@@ -7,107 +7,6 @@ import SQLite3
 
 @MainActor
 final class PKMWorkflowTests: XCTestCase {
-    func testAutomaticDeliveryRetriesWithoutDuplicatesAndPreservesExternalEdits() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let folder = root.appendingPathComponent("vault")
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let journal = root.appendingPathComponent("journal.json")
-        let writer = AutomaticMarginWriter(journalURL: journal)
-        let note = AutomaticMarginWriter.Note(id: "session-a:margin-1", markdown: "# Thought\n\nOriginal")
-        _ = try await writer.deliver([note], to: folder, destinationID: "vault")
-        let restarted = AutomaticMarginWriter(journalURL: journal)
-        _ = try await restarted.deliver([note], to: folder, destinationID: "vault")
-        let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
-        XCTAssertEqual(files.count, 1)
-        _ = try await restarted.deliver([.init(id: note.id, markdown: "Updated transcript")], to: folder, destinationID: "vault")
-        XCTAssertEqual(try String(contentsOf: files[0], encoding: .utf8), "Updated transcript")
-        try Data("My Obsidian edit".utf8).write(to: files[0])
-        // #581: the edit is kept and counted, not reported as a failure.
-        let summary = try await restarted.deliver([.init(id: note.id, markdown: "Another transcript"), .init(id: "unaffected", markdown: "Another independent Margin")], to: folder, destinationID: "vault")
-        XCTAssertEqual(summary, MarginNoteDelivery.Summary(saved: 1, keptEdits: 1))
-        XCTAssertEqual(try String(contentsOf: files[0], encoding: .utf8), "My Obsidian edit")
-        let delivered = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
-        XCTAssertEqual(delivered.count, 2, "One conflict must not prevent independent delivery")
-    }
-
-    /// #587: an item note asks for its own file name and keeps the first one when the item is renamed, so completing
-    /// again rewrites the same file. A Margin note still gets `Margin-<digest>.md`, and a journal from an earlier build
-    /// (no file name in its entries) still decodes.
-    func testItemNotesKeepTheirFirstFileNameAndMarginNotesAreNamedAsBefore() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let folder = root.appendingPathComponent("vault")
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let journal = root.appendingPathComponent("journal.json")
-        try Data(#"{"old:entry": {"previous": null, "intended": "abc"}}"#.utf8).write(to: journal)
-        let writer = AutomaticMarginWriter(journalURL: journal)
-        func names() throws -> [String] {
-            try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
-        }
-
-        _ = try await writer.deliver([
-            .init(id: "item:item-1", markdown: "First", fileName: "Old title — Margins 1a2b3c.md"),
-            .init(id: "session-a:margin-1", markdown: "A Margin"),
-        ], to: folder, destinationID: "vault")
-        XCTAssertEqual(try names(), ["Margin-\(ListeningEdition.digest("session-a:margin-1")).md", "Old title — Margins 1a2b3c.md"])
-
-        // The item was renamed and completed again, in a new app launch.
-        let restarted = AutomaticMarginWriter(journalURL: journal)
-        _ = try await restarted.deliver([
-            .init(id: "item:item-1", markdown: "Second", fileName: "New title — Margins 1a2b3c.md"),
-        ], to: folder, destinationID: "vault")
-        XCTAssertEqual(try names().count, 2, "no second copy under the new title")
-        XCTAssertEqual(try String(contentsOf: folder.appendingPathComponent("Old title — Margins 1a2b3c.md"), encoding: .utf8), "Second")
-    }
-
-    /// Build 29 wrote Margin notes without a properties block (#491). The writer must rewrite its
-    /// own unedited notes once to gain the block, and still never overwrite a note edited outside the app.
-    func testMarginNotesGainPropertiesOnceWithoutOverwritingEditedNotes() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let folder = root.appendingPathComponent("vault")
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        func note(_ marginID: String) throws -> String {
-            let json = """
-            {"schemaVersion": "spoken-margins.export.v1", "item": {"id": "item-a", "title": "Episode: \\"one\\"", "externalReference": "https://example.com/1", "includedFullText": false},
-             "session": {"id": "session-a", "status": "in_progress", "completionPercent": 10},
-             "turns": [], "timeline": [],
-             "interjections": [{"id": "\(marginID)", "sessionId": "session-a", "targetType": "item", "targetId": "item-a",
-               "roughPercent": 10, "anchorBefore": "Before.", "anchorAfter": "After.", "mediaTimeMs": 5000,
-               "transcriptionStatus": "transcribed", "transcript": "A thought.", "audioPath": null}]}
-            """
-            let export = try JSONDecoder().decode(SessionExport.self, from: Data(json.utf8))
-            return SessionExportMarkdownRenderer.renderMargin(export, createdAt: Date(timeIntervalSince1970: 1_777_000_000))
-        }
-        let current = [AutomaticMarginWriter.Note(id: "session-a:m1", markdown: try note("m1")),
-                       AutomaticMarginWriter.Note(id: "session-a:m2", markdown: try note("m2"))]
-        // The Build 29 note is the same body without the properties block.
-        let build29 = try current.map { note in
-            let parts = note.markdown.components(separatedBy: "\n---\n\n")
-            XCTAssertTrue(note.markdown.hasPrefix("---\n"))
-            return AutomaticMarginWriter.Note(id: note.id, markdown: try XCTUnwrap(parts.count == 2 ? parts[1] : nil))
-        }
-        let journal = root.appendingPathComponent("journal.json")
-        _ = try await AutomaticMarginWriter(journalURL: journal).deliver(build29, to: folder, destinationID: "vault")
-        func file(_ id: String) -> URL { folder.appendingPathComponent("Margin-\(ListeningEdition.digest(id)).md") }
-        try Data("My Obsidian edit".utf8).write(to: file("session-a:m2"))
-
-        let upgraded = AutomaticMarginWriter(journalURL: journal)
-        let summary = try await upgraded.deliver(current, to: folder, destinationID: "vault")
-        XCTAssertEqual(summary, MarginNoteDelivery.Summary(saved: 1, keptEdits: 1), "The edited note is kept, not overwritten")
-        XCTAssertEqual(try String(contentsOf: file("session-a:m1"), encoding: .utf8), current[0].markdown)
-        XCTAssertEqual(try String(contentsOf: file("session-a:m2"), encoding: .utf8), "My Obsidian edit")
-
-        // Once: a second pass leaves the rewritten note's bytes and date alone.
-        let written = try FileManager.default.attributesOfItem(atPath: file("session-a:m1").path)[.modificationDate] as? Date
-        _ = try? await upgraded.deliver([current[0]], to: folder, destinationID: "vault")
-        XCTAssertEqual(try String(contentsOf: file("session-a:m1"), encoding: .utf8), current[0].markdown)
-        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: file("session-a:m1").path)[.modificationDate] as? Date, written)
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).count, 2)
-    }
-
     func testEditionImportPreservesActiveSessionAndRejectsSilentMapReplacement() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed(); model.declineCurrentTerms()
@@ -127,6 +26,46 @@ final class PKMWorkflowTests: XCTestCase {
         XCTAssertEqual(try ListeningEditionStore.application().load(itemID: edition.itemID)?.scenes[0].summary, "Summary")
         model.importListeningEditionData(try edition.encoded(), replaceMap: true)
         XCTAssertEqual(try ListeningEditionStore.application().load(itemID: edition.itemID)?.scenes[0].summary, "Changed")
+    }
+
+    func testBatchEditionImportSavesEveryFileInOneOperationAndStaysWhereTheListenerIs() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed(); model.declineCurrentTerms()
+        model.importTitle = "Existing"; model.importText = "Keep the ongoing session."
+        model.importTextItem(); model.pause()
+        let activeSession = model.snapshot.sessionId
+        let activeItem = model.activeItemId
+        let screen = model.screen
+        func make(_ title: String) -> ListeningEdition {
+            ListeningEdition(title: title, text: title + " " + UUID().uuidString, generator: "External model", overview: "Overview",
+                             scenes: [.init(title: "A", description: "Description", summary: "Summary", startBlock: 1, endBlock: 1)])
+        }
+        let first = make("Batch one"), second = make("Batch two")
+        var different = first
+        different.scenes[0].summary = "A different map for the same source"
+        defer { for e in [first, second] { try? FileManager.default.removeItem(at: ListeningEditionStore.application().file(e.itemID)) } }
+
+        let lines = model.importListeningEditions([
+            .init(id: 0, name: "one.json", data: try first.encoded()),
+            .init(id: 1, name: "broken.json", data: Data("not json".utf8)),
+            .init(id: 2, name: "two.json", data: try second.encoded()),
+            .init(id: 3, name: "one-again.json", data: try first.encoded()),
+            .init(id: 4, name: "one-different.json", data: try different.encoded()),
+        ])
+
+        XCTAssertEqual(lines.map(\.id), [0, 1, 2, 3, 4])
+        XCTAssertEqual([lines[0].outcome, lines[2].outcome, lines[3].outcome, lines[4].outcome],
+                       [.imported, .imported, .alreadyImported, .keptExistingMap])
+        guard case .failed = lines[1].outcome else { return XCTFail("the malformed file should have its own failed line") }
+        // Both valid editions are in the Library and saved, and the different map did not replace the first.
+        XCTAssertEqual(model.libraryItems.filter { $0.id == first.itemID }.count, 1)
+        XCTAssertEqual(model.libraryItems.filter { $0.id == second.itemID }.count, 1)
+        XCTAssertEqual(try ListeningEditionStore.application().load(itemID: first.itemID), first)
+        XCTAssertEqual(try ListeningEditionStore.application().load(itemID: second.itemID), second)
+        // A batch opens nothing and leaves the current session alone.
+        XCTAssertEqual(model.screen, screen)
+        XCTAssertEqual(model.activeItemId, activeItem)
+        XCTAssertEqual(model.snapshot.sessionId, activeSession)
     }
 
     func testShortcutIntentImportsAndOpensEditionWithoutURLLaunch() async throws {

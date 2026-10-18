@@ -1,5 +1,6 @@
 import XCTest
 @testable import SessionKit
+import SessionKitFeeds
 @testable import SpokenMarginsApp
 
 /// B1 M1: a fresh install opens the podcast drawer once; it works offline from the bundled
@@ -176,7 +177,7 @@ final class CatalogDrawerTests: XCTestCase {
         let repository = InMemorySessionRepository()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [SubstackFeedURLProtocol.self]
-        let coordinator = FollowedSourceCoordinator(repository: repository, session: URLSession(configuration: configuration))
+        let coordinator = FollowedSourceCoordinator(repository: repository, session: URLSession(configuration: configuration), signals: .app)
         let bundled = try XCTUnwrap(Bundle.main.url(forResource: "catalog", withExtension: "json"))
         let cache = FileManager.default.temporaryDirectory.appending(path: "catalog-drawer-\(UUID().uuidString)")
         addTeardownBlock { try? FileManager.default.removeItem(at: cache) }

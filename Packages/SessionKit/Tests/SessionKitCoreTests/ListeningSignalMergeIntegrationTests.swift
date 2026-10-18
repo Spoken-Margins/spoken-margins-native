@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import SessionKitTestInputs
 
 /// Host-only wiring checks for #567's overlapping edits with #273 and #466.
 /// These catch merge omissions; app builds and journeys still verify the runtime boundary.
@@ -46,7 +47,7 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
     }
 
     func testFeedSaveKeepsPublicationSignalsGUIDsAndAutomaticImportCandidates() throws {
-        let source = try appSource("FollowedSourceCoordinator.swift")
+        let source = try packageSource(at: "Sources/SessionKitFeeds/FollowedSourceCoordinator.swift")
         let save = try body(source, from: "private func save(entries:", to: "private static func entryID(")
         XCTAssertFalse(save.contains("<<<<<<<"), "The feed-save merge must be resolved")
         XCTAssertTrue(save.contains("episodeGUID: item.guid"), "Keep the feed GUID used by podcast anchors")
@@ -92,13 +93,12 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
     /// App source with comments and string contents blanked, so a match cannot come from a comment
     /// or a string, and braces inside strings do not confuse `functionBody`.
     private func appSource(_ name: String) throws -> String {
-        let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent() // SessionKitCoreTests
-            .deletingLastPathComponent() // Tests
-            .deletingLastPathComponent() // SessionKit
-            .deletingLastPathComponent() // Packages
-            .deletingLastPathComponent() // repository
-        let raw = try String(contentsOf: root.appendingPathComponent("App/SpokenMarginsApp/Sources/SpokenMarginsApp/\(name)"), encoding: .utf8)
+        blankingCommentsAndStrings(try TestInputs.text(.appSources, name))
+    }
+
+    /// A SessionKit source file, blanked the same way.
+    private func packageSource(at relativePath: String) throws -> String {
+        let raw = try String(contentsOf: TestInputs.packageURL(relativePath), encoding: .utf8)
         return blankingCommentsAndStrings(raw)
     }
 

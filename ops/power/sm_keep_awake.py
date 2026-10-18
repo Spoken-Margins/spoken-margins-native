@@ -37,10 +37,13 @@ import time
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+import sm_paths  # noqa: E402
+
 BUILD_PROCESSES = ('xcodebuild', 'swift-build', 'swift-test', 'swift-frontend', 'xctest',
                    'Runner.Worker')
 TRANSCRIPT_ROOTS = (Path.home() / '.claude' / 'projects', Path.home() / '.codex' / 'sessions')
-STATE_DIR = Path.home() / 'SpokenMarginsOps' / 'keep-awake'
+STATE_DIR = sm_paths.state_dir('keep-awake')
 AMPH = Path(__file__).resolve().with_name('amph')
 
 

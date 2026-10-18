@@ -2,8 +2,7 @@ import Foundation
 
 /// The place a "Review new Margins" (#474) owes the listener. A review moves the source between Margins, so the
 /// session is saved wherever the review has got to. The review hands the listener's place back itself when it ends in
-/// the app, but not when the app is killed mid-review, nor when Add Margin keeps the source at a Margin to record there.
-/// This is the note that lets the app put them back afterwards.
+/// the app, but not when the app is killed mid-review. This is the note that lets the app put it back at the next launch.
 public struct ReviewReturnPlace: Codable, Equatable, Sendable {
     /// How far past its last Margin a review can leave the source: the lead-in is shorter, and a voice holds it still.
     public static let slackMs = 15_000
@@ -16,8 +15,6 @@ public struct ReviewReturnPlace: Codable, Equatable, Sendable {
     /// Where a review can have left the source: from the first lead-in to just past the last Margin.
     public let stretchStartMs: Int
     public let stretchEndMs: Int
-    /// Add Margin ended the review to record at a Margin: the place stays owed until that recording is saved or cancelled.
-    public var keptForRecording = false
 
     /// The place a review about to start owes. Nil for a moment that isn't a review, or one that has no place to go back to.
     public init?(sequence: MarginMomentSequence) {
@@ -55,15 +52,6 @@ public struct ReviewReturnPlaces {
 
     public func owed(itemId: String) -> ReviewReturnPlace? {
         load()[itemId]
-    }
-
-    /// Add Margin ended the review at a Margin: keep what it owes until the recording is over.
-    public func keepForRecording(itemId: String) {
-        var all = load()
-        guard var place = all[itemId] else { return }
-        place.keptForRecording = true
-        all[itemId] = place
-        save(all)
     }
 
     public func clear(itemId: String) {

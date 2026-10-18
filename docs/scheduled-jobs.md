@@ -10,7 +10,7 @@ One place for every job that runs on a clock or an event and drives the project,
 |---|---|---|
 | Project routines | Claude routines on the owner's project | The routine list (`list_triggers`). Not in this repo. |
 | Claude scheduled tasks and loops | The owner's Mac, `~/.claude/scheduled-tasks/` and long-running threads | Outside this repo. |
-| Mac launchd jobs | `~/Library/LaunchAgents/`, one plist per job | Plists in this repo (`ops/`, `scripts/`), copied by hand. |
+| Mac launchd jobs | `~/Library/LaunchAgents/`, one plist per job | Plist templates in this repo (`ops/`, `scripts/`), rendered and installed with `ops/install-launchd.py` (`--list`, `--print JOB`, `--install JOB`, `--remove JOB`). The templates hold `@HOME@`; nothing is installed or reloaded by merging one. |
 | VPS systemd | The owner's VPS | Units in this repo (`ops/dial/`, `research/B4/deploy/`), installed by `deploy.sh`. |
 | GitHub Actions | `.github/workflows/` | Workflow files in this repo. |
 
@@ -24,7 +24,7 @@ Times are UTC unless a zone is named. "Pause" is the way to stop that one job wi
 |---|---|---|---|---|---|
 | Dial relay | None. Fired by the Dial gate and by lane-open pings through the routine's fire endpoint | The fire payload | A project-chat post only on a state change (Off, Holding, a new thread count); otherwise the payload goes to the coordinator | Routine; project instructions say how it behaves | Disable the routine, or set the Dial to Off on #589 |
 | Hourly dispatch | `20 */3 * * *` (every 3 hours; last fired 18:20, next 21:20) | Latest Mac tick on #337, lane reports, audits, `automerge` PRs | Labels, comments, thread starts | Routine, with the project instructions' HOURLY DISPATCH list | Disable the routine |
-| Spoken Margins daily routine | `CRON_TZ=America/New_York 30 21 * * *`; last fired 01:36, so it ran about 6 minutes after 21:30 Eastern | New issues, the project board | Labels, the Area field, new `ready` issues, thread starts | Routine, with FILING NEW ISSUES in the project instructions | Disable the routine |
+| Spoken Margins daily routine | `CRON_TZ=America/New_York 30 21 * * *`; last fired 01:36, so it ran about 6 minutes after 21:30 Eastern | Issues filed since its last run, and the project board. The owner-side prompt change to "every open issue with no milestone" is pending (#337, 2026-10-16) | Labels, the Area field, new `ready` issues, thread starts | Routine, with FILING NEW ISSUES in the project instructions | Disable the routine |
 | Six disabled routines | None. Four one-shot reminders from 2026-09-30 and two `limit_wake` retries from 2026-10-10 | | | | Already off. Safe to delete. |
 
 ### Claude work on the Mac (not checked: lives outside this repo)
@@ -41,14 +41,12 @@ Times are UTC unless a zone is named. "Pause" is the way to stop that one job wi
 
 | Job (label `com.spokenmargins.*`) | Schedule | Reads | Writes | Config owner | Pause |
 |---|---|---|---|---|---|
-| `phone-build` (`scripts/`) | Every 10 min; `scripts/phone-build` coalesces to at most one build an hour, or sooner after an integration PASS | `next`'s tip, integration reports on #184 | `~/SpokenMargins-phone/` builds, `latest/build.json`, `test-plan.md` | Owner | `launchctl bootout gui/$(id -u)/com.spokenmargins.phone-build` (`release-cut` also holds it) |
+| `phone-build` (`scripts/`) | Every 10 min; `scripts/phone-build` coalesces to at most one build an hour, or sooner after an integration PASS | `next`'s tip, integration reports on #184 | `~/SpokenMargins-phone/` builds, `latest/build.json`, `test-plan.md` | Owner | `launchctl bootout gui/$(id -u)/com.spokenmargins.phone-build` |
 | `integration-run` (`ops/testdesk/`) | Every 10 min, and at load; waits for a quiet lane | `next`'s tip, #184 | `Lane report integration-<sha7>` on #184, culprit and revert on a real FAIL | Owner | `launchctl bootout` of the label |
 | `codex-audit` (`ops/codex/`) | Every 5 min | Lane and risky PRs | `**Claude audit on <sha7>**` on the PR. The name is old; it calls headless Claude (#1195) | Owner | `launchctl bootout` of the label. Nothing merges an audio, persistence, packet or lane PR without it. |
-| `codex-worker` (`ops/codex/`) | Every 10 min | `ready` issues, stalled PRs | PRs, claim and stop notes as `Codex worker N` | Owner | Retired (#1195); the owner unloads it after 2026-10-15 |
 | `disk-relief` (`ops/disk/`) | Every 15 min, and at load | Free space, worktrees, session folders | Deletes rebuildable caches and finished worktrees, moves old artifacts to the external drive | Owner | `launchctl bootout` of the label |
 | `keep-awake` (`ops/power/`) | Every 60 s, and at load | Running builds, agent transcripts | Starts Amphetamine sessions | Owner | `launchctl bootout` of the label, or take out `--lid` for heat |
 | `lane-power-guard` (`ops/lane/`) | Every 15 s, and at load | Power source, lid, runner state | Stops and starts the lane runner services it paused | Owner | `launchctl bootout` of the label |
-| `release-cut` (`ops/release/`) | One shot for Build 30 (`--at 2026-10-04T21:00`), and at load | `next`, PR 604 | `release/build-30`, #337, a Mac notification | Owner | Stale. See "Needs a fix" below. |
 | GitHub Actions runner services `actions.runner.uncomposed-spoken-margins-native.*` | Always on | Queued jobs | Run `lane.yml` (`lane`, `automerge`, `release`) and `shipped-build-compat.yml` jobs for labels `sm-lane`, `sm-lane-build`, `sm-lane-priority` | Owner; not in this repo | `launchctl bootout` of the service. The power guard restarts only runners it paused itself. |
 
 ### VPS (plists and units in this repo; live state **not checked**)
@@ -98,12 +96,11 @@ From any machine with repo admin: `gh api repos/uncomposed/spoken-margins-native
 Found while building the table. Routine and plist changes are the owner's or the coordinator's; none was made here.
 
 1. **"Hourly" dispatch runs every 3 hours.** The routine's cron is `20 */3 * * *`, but its own prompt, AGENTS.md ("dispatches lane results every hour") and the project instructions say hourly at 20 past. #1601 records the same gap on Oct 9. Fix: set the cron to `20 * * * *`, or if 3 hours is the owner's choice, change the three texts.
-2. **`release-cut` plist is a spent one-shot.** It names Build 30, a date that has passed and a deadline of 2026-10-04, and it runs at load. It does nothing on re-run (`~/SpokenMarginsOps/release/build-30.json`), so it is only clutter, but a reader will think a release is scheduled. Fix: remove the plist and unload it, or make `--build` and `--at` come from the command line.
-3. **Two checkouts on the Mac, two update paths.** `disk-relief`, `keep-awake`, `lane-power-guard`, `release-cut` and `phone-build` run from `~/Documents/GitHub/spoken-margins-native` (the Mac tick fast-forwards it). `codex-audit`, `codex-worker` and `integration-run` run from `~/SpokenMarginsOps/repo` (the phone-build job keeps it on `next`, per `ops/testdesk/README.md`). A change to an ops script reaches the two sets at different times. Fix: say in each README which checkout runs it, or move all to one.
-4. **`scripts/com.spokenmargins.phone-build.plist` says the "hourly Mac tick".** The tick is every 2 hours (`kickoff.md`). Also its header comment contains `--if-changed`; a double hyphen is not allowed inside an XML comment, and Python's `plistlib` refuses the file. The loaded copy may still work (`plutil -lint` on the Mac will say). Fix both in the next change to that file. #1600 is about to edit it, so it was left alone here.
-5. **`docs/workstreams/kickoff.md` still describes a standing Test Desk "in a loop".** Current practice (project instructions, 2026-10-13) is a managed desk started on a `Test Desk: GO` tick line. Fix: update `kickoff.md` the next time that table changes.
-6. **Six dead routines.** See the routine table. Fix: delete them.
-7. **`codex-audit` is named for Codex but calls Claude.** Documented in `ops/codex/README.md`, kept so the loaded job, log and lock carry on. No action unless the owner wants a rename after 2026-10-15.
+2. **Two checkouts on the Mac, two update paths.** `disk-relief`, `keep-awake`, `lane-power-guard` and `phone-build` run from `~/Documents/GitHub/spoken-margins-native` (the Mac tick fast-forwards it). `codex-audit` and `integration-run` run from `~/SpokenMarginsOps/repo` (the phone-build job keeps it on `next`, per `ops/testdesk/README.md`). A change to an ops script reaches the two sets at different times. Fix: say in each README which checkout runs it, or move all to one.
+3. **`scripts/com.spokenmargins.phone-build.plist` says the "hourly Mac tick".** The tick is every 2 hours (`kickoff.md`). (Its header comment used to contain `--if-changed`, a double hyphen that is not allowed inside an XML comment; #1843 reworded it.) Fix the tick wording in the next change to that file. #1600 is about to edit it, so it was left alone here.
+4. **`docs/workstreams/kickoff.md` still describes a standing Test Desk "in a loop".** Current practice (project instructions, 2026-10-13) is a managed desk started on a `Test Desk: GO` tick line. Fix: update `kickoff.md` the next time that table changes.
+5. **Six dead routines.** See the routine table. Fix: delete them.
+6. **`codex-audit` is named for Codex but calls Claude.** Documented in `ops/codex/README.md`, kept so the loaded job, log and lock carry on. No action unless the owner wants a rename after 2026-10-15.
 
 ## Public-repo readiness note
 
@@ -140,7 +137,7 @@ Whether GitHub's free hosted runners for public repos include enough macOS capac
 | `linux-t1` (VPS), `merge-audit`, `route`, `lane-open-*` | Replaced with no loss. These are plain Linux jobs that moved to the VPS only because the free minutes ran out on 2026-10-07 (#1023). |
 | Host tests (`--plan fast`) and the app build for the simulator and device | Likely, on a hosted macOS runner: no simulator audio, no owner machine. Slower than the Mac and with no warm build cache. |
 | T3 app-hosted tests and the integration run (`--plan app`) | Possible on a hosted macOS runner's simulator, but the lane's one-simulator rules and its audio-device handling (#1556) were built around the owner's Mac. |
-| T4 and T5 journeys (computer use), the phone build, the owner's phone check, signing, TestFlight upload | Not replaceable. They need the owner's Mac, his login keychain and his phone. |
+| T4 and T5 journeys (iOS simulator tool), the phone build, the owner's phone check, signing, TestFlight upload | Not replaceable. They need the owner's Mac, his login keychain and his phone. |
 | The usage breaker, the Dial, the Mac tick, disk relief, keep-awake | Not Actions jobs at all. Unaffected. |
 
 ### The owner's answer (2026-10-14)

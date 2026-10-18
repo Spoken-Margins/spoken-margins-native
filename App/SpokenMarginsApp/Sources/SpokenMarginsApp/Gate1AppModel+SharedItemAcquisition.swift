@@ -24,7 +24,10 @@ extension Gate1AppModel {
             throw SessionKitError.persistenceFailed("shared_article_unreadable")
         }
         guard SharedArticleReferencePolicy.fetchedPageIsTheSharedArticle(
-            item, fetchedURL: handoff.source.url, fetchedText: handoff.text
+            item,
+            fetchedURL: handoff.source.url,
+            fetchedText: Self.sanitizedBrowserTextHandoff(handoff).text,
+            contentFormat: handoff.contentFormat
         ) else {
             // A redirect to a consent or sign-in page would be saved as the article and the Margins wouldn't play.
             diagnostics["lastSharedArticleAcquisition"] = "wrong_page:\(handoff.source.url)"

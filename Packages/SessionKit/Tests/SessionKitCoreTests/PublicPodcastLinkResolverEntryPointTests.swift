@@ -1,6 +1,7 @@
 import XCTest
 import SessionKit
 import SessionKitFeeds
+import SessionKitTestInputs
 
 /// The public podcast link resolver, with every scenario of the Mac-only PublicPodcastLinkResolverTests
 /// copied here so it runs on Linux, and each one resolved through BOTH entry points.
@@ -13,10 +14,7 @@ import SessionKitFeeds
 /// resolver needs no main-actor isolation.
 final class PublicPodcastLinkResolverEntryPointTests: XCTestCase {
     /// The Omny fixtures live beside the Mac-only tests, so the two copies of a scenario share one recording.
-    private static let fixtures = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent() // SessionKitCoreTests
-        .deletingLastPathComponent() // Tests
-        .appending(path: "SessionKitTests/Fixtures")
+    private static let fixtures = TestInputs.packageURL("Tests/SessionKitTests/Fixtures")
 
     /// Resolves `request` through `resolve` and `resolveAsync` on one fetch seam. The async resolver gets
     /// the same stub, so neither entry point reaches the network. Fails when the two answers differ.

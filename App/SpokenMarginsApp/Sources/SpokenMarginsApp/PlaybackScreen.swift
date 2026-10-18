@@ -133,12 +133,24 @@ struct PlaybackScreen: View {
                             PlaybackMarginsView()
                         }
                     }
+                    // Pinned above every pane, not inside the Now pane's scrolling header: a failure about this
+                    // listen hides the top banner, so the tag must stay in sight on Timeline and Margins too (#430).
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        if !model.recordingNavigationIsLocked, let feedback = model.playbackFeedbackTag {
+                            PlaybackFeedbackTagView(event: feedback.event, tag: feedback.tag)
+                                .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
+                                .frame(maxWidth: 620)
+                                .frame(maxWidth: .infinity)
+                                .background(AppColors.listeningBackground)
+                        }
+                    }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         if !isTimelineEditing { playbackControls }
                     }
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("playback.screen")
+                .announcesScreenChange()
                 .onChange(of: model.marginMoment?.target.marginId) { _, target in
                     if target != nil { selectedPane = .now }
                 }
@@ -185,7 +197,10 @@ struct PlaybackScreen: View {
                     .environmentObject(model)
             }
             .sheet(item: $sourceTextTarget) { target in
-                NativeTextPeekView(title: model.selectedItem.title, target: target)
+                NativeTextPeekView(
+                    title: model.selectedItem.title, target: target,
+                    text: model.selectedItem.text, chapters: model.selectedItem.chapters
+                )
             }
             .sheet(isPresented: $isPlaybackOptionsPresented, onDismiss: performPendingOptionsNavigation) {
                 NavigationStack {
@@ -793,8 +808,13 @@ struct PlaybackScreen: View {
                     model.recordDeveloperDiagnostic("scrub.text.display", ["canonical": String(value), "displayed": String(textScrubState.displayedValue(canonicalValue: value, range: textScrubRange)), "editing": String(textScrubState.isEditing), "range": String(textScrubRange.upperBound)])
                 }
                 .disabled(model.snapshot.isRecording)
-                Text(textTimeEstimate?.remainingText ?? "100%")
-                    .frame(minWidth: 34, alignment: .leading)
+                // Compact and as wide as its text, so the slider keeps the rest of the row (#1442). The slider's
+                // VoiceOver value above already says the time left in words.
+                Text(textTimeEstimate?.compactRemainingText ?? "100%")
+                    .fixedSize(horizontal: true, vertical: false)
+                    .allowsHitTesting(false)
+                    // The label stays its own element (its identifier is queried, #305), so it speaks the words.
+                    .accessibilityLabel(textTimeEstimate?.remainingSpokenText ?? "100 percent")
                     .accessibilityIdentifier("playback.timeLeft.label")
             }
             .font(.caption.monospacedDigit())
@@ -813,7 +833,9 @@ struct PlaybackScreen: View {
                     .accessibilityLabel("Playback progress")
                     .accessibilityValue(barLabels.accessibilityValue)
                 Text(barLabels.trailing)
-                    .frame(minWidth: 34, alignment: .leading)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .allowsHitTesting(false)
+                    .accessibilityLabel(barLabels.trailingSpokenText)
                     .accessibilityIdentifier("playback.timeLeft.label")
             }
             .font(.caption.monospacedDigit())
@@ -1084,9 +1106,11 @@ struct PlaybackScreen: View {
                 } else if model.canStopOnDeviceSpeechGeneration {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(AppColors.accent)
+                        .accessibilityHidden(true)
                 } else {
                     Image(systemName: "speaker.wave.2.fill")
                         .foregroundStyle(AppColors.accent)
+                        .accessibilityHidden(true)
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text("On-device voice")
@@ -1556,6 +1580,7 @@ struct PlaybackScreen: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     Image(systemName: "info.circle")
+                        .accessibilityHidden(true)
                     Spacer()
                     Text("Conversation")
                         .font(.headline)
@@ -1658,8 +1683,7 @@ private struct GuidedOnboardingPlaybackCard: View {
                         .font(.headline)
                     Spacer()
                     Button(action: model.pauseGuidedOnboarding) {
-                        Image(systemName: "xmark")
-                            .frame(width: 32, height: 32)
+                        TapTargetIcon(systemName: "xmark")
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Pause guided tour")
@@ -1782,7 +1806,7 @@ private struct PastedAssistantResponseView: View {
                     .font(.body)
                     .frame(height: 180)
                     .padding(8)
-                    .background(AppColors.inputBackground)
+                    .inputEditorBackground()
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
                     .focused($isFocused)

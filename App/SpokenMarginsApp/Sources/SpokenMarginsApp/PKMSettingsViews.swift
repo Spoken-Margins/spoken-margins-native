@@ -51,6 +51,7 @@ struct MarginOutputDestinationsSection: View {
             ForEach(coordinator.rows) { row in
                 NavigationLink {
                     MarginOutputDestinationScreen(coordinator: coordinator, id: row.id)
+                        .miniPlayerKeepOut()
                 } label: {
                     MarginOutputDestinationRow(row: row)
                 }
@@ -204,7 +205,18 @@ struct ListeningEditionImportScreen: View {
     @State private var replaceMap = false
     @State private var notifications = ""
     @State private var notificationsFailed = false
+    /// Files chosen but not imported yet, already decoded so each row shows its title or its error (#1472).
+    @State private var picked: [ListeningEditionBatch.Entry] = []
+    @State private var nextEntryID = 0
+    @State private var results: [ListeningEditionBatch.Line] = []
+    @State private var loadingForReview = false
     @FocusState private var editingJSON: Bool
+    private static let pastedEntryID = -1
+
+    private var hasPastedJSON: Bool { !json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    /// What the pinned button will import: every valid chosen file, plus the pasted JSON when there is any.
+    private var importCount: Int { picked.filter(\.isValid).count + (hasPastedJSON ? 1 : 0) }
+
     var body: some View {
         Form {
             Section {
@@ -220,18 +232,36 @@ struct ListeningEditionImportScreen: View {
                     }
                 }
                 if !notifications.isEmpty { StatusMessageText(message: notifications, isFailure: notificationsFailed) }
-                Button("Choose JSON File") { choosingFile = true }
+                Button("Choose JSON Files") { choosingFile = true }
+                if !picked.isEmpty {
+                    ForEach(picked) { entry in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.name).font(.subheadline.weight(.semibold))
+                            if entry.isValid { Text(entry.detail).font(.footnote).foregroundStyle(.secondary) }
+                            else { FailureMessageLabel(entry.detail).font(.footnote) }
+                            if let loaded = entry.edition {
+                                Button("Review on its own") { review(loaded, id: entry.id) }.font(.footnote).buttonStyle(.borderless)
+                            }
+                        }
+                        .accessibilityElement(children: .contain)
+                    }
+                    .onDelete { picked.remove(atOffsets: $0) }
+                }
                 TextEditor(text: $json).frame(minHeight: 140, maxHeight: 240)
                     .accessibilityLabel("Listening edition JSON")
                     .focused($editingJSON)
-                    .onChange(of: json) { _, _ in edition = nil; replaceMap = false }
+                    .onChange(of: json) { _, _ in
+                        // Loading a file for review sets the editor text and its preview together.
+                        if loadingForReview { loadingForReview = false; return }
+                        edition = nil; replaceMap = false
+                    }
                 Button("Preview") {
                     editingJSON = false
                     do { edition = try ListeningEdition.decode(Data(json.utf8)); message = "" }
                     catch { message = error.localizedDescription; messageIsFailure = true }
                 }
             } footer: {
-                Text("Use Make Listening Map Prompt, your chosen model, then Assemble Listening Edition in Shortcuts. Import the result here or with Import Listening Edition. No model request is made during import.")
+                Text("Use Make Listening Map Prompt, your chosen model, then Assemble Listening Edition in Shortcuts. Import the result here or with Import Listening Edition. Choose several files to import them together; Preview is optional. No model request is made during import.")
             }
             if let edition {
                 Section(edition.title) {
@@ -244,8 +274,13 @@ struct ListeningEditionImportScreen: View {
                         }
                     }
                     Toggle("Replace existing map for this exact source", isOn: $replaceMap)
-                    Button("Import Item and Map") {
-                        model.importListeningEditionData(Data(json.utf8), replaceMap: replaceMap)
+                    Text("Replacing applies when this is the only edition you import.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if !results.isEmpty {
+                Section("Results") {
+                    ForEach(results) { line in
+                        StatusMessageText(message: line.message, isFailure: line.outcome.isFailure)
                     }
                 }
             }
@@ -254,20 +289,76 @@ struct ListeningEditionImportScreen: View {
             }
         }
         .navigationTitle("Listening Edition")
-        .fileImporter(isPresented: $choosingFile, allowedContentTypes: [.json]) { result in
+        // Pinned, so Import never needs a scroll, at any screen size or text size.
+        .safeAreaInset(edge: .bottom) {
+            Button(action: importAll) {
+                Text(ListeningEditionBatch.buttonTitle(count: importCount))
+                    .font(.headline).frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .filledActionButton()
+            .disabled(importCount == 0)
+            .accessibilityIdentifier("listeningEdition.import")
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(.bar)
+        }
+        .fileImporter(isPresented: $choosingFile, allowedContentTypes: [.json], allowsMultipleSelection: true) { result in
             do {
-                let url = try result.get()
-                let access = url.startAccessingSecurityScopedResource()
-                defer { if access { url.stopAccessingSecurityScopedResource() } }
-                guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 8_000_000 else { throw EditionError.invalid("File exceeds 8 MB.") }
-                let data = try Data(contentsOf: url)
-                let parsed = try ListeningEdition.decode(data)
-                json = String(data: data, encoding: .utf8) ?? ""
-                // Preview is explicit after changing the editor, so old content cannot import.
-                message = "Loaded \(parsed.title). Tap Preview to review it."
-                messageIsFailure = false
+                for url in try result.get() {
+                    picked.append(Self.entry(for: url, id: nextEntryID))
+                    nextEntryID += 1
+                }
+                results = []
+                message = ""
             } catch { message = error.localizedDescription; messageIsFailure = true }
         }
+    }
+
+    private static func entry(for url: URL, id: Int) -> ListeningEditionBatch.Entry {
+        let name = url.lastPathComponent
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        do {
+            guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 8_000_000 else {
+                return ListeningEditionBatch.Entry(id: id, name: name, error: "Listening edition exceeds 8 MB.")
+            }
+            return ListeningEditionBatch.Entry(id: id, name: name, data: try Data(contentsOf: url))
+        } catch {
+            return ListeningEditionBatch.Entry(id: id, name: name, error: error.localizedDescription)
+        }
+    }
+
+    /// Moves one chosen file into the editor with its preview, where the replace toggle lives.
+    private func review(_ loaded: ListeningEdition, id: Int) {
+        guard let data = try? loaded.encoded(), let text = String(data: data, encoding: .utf8) else { return }
+        if json != text { loadingForReview = true }
+        json = text
+        edition = loaded
+        replaceMap = false
+        picked.removeAll { $0.id == id }
+        message = ""
+    }
+
+    private func importAll() {
+        editingJSON = false
+        var entries = picked
+        if hasPastedJSON {
+            entries.append(ListeningEditionBatch.Entry(id: Self.pastedEntryID, name: "Pasted JSON", data: Data(json.utf8)))
+        }
+        results = []
+        message = ""
+        // One edition is imported and opened, as it always was. Several are saved where the listener is.
+        if entries.count == 1, let single = entries[0].edition {
+            let replace = entries[0].id == Self.pastedEntryID && replaceMap
+            if model.importListeningEdition(single, replaceMap: replace) { picked = []; json = ""; edition = nil; replaceMap = false }
+            return
+        }
+        let lines = model.importListeningEditions(entries)
+        results = lines
+        let done = Set(lines.filter { $0.outcome.isSuccess }.map(\.id))
+        // What imported leaves the list; what did not stays, so it can be fixed, reviewed on its own, or removed.
+        picked.removeAll { done.contains($0.id) }
+        if done.contains(Self.pastedEntryID) { json = ""; edition = nil; replaceMap = false }
     }
 }
 

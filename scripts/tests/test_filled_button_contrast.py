@@ -1,10 +1,11 @@
 """Filled evergreen and plum button labels are readable in light and dark mode (#537).
 
-Runs the app's own Foundation-only contrast audit (`ExperienceColorContrast.swift`) on the host,
+Runs the app's own Foundation-only contrast audit (`ExperienceColorContrast.swift`, in SessionKit) on the host,
 so a colour change that makes `onEvergreen` unreadable on evergreen or plum fails here too, not only
-in the app-hosted `ExperienceColorContrastTests`. Also checks `filledActionButton` still sets that
+in SessionKit's `ExperienceColorContrastTests`. Also checks `filledActionButton` still sets that
 label colour, which the source scan in test_filled_button_labels.py relies on.
 """
+import os
 import re
 import shutil
 import subprocess
@@ -14,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "App/SpokenMarginsApp/Sources/SpokenMarginsApp"
-AUDIT = APP / "ExperienceColorContrast.swift"
+AUDIT = ROOT / "Packages/SessionKit/Sources/SessionKit/ExperienceColorContrast.swift"
 DESIGN_SYSTEM = APP / "ExperienceDesignSystem.swift"
 
 PROBE = """
@@ -40,6 +41,9 @@ for failure in AppColorContrastAudit.failures() {
 def run_audit() -> list[str]:
     swiftc = shutil.which("swiftc")
     if swiftc is None:
+        # SM_REQUIRE_TOOLS marks a machine that must have it: skipping there would report a pass that never ran (#1905).
+        if os.environ.get("SM_REQUIRE_TOOLS"):
+            raise AssertionError("SM_REQUIRE_TOOLS is set but swiftc is not on PATH")
         raise unittest.SkipTest("swiftc is not installed")
     with tempfile.TemporaryDirectory() as tmp:
         main = Path(tmp) / "main.swift"

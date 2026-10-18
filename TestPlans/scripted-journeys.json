@@ -7,6 +7,10 @@
       "journey": "J1"
     },
     {
+      "test": "SpokenMarginsAppUITests/J1TextChaptersJourneyUITests",
+      "journey": "J1 step 4"
+    },
+    {
       "test": "SpokenMarginsAppUITests/J2PodcastSurvivesRelaunchJourneyUITests",
       "journey": "J2"
     },
@@ -25,6 +29,10 @@
     {
       "test": "SpokenMarginsAppUITests/J9HearNewMarginsJourneyUITests",
       "journey": "J9"
+    },
+    {
+      "test": "SpokenMarginsAppUITests/VoiceOverAuditUITests",
+      "journey": "VoiceOver audit of J1, J3, J5 and adding an item (#207)"
     }
   ]
 }

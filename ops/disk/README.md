@@ -23,6 +23,17 @@
 5. **Old iOS DeviceSupport folders.** It keeps the newest one and the one with the highest iOS version.
 6. **Moves to the external drives.** It moves `artifacts/` folders in the main checkout untouched for 2 days, older phone builds (never `latest`, the installed one, or the newest two), and Claude and Codex session logs untouched for 3 days. Each goes to `/Volumes/SlawBulk/Codex-Offload/<date>-disk-relief/<path under your home folder>`. When the mirror disk happens to be mounted, a second copy goes to `/Volumes/SlawArchiveMirror/Current/SlawBulk/...`; it isn't required, because the mirror is for highly sensitive data and is stored away from the desk (owner, 2026-10-09). Each copy is written under a `.partial` name and checked by size and file count. The original is deleted only after every copy matches and the original hasn't changed. Without SlawBulk, moves are skipped and the other steps still run. Without Full Disk Access, macOS also reports SlawBulk as "not writable", so moves are skipped (see below). A `MANIFEST.txt` on each drive lists every move. Moved artifacts and phone builds also get a `MOVED-TO-SLAWBULK.txt` note in their old folder.
 
+## The lane folder (every run)
+
+Before it looks at free space, every run also keeps `~/Library/Caches/SpokenMarginsLane` under **16 GiB** and ages out lane evidence, with `sm_lane_prune.py` (#1775). Free space doesn't decide: on 2026-10-16 the folder grew from 10 to 23 GB in a day while free disk fell from 73 to 31 GB, and nothing here was due to act. The rules and their reasons are under "Lane folder cap" in `docs/workstreams/test-lane.md`. In short:
+
+- Lane evidence goes 7 days after it last changed, except the latest run of each open PR.
+- Over the cap, idle warm builds go, oldest first, but never a cache a job holds and never the newest of each checkout. Warm builds of a checkout nothing on the Mac maps to go once idle.
+- State files and `compilation-cache/` are never touched.
+- `artifacts/lane/` is in `~/Documents`, which this job can't read, so its evidence is pruned when the lane runner or a Claude session runs `sm_lane_prune.py`. `--dry-run` lists what it would do.
+
+A failure in this step is logged and never stops the rest of the run.
+
 It never touches the self-hosted runner folders, `~/.codex/worktrees`, simulators (CoreSimulator), app data, or the external drives' existing files. It never removes a standing checkout (the main one, `-test-desk`, `-finisher` and the other `spoken-margins-native*` folders). Stale worktrees it may not remove are listed in the log with the reason, for you to remove.
 
 **No Full Disk Access (owner, 2026-10-14).** The job runs without Full Disk Access. Granting it to `python3` was tried, didn't take, and was reverted; don't ask the owner for it again. (The `/usr/bin/python3` in the privacy list only launches Xcode's own Python, and macOS checks that one.) Without it, macOS refuses the job `~/Documents` and the external drives. A folder it can't open is skipped with a `skip ...: macOS will not let this job read it` line in the log, and the other steps still run. Before 2026-10-14 one refused `.build` folder crashed every run from 10-11 on, before anything was freed. In practice this means steps 1, 2 and 6 do little from launchd. The Mac tick, a Claude session that can read `~/Documents`, clears worktree build caches when free disk drops under 20 GB, and it alerts when this job exits with an error.
@@ -46,11 +57,7 @@ mkdir -p ~/SpokenMarginsOps/disk-relief
 ```
 
 ```zsh
-cp ~/Documents/GitHub/spoken-margins-native/ops/disk/com.spokenmargins.disk-relief.plist ~/Library/LaunchAgents/
-```
-
-```zsh
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.spokenmargins.disk-relief.plist
+/usr/bin/python3 ~/Documents/GitHub/spoken-margins-native/ops/install-launchd.py --install disk-relief
 ```
 
 To turn it off:
@@ -76,4 +83,4 @@ A Time Machine local snapshot keeps deleted files on disk, so free space doesn't
 python3 -m unittest ops/disk/test_sm_disk_relief.py
 ```
 
-The tests use temporary folders and the real `rsync` only.
+The tests use temporary folders and the real `rsync` only. The lane folder rules have their own: `python3 -m unittest ops/disk/test_sm_lane_prune.py`.

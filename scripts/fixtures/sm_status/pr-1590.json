@@ -147,6 +147,7 @@
  ],
  "comments": [
   {
+   "author_association": "OWNER",
    "body": "/lane T3\ncommit: 59b798fb\nchanged: an own Margin played from its detail brings the source back when it ends, and a podcast's later Margins follow\ntests: SpokenMarginsAppTests/SharedMarginReturnAppTests, SpokenMarginsAppTests/MarginVoiceTransportTests, SpokenMarginsAppTests/MediaPlaybackInterruptionTests",
    "created_at": "2026-10-14T17:20:13Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1590#issuecomment-6174135746",
@@ -157,6 +158,7 @@
    }
   },
   {
+   "author_association": "NONE",
    "body": "Lane report pr1590-r38605791855 \u2014 FAIL\ncommit 59b798f (tested merged with next at a8db39b) \u00b7 tier T3 \u00b7 cloned iPhone 17, iOS 26.5 \u00b7 21m14s\nran: SharedMarginReturnAppTests, MarginVoiceTransportTests, Gate1AppModelWorkflowTests (202 passed, 1 failed; app plan, build and tests, 1m54s); MediaPlaybackInterruptionTests (23 passed; adapters plan, build and tests, 2m17s)\nbuild folders: cold, new cache (SessionKit 83f045c337d8-c4a32e63)\n<!-- lane-request: {\"commit\": \"59b798fb8b90056dc9dc7503183c1844ecb41567\", \"next\": \"a8db39b95f8d0c7d861c9c0951a86bba255525d4\", \"tests\": [\"SpokenMarginsAppTests/MarginVoiceTransportTests\", \"SpokenMarginsAppTests/MediaPlaybackInterruptionTests\", \"SpokenMarginsAppTests/SharedMarginReturnAppTests\"], \"tier\": \"T3\"} -->",
    "created_at": "2026-10-14T17:43:13Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1590#issuecomment-6174573636",
@@ -167,6 +169,7 @@
    }
   },
   {
+   "author_association": "NONE",
    "body": "Lane report pr1590-r38605791451 \u2014 FAIL\ncommit 59b798f (tested merged with next at 5deb368) \u00b7 tier auto \u00b7 no build \u00b7 4s\nran: hot-file ratchet: failed\nran beside a simulator job (trial): memory pressure normal, 35 GiB free\n<!-- lane-request: {\"commit\": \"59b798fb8b90056dc9dc7503183c1844ecb41567\", \"next\": \"5deb368d243c1f90d12568d951a42fef989de4cf\", \"tests\": [], \"tier\": \"auto\"} -->",
    "created_at": "2026-10-14T17:44:28Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1590#issuecomment-6174597650",
@@ -177,6 +180,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "/lane T3\ncommit: 7b57509a\nchanged: an own Margin played from its detail brings the source back when it ends, and a podcast's later Margins follow\ntests: SpokenMarginsAppTests/SharedMarginReturnAppTests, SpokenMarginsAppTests/MarginVoiceTransportTests, SpokenMarginsAppTests/MediaPlaybackInterruptionTests",
    "created_at": "2026-10-14T17:45:45Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1590#issuecomment-6174623393",
@@ -187,6 +191,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "/lane T3\ncommit: e3b753ca\nchanged: an own Margin played from its detail brings the source back when it ends, and a podcast's later Margins follow\ntests: SpokenMarginsAppTests/SharedMarginReturnAppTests, SpokenMarginsAppTests/MarginVoiceTransportTests, SpokenMarginsAppTests/MediaPlaybackInterruptionTests",
    "created_at": "2026-10-14T17:46:52Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1590#issuecomment-6174645289",
@@ -197,6 +202,7 @@
    }
   },
   {
+   "author_association": "NONE",
    "body": "Lane report pr1590-r38609533618 \u2014 INCONCLUSIVE\ncommit e3b753c (tested merged with next at 9833c3a) \u00b7 tier auto \u00b7 host only \u00b7 9m35s\nran: host tests (--plan fast): passed\nran beside a simulator job (trial): memory pressure normal, 31 GiB free\n<!-- lane-checks: {\"commit\": \"e3b753caaa20e30d6cf0a12389725a5f4888dbc1\", \"next\": \"9833c3ae203c89afd06c365dbfe43d2c928e8c17\", \"ran\": \"host tests (--plan fast): passed\", \"where\": \"host only\"} -->\n<!-- lane-request: {\"commit\": \"e3b753caaa20e30d6cf0a12389725a5f4888dbc1\", \"next\": \"9833c3ae203c89afd06c365dbfe43d2c928e8c17\", \"tests\": [], \"tier\": \"auto\"} -->",
    "created_at": "2026-10-14T18:16:37Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1590#issuecomment-6175203365",
@@ -207,6 +213,7 @@
    }
   },
   {
+   "author_association": "NONE",
    "body": "Lane report pr1590-r38609533618 \u2014 PASS\ncommit e3b753c (tested merged with next at 4555252) \u00b7 tier T3 \u00b7 cloned iPhone 17, iOS 26.5 \u00b7 10m23s\nran: SharedMarginReturnAppTests, MarginVoiceTransportTests, Gate1AppModelWorkflowTests (203 passed; app plan, build and tests, 1m25s); MediaPlaybackInterruptionTests (23 passed; adapters plan, build and tests, 2m22s)\nbuild folders: cold, new cache (SessionKit f0a96f6675a6-31a6df51)\n<!-- lane-request: {\"commit\": \"e3b753caaa20e30d6cf0a12389725a5f4888dbc1\", \"next\": \"45552525048b595186b8666e034b77e5eb94d099\", \"tests\": [\"SpokenMarginsAppTests/MarginVoiceTransportTests\", \"SpokenMarginsAppTests/MediaPlaybackInterruptionTests\", \"SpokenMarginsAppTests/SharedMarginReturnAppTests\"], \"tier\": \"T3\"} -->",
    "created_at": "2026-10-14T18:29:02Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1590#issuecomment-6175436218",
@@ -217,6 +224,7 @@
    }
   },
   {
+   "author_association": "NONE",
    "body": "Lane: the automerge run held for T3 on `e3b753c` goes to the build runner (#1209).\n- started by the T3 PASS (https://github.com/uncomposed/spoken-margins-native/pull/1590#issuecomment-6175436218) in the same lane job; that run has to test the merge commit again, because its checks passed with 9833c3a, and next at fecb41a differs: its commits touch this PR's files (App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift).\n- So this simulator runner moves on to the next T3, and a `lane` release run on the build runner tests the merge commit and merges on PASS: https://github.com/uncomposed/spoken-margins-native/actions/workflows/lane.yml?query=event%3Aworkflow_dispatch.\n- Its report follows here. Nobody needs to push or re-label.\n<!-- lane-note -->",
    "created_at": "2026-10-14T18:29:09Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1590#issuecomment-6175438394",
@@ -227,6 +235,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "**Claude audit on `e3b753c`**\n\n**1. The source can start again after the listener paused it while their Margin was playing.** File: `App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginVoicePlayback.swift:43` and `:54`, where the promise is recorded, and `:239\u2013242`, where it is acted on.\n",
    "created_at": "2026-10-14T18:38:00Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1590#issuecomment-6175604394",
@@ -237,6 +246,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "Finisher Codex taking this.\n\nThread \"Codex worker 1\" finishing #1590",
    "created_at": "2026-10-14T18:39:36Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1590#issuecomment-6175634009",
@@ -247,6 +257,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "Claude slot A already has the audit's finding fixed on this branch: `6893d8d` (pushed 18:40Z, just after the finisher claim). It drops the own Margin's return promise when the source becomes active while the Margin plays, and when a sleep timer expires. Two app tests cover both (Resume then Pause ov",
    "created_at": "2026-10-14T18:40:32Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1590#issuecomment-6175650970",
@@ -257,6 +268,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "/lane T3\ncommit: 6893d8df\nchanged: the own Margin's promise to bring the source back is dropped when the listener resumes the source over it or a sleep timer ends listening (audit finding on e3b753c)\ntests: SpokenMarginsAppTests/SharedMarginReturnAppTests, SpokenMarginsAppTests/MarginVoiceTransportTests, SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testTimedSleepTimerExpiryPausesThePlayingSource",
    "created_at": "2026-10-14T18:40:48Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1590#issuecomment-6175655872",
@@ -267,6 +279,7 @@
    }
   },
   {
+   "author_association": "NONE",
    "body": "Lane report pr1590-r38617202524 \u2014 PASS\ncommit 6893d8d (tested merged with next at 5c615e7) \u00b7 tier T3 \u00b7 cloned iPhone 17, iOS 26.5 \u00b7 17m53s\nran: SharedMarginReturnAppTests, MarginVoiceTransportTests, Gate1AppModelWorkflowTests (206 passed; app plan, build and tests, 1m59s)\nbuild folders: cold, new cache (SessionKit 5858260557a8-31a6df51)\n<!-- lane-request: {\"commit\": \"6893d8dfca9806f0187de2eb6dde2429bb5d7529\", \"next\": \"5c615e7a49c24099f1a0cd2b41cb848e239f3e54\", \"tests\": [\"SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testTimedSleepTimerExpiryPausesThePlayingSource\", \"SpokenMarginsAppTests/MarginVoiceTransportTests\", \"SpokenMarginsAppTests/SharedMarginReturnAppTests\"], \"tier\": \"T3\"} -->",
    "created_at": "2026-10-14T19:02:17Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1590#issuecomment-6176064915",
@@ -277,6 +290,7 @@
    }
   },
   {
+   "author_association": "NONE",
    "body": "Lane report pr1590-r38617200417 \u2014 PASS\ncommit 6893d8d (tested merged with next at de750f8) \u00b7 tier auto \u00b7 host only \u00b7 8m44s\nran: host tests (--plan fast): passed\nran beside a simulator job (trial): memory pressure normal, 36 GiB free\n<!-- lane-checks: {\"commit\": \"6893d8dfca9806f0187de2eb6dde2429bb5d7529\", \"next\": \"de750f8822a9de969e3a1847e431e3e72dd82191\", \"ran\": \"host tests (--plan fast): passed\", \"where\": \"host only\"} -->\n<!-- lane-request: {\"commit\": \"6893d8dfca9806f0187de2eb6dde2429bb5d7529\", \"next\": \"de750f8822a9de969e3a1847e431e3e72dd82191\", \"tests\": [], \"tier\": \"auto\"} -->",
    "created_at": "2026-10-14T19:07:20Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1590#issuecomment-6176160492",
@@ -287,6 +301,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "**Claude audit on `6893d8d`**\n\nNo blocking findings.\n",
    "created_at": "2026-10-14T19:11:42Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1590#issuecomment-6176245156",

@@ -93,6 +93,7 @@ struct ExperienceSourcesScreen: View {
                 }
                 .navigationDestination(isPresented: $isManagingFeeds) {
                     ManageFeedsScreen(focusFeedURLOnAppear: focusFeedURLOnManage)
+                        .miniPlayerKeepOut()
                 }
                 .task { model.refreshQuickAddFeed(force: false) }
                 // The catalog tags followed shows with a kind and subjects (I2), and gives their artwork (#773).
@@ -107,6 +108,7 @@ struct ExperienceSourcesScreen: View {
                     artwork = await coordinator.followingArtwork(catalog: catalogDrawer.catalog)
                 }
             }
+            .miniPlayerKeepOut()
         }
     }
 
@@ -430,14 +432,15 @@ private struct ManageFeedsScreen: View {
                 if let makeOPMLImport = catalogDrawer.makeOPMLImport {
                     NavigationLink {
                         OPMLImportScreen(importer: makeOPMLImport())
+                            .miniPlayerKeepOut()
                     } label: {
                         Label("Import from another app", systemImage: "square.and.arrow.down")
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     }
                     .accessibilityIdentifier("sources.importOPML")
                 }
-                NavigationLink("Read Later Services") { ReadLaterScreen() }
-                NavigationLink("Import Listening Edition") { ListeningEditionImportScreen() }
+                NavigationLink("Read Later Services") { ReadLaterScreen().miniPlayerKeepOut() }
+                NavigationLink("Import Listening Edition") { ListeningEditionImportScreen().miniPlayerKeepOut() }
             }
             sourceSetup
                 .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
@@ -582,6 +585,7 @@ struct FollowCandidateChoices: View {
 
 private struct SourceInboxRow: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let candidate: QuickAddCandidate
     let artwork: FollowingArtworkCache
     @State private var confirmsUnfollow = false
@@ -598,11 +602,24 @@ private struct SourceInboxRow: View {
                         .foregroundStyle(AppColors.text)
                         .multilineTextAlignment(.leading)
                         .lineLimit(2)
-                    Text(provenance)
-                        .font(.caption)
-                        .foregroundStyle(AppColors.secondaryText)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    // The show name gives way first: the length and date keep their space (#1443). At the
+                    // accessibility sizes there is no room for both on one line, so the length and date
+                    // take a line of their own under the show instead of being cut off.
+                    let layout = dynamicTypeSize.isAccessibilitySize
+                        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
+                        : AnyLayout(HStackLayout(spacing: 0))
+                    layout {
+                        Text(provenanceLead)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        if let trail = provenanceTrail {
+                            Text(dynamicTypeSize.isAccessibilitySize ? trail : " · \(trail)")
+                                .lineLimit(1)
+                                .layoutPriority(1)
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if isImporting {
@@ -702,14 +719,18 @@ private struct SourceInboxRow: View {
         }
     }
 
-    private var provenance: String {
+    private var provenanceLead: String {
         switch candidate {
-        case .localFile(let file): return "Quick Folder · \(file.modifiedAtDescription)"
-        case .followedSource(let entry):
-            let show = showTitle(of: entry) ?? "Followed feed"
-            guard let length = row?.length else { return show }
-            return "\(show) · \(length.label)"
+        case .localFile(let file): "Quick Folder · \(file.modifiedAtDescription)"
+        case .followedSource(let entry): showTitle(of: entry) ?? "Followed feed"
         }
+    }
+
+    /// "12 min · Oct 12" after the show name, when there is a length or a date.
+    private var provenanceTrail: String? { row?.trailingMetadata }
+
+    private var provenance: String {
+        provenanceTrail.map { "\(provenanceLead) · \($0)" } ?? provenanceLead
     }
 
     private func showTitle(of entry: FeedEntry) -> String? {

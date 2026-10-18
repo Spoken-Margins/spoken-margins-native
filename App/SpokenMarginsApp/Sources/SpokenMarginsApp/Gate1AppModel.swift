@@ -210,7 +210,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var selectedBatchExportSessionIds: Set<String> = []
     @Published var batchExportFolderName = SavedFolderSetting.sessionExport.name() ?? "No folder selected"
     @Published var batchExportResult: BatchSessionExportResult?
-    @Published var isWritingBatchExport = false
+    @Published var batchExportShare: SessionShareFiles?
     @Published var retryingInterjectionTranscriptionIds: Set<String> = []
     var libraryPresentationRevision = 0
     var navigationRefreshTask: Task<Void, Never>?
@@ -296,7 +296,9 @@ final class Gate1AppModel: ObservableObject {
     /// Whose Margin the moment is for ("Your Margin", "Cole's Margin"), and whether its position is only a guess.
     @Published private(set) var marginMomentTitle = "Your Margin"
     @Published private(set) var marginMomentPositionIsApproximate = false
-    var marginMomentConductor: MarginMomentConductor?
+    private(set) var marginMomentConductor: MarginMomentConductor?
+    /// The Margin voice Add a Margin paused and kept (`Gate1AppModel+MarginVoiceHold.swift`, #1672).
+    var marginVoiceHeldForRecording: HeldMarginVoice?
     private(set) var marginMomentClock = MarginMomentClock.media // media time, or narration time for text read aloud (#1577)
     /// Heard audio around streamed Margins, in temporary files only while a Margin can use it (#156, #652). Keyed by margin identity.
     var heardSourceWindows = HeardSourceWindowFiles(rootDirectory: HeardSourceWindowFiles.defaultRootDirectory)
@@ -304,6 +306,7 @@ final class Gate1AppModel: ObservableObject {
     var activePlaybackIsPlaying: Bool {
         if playingImportedCommentary != nil { return importedCommentaryPhase.showsPause }
         if marginMomentConductor?.isPlayingVoice == true { return !marginMomentVoiceIsPaused }
+        if ownMarginVoiceHasTransport { return !ownMarginVoiceIsPaused }
         return snapshot.skimBridgeState?.status == .playing || snapshot.status.isPlaybackActive
     }
 
@@ -469,7 +472,7 @@ final class Gate1AppModel: ObservableObject {
     private let featureFlags: SpokenMarginsFeatureFlags
     let localFoundationModelClient: any LocalFoundationModelClient
     let openAIResponsesClient = OpenAIResponsesClient()
-    let streamingSpeechQueue = StreamingSpeechQueue()
+    let streamingSpeechQueue = StreamingSpeechQueue(speech: SystemSpeechPlaybackClient())
     var speechPlaybackClient: AudioPlaybackClient?
     var sessionAudioPlaybackClient: AudioPlaybackClient?
     var supertonicRenderer: SupertonicNarrationRenderer?
@@ -1319,7 +1322,7 @@ final class Gate1AppModel: ObservableObject {
             reportFailure("This shared Margin contains reviewed text but no playable voice recording.")
             return
         }
-        endMarginMoment()
+        endMarginMoment(); stopInterjectionAudioPlayback() // one Margin voice at a time: a paused one of yours mustn't take the resume below (#1672)
         if snapshot.itemId != itemID || !hasActiveSession { startItem(id: itemID) }
         guard snapshot.itemId == itemID else { return }
         // The moment plays this voice; the automatic shared-Margin prompt mustn't play it again.
@@ -1565,6 +1568,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func playPause() {
+        if marginVoiceIsHeldForRecording { return } // a Margin is recording over the voice; nothing plays until it ends
         if playingImportedCommentary != nil {
             // Pause while it sounds or loads; Play (resume, or Retry after a failure) otherwise (#941).
             setImportedCommentaryPaused(importedCommentaryPhase.showsPause)
@@ -1572,6 +1576,10 @@ final class Gate1AppModel: ObservableObject {
         }
         if let conductor = marginMomentConductor, conductor.isPlayingVoice {
             conductor.setVoicePaused(!conductor.isVoicePaused)
+            return
+        }
+        if ownMarginVoiceHasTransport {
+            setOwnMarginPaused(!ownMarginVoiceIsPaused)
             return
         }
         if snapshot.phase == .finished, let itemID = snapshot.itemId {
@@ -1592,12 +1600,17 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func pause() {
+        if marginVoiceIsHeldForRecording { return }
         if playingImportedCommentary != nil {
             setImportedCommentaryPaused(true)
             return
         }
         if let conductor = marginMomentConductor, conductor.isPlayingVoice, !conductor.isVoicePaused {
             conductor.setVoicePaused(true)
+            return
+        }
+        if ownMarginVoiceHasTransport, !ownMarginVoiceIsPaused {
+            setOwnMarginPaused(true)
             return
         }
         if snapshot.skimBridgeState != nil {
@@ -1714,12 +1727,17 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func resumePlayback() {
+        if marginVoiceIsHeldForRecording { return }
         if playingImportedCommentary != nil {
             setImportedCommentaryPaused(false)
             return
         }
         if let conductor = marginMomentConductor, conductor.isVoicePaused {
             conductor.setVoicePaused(false)
+            return
+        }
+        if ownMarginVoiceHasTransport, ownMarginVoiceIsPaused {
+            setOwnMarginPaused(false)
             return
         }
         if snapshot.skimBridgeState != nil {
@@ -2151,39 +2169,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    /// #866: Add Margin while a Margin plays records straight away. The voice stops without resuming the source,
-    /// and the source moves to the playing Margin's place so the new Margin is anchored there. False when that move
-    /// failed: nothing records, rather than recording at the wrong place.
-    func handOffPlayingMarginToRecording() -> Bool {
-        let handoff: MarginCaptureHandoff
-        if let prompt = playingImportedCommentary {
-            handoff = MarginCaptureHandoff(sharedMargin: prompt.interjection, itemId: prompt.layer.itemId)
-            sharedMarginOffers.markAnnounced(prompt.id) // the rejoin mustn't offer it again
-            stopImportedCommentaryPlayback(resumeSource: false)
-        } else if let conductor = marginMomentConductor, conductor.isPlayingVoice {
-            handoff = MarginCaptureHandoff(moment: conductor.sequence)
-            keepReviewPlaceForRecording()
-            endMarginMoment()
-        } else if let playingID = playingInterjectionAudioId {
-            // Your own Margin heard from its detail: it sits where it was recorded.
-            let margin = playingInterjectionAudioSessionID.flatMap { try? store?.loadInterjections(sessionId: $0) }?.first { $0.id == playingID }
-            handoff = margin.map { MarginCaptureHandoff(localMargin: $0) } ?? MarginCaptureHandoff(itemId: nil, place: nil)
-            stopInterjectionAudioPlayback()
-        } else {
-            return true
-        }
-        let move = handoff.sourceMove(from: snapshot)
-        diagnostics["marginCaptureHandoff"] = String(describing: move)
-        let moved: Bool
-        switch move {
-        case .stay: return true
-        case .seekMedia(let ms): moved = seekMedia(toMediaTimeMs: ms)
-        case .seekText(let charOffset): moved = seekText(toCharOffset: charOffset)
-        }
-        if !moved { reportFailure("Couldn't go back to that Margin's place, so no Margin was started. Tap Add Margin again to record where the source is."); restoreOwedReviewPlace() }
-        return moved
-    }
-
     func playTurn(_ turn: ConversationTurn, fromTimeline: Bool = false) {
         stopSpeechPreviews()
         run { engine in
@@ -2557,7 +2542,19 @@ final class Gate1AppModel: ObservableObject {
         if command.movesPlaybackPosition { marginMomentConductor?.sourceMoved() } // before any return below (#1656)
         if command == .beginInterjection, !snapshot.isRecording, snapshot.skimBridgeState == nil,
            !handOffPlayingMarginToRecording() { return }
-        if playingImportedCommentary != nil {
+        if snapshot.isRecording, heldMarginVoice != nil, command == .finishInterjection || command == .cancelInterjection { // the model plays the held voice on (#1672)
+            if command == .finishInterjection { finishInterjection() } else { cancelInterjection() }
+            return
+        }
+        if !snapshot.isRecording, marginMomentConductor?.isPlayingVoice == true || ownMarginVoiceHasTransport { // Play and Pause reach the voice, not the source behind it (#1672)
+            switch command {
+            case .play: resumePlayback(); return
+            case .pause: pause(); return
+            case .togglePlayPause: playPause(); return
+            default: break
+            }
+        }
+        if playingImportedCommentary != nil, !(command == .beginInterjection && marginVoiceHeldForRecording != nil) {
             switch command {
             case .play: resumePlayback()
             case .pause: pause()
@@ -2674,6 +2671,7 @@ final class Gate1AppModel: ObservableObject {
             if command == .beginInterjection || command == .finishInterjection || command == .cancelInterjection {
                 streamingSpeechQueue.resumeAfterInterjection()
             }
+            if command == .beginInterjection, !snapshot.isRecording { resumeHeldMarginVoice(heldMarginVoice) } // no recording came of it (#1672)
             reportFailure(error, context: "Compact control failed")
         }
     }
@@ -2787,7 +2785,7 @@ final class Gate1AppModel: ObservableObject {
         ListeningReadyNotifications.pendingItemID = nil
         openItem(id: id)
     }
-    private func activateListeningEditionAudio(itemId: String, timeline: TranscriptTimeline) {
+    func activateListeningEditionAudio(itemId: String, timeline: TranscriptTimeline) {
         guard let edition = try? ListeningEditionStore.application().load(itemID: itemId), let store else { return }
         do {
             let (proposal, projection) = try edition.audioMap(timeline: timeline)
@@ -2800,46 +2798,6 @@ final class Gate1AppModel: ObservableObject {
     }
 
     // MARK: Portable listening editions and personal knowledge output
-    func importListeningEditionData(_ data: Data, replaceMap: Bool = false) {
-        do {
-            try performListeningEditionImport(data, replaceMap: replaceMap)
-        } catch { reportFailure(error, context: "Listening edition import failed") }
-    }
-
-    func importListeningEditionDataForShortcut(_ data: Data) throws {
-        try performListeningEditionImport(data, replaceMap: false)
-    }
-
-    private func performListeningEditionImport(_ data: Data, replaceMap: Bool) throws {
-        guard !snapshot.isRecording else { throw EditionError.invalid("Finish recording before importing a listening edition.") }
-        let edition = try ListeningEdition.decode(data)
-        let editions = try ListeningEditionStore.application()
-        if let previous = try editions.load(itemID: edition.itemID), previous != edition, !replaceMap {
-            throw EditionError.invalid("This source already has a different Listening Map. Use Import Listening Edition in Settings to preview and explicitly replace it.")
-        }
-        let store = try requireStore()
-        // Stable source identity preserves every existing session and Margin on retry.
-        if (try? store.loadItem(id: edition.itemID)) == nil {
-            try store.saveItem(Item(id: edition.itemID, title: edition.title, mediaType: "text", text: edition.text,
-                                   externalReference: edition.sourceURL, status: "ready", externalReferenceType: "url", createdAt: Date()))
-        }
-        if snapshot.itemId == edition.itemID, snapshot.status.isPlaybackActive {
-            throw EditionError.invalid("Pause playback before importing a map for the current item.")
-        }
-        try editions.save(edition)
-        if let engine { snapshot = try engine.attachListeningMap(edition.listeningMap()) }
-        else { try store.saveListeningMap(edition.listeningMap()) }
-        if let timeline = try store.loadTranscriptTimeline(itemId: edition.itemID)?.timeline {
-            activateListeningEditionAudio(itemId: edition.itemID, timeline: timeline)
-        }
-        activeItemId = edition.itemID
-        libraryItems = try loadLibraryRows(store: store)
-        refreshSelectedItem()
-        screen = .item
-        scheduleTextAudioPrewarmIfNeeded(itemId: edition.itemID)
-        reportConfirmation("Imported item and Listening Map. Audio prepares separately; playback has not started.")
-    }
-
     func importListeningEditionFile(_ url: URL) {
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
@@ -4366,7 +4324,7 @@ final class Gate1AppModel: ObservableObject {
             ledger: ledger,
             applicationSupportDirectory: support
         )
-        followedSourceCoordinator = FollowedSourceCoordinator(repository: store, artworkFile: support.appending(path: FollowingArtworkCache.fileName))
+        followedSourceCoordinator = FollowedSourceCoordinator(repository: store, artworkFile: support.appending(path: FollowingArtworkCache.fileName), signals: .app)
         guidedOnboardingCoordinator = GuidedOnboardingCoordinator(
             directory: support.appending(path: "GuidedOnboarding", directoryHint: .isDirectory),
             ledger: ledger

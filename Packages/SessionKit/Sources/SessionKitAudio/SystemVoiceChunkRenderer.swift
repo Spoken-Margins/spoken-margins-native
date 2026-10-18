@@ -17,6 +17,9 @@ public final class SystemVoiceChunkRenderer: @unchecked Sendable {
     /// Starts a write on `synthesizer`, delivering its buffers to the callback. The real one is
     /// `AVSpeechSynthesizer.write`; tests pass one that stalls or sends late buffers.
     typealias SpeechWrite = @Sendable (AVSpeechSynthesizer, AVSpeechUtterance, @escaping @Sendable (AVAudioBuffer) -> Void) -> Void
+    /// Finds the voice for an identifier. The real one is `AVSpeechSynthesisVoice(identifier:)`,
+    /// which blocks on the same TextToSpeech semaphore as the write while the speech service starts.
+    typealias VoiceLookup = @Sendable (String) -> AVSpeechSynthesisVoice?
 
     /// `AVSpeechSynthesizer.write` can block its caller for minutes, on a semaphore inside Apple's
     /// TextToSpeech while the speech service loads (#1230). It is called here, never on a Swift
@@ -26,6 +29,7 @@ public final class SystemVoiceChunkRenderer: @unchecked Sendable {
 
     private let usesApplicationAudioSession: Bool
     private let speechWrite: SpeechWrite
+    private let voiceLookup: VoiceLookup
     private let releaseDelay: TimeInterval
 
     /// Rendering to a file needs no audio output. By default a speech synthesizer shares the app's
@@ -38,9 +42,15 @@ public final class SystemVoiceChunkRenderer: @unchecked Sendable {
         }
     }
 
-    init(usesApplicationAudioSession: Bool, releaseDelay: TimeInterval, speechWrite: @escaping SpeechWrite) {
+    init(
+        usesApplicationAudioSession: Bool,
+        releaseDelay: TimeInterval,
+        voiceLookup: @escaping VoiceLookup = { AVSpeechSynthesisVoice(identifier: $0) },
+        speechWrite: @escaping SpeechWrite
+    ) {
         self.usesApplicationAudioSession = usesApplicationAudioSession
         self.releaseDelay = releaseDelay
+        self.voiceLookup = voiceLookup
         self.speechWrite = speechWrite
     }
 
@@ -64,9 +74,6 @@ public final class SystemVoiceChunkRenderer: @unchecked Sendable {
             interleaved: format.isInterleaved
         )
         let utterance = AVSpeechUtterance(string: speech)
-        if let voiceIdentifier, let voice = AVSpeechSynthesisVoice(identifier: voiceIdentifier) {
-            utterance.voice = voice
-        }
         let synthesizer = AVSpeechSynthesizer()
         #if os(iOS)
         synthesizer.usesApplicationAudioSession = usesApplicationAudioSession
@@ -77,11 +84,14 @@ public final class SystemVoiceChunkRenderer: @unchecked Sendable {
             releaseDelay: releaseDelay, settleDelay: timeout + 300
         )
         let speechWrite = self.speechWrite
+        let voiceLookup = self.voiceLookup
         let framesWritten = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<AVAudioFramePosition, Error>) in
             job.onEnd = { continuation.resume(with: $0) }
             // Weak: a job is let go only after its stream has ended, so a gone job needs no timeout.
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak job] in job?.timeOut() }
-            Self.writeQueue.async { job.start(speechWrite) }
+            // The voice is looked up on the write queue too: on a speech service still starting, the
+            // lookup blocked its caller with no limit, before the timeout above was set (#1688).
+            Self.writeQueue.async { job.start(voiceIdentifier: voiceIdentifier, voiceLookup: voiceLookup, speechWrite) }
         }
         guard framesWritten > 0 else { throw Failure.noAudio }
         return Double(framesWritten) / format.sampleRate
@@ -123,11 +133,23 @@ private final class SpeechWriteJob: NSObject, AVSpeechSynthesizerDelegate, @unch
     }
 
     /// Runs on the write queue. The write may block here for a long time.
-    func start(_ speechWrite: SystemVoiceChunkRenderer.SpeechWrite) {
+    func start(
+        voiceIdentifier: String?,
+        voiceLookup: SystemVoiceChunkRenderer.VoiceLookup,
+        _ speechWrite: SystemVoiceChunkRenderer.SpeechWrite
+    ) {
         if lock.withLock({ ended }) {
             // Timed out before its turn: nothing was asked of the synthesizer, so nothing is in flight.
             retire()
             return
+        }
+        if let voiceIdentifier {
+            if let voice = voiceLookup(voiceIdentifier) { utterance.voice = voice }
+            // The lookup can block for minutes; if the render timed out meanwhile, don't write.
+            if lock.withLock({ ended }) {
+                retire()
+                return
+            }
         }
         speechWrite(synthesizer, utterance) { [weak self] buffer in self?.receive(buffer) }
         // If neither `didFinish` nor `didCancel` ever comes, let go long after the render has ended:

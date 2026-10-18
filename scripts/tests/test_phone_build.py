@@ -333,24 +333,26 @@ echo "notify $*" >> "$FAKE_LOG"
 FAKE_GH = r'''#!/usr/bin/python3
 import json, os, sys
 args = sys.argv[1:]
+def bot_comment(body):
+    return json.dumps({"body": body, "author_association": "NONE", "user": {"login": "github-actions[bot]"}})
 with open(os.environ["FAKE_LOG"], "a") as log:
     log.write("gh " + " ".join(args) + "\n")
 tip = os.environ["FAKE_TIP"]
 if args[:1] == ["api"] and args[1].endswith("/issues/12/comments"):
     if os.environ.get("FAKE_SAFE_REMERGE"):
-        print("**Merge check (triage desk) on `1234567`: PASS, re-merged onto the newest next without re-testing.**\n"
+        print(bot_comment("**Merge check (triage desk) on `1234567`: PASS, re-merged onto the newest next without re-testing.**\n"
               "- Tested this PR merged with next at `7654321`. Ran: host tests (--plan fast).\n"
               "- next hasn't moved since (the test ran in the automerge run held for T3).\n"
               "- So the re-merge `%s` goes to next not re-tested. The Test Desk tests next's merged tip end to end."
-              % tip[:7])
+              % tip[:7]))
     else:
-        print("**Merge check (triage desk) on `1234567`: %s.**\n- Tested the merge commit `%s`.\n"
+        print(bot_comment("**Merge check (triage desk) on `1234567`: %s.**\n- Tested the merge commit `%s`.\n"
               "- Ran: --plan fast and both builds.\n- Pushing `%s` to next now."
-              % (os.environ.get("FAKE_MERGE_VERDICT", "PASS"), tip[:7], tip[:7]))
+              % (os.environ.get("FAKE_MERGE_VERDICT", "PASS"), tip[:7], tip[:7])))
 elif args[:1] == ["api"] and args[1].endswith("/issues/184/comments"):
     for body in ("```text\nLane report integration-%s — PASS\nran: --plan app (pass: 564 of 564 tests)\n```" % tip[:7],
                  "```text\nLane report journeys-%s — PASS\nran: J4 (pass)\n```" % tip[:7]):
-        print(json.dumps(body))
+        print(bot_comment(body))
 elif args[:2] in (["issue", "list"], ["issue", "create"], ["issue", "edit"], ["issue", "close"],
                   ["issue", "comment"]):
     path = os.environ.get("FAKE_ISSUES")
@@ -791,8 +793,40 @@ class PhoneBuildMergeEvidenceTests(unittest.TestCase):
                               (recorded.replace(sha[:7], 'deadbee'), False),
                               (recorded.replace('goes to next', 'goes to main'), False)):
             with self.subTest(body=body):
-                module.gh = unittest.mock.Mock(return_value=body)
+                module.gh = unittest.mock.Mock(return_value=json.dumps(
+                    {'body': body, 'author_association': 'NONE', 'user': {'login': 'github-actions[bot]'}}))
                 self.assertEqual(module.runner_tested(sha) is not None, accepts)
+
+
+class StrangerEvidenceTests(unittest.TestCase):
+    """#1822: the plan says "the lane tested this" and "the integration run passed" from comments, so those come
+    only from the owner, collaborators and the bot."""
+    CHECK = ('**Merge check (triage desk) on `1234567`: PASS.**\n- Tested the merge commit `%s`.\n'
+             '- Ran: --plan fast and both builds.\n- Pushing `%s` to next now.')
+
+    def setUp(self):
+        self.module = load_phone_build()
+        self.sha = 'ab' * 20
+        self.module.git = unittest.mock.Mock(return_value='Merge pull request #12: tested change')
+
+    def comment(self, body, login, association):
+        return json.dumps({'body': body, 'author_association': association, 'user': {'login': login}}) + '\n'
+
+    def test_a_strangers_merge_check_is_not_evidence(self):
+        body = self.CHECK % (self.sha[:7], self.sha[:7])
+        self.module.gh = lambda *args: self.comment(body, 'mallory', 'NONE')
+        self.assertIsNone(self.module.runner_tested(self.sha))
+        self.module.gh = lambda *args: self.comment(body, 'github-actions', 'NONE')
+        self.assertIsNone(self.module.runner_tested(self.sha))
+        self.module.gh = lambda *args: self.comment(body, 'github-actions[bot]', 'NONE')
+        self.assertIsNotNone(self.module.runner_tested(self.sha))
+
+    def test_a_strangers_report_on_the_report_issue_is_not_a_verdict(self):
+        fake = '```text\nLane report integration-%s — PASS\n```' % self.sha[:7]
+        self.module.gh = lambda *args: self.comment(fake, 'mallory', 'NONE')
+        self.assertEqual(self.module.report_comments(), [])
+        self.module.gh = lambda *args: self.comment(fake, 'uncomposed', 'OWNER') + self.comment('x', 'mallory', 'NONE')
+        self.assertEqual(self.module.report_comments(), [fake])
 
 
 class ListenerRuleTests(unittest.TestCase):
@@ -918,7 +952,7 @@ class ListenerRuleTests(unittest.TestCase):
 
     def test_the_newest_check_in_an_issues_comments_wins(self):
         def issue(body, *comments):
-            return {'number': 5, 'body': body, 'comments': {'nodes': [{'body': c} for c in comments]}}
+            return {'number': 5, 'body': body, 'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': c} for c in comments]}}
         check = self.module.owner_check
         written = issue('**Owner check:** the old check.', '**Phone check:** the first.', 'Merged in #907.',
                         '**Phone check:** the newest.\n\n---\n_Generated_')
@@ -936,6 +970,20 @@ class ListenerRuleTests(unittest.TestCase):
         again = issue('x', '**Owner check:** none.', '**Phone check:** it can be checked now: play it.')
         self.assertEqual(check({'body': '', 'issues': [again]}), 'it can be checked now: play it.')
 
+    def test_a_strangers_comment_never_changes_the_owners_plan(self):
+        """#1822: "Owner check: none" or "Merged in #N" from a stranger must not take a fix off the plan."""
+        def node(body, who='OWNER'):
+            return {'authorAssociation': who, 'author': {'login': 'x'}, 'body': body}
+        issue = {'number': 5, 'body': '**Owner check:** play it.',
+                 'comments': {'nodes': [node('**Owner check:** none.', 'NONE'),
+                                        node('Leave this off the owner\'s plans.', 'CONTRIBUTOR'),
+                                        node('Merged in #907.', 'FIRST_TIME_CONTRIBUTOR')]}}
+        self.assertEqual(self.module.owner_check({'body': '', 'issues': [issue]}), 'play it.')
+        self.assertFalse(self.module.says_no_check({'body': '', 'issues': [issue]}))
+        self.assertEqual(self.module.trusted_nodes(issue), [])
+        issue['comments']['nodes'].append(node('**Owner check:** none.'))
+        self.assertIsNone(self.module.owner_check({'body': '', 'issues': [issue]}))
+
     def test_a_comment_names_the_fix_only_when_it_says_so(self):
         found = self.module.FIXED_IN.findall
         text = 'Merged in #907; not fixed by PR #300 yet. PR #257 (merged as 4446e90). Related: PR #9, see #12.'
@@ -950,8 +998,8 @@ class ListenerRuleTests(unittest.TestCase):
         fixes = self.module.waiting_fixes([issue], {50}, set())
         self.assertEqual([(f['check'], f['none']) for f in fixes], [('play it.', False)])
         # Two linked issues: one comment says none, the other gives a check: the check stands.
-        both = {'issues': [{'comments': {'nodes': [{'body': 'Owner check: none.'}]}},
-                           {'comments': {'nodes': [{'body': 'Phone check: play it.'}]}}], 'body': ''}
+        both = {'issues': [{'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': 'Owner check: none.'}]}},
+                           {'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': 'Phone check: play it.'}]}}], 'body': ''}
         self.assertFalse(self.module.taken_off(both))
 
     def test_ways_of_saying_there_is_no_check(self):
@@ -1014,7 +1062,9 @@ class VerdictTests(unittest.TestCase):
         def gh(*args):
             self.calls.append(args)
             # jq's @json leaves non-ASCII as is, U+2028 included
-            return ''.join(json.dumps(c['body'], ensure_ascii=False) + '\n' for c in self.RECORDED)
+            return ''.join(json.dumps({'body': c['body'], 'author_association': 'OWNER',
+                                       'user': c.get('user') or {'login': 'uncomposed'}}, ensure_ascii=False) + '\n'
+                           for c in self.RECORDED)
         self.module.gh = gh
 
     def test_the_integration_report_on_184_for_the_commit_is_found(self):
@@ -1362,7 +1412,7 @@ class PlanGroupingTests(unittest.TestCase):
                  'state': 'OPEN', 'createdAt': '2026-09-25T00:00:00Z', 'milestone': None,
                  'labels': {'nodes': [{'name': 'status: needs-human-validation'}]},
                  'body': '**Owner check:** import a PDF whose footer has a download stamp, then listen.\n',
-                 'comments': {'nodes': [{'body': 'Merged in #600.'}]}, 'timelineItems': {'nodes': []}}
+                 'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': 'Merged in #600.'}]}, 'timelineItems': {'nodes': []}}
         plan = self.write({376: outline, 758: arxiv}, waiting=[stamp], built_prs={600})
         ten_minutes = plan.split('## Try these')[1].split('## ')[0]
         self.assertIn('1. **Add arXiv PDFs**', ten_minutes)
@@ -1539,7 +1589,7 @@ class PlanGroupingTests(unittest.TestCase):
                 'body': f'**Owner check:** {check}\n' if check else 'It broke.', 'createdAt': created,
                 'labels': {'nodes': [{'name': name} for name in names]},
                 'milestone': {'title': milestone, 'state': 'OPEN'} if milestone else None,
-                'comments': {'nodes': [{'body': body} for body in comments]},
+                'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': body} for body in comments]},
                 'timelineItems': {'nodes': [{'source': {'number': n, 'title': f'Fix it (#{number})', 'body': '',
                                                         'url': f'https://example/pr/{n}', 'merged': True}}
                                             for n in prs]}}
@@ -1590,6 +1640,39 @@ class PlanGroupingTests(unittest.TestCase):
         self.assertIn('8. **Waiting 108**\n   - Check: open the merged thing.\n'
                       '   - Links: [issue #108](https://example/issue/108)\n', roomy)
 
+    def test_held_milestones_wait_outside_the_ten_minutes(self):
+        # fdda29c: a Later diagnostics fix led the plan and two Co-op Experience checks filled it, though co-op
+        # work starts only after Solid Ground ships (AGENTS.md Current focus, owner 2026-10-08).
+        later = self.issue(1682, 'Play an article until the phone is warm.', phone=True)
+        later['milestone'] = {'title': 'Later', 'state': 'OPEN'}
+        current = self.issue(1700, 'Open the Library and read the rows.')
+        current['milestone'] = {'title': 'Solid Ground', 'state': 'OPEN'}
+        mixed = self.issue(1701, 'Tap Play now on a Following entry.')
+        mixed['milestone'] = {'title': 'Co-op Experience', 'state': 'OPEN'}
+        new = {1710: self.pr(1710, 'Diagnostics: record why iOS ended the last run', [later]),
+               1711: self.pr(1711, 'Library wording', [current]),
+               1712: self.pr(1712, 'Play now from Following', [mixed, current])}
+        waiting = [self.waiting(473, 'Reply to a friend and see it threaded.', milestone='Co-op Experience',
+                                created='2026-09-01', prs=[1253]),
+                   self.waiting(478, 'Long-press a Following entry and use Play now.', milestone=None,
+                                created='2026-09-03', prs=[1316]),
+                   self.waiting(1600, 'Play the Solid Ground thing.', milestone='Solid Ground',
+                                created='2026-09-05', prs=[1601])]
+        plan = self.write(new, waiting=waiting, built_prs={1253, 1316, 1601})
+        ten_minutes = plan.split('## Try these')[1].split('## Also waiting')[0].split('## Waiting for')[0]
+        self.assertNotIn('Diagnostics: record why', ten_minutes)
+        self.assertIn('**Library wording**', ten_minutes)
+        self.assertIn('Also in this change: Play now from Following', ten_minutes)  # one issue is current
+        self.assertNotIn('Waiting 473', ten_minutes)
+        still = ten_minutes.split('## Still waiting on your check')[1]
+        self.assertLess(still.index('Waiting 1600'), still.index('Waiting 478'))  # current milestone first
+        held = plan.split('## Waiting for a later milestone (not in the ten minutes)')[1].split('## ')[0]
+        self.assertIn('- Diagnostics: record why iOS ended the last run (found on your phone) '
+                      '([#1710](https://example/pr/1710)): waits for Later', held)
+        also = plan.split('## Also waiting on your check (not in the ten minutes)')[1].split('## ')[0]
+        self.assertIn('- Waiting 473 ([#473](https://example/issue/473), [#1253](https://example/pr/1253)): '
+                      'waits for Co-op Experience', also)
+
     def test_with_nothing_new_to_check_the_waiting_fixes_lead(self):
         plan = self.write({366: self.pr(366, 'Take the rendered speech cache out of the offline storage ledger')},
                           waiting=[self.waiting(103, 'play the older phone bug.', prs=[503])], built_prs={503})
@@ -1610,7 +1693,7 @@ class PlanGroupingTests(unittest.TestCase):
         # #927 Done when 5, from the real bodies on 2026-10-07 (cut to the lines that matter).
         issue_854 = {'number': 854, 'title': 'Narration never starts if you leave the app while it is starting',
                      'url': 'https://example/issue/854', 'labels': {'nodes': [{'name': 'found-on-phone'}]},
-                     'comments': {'nodes': [{'body': 'Merged in #907; waiting on owner\'s phone check.'}]},
+                     'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': 'Merged in #907; waiting on owner\'s phone check.'}]},
                      'body': '## Steps\n1. Play a text article with the Supertonic voice.\n2. Record a Margin, tap '
                              'Save & resume, and swipe to another app straight away.\n\n**Expected:** narration '
                              'resumes in the background.\n**Actual:** silence.\n\n## Done when\n3. A test fails '
@@ -1759,6 +1842,15 @@ class PlanFaultTests(unittest.TestCase):
             ('Read the AI Handoff export of the next test plan.', True),
             ('Read the AI Handoff export of the next test plan once.', True),
             ('Look through the exported log.', True),
+            # fdda29c: the field came after the verb, in backticks, with diagnostics before it
+            ('reproduce #1679 on Build 32, export diagnostics, and look for `app.previous_exit` naming a CPU '
+             'or memory reason.', True),
+            ('Look for `playback.stall_count` in the export.', True),
+            ('Search diagnostics for the stall.', True),
+            # fdda29c: #391's check only pointed at another step
+            ('yes, the phone step above.', True),
+            ('See the steps below.', True),
+            ('Yes: Done when 4.', True),
             # neighbours the owner can run
             ('Settings > Version ends with `929b5ce`.', False),
             ('Open the Library at 2am and play the first item.', False),
@@ -1773,6 +1865,10 @@ class PlanFaultTests(unittest.TestCase):
             ('Read the AI Handoff export; you will see two Margins.', False),
             ('Double-click the Desktop icon.', False),
             ('Tap Share Diagnostics and send the file to Claude.', False),
+            ('Copy Privacy-Safe Diagnostics here, with a screenshot of Settings > Battery.', False),
+            ('Look for the Waiting label on the second row.', False),
+            ('Yes: play an article and hear the voice above the music.', False),
+            ('Scroll to the row above and tap it.', False),
             ('', False),
         ]
         for check, refused in rows:
@@ -1811,7 +1907,7 @@ class PlanFaultTests(unittest.TestCase):
                  'state': 'OPEN', 'createdAt': '2026-10-11T00:00:00Z', 'milestone': None,
                  'labels': {'nodes': [{'name': 'status: needs-human-validation'}]},
                  'body': '**Owner check:** Run --plan app at 929b5ce on simulator F1E6BBFE.\n',
-                 'comments': {'nodes': [{'body': 'Merged in #1352.'}]}, 'timelineItems': {'nodes': []}}
+                 'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': 'Merged in #1352.'}]}, 'timelineItems': {'nodes': []}}
         plan = self.write({}, waiting=[stuck], built_prs={1352})
         self.assertNotIn('Credit a followed source', plan)
         self.assertIn("can't be run on the phone", self.printed)
@@ -2081,7 +2177,7 @@ class RevertedPRTests(unittest.TestCase):
                 'createdAt': f'2026-10-0{number % 9 + 1}T00:00:00Z', 'milestone': None,
                 'labels': {'nodes': [{'name': 'status: needs-human-validation'}]},
                 'body': f'**Owner check:** open the playback screen and look at {title}.\n',
-                'comments': {'nodes': [{'body': body} for body in comments]},
+                'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': body} for body in comments]},
                 'timelineItems': {'nodes': [{'source': {'number': n, 'title': t, 'body': '', 'merged': True,
                                                         'url': f'https://example/pr/{n}'}} for n, t in prs]}}
 
@@ -2188,6 +2284,154 @@ class PlanBaseTests(unittest.TestCase):
         self.assertEqual(base, self.first)
         self.assertIn('nothing recorded in installed.txt yet', why)
 
+
+
+class SolidGroundLeadTests(unittest.TestCase):
+    """2026-10-16: the two most important open phone checks never reached the owner's plans. #1708 (priority,
+    found on the phone, Solid Ground) had its check only in the hourly dispatch's prose ("This needs the owner's
+    Bluetooth headphones: ..."), and #1337's last comment wrote "The owner's phone check: ...". Neither reads as
+    "Owner check:", so the fdda29c plan put #1709 under "no phone check written" and the ca6bbd9 plan led with
+    #1073 instead."""
+
+    DISPATCH_1708 = (
+        'Merged into `next` by #1709 (2026-10-16 06:44Z). Hourly dispatch: released `in-progress` and added '
+        "`status: needs-human-validation`. This needs the owner's Bluetooth headphones: on a podcast, tap Add a "
+        'Margin and check the recording screen stays open; then press the headphone button mid-Margin and check it '
+        'still ends and saves the Margin (#1030). Stays open in Solid Ground until he confirms.\n\n---\n'
+        '_Generated by [Claude Code](https://claude.ai/code)_')
+    CHECK_1708 = ('on a podcast, tap Add a Margin and check the recording screen stays open; then press the '
+                  'headphone button mid-Margin and check it still ends and saves the Margin (#1030).')
+    STOPPING_1337 = (
+        'Thread "Fallback switch regression test" stopping: #1703 merged into `next`.\n\n'
+        '**Still open on this issue.**\n'
+        '1. The cause of the 14:31:03 idle transition (the `session.end` records should name it).\n'
+        "2. The owner's phone check: background narration through a real Supertonic fallback, a Lock Screen tap, "
+        'and the position carrying on.\n\n---\n_Generated by [Claude Code](https://claude.ai/code)_')
+
+    def setUp(self):
+        self.module = load_phone_build()
+
+    pr = staticmethod(PlanGroupingTests.pr)
+    write = PlanGroupingTests.write
+
+    @staticmethod
+    def fix(number, names=(), milestone='Solid Ground', check=None, comments=(), created='2026-10-01', prs=()):
+        """An open `status: needs-human-validation` issue as fetch_waiting reads it, with any labels."""
+        return {'number': number, 'title': f'Waiting {number}', 'url': f'https://example/issue/{number}',
+                'body': f'**Owner check:** {check}\n' if check else 'It broke.\n\nExpected: it works.',
+                'createdAt': created, 'state': 'OPEN',
+                'labels': {'nodes': [{'name': name} for name in ['status: needs-human-validation', *names]]},
+                'milestone': {'title': milestone, 'state': 'OPEN'} if milestone else None,
+                'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': body} for body in comments]},
+                'timelineItems': {'nodes': [{'source': {'number': n, 'title': f'Fix it (#{number})', 'body': '',
+                                                        'url': f'https://example/pr/{n}', 'merged': True}}
+                                            for n in prs]}}
+
+    def test_checks_written_the_way_dispatch_and_threads_write_them(self):
+        # A table of neighbouring inputs (AGENTS.md): what counts as the owner's check in a comment, and what doesn't.
+        comment_check = self.module.comment_check
+        cases = [
+            (self.DISPATCH_1708, self.CHECK_1708),
+            (self.STOPPING_1337, 'background narration through a real Supertonic fallback, a Lock Screen tap, and '
+                                 'the position carrying on.'),
+            ("The owner’s phone check: open the mini player.", 'open the mini player.'),     # curly apostrophe
+            ("- Owner's phone check: open the mini player.", 'open the mini player.'),
+            ('**Owner check.** Run your share-sheet shortcut on a link; it finishes in the app with no picker.',
+             'Run your share-sheet shortcut on a link; it finishes in the app with no picker.'),  # #574's "."
+            ("This needs the owner's phone: open a PDF and read its first page.",
+             'open a PDF and read its first page.'),
+            ("This needs the owner’s AirPods: press the stem once mid-Margin; it ends and saves.",
+             'press the stem once mid-Margin; it ends and saves.'),
+            # Not checks: #1030's routing note, a decision asked of him, a dated report, prose.
+            ("#1596 merged into `next` at 19:40Z. This needs the owner's phone and headphones to confirm, so it now "
+             'waits on his phone check: `in-progress` removed, `status: needs-human-validation` added.', None),
+            ("This needs the owner's call: thirty seconds or ten?", None),
+            ('Owner phone check, 2026-10-14 evening, candidate 0.1 (32): headphone-button completion did not pass.',
+             None),
+            ('the phone check covers that: nothing else to do.', None),
+            ('', None),
+        ]
+        for body, expected in cases:
+            with self.subTest(body=body[:60]):
+                self.assertEqual(comment_check({'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': body}]}}), expected)
+
+    def test_current_milestone_priority_then_found_on_phone_lead_the_waiting_fixes(self):
+        # The ca6bbd9 plan, 2026-10-16: #1073 (no milestone priority) took "Still waiting" while #1708 and #1337
+        # (Solid Ground, on the phone, waiting on him) weren't on it at all.
+        waiting = [
+            self.fix(1073, milestone=None, created='2026-10-08', prs=[1303],
+                     check='with one article playing, run a shortcut that adds a Margin to a different article.'),
+            self.fix(1337, ['bug', 'found-on-phone'], created='2026-10-10', prs=[1703],
+                     comments=[self.STOPPING_1337]),
+            self.fix(1708, ['bug', 'regression', 'found-on-phone', 'priority'], created='2026-10-16', prs=[1709],
+                     comments=[self.DISPATCH_1708]),
+            self.fix(1600, created='2026-09-05', prs=[1601], check='Play the Solid Ground thing.'),
+            self.fix(1682, ['found-on-phone', 'priority'], milestone='Later', created='2026-09-01', prs=[1683],
+                     check='Play an article until the phone is warm.'),
+            self.fix(1679, ['found-on-phone', 'priority', 'validate-by-use'], created='2026-09-02', prs=[1684],
+                     check='Listen as usual.', comments=['Owner check: none. Validated by use.']),
+            self.fix(1690, ['found-on-phone', 'priority'], created='2026-09-03', prs=[1691],
+                     comments=['Owner check: none. Diagnostics show it.']),
+        ]
+        plan = self.write({366: self.pr(366, 'Take the rendered speech cache out of the offline storage ledger')},
+                          waiting=waiting, built_prs={1303, 1703, 1709, 1601, 1683, 1684, 1691})
+        still = plan.split('## Still waiting on your check')[1].split('\n## ')[0]
+        numbered = re.findall(r'(?m)^\d+\. \*\*(.+?)\*\*', still)
+        self.assertEqual(numbered, ['Waiting 1708', 'Waiting 1337', 'Waiting 1600', 'Waiting 1073'], plan)
+        self.assertIn('1. **Waiting 1708** (found on your phone)\n   - Check: ' + self.CHECK_1708, still)
+        self.assertIn('2. **Waiting 1337** (found on your phone)\n   - Check: background narration through a real '
+                      'Supertonic fallback', still)
+        also = plan.split('## Also waiting on your check (not in the ten minutes)')[1].split('\n## ')[0]
+        self.assertIn('- Waiting 1682 (found on your phone) ([#1682](https://example/issue/1682), '
+                      '[#1683](https://example/pr/1683)): waits for Later', also)
+        for gone in ('Waiting 1679', 'Waiting 1690'):                    # validate-by-use and "Owner check: none"
+            self.assertNotIn(gone, plan)
+        for quiet in ('#1679', '#1690'):
+            self.assertNotIn(quiet, self.printed)
+
+    def test_the_lead_fixes_keep_their_place_when_new_changes_fill_the_ten_minutes(self):
+        self.module.PLAN_CHECKS = 3
+        issue = PlanGroupingTests.issue
+        new = {n: self.pr(n, f'New change {n}', [issue(n + 1000, f'Try new change {n}.')]) for n in (280, 281, 282)}
+        waiting = [self.fix(1708, ['found-on-phone', 'priority'], created='2026-10-16', prs=[1709],
+                            comments=[self.DISPATCH_1708]),
+                   self.fix(1600, created='2026-09-05', prs=[1601], check='Play the Solid Ground thing.')]
+        plan = self.write(new, waiting=waiting, built_prs={1709, 1601})
+        still = plan.split('## Still waiting on your check')[1].split('\n## ')[0]
+        self.assertIn('**Waiting 1708**', still)
+        self.assertEqual(len(re.findall(r'(?m)^\d+\. \*\*', plan.split('## Also')[0])), 3, plan)
+        self.assertIn('Waiting 1600', plan.split('## Also waiting on your check')[1])
+
+    def test_a_new_priority_fix_with_no_steps_yet_is_not_filed_under_nothing_to_test(self):
+        # The fdda29c plan, 08:51Z on 2026-10-16: #1709 fixed #1708 (priority, found on the phone, Solid Ground)
+        # before dispatch wrote the check at 09:22Z, and the plan said "You don't need to test these" about it.
+        bluetooth = self.fix(1708, ['bug', 'regression', 'found-on-phone', 'priority'])
+        everyday = self.fix(1700, ['found-on-phone', 'validate-by-use'])
+        plan = self.write({1709: self.pr(1709, 'Ignore a Now Playing play in the first moment of a Margin recording '
+                                               '(#1708)', [bluetooth]),
+                           1701: self.pr(1701, 'Everyday fix', [everyday]),
+                           366: self.pr(366, 'Take the rendered speech cache out of the offline storage ledger')})
+        unchecked = plan.split('## Also changed (no phone check written)')[1]
+        self.assertNotIn('Ignore a Now Playing play', unchecked)
+        self.assertIn('Everyday fix', unchecked)                          # validate-by-use: his use checks it
+        steps = plan.split('## Important, but no phone steps written yet')[1].split('\n## ')[0]
+        self.assertIn('- Ignore a Now Playing play in the first moment of a Margin recording (#1708) (found on your '
+                      'phone) ([#1709](https://example/pr/1709))', steps)
+        self.assertIn('#1708', self.printed)
+        alone = self.write({1709: self.pr(1709, 'Ignore a Now Playing play (#1708)', [bluetooth])})
+        self.assertNotIn('Nothing a listener would notice changed', alone)
+        self.assertIn('- Ignore a Now Playing play (#1708) (found on your phone)', alone)
+
+    def test_once_dispatch_writes_the_check_the_new_fix_leads_the_ten_minutes(self):
+        bluetooth = self.fix(1708, ['bug', 'regression', 'found-on-phone', 'priority'], comments=[self.DISPATCH_1708])
+        issue = PlanGroupingTests.issue
+        plan = self.write({1720: self.pr(1720, 'Library wording', [issue(81, 'Read the Library rows.', phone=True)]),
+                           1709: self.pr(1709, 'Ignore a Now Playing play in the first moment of a Margin recording '
+                                               '(#1708)', [bluetooth])})
+        self.assertIn('1. **Ignore a Now Playing play in the first moment of a Margin recording (#1708)** (found on '
+                      'your phone)\n   - Check: ' + self.CHECK_1708, plan)
+        self.assertIn('2. **Library wording**', plan)
+        self.assertNotIn('no phone steps written', plan)
 
 if __name__ == '__main__':
     unittest.main()

@@ -25,9 +25,7 @@ struct ExperienceMarginsScreen: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    TextField("Search your notes or an item", text: $model.marginCollectionQuery.text)
-                        .textFieldStyle(.roundedBorder)
-                        .accessibilityIdentifier("margins.search.field")
+                    MarginsSearchField(text: $model.marginCollectionQuery.text)
                         .padding(.bottom, 12)
                     scopeRow
                     filterBar
@@ -69,6 +67,7 @@ struct ExperienceMarginsScreen: View {
             .sheet(item: $selectedSharedMargin) { row in
                 SharedMarginDetailView(row: row).environmentObject(model)
             }
+            .miniPlayerKeepOut()
         }
     }
 
@@ -144,15 +143,27 @@ struct ExperienceMarginsScreen: View {
             ForEach(groupedRows) { group in
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(group.itemTitle)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(AppColors.text)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text("\(group.rows.count) Margins")
-                            .font(.caption)
-                            .foregroundStyle(AppColors.secondaryText)
+                    // The heading opens the item, as the Library row does (#1256). The chevron says it goes somewhere.
+                    Button { model.openItem(id: group.itemID) } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("\(group.itemTitle) \(Text(Image(systemName: "chevron.right")).font(.caption.weight(.bold)).foregroundStyle(AppColors.secondaryText))")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(AppColors.text)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("\(group.rows.count) Margins")
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                        .frame(minHeight: 44, alignment: .topLeading)
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(group.itemTitle), \(group.rows.count) Margins")
+                    .accessibilityHint("Opens the item.")
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityIdentifier("margins.openItem.\(group.itemID)")
                     Spacer(minLength: 8)
                     Button { model.openMarginItemExport(itemID: group.itemID) } label: {
                         Label("Share", systemImage: "square.and.arrow.up")
@@ -214,6 +225,8 @@ struct ExperienceMarginsScreen: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("\(row.interjection.replyTo == nil ? "My Margin" : "My reply to a shared Margin"). \(row.needsAttention ? row.attentionDescription.trimmingCharacters(in: CharacterSet(charactersIn: ".")) : row.placeDescription()). \(row.needsAttention && row.preview == row.attentionDescription ? "" : "\(row.preview). ")\(group.itemTitle).")
+                        // The star on the row is a picture; the listener hears it as the row's value.
+                        .accessibilityValue(row.interjection.isStarredForSharing == true ? "Starred for sharing" : "")
                         .accessibilityIdentifier("margins.row.\(row.id)")
                         .contextMenu {
                             Button("Play this moment", systemImage: "play.fill") { _ = model.playMarginMoment(row) }
@@ -543,5 +556,26 @@ struct MarginsScopeRow: View {
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
         }
+    }
+}
+
+/// The Margins search field, at least 44 pt tall (#151). The rounded-border style alone is about 34 pt.
+struct MarginsSearchField: View {
+    @Binding var text: String
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        // A single-line field stays about 34 pt tall inside the 44 pt frame, so a tap catcher behind it focuses
+        // the field when the tap lands in the extra room above or below. Taps on the field itself never reach it.
+        TextField("Search your notes or an item", text: $text)
+            .textFieldStyle(.roundedBorder)
+            .focused($isFocused)
+            .frame(minHeight: TapTarget.minimum)
+            .background {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { isFocused = true }
+            }
+            .accessibilityIdentifier("margins.search.field")
     }
 }

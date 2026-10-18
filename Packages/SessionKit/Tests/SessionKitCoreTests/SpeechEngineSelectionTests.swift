@@ -55,6 +55,25 @@ final class SpeechEngineSelectionTests: XCTestCase {
         XCTAssertFalse(line.contains("Retry"), "nothing for the listener to do")
     }
 
+    // #1673: narration handed to the iOS voice because the next chunk wasn't rendered with the app in the
+    // background says so, and the chosen voice gets another try at the next play.
+    func testABackgroundGapHandsOverAndTheChosenVoiceGetsAnotherTryAtTheNextPlay() {
+        XCTAssertEqual(SpeechFallbackReason(supertonicCode: "supertonic_background_gap", resourceBlock: nil), .backgroundGap)
+        XCTAssertEqual(SpeechFallbackReason.backgroundGap.rawValue, "background_gap")
+        XCTAssertTrue(SpeechEnginePolicy.restoresChosenVoice(after: .backgroundGap, conditions: SpeechEngineConditions()))
+        XCTAssertFalse(
+            SpeechEnginePolicy.restoresChosenVoice(after: .backgroundGap, conditions: SpeechEngineConditions(thermal: .serious)),
+            "still too warm to render: the iOS voice stays"
+        )
+        let line = SpeechFallbackReason.backgroundGap.listenerExplanation
+        XCTAssertTrue(line.contains("background"), line)
+        XCTAssertTrue(line.contains("next time you press play"), line)
+        XCTAssertFalse(line.contains("Retry"), "nothing for the listener to do")
+        XCTAssertEqual(
+            SpeechGenerationStopReason.listenerExplanation(stopReason: "background_gap", fallbackReason: nil), line
+        )
+    }
+
     func testEveryFallbackNamesItsCauseForTheListenerAndTheLog() {
         XCTAssertEqual(SpeechFallbackReason(supertonicCode: "supertonic_resource_pressure", resourceBlock: .memoryWarning), .memoryWarning)
         XCTAssertEqual(SpeechFallbackReason(supertonicCode: "supertonic_resource_pressure", resourceBlock: .deviceTooWarm), .deviceTooWarm)
@@ -72,7 +91,7 @@ final class SpeechEngineSelectionTests: XCTestCase {
     /// iOS voice is reading, since it isn't.
     func testTheBackupVoiceLineNamesTheCauseAndNeverTheIOSVoice() {
         let all: [SpeechFallbackReason] = [.deviceTooWarm, .memoryWarning, .renderTooSlow, .playbackFailed,
-                                           .playerStalled, .listenerStoppedGeneration]
+                                           .playerStalled, .backgroundGap, .listenerStoppedGeneration]
         for reason in all {
             let line = reason.bundledVoiceExplanation
             XCTAssertTrue(line.contains("backup voice"), line)

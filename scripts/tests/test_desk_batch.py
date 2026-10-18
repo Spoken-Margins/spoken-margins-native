@@ -49,7 +49,7 @@ RUNNER_REPORT = 'Lane report pr335-r36657095336 — PASS\ncommit 6370e05 (tested
 def comment(identifier, issue, body, created, login='uncomposed'):
     return {'id': identifier, 'issue_url': f'https://api.github.com/repos/o/r/issues/{issue}', 'body': body,
             'created_at': created, 'html_url': f'https://github.com/o/r/issues/{issue}#issuecomment-{identifier}',
-            'user': {'login': login}}
+            'user': {'login': login}, 'author_association': 'NONE' if login.endswith('[bot]') else 'OWNER'}
 
 
 class FakeGitHub:
@@ -118,11 +118,22 @@ class ParsingTests(unittest.TestCase):
         self.assertTrue(desk.is_desk_report('**Lane report (T4): FAIL · PR #644 journeys-batch fix**'))
         self.assertTrue(desk.is_desk_report('Lane report t4-1 — PASS (integration-test of share)'))
 
-    def test_journey_steps_from_the_real_journeys_doc(self):
-        steps = desk.journey_steps(SCRIPTS.parent)
-        self.assertEqual(steps['J3'], 4)
-        self.assertEqual(steps['J1'], 3)
+    def test_journey_steps_counts_numbered_top_level_steps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'docs').mkdir()
+            (Path(tmp) / 'docs' / 'journeys.md').write_text(
+                '# Journeys\n1. not under a journey\n\n'
+                '## J1 \u2014 First\n\n1. one\n   - Pass: nested bullet\n2. two\n   1. nested number\n3. three\n4. four\n\n'
+                '## Notes\n\n1. not a journey\n\n'
+                '## J10 \u2014 Tenth\n\n1. only\n', encoding='utf-8')
+            self.assertEqual(desk.journey_steps(tmp), {'J1': 4, 'J10': 1})
         self.assertEqual(desk.journey_steps(SCRIPTS.parent / 'nowhere'), {})
+
+    def test_journey_steps_reads_the_real_journeys_doc(self):
+        # The doc grows as journeys gain steps (J1 went from 3 to 4 in #1579), so pin the shape, not the counts.
+        steps = desk.journey_steps(SCRIPTS.parent)
+        self.assertTrue({'J1', 'J2', 'J3'} <= set(steps))
+        self.assertTrue(all(count >= 1 for count in steps.values()), steps)
 
     def test_step_units(self):
         journeys = {'J3': 4, 'J5': 6}
@@ -354,6 +365,15 @@ class MainTests(unittest.TestCase):
         found = desk.comments_since(api, '2026-10-03T20:00:00Z')
         self.assertEqual(len(found), 151)
         self.assertEqual(len([p for p in api.paths if p.startswith('issues/comments?')]), 2)
+
+    def test_a_strangers_t4_request_never_reaches_the_planner(self):
+        """#1822: the Test Desk runs journeys on the owner's Mac for whoever asks, so a stranger can't ask."""
+        forged = dict(comment(6000, 335, REQUEST_335, '2026-10-13T10:00:00Z', login='mallory'), author_association='NONE')
+        owner = comment(6001, 336, REQUEST_335, '2026-10-13T10:05:00Z')
+        api = FakeGitHub([forged, owner], {})
+        found = desk.comments_since(api, '2026-10-03T20:00:00Z')
+        self.assertEqual([c['id'] for c in found], [6001])
+        self.assertEqual(sorted(request['number'] for request in desk.pending_requests(found, {})), [336])
 
     def test_json_plan(self):
         code, out, _, files, _ = self.run_main(self.api(3), '--json')

@@ -6,6 +6,7 @@ import Crypto
 import Foundation
 import XCTest
 @testable import SessionKit
+import SessionKitTestInputs
 
 /// Share links are sealed on the phone and the key rides only in the link's `#` part (#805).
 final class ShareLinkSealingTests: XCTestCase {
@@ -175,10 +176,7 @@ final class ShareLinkSealingTests: XCTestCase {
         let packet: Entry
 
         static func load() throws -> Vector {
-            var root = URL(fileURLWithPath: #filePath)
-            for _ in 0..<5 { root.deleteLastPathComponent() }
-            let url = root.appendingPathComponent("research/B4/contracts/fixtures/share-link-sealing-vector.json")
-            return try JSONDecoder().decode(Vector.self, from: Data(contentsOf: url))
+            try JSONDecoder().decode(Vector.self, from: TestInputs.data(.research, "B4/contracts/fixtures/share-link-sealing-vector.json"))
         }
     }
 }

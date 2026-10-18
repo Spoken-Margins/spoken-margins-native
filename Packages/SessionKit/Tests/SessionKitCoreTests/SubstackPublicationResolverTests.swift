@@ -7,17 +7,14 @@ import Foundation
 import XCTest
 import SessionKit
 @testable import SessionKitFeeds
+import SessionKitTestInputs
 
 /// B2 M1: Follow didn't work for tracked links, old posts, large pages, share links, apex
 /// domains or profiles. Replays research/B2's recorded responses; never touches the network.
 final class SubstackPublicationResolverTests: XCTestCase {
-    private static let research = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent() // SessionKitCoreTests
-        .deletingLastPathComponent() // Tests
-        .deletingLastPathComponent() // SessionKit
-        .deletingLastPathComponent() // Packages
-        .deletingLastPathComponent() // repo
-        .appending(path: "research/B2", directoryHint: .isDirectory)
+    private static func research() throws -> URL {
+        try TestInputs.url(.research, "B2")
+    }
     private static let publicPodcast = "https://api.substack.com/feed/podcast/69345.rss"
     /// The shape of the link a paid subscriber copies from Substack; the token here is fake.
     private static let fakePrivate = "https://api.substack.com/feed/podcast/69345/private/0f0f0f0f-test-not-a-token.rss"
@@ -31,7 +28,7 @@ final class SubstackPublicationResolverTests: XCTestCase {
 
     private func cases() throws -> [Case] {
         struct File: Decodable { let cases: [Case] }
-        let data = try Data(contentsOf: Self.research.appending(path: "urls.json"))
+        let data = try Data(contentsOf: Self.research().appending(path: "urls.json"))
         return try JSONDecoder().decode(File.self, from: data).cases
     }
 
@@ -46,7 +43,7 @@ final class SubstackPublicationResolverTests: XCTestCase {
     }
 
     func testEveryRecordedLinkResolvesToItsPublicationFeed() async throws {
-        let fetcher = ReplayFetcher(fixtures: Self.research.appending(path: "fixtures"))
+        let fetcher = ReplayFetcher(fixtures: try Self.research().appending(path: "fixtures"))
         let resolver = SubstackPublicationResolver(fetch: fetcher.fetch)
         var failures: [String: String] = [:]
         for testCase in try cases() {
@@ -60,7 +57,7 @@ final class SubstackPublicationResolverTests: XCTestCase {
     }
 
     func testOldAndTrackedPostsResolveWithoutBeingInTheFeed() async throws {
-        let resolver = SubstackPublicationResolver(fetch: ReplayFetcher(fixtures: Self.research.appending(path: "fixtures")).fetch)
+        let resolver = SubstackPublicationResolver(fetch: ReplayFetcher(fixtures: try Self.research().appending(path: "fixtures")).fetch)
         for link in [
             "https://www.astralcodexten.com/p/spring-meetups-in-seventy-cities",
             "https://garymarcus.substack.com/p/promises-are-cheap?utm_source=substack&utm_medium=email",
@@ -74,7 +71,7 @@ final class SubstackPublicationResolverTests: XCTestCase {
     }
 
     func testProfileCandidatesAreNeverPresentedAsCertain() async throws {
-        let resolver = SubstackPublicationResolver(fetch: ReplayFetcher(fixtures: Self.research.appending(path: "fixtures")).fetch)
+        let resolver = SubstackPublicationResolver(fetch: ReplayFetcher(fixtures: try Self.research().appending(path: "fixtures")).fetch)
         // lennysnewsletter.substack.com redirects to an unrelated person's profile.
         let trap = await resolver.resolve("https://lennysnewsletter.substack.com/")
         XCTAssertEqual(trap?.feedURL, "https://na12.substack.com/feed")
@@ -83,7 +80,7 @@ final class SubstackPublicationResolverTests: XCTestCase {
     }
 
     func testNonSubstackSitesAreLeftToGenericDiscoveryAfterOneRequest() async throws {
-        let fetcher = ReplayFetcher(fixtures: Self.research.appending(path: "fixtures"))
+        let fetcher = ReplayFetcher(fixtures: try Self.research().appending(path: "fixtures"))
         let resolver = SubstackPublicationResolver(fetch: fetcher.fetch)
         let resolved = await resolver.resolve("https://www.platformer.news/")
         XCTAssertNil(resolved)
@@ -98,7 +95,7 @@ final class SubstackPublicationResolverTests: XCTestCase {
         XCTAssertFalse(SubstackPublicationResolver.isPrivateFeedURL("https://www.astralcodexten.com/feed"))
         XCTAssertFalse(SubstackPublicationResolver.redact(Self.fakePrivate).contains("test-not-a-token"))
 
-        let fetcher = ReplayFetcher(fixtures: Self.research.appending(path: "fixtures"), aliases: [Self.fakePrivate: Self.publicPodcast])
+        let fetcher = ReplayFetcher(fixtures: try Self.research().appending(path: "fixtures"), aliases: [Self.fakePrivate: Self.publicPodcast])
         let resolved = await SubstackPublicationResolver(fetch: fetcher.fetch).resolve(Self.fakePrivate)
         XCTAssertEqual(resolved?.kind, .privateFeed)
         XCTAssertEqual(resolved?.isPrivate, true)
@@ -117,7 +114,7 @@ final class SubstackPublicationResolverTests: XCTestCase {
         XCTAssertFalse(SubstackPublicationResolver.isPrivateFeedURL("https://www.example.com/feed/private"), "a path with no token")
         XCTAssertFalse(SubstackPublicationResolver.redact(generic).contains("abc123"))
 
-        let fetcher = ReplayFetcher(fixtures: Self.research.appending(path: "fixtures"), aliases: [generic: Self.publicPodcast])
+        let fetcher = ReplayFetcher(fixtures: try Self.research().appending(path: "fixtures"), aliases: [generic: Self.publicPodcast])
         let resolved = await SubstackPublicationResolver(fetch: fetcher.fetch).resolve(generic)
         XCTAssertEqual(resolved?.kind, .privateFeed, "taken as a private feed, not as a page to scrape")
         XCTAssertEqual(resolved?.isPrivate, true)
@@ -126,7 +123,7 @@ final class SubstackPublicationResolverTests: XCTestCase {
 
     /// I1: the resolver plugs into `SourceResolverRegistry` like any other resolver.
     func testResolverAnswersThroughSeamI1() async throws {
-        let fetcher = ReplayFetcher(fixtures: Self.research.appending(path: "fixtures"), aliases: [Self.fakePrivate: Self.publicPodcast])
+        let fetcher = ReplayFetcher(fixtures: try Self.research().appending(path: "fixtures"), aliases: [Self.fakePrivate: Self.publicPodcast])
         let resolver = SubstackPublicationResolver(fetch: fetcher.fetch)
         XCTAssertFalse(resolver.canResolve(.query("astral codex ten")))
 
@@ -150,7 +147,7 @@ final class SubstackPublicationResolverTests: XCTestCase {
 
     /// #244: the owner's link. From recorded responses the resolver finds the feed; the trace says how.
     func testOwnersLinkFrom244ResolvesAndExplainsHow() async throws {
-        let resolver = SubstackPublicationResolver(fetch: ReplayFetcher(fixtures: Self.research.appending(path: "fixtures")).fetch)
+        let resolver = SubstackPublicationResolver(fetch: ReplayFetcher(fixtures: try Self.research().appending(path: "fixtures")).fetch)
         let result = await resolver.resolveExplained("https://www.rameznaam.com/p/ai-rsi-isnt-leading-to-super-intelligence")
         XCTAssertEqual(result.publication?.feedURL, "https://www.rameznaam.com/feed")
         XCTAssertEqual(result.trace, ["www.rameznaam.com/feed: Substack feed, 20 items"])
@@ -160,7 +157,7 @@ final class SubstackPublicationResolverTests: XCTestCase {
     /// report can say why Follow failed. It never carries the article's full link.
     func testTraceNamesTheFailedStepWhenTheFeedCannotBeFetched() async throws {
         let fetcher = ReplayFetcher(
-            fixtures: Self.research.appending(path: "fixtures"),
+            fixtures: try Self.research().appending(path: "fixtures"),
             failures: ["feed https://www.rameznaam.com/feed": URLError(.timedOut)]
         )
         let result = await SubstackPublicationResolver(fetch: fetcher.fetch)
@@ -266,7 +263,7 @@ final class SubstackPublicationResolverTests: XCTestCase {
     func testPrivateFeedVariantsAreFetchedOnceAsAnHttpsFeed() async throws {
         for base in [Self.fakePrivate, Self.genericPrivate] {
             for link in Self.variants(of: base) {
-                let fetcher = ReplayFetcher(fixtures: Self.research.appending(path: "fixtures"), aliases: [base: Self.publicPodcast])
+                let fetcher = ReplayFetcher(fixtures: try Self.research().appending(path: "fixtures"), aliases: [base: Self.publicPodcast])
                 let resolved = await SubstackPublicationResolver(fetch: fetcher.fetch).resolve(link)
                 XCTAssertEqual(resolved?.kind, .privateFeed, link)
                 XCTAssertEqual(resolved?.isPrivate, true, link)

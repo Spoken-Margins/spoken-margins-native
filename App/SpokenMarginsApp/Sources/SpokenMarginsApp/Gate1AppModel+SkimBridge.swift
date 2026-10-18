@@ -61,7 +61,7 @@ extension Gate1AppModel {
     }
 
     func restoreSkimOriginBeforeCanonicalTransport() {
-        if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: false) }
+        if playingImportedCommentary != nil, heldMarginVoice?.kind != .shared { stopImportedCommentaryPlayback(resumeSource: false) } // Add a Margin holds the voice and moves the source under it (#1672)
         skimBridge.restoreOriginBeforeCanonicalTransport()
     }
 }

@@ -179,6 +179,7 @@ struct ExportScreen: View {
                     .accessibilityIdentifier("export.home.button")
                 }
             }
+            .miniPlayerKeepOut()
         }
     }
 

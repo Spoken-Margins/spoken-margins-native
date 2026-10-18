@@ -1,6 +1,5 @@
 import SwiftUI
 import SessionKit
-import UniformTypeIdentifiers
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -8,9 +7,11 @@ import UIKit
 struct BatchExportScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
-    @State private var isFolderImporterPresented = false
+    @State private var isShareSheetPresented = false
+    /// Kept while the sheet closes, so its content does not blank out mid-animation.
+    @State private var sharedFileURLs: [URL] = []
 
-    private static let destinationAnchor = "batchExport.destination"
+    private static let destinationAnchor = "batchExport.share"
 
     var body: some View {
         NavigationStack {
@@ -20,7 +21,7 @@ struct BatchExportScreen: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Export Sessions")
                                 .font(.largeTitle.bold())
-                            Text("Choose listening sessions and save one Markdown file for each session.")
+                            Text("Choose listening sessions and share one Markdown file for each session.")
                                 .foregroundStyle(AppColors.secondaryText)
                         }
 
@@ -51,7 +52,7 @@ struct BatchExportScreen: View {
 
                         if !model.selectedBatchExportSessionIds.isEmpty {
                             exportOptions
-                            destination
+                            exportAction
                                 .id(Self.destinationAnchor)
                         }
 
@@ -75,25 +76,23 @@ struct BatchExportScreen: View {
                             jumpToDestination(using: proxy)
                         }
                         .disabled(model.selectedBatchExportSessionIds.isEmpty)
-                        .accessibilityHint("Jumps to Included Material and Destination.")
+                        .accessibilityHint("Jumps to Included Material and the Export button.")
                         .accessibilityIdentifier("batchExport.jumpToDestination.button")
                     }
                 }
             }
-            .fileImporter(
-                isPresented: $isFolderImporterPresented,
-                allowedContentTypes: [.folder],
-                allowsMultipleSelection: false
-            ) { result in
-                switch result {
-                case .success(let urls):
-                    if let folder = urls.first {
-                        model.configureBatchExportFolder(url: folder)
-                    }
-                case .failure(let error):
-                    model.reportBatchExportFolderFailure(error)
+            .onChange(of: model.batchExportShare) { _, files in
+                if let files { sharedFileURLs = files.fileURLs }
+                isShareSheetPresented = files != nil
+            }
+            #if canImport(UIKit)
+            .sheet(isPresented: $isShareSheetPresented, onDismiss: model.batchShareSheetDismissed) {
+                BatchShareActivityView(fileURLs: sharedFileURLs) { completed, activityType in
+                    model.batchShareSheetFinished(completed: completed, activityType: activityType)
                 }
             }
+            #endif
+            .miniPlayerKeepOut()
         }
     }
 
@@ -149,7 +148,7 @@ struct BatchExportScreen: View {
                         }
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("\(selected ? "Deselect" : "Select") \(row.itemTitle), \(row.interjectionCount) interjections, \(row.session.completionPercent) percent complete")
+                    .accessibilityLabel("\(selected ? "Deselect" : "Select") \(row.itemTitle), \(row.interjectionCount) \(row.interjectionCount == 1 ? "Margin" : "Margins"), \(row.session.completionPercent) percent complete")
                     .accessibilityIdentifier("batchExport.session.\(row.id)")
                 }
             }
@@ -199,44 +198,24 @@ struct BatchExportScreen: View {
         }
     }
 
-    private var destination: some View {
+    private var exportAction: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Destination")
+            Text("Share")
                 .font(.headline)
             ProductPanel {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: 10) {
-                        Image(systemName: "folder")
+                        Image(systemName: "square.and.arrow.up")
                             .foregroundStyle(AppColors.green)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(model.hasBatchExportFolder ? model.batchExportFolderName : "Choose a folder")
-                                .font(.subheadline.weight(.semibold))
-                            Text("Spoken Margins remembers this destination for future exports.")
-                                .font(.caption)
-                                .foregroundStyle(AppColors.secondaryText)
-                        }
+                        Text("The share sheet opens with the files. Choose AirDrop, Save to Files or another app each time.")
+                            .font(.subheadline)
                     }
-                    Button {
-                        isFolderImporterPresented = true
-                    } label: {
-                        Label(model.hasBatchExportFolder ? "Change Folder" : "Choose Folder", systemImage: "folder.badge.plus")
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-                    .accessibilityIdentifier("batchExport.chooseFolder.button")
-
-                    Button(action: model.exportSelectedSessionsToFolder) {
-                        if model.isWritingBatchExport {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                Text("Exporting")
-                            }
-                        } else {
-                            Label("Export \(model.selectedBatchExportSessionIds.count) Session\(model.selectedBatchExportSessionIds.count == 1 ? "" : "s")", systemImage: "square.and.arrow.down")
-                        }
+                    Button(action: model.prepareSelectedSessionsForSharing) {
+                        Label("Export \(model.selectedBatchExportSessionIds.count) Session\(model.selectedBatchExportSessionIds.count == 1 ? "" : "s")", systemImage: "square.and.arrow.up")
                     }
                     .buttonStyle(PrimaryButtonStyle())
-                    .disabled(!model.hasBatchExportFolder || model.isWritingBatchExport)
-                    .accessibilityIdentifier("batchExport.write.button")
+                    .disabled(model.batchExportShare != nil)
+                    .accessibilityIdentifier("batchExport.export.button")
                 }
             }
         }
@@ -247,9 +226,11 @@ struct BatchExportScreen: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Export Result")
                     .font(.headline)
-                Text("\(result.exportedFileNames.count) saved to \(result.destinationName)")
-                    .font(.subheadline)
-                ForEach(result.exportedFileNames, id: \.self) { fileName in
+                if !result.sharedFileNames.isEmpty {
+                    Text(SessionShareFiles.sharedSummary(count: result.sharedFileNames.count, activityType: result.activityType))
+                        .font(.subheadline)
+                }
+                ForEach(result.sharedFileNames, id: \.self) { fileName in
                     Label(fileName, systemImage: "checkmark.circle")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
@@ -263,3 +244,22 @@ struct BatchExportScreen: View {
         .accessibilityIdentifier("batchExport.result")
     }
 }
+
+#if canImport(UIKit)
+/// The system share sheet for the batch's Markdown files. It reports whether the listener actually shared
+/// (cancelling is not a share) and which activity took the files (#1528).
+private struct BatchShareActivityView: UIViewControllerRepresentable {
+    let fileURLs: [URL]
+    let onFinished: (_ completed: Bool, _ activityType: String?) -> Void
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: fileURLs, applicationActivities: nil)
+        controller.completionWithItemsHandler = { activityType, completed, _, _ in
+            onFinished(completed, activityType?.rawValue)
+        }
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+#endif

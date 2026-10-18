@@ -31,6 +31,9 @@ so they run whether or not the external drive is plugged in; only step 6 needs t
    ~/SpokenMargins-phone (never `latest`, the installed one, or the newest two), and Claude and
    Codex session logs untouched for 3 days. Without SlawBulk, moves are skipped.
 
+On every run, whatever the free space (#1775), it also keeps the lane's own folder, ~/Library/Caches/
+SpokenMarginsLane, under a size cap and ages out lane evidence; ops/disk/sm_lane_prune.py has the rules.
+
 Once a night (02:00 to 05:00), when no backup is running, it also deletes Time Machine local
 snapshots, which otherwise hold on to everything it deletes. Backups on the Time Machine drive stay.
 
@@ -59,8 +62,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, List, Optional, Tuple
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+import sm_lane_prune as lane_prune  # noqa: E402
+import sm_paths  # noqa: E402
+
 GiB = 1024 ** 3
 HOME = Path.home()
+# The owner's development checkout, which is not this script's own (SM_REPO replaces it, #1844).
+DEV_CHECKOUT = sm_paths.repo(__file__, default=HOME / 'Documents/GitHub/spoken-margins-native')
 
 CACHE_IDLE_SECONDS = 30 * 60
 ARTIFACT_AGE_SECONDS = 2 * 86400
@@ -84,8 +93,8 @@ PHONE_BUILD_NAME = re.compile(r'^\d{8}-\d{6}-[0-9a-f]{7}$')
 @dataclass
 class Config:
     home: Path = HOME
-    repo: Path = HOME / 'Documents/GitHub/spoken-margins-native'
-    checkout_glob: str = str(HOME / 'Documents/GitHub/spoken-margins-native*')
+    repo: Path = DEV_CHECKOUT
+    checkout_glob: str = str(DEV_CHECKOUT) + '*'
     data_volume: Path = Path('/System/Volumes/Data')
     drive: Path = Path('/Volumes/SlawBulk')
     offload_dir: str = 'Codex-Offload'
@@ -100,7 +109,7 @@ class Config:
     snapshot_volume: Path = Path('/')
     night_start_hour: int = 2
     night_end_hour: int = 5
-    ops_dir: Path = HOME / 'SpokenMarginsOps/disk-relief'
+    ops_dir: Path = sm_paths.state_dir('disk-relief', home=HOME)
     phone_dir: Path = HOME / 'SpokenMargins-phone'
     device_support: Path = HOME / 'Library/Developer/Xcode/iOS DeviceSupport'
     launch_agents: Path = HOME / 'Library/LaunchAgents'
@@ -113,6 +122,11 @@ class Config:
     tmp_root: Path = Path('/private/tmp')
     tmp_globs: Tuple[str, ...] = ('spoken-margins-*',)
     own_session: Optional[str] = field(default_factory=lambda: os.environ.get('CLAUDE_CODE_SESSION_ID'))
+    # The lane's own folder (warm builds, compilation cache, evidence, state) and where its evidence lands
+    # when a runner's .env points SM_LANE_EVIDENCE_DIR at the main checkout (#1775).
+    lane_dir: Path = HOME / 'Library/Caches/SpokenMarginsLane'
+    lane_cap_bytes: int = lane_prune.LANE_CAP_BYTES
+    repo_slug: str = lane_prune.DEFAULT_REPO
     # One app build into a worktree's .build/dd takes 8 to 9 GiB (log, 2026-10-09): start early.
     trigger_bytes: int = 50 * GiB
     target_bytes: int = 70 * GiB
@@ -125,6 +139,10 @@ class Config:
     @property
     def lock_file(self) -> Path:
         return self.ops_dir / '.lock'
+
+    @property
+    def lane_evidence_dirs(self) -> List[Path]:
+        return [self.lane_dir / 'evidence', self.repo / 'artifacts/lane']
 
     @property
     def snapshot_stamp(self) -> Path:
@@ -353,6 +371,10 @@ class Machine:
         except (OSError, subprocess.TimeoutExpired):
             return False
         return done.returncode == 0
+
+    def open_pull_requests(self, repo: str) -> Optional[set]:
+        """Numbers of the open PRs; None when GitHub can't be asked."""
+        return lane_prune.open_pull_requests(repo)
 
     def notify(self, title: str, message: str) -> None:
         command = os.environ.get('SM_DISK_NOTIFY', 'osascript')
@@ -879,6 +901,37 @@ def plan_worktrees(cfg: Config, machine: Machine, trees: List[Worktree], protect
     return {c.path for c in found}
 
 
+# ---------- the lane folder (#1775) ----------
+
+def lane_live_trees(cfg: Config) -> List[Path]:
+    """The checkouts the lane builds in: this repo's checkouts and their worktrees, and the runners' workspaces.
+    Each one's warm-build folder is named by a hash of its path (lane-runner.py checkout_folder)."""
+    trees = [cfg.repo]
+    for match in sorted(glob.glob(cfg.checkout_glob)):
+        trees.append(Path(match))
+        trees += sorted(Path(match).glob('.claude/worktrees/*'))
+    for runner in runner_dirs(cfg.launch_agents):
+        trees.append(runner / '_work/spoken-margins-native/spoken-margins-native')
+    return trees
+
+
+def plan_lane(cfg: Config, machine: Machine) -> lane_prune.Plan:
+    return lane_prune.plan_prune(cfg.lane_dir, cfg.lane_evidence_dirs, lane_live_trees(cfg),
+                                 machine.open_pull_requests(cfg.repo_slug), machine.now(), cap=cfg.lane_cap_bytes)
+
+
+def prune_lane(cfg: Config, machine: Machine, log: Log) -> int:
+    """Cap the lane folder and age out its evidence. Runs every time, not only below the free-space trigger: on
+    2026-10-16 the folder grew from 10 to 23 GB in a day while nothing here was due to act. A failure here
+    never stops the rest of the run."""
+    try:
+        plan = plan_lane(cfg, machine)
+        return lane_prune.prune(plan, machine.now(), log)
+    except Exception as error:  # noqa: BLE001 - one step's fault must not stop the others
+        log(f'lane folder step failed: {error!r}')
+        return 0
+
+
 def make_plan(cfg: Config, machine: Machine) -> Plan:
     plan = Plan()
     protected = cfg.protected()
@@ -1180,6 +1233,7 @@ def clear_snapshots_overnight(cfg: Config, machine: Machine, log: Log) -> None:
 def run(cfg: Config, machine: Machine, log: Log) -> Result:
     """One scheduled run. Assumes the caller holds the run lock."""
     clear_snapshots_overnight(cfg, machine, log)
+    prune_lane(cfg, machine, log)
     free = machine.free_bytes(cfg.data_volume)
     if not should_run(free, cfg):
         return Result(reason=f'{gib(free)} free; acts below {gib(cfg.trigger_bytes)}')
@@ -1225,6 +1279,8 @@ def dry_run(cfg: Config, machine: Machine, pretend_free: Optional[int]) -> List[
                                                    'moves would make one copy, on the drive'))
     else:
         out.append(f'Mirror: {cfg.mirror} mounted, {gib(machine.free_bytes(cfg.mirror))} free')
+    out.append('Lane folder (checked on every run, whatever the free space):')
+    out += ['  ' + line for line in lane_prune.describe(plan_lane(cfg, machine))]
     plan = make_plan(cfg, machine)
     start = free if triggered else cfg.trigger_bytes
     out.append('Would act now.' if triggered else

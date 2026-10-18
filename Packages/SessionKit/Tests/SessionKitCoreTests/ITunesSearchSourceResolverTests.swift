@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import SessionKit
+import SessionKitTestInputs
 
 final class ITunesSearchSourceResolverTests: XCTestCase {
     private struct TestName: Decodable {
@@ -17,7 +18,7 @@ final class ITunesSearchSourceResolverTests: XCTestCase {
     /// B1 M2 bar: the right show first for at least 45 of the 50 committed names,
     /// replayed from recorded iTunes Search responses (no live network).
     func testRightShowFirstForAtLeast45Of50Names() throws {
-        let list = try JSONDecoder().decode(TestList.self, from: Data(contentsOf: SourceCatalogTests.path("Contracts/fixtures/podcast-search/test-names.json")))
+        let list = try JSONDecoder().decode(TestList.self, from: Data(contentsOf: TestInputs.url(.contracts, "fixtures/podcast-search/test-names.json")))
         XCTAssertEqual(list.names.count, 50)
         XCTAssertEqual(Set(list.names.map(\.query)).count, 50)
         XCTAssertGreaterThanOrEqual(list.names.filter { $0.tier == "niche" }.count, 20, "mix popular and niche")
@@ -107,6 +108,6 @@ final class ITunesSearchSourceResolverTests: XCTestCase {
             .components(separatedBy: CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789").inverted)
             .filter { !$0.isEmpty }
             .joined(separator: "-")
-        return try SourceCatalogTests.path("Contracts/fixtures/podcast-search/itunes-responses/\(slug).json")
+        return try TestInputs.url(.contracts, "fixtures/podcast-search/itunes-responses/\(slug).json")
     }
 }

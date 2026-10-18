@@ -1,5 +1,8 @@
 import Foundation
 import SessionKit
+#if canImport(AVFoundation) && os(iOS)
+import AVFoundation
+#endif
 
 /// Polls the recorder while a spoken Margin records and keeps `MarginCaptureSupervisor` informed (#937).
 ///
@@ -20,15 +23,20 @@ final class MarginCaptureWatcher {
     private var lastReported: (health: MarginCaptureSupervisor.Health, restarts: Int, keepable: Bool)?
     private let autoPoll: Bool
     private var startedAtMs = 0
+    private var lastRouteChangeAtMs: Int?
+    private var routeObserver: NSObjectProtocol?
+    private let notificationCenter: NotificationCenter
     /// Milliseconds on a clock that only moves forward. Tests replace it.
     var nowMs: () -> Int
 
     /// Tests pass `autoPoll: false` and call `tick()` themselves.
     init(
         autoPoll: Bool = true,
+        notificationCenter: NotificationCenter = .default,
         nowMs: @escaping () -> Int = { Int((ProcessInfo.processInfo.systemUptime * 1_000).rounded()) }
     ) {
         self.autoPoll = autoPoll
+        self.notificationCenter = notificationCenter
         self.nowMs = nowMs
     }
 
@@ -44,6 +52,8 @@ final class MarginCaptureWatcher {
     var capturedMs: Int { supervisor?.capturedMs ?? 0 }
     /// Milliseconds since the recording began, for the diagnostics log.
     var elapsedMs: Int { supervisor == nil ? 0 : max(0, nowMs() - startedAtMs) }
+    /// Milliseconds since the audio route last changed during this recording, nil when it has not (#1708).
+    var msSinceRouteChange: Int? { lastRouteChangeAtMs.map { max(0, nowMs() - $0) } }
     /// The final diagnostics line for this recording is written (once per recording).
     var finalRecorded = false
 
@@ -61,6 +71,8 @@ final class MarginCaptureWatcher {
         supervisor = MarginCaptureSupervisor(beganAtMs: startedAtMs)
         lastReported = nil
         finalRecorded = false
+        lastRouteChangeAtMs = nil
+        observeRouteChanges()
         tick()
         guard autoPoll else { return }
         pollTask = Task { @MainActor [weak self] in
@@ -127,9 +139,34 @@ final class MarginCaptureWatcher {
         supervisor?.interruptionVerdict(nowMs: nowMs()) ?? .saveCutShort
     }
 
+    /// The headset can answer a route change with a transport command the listener never pressed (#1708).
+    /// Called by the observer below; tests call it directly.
+    func routeChanged() {
+        guard supervisor != nil else { return }
+        lastRouteChangeAtMs = nowMs()
+    }
+
+    private func observeRouteChanges() {
+        #if canImport(AVFoundation) && os(iOS)
+        removeRouteObserver()
+        routeObserver = notificationCenter.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.routeChanged() }
+        }
+        #endif
+    }
+
+    private func removeRouteObserver() {
+        if let routeObserver { notificationCenter.removeObserver(routeObserver) }
+        routeObserver = nil
+    }
+
     func stop() {
         pollTask?.cancel()
         pollTask = nil
+        removeRouteObserver()
+        lastRouteChangeAtMs = nil
         supervisor = nil
         lastReported = nil
         reading = { nil }

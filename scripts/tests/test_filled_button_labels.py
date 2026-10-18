@@ -13,6 +13,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCES = ROOT / "App"
+# The App folder held about 370 Swift files when this floor was set (2026-10-17).
+MIN_SOURCE_FILES = 200
 TINTED = re.compile(r"\.tint\(AppColors\.(evergreen|plum)\)")
 
 
@@ -48,9 +50,17 @@ class FilledButtonLabelTests(unittest.TestCase):
 
     def test_every_filled_evergreen_or_plum_button_sets_its_label(self):
         offenders = []
+        scanned = 0
+        filled_buttons = 0
         for path in sorted(SOURCES.rglob("*.swift")):
-            for line in unlabelled_filled_buttons(path.read_text(encoding="utf-8")):
+            text = path.read_text(encoding="utf-8")
+            scanned += 1
+            filled_buttons += text.count(".buttonStyle(.borderedProminent)")
+            for line in unlabelled_filled_buttons(text):
                 offenders.append(f"{path.relative_to(ROOT)}:{line}")
+        # A scan that visited nothing finds nothing (#1905): prove it read the app and saw a filled button.
+        self.assertGreaterEqual(scanned, MIN_SOURCE_FILES, f"scanned only {scanned} Swift files under {SOURCES}")
+        self.assertGreater(filled_buttons, 0, "no borderedProminent button was seen; has the scan lost the app's views?")
         self.assertEqual(offenders, [], "use .filledActionButton() so the label is onEvergreen")
 
 

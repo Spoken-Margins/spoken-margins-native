@@ -16,6 +16,8 @@ SOURCES = [
     ROOT / "App" / "SpokenMarginsApp" / "Sources",
     ROOT / "Packages" / "SessionKit" / "Sources",
 ]
+# The two source folders held about 600 Swift files when this floor was set (2026-10-17).
+MIN_SOURCE_FILES = 300
 HOOK = re.compile(r'--ui-testing|SPOKEN_MARGINS_UI_TEST')
 
 
@@ -67,10 +69,15 @@ class UITestingHooksDebugOnlyTests(unittest.TestCase):
 
     def test_no_app_source_names_a_hook_outside_debug(self):
         offenders = []
+        scanned = []
         for folder in SOURCES:
             for path in sorted(folder.rglob("*.swift")):
+                scanned.append(path)
                 for number in hook_lines_outside_debug(path.read_text(encoding="utf-8")):
                     offenders.append(f"{path.relative_to(ROOT)}:{number}")
+        # A scan that visited nothing finds nothing (#1905): prove it read the sources it guards.
+        self.assertGreaterEqual(len(scanned), MIN_SOURCE_FILES, f"scanned only {len(scanned)} Swift files; are {SOURCES} still the app's sources?")
+        self.assertTrue(any(path.name == "UITestingHooks.swift" for path in scanned), "the file that holds the hooks was not scanned")
         self.assertEqual(offenders, [], "UI-test hook literals outside #if DEBUG")
 
 

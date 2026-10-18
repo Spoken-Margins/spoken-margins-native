@@ -25,7 +25,6 @@ final class ReviewReturnPlaceTests: XCTestCase {
         let place = try XCTUnwrap(ReviewReturnPlace(sequence: review()))
         XCTAssertEqual(place.itemId, "ep")
         XCTAssertEqual(place.returnToMediaTimeMs, 12_000)
-        XCTAssertFalse(place.keptForRecording)
     }
 
     func testAMomentThatIsNotAReviewOrHasNoPlaceOwesNothing() {
@@ -62,12 +61,11 @@ final class ReviewReturnPlaceTests: XCTestCase {
         }
     }
 
-    func testKeepingForRecordingSurvivesALaunchAndClearingForgetsIt() throws {
+    func testClearingAPlaceForgetsItAndLeavesNothingBehind() throws {
         try withIsolatedDefaults { defaults in
             let places = ReviewReturnPlaces(defaults: defaults)
             places.owe(try XCTUnwrap(ReviewReturnPlace(sequence: review())))
-            places.keepForRecording(itemId: "ep")
-            XCTAssertEqual(ReviewReturnPlaces(defaults: defaults).owed(itemId: "ep")?.keptForRecording, true)
+            XCTAssertNotNil(ReviewReturnPlaces(defaults: defaults).owed(itemId: "ep"))
             places.clear(itemId: "ep")
             XCTAssertNil(ReviewReturnPlaces(defaults: defaults).owed(itemId: "ep"))
             XCTAssertNil(defaults.data(forKey: "spokenmargins.reviewReturnPlaces"), "nothing left behind")
@@ -88,10 +86,10 @@ final class ReviewReturnPlaceTests: XCTestCase {
         }
     }
 
-    func testKeepingAnItemThatOwesNothingChangesNothing() {
+    func testClearingAnItemThatOwesNothingChangesNothing() {
         withIsolatedDefaults { defaults in
             let places = ReviewReturnPlaces(defaults: defaults)
-            places.keepForRecording(itemId: "ep")
+            places.clear(itemId: "ep")
             XCTAssertNil(places.owed(itemId: "ep"))
             XCTAssertNil(defaults.data(forKey: "spokenmargins.reviewReturnPlaces"))
         }
@@ -101,10 +99,8 @@ final class ReviewReturnPlaceTests: XCTestCase {
         try withIsolatedDefaults { defaults in
             let places = ReviewReturnPlaces(defaults: defaults)
             places.owe(try XCTUnwrap(ReviewReturnPlace(sequence: review(returnTo: 12_000))))
-            places.keepForRecording(itemId: "ep")
             places.owe(try XCTUnwrap(ReviewReturnPlace(sequence: review(returnTo: 3_000))))
             XCTAssertEqual(places.owed(itemId: "ep")?.returnToMediaTimeMs, 3_000)
-            XCTAssertEqual(places.owed(itemId: "ep")?.keptForRecording, false)
         }
     }
 

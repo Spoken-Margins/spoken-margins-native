@@ -3,6 +3,7 @@ import SQLite3
 import XCTest
 @testable import SessionKit
 import SessionKitPersistence
+import SessionKitTestInputs
 
 /// #489: named collections of Library items, stored without changing the database Build 29 opens.
 final class ItemCollectionStoreTests: XCTestCase {
@@ -76,7 +77,8 @@ final class ItemCollectionStoreTests: XCTestCase {
         XCTAssertEqual(SQLiteSessionStore.currentSchemaVersion, 5)
         // The version number alone would pass a new column or index. The tables and indexes must be
         // exactly what Build 29 wrote (#1048), read from a database its own code created.
-        XCTAssertEqual(try Self.schemaObjects(atPath: path), try Self.build29SchemaObjects(),
+        let build29Schema = try Self.build29SchemaObjects()
+        XCTAssertEqual(try Self.schemaObjects(atPath: path), build29Schema,
                        "collections add no table, column or index")
         XCTAssertEqual(existingReads(store), before)
         XCTAssertEqual(before.count, 45, "every load API the store had before collections")
@@ -199,15 +201,10 @@ final class ItemCollectionStoreTests: XCTestCase {
     /// The schema of Contracts/fixtures/persistence/build29.sqlite, written by Build 29's own code.
     /// Read from a copy, so opening it leaves no WAL files in the checkout.
     private static func build29SchemaObjects() throws -> [String] {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while !FileManager.default.fileExists(atPath: root.appendingPathComponent("Contracts").path) {
-            let parent = root.deletingLastPathComponent()
-            guard parent != root else { throw NSError(domain: "ItemCollectionStoreTests", code: 3) }
-            root = parent
-        }
+        let fixture = try TestInputs.url(.contracts, "fixtures/persistence/build29.sqlite")
         let copy = FileManager.default.temporaryDirectory.appending(path: "build29-schema-\(UUID().uuidString).sqlite")
         defer { try? FileManager.default.removeItem(at: copy) }
-        try FileManager.default.copyItem(at: root.appendingPathComponent("Contracts/fixtures/persistence/build29.sqlite"), to: copy)
+        try FileManager.default.copyItem(at: fixture, to: copy)
         return try schemaObjects(atPath: copy.path)
     }
 

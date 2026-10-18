@@ -350,14 +350,7 @@ struct CatalogDrawerView: View {
     private func subjectChip(id: String?, title: String) -> some View {
         let isSelected = drawer.selectedSubject == id
         return Button { drawer.selectedSubject = id } label: {
-            HStack(spacing: 4) {
-                if isSelected { Image(systemName: "checkmark").font(.caption.weight(.bold)) }
-                Text(title).font(.subheadline.weight(isSelected ? .semibold : .regular))
-            }
-            .padding(.horizontal, 12)
-            .frame(minHeight: 36)
-            .background(isSelected ? AppColors.evergreen.opacity(0.16) : AppColors.panel, in: Capsule())
-            .overlay { Capsule().stroke(isSelected ? AppColors.evergreen : AppColors.border) }
+            CatalogSubjectChipLabel(title: title, isSelected: isSelected)
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -527,5 +520,23 @@ private struct CatalogSearchResultRow: View {
                 .accessibilityLabel("Follow \(show.title)")
                 .accessibilityIdentifier("catalog.search.follow.\(show.id)")
         }
+    }
+}
+
+/// A subject chip in the podcast list: a 36 pt capsule inside a 44 pt hit area (#151).
+struct CatalogSubjectChipLabel: View {
+    let title: String
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if isSelected { Image(systemName: "checkmark").font(.caption.weight(.bold)) }
+            Text(title).font(.subheadline.weight(isSelected ? .semibold : .regular))
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 36)
+        .background(isSelected ? AppColors.evergreen.opacity(0.16) : AppColors.panel, in: Capsule())
+        .overlay { Capsule().stroke(isSelected ? AppColors.evergreen : AppColors.border) }
+        .minimumTapTarget()
     }
 }

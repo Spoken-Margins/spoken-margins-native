@@ -122,13 +122,14 @@ public struct FeedEntry: Codable, Equatable, Sendable, Identifiable {
     }
 
     /// Fills the episode identity an item added from this entry is missing: the GUID, the followed
-    /// show's title and the publish date. Values the item already has are kept.
+    /// show's title, the publish date and the feed's description. Values the item already has are kept.
     public func fillEpisodeIdentity(of item: inout Item, showTitle: String?) {
         if item.episodeGUID == nil { item.episodeGUID = Self.nonEmpty(episodeGUID) }
         if item.showTitle == nil { item.showTitle = Self.nonEmpty(showTitle) }
         if item.publishedAt == nil, let publishedAt {
             item.publishedAt = ISO8601DateFormatter().string(from: publishedAt)
         }
+        if item.descriptionText == nil { item.descriptionText = ItemMetadata.plainDescription(from: summary) }
     }
 
     private static func nonEmpty(_ value: String?) -> String? {

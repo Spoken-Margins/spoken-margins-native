@@ -15,6 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import sm_disk_relief as d  # noqa: E402
+import sm_lane_prune as lane_prune  # noqa: E402
 
 MiB = 1024 ** 2
 # The fake clock and expected offload folders must agree after October 1 too.
@@ -50,8 +51,9 @@ class FakeMachine(d.Machine):
 
     def __init__(self, cfg: d.Config, base_free: int, procs=None, mounted=None, drive_free=None,
                  live_pids=(), copy=None, frozen_free=False, now=NOW, snapshots=(), backup=False,
-                 undeletable=()):
+                 undeletable=(), open_prs=None):
         self.cfg = cfg
+        self.open_prs = open_prs
         self.base_free = base_free
         self.initial_used = d.tree_stats(cfg.home).disk_bytes
         self.procs = procs or []
@@ -69,6 +71,9 @@ class FakeMachine(d.Machine):
 
     def now(self):
         return self.clock
+
+    def open_pull_requests(self, repo):
+        return self.open_prs
 
     def snapshot_dates(self, volume):
         return list(self.snapshots)
@@ -133,6 +138,7 @@ class Base(unittest.TestCase):
             claude_sessions=home / '.claude/sessions',
             tmp_root=home / 'tmp',
             own_session=None,
+            lane_dir=home / 'Library/Caches/SpokenMarginsLane',
             trigger_bytes=100 * MiB,
             target_bytes=104 * MiB,
         )
@@ -752,3 +758,77 @@ class TmpFolders(Base):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class LaneFolder(Base):
+    """#1775: the lane folder is capped and its evidence aged out on every run, whatever the free space.
+    The folder rules have their own tests (test_sm_lane_prune.py); these check the job runs them."""
+
+    def lane_fixture(self):
+        lane = self.cfg.lane_dir
+        runner = self.cfg.home / 'runner/_work/spoken-margins-native/spoken-margins-native'
+        (self.cfg.launch_agents).mkdir(parents=True, exist_ok=True)
+        (self.cfg.launch_agents / 'actions.runner.test.plist').write_bytes(plistlib.dumps(
+            {'Label': 'actions.runner.test', 'WorkingDirectory': str(self.cfg.home / 'runner'),
+             'ProgramArguments': [str(self.cfg.home / 'runner/runsvc.sh')]}))
+        checkout = lane / 'warm-build' / lane_prune.checkout_folder(runner)
+        self.newest = checkout / 'sk-new'
+        self.spare = checkout / 'sk-spare'
+        self.gone = lane / 'warm-build' / lane_prune.checkout_folder(self.cfg.home / 'deleted-runner') / 'sk-x'
+        for cache, age in ((self.newest, DAY), (self.spare, 3 * DAY), (self.gone, 3 * DAY)):
+            write(cache / 'Build/blob', 3 * MiB)
+            age_tree(cache, age)
+            age_tree(cache.parent, age)
+        self.old = write(lane / 'evidence/pr1-r1/report.md', MiB).parent
+        self.fresh = write(lane / 'evidence/pr2-r2/report.md', MiB).parent
+        self.open_old = write(lane / 'evidence/pr3-r3/report.md', MiB).parent
+        self.old_artifacts = write(self.cfg.repo / 'artifacts/lane/pr4-r4/report.md', MiB).parent
+        age_tree(self.old, 9 * DAY)
+        age_tree(self.fresh, 2 * DAY)
+        age_tree(self.open_old, 40 * DAY)
+        age_tree(self.old_artifacts, 9 * DAY)
+        self.state = write(lane / 'step-ledger.json', 100, age=60 * DAY)
+
+    def test_with_plenty_of_free_space_old_evidence_and_dead_checkouts_still_go(self):
+        self.lane_fixture()
+        m = FakeMachine(self.cfg, base_free=500 * MiB, open_prs={3})
+        d.run(self.cfg, m, self.log)
+        for gone in (self.old, self.old_artifacts, self.gone):
+            self.assertFalse(gone.exists(), gone)
+        for kept in (self.fresh, self.open_old, self.newest, self.spare, self.state):
+            self.assertTrue(kept.exists(), kept)
+        self.assertTrue(any(line.startswith('lane evidence') for line in self.log.lines), self.log.lines)
+
+    def test_over_the_cap_idle_warm_caches_go_with_plenty_of_free_space(self):
+        self.lane_fixture()
+        self.cfg.lane_cap_bytes = 3 * MiB + MiB // 2
+        m = FakeMachine(self.cfg, base_free=500 * MiB, open_prs={3})
+        d.run(self.cfg, m, self.log)
+        self.assertFalse(self.spare.exists())
+        self.assertTrue(self.newest.exists(), 'the newest cache of a live checkout stays')
+
+    def test_dry_run_lists_the_lane_step_and_changes_nothing(self):
+        self.lane_fixture()
+        m = FakeMachine(self.cfg, base_free=500 * MiB, open_prs={3})
+        text = '\n'.join(d.dry_run(self.cfg, m, None))
+        self.assertIn('Lane folder', text)
+        self.assertIn(str(self.old), text)
+        self.assertTrue(self.old.exists() and self.gone.exists())
+
+    def test_a_fault_in_the_lane_step_does_not_stop_the_rest(self):
+        _, (w,) = self.make_repo('a')
+        c = self.cache(w, MiB)
+        m = FakeMachine(self.cfg, base_free=10 * MiB)
+
+        def broken(repo):
+            raise RuntimeError('gh exploded')
+        m.open_pull_requests = broken
+        result = d.run(self.cfg, m, self.log)
+        self.assertTrue(result.acted)
+        self.assertFalse(c.exists())
+        self.assertTrue(any('lane folder step failed' in line for line in self.log.lines), self.log.lines)
+
+    def test_the_default_cap_is_one_documented_number(self):
+        self.assertEqual(d.Config().lane_cap_bytes, 16 * d.GiB)
+        doc = (Path(__file__).resolve().parents[2] / 'docs/workstreams/test-lane.md').read_text()
+        self.assertIn('16 GiB', doc)

@@ -40,7 +40,7 @@ Scripted journeys are UI tests in `App/SpokenMarginsAppUITests/` that each follo
 
 - **Where they run.** Only in the integration run on `next`'s merged tip, never as a per-PR gate. Per PR, a script only has to compile: `scripts/test-scope.py` puts `App/SpokenMarginsAppUITests/` at T2 and never adds its classes to a T3 request.
 - **Who writes them.** A thread that changes a listener's flow may add or update the script for the journey it affects, and names that journey in the PR.
-- **Probation.** `TestPlans/scripted-journeys.json` is the one list the integration run reads. A new or changed script goes under `probation` in the same PR. It runs and is reported, but can't turn the integration run red. The Test Desk moves it to `gating` after seeing it pass twice on the simulator, and moves a gating script that flakes twice back to `probation`. `scripts/test_inventory.py` rejects an entry that names no real UI test or no journey.
+- **Probation.** `TestPlans/scripted-journeys.json` is the one list the integration run reads. A new or changed script goes under `probation` in the same PR. It runs and is reported, but can't turn the integration run red. The integration script counts each script's passes and bad runs in its state file and names the scripts that are due in its report (`journeys due to move:`); `ops/testdesk/journey_promotion.py --apply` then moves them in the listing, and the Test Desk opens that PR into next. A script moves to `gating` after two passing runs in a row, and back to `probation` after two bad runs in a row. `scripts/test_inventory.py` rejects an entry that names no real UI test or no journey.
 - **What they don't cover.** Audible content, the Lock Screen, Bluetooth, and anything that only looks wrong. Agent-driven journeys and the owner's phone keep those.
 - **How this differs from the retired plans.** `--plan ui`, `speech-canary` and `release` ran a broad route suite as a gate and stay retired (`AGENTS.md`). Scripted journeys are one short script per journey, each earning its place on probation.
 
@@ -60,7 +60,7 @@ A week after the first script gates, the desk's daily hand-off on #184 counts tw
 - **Order.** Gate streams (A2 `seams`, anything blocking others) first, then oldest request first.
 - **Evidence stays local.** Screenshots and logs go under `artifacts/lane/<request-id>/` (git-ignored). The request id is `pr<PR>-r<run id>`, plus `-a<N>` when a job is re-run, so a re-run never reuses a folder. The PR comment carries the observations and file paths, not images.
 
-Note for whoever builds the Test Desk: Claude Desktop's iOS Simulator pane currently doesn't work with Xcode 27 ([docs](https://code.claude.com/docs/en/desktop-ios-simulator)). This repo builds with Xcode 27, so drive the simulator through computer use from the CLI, as the journeys do today, until the pane supports Xcode 27.
+The Test Desk drives the simulator with the iOS simulator tool (`mcp__Claude_Code_iOS_Simulator__control`), never with computer use, Device Hub or Simulator.app; it works with this repo's Xcode 27 (Build 34 baseline, 2026-10-16). Each journey runs in a helper agent of its own: see the journey skill, Driving.
 
 ## Guard rails (deterministic, not advisory)
 
@@ -124,7 +124,10 @@ ran: J1 (pass), J7 (fail at step 1)
 J7 step 1 — expected: "Downloaded on…" stamp not read. observed: transcript shows it in paragraph 1 of page 2. evidence: artifacts/lane/<id>/j7-step1.png
 crashes: none | 1 isolated SpringBoard crash (noted, continued)
 not verified: audible content (owner), Lock Screen (owner)
+tokens: J1 41k (9 screenshots), J7 38k (12) · desk 95k at the end
 ```
+
+The `tokens:` line gives each journey's helper `subagent_tokens` (from the Agent tool's usage line) and its screenshot count, and the lead desk's context when it posts, so the cost per journey can be compared across desks.
 
 `INCONCLUSIVE` is not a pass: no simulator available, XCTest never connected, a flood stopped the run. Say which.
 
@@ -155,13 +158,21 @@ When next's tip has no integration report on #184, run one job on that tip, in t
    TestPlans/scripted-journeys.json (gating, then probation). They launch with --ui-testing,
    which resets the app's library, so they run before step 3 builds the journey library. A
    probation failure goes in the report but doesn't make it FAIL. Move a script to gating
-   after two passes, and back to probation after two flakes, in a PR into next. Run them
+   after two passes, and back to probation after two bad runs, in a PR into next
+   (ops/testdesk/journey_promotion.py). Run them
    with scripts/verify-tests.py --plan journeys --device <udid>; its manifest's gating and
    probation maps give each script's result.
 3. Then the journeys in docs/journeys.md. Finish the app tests' device with --done and take one
    again first (it comes back erased, because the app tests wrote to its app data), and build a library shaped like the owner's and upgraded
    from Build 29 (lane-build29) before installing the candidate over it. Post
    "Lane report journeys-<sha7> — …" on #184.
+How to run journeys: you are the lead. Build or reuse the app once, take the pool device and
+install once, then give each journey to one helper agent (Agent tool, one at a time) with its
+steps, the UDID and the app path; it answers in about 150 words. Drive with the iOS simulator
+tool only, never computer use, Device Hub or Simulator.app. Screenshots at half scale, zoom
+only for small text, full size only as FAIL evidence, about 15 per journey. The brief and the
+budget are in the journey skill (Driving, Screenshot budget). Send verify-tests.py and
+desk-batch.py output to files and read back only counts. Each report carries a tokens: line.
 A tip that lands mid-job waits for the next job. If the understudy has already posted the
 integration report for a tip, start that tip at step 2.
 
@@ -256,6 +267,17 @@ Simulators:
   wait until the watcher has exited (`ps -p $(cat ~/Library/Caches/SpokenMarginsLane/watch-<udid>.pid)` lists no
   process; the file stays behind, so don't wait for it to go), and the next --pool deletes it. A device that only fails
   to erase stays in the pool and is passed over; the helper prints STOP only when no pool device will erase, so report that on #184.
+- **One fresh device after a boot stall (#1802).** A boot stall is SpringBoard restarting or vanishing while the
+  device boots, with no crash report. From 10-09 to 10-16 it caused 26 of 45 INCONCLUSIVE integration runs and 22 of
+  42 INCONCLUSIVE T3s, on fresh devices too (#1389). `lane_sim.boot_with_retry` marks the stalled device unsafe,
+  deletes it, and boots one fresh device in its place: a new clone for the runner's T3, a new Test Runner for
+  `verify-tests.py`, another pool device for `--pool`, a new device for `--fresh`. A device named on the command
+  line (`lane-sim-boot <udid>`, `verify-tests.py --device`) gets no retry. A second stall, a failed `simctl boot`,
+  a crash report and a timeout all stop as before. Before a retry the lane waits 150 s for late crash reports; one
+  naming the stalled device means a possible crash flood, and nothing is retried. The retry happens before any app
+  is installed or test runs, so it can't hide an app failure; the report names the retry and the replaced device.
+  Each stall is logged on #1802: the runner posts it after its report, with the link and verdict; the other
+  callers post it from `lane_sim.py`.
 - The old standing device, "SM Lane Desk erase-approval" (1330F268-5467-4421-9D55-1FCC3FF5CF8A),
   stays retired: never boot, erase or reuse it. Stay on iOS 26.5: iOS 27's Apple Intelligence
   services crash-flood on this Mac (#184). `--fresh` still makes a one-off device, for work that
@@ -296,7 +318,7 @@ going. Stop only for owner data, the phone, money, anything public, main or rele
 
 ## Batching T4 requests
 
-`scripts/desk-batch.py` (#1557) turns the unanswered `/lane T4` requests into work lists sized for one desk session. Each desk of 2026-10-13 got through one to three checks before the 250k-token line, mostly because a screenshot costs about 2.5k tokens and the simulator lags enough to need two a step. A desk that starts from a sized list on one build spends its context on checks, not on choosing them.
+`scripts/desk-batch.py` (#1557) turns the unanswered `/lane T4` requests into work lists sized for one desk session. Each desk of 2026-10-13 got through one to three checks before the 250k-token line, mostly because a screenshot costs about 2.5k tokens and the simulator lags enough to need two a step. A desk that starts from a sized list on one build spends its context on checks, not on choosing them. Since 2026-10-16 each check's journeys run in helper agents (journey skill, Driving), so the screenshots no longer pile up in the desk's own context; batch sizes were set before that and may be raised once desks report their `tokens:` lines.
 
 ```bash
 scripts/desk-batch.py            # prints GO or STOP; on GO writes the first batch to ~/SpokenMarginsOps/desk-batches/
@@ -317,7 +339,7 @@ scripts/desk-batch.py --json     # the whole plan, writes nothing
   - During a HALT (usage breaker: Claude) the GO line is information only: start nothing until RESUMED.
   ```
 
-  The tick reports; it doesn't start a desk. The desk drives the simulator with computer use from the desktop app, which a scheduled task can't open. The open step is who turns a GO line into a running desk: the coordinator's hourly dispatch (a managed desk, as on 2026-10-13) is the natural fit, and needs a line in the project instructions that only the owner can change. Until then the owner starts a desk from `latest.md` in `~/SpokenMarginsOps/desk-batches/`.
+  The tick reports; it doesn't start a desk. The desk drives the simulator with the desktop app's iOS simulator tool, which a scheduled task can't use. The open step is who turns a GO line into a running desk: the coordinator's hourly dispatch (a managed desk, as on 2026-10-13) is the natural fit, and needs a line in the project instructions that only the owner can change. Until then the owner starts a desk from `latest.md` in `~/SpokenMarginsOps/desk-batches/`.
 - **After the batch.** The desk posts one report per check on its PR, which takes it off the list. When its context runs short it stops between checks and posts a hand-off on #184; the next run of the script lists what is left, so nothing is passed along by hand.
 - **Cost.** No model tokens, and no state. About 60 `gh api` reads for the ten-day window. If a batch keeps going with one check, or desks still run out before finishing a batch, change the step budget.
 
@@ -347,6 +369,12 @@ Three self-hosted GitHub Actions runners on the owner's Mac (the third after the
 - **Remove one:** `./svc.sh uninstall`, then `./config.sh remove --token <token>`. Get the token from `gh api -X POST repos/uncomposed/spoken-margins-native/actions/runners/remove-token --jq .token`.
 - **Runner simulators.** A T3 job creates its own `SM Lane Runner <run>` device and locks that name in the lane state folder until it deletes the device. Every job first sweeps leftover runner devices but skips a locked one, so one runner's sweep can't delete the other's live T3 device (#440, #411). A crashed job's lock ends with its process, so its leftover is swept. If a plan's device disappears or its readiness step fails, the run stops there and reports INCONCLUSIVE as a lane fault, not FAIL.
 - **Evidence:** each job writes to `SM_LANE_EVIDENCE_DIR`, which is `artifacts/lane/<request-id>/` in the owner's main checkout.
+- **Lane folder cap (#1775).** `~/Library/Caches/SpokenMarginsLane/` as a whole (warm builds, compilation cache, evidence and state) is held to **16 GiB**. On 2026-10-16 it grew from 10 GB to 23 GB in a working day, 6.2 GB of it evidence that nothing pruned, while the Mac's free disk fell from 73 GB to 31 GB, near the 20 GiB at which the Mac finisher pauses. `ops/disk/sm_lane_prune.py` enforces it; the disk relief job runs it on every run (every 15 minutes), whatever the free space, and the lane runner runs it before each T2 or T3 build (`prune_lane_folder`; one directory walk, never fails the job), which is what reaches `artifacts/lane/`. Its rules:
+  - **Evidence** (`pr<PR>-r<run>[-a<N>][-auto]`, in `evidence/` and in `artifacts/lane/`) is deleted 7 days after it last changed. The latest run of each open PR (every attempt and its `-auto` run) is kept whatever its age, found with `gh pr list`. When GitHub can't be asked, the latest run of any PR seen in 30 days is kept. A folder not named like a lane request (a Test Desk or journey folder with a free-form id) has no PR to keep it, so it goes after 7 days too. Nothing changed in the last hour is touched. `artifacts/lane/` is in `~/Documents`, which the disk relief job can't read (no Full Disk Access): there it skips and logs, and the lane runner's run prunes it.
+  - **Warm builds** are evicted, oldest first, across all `checkout-*` folders, only while the folder is over the cap. The newest cache of each checkout stays, and a cache a job holds (its `.lock` flock, the test `_cache_busy` uses) is never touched; the prune holds that lock while it deletes. A `checkout-*` folder that no checkout, worktree or runner workspace on the Mac maps to is removed once every cache in it is idle and the folder has gone a day untouched.
+  - **Still over the cap**, the oldest evidence in the lane folder goes next (never an open PR's latest run). What is left is the compilation cache (Xcode bounds it, about 6 GB), state, busy caches and one cache per checkout; the log says so.
+  - **Never touched:** the state files (slot locks, `step-ledger.json`, `unsafe-simulators.json`, `desk-simulator-pool.json`, `guard.log`, `inherited-holds.json`, `boot-events.log`) and `compilation-cache/`.
+  - Check what it would do with `python3 ops/disk/sm_lane_prune.py --dry-run`. The disk relief log (`~/SpokenMarginsOps/disk-relief/log.txt`) shows each deletion and the folder's size before. **Waste signal:** the prune deletes nothing for 14 days, or the folder's peak stays under 8 GiB for 14 days (the cap is set too high to matter). **Too tight:** more "build folders: cold" lines in lane reports after it.
 - **Git LFS:** both jobs check out with `lfs: true`, because the Supertonic models are LFS files and the contracts check reads them. The LFS cache is in the workspace's `.git`, so each runner downloads the models once.
 - **Warm build folders.** A T2 or T3 job links the tree's `.build` and `Packages/SessionKit/.build` to `~/Library/Caches/SpokenMarginsLane/warm-build/checkout-<checkout path hash>/sk-<SessionKit tree hash>-<project file hash>/`.
   - Automerge jobs keep no cache (#1207). They build no app, and their host tests' SwiftPM build of SessionKit (1.3 GB) stays in the workspace and is emptied when the job ends. A warm SwiftPM cache saved about 50 s of a 5-minute run on the 48% of runs that hit one (medians from 460 automerge reports, 2026-10-10), and four per build runner held about 9 GB. Each automerge job removes its own runner's idle caches that hold no app build (no `root/dd-*`, nothing in `root/verification`); a T2 or T3 cache, a busy one, and another runner's folder stay.
@@ -354,7 +382,7 @@ Three self-hosted GitHub Actions runners on the owner's Mac (the third after the
   - Each runner has its own caches. DerivedData and SwiftPM's state record absolute paths, and a cache shared by the two original runners lost Xcode's VFS overlay and the onnxruntime binary (#405).
   - A cache whose SwiftPM state lists a binary artifact that isn't on disk is emptied, and the job builds cold. Its report says which artifact was missing.
   - The T2 simulator and device builds each have their own DerivedData (`.build/dd-simulator`, `.build/dd-device`). When they shared one, the warm simulator build after a device build failed on a missing `all-product-headers.yaml` (#405).
-  - At most four caches are kept per runner (#863), with idle caches evicted first. Below 15 GB of free disk idle caches are cleared; if that cannot restore the floor, the job builds cold and its report says so. Caches in use stay locked and are never evicted, even when that leaves more than four.
+  - At most four caches are kept per runner (#863), with idle caches evicted first. Below 25 GB of free disk (above the 20 GiB at which the Mac finisher pauses and the build runner waits, #1775) idle caches are cleared; if that cannot restore the floor, the job builds cold and its report says so. Caches in use stay locked and are never evicted, even when that leaves more than four.
   - If a build error disappears on a cold rebuild, delete `warm-build/` while no job runs.
 - **Compilation cache (#1331).** Every `verify-tests.py` app build (T3, the integration run, the Test Desk) turns on Xcode's compilation cache, stored in `~/Library/Caches/SpokenMarginsLane/compilation-cache/` and shared by every checkout on the Mac. A prefix map turns the tree's own path into `/^tree`, so one checkout's results serve another. So test failures print `/^tree/App/…/X.swift:25`, not the absolute path. Xcode holds the store under about twice `COMPILATION_CACHE_LIMIT` (3G). Measured 2026-10-12 on the lane Mac: a cold simulator build-for-testing took 57-73 s; with the cache, 46 s after a one-line SessionKit edit, 39 s after an app-only edit, 18-25 s with no change. If a build error looks stale (code that is already fixed still fails), delete `compilation-cache/` while no job runs and run again.
 - **The app test host launches but never reaches XCTest (#705, #1161).** On some runs the app plan or the adapters plan launches `SpokenMarginsApp` and then nothing runs: no `Test Suite` line, 0 tests, and Xcode ends with "The test runner hung before establishing connection" (exit 65 after about 5.5 minutes) or the step runs out of its budget (exit 124). Healthy runs print their first `Test Suite` line about 7 seconds after launch. It is not the PR's code: the same head passes on a rerun.
@@ -374,7 +402,7 @@ Three self-hosted GitHub Actions runners on the owner's Mac (the third after the
   - A report counts only if its "(tested merged with next at `<sha7>`)" names `next`, not a `lane-check/**` base, at a commit containing the lane change. A stopped-job note carries the same words when the job had fetched its base before it stopped; one without them doesn't count.
   - Only once per lane change, and never a merge that didn't touch lane paths or that is itself a revert of a lane change. A revert is recognized by git's "This reverts commit `<sha>`" line in the merge's own commits, naming a lane change already on `next`, not by the PR title. A revert that doesn't apply cleanly is posted on #337 ("Lane auto-revert failed:") and left for a person.
   - It can't catch a lane change that stops the runner before the check runs (a broken `lane.yml`, or a `lane-runner.py` that doesn't start): no job reports, so nothing triggers it. The Mac tick on #337 is the watch for that.
-- **Mac-wide state** is in `~/Library/Caches/SpokenMarginsLane/`: the slot locks, `boot-events.log`, `unsafe-simulators.json`, `desk-simulator-pool.json` (the Test Desk's pool, #688), and the lane guard's `guard.log`. The guard hook is `~/.claude/hooks/spoken-margins-lane-guard.py`; reinstall it with `scripts/install-lane-guard.py`, and use `--check` to see drift.
+- **Mac-wide state** is in `~/Library/Caches/SpokenMarginsLane/`: the slot locks, `boot-events.log`, `unsafe-simulators.json`, `desk-simulator-pool.json` (the Test Desk's pool, #688), and the lane guard's `guard.log`; the folder as a whole is capped (see "Lane folder cap" above). The guard hook is `~/.claude/hooks/spoken-margins-lane-guard.py`; reinstall it with `scripts/install-lane-guard.py`, and use `--check` to see drift.
 
 ## What the owner sees
 

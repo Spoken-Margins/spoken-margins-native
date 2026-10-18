@@ -1592,52 +1592,22 @@ final class SupertonicSpeechTests: XCTestCase {
         return url
     }
 
-    /// The guard's stand-in is real iOS speech synthesis. After an 8.5-minute simulator boot, two
-    /// tests that allowed 8 and 10 s for the whole play failed, while the two guard tests that
-    /// simply await the render passed in the same run (#417): synthesis was slow, not wrong. Wait
-    /// for the guard's own report instead, for longer than the synthesizer's 30 s limit, and check
-    /// that it stood in, so a failure says which of the two happened. The client's own render wait
-    /// must outlast that too, or after 15 s it hands the play to its fallback and drops the stand-in.
+    /// The client's render wait for a stand-in chunk. These tests used to wait on real iOS speech
+    /// synthesis (#417), so it outlasts the synthesizer's 30 s limit; with `copyStandIn` it is spare.
     private let standInRenderWaitLimit: Duration = .seconds(60)
 
-    /// #1230: on the lane, the first iOS-voice write in a fresh simulator waited on Apple's speech
-    /// service for 30 s to over 3 minutes. A spindump showed `AVSpeechSynthesizer.write` blocked on
-    /// a semaphore inside TextToSpeech while `axassetsd` loaded the synthesis provider. That is the
-    /// simulator starting its speech service, not what these tests check, and it always landed on
-    /// whichever stand-in test ran first. So each stand-in test first waits, once per run, for one
-    /// write to finish, with the longest allowance the plan permits (180 s).
-    ///
-    /// #1622: the wait used to fail the test at 100 s, and 2 of 14 lane runs landed just past it
-    /// (the others ran 0.9 to 98 s) while every later stand-in case passed: the service did start,
-    /// only late. Now only a write that errors fails here. A write still waiting after
-    /// `iOSVoiceWarmUpWait` is noted and left running; the writes are serial, so the test's own
-    /// renders queue behind it with 30 s timeouts each, and a service that never starts fails that
-    /// test and every later stand-in test with their "guard never reported" messages. Cost: such a
-    /// failure now names the stand-in test, not the warm-up, so the timeout note goes in the first
-    /// test's log and activity list.
-    /// The wait leaves 60 s of the first test's 180 s for its own renders and waits.
-    private let iOSVoiceWarmUpWait: TimeInterval = 120
-
-    private func warmUpTheIOSVoice() async throws {
-        guard await IOSVoiceWarmUp.shared.claimAttempt() else { return }
-        executionTimeAllowance = 180
-        let root = FileManager.default.temporaryDirectory.appending(path: "warm-up-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let started = Date()
-        do {
-            _ = try await SystemVoiceChunkRenderer().render(
-                text: "The iOS voice is ready.", voiceIdentifier: nil,
-                matching: try guardTemplate(root), to: root.appending(path: "warm-up.wav"), timeout: iOSVoiceWarmUpWait
-            )
-            print("#1230 iOS voice warm-up took \(Date().timeIntervalSince(started)) s")
-        } catch SystemVoiceChunkRenderer.Failure.timedOut {
-            let note = "#1622 the simulator's speech service had not finished a first iOS-voice write in \(Int(iOSVoiceWarmUpWait)) s; the stand-in renders decide whether it ever starts"
-            print(note)
-            XCTContext.runActivity(named: note) { _ in }
-        } catch {
-            XCTFail("the simulator's speech service failed its first iOS-voice write: \(error)")
-        }
+    /// #1688: the guard tests check which file the guard keeps, caches, assembles and deletes, not
+    /// Apple's synthesis. They used real iOS speech, and on a freshly cloned lane simulator the
+    /// first voice lookup or write waited 2 to 6 minutes behind the simulator's background-task
+    /// daemon (`dasd`) settling after boot. Waiting longer (#1230, #1623, #1689) and naming a
+    /// built-in voice (#1694) did not help, and the same head passed and failed. So the guard is
+    /// given a stand-in that copies the Supertonic chunk, already in its format. Real synthesis is
+    /// covered by `SystemVoiceSessionTests` (which skips a stalled runtime, #768) and on the host by
+    /// `SystemVoiceChunkRendererTests`.
+    private let copyStandIn: SupertonicOutputGuard.StandInRender = { _, _, reference, output in
+        try FileManager.default.copyItem(at: reference, to: output)
+        let file = try AVAudioFile(forReading: output)
+        return Double(file.length) / file.processingFormat.sampleRate
     }
 
     private func awaitStandIn(_ reports: GuardReports) async throws {
@@ -1648,11 +1618,12 @@ final class SupertonicSpeechTests: XCTestCase {
 
     // #311: the guard's iOS-voice file is deleted when the player discards it.
     func testGuardDeletesItsStandInFileOnDiscard() async throws {
-        try await warmUpTheIOSVoice()
         let root = FileManager.default.temporaryDirectory.appending(path: "guard-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let guardRenderer = SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil)
+        let guardRenderer = SupertonicOutputGuard(
+            wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil, standIn: copyStandIn
+        )
         let result = try await guardRenderer.render(
             text: "Table 3 reports 91.1% 8.9% 0.0 and 7,494 tool decisions across 2,548 summaries.",
             voice: .m2, language: "en", speed: 1, synthesisSteps: 8
@@ -1694,7 +1665,6 @@ final class SupertonicSpeechTests: XCTestCase {
 
     // #311: a stand-in isn't cached under the Supertonic key, so the next play re-checks Supertonic.
     func testStandInIsNotCachedAsSupertonic() async throws {
-        try await warmUpTheIOSVoice()
         let root = FileManager.default.temporaryDirectory.appending(path: "guard-cache-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1704,7 +1674,7 @@ final class SupertonicSpeechTests: XCTestCase {
         let reports = GuardReports()
         let client = SupertonicSpeechPlaybackClient(
             renderer: SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20),
-                                            systemVoiceIdentifier: nil, onReplacement: { reports.add($0) }),
+                                            systemVoiceIdentifier: nil, onReplacement: { reports.add($0) }, standIn: copyStandIn),
             voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             diskCache: cache, audioSessionActivator: {}, audioPlayerStarter: { _, _ in started.fulfill() },
             observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
@@ -1723,11 +1693,12 @@ final class SupertonicSpeechTests: XCTestCase {
     // every flagged chunk left an iOS-voice file behind. The render is discarded once kept, or on
     // failure.
     func testABackgroundRenderIsDiscardedOnceKeptOrOnFailure() async throws {
-        try await warmUpTheIOSVoice()
         let root = FileManager.default.temporaryDirectory.appending(path: "guard-keep-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let guardRenderer = SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil)
+        let guardRenderer = SupertonicOutputGuard(
+            wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil, standIn: copyStandIn
+        )
         let text = "Table 3 reports 91.1% 8.9% 0.0 and 7,494 tool decisions across 2,548 summaries."
         var standIn: URL?
         let kept = try await guardRenderer.render(text: text, voice: .m2, language: "en", speed: 1, synthesisSteps: 8) { rendered in
@@ -1770,7 +1741,6 @@ final class SupertonicSpeechTests: XCTestCase {
     // item's audio, so the stand-in played forever. It isn't assembled while a stand-in remains;
     // with Supertonic's own audio it still is.
     func testAnArticleWithAStandInIsNotAssembledButOneWithoutIs() async throws {
-        try await warmUpTheIOSVoice()
         let root = FileManager.default.temporaryDirectory.appending(path: "assemble-standin-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1783,7 +1753,7 @@ final class SupertonicSpeechTests: XCTestCase {
             let reports = GuardReports()
             let client = SupertonicSpeechPlaybackClient(
                 renderer: SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: seconds),
-                                                systemVoiceIdentifier: nil, onReplacement: { reports.add($0) }),
+                                                systemVoiceIdentifier: nil, onReplacement: { reports.add($0) }, standIn: copyStandIn),
                 voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
                 preparedAudioDirectory: root.appending(path: "assembled-\(Int(seconds))", directoryHint: .isDirectory),
                 audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
@@ -1977,6 +1947,212 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertNil(harness.client.debugBackgroundSeamSummary, "a seam with the app in front isn't a background seam")
     }
 
+    // #1673: the app is away, A ends and B is still rendering. Waiting for the render needs the app to run when it
+    // lands, and a backgrounded app with nothing playing can be suspended first (the 2026-10-07 export). The iOS
+    // voice reads on from B's place at once, the app is told why, and the chosen voice comes back at the next play.
+    func testAChunkNotRenderedAtABackgroundSeamHandsOverToTheIOSVoice() async throws {
+        let harness = try SupertonicClientHarness(heldRenders: [2], applicationIsActive: { false })
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 1)
+        await harness.waitForRenderStarts(2)
+        XCTAssertNil(harness.client.debugQueuedChunkStart, "B isn't rendered yet")
+
+        await harness.finishPlayingChunk()
+
+        for _ in 0..<150 where harness.systemVoice.playedOffsets.isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(harness.systemVoice.playedOffsets, [chunk[1]], "the iOS voice reads on from where B starts")
+        XCTAssertEqual(harness.fallbackReasons.values, ["supertonic_background_gap"], "the app is told why")
+        XCTAssertTrue(harness.client.isSystemVoiceActive)
+        XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "next_not_rendered 1")
+
+        // The render that lands afterwards plays nowhere: the iOS voice has the article.
+        let before = harness.playerStarts
+        harness.releaseRender(2)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(harness.playerStarts, before, "no second voice starts on top of the iOS voice")
+
+        // The chosen voice comes back at the next play, not at the listener's Retry.
+        try harness.client.pause()
+        try harness.play(from: chunk[1])
+        let back = await harness.waitForPlayerStarts(before + 1)
+        XCTAssertTrue(back, "Supertonic plays again in a new player")
+        XCTAssertFalse(harness.client.isSystemVoiceActive)
+    }
+
+    // The same gap with the app in front is a wait for the chosen voice, never a change of voice (#849).
+    func testAChunkNotRenderedAtASeamWithTheAppInFrontWaitsForTheChosenVoice() async throws {
+        let harness = try SupertonicClientHarness(heldRenders: [2], applicationIsActive: { true })
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 1)
+        await harness.waitForRenderStarts(2)
+
+        await harness.finishPlayingChunk()
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertTrue(harness.systemVoice.playedOffsets.isEmpty)
+        XCTAssertTrue(harness.fallbackReasons.values.isEmpty)
+        XCTAssertFalse(harness.client.isSystemVoiceActive)
+
+        let before = harness.playerStarts
+        harness.releaseRender(2)
+        let next = await harness.waitForPlayerStarts(before + 1)
+        XCTAssertTrue(next, "B plays as soon as it lands")
+        XCTAssertEqual(harness.playingChunkStart, chunk[1])
+        XCTAssertNil(harness.client.debugBackgroundSeamSummary)
+    }
+
+    // An inactive app (Control Center, a call banner, the app switcher) is still in front of the listener: the seam
+    // is counted, but the voice does not change (#849).
+    func testAnInactiveAppIsNotAwayEnoughToChangeTheVoice() async throws {
+        let harness = try SupertonicClientHarness(
+            heldRenders: [2], applicationIsActive: { false }, applicationIsInBackground: { false }
+        )
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 1)
+        await harness.waitForRenderStarts(2)
+
+        await harness.finishPlayingChunk()
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertTrue(harness.systemVoice.playedOffsets.isEmpty)
+        XCTAssertTrue(harness.fallbackReasons.values.isEmpty)
+        XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "next_not_rendered 1")
+
+        let before = harness.playerStarts
+        harness.releaseRender(2)
+        let next = await harness.waitForPlayerStarts(before + 1)
+        XCTAssertTrue(next, "B plays in the chosen voice as soon as it lands")
+        XCTAssertEqual(harness.playingChunkStart, chunk[1])
+    }
+
+    // The iOS voice can't start (a session that won't activate): the hand-over touches nothing of the chosen voice's,
+    // so the seam waits for B as it always did and B plays when it lands, with the render queue behind it intact
+    // (#1673 review and audit).
+    func testAHandOverTheIOSVoiceCannotStartFallsBackToWaitingForTheChosenVoice() async throws {
+        let harness = try SupertonicClientHarness(heldRenders: [2], applicationIsActive: { false })
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        harness.systemVoice.playError = NSError(domain: "test", code: 1)
+        try await harness.start(waitingForRenders: 1)
+        await harness.waitForRenderStarts(2)
+        let before = harness.playerStarts
+        let stopsBefore = harness.systemVoice.stopCount
+
+        await harness.finishPlayingChunk()
+        for _ in 0..<150 where harness.systemVoice.stopCount == stopsBefore { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThan(harness.systemVoice.stopCount, stopsBefore, "the seam tried the iOS voice")
+        XCTAssertEqual(harness.playerStarts, before, "B is still rendering: the seam waits for it")
+
+        // B was never cancelled: it plays when it lands.
+        harness.releaseRender(2)
+        let next = await harness.waitForPlayerStarts(before + 1)
+        XCTAssertTrue(next, "B plays in the chosen voice once it is rendered")
+        XCTAssertEqual(harness.playingChunkStart, chunk[1])
+        XCTAssertFalse(harness.client.isSystemVoiceActive)
+        XCTAssertTrue(harness.fallbackReasons.values.isEmpty, "the app isn't told of a change that didn't happen")
+
+        // The render queue behind B survived the failed hand-over, so the chunks after B still render ahead of the
+        // playing one. Without it every later seam would wait for its own render (#1673 audit).
+        await harness.waitForRenderStarts(3)
+        XCTAssertGreaterThanOrEqual(harness.renderer.startedCount, 3, "C renders while B plays")
+    }
+
+    // The same failed hand-over on a phone that may not render with Supertonic (hot, or Low Power Mode): the bundled
+    // voice is rendering, and the chunk it was still rendering plays when it lands, not held until the listener's next
+    // play (#1673 audit).
+    func testAFailedBackgroundHandOverStillRendersTheNextChunkWithTheBundledVoice() async throws {
+        let template = try makeTestWAV(duration: 1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let supertonic = CountingAudioSupertonicRenderer(templateURL: template)
+        let (gate, openGate) = AsyncStream<Void>.makeStream()
+        defer { openGate.finish() }
+        let bundled = GatedBundledVoiceRenderer(templateURL: template, gatedRender: 2, gate: gate)
+        let fallback = RecordingFallbackAudioClient()
+        fallback.playError = NSError(domain: "test", code: 1)
+        let starts = HarnessStartCounter()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: supertonic, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                player.volume = 0
+                player.playImmediately(atRate: rate)
+                starts.add()
+            },
+            observesPlayerLifecycle: true,
+            onDeviceRenderingAllowed: { false },
+            pressureRenderer: bundled,
+            fallbackClient: fallback,
+            applicationIsActive: { false }
+        )
+        defer { try? client.stop() }
+        _ = try client.prepareSpeechText(Self.pressureArticle(paragraphs: 4))
+        try client.play(targetId: "gap-kitten")
+        for _ in 0..<250 where starts.count < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(starts.count, 1, "the first chunk plays")
+
+        // The first chunk ends after a second; the second is still rendering (gated) and the hand-over fails, so the
+        // seam waits for that render, which plays when it lands.
+        for _ in 0..<250 where fallback.stopCount == 0 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThan(fallback.stopCount, 0, "the seam tried the iOS voice")
+        XCTAssertEqual(starts.count, 1, "the second chunk is still rendering")
+        openGate.finish()
+        for _ in 0..<500 where starts.count < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThanOrEqual(starts.count, 2, "the next chunk plays without a listener's play")
+        XCTAssertFalse(client.isSystemVoiceActive)
+    }
+
+    // The bundled voice holds the article's generation (the phone was hot), and the phone has cooled by the time a
+    // background seam finds the next chunk unrendered and the hand-over fails. The chunk still plays from the bundled
+    // voice's render: no mid-paragraph change to Supertonic that nobody asked for (#849, #1673 audit).
+    func testAFailedBackgroundHandOverKeepsTheBundledVoiceThatHeldTheGeneration() async throws {
+        let template = try makeTestWAV(duration: 1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let supertonic = CountingAudioSupertonicRenderer(templateURL: template)
+        let (gate, openGate) = AsyncStream<Void>.makeStream()
+        defer { openGate.finish() }
+        let bundled = GatedBundledVoiceRenderer(templateURL: template, gatedRender: 2, gate: gate)
+        let fallback = RecordingFallbackAudioClient()
+        fallback.playError = NSError(domain: "test", code: 1)
+        let allowed = KittenAllowedFlag()
+        let starts = HarnessStartCounter()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: supertonic, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                player.volume = 0
+                player.playImmediately(atRate: rate)
+                starts.add()
+            },
+            observesPlayerLifecycle: true,
+            onDeviceRenderingAllowed: { allowed.value },
+            pressureRenderer: bundled,
+            fallbackClient: fallback,
+            applicationIsActive: { false }
+        )
+        defer { try? client.stop() }
+        _ = try client.prepareSpeechText(Self.pressureArticle(paragraphs: 4))
+        try client.play(targetId: "gap-held")
+        for _ in 0..<250 where starts.count < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(starts.count, 1, "the first chunk plays, rendered by the bundled voice")
+        var bundledRenders = await bundled.renderCount
+        for _ in 0..<250 where bundledRenders < 2 {
+            try await Task.sleep(for: .milliseconds(20))
+            bundledRenders = await bundled.renderCount
+        }
+
+        allowed.value = true                                   // the phone cooled; the bundled voice keeps the article
+
+        for _ in 0..<250 where fallback.stopCount == 0 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThan(fallback.stopCount, 0, "the seam tried the iOS voice")
+        openGate.finish()
+        for _ in 0..<500 where starts.count < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThanOrEqual(starts.count, 2, "the next chunk plays without a listener's play")
+        let supertonicRenders = await supertonic.renderCount
+        XCTAssertEqual(supertonicRenders, 0, "the voice never changes to Supertonic mid-article")
+        XCTAssertFalse(client.isSystemVoiceActive)
+    }
+
     // Leaving the app while a chunk plays: the next chunk is ready already, so it goes onto the player then.
     func testLeavingTheAppQueuesTheNextChunk() async throws {
         let presence = AppPresence()
@@ -2030,10 +2206,10 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "stand_in_voice 1")
     }
 
-    // The end of A is heard while the queue has not moved on (paused at the end, or not there yet) and B is queued
-    // behind it. B is not playing, so the seam must go through the app, which still has B's audio. Treating B as
-    // playing would leave the player silent until the stall watchdog fired.
-    func testAChunkEndHeardBeforeTheQueueMovedOnIsHandledThroughTheApp() async throws {
+    // #1762: the end of A reaches the app while the player still names A as current, with B queued behind it. The
+    // queue is moving on to B, which is playing from its start. The app must follow it, not take B off and start it
+    // again on a new player, which played B's first words twice at every seam on the owner's phone.
+    func testAChunkEndHeardBeforeTheQueueMovedOnFollowsTheQueueToTheNextChunk() async throws {
         let harness = try SupertonicClientHarness(applicationIsActive: { false })
         defer { harness.tearDown() }
         let chunk = harness.chunkStarts
@@ -2042,12 +2218,131 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertTrue(queued)
         let before = harness.playerStarts
 
-        await harness.finishPlayingChunk()                          // the end notification; the queue stays on A
+        await harness.finishPlayingChunk()                          // the end notification; the queue is still on A
+        let caughtUp = await harness.waitForPlayingChunk(chunk[1])
+        XCTAssertTrue(caughtUp, "the client's place moved on to B")
+        harness.advanceTheQueueWithoutTellingTheApp()               // the player gets to B a moment later
+
+        let next = await harness.waitForQueuedChunk(chunk[2])
+        XCTAssertTrue(next, "C is queued behind B")
+        XCTAssertEqual(harness.playerStarts, before, "B was not started again on a new player")
+        XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "queued_ahead 1")
+    }
+
+    // The player stops at the end of an item (nothing will move on to B): B is not playing, so the seam goes
+    // through the app, which still has B's audio. Treating B as playing would leave the player silent until the
+    // stall watchdog fired.
+    func testAChunkEndHeardOnAPlayerThatStopsAtTheEndIsHandledThroughTheApp() async throws {
+        let harness = try SupertonicClientHarness(applicationIsActive: { false })
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 3)
+        let queued = await harness.waitForQueuedChunk(chunk[1])
+        XCTAssertTrue(queued)
+        let before = harness.playerStarts
+        let queue = try XCTUnwrap(harness.newestQueuePlayer)
+        queue.actionAtItemEnd = .pause
+
+        await harness.finishPlayingChunk()
 
         let next = await harness.waitForPlayerStarts(before + 1)
         XCTAssertTrue(next, "B was started through the app")
         XCTAssertEqual(harness.playingChunkStart, chunk[1])
         XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "rendered_not_queued 1")
+    }
+
+    // #1762: the real queue, with nothing driving it. Each chunk is two seconds of its own tone; the app is away
+    // through four of them. Every seam must be the queue's own: no new player, one `queued_ahead` per seam.
+    func testTheRealQueuePlaysThroughSeveralSeamsWithTheAppAwayAndNoNewPlayer() async throws {
+        let harness = try SupertonicClientHarness(
+            chunkSeconds: 2, distinctTones: true, applicationIsActive: { false }
+        )
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        XCTAssertGreaterThanOrEqual(chunk.count, 4)
+        try await harness.start(waitingForRenders: 3)
+        let starts = harness.playerStarts
+
+        let reached = await harness.waitForPlayingChunk(chunk[3], seconds: 15)
+
+        XCTAssertTrue(reached, "the real queue played on to the fourth chunk by itself")
+        XCTAssertEqual(harness.playerStarts, starts, "no seam started a new player")
+        XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "queued_ahead 3")
+    }
+
+    // #1763: a new player the system would not start with the phone locked sat at time 0 with rate 0 ("SetRateFailed")
+    // for 5 s before the watchdog noticed, re-seated it, and then nothing brought the sound back before the
+    // listener opened the app. A refusal still standing a second later is a stall at once: one re-seat, and a
+    // second refusal from the re-seated player hands over to the iOS voice, with no tap.
+    func testARefusedStartWithTheAppInTheBackgroundIsReseatedAtOnce() async throws {
+        let harness = try SupertonicClientHarness(
+            applicationIsActive: { false }, applicationIsInBackground: { true }
+        )
+        defer { harness.tearDown() }
+        try await harness.start()
+        let starts = harness.playerStarts
+
+        harness.refuseTheNewestPlayersStart()
+
+        let reseated = await harness.waitForPlayerStarts(starts + 1)
+        XCTAssertTrue(reseated, "a new player was started well inside the watchdog's 5 s")
+        XCTAssertEqual(harness.stallEvents.values, ["supertonic.stall"])
+        XCTAssertEqual(harness.fallbackReasons.values, [], "still the chosen voice")
+    }
+
+    func testARefusedStartThatTheReseatDoesNotFixHandsOverToTheIOSVoice() async throws {
+        let harness = try SupertonicClientHarness(
+            applicationIsActive: { false }, applicationIsInBackground: { true }
+        )
+        defer { harness.tearDown() }
+        try await harness.start()
+        let starts = harness.playerStarts
+        harness.refuseTheNewestPlayersStart()
+        let reseated = await harness.waitForPlayerStarts(starts + 1)
+        XCTAssertTrue(reseated)
+
+        harness.refuseTheNewestPlayersStart()                       // the new player is turned down too
+
+        for _ in 0..<150 where !harness.stallEvents.values.contains("supertonic.stall_handover") {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(harness.stallEvents.values.prefix(2), ["supertonic.stall", "supertonic.stall_handover"])
+        XCTAssertFalse(harness.systemVoice.playedOffsets.isEmpty, "the iOS voice reads on")
+        XCTAssertEqual(harness.fallbackReasons.values, ["supertonic_player_stalled"])
+        XCTAssertFalse(harness.stallEvents.values.contains("supertonic.stall_paused"), "not left paused for a tap")
+    }
+
+    // The listener pauses within the second the refusal gets to clear: nothing is recovered.
+    func testARefusedStartIsLeftAloneWhenTheListenerPausesFirst() async throws {
+        let harness = try SupertonicClientHarness(
+            applicationIsActive: { false }, applicationIsInBackground: { true }
+        )
+        defer { harness.tearDown() }
+        try await harness.start()
+        let starts = harness.playerStarts
+
+        harness.refuseTheNewestPlayersStart()
+        try harness.client.pause()
+        try await Task.sleep(for: .milliseconds(1_500))
+
+        XCTAssertEqual(harness.playerStarts, starts, "no re-seat of a player the listener paused")
+        XCTAssertEqual(harness.stallEvents.values, [])
+    }
+
+    // In front of the listener, who can tap, the watchdog's own timing stands.
+    func testARefusedStartWithTheAppInFrontIsLeftToTheWatchdog() async throws {
+        let harness = try SupertonicClientHarness(
+            applicationIsActive: { true }, applicationIsInBackground: { false }
+        )
+        defer { harness.tearDown() }
+        try await harness.start()
+        let starts = harness.playerStarts
+
+        harness.refuseTheNewestPlayersStart()
+        try await Task.sleep(for: .milliseconds(2_500))
+
+        XCTAssertEqual(harness.playerStarts, starts, "no early re-seat")
+        XCTAssertEqual(harness.stallEvents.values, [])
     }
 
     // The listener pauses with a chunk queued: nothing is lost. Playing again carries on, and the queued chunk
@@ -2414,6 +2709,307 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(log.fallbacks, [])
         XCTAssertEqual(fallback.playedOffsets, [])
         try client.stop()
+    }
+
+    /// #1681: live narration rendered the whole rest of the item ahead, hot or in the background. With a limit, the
+    /// render chain rests once the window of audio waits ahead and playback hasn't used any of it.
+    func testLiveNarrationStopsRenderingAheadOnceTheWindowIsFull() async throws {
+        let rendered = try await renderAhead(window: 0.5, playsAudio: false)
+        XCTAssertGreaterThan(rendered.total, 10)
+        XCTAssertLessThanOrEqual(rendered.renders, 5, "the playing chunk and about 0.5 s ahead, not the whole item")
+        XCTAssertGreaterThanOrEqual(rendered.renders, 3)
+        XCTAssertTrue(rendered.last.isRestingAhead, "the rest is reported, so the app doesn't call it a slow render")
+        XCTAssertFalse(rendered.last.watchesForDelay)
+    }
+
+    /// A cool phone in front renders the whole item, as before.
+    func testWithoutALimitLiveNarrationRendersTheWholeItem() async throws {
+        let rendered = try await renderAhead(window: nil, playsAudio: false)
+        XCTAssertEqual(rendered.renders, rendered.total)
+        XCTAssertEqual(rendered.restingReports, 0)
+    }
+
+    /// #1681: a resting chain starts again as playback uses the audio ahead, so the item still plays to the end.
+    func testARestingRenderChainStartsAgainAsPlaybackMovesOn() async throws {
+        let rendered = try await renderAhead(window: 0.5, playsAudio: true)
+        XCTAssertEqual(rendered.completed, rendered.total, "every chunk was rendered in the end")
+        XCTAssertEqual(rendered.renders, rendered.total)
+        XCTAssertGreaterThan(rendered.restarts, 0,
+                             "the chain started again as playback moved on, not only when playback ran out of audio")
+        XCTAssertGreaterThan(rendered.restingReports, 0)
+        XCTAssertFalse(rendered.last.isRestingAhead)
+        let reports = rendered.reports
+        XCTAssertTrue(zip(reports, reports.dropFirst()).contains { rest, wake in
+            rest.isRestingAhead && !wake.isRestingAhead
+                && wake.completedChunks == rest.completedChunks && wake.totalChunks == rest.totalChunks
+        }, "a chain that starts again reports its progress without the rest before it renders on")
+    }
+
+    /// #1681 audit: while the chain rested, the app's 45-second watch marked the render delayed, showed "Still
+    /// preparing" and wrote a delay into diagnostics on every rest. A rest starts no watch; waking starts it again.
+    func testARestingRenderChainIsNotWatchedAsADelayedRender() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.updateOnDeviceSpeechGenerationState(.rendering, stopReason: nil)
+        model.updateOnDeviceSpeechGenerationProgress(RenderedSpeechGenerationProgress(completedChunks: 4, totalChunks: 30))
+        XCTAssertNotNil(model.onDeviceSpeechGenerationDelayTask, "a render that owes progress is watched")
+        model.updateOnDeviceSpeechGenerationProgress(
+            RenderedSpeechGenerationProgress(completedChunks: 5, totalChunks: 30, isRestingAhead: true))
+        XCTAssertNil(model.onDeviceSpeechGenerationDelayTask, "a resting chain is not")
+        XCTAssertFalse(model.isOnDeviceSpeechGenerationDelayed)
+        XCTAssertEqual(model.diagnostics["onDeviceSpeechGenerationProgress"], "5/30 resting")
+        model.updateOnDeviceSpeechGenerationProgress(RenderedSpeechGenerationProgress(completedChunks: 5, totalChunks: 30))
+        XCTAssertNotNil(model.onDeviceSpeechGenerationDelayTask, "waking from the rest starts the watch again")
+        model.onDeviceSpeechGenerationDelayTask?.cancel()
+    }
+
+    /// #1681 (agent-verify): the tests above hand the client a window. This one leaves the client as the app builds
+    /// it, so the limit has to come from the app's own background state through `RenderAheadPolicy`. Chunks of 100 s
+    /// against the 300 s window: with the app away the chain rests after a few chunks, where on the phone it had
+    /// rendered hundreds (`cached=731`). Fails if the default stops reading the governor, or the policy stops limiting.
+    func testTheDefaultLimitsRenderAheadWhileTheAppIsAway() async throws {
+        let governor = OnDeviceVoiceGovernor.app
+        governor.setAppBackgrounded(true)
+        defer { governor.setAppBackgrounded(false) }
+
+        // Silence at 8 kHz keeps a 100 s chunk to about 3 MB on disk.
+        let template = FileManager.default.temporaryDirectory
+            .appending(path: "render-ahead-default-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: template) }
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1))
+        let frames = AVAudioFrameCount(8_000 * 100)
+        let silence = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
+        silence.frameLength = frames
+        do {
+            let file = try AVAudioFile(forWriting: template, settings: format.settings)
+            try file.write(from: silence)
+        }
+
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let log = KittenClientLog()
+        // No `renderAheadWindow`: the client's own default is what is under test.
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false,
+            onDeviceRenderingAllowed: { true },
+            onGenerationProgress: { log.record($0) }
+        )
+        let text = (1...30).map { "Sentence \($0) carries enough words to make a chunk of its own for the planner here." }
+            .joined(separator: " ")
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "render-ahead-default")
+
+        // Wait for the chain to rest, then for the render count to hold still.
+        let deadline = ContinuousClock.now + .seconds(10)
+        var lastCount = -1
+        var steadySince = ContinuousClock.now
+        while ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+            let count = await renderer.renderCount
+            if count != lastCount {
+                lastCount = count
+                steadySince = ContinuousClock.now
+            } else if ContinuousClock.now - steadySince > .seconds(1) {
+                break
+            }
+        }
+        let renders = await renderer.renderCount
+        let last = log.lastProgress
+        try client.stop()
+
+        XCTAssertGreaterThan(last.totalChunks, 10, "an item of many chunks, so a limit is what stops it")
+        XCTAssertGreaterThanOrEqual(renders, 2, "at critical heat the window is 60 s: the playing chunk and one ahead")
+        XCTAssertLessThanOrEqual(renders, 6, "the playing chunk and about 300 s of listening ahead, not the whole item")
+        XCTAssertTrue(last.isRestingAhead, "the rest is reported, so the app doesn't call it a slow render")
+    }
+
+    private func renderAhead(
+        window: TimeInterval?, playsAudio: Bool
+    ) async throws -> (
+        renders: Int, completed: Int, total: Int, restarts: Int, restingReports: Int, last: RenderedSpeechGenerationProgress,
+        reports: [RenderedSpeechGenerationProgress]
+    ) {
+        let template = try makeTestWAV(duration: 0.2)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let log = KittenClientLog()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                guard playsAudio else { return }
+                player.volume = 0
+                player.playImmediately(atRate: rate)
+            },
+            // The player's own end moves playback on, which is what lets a resting chain start again.
+            observesPlayerLifecycle: playsAudio,
+            onDeviceRenderingAllowed: { true },
+            onGenerationProgress: { log.record($0) },
+            renderAheadWindow: { window }
+        )
+        let text = (1...30).map { "Sentence \($0) carries enough words to make a chunk of its own for the planner here." }
+            .joined(separator: " ")
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "render-ahead")
+        let deadline = ContinuousClock.now + .seconds(playsAudio ? 30 : 3)
+        var lastCount = -1
+        var steadySince = ContinuousClock.now
+        while ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+            if log.totalChunks > 0, log.completedChunks == log.totalChunks { break }
+            let count = await renderer.renderCount
+            if count != lastCount {
+                lastCount = count
+                steadySince = ContinuousClock.now
+            } else if !playsAudio, ContinuousClock.now - steadySince > .seconds(1) {
+                break
+            }
+        }
+        let renders = await renderer.renderCount
+        let restarts = client.debugRenderAheadRestarts
+        try client.stop()
+        return (renders, log.completedChunks, log.totalChunks, restarts, log.restingProgressReports, log.lastProgress,
+                log.progressReports)
+    }
+
+    /// #1680: every chunk Kitten rendered was saved and never read again, so after a cold launch on a hot phone the
+    /// player rendered the same chunks from scratch. With the bundled voice's saved audio there, nothing renders, and
+    /// the export says the play started from saved audio.
+    func testSavedBundledVoiceAudioPlaysInsteadOfRenderingAgain() async throws {
+        let template = try makeTestWAV(duration: 0.2)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let supertonic = CountingAudioSupertonicRenderer(templateURL: template)
+        let bundled = RecordingBundledVoiceRenderer(templateURL: template)
+        let log = KittenClientLog()
+        let decisions = ResumeDecisionLog()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: supertonic, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { player, rate in player.volume = 0; player.playImmediately(atRate: rate) },
+            observesPlayerLifecycle: false,
+            onDeviceRenderingAllowed: { false },
+            pressureRenderer: bundled,
+            fallbackClient: RecordingFallbackAudioClient(),
+            onGenerationProgress: { log.record($0) },
+            preparedChunkLookup: { _, _, _ in nil },
+            bundledVoiceChunkLookup: { _, _, _ in .init(audioURL: template, duration: 0.2) },
+            onFallback: { reason, _, _ in log.recordFallback(reason) },
+            onBundledVoice: { _, _, _ in log.recordNotice("bundled_voice") },
+            onResumeDecision: { decisions.add($0) }
+        )
+        _ = try client.prepareSpeechText(Self.pressureArticle(paragraphs: 4))
+        try client.play(targetId: "saved-kitten")
+
+        let deadline = ContinuousClock.now + .seconds(30)
+        while log.totalChunks == 0 || log.completedChunks < log.totalChunks, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertGreaterThan(log.totalChunks, 1)
+        XCTAssertEqual(log.completedChunks, log.totalChunks)
+        let renders = await bundled.renderedTexts
+        XCTAssertEqual(renders, [], "saved Kitten audio plays; nothing is rendered again")
+        let supertonicRenders = await supertonic.renderCount
+        XCTAssertEqual(supertonicRenders, 0)
+        XCTAssertEqual(log.fallbacks, [])
+        XCTAssertTrue(decisions.values.contains { $0["path"] == "play_saved" && $0["engine"] == KittenNarrationRenderer.engine },
+                      "\(decisions.values)")
+        try client.stop()
+    }
+
+    /// #1680, owner's call (2026-10-15): on a hot phone, saved Supertonic audio plays as long as the voice doesn't
+    /// bounce. A saved run of five minutes from a paragraph seam takes over from the bundled voice, keeps it to the end
+    /// of the run, and hands back once the run ends: one change each way. Before, the bundled voice rendered it all.
+    func testALongSavedSupertonicRunTakesOverAtASeamAndHandsBackAtItsEnd() async throws {
+        let text = Self.pressureArticle(paragraphs: 14)
+        let run = try Self.savedRun(in: text, startingAtOrAfter: 2, chunks: 5)
+        XCTAssertEqual(Set(run.plan.map(\.text)).count, run.plan.count, "chunk texts are unique, so texts identify chunks")
+        let outcome = try await renderUnderPressure(text: text, savedSupertonic: Set(run.indices), declaredSeconds: 70)
+        XCTAssertEqual(outcome.supertonicRenders, 0, "Supertonic may not render")
+        XCTAssertTrue(outcome.bundledTexts.allSatisfy { !run.texts.contains($0) }, "the saved run plays: \(outcome.bundledTexts)")
+        let after = run.plan.indices.filter { $0 > run.indices.upperBound }.map { run.plan[$0].text }
+        let before = run.plan.indices.filter { $0 > 0 && $0 < run.indices.lowerBound }.map { run.plan[$0].text }
+        XCTAssertFalse(after.isEmpty)
+        XCTAssertTrue(after.allSatisfy(outcome.bundledTexts.contains), "the bundled voice takes back the chunks after the run")
+        XCTAssertTrue(before.allSatisfy(outcome.bundledTexts.contains), "and kept the chunks before it")
+    }
+
+    /// #1680: a saved run under five minutes that doesn't reach the end would be a Supertonic island inside the
+    /// bundled voice, so the bundled voice keeps it.
+    func testAShortSavedSupertonicRunKeepsTheBundledVoice() async throws {
+        let text = Self.pressureArticle(paragraphs: 14)
+        let run = try Self.savedRun(in: text, startingAtOrAfter: 2, chunks: 2)
+        let outcome = try await renderUnderPressure(text: text, savedSupertonic: Set(run.indices), declaredSeconds: 20)
+        XCTAssertEqual(outcome.supertonicRenders, 0)
+        XCTAssertTrue(run.texts.allSatisfy(outcome.bundledTexts.contains), "the bundled voice renders the short run: \(outcome.bundledTexts)")
+    }
+
+    /// #1680 audit: a hot start splits the first chunk for a quick start. A fully prepared article still plays saved
+    /// Supertonic from there to the end, the whole first chunk included, as it did before (#849 audit).
+    func testAPreparedArticlePlaysSavedSupertonicFromASplitStartOnAHotPhone() async throws {
+        let text = Self.pressureArticle(paragraphs: 4)
+        let outcome = try await renderUnderPressure(text: text, savedSupertonic: Set(0..<200), declaredSeconds: 20)
+        XCTAssertEqual(outcome.supertonicRenders, 0)
+        XCTAssertEqual(outcome.bundledTexts, [], "saved Supertonic plays throughout")
+    }
+
+    /// An article of paragraphs for the pressure tests: the planner runs chunks across the breaks. Every sentence
+    /// names its paragraph, so no two chunks have the same text and a chunk's text says which chunk it is.
+    private static func pressureArticle(paragraphs: Int) -> String {
+        (1...paragraphs).map {
+            "Section \($0). The committee met on day \($0) to discuss proposal \($0), which had been circulating among members for several weeks. Most of the objections to proposal \($0) concerned cost, and a smaller group worried about its timeline."
+        }.joined(separator: "\n\n")
+    }
+
+    /// `chunks` article chunks from the first paragraph seam at or after chunk `start` (the planner's own plan and
+    /// seam rule), as the client sees them without a preface.
+    private static func savedRun(
+        in text: String, startingAtOrAfter start: Int, chunks count: Int
+    ) throws -> (indices: ClosedRange<Int>, texts: [String], plan: [NarrationChunkPlanner.SpokenChunk]) {
+        let projection = SpeechTextNormalizer.normalizeWithSourceOffsets(text)
+        let plan = NarrationChunkPlanner.spokenPlan(spokenText: projection.text, articleText: nil, articleSpokenStart: 0).chunks
+        let seam = try XCTUnwrap(plan.indices.first { index in
+            index >= start && index + count < plan.count - 1 && SavedVoiceRunRule.isParagraphSeam(
+                in: text, at: index,
+                sourceStart: { projection.sourceOffset(atSpokenCharacterOffset: plan[$0].startOffset) },
+                endsSentence: { plan[$0].boundary == .sentence || plan[$0].boundary == .hard })
+        }, "no seam with room for the run in \(plan.count) chunks")
+        let indices = seam...(seam + count - 1)
+        return (indices, indices.map { plan[$0].text }, plan)
+    }
+
+    /// Renders `text` to the end on a phone that refuses Supertonic, with saved Supertonic audio for the article chunks
+    /// at `savedSupertonic`, each declared `declaredSeconds` long.
+    private func renderUnderPressure(
+        text: String, savedSupertonic: Set<Int>, declaredSeconds: TimeInterval
+    ) async throws -> (bundledTexts: [String], supertonicRenders: Int) {
+        let template = try makeTestWAV(duration: 0.2)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let supertonic = CountingAudioSupertonicRenderer(templateURL: template)
+        let bundled = RecordingBundledVoiceRenderer(templateURL: template)
+        let log = KittenClientLog()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: supertonic, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { player, rate in player.volume = 0; player.playImmediately(atRate: rate) },
+            observesPlayerLifecycle: false,
+            onDeviceRenderingAllowed: { false },
+            pressureRenderer: bundled,
+            fallbackClient: RecordingFallbackAudioClient(),
+            onGenerationProgress: { log.record($0) },
+            preparedChunkLookup: { _, _, plan in
+                savedSupertonic.contains(plan.index) ? .init(audioURL: template, duration: declaredSeconds) : nil
+            },
+            onFallback: { reason, _, _ in log.recordFallback(reason) }
+        )
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "saved-run")
+        let deadline = ContinuousClock.now + .seconds(60)
+        while log.totalChunks == 0 || log.completedChunks < log.totalChunks, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(log.completedChunks, log.totalChunks, "the generation finished")
+        XCTAssertEqual(log.fallbacks, [])
+        try client.stop()
+        return (await bundled.renderedTexts, await supertonic.renderCount)
     }
 
     func testSlowSpeculativeChunkDoesNotSwitchAudiblePreparedPlaybackToFallback() async throws {
@@ -4338,7 +4934,16 @@ private final class KittenClientLog: @unchecked Sendable {
     private var noticeReasons: [String] = []
     private var restoreCount = 0
 
-    func record(_ value: RenderedSpeechGenerationProgress) { lock.withLock { progress = value } }
+    private var reports: [RenderedSpeechGenerationProgress] = []
+    func record(_ value: RenderedSpeechGenerationProgress) {
+        lock.withLock {
+            progress = value
+            reports.append(value)
+        }
+    }
+    var progressReports: [RenderedSpeechGenerationProgress] { lock.withLock { reports } }
+    var restingProgressReports: Int { lock.withLock { reports.filter(\.isRestingAhead).count } }
+    var lastProgress: RenderedSpeechGenerationProgress { lock.withLock { progress } }
     func recordFallback(_ reason: String) { lock.withLock { fallbackReasons.append(reason) } }
     func recordNotice(_ reason: String) { lock.withLock { noticeReasons.append(reason) } }
     func recordRestore() { lock.withLock { restoreCount += 1 } }
@@ -4471,6 +5076,42 @@ private actor GatedBundledVoiceRenderer: BundledVoiceRendering {
     }
 }
 
+private final class HarnessStartCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var starts = 0
+    var count: Int { lock.withLock { starts } }
+    func add() { lock.withLock { starts += 1 } }
+}
+
+/// A bundled-voice stand-in that records the text of each render (#1680).
+private actor RecordingBundledVoiceRenderer: BundledVoiceRendering {
+    let templateURL: URL
+    private(set) var renderedTexts: [String] = []
+    private var generatedURLs: Set<URL> = []
+
+    init(templateURL: URL) { self.templateURL = templateURL }
+
+    func render(text: String) async throws -> SupertonicNarrationResult {
+        renderedTexts.append(text)
+        let url = FileManager.default.temporaryDirectory.appending(path: "bundled-recorded-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: templateURL, to: url)
+        generatedURLs.insert(url)
+        return SupertonicNarrationResult(audioURL: url, duration: 0.2, sampleRate: 44_100, renderDuration: 0.01,
+                                         sessionLoadCount: 1, engine: KittenNarrationRenderer.engine)
+    }
+
+    func discardGeneratedAudio(at url: URL) async {
+        if generatedURLs.remove(url) != nil { try? FileManager.default.removeItem(at: url) }
+    }
+}
+
+private final class ResumeDecisionLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [[String: String]] = []
+    var values: [[String: String]] { lock.withLock { entries } }
+    func add(_ fields: [String: String]) { lock.withLock { entries.append(fields) } }
+}
+
 private final class PreparedLookupLog: @unchecked Sendable {
     private let lock = NSLock()
     private var entries: [(String, PreparedChunkPlan)] = []
@@ -4574,16 +5215,6 @@ private final class GuardReports: @unchecked Sendable {
     func add(_ report: String) {
         lock.withLock { entries.append(report) }
         reported.fulfill()
-    }
-}
-
-/// Makes the iOS-voice warm-up happen once per test run (#1230).
-private actor IOSVoiceWarmUp {
-    static let shared = IOSVoiceWarmUp()
-    private var attempted = false
-    func claimAttempt() -> Bool {
-        defer { attempted = true }
-        return !attempted
     }
 }
 

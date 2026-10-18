@@ -76,7 +76,10 @@ final class Gate1FlowUITests: XCTestCase {
         let keyboardDismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
         XCTAssertEqual(XCTWaiter().wait(for: [keyboardDismissed], timeout: 3), .completed)
         XCTAssertTrue(app.staticTexts["Portable test article"].waitForExistence(timeout: 5))
-        XCTAssertTrue(scrollToButton(containingLabel: "Import Item and Map").isHittable)
+        // The Import button is pinned to the bottom of the screen, so it is hittable without scrolling (#1472).
+        let importButton = app.buttons["listeningEdition.import"]
+        XCTAssertTrue(importButton.isHittable)
+        XCTAssertEqual(importButton.label, "Import 1 edition")
         captureScreen(named: "listening-edition-preview")
     }
 
@@ -556,10 +559,12 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(summarize.isEnabled)
         summarize.tap()
 
-        let failure = element("app.feedback.banner")
+        // A failure about the playing listen is the playback screen's one-line tag, not the top banner (#430).
+        let failure = element("playback.feedbackTag")
         XCTAssertTrue(failure.waitForExistence(timeout: 8))
-        XCTAssertTrue(failure.label.contains("Summary couldn’t finish."))
-        XCTAssertTrue(app.buttons["app.feedback.retry"].isEnabled)
+        XCTAssertTrue(failure.label.contains("Summary couldn’t finish"))
+        XCTAssertTrue(app.buttons["playback.feedbackTag.retry"].isEnabled)
+        XCTAssertFalse(element("app.feedback.banner").exists)
 
         XCTAssertTrue(summarize.waitForExistence(timeout: 4))
         XCTAssertTrue(summarize.label.contains("Retry summary"))
@@ -983,8 +988,9 @@ final class Gate1FlowUITests: XCTestCase {
 
         XCTAssertTrue(jump.isEnabled)
         jump.tap()
-        XCTAssertTrue(element("batchExport.chooseFolder.button").waitForExistence(timeout: 2))
-        XCTAssertTrue(element("batchExport.chooseFolder.button").isHittable)
+        XCTAssertTrue(element("batchExport.export.button").waitForExistence(timeout: 2))
+        XCTAssertTrue(element("batchExport.export.button").isHittable)
+        XCTAssertFalse(element("batchExport.chooseFolder.button").exists, "Export Sessions has no remembered folder (#1528)")
     }
 
     func testBuild23SenderStagesInvalidateStalePreviewAndUseSystemShare() throws {

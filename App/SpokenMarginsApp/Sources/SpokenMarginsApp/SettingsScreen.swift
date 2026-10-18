@@ -36,8 +36,8 @@ struct SettingsScreen: View {
             Form {
                 MarginOutputSettingsSection()
                 Section("Bring Your Own Listening Map") {
-                    NavigationLink("Import Listening Edition") { ListeningEditionImportScreen() }
-                    NavigationLink("Read Later Services") { ReadLaterScreen() }
+                    NavigationLink("Import Listening Edition") { ListeningEditionImportScreen().miniPlayerKeepOut() }
+                    NavigationLink("Read Later Services") { ReadLaterScreen().miniPlayerKeepOut() }
                 }
                 Section("Playback & Voice") {
                     Picker("Playback Controls", selection: $usesVerbosePlaybackActions) {
@@ -366,16 +366,19 @@ struct SettingsScreen: View {
                     .accessibilityIdentifier("settings.communityMapLookup.toggle")
                     NavigationLink("Terms of Use") {
                         SpokenMarginsTermsView(allowsAcceptance: !model.hasAcceptedCurrentTerms)
+                            .miniPlayerKeepOut()
                     }
                     .accessibilityIdentifier("settings.terms.link")
                     LabeledContent("Terms Status", value: model.termsAcceptanceDescription)
                         .accessibilityIdentifier("settings.terms.status")
                     NavigationLink("Legal · On-Device Voice") {
                         SupertonicLegalView()
+                            .miniPlayerKeepOut()
                     }
                     .accessibilityIdentifier("settings.legal.supertonic.link")
                     NavigationLink("Legal · Open-Source Licenses") {
                         OpenSourceLicensesView()
+                            .miniPlayerKeepOut()
                     }
                     .accessibilityIdentifier("settings.legal.openSource.link")
                     #if canImport(UIKit)
@@ -538,6 +541,7 @@ struct SettingsScreen: View {
             } message: {
                 Text("This permanently deletes every item and its related records, then loads the sample.")
             }
+            .miniPlayerKeepOut()
         }
     }
 }

@@ -165,6 +165,88 @@ final class FollowingLengthAndArtworkTests: XCTestCase {
         XCTAssertEqual(row.accessibilityLabel, "Episode 12.")
     }
 
+    // MARK: Publication date (#1443)
+
+    /// 2026-10-16 12:00 UTC, the day the list is read.
+    private let readingTime = Date(timeIntervalSince1970: 1_792_152_000)
+
+    private func calendar(_ zone: String) -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: zone)!
+        return calendar
+    }
+
+    private func row(published: Date?, show: String? = "The Daily", zone: String = "UTC", locale: String = "en_US") -> FollowingEntryRow {
+        let entry = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: "https://example.com/e", audioURL: "https://example.com/e.mp3",
+                              title: "Housing costs", publishedAt: published, audioDurationMs: 42 * 60_000)
+        return FollowingEntryRow(entry: entry, showTitle: show, artworkURL: nil,
+                                 now: readingTime, calendar: calendar(zone), locale: Locale(identifier: locale))
+    }
+
+    private func utc(_ iso: String) -> Date { ISO8601DateFormatter().date(from: iso)! }
+
+    func testAnEntryWithoutAPublicationDateShowsNoDate() {
+        let undated = row(published: nil)
+        XCTAssertNil(undated.dateLabel)
+        XCTAssertEqual(undated.trailingMetadata, "42 min", "nothing extra, and no invented date")
+        XCTAssertEqual(undated.accessibilityLabel, "The Daily. Housing costs. 42 minutes.")
+    }
+
+    func testADateThisYearIsMonthAndDayAndEarlierYearsCarryTheYear() {
+        let thisYear = row(published: utc("2026-10-12T15:00:00Z"))
+        XCTAssertEqual(thisYear.dateLabel, "Oct 12")
+        XCTAssertEqual(thisYear.trailingMetadata, "42 min · Oct 12")
+        XCTAssertEqual(thisYear.accessibilityLabel, "The Daily. Housing costs. 42 minutes. Published October 12.")
+        let lastYear = row(published: utc("2025-10-12T15:00:00Z"))
+        XCTAssertEqual(lastYear.dateLabel, "Oct 12, 2025")
+        XCTAssertEqual(lastYear.accessibilityLabel, "The Daily. Housing costs. 42 minutes. Published October 12, 2025.")
+        XCTAssertEqual(row(published: utc("2026-01-01T12:00:00Z")).dateLabel, "Jan 1", "the first day of this year")
+        XCTAssertEqual(row(published: utc("2025-12-31T12:00:00Z")).dateLabel, "Dec 31, 2025", "the last day of last year")
+    }
+
+    func testTheDateIsAlwaysAbsoluteEvenForToday() {
+        XCTAssertEqual(row(published: readingTime.addingTimeInterval(-3_600)).dateLabel, "Oct 16", "no \"Today\"")
+        XCTAssertEqual(row(published: utc("2026-10-15T12:00:00Z")).dateLabel, "Oct 15", "no \"Yesterday\"")
+    }
+
+    func testADateAFewHoursInTheFutureIsStillThatDate() {
+        XCTAssertEqual(row(published: readingTime.addingTimeInterval(3 * 3_600)).dateLabel, "Oct 16", "a feed clock a little ahead is not hidden or turned into \"in 3 hours\"")
+    }
+
+    func testTheListenersTimeZoneDecidesWhichDayItWas() {
+        let newYear = utc("2026-01-01T00:30:00Z")
+        XCTAssertEqual(row(published: newYear, zone: "America/Los_Angeles").dateLabel, "Dec 31, 2025", "still New Year's Eve in Los Angeles, and last year")
+        XCTAssertEqual(row(published: newYear, zone: "Pacific/Auckland").dateLabel, "Jan 1", "already the afternoon of New Year's Day in Auckland")
+        XCTAssertEqual(row(published: newYear, zone: "UTC").dateLabel, "Jan 1")
+        XCTAssertEqual(row(published: newYear, zone: "America/Los_Angeles").accessibilityLabel,
+                       "The Daily. Housing costs. 42 minutes. Published December 31, 2025.")
+    }
+
+    func testTheDateFollowsTheLocale() throws {
+        let published = utc("2026-10-12T15:00:00Z")
+        let german = try XCTUnwrap(row(published: published, locale: "de_DE").dateLabel)
+        XCTAssertTrue(german.contains("12") && german.contains("Okt"), german)
+        let japanese = try XCTUnwrap(row(published: published, locale: "ja_JP").dateLabel)
+        XCTAssertTrue(japanese.contains("10月12日"), japanese)
+        let germanSpoken = row(published: published, locale: "de_DE").accessibilityLabel
+        XCTAssertTrue(germanSpoken.contains("Oktober"), germanSpoken)
+    }
+
+    func testALongShowNameLeavesTheLengthAndDateIntact() {
+        let long = String(repeating: "A very long show name ", count: 12)
+        let entry = row(published: utc("2026-10-12T15:00:00Z"), show: long)
+        XCTAssertEqual(entry.trailingMetadata, "42 min · Oct 12", "the screen truncates the show name, not this")
+        XCTAssertTrue(entry.accessibilityLabel.hasSuffix("Published October 12."))
+    }
+
+    func testAnArticleWithADateButNoLengthShowsOnlyTheDate() {
+        let entry = FeedEntry(id: "a", subscriptionId: "s", canonicalURL: "https://example.com/a", title: "On cities", publishedAt: utc("2026-10-12T15:00:00Z"))
+        let row = FollowingEntryRow(entry: entry, showTitle: "Lab Notes", artworkURL: nil,
+                                    now: readingTime, calendar: calendar("UTC"), locale: Locale(identifier: "en_US"))
+        XCTAssertNil(row.length)
+        XCTAssertEqual(row.trailingMetadata, "Oct 12")
+    }
+
     func testCatalogArtworkIsRecordedForFollowedShowsTheCatalogLists() {
         let catalog = SourceCatalog(
             schemaVersion: SourceCatalog.currentSchemaVersion, catalogId: "test", contentVersion: 1, title: "Test",

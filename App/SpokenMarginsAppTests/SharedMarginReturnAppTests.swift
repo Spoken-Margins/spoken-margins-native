@@ -205,6 +205,24 @@ final class SharedMarginReturnAppTests: XCTestCase {
         }
     }
 
+    // #1672 audit: only the Margin just recorded over a Margin is skipped when it ends. Another Margin of yours that
+    // happens to sit within a fraction of a second of it still plays when playback reaches it.
+    func testALaterOwnMarginRightNextToTheOneHeardStillFollowsIt() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        let heard = try fixture.addOwnMargin(id: "own-heard", atMediaTimeMs: 4_400, voiceSeconds: 1)
+        let neighbour = try fixture.addOwnMargin(id: "own-neighbour", atMediaTimeMs: 4_500, voiceSeconds: 1)
+        model.seekMedia(toMediaTimeMs: 1_500)
+        try await fixture.waitUntil("the source is past the shared Margin") { (model.snapshot.currentMediaTimeMs ?? 0) >= 1_400 }
+
+        model.toggleInterjectionAudioPlayback(heard)
+        try await fixture.waitUntil("the Margin ends", timeout: 10) { !model.isPlayingInterjectionAudio(heard) }
+        try await fixture.waitUntil("the source plays again") { model.snapshot.status == .playing }
+        let moment = try XCTUnwrap(model.marginMoment, "the neighbouring Margin is waiting for playback to reach it")
+        XCTAssertEqual(moment.unplayed.map(\.marginId), [Gate1AppModel.marginIdentity(neighbour)])
+    }
+
     // #1538: moving from one of your Margins to another while the first plays keeps the promise to bring the source back.
     func testSwitchingFromOneOwnMarginToAnotherStillBringsTheSourceBackWhenTheSecondEnds() async throws {
         let fixture = try await ReturnFixture.make(sourcePlaying: true)

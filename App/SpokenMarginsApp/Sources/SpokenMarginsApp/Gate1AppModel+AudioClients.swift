@@ -104,6 +104,7 @@ extension Gate1AppModel {
                 onPreparedChunk: { await hooks.rendered(itemId: $0, articleIdentity: $1, plan: $2, audioURL: $3, durationMs: $4, engine: $5) },
                 articleText: { hooks.articleText(itemId: $0) },
                 preparedChunkLookup: { await hooks.lookup(itemId: $0, articleIdentity: $1, plan: $2) },
+                bundledVoiceChunkLookup: { await hooks.lookup(itemId: $0, articleIdentity: $1, plan: $2, engine: KittenNarrationRenderer.engine) },
                 onPreparedAudio: { [weak self] itemId, prepared in
                     Task { @MainActor [weak self] in
                         guard let signature = try? await signatureTask.value, let self else { return }
@@ -177,6 +178,7 @@ extension Gate1AppModel {
                 handOverHold: handOverBackgroundHold,
                 interruptionHold: makeInterruptionBackgroundHold(),
                 applicationIsActive: SupertonicSpeechPlaybackClient.isApplicationActive,
+                applicationIsInBackground: SupertonicSpeechPlaybackClient.isApplicationInBackground,
                 onBackgroundSeams: { [weak self] summary in Task { @MainActor [weak self] in self?.diagnostics["backgroundSeams"] = summary } }
             )
         }

@@ -25,9 +25,12 @@ import sys
 import time
 from typing import Callable, Optional
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+import sm_paths  # noqa: E402
+
 REPO = os.environ.get('SM_INTEGRATION_REPO', 'uncomposed/spoken-margins-native')
-REPO_ROOT = Path(__file__).resolve().parents[2]          # ops/testdesk/ -> repo root
-HOME_DIR = Path(os.environ.get('SM_INTEGRATION_HOME', Path.home() / 'SpokenMarginsOps' / 'integration-run'))
+REPO_ROOT = sm_paths.repo(__file__)                      # the public checkout it tests (SM_REPO)
+HOME_DIR = Path(os.environ.get('SM_INTEGRATION_HOME') or sm_paths.state_dir('integration-run'))
 BASE_BRANCH = 'next'
 REPORT_ISSUE = 184
 RUN_BY = 'integration script'
@@ -49,7 +52,10 @@ NOT_RUN = 'not run: agent-driven journeys (they need an attended session)'
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(REPO_ROOT / 'scripts'))
+import comment_trust  # noqa: E402  (#1822: whose comments and issues the desk believes)
 import integration_revert as revert  # noqa: E402
+import journey_promotion  # noqa: E402
+import lane_ledger  # noqa: E402
 import lane_slots  # noqa: E402
 from lane_xcresult_attachments import report_lines  # noqa: E402
 
@@ -198,6 +204,31 @@ def script_results(listing: dict, records: dict) -> dict:
     return results
 
 
+def scripted_summary(journeys: dict) -> str:
+    """The candidate line's words on scripted journeys. "Passed" is only said when every listed script passed;
+    otherwise each outcome is counted, so a skipped or unrun script is never rolled into a pass (#1901)."""
+    if not journeys:
+        return 'scripted journeys not run'
+    counts = {'passed': 0, 'failed': 0, 'skipped': 0, 'not run': 0}
+    failing = []
+    for test, status in sorted(journeys.items()):
+        if status == 'passed':
+            counts['passed'] += 1
+        elif status in ('failed', 'missing'):
+            counts['failed'] += 1
+            failing.append(test.rsplit('/', 1)[-1])
+        elif status == 'skipped':
+            counts['skipped'] += 1
+        else:
+            counts['not run'] += 1
+    if counts['passed'] == len(journeys):
+        return f"scripted journeys passed ({counts['passed']} of {len(journeys)})"
+    if counts['not run'] == len(journeys):
+        return 'scripted journeys not run'
+    words = ', '.join(f'{n} {name}' for name, n in counts.items())
+    return f"scripted journeys {words}" + (f" (failed: {', '.join(failing)})" if failing else '')
+
+
 def clock(ts: float) -> str:
     return dt.datetime.fromtimestamp(ts).strftime('%H:%M')
 
@@ -220,8 +251,10 @@ def report_text(sha: str, result: dict, *, started: float, finished: float, prev
     if result.get('reruns'):
         lines.append(f"  2. failing tests re-run {result['reruns']} times on the same build")
     if result.get('journeys'):
-        lines.append('  scripted journeys (probation, not verdict input): '
+        lines.append('  scripted journeys (only those on gating are verdict input): '
                      + ', '.join(f'{t.rsplit("/", 1)[-1]} {s}' for t, s in sorted(result['journeys'].items())))
+        if result.get('journeys_due'):
+            lines.append('  ' + result['journeys_due'])
     if result['failed']:
         lines.append('failing: ' + ', '.join(result['failed']))
     notes = result.get('flaky_notes', {})
@@ -239,9 +272,7 @@ def report_text(sha: str, result: dict, *, started: float, finished: float, prev
     if result['verdict'] == 'PASS':
         # Say what the pass covers: app tests alone are not a full candidate (#1465).
         journeys = result.get('journeys') or {}
-        failed = sorted(t.rsplit('/', 1)[-1] for t, status in journeys.items() if status in ('failed', 'missing'))
-        scripted = (f"scripted journeys failed ({', '.join(failed)})" if failed else
-                    'scripted journeys passed' if 'passed' in journeys.values() else 'scripted journeys not run')
+        scripted = scripted_summary(journeys)
         lines += ['', f'{sha[:7]} is the current phone candidate: app tests passed; {scripted}; '
                       'attended journeys not run.']
     return '\n'.join(lines) + '\n'
@@ -254,26 +285,41 @@ def dedupe_query(test: str) -> str:
     return 'is:issue is:open "' + re.sub(r'[^A-Za-z0-9_]', '', name) + '"'
 
 
-LISTED_COMMENTS = 100  # `gh issue list --json comments` returns at most this many per issue
-
-
 def find_duplicate(issues: list[dict], tests: list[str],
                    all_comments: Optional[Callable[[int], str]] = None) -> Optional[int]:
-    """The first open issue naming one of the tests (the report issue itself never counts)."""
+    """The first open issue that is a failure report for one of the tests (the report issue never counts).
+
+    Naming a test is not enough: a design issue can cite one as an example, and a comment posted there files
+    nothing (#1871). An issue is a failure report when it carries `regression` (part of FAIL_LABELS, which
+    every filed failure gets) and names the test, or when a "Failing tests:" line in its body or comments
+    names the test, as the runs' own issues and an earlier run's comment do. The `regression` label alone is
+    not enough, because a regression about something else may still mention the test in passing.
+
+    `issues` are REST issue objects, which carry `author_association`, `user.login` and labels; `gh issue list
+    --json` has no association field. Only the team's issues count (#1822), and `all_comments(number)` returns the
+    text of that issue's trusted comments, read only when the title and body don't already settle it and the issue
+    has some."""
+    names = [t.rsplit('/', 1)[-1].removesuffix('()') for t in tests]
+
     def names_a_test(text: str) -> bool:
-        return any(re.search(r'(?<!\w)' + re.escape(t.rsplit('/', 1)[-1].removesuffix('()')) + r'(?!\w)', text)
-                   for t in tests)
+        return any(re.search(r'(?<!\w)' + re.escape(name) + r'(?!\w)', text) for name in names)
+
+    def lists_a_failing_test(text: str) -> bool:
+        return any(line.startswith('Failing tests:') and names_a_test(line) for line in text.splitlines())
+
+    def is_failure_report(issue: dict, text: str) -> bool:
+        labels = {(label.get('name') if isinstance(label, dict) else label) for label in issue.get('labels') or []}
+        return lists_a_failing_test(text) or ('regression' in labels and names_a_test(text))
 
     for issue in issues:
-        if issue['number'] == REPORT_ISSUE:
-            continue
-        comments = issue.get('comments') or []
-        text = '\n'.join([issue.get('title') or '', issue.get('body') or '']
-                         + [c.get('body') or '' for c in comments])
-        if names_a_test(text):
+        if issue['number'] == REPORT_ISSUE or not comment_trust.trusted(issue):
+            continue  # #1822: a stranger's issue naming a test must not swallow the failure report
+        text = '\n'.join([issue.get('title') or '', issue.get('body') or ''])
+        if is_failure_report(issue, text):
             return issue['number']
-        if all_comments is not None and len(comments) >= LISTED_COMMENTS and names_a_test(all_comments(issue['number'])):
-            return issue['number']
+        if all_comments is not None and (issue.get('comments') or 0):
+            if is_failure_report(issue, text + '\n' + all_comments(issue['number'])):
+                return issue['number']
     return None
 
 
@@ -431,8 +477,8 @@ class Ops:
         since = (dt.datetime.now(dt.timezone.utc) - REPORT_LOOKBACK).strftime('%Y-%m-%dT%H:%M:%SZ')
         out = self.must(['gh', 'api', '--paginate',
                          f'repos/{REPO}/issues/{REPORT_ISSUE}/comments?since={since}&per_page=100',
-                         '--jq', '.[] | {created_at, body} | @json']).stdout
-        return [json.loads(line) for line in out.splitlines() if line.strip()]
+                         '--jq', '.[] | {created_at, body, author_association, user: {login: .user.login}} | @json']).stdout
+        return comment_trust.trusted_only([json.loads(line) for line in out.splitlines() if line.strip()])
 
     def lane_waiting(self) -> list[int]:
         """PRs whose waiting /lane request needs the simulator. A GitHub error counts as none
@@ -441,9 +487,9 @@ class Ops:
             runs = self.gh_json(['run', 'list', '-R', REPO, '--workflow', 'lane.yml', '--limit', '50',
                                  '--json', 'status,displayTitle'])
             return [n for n in lane_requests_waiting(runs or [])
-                    if needs_simulator(json.loads(self.must(
+                    if needs_simulator([c.get('body') or '' for c in comment_trust.trusted_only(json.loads(self.must(
                         ['gh', 'api', '--paginate', f'repos/{REPO}/issues/{n}/comments',
-                         '--jq', '[.[].body]']).stdout or '[]'))]
+                         '--jq', '[.[] | {body, author_association, user: {login: .user.login}}]']).stdout or '[]'))])]
         except (RuntimeError, ValueError) as error:
             self.log('lane queue unreadable, not waiting for it: ' + str(error)[:200])
             return []
@@ -614,8 +660,16 @@ class Ops:
             git('branch', '-D', branch)
 
     def issue_comments(self, number: int) -> str:
-        return self.must(['gh', 'api', '--paginate', f'repos/{REPO}/issues/{number}/comments',
-                          '--jq', '.[].body']).stdout or ''
+        out = self.must(['gh', 'api', '--paginate', f'repos/{REPO}/issues/{number}/comments',
+                         '--jq', '.[] | {body, author_association, user: {login: .user.login}} | @json']).stdout or ''
+        return '\n'.join(c.get('body') or '' for c in comment_trust.trusted_only(
+            [json.loads(line) for line in out.splitlines() if line.strip()]))
+
+    def open_issues_matching(self, test: str) -> list[dict]:
+        """Open issues GitHub's search ties to the test, as REST objects (they carry author_association)."""
+        out = self.must(['gh', 'api', '-X', 'GET', 'search/issues', '-f', f'q=repo:{REPO} {dedupe_query(test)}',
+                         '-f', 'per_page=100', '--jq', '.items[] | @json']).stdout or ''
+        return [json.loads(line) for line in out.splitlines() if line.strip()]
 
     def file_failures(self, groups: list[dict], sha: str, report: str, evidence: Path,
                       cost: Optional[float]) -> list[int]:
@@ -623,9 +677,7 @@ class Ops:
         for i, group in enumerate(groups):
             duplicate = None
             for test in group['tests']:
-                issues = self.gh_json(['issue', 'list', '-R', REPO, '--state', 'open',
-                                       '--search', dedupe_query(test), '--limit', '100',
-                                       '--json', 'number,title,body,comments'])
+                issues = self.open_issues_matching(test)
                 duplicate = find_duplicate(issues, [test], self.issue_comments)
                 if duplicate is not None:
                     break
@@ -796,9 +848,22 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
         finally:
             stack.close()  # the simulator is free before GitHub and Claude work
         suspects = ops.suspects(sha, green) if result['verdict'] == 'FAIL' else []
+        if result.get('journeys'):  # streaks toward gating, and the scripts due to move (#1901); never blocks the report
+            try:
+                state['journeys'] = journey_promotion.update(state.get('journeys', {}), result['journeys'])
+                listing = json.loads((wt / 'TestPlans' / 'scripted-journeys.json').read_text())
+                result['journeys_due'] = journey_promotion.report_line(
+                    journey_promotion.due(listing, state['journeys']))
+            except Exception as error:  # noqa: BLE001
+                ops.log('journey streaks failed: ' + str(error)[:300])
         state['results'][sha] = {'verdict': result['verdict'], 'started': now, 'evidence': str(evidence),
                                  'failed': result['failed'], 'flaky': result.get('flaky', [])}
         save_state(path, state)
+        try:  # the per-test catch ledger (#1789); it must never hold up the report
+            lane_ledger.record_tip(lane_slots.state_dir(), ops.repo_root, sha, result['verdict'], result['failed'],
+                                   result.get('flaky', []), ops.now() - now)
+        except Exception as error:  # noqa: BLE001
+            ops.log('catch ledger failed: ' + str(error)[:300])
         try:
             body = report_text(sha, result, started=now, finished=ops.now(), previous=previous,
                                suspects=suspects, evidence=evidence)

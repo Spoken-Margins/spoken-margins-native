@@ -66,4 +66,28 @@ final class BackgroundChunkSeamTests: XCTestCase {
         XCTAssertEqual(log.total, 5)
         XCTAssertEqual(log.summary, "queued_ahead 3, next_not_rendered 2")
     }
+
+    // #1673: only a seam with nothing rendered to play hands over to the iOS voice. Every other miss has its audio
+    // in hand (or a stand-in voice that needs the app anyway) and carries on through the app.
+    func testOnlyANextChunkThatIsNotRenderedHandsOverToTheIOSVoice() {
+        for outcome in BackgroundChunkSeam.Outcome.allCases {
+            XCTAssertEqual(
+                BackgroundChunkSeam.handsOverToSystemVoice(outcome), outcome == .nextNotRendered, outcome.rawValue
+            )
+        }
+    }
+
+    // #1762: the end of a chunk heard while the player still names it as current, with the next chunk queued behind
+    // it on a player that advances and is playing, is a queue moving on. Flipping any one fact goes through the app.
+    func testAQueuedChunkOnAnAdvancingPlayingPlayerIsTheOneThatPlaysNext() {
+        func moves(onPlayer: Bool = true, advances: Bool = true, playing: Bool = true) -> Bool {
+            BackgroundChunkSeam.queueMovesOnAtEnd(
+                queuedChunkIsOnThePlayer: onPlayer, playerAdvancesAtItemEnd: advances, playerIsPlaying: playing
+            )
+        }
+        XCTAssertTrue(moves())
+        XCTAssertFalse(moves(onPlayer: false), "B left the queue")
+        XCTAssertFalse(moves(advances: false), "the player stops at an item's end")
+        XCTAssertFalse(moves(playing: false), "the player rests at A's end and won't play an inserted B")
+    }
 }

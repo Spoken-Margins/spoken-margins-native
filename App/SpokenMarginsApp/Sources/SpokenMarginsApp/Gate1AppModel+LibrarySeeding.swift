@@ -21,6 +21,7 @@ import PDFKit
 extension Gate1AppModel {
     func bootstrapLibraryIfNeeded() {
         guard pendingUITestingSeed != nil || (libraryItems.isEmpty && store == nil) else { return }
+        SessionShareFiles.removeLeftovers() // files of a multi-session share whose sheet died with the app (#1528)
         do {
             let store = try requireStore()
             libraryAccessError = nil

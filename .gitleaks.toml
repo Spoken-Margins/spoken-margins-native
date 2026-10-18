@@ -1,0 +1,114 @@
+# gitleaks config for Spoken Margins (#1839).
+#
+# Run it with scripts/check-gitleaks.sh (see CONTRIBUTING.md). It keeps the default rules and clears only
+# the look-alikes the 2026-10-16 all-refs scan found (#1383): 105 hits, none a real credential. Each
+# allowlist names the files it covers and, where the hit is a single value, that exact value too, so a
+# new key in the same file still fails the scan. Don't widen an entry to a folder or a whole rule; add a
+# new entry with its own reason instead.
+
+title = "Spoken Margins"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "UserDefaults key name for the catalog drawer's seen flag, not a secret."
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+  '''(?:^|/)App/SpokenMarginsApp/Sources/SpokenMarginsApp/CatalogDrawer\.swift$''',
+]
+regexes = [
+  '''^catalogDrawerSeenV1$''',
+]
+
+[[allowlists]]
+description = "Made-up private-feed tokens that the redaction tests and contract fixtures must strip."
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+  '''(?:^|/)App/SpokenMarginsAppTests/SourceLinkImportTests\.swift$''',
+  '''(?:^|/)Contracts/fixtures/feeds/enclosure-only-episodes\.rss$''',
+  '''(?:^|/)Contracts/fixtures/invalid/source-resolution/feed-without-privacy-flag\.json$''',
+  '''(?:^|/)Contracts/fixtures/opml/edge-cases\.opml$''',
+  '''(?:^|/)Contracts/fixtures/source-resolution/private-feed-link\.json$''',
+  '''(?:^|/)Packages/SessionKit/Tests/SessionKitCoreTests/CommunityMapUploadTests\.swift$''',
+  '''(?:^|/)Packages/SessionKit/Tests/SessionKitCoreTests/MarginMarkdownShareTests\.swift$''',
+  '''(?:^|/)Packages/SessionKit/Tests/SessionKitCoreTests/MarginNoteFrontmatterTests\.swift$''',
+  '''(?:^|/)Packages/SessionKit/Tests/SessionKitCoreTests/OPMLTests\.swift$''',
+  '''(?:^|/)Packages/SessionKit/Tests/SessionKitCoreTests/OriginalSourceLinkTests\.swift$''',
+  '''(?:^|/)Packages/SessionKit/Tests/SessionKitCoreTests/ReadwiseHighlightTests\.swift$''',
+  '''(?:^|/)Packages/SessionKit/Tests/SessionKitCoreTests/ShareableLinkPolicyEncodingTests\.swift$''',
+  '''(?:^|/)Packages/SessionKit/Tests/SessionKitCoreTests/ShareableLinkPolicyFragmentTests\.swift$''',
+  '''(?:^|/)Packages/SessionKit/Tests/SessionKitCoreTests/SourceResolutionTests\.swift$''',
+  '''(?:^|/)Packages/SessionKit/Tests/SessionKitTests/OPMLTests\.swift$''',
+  '''(?:^|/)Packages/SessionKit/Tests/SessionKitTests/PrivateFeedLinkTests\.swift$''',
+  '''(?:^|/)Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests\.swift$''',
+  '''(?:^|/)Packages/SessionKit/Tests/SessionKitTests/SourceResolutionTests\.swift$''',
+]
+# The last of these is the base64 test token decoded, which gitleaks also checks.
+regexes = [
+  '''^Zx81kq0P2mNw7rT4yB6vC9dF3hJ5lA1s$''',
+  '''^Zk9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq$''',
+  '''^k9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq$''',
+  '''^pAtReOnSeCrEt7f3a9c2e41b8d6$''',
+  '''^5b2d8e0c9a7f4e1d8c3b6a5f2e9d0c7b$''',
+  '''^abc123SECRET456def789ghi012jkl345$''',
+  '''^zyx987SECRET654wvu321tsr098qpo765$''',
+  '''^PASTEDsecret0123456789$''',
+  '''^abcdef0123456789$''',
+  '''^0123456789abcdef0123456789abcdef$''',
+  '''^fOqChSoken1234567890abcdefghij$''',
+]
+
+[[allowlists]]
+description = "Hex digests and keys the tests compute or pin: map keys, a commit hash, server test keys."
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+  '''(?:^|/)Packages/SessionKit/Tests/SessionKitCoreTests/CommunityMapFetchTests\.swift$''',
+  '''(?:^|/)Packages/SessionKit/Tests/SessionKitCoreTests/CommunityMapUploadTests\.swift$''',
+  '''(?:^|/)Packages/SessionKit/Tests/SessionKitTests/BuildIdentityTests\.swift$''',
+  '''(?:^|/)research/B4/server/internal/api/maps_test\.go$''',
+  '''(?:^|/)research/B4/server/internal/maps/helpers_test\.go$''',
+]
+regexes = [
+  '''^fb457cfea268232e0b7362946b20514cd6e3d4e3386d293f7eae8a1c9cbf5c73$''',
+  '''^7013f25cbc88f09d1dda36238057be2e8f4636371f48d904e781051385363dd7$''',
+  '''^9d422f623d0ab775f657ad9352a23fca51280e8d$''',
+  '''^0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$''',
+  '''^fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210$''',
+]
+
+[[allowlists]]
+description = "Published RFC 9578 (Privacy Pass) test vectors: their keys and tokens are public by design."
+targetRules = ["generic-api-key", "private-key"]
+paths = [
+  '''(?:^|/)Packages/SessionKit/Tests/SessionKitCoreTests/PrivacyPassVectors\.swift$''',
+  '''(?:^|/)research/B4/server/internal/tokens/testdata/rfc9578-type2-vectors\.json$''',
+]
+
+[[allowlists]]
+description = "Recorded iTunes lookup: the text after the artist name \"Travis Kelce\" looks like a Travis CI token."
+targetRules = ["travisci-access-token"]
+condition = "AND"
+paths = [
+  '''(?:^|/)research/B1/recorded/2026-09-28/lookup-02\.json$''',
+]
+regexTarget = "match"
+regexes = [
+  '''^Travis Kelce", "''',
+]
+
+[[allowlists]]
+description = "Apple crash reports committed in history: crashReporterKey is a crash-log device ID, not a credential."
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+  '''(?:^|/)artifacts/.+\.(?:ips|txt)$''',
+]
+regexTarget = "match"
+regexes = [
+  '''^crashReporterKey" : "[0-9A-Fa-f-]{36}"$''',
+  '''^Key:  [0-9A-Fa-f-]{36}$''',
+]

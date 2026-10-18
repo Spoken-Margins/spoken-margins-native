@@ -144,7 +144,10 @@ BUILD_RUNNER_FREE_DISK = 20 * 10**9
 # Trial (2026-10-01): host-only jobs on the build runner may run beside a simulator job, with this much disk.
 BESIDE_SIMULATOR_FREE_DISK = 30 * 2**30
 BESIDE_SIMULATOR_LOG = 'beside-simulator.log'  # in the lane state folder: one line per job, to count crashes against
-WARM_FREE_FLOOR = 15 * 10**9
+# Above the 20 GiB at which the Mac finisher pauses and BUILD_RUNNER_FREE_DISK, so idle caches go before other
+# work stops for lack of disk (#1775). The lane folder's overall cap is ops/disk/sm_lane_prune.py's.
+WARM_FREE_FLOOR = 25 * 10**9
+PRUNE_TIMEOUT = 300
 PROJECT_FILE = 'SpokenMarginsNative.xcodeproj/project.pbxproj'  # its layout names Xcode's VFS folders (#405)
 # How the T3 gate's hold reads in an automerge report, now and before #421 (PRs held by an older runner).
 HELD_FOR_T3 = ('not merged: held for T3', 'after a T3 PASS, push or remove and re-add automerge to merge')
@@ -154,6 +157,12 @@ AUDITS = ('**Codex audit (Astra)', '## Codex audit', '**Claude audit on `')
 AUDITED = {'audio': 'the audio session', 'persistence': 'persistence', 'packet': 'packets'}
 BOT = ('github-actions[bot]', '41898282+github-actions[bot]@users.noreply.github.com')
 RUNNER_TIERS = ('T2', 'T3')
+# Whose PR comments the runner reads (#1719). Once the repository is public, anyone can comment, and a /lane
+# request runs the PR's code on the Mac; a fake report or note could also answer a request or lift the T3 hold.
+# So the runner sees only comments from the owner, the organisation's members and the repository's
+# collaborators (GitHub's author_association), and from the project's own bot, the workflows' github-actions.
+TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
+TRUSTED_BOTS = (BOT[0],)
 APP_TEST_TARGET = 'SpokenMarginsAppTests'
 PLANS = {'app': 'AppBehavior', 'adapters': 'AudioAdapters'}
 # The device build compiles without signing: the runner is a background service with no access to
@@ -181,6 +190,15 @@ LANE_WORKFLOW = 'lane.yml'
 
 
 # ---- Requests -----------------------------------------------------------------------------------
+
+def trusted_comment(comment: dict) -> bool:
+    """Whether the runner may act on this comment: the owner's, a member's or collaborator's, or the project's bot.
+
+    A comment without author_association (GitHub always sends it) is not trusted.
+    """
+    login = (comment.get('user') or {}).get('login')
+    return comment.get('author_association') in TRUSTED_ASSOCIATIONS or login in TRUSTED_BOTS
+
 
 def parse_request(body: str) -> dict | None:
     """The /lane line and the `key: value` lines after it, or None if the comment isn't a request."""
@@ -299,15 +317,17 @@ STEP_RUNS: list[dict] = []  # this job's step runs, for the step ledger once the
 TESTED_BASE = ''  # the next commit the job is testing now (remember_tested)
 
 
-def note_step(name: str, verdict: str, seconds: float, failed=(), zero_tests: bool = False) -> None:
+def note_step(name: str, verdict: str, seconds: float, failed=(), zero_tests: bool = False, ran=None) -> None:
+    """ran: the tests this run executed (#1830), or None when the step can't say; the ledger closes a named test
+    failure only on a run that ran it."""
     STEP_RUNS.append({'step': name, 'verdict': verdict, 'seconds': seconds, 'base': TESTED_BASE,
-                      'failed': list(failed), 'zero_tests': zero_tests})
+                      'failed': list(failed), 'zero_tests': zero_tests, 'ran': None if ran is None else list(ran)})
 
 
 def ledger_step(name: str, read=None):
     """Note each run of the decorated step for the step ledger: its verdict (the result's first item) and wall
-    time, and through read(args, result) what failed and whether it ran zero tests. A step that raises is a
-    runner fault."""
+    time, and through read(args, result) what failed, whether it ran zero tests and, when it can say, which tests it
+    ran: (failed, zero) or (failed, zero, ran). A step that raises is a runner fault."""
     def wrap(function):
         @functools.wraps(function)
         def run(*args, **kwargs):
@@ -317,21 +337,23 @@ def ledger_step(name: str, read=None):
             except BaseException:
                 note_step(name, 'ERROR', time.monotonic() - started)
                 raise
-            failed, zero = [], False
+            failed, zero, ran = [], False, None
             try:
-                failed, zero = read(args, result) if read else ([], False)
+                failed, zero, *rest = read(args, result) if read else ([], False)
+                ran = rest[0] if rest else None
             except Exception:  # noqa: BLE001 - the ledger never changes a step's result
                 pass
-            note_step(name, result[0], time.monotonic() - started, failed, zero)
+            note_step(name, result[0], time.monotonic() - started, failed, zero, ran)
             return result
         return run
     return wrap
 
 
-def manifest_failures(*outputs: Path) -> tuple[list[str], bool]:
-    """(The failed tests, or failed steps when a step names no tests, and whether no test ran) in the
-    verify-tests.py manifests under <outputs>."""
-    failed, counted = [], 0
+def manifest_failures(*outputs: Path) -> tuple[list[str], bool, list[str]]:
+    """(The failed tests, or failed steps when a step names no tests, whether no test ran, and the names of the
+    tests that did run) in the verify-tests.py manifests under <outputs>. A SessionKit step skipped as already
+    passed (#1328) ran no test and adds no names."""
+    failed, counted, ran = [], 0, []
     for output in outputs:
         manifest = _read_manifest(output)
         if manifest.get('sessionkit_pass'):  # SessionKit's tests were skipped as already passed (#1328): not a run of none
@@ -341,19 +363,21 @@ def manifest_failures(*outputs: Path) -> tuple[list[str], bool]:
                 continue
             tests = step.get('tests') or {}
             counted += len(tests)
+            ran += [test for test, record in tests.items() if record.get('status') != 'skipped']  # a skip is not a run
             failed += [test for test, record in tests.items() if record.get('status') == 'failed']
             if step.get('exit_code') and not step.get('interrupted') and not tests:
                 failed.append(str(step.get('name')))
-    return failed, counted == 0
+    return failed, counted == 0, list(dict.fromkeys(ran))
 
 
-STALL_ISSUE = 705  # the open regression for the app test host that launches and never reaches XCTest
+STALL_ISSUE = 1802  # the evidence log for app startup stalls and simulator boot stalls (#705 is closed)
+BOOT_STALLS = 'boot-stalls.json'  # a T3 boot's stalls (boot_t3_device), for log_recovered_stalls
 
 
 def recovered_startup_stalls(manifest: dict) -> list[dict]:
     """The steps of a verify-tests.py manifest that stalled once at startup, recovered on the first retry and passed.
 
-    Owner's call 2026-10-11: such a step counts as a PASS, and each stall is logged on #705. Two or more stalls
+    Owner's call 2026-10-11: such a step counts as a PASS, and each stall is logged on the evidence log (STALL_ISSUE). Two or more stalls
     before a pass stay a step error, so they never show up here.
     """
     return [{'step': step.get('name'), 'stall': step['startup_stalls'][0],
@@ -362,12 +386,43 @@ def recovered_startup_stalls(manifest: dict) -> list[dict]:
             if step.get('startup_recovered') and len(step.get('startup_stalls') or []) == 1 and not step.get('errors')]
 
 
-def log_recovered_stalls(evidence: Path, pr: int, head: str, report_url: str, post) -> int:
-    """Post each recovered startup stall in the verify-* manifests under <evidence> on #705 with post(body).
+def boot_stall_note(evidence: Path, pr: int, head: str, report_url: str, verdict: str) -> str | None:
+    """The evidence-log comment for the T3 boot's stalls (<evidence>/boot-stalls.json), in the startup stalls' format."""
+    try:
+        found = json.loads((evidence / BOOT_STALLS).read_text())
+        stalls, outcome = found['stalls'], found['outcome']
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not stalls:
+        return None
+    if outcome.startswith('recovered'):
+        title = f'Boot stall recovered on a fresh device; the run then ended {verdict}'
+    else:
+        title = f'Boot stall, {outcome}'
+    lines = [f'{title}: the T3 run for PR #{pr} at `{head[:7]}` ({report_url}).']
+    lines += [f'- Boot {number}, clone `{stall.get("udid")}` (memory pressure {stall.get("pressure", "unknown")}): '
+              f'{stall.get("error")}' for number, stall in enumerate(stalls, 1)]
+    lines.append(f'- Outcome: {outcome}.')
+    lines.append(f'- Evidence on the Mac: `{evidence}/first-boot.log` and the boot log '
+                 '`~/Library/Caches/SpokenMarginsLane/boot-events.log`.')
+    lines.append('_Posted by the lane runner (scripts/lane-runner.py)._')
+    return '\n'.join(lines)
+
+
+def log_recovered_stalls(evidence: Path, pr: int, head: str, report_url: str, post, verdict: str = '') -> int:
+    """Post the T3 boot's stalls, and each recovered startup stall in the verify-* manifests under <evidence>,
+    on the evidence log (STALL_ISSUE) with post(body).
 
     Best effort: the report is already posted, and nothing here can fail the job. Returns how many were posted.
     """
     posted = 0
+    booted = boot_stall_note(evidence, pr, head, report_url, verdict)
+    if booted:
+        try:
+            post(booted)
+            posted += 1
+        except Exception as error:  # noqa: BLE001 - the report already says the stall happened
+            print(f'Could not log the boot stall on #{STALL_ISSUE}: {error!r}', flush=True)
     for output in sorted(evidence.glob('verify-*')):
         plan = output.name.removeprefix('verify-')
         for found in recovered_startup_stalls(_read_manifest(output)):
@@ -619,7 +674,13 @@ def changed_paths_for_tests(tree: Path, base: str) -> list[str] | None:
     return sorted(set(paths)) or None
 
 
-@ledger_step('host tests', lambda args, result: (manifest_failures(args[0] / 'fast')[0], False))
+def fast_manifest(args, result):
+    """What the host tests failed and ran, for the step ledger; their zero-test case is not a runner fault."""
+    failed, _, ran = manifest_failures(args[0] / 'fast')
+    return failed, False, ran
+
+
+@ledger_step('host tests', fast_manifest)
 def run_fast(evidence: Path, runner=run_bounded, changed: list[str] | None = None) -> tuple[str, list[str]]:
     """--plan fast (host tests): returns (PASS, FAIL or INCONCLUSIVE, details).
 
@@ -811,7 +872,15 @@ def merge_blockers(scope: dict, comments: list[dict], head: str, inherited=None)
     inherited (inherited_check's answer) adds a hold per blocking audit on another PR's commits this PR brings in
     (#712): a clean audit of this head doesn't clear it, a resolution of that finding plus a clean audit after does."""
     reasons = []
-    risky = sorted({AUDITED[f['category']] for f in scope['files'] if f['category'] in AUDITED})
+    # Imported here, like lane_slots: the workflow runs this file from $RUNNER_TEMP, where ROOT/scripts is
+    # not the workspace, so a top-level import fails before main() puts the tree on sys.path.
+    from lane_audit_policy import requires_persistence_audit
+    risky = {AUDITED[f['category']] for f in scope['files'] if f['category'] in AUDITED}
+    # #1658: test-scope's sessionkit category does not describe persistence risk.
+    # Use the auditor's existing eligibility rules as well, without changing tiers.
+    if requires_persistence_audit([f.get('path', '') for f in scope['files']]):
+        risky.add('persistence')
+    risky = sorted(risky)
     if scope.get('lane_paths'):  # owner rule 2026-10-01: lane changes need the audit too (test-scope.py)
         risky.append('the lane')
     audit = audit_blocker(comments, head) if risky else None
@@ -1515,6 +1584,24 @@ def warm_build_folders(tree: Path, root: Path | None = None, free=lambda path: s
     return f'build folders: {"warm" if was_warm else "cold, new cache"} (SessionKit {key})'
 
 
+def prune_lane_folder(evidence_root: Path) -> str:
+    """Cap the lane folder and age out lane evidence before a build takes room (#1775): ops/disk/sm_lane_prune.py
+    from the tools checkout, which the disk relief job also runs, though it can't read artifacts/lane in
+    ~/Documents. Returns a line for the log; never fails the job."""
+    script = tools_source() / 'ops/disk/sm_lane_prune.py'
+    if not script.is_file():
+        return 'lane folder prune: not installed in the tools checkout'
+    state = Path(os.environ.get('SM_LANE_STATE_DIR') or Path.home() / 'Library/Caches/SpokenMarginsLane')
+    try:
+        done = subprocess.run([sys.executable, str(script), '--lane-dir', str(state), '--evidence-dir',
+                               str(evidence_root)], capture_output=True, text=True, timeout=PRUNE_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return f'lane folder prune: did not run ({error!r})'
+    if done.returncode != 0:
+        return f'lane folder prune: failed ({done.stderr.strip()[-200:]})'
+    return 'lane folder prune: ' + (done.stdout.strip().splitlines() or ['nothing to do'])[-1]
+
+
 def _cache_busy(cache: Path) -> bool:
     import fcntl
     try:
@@ -1836,18 +1923,28 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
     return summaries, statuses, ran, details
 
 
-def boot_t3_device(udid: str, log) -> tuple:
+def boot_t3_device(udid: str, log, replace=None, evidence: Path | None = None, info: dict | None = None) -> tuple:
     """Boot the clone under the lane's boot rules (scripts/lane_sim.py).
 
     A clone has never booted as itself, so it gets the first-boot tolerance (one SpringBoard change in the
     first 30 s, #184). Without it every clone boot stopped on that change from 06:00 UTC on 2026-10-11 (#1359).
+    At a boot stall, replace(old) gives one fresh clone to boot instead (#1802); each stall goes to
+    <evidence>/boot-stalls.json, which log_recovered_stalls posts on #1802 with the report's link and verdict.
 
-    Returns (None when ready or the reason it isn't, details such as the memory pressure at boot).
+    Returns (None when ready or the reason it isn't, details such as the memory pressure at boot). info['udid']
+    is the device the run holds now, ready or not; pass info to read it even if the boot raises.
     """
     import lane_sim
-    info = {}
+    info = {} if info is None else info
+
+    def note(label, stalls, outcome):
+        if evidence is not None:
+            (evidence / BOOT_STALLS).write_text(json.dumps({'label': label, 'stalls': stalls, 'outcome': outcome},
+                                                           indent=2) + '\n')
+
     try:
-        lane_sim.boot(udid, f'runner boot {udid}', out=log, info=info, first_boot=True)
+        lane_sim.boot_with_retry(udid, f'runner boot {udid}', replace, out=log, info=info, first_boot=True,
+                                 log_stall=note)
     except lane_sim.BootError as error:
         return str(error), info
     return None, info
@@ -1961,10 +2058,19 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
                                  '(build and tests) ran out; interrupted'}
         return _read_manifest(output) or {'status': 'missing', 'error': 'verify-tests.py wrote no manifest'}
 
+    def replace(stalled):
+        lane_sim.release(stalled)
+        with (evidence / 'simulator-clone.log').open('a') as log:
+            return lane_sim.clone_temporary(RUNNER_SIMULATOR_PREFIX + request_id, runtime, out=log)
+
     try:
         boot_started = time.monotonic()
+        boot_info = {}
         with (evidence / 'first-boot.log').open('w') as log:
-            problem, boot_info = boot_t3_device(udid, log)
+            try:
+                problem, boot_info = boot_t3_device(udid, log, replace, evidence, boot_info)
+            finally:
+                udid = boot_info.get('udid', udid)  # after a stall, the fresh clone is the one to release
         boot_seconds = time.monotonic() - boot_started  # the boot alone, before any build or test
         if problem:
             details = [f'The cloned simulator did not boot: {problem} evidence: {evidence}/first-boot.log']
@@ -1980,6 +2086,10 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
         details.insert(0, f'boot of the cloned simulator took {duration(boot_seconds)} (memory pressure at boot: '
                           f'{boot_info.get("pressure", "unknown")}, after waiting {boot_info.get("pressure_waited", 0)}s; '
                           f'{boot_info.get("period", "one-simulator")} period)')
+        if boot_info.get('boot_retry'):
+            retry = boot_info['boot_retry']
+            details.insert(1, f'boot stall on the first clone ({retry["stalled"]}), so it was deleted and one fresh clone '
+                              f'({retry["fresh"]}) booted in {retry["seconds"]}s instead, before any app install or test (#1802); the stall is logged on #1802')
         if boot_info.get('tolerated'):
             details.insert(1, f'tolerated one SpringBoard change in the first 30 s of the first boot (owner\'s rule, '
                               f'#184): {boot_info["tolerated"]}')
@@ -2031,8 +2141,15 @@ class GitHub:
         return json.loads(self.api(f'repos/{self.repo}/pulls/{self.pr}'))
 
     def comments(self) -> list[dict]:
+        """The PR's comments the runner may act on: only trusted authors' (trusted_comment, #1719)."""
         lines = self.api('--paginate', '--jq', '.[] | @json', f'repos/{self.repo}/issues/{self.pr}/comments')
-        return [json.loads(line) for line in lines.splitlines() if line.strip()]
+        comments = [json.loads(line) for line in lines.splitlines() if line.strip()]
+        kept = [comment for comment in comments if trusted_comment(comment)]
+        if len(kept) < len(comments):
+            ignored = sorted({(c.get('user') or {}).get('login') or 'unknown' for c in comments if not trusted_comment(c)})
+            print(f'[lane] ignored {len(comments) - len(kept)} comment(s) from authors who are not the owner, a '
+                  f'collaborator or the project\'s bot: {", ".join(ignored)}', flush=True)
+        return kept
 
     def comment(self, body: str) -> str:
         return json.loads(self.api(f'repos/{self.repo}/issues/{self.pr}/comments', '-f', f'body={body}'))['html_url']
@@ -2652,10 +2769,12 @@ def main(argv=None) -> int:
             details = [f'The PR does not merge cleanly into {args.base} ({base_sha[:7]}): {", ".join(conflicts[:10])}. '
                        f'Merge {args.base} into your branch, push, and ask again.']
         elif request['tier'] == 'T2':
+            print(prune_lane_folder(evidence.parent), flush=True)
             warm = warm_build_folders(ROOT)
             verdict, ran, details = run_t2(evidence)
             where, crashes, details = 'no simulator (compile only)', 'none', [warm] + details
         else:
+            print(prune_lane_folder(evidence.parent), flush=True)
             warm = warm_build_folders(ROOT)
             classes, problem = t3_scope(ROOT, args.base, evidence)
             verdict, where, ran, details, crashes, cc = run_t3(request['tests'], request_id, evidence, classes)
@@ -2680,7 +2799,8 @@ def main(argv=None) -> int:
     print(body)
     t3_url = github.comment(body)  # if this fails, the job fails and the tidy step says so on the PR
     if request['tier'] == 'T3':
-        log_recovered_stalls(evidence, args.pr, head, t3_url, lambda text: Repo(repo).comment(STALL_ISSUE, text))
+        log_recovered_stalls(evidence, args.pr, head, t3_url, lambda text: Repo(repo).comment(STALL_ISSUE, text),
+                             verdict)
     record_outcome(verdict)
     _, desk_waiting = pending_requests(github.comments())
     if explicit:
