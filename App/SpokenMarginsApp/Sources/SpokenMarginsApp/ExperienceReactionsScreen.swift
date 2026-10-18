@@ -227,6 +227,7 @@ struct ExperienceReactionsScreen: View {
                         } label: {
                             Label(reactions.summary == nil ? "Summarize" : "Summarize again", systemImage: "sparkles")
                                 .frame(minHeight: 40)
+                                .expandedHitArea(vertical: 2)
                         }
                         .buttonStyle(.bordered)
                         .disabled(reactions.isSummarizing || input.placed.isEmpty)

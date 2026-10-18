@@ -933,9 +933,11 @@ struct PlaybackScreen: View {
                 if usesVerbosePlaybackActions {
                     PlaybackControlLabel(title: "Text", systemImage: "doc.plaintext")
                     .frame(minHeight: 32)
+                    .expandedHitArea(vertical: 6)
                 } else {
                     Image(systemName: "doc.plaintext")
                     .frame(minWidth: 24, minHeight: 32)
+                    .expandedHitArea(horizontal: 10, vertical: 6)
                 }
             }
             .accessibilityLabel("View native source text")
@@ -952,6 +954,7 @@ struct PlaybackScreen: View {
                     systemImage: model.mixesWithOtherAudio ? "checkmark.circle.fill" : "circle"
                 )
                 .frame(minHeight: 32)
+                .expandedHitArea(vertical: 6)
             }
             .toggleStyle(.button)
             .disabled(model.snapshot.isRecording)
@@ -967,9 +970,11 @@ struct PlaybackScreen: View {
                 PlaybackControlLabel(title: model.sleepTimerIsActive ? model.sleepTimerDescription : "Sleep", systemImage: "moon.zzz")
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .frame(minHeight: 32)
+                    .expandedHitArea(vertical: 6)
             } else {
                 Image(systemName: "moon.zzz")
                     .frame(minWidth: 24, minHeight: 32)
+                    .expandedHitArea(horizontal: 10, vertical: 6)
             }
         }
         .accessibilityLabel(model.sleepTimerDescription)
@@ -986,10 +991,12 @@ struct PlaybackScreen: View {
                 PlaybackControlLabel(title: model.compactPlaybackRateDescription, systemImage: "speedometer")
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .frame(minHeight: 32)
+                    .expandedHitArea(vertical: 6)
             } else {
                 Text(model.compactPlaybackRateDescription)
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .frame(minHeight: 32)
+                    .expandedHitArea(vertical: 6)
                     .fixedSize(horizontal: true, vertical: false)
             }
         }
@@ -2044,6 +2051,7 @@ private struct LightButtonStyle: ButtonStyle {
             .foregroundStyle(AppColors.text)
             .background(AppColors.panel.opacity(configuration.isPressed ? 0.75 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
+            .expandedHitArea(vertical: 1)
     }
 }
 
