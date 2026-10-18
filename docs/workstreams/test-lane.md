@@ -33,6 +33,7 @@ Pick the **lowest tier that exercises what the diff could break**, and run it on
 - A new regression test must be run once **without** the fix and seen to fail (`AGENTS.md`). That run counts as T1, not an extra tier.
 - **A change to the lane's own cost** (a new step, tier rule or per-PR check) states its "Cost and catch" in the PR (`AGENTS.md`): cost per run, how often, what it catches with evidence, and the waste signal the step ledger watches. The audit blocks it without one.
 - When unsure, ask the lane for the tier (A1 ships `scripts/test-scope.py`, which maps a diff to its minimum tier and suggested test filters). If the tool and your judgment disagree, take the higher tier and say why in the request.
+- **On-device transcription is not checked in the simulator (#1522).** `SpeechTranscriber.isAvailable` is false in the iOS Simulator and its supported-locale list is empty (Apple Developer Forums threads 802969 and 806765), so "Failed to initialize recognizer" there is the runtime, not the app, and not a permission problem. App tests fake the transcriber. The real one is checked on the host by `RealSpeechTranscriberTests` in SessionKitTests (it synthesizes a clip with `say` and expects the words back; it skips with a reason if the Mac has no speech model). Don't mark a simulator transcription stall a regression; sound quality on a real phone stays the owner's check.
 
 ## Scripted journeys
 
