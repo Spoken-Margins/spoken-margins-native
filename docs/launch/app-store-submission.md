@@ -195,7 +195,7 @@ Copy that reads as internal, for the listing pass rather than an issue: `A/Setti
 
 ## 5. Download size input for #175
 
-The bundled Supertonic 3 INT8 voice is **148,065,254 bytes (148.1 MB, 141.2 MiB)** across 23 files. The four ONNX models are 144,508,203 bytes of that. Source: the sum of `bytes` in `App/SpokenMarginsApp/Resources/Supertonic/asset-manifest.json`. The onnxruntime framework comes on top of that. The real download and install sizes come from App Store Connect's size report for a TestFlight build.
+Since #1820 the app no longer bundles Supertonic; listeners download it in Settings › Voices. The download is all 23 files (the 16 model files marked `downloaded` in the manifest, the licences and the notice), 148,065,254 bytes, and the app shrinks by the 147,709,674 bytes of model files. Before #1820, the bundled Supertonic 3 INT8 voice was **148,065,254 bytes (148.1 MB, 141.2 MiB)** across 23 files. The four ONNX models are 144,508,203 bytes of that. Source: the sum of `bytes` in `App/SpokenMarginsApp/Resources/Supertonic/asset-manifest.json`. The onnxruntime framework comes on top of that. The real download and install sizes come from App Store Connect's size report for a TestFlight build.
 
 ## 6. Licenses and the EULA (#449 item 7)
 

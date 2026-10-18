@@ -193,6 +193,39 @@ class LfsPointerCheck(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertIn('pointer ', err)
 
+    def test_a_downloaded_model_file_must_not_be_in_the_tree(self):
+        """#1820: Supertonic's model is a download. The manifest keeps its hashes; the file itself must stay out."""
+        import hashlib
+        body = b'model bytes'
+        digest = hashlib.sha256(body).hexdigest()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'kept.txt').write_bytes(body)
+            entries = [{'path': 'kept.txt', 'bytes': len(body), 'sha256': digest, 'provenance': 'p'},
+                       {'path': 'onnx/model.onnx', 'bytes': len(body), 'sha256': digest, 'provenance': 'p', 'downloaded': True}]
+            manifest = root / 'asset-manifest.json'
+            manifest.write_text(json.dumps({
+                'modelRevision': '3cadd1ee6394adea1bd021217a0e650ede09a323',
+                'quantizedArchive': {'sha256': '82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427'},
+                'provenance': {'p': {'source': 's', 'version': 'v'}}, 'files': entries}))
+
+            def run():
+                out, err = io.StringIO(), io.StringIO()
+                with patch.object(supertonic, 'ASSET_ROOT', root), patch.object(supertonic, 'MANIFEST_PATH', manifest), \
+                        patch.object(sys, 'argv', ['validate-supertonic-assets.py']), \
+                        contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    code = supertonic.main()
+                return code, out.getvalue(), err.getvalue()
+
+            code, out, _ = run()
+            self.assertEqual(code, 0)
+            self.assertIn('1 model files are downloads', out)
+            (root / 'onnx').mkdir()
+            (root / 'onnx' / 'model.onnx').write_bytes(body)
+            code, _, err = run()
+            self.assertEqual(code, 1)
+            self.assertIn('downloaded file is in the tree: onnx/model.onnx', err)
+
     def test_real_files_are_still_hashed_and_a_big_file_is_never_a_pointer(self):
         import hashlib
         body = b'real bytes'
