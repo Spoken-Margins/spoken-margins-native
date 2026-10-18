@@ -654,7 +654,7 @@ enum AppColors {
     static let background = dynamicColor(AppSemanticColorRGB.background)
     static let panel = dynamicColor(AppSemanticColorRGB.panel)
     static let inputBackground = dynamicColor(light: (0.98, 0.99, 0.97), dark: (0.10, 0.12, 0.11))
-    static let border = dynamicColor(light: (0.84, 0.87, 0.81), dark: (0.28, 0.34, 0.30))
+    static let border = contrastAware(AppSemanticColorRGB.border, increased: AppSemanticColorRGB.borderIncreased)
     static let text = dynamicColor(AppSemanticColorRGB.text)
     static let secondaryText = dynamicColor(AppSemanticColorRGB.secondaryText)
     static let green = dynamicColor(light: (0.13, 0.43, 0.30), dark: (0.50, 0.84, 0.62))
