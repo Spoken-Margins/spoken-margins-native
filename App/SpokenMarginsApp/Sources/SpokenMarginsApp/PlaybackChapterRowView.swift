@@ -29,10 +29,12 @@ struct PlaybackChapterRowView: View {
                 // full width and the skim controls sit under it instead of squeezing it between them (#1933).
                 VStack(spacing: 4) {
                     titleView
-                    HStack(spacing: 8) {
-                        backwardControl
-                        Spacer(minLength: 0)
-                        forwardControl
+                    if backward != .hidden || forward != .hidden {
+                        HStack(spacing: 8) {
+                            backwardControl
+                            Spacer(minLength: 0)
+                            forwardControl
+                        }
                     }
                 }
             } else {
@@ -48,8 +50,8 @@ struct PlaybackChapterRowView: View {
         .buttonStyle(.plain)
     }
 
-    /// One line at default sizes; up to three at accessibility sizes, where a one-line title showed a few characters.
-    private var titleLineLimit: Int { dynamicTypeSize.isAccessibilitySize ? 3 : 1 }
+    /// One line at default sizes; up to two at accessibility sizes, where a one-line title showed a few characters.
+    private var titleLineLimit: Int { dynamicTypeSize.isAccessibilitySize ? 2 : 1 }
 
     @ViewBuilder private var titleView: some View {
         if let waitingText {

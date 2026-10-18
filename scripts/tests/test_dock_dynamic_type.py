@@ -29,7 +29,7 @@ class DockDynamicTypeTests(unittest.TestCase):
 
     def test_the_chapter_title_gets_more_lines_and_the_skim_controls_move_below_it(self):
         row = _strip((APP / "PlaybackChapterRowView.swift").read_text())
-        self.assertIn("dynamicTypeSize.isAccessibilitySize ? 3 : 1", row)
+        self.assertIn("dynamicTypeSize.isAccessibilitySize ? 2 : 1", row)
         self.assertEqual(row.count(".lineLimit(1)"), 0, "no title is pinned to one line at every size")
         accessibility = row[row.index("if dynamicTypeSize.isAccessibilitySize {"):row.index("} else {")]
         self.assertIn("VStack", accessibility)

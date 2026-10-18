@@ -6,9 +6,10 @@ import Foundation
 /// largest text sizes it reached about half a 6.1-inch screen, which left the Now view almost nothing. The dock
 /// now scrolls inside a bounded height: its own height while that fits under the cap, the cap when it doesn't.
 public enum BoundedDockHeight {
-    /// The share of the container the dock may take. On an iPhone SE (667 pt) that leaves the Now view about 400 pt
-    /// before its own header.
-    public static let maxFraction: Double = 0.4
+    /// The share of the container the dock may take. Half is enough for the pane switch, a chapter row of two lines,
+    /// the scrubber and the transport at the largest size, and on an iPhone SE (667 pt) it leaves the Now view
+    /// about 330 pt before its own header.
+    public static let maxFraction: Double = 0.5
 
     /// The height to give the dock. `content` is the dock's full height as last measured (0 before the first
     /// measure) and `container` the height it may use a share of.

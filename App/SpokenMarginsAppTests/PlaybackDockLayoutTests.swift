@@ -157,7 +157,7 @@ final class PlaybackDockLayoutTests: XCTestCase {
     }
 
     /// #1933: at accessibility sizes the chapter title was one line between two 44-point buttons and showed a few
-    /// characters, and it is the only place the title appears. The row now gives the title the full width, up to three
+    /// characters, and it is the only place the title appears. The row now gives the title the full width, up to two
     /// lines, with the skim controls under it.
     func testChapterRowShowsMoreOfALongTitleAtAccessibilitySizes() {
         func fittedHeight(title: String, size: DynamicTypeSize) -> CGFloat {
