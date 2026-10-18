@@ -96,7 +96,7 @@ extension Gate1AppModel {
             } else {
                 selectedItem = ItemDetailState()
             }
-            writtenMarginNotice = restoreUnfinishedWrittenMargin(store: store)
+            writtenMarginNotice = restoreUnfinishedWrittenMargin(store: store, availableItemIDs: availableItemIDs)
             refreshMarginRows()
             tryRefreshOfflineStorageUsage()
             diagnostics["libraryBootstrap"] = "loaded:\(rows.count)"
