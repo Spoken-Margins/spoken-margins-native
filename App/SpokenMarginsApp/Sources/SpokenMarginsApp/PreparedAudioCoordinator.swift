@@ -54,11 +54,22 @@ private final class BundledModelHashCache: @unchecked Sendable {
     private let lock = NSLock()
     private var hashes: [URL: String] = [:]
 
+    /// Folders whose files never change while the app runs: the app bundle, and the downloaded voices (#1820). The
+    /// voice installer verifies each file's hash and moves a whole version folder into place; a new version gets a
+    /// new folder and a removed one is deleted, so a folder's bytes never change in place. Without this, every play
+    /// and preparation pass would hash Supertonic's 145 MB again now that it is a download.
+    private static let immutableRoots: [String] = {
+        var roots = [Bundle.main.bundleURL]
+        if let support = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false) {
+            roots.append(VoiceCatalogCoordinator.voicesRoot(supportDirectory: support))
+        }
+        return roots.map { $0.resolvingSymlinksInPath().standardizedFileURL.path + "/" }
+    }()
+
     func value(at url: URL, compute: () throws -> String) rethrows -> String {
-        // Only installed bundle resources are immutable for this process.
-        // Imported/test assets must be rehashed, including same-size edits.
-        let root = Bundle.main.bundleURL.standardizedFileURL.path + "/"
-        guard url.standardizedFileURL.path.hasPrefix(root) else { return try compute() }
+        // Imported and test assets elsewhere must be rehashed, including same-size edits.
+        let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+        guard Self.immutableRoots.contains(where: { path.hasPrefix($0) }) else { return try compute() }
         lock.lock()
         let cached = hashes[url]
         lock.unlock()

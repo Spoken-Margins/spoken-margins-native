@@ -388,7 +388,7 @@ final class SupertonicSpeechTests: XCTestCase {
     // because cleanup handed it to the renderer, which removed any file it was given.
     // Real player, real prepared-audio coordinator and SQLite, real renderer deletion.
     func testStoppingPlaybackKeepsAnArticlesDurablePreparedChunk() async throws {
-        let resources = try XCTUnwrap(Bundle.main.resourceURL).appending(path: "Supertonic", directoryHint: .isDirectory)
+        let assets = try SupertonicTestAssets.installPlaceholderDownload(in: self) // it plays a prepared chunk; nothing renders (#1820)
         let root = FileManager.default.temporaryDirectory.appending(path: "prepared-survives-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -410,7 +410,7 @@ final class SupertonicSpeechTests: XCTestCase {
         let durable = try await XCTUnwrapAsync(await coordinator.committedChunk(itemId: "item-258", signature: signature, plan: plan, sourceText: text))
 
         let renderer = try SupertonicNarrationRenderer(
-            assets: SupertonicAssetLocation(rootURL: resources),
+            assets: assets,
             outputDirectory: root.appending(path: "Playback", directoryHint: .isDirectory),
             governor: OnDeviceVoiceGovernor()
         )
@@ -4703,19 +4703,18 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
-    // APA-15 (#1042): the app always bundles the model (project.yml), so a missing folder is a broken build,
-    // not a reason to skip the only test that runs it inside the app. A peak of 0.000001 also accepted
-    // near-silence; 0.01 is quiet speech. Whether each voice loads its own style is checked on the host, by
-    // pitch (SupertonicVoiceSelectionTests): renders start from random noise, so samples can't be compared.
-    func testBundledRendererSynthesizesJamesAndLilyAndReusesSessions() async throws {
-        let resourceURL = try XCTUnwrap(Bundle.main.resourceURL, "Hosted app resources unavailable")
-        let root = resourceURL.appending(path: "Supertonic", directoryHint: .isDirectory)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: root.path), "the app bundles the Supertonic model")
+    // APA-15 (#1042): the only test that runs the real model inside the app. Since #1820 the model is a download,
+    // not in the app, so it comes through the supertonicModel input (SupertonicTestAssets.realModel) and the test
+    // skips, naming it, when it isn't fetched. A peak of 0.000001 also accepted near-silence; 0.01 is quiet speech.
+    // Whether each voice loads its own style is checked on the host, by pitch (SupertonicVoiceSelectionTests):
+    // renders start from random noise, so samples can't be compared.
+    func testBundledRendererSynthesizesJamesAndLilyAndReusesSessions() async throws {  // the name the test plans list; the model is downloaded now
+        let model = try SupertonicTestAssets.realModel()
         let output = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-integration-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: output) }
         let renderer = try SupertonicNarrationRenderer(
-            assets: SupertonicAssetLocation(rootURL: root),
+            assets: model,
             outputDirectory: output,
             governor: OnDeviceVoiceGovernor()
         )
