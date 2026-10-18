@@ -140,6 +140,7 @@ struct ExperienceItemDetailScreen: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(model.selectedItem.title)
                 .font(.title.weight(.bold))
+                .screenTitle()
                 .foregroundStyle(AppColors.text)
                 .fixedSize(horizontal: false, vertical: true)
             if let published = model.selectedItem.publishedDateText {

@@ -1699,6 +1699,7 @@ private struct GuidedOnboardingPlaybackCard: View {
         case .practiceInterjection:
             Text("Practice making a Margin")
                 .font(.title3.bold())
+                .screenTitle()
             Text("Let the welcome source play until an idea occurs to you, then record a short note. Spoken Margins will anchor it to this listening session.")
                 .foregroundStyle(AppColors.secondaryText)
             if model.snapshot.isRecording {
@@ -1714,6 +1715,7 @@ private struct GuidedOnboardingPlaybackCard: View {
         case .reviewTimeline:
             Text("Use the timeline")
                 .font(.title3.bold())
+                .screenTitle()
             Text("Tap your saved Margin to review it, or tap any source chapter to jump there. Either action completes this step.")
                 .foregroundStyle(AppColors.secondaryText)
             Button("Show Timeline", action: showTimeline)
@@ -1722,6 +1724,7 @@ private struct GuidedOnboardingPlaybackCard: View {
         case .optionalAI:
             Text("AI is optional")
                 .font(.title3.bold())
+                .screenTitle()
             Text(model.remoteProviderExperienceEnabled
                 ? "Summarize Notes sums up this session’s Margins. Discuss answers a question using relevant source and session context. Both require your OpenAI API key, network access, and permission to send content."
                 : "Summarize Notes uses Apple’s on-device model when it is available. Nothing is sent to a third-party AI service. You can also copy notes to another chatbot and paste its response back here.")
@@ -1751,6 +1754,7 @@ private struct GuidedOnboardingPlaybackCard: View {
         case .exportSession:
             Text("Keep the useful context")
                 .font(.title3.bold())
+                .screenTitle()
             Text("Open the session export, then share it or copy its Markdown or JSON. Completion is recorded only after a share succeeds or the export is copied.")
                 .foregroundStyle(AppColors.secondaryText)
             Button("Open Session Export", action: model.openExport)
@@ -1760,6 +1764,7 @@ private struct GuidedOnboardingPlaybackCard: View {
         case .complete:
             Text("You know the core loop")
                 .font(.title3.bold())
+                .screenTitle()
             Text("You can now add a source of your own, or keep exploring the welcome session. Source-specific setup remains available in Help.")
                 .foregroundStyle(AppColors.secondaryText)
             Button("Finish Tour", action: model.finishGuidedOnboarding)

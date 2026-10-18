@@ -153,6 +153,7 @@ struct ExperienceAddSourceFlow: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Add to Library")
                 .font(.title2.weight(.bold))
+                .screenTitle()
                 .foregroundStyle(AppColors.text)
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 ForEach(primaryRoutes) { route in
@@ -409,6 +410,7 @@ struct ExperienceAddSourceFlow: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Choose the matching episode")
                 .font(.title2.weight(.bold))
+                .screenTitle()
                 .foregroundStyle(AppColors.text)
                 .accessibilityIdentifier("sourceLink.candidateReview.sheet")
             Text("More than one public episode matches this link.")
