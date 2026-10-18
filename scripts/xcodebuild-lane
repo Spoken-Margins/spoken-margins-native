@@ -12,6 +12,7 @@ Usage: scripts/xcodebuild-lane <xcodebuild arguments>
   included, was compiled for x86_64 too, a simulator no Mac here runs (#1326).
 - A `test` or `test-without-building` run that has printed its test summary and then stays silent for
   scripts/xcodebuild_finish.py's grace period is stopped, says so, and returns the result its summary shows (#2053).
+  That is a pass only when the summary covers the whole run (one bundle selected, or xcodebuild's own banner).
 - Information-only calls (-version, -list, -showBuildSettings, -exportArchive, ...) skip all three.
 """
 import contextlib
@@ -118,8 +119,9 @@ def run_tests(command, grace=None, drain_seconds=5):
             print(f'[lane] {note}', file=sys.stderr, flush=True)
             xcodebuild_finish.stop_group(process)
             with lock:
-                result = watch.result()
-            print(f'[lane] returning the summary\'s result: exit {result}', file=sys.stderr, flush=True)
+                result, why = watch.forced_result(command[1:])
+            # One bundle's summary isn't the run's when the scheme has more bundles to go: never a pass for those.
+            print(f'[lane] {why or "returning the summary result"}: exit {result}', file=sys.stderr, flush=True)
             break
     for reader in readers:
         reader.join(timeout=drain_seconds)

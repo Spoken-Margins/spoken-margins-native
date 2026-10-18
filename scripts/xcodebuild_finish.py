@@ -9,7 +9,13 @@ The rule: once the run's top-level summary has printed (the "Executed" line afte
 "'Selected tests'" finishes, or xcodebuild's own "** TEST … **" banner), a run that then prints nothing for
 GRACE_SECONDS is finished. Its process group gets SIGINT first, which lets xcodebuild write the result bundle,
 then SIGTERM and SIGKILL. The caller says that it was forced and reports the result the log already shows.
-Any new output restarts the quiet period, so a run with a second test bundle still to start isn't cut short.
+Any new output restarts the quiet period, and a suite that starts after a summary (a scheme's next test bundle) clears it
+until that bundle reports in turn.
+
+Each test bundle prints its own 'All tests' or 'Selected tests' summary, so the quiet spell can also be a scheme's next
+bundle being installed and launched, which on this Mac can take minutes. A forced stop therefore reports a pass only
+when the summary speaks for the whole run: xcodebuild's own banner printed, or the command selects tests in one bundle
+and nothing (a test plan, an .xctestrun, iterations or retries) can run them again. Otherwise it reports 65.
 """
 import contextlib
 import os
@@ -22,6 +28,7 @@ TEST_FAILED_EXIT = 65  # what xcodebuild itself exits with when tests fail
 
 TOP_SUITE_END = re.compile(r"^\s*Test Suite '(?:All tests|Selected tests)' (?:passed|failed) at ")
 EXECUTED = re.compile(r'^\s*Executed (\d+) tests?, with (\d+) failures?')
+SUITE_STARTED = re.compile(r"^\s*Test Suite '[^']+' started at ")
 BANNER = re.compile(r'^\*\* TEST (?:EXECUTE )?(SUCCEEDED|FAILED) \*\*')
 
 
@@ -35,11 +42,14 @@ class FinishWatch:
         self.summary_seen = False
         self.after_top_suite = False
         self.failed = False
+        self.banner_seen = False
         self.executed = None  # tests in the last top-level summary
 
     def feed(self, line):
         self.last_output = self.clock()
-        if TOP_SUITE_END.match(line):
+        if SUITE_STARTED.match(line) and not self.banner_seen:
+            self.summary_seen = False  # another bundle (or configuration) has begun; wait for its own summary
+        elif TOP_SUITE_END.match(line):
             self.after_top_suite = True
             self.failed = self.failed or " failed at " in line
         elif self.after_top_suite and (match := EXECUTED.match(line)):
@@ -48,7 +58,7 @@ class FinishWatch:
             self.executed = int(match[1])
             self.failed = self.failed or int(match[2]) > 0
         elif match := BANNER.match(line):
-            self.summary_seen = True
+            self.summary_seen = self.banner_seen = True
             self.failed = self.failed or match[1] == 'FAILED'
         elif (match := EXECUTED.match(line)) and int(match[2]) > 0:
             self.failed = True  # an inner suite's failures count even if the top-level line never comes
@@ -62,10 +72,35 @@ class FinishWatch:
         """The exit code the summary shows: 0 when every reported test passed, else xcodebuild's own 65."""
         return TEST_FAILED_EXIT if self.failed else 0
 
+    def forced_result(self, args):
+        """(exit code, why it isn't a pass) for a run stopped after its summary, given xcodebuild's arguments.
+        A summary without failures is a pass only if it covers every test the command would run; else 65."""
+        if self.failed:
+            return TEST_FAILED_EXIT, None
+        if self.banner_seen or one_bundle(args):
+            return 0, None
+        return TEST_FAILED_EXIT, ('reporting 65: the summary is one test bundle\'s, and it could not confirm every '
+                                  'test bundle this command selects had run')
+
     def note(self, quiet):
         tests = '' if self.executed is None else f' ({self.executed} tests, {"failed" if self.failed else "passed"})'
         return (f'xcodebuild reported its tests{tests} but printed nothing for {quiet:.0f}s and had not exited; '
                 f'stopped it (forced, #2053)')
+
+
+REPEATS = {'-testPlan', '-xctestrun', '-test-iterations', '-retry-tests-on-failure', '-run-tests-until-failure'}
+
+
+def one_bundle(args):
+    """Whether xcodebuild's arguments select tests in a single test bundle that run once, so one bundle's summary
+    is the whole run's. No -only-testing means every bundle in the scheme; a test plan, an .xctestrun, iterations or
+    retries can run a bundle again and print another summary."""
+    if REPEATS.intersection(args):
+        return False
+    selectors = [arg.split(':', 1)[1] for arg in args if arg.startswith('-only-testing:')]
+    selectors += [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == '-only-testing']
+    targets = {selector.split('/', 1)[0] for selector in selectors}
+    return len(targets) == 1 and '' not in targets
 
 
 def group_alive(pgid):

@@ -89,6 +89,10 @@ class Fakes(unittest.TestCase):
         return [int(p) for p in self.pids.read_text().split()] if self.pids.exists() else []
 
 
+# The Test Desk's own shape: one test in one bundle, so its summary is the whole run's.
+ONE = '-only-testing:SpokenMarginsAppUITests/J1/testStep'
+
+
 class WrapperTests(Fakes):
     def wrapper(self, *args, **extra):
         started = time.monotonic()
@@ -98,7 +102,7 @@ class WrapperTests(Fakes):
         return result, time.monotonic() - started
 
     def test_a_passing_run_that_hangs_after_its_summary_is_stopped_and_passes(self):
-        result, seconds = self.wrapper('test')
+        result, seconds = self.wrapper(ONE, 'test')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertLess(seconds, 45)
         self.assertIn('Executed 1 test, with 0 failures', result.stdout)  # output still reaches the caller
@@ -112,7 +116,7 @@ class WrapperTests(Fakes):
         self.assertIn('forced', result.stderr)
 
     def test_a_run_that_ignores_sigint_is_still_stopped(self):
-        result, seconds = self.wrapper('test', FAKE_IGNORE_INT='1')
+        result, seconds = self.wrapper(ONE, 'test', FAKE_IGNORE_INT='1')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(any(alive(pid) for pid in self.fake_pids()))
 
@@ -125,7 +129,7 @@ class WrapperTests(Fakes):
                 self.assertEqual(held['waited_seconds'], 0)
 
     def test_a_descendant_holding_the_output_does_not_hold_the_wrapper(self):
-        result, seconds = self.wrapper('test', FAKE_GRANDCHILD='1')
+        result, seconds = self.wrapper(ONE, 'test', FAKE_GRANDCHILD='1')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertLess(seconds, 30)
         self.assertIn('still held its output', result.stderr)
@@ -137,6 +141,22 @@ class WrapperTests(Fakes):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('finished on its own', result.stdout)
         self.assertNotIn('forced', result.stderr)
+
+
+    def test_a_forced_stop_after_one_bundle_of_two_does_not_pass(self):
+        # The SpokenMarginsApp scheme has two test bundles, and each prints its own 'Selected tests' summary. A quiet
+        # spell after the first (the UI runner launching) must not turn into a pass for tests that never ran.
+        result, _ = self.wrapper('-only-testing:SpokenMarginsAppTests/ModelTests',
+                                 '-only-testing:SpokenMarginsAppUITests/J1', 'test')
+        self.assertEqual(result.returncode, 65, result.stderr)
+        self.assertIn('forced', result.stderr)
+        self.assertIn('every test bundle', result.stderr)
+        self.assertFalse(any(alive(pid) for pid in self.fake_pids()))
+
+    def test_a_forced_stop_with_no_selectors_does_not_pass(self):
+        result, _ = self.wrapper('test')
+        self.assertEqual(result.returncode, 65, result.stderr)
+        self.assertIn('every test bundle', result.stderr)
 
 
 class VerifyTestsTests(Fakes):
@@ -184,6 +204,56 @@ class FinishWatchTests(unittest.TestCase):
         watch.feed("Test Suite 'All tests' started at 2026-10-18")
         self.now = 15
         self.assertIsNone(watch.overdue())
+
+    def test_a_bundle_that_starts_after_a_summary_is_not_cut_short(self):
+        # A scheme's second bundle prints its own suites after the first one's summary; until it reports, a
+        # quiet spell inside it (a long UI test) is not a hang.
+        watch = self.watch()
+        self.feed(watch, SUMMARY.format(failures=0, verdict='passed'))
+        self.now = 5
+        watch.feed("Test Suite 'Selected tests' started at 2026-10-18 14:01:00.000.")
+        watch.feed("Test Suite 'SpokenMarginsAppUITests.xctest' started at 2026-10-18 14:01:00.000.")
+        self.now = 500
+        self.assertIsNone(watch.overdue())
+        self.feed(watch, SUMMARY.format(failures=0, verdict='passed'))
+        self.now = 511
+        self.assertEqual(watch.overdue(), 11)
+
+    def test_which_commands_a_summary_can_speak_for(self):
+        rows = [
+            (['-scheme', 'S', 'test'], False),  # no selectors: every bundle in the scheme runs
+            (['-only-testing:SpokenMarginsAppUITests/J1/testStep', 'test'], True),
+            (['-only-testing:A', 'test'], True),
+            (['-only-testing:A/B', '-only-testing:A/C/d', 'test'], True),
+            (['-only-testing', 'A/B', 'test'], True),
+            (['-only-testing:A/B', '-only-testing:B/C', 'test'], False),
+            (['-only-testing:A/B', '-only-testing', 'B/C', 'test'], False),
+            (['-only-testing:A/B', '-skip-testing:A/B/c', 'test'], True),
+            (['-only-testing:A/B', '-testPlan', 'P', 'test'], False),  # a plan can run each test per configuration
+            (['-xctestrun', 'r.xctestrun', '-only-testing:A/B', 'test-without-building'], False),
+            (['-only-testing:A/B', '-test-iterations', '3', 'test'], False),
+            (['-only-testing:A/B', '-retry-tests-on-failure', 'test'], False),
+            (['-only-testing:A/B', '-run-tests-until-failure', 'test'], False),
+            (['-only-testing:', 'test'], False),
+        ]
+        for args, expected in rows:
+            with self.subTest(args=args):
+                self.assertEqual(xcodebuild_finish.one_bundle(args), expected)
+
+    def test_a_forced_result_is_a_pass_only_when_the_summary_covers_the_run(self):
+        one = ['-only-testing:A/B', 'test']
+        watch = self.watch()
+        self.feed(watch, SUMMARY.format(failures=0, verdict='passed'))
+        self.assertEqual(watch.forced_result(one), (0, None))
+        code, why = watch.forced_result(['test'])
+        self.assertEqual(code, 65)
+        self.assertIn('every test bundle', why)
+        failed = self.watch()
+        self.feed(failed, SUMMARY.format(failures=1, verdict='failed'))
+        self.assertEqual(failed.forced_result(['test']), (65, None))
+        banner = self.watch()
+        banner.feed('** TEST SUCCEEDED **')  # xcodebuild's own last word covers every bundle
+        self.assertEqual(banner.forced_result(['test']), (0, None))
 
     def test_inner_summaries_and_silence_before_any_summary_never_end_the_run(self):
         watch = self.watch()
