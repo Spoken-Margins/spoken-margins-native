@@ -53,7 +53,9 @@ final class SpokenMarginsPackageImportCoordinator {
     }
 
     enum StageResult {
-        case rejected
+        /// `needsNewerApp`: the file is fine but uses something this version doesn't know, so the caller keeps
+        /// it for the listener to open after updating (#1983).
+        case rejected(needsNewerApp: Bool)
         case staged
         /// An already-imported listening package on owned audio. The caller launches the task that places it
         /// and removes `directory` when that task ends.
@@ -112,7 +114,7 @@ final class SpokenMarginsPackageImportCoordinator {
 
     /// Copies the packet into its own folder under Application Support, verifies it and either opens an item it
     /// already belongs to or shows it for review.
-    func stage(from sourceURL: URL) -> StageResult {
+    func stage(from sourceURL: URL, announcesRejection: Bool = true) -> StageResult {
         var workingDirectory: URL?
         do {
             environment.bootstrapLibrary()
@@ -172,8 +174,9 @@ final class SpokenMarginsPackageImportCoordinator {
         } catch {
             if let workingDirectory { try? FileManager.default.removeItem(at: workingDirectory) }
             environment.recordDiagnostic("lastSpokenMarginsPackageImport", "rejected:\(SharedMarginsImportMessage.diagnosticDetail(error))")
-            environment.reportFailureMessage(SharedMarginsImportMessage.userFacing(error))
-            return .rejected
+            // A kept file is tried again at launch; the caller says when the listener has already been told.
+            if announcesRejection { environment.reportFailureMessage(SharedMarginsImportMessage.userFacing(error)) }
+            return .rejected(needsNewerApp: (error as? SpokenMarginsPackageArchiveError)?.listenerOutcome == .needsNewerApp)
         }
     }
 
