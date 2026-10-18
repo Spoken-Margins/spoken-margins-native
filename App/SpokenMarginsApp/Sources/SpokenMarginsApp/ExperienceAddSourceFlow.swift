@@ -154,7 +154,8 @@ struct ExperienceAddSourceFlow: View {
             Text("Add to Library")
                 .font(.title2.weight(.bold))
                 .foregroundStyle(AppColors.text)
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+            // One column at accessibility sizes: two columns broke headline titles mid-word (#1934).
+            LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize ? [GridItem(.flexible())] : [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 ForEach(primaryRoutes) { route in
                     Button {
                         if route == .documentOrBook {

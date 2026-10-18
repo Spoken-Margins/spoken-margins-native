@@ -7,6 +7,7 @@ import SessionKit
 struct PasteAndGoBar: View {
     @EnvironmentObject private var model: Gate1AppModel
     let onAdded: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var notAddedMessage: String?
 
     var body: some View {
@@ -20,7 +21,11 @@ struct PasteAndGoBar: View {
             } else if model.sourceLinkImportState == "resolving" || model.sourceLinkImportState == "failure" {
                 SourceLinkImportStatusView()
             }
-            HStack(spacing: 12) {
+            // At accessibility sizes the Paste button stacks under the text; beside it the text column was crushed (#1934).
+            let layout = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
+                : AnyLayout(HStackLayout(spacing: 12))
+            layout {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Paste & go")
                         .font(.headline)
@@ -31,7 +36,7 @@ struct PasteAndGoBar: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .accessibilityHidden(true)
-                Spacer(minLength: 8)
+                if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 8) }
                 if model.isResolvingSourceLink {
                     ProgressView()
                         .frame(minWidth: 44, minHeight: 44)
