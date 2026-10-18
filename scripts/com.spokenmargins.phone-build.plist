@@ -3,15 +3,14 @@
 <!--
   The rolling phone build's poll (#384, #1329): every 10 minutes, check next's tip. scripts/phone-build
   coalesces changed tips to at most one start per hour, or sooner after an integration PASS. Owner
-  requests without --if-changed build immediately. The script keeps its Release cache and handles
+  requests that leave out the if-changed flag build immediately. The script keeps its Release cache and handles
   one build at a time, memory/disk guards, test evidence and failed-tip suppression. Not installed by the PR.
 
   Install (once, from the main checkout):
-    cp scripts/com.spokenmargins.phone-build.plist ~/Library/LaunchAgents/
-    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.spokenmargins.phone-build.plist
+    run ops/install-launchd.py with its install option and the job name phone-build (this file holds
+    a home-folder placeholder; copying it into ~/Library/LaunchAgents/ as is would load a broken job)
   Remove:
-    launchctl bootout gui/$(id -u)/com.spokenmargins.phone-build
-    rm ~/Library/LaunchAgents/com.spokenmargins.phone-build.plist
+    the same script with its remove option (see docs/scheduled-jobs.md)
 
   It runs the main checkout's copy, which the hourly Mac tick fast-forwards to origin/next. A
   LaunchAgent runs in the owner's login session, so signing can use his login keychain.
@@ -23,11 +22,11 @@
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
-    <string>/Users/colemiller/Documents/GitHub/spoken-margins-native/scripts/phone-build</string>
+    <string>@HOME@/Documents/GitHub/spoken-margins-native/scripts/phone-build</string>
     <string>--if-changed</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/colemiller/Documents/GitHub/spoken-margins-native</string>
+  <string>@HOME@/Documents/GitHub/spoken-margins-native</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
@@ -40,8 +39,8 @@
   <key>Nice</key>
   <integer>5</integer>
   <key>StandardOutPath</key>
-  <string>/Users/colemiller/SpokenMargins-phone/launchd.log</string>
+  <string>@HOME@/SpokenMargins-phone/launchd.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/colemiller/SpokenMargins-phone/launchd.log</string>
+  <string>@HOME@/SpokenMargins-phone/launchd.log</string>
 </dict>
 </plist>

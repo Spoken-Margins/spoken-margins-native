@@ -34,9 +34,10 @@ head and the passing one (first-parent only, so next merged into the PR does not
 A test closes only on a run that ran it. The lane reports list failing tests only, and T3 runs a different set
 of tests on each request, so a test missing from a run's failures may simply not have run. Each step run can carry
 'ran', the tests it executed; a named test closes only when it is in that list and not among the failures, and
-otherwise stays open (step['open_tests']) with the head it last failed at. The lane runner does not pass 'ran' yet,
-so until it does, the lane's named test failures stay open and only a step failure that named no test
-(step:<name>) closes on the step's PASS. The integration run (record_tip) always runs the full app plan, so a
+otherwise stays open (step['open_tests']) with the head it last failed at. The lane runner passes 'ran' for the host tests
+and the T3 run (the tests in their verify-tests.py manifests, #1830); a step that cannot say, such as the app builds, passes
+none, so its named failures stay open and only a step failure that named no test (step:<name>) closes on the step's
+PASS. The integration run (record_tip) always runs the full app plan, so a
 PASS there closes every open test.
 
 `python3 scripts/lane_ledger.py report` prints the totals per test. "Episodes" counts failures that were later

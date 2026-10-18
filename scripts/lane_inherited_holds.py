@@ -25,7 +25,8 @@ Limits, stated plainly:
   comments does not stop that merge (a time-of-check/time-of-push gap, as before).
 - Only audit comments and real ancestry are read. A cherry-pick or a copy of the same change under a new commit
   isn't recognised. The lookup reaches closed-unmerged PRs updated since a day before the PR's oldest new commit.
-- Comment authors aren't checked, as for audits today: every comment here is posted as the owner.
+- Only comments from the owner, a member, a collaborator or the project's bot are read (#1822; scripts/comment_trust.py
+  states the rule). A stranger's audit heading or `audit-resolution` marker is data: it can neither block nor clear.
 
 Stdlib only, Python 3.9-compatible (the lane runner runs under /usr/bin/python3). Loaded by scripts/lane-runner.py
 from next (so a PR can't change the rule that judges it) and imported by ops/codex/sm_codex_audit.py.
@@ -50,6 +51,10 @@ RESOLUTION = re.compile(r'<!-- audit-resolution: (\{.*?\}) -->')
 FULL_SHA = re.compile(r'[0-9a-f]{40}')
 COMMENT_ID = re.compile(r'issuecomment-(\d+)')
 
+# Whose comments count (#1822). This module is loaded from next without its tree, so the rule of
+# scripts/comment_trust.py is copied here; test_comment_trust.py fails if the two drift.
+TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
+TRUSTED_BOTS = ('github-actions[bot]',)
 LANE_BOT = 'github-actions[bot]'  # its reports quote the hold text, template included: never a resolution
 MIN_EVIDENCE = 10  # characters; "..." and other placeholders are not evidence
 CACHE_ENTRIES = 600
@@ -61,6 +66,12 @@ INHERITED = 'it inherits a blocking audit finding'  # how every reason here begi
 
 class LookupFailed(RuntimeError):
     """The inherited-finding lookup could not finish, so the caller must hold the merge (fail closed)."""
+
+
+def trusted(comment: dict) -> bool:
+    """Whether this comment is from the owner, a member, a collaborator or the project's bot (a stranger's is data)."""
+    return (comment.get('author_association') in TRUSTED_ASSOCIATIONS
+            or (comment.get('user') or {}).get('login') in TRUSTED_BOTS)
 
 
 def comment_id(comment: dict) -> int | None:
@@ -77,6 +88,8 @@ def audit_records(comments: list[dict]) -> list[dict]:
     for index, comment in enumerate(comments):
         body = (comment.get('body') or '').lstrip()
         heading, _, rest = body.partition('\n')
+        if not trusted(comment):
+            continue
         if not (body.startswith(AUDIT_HEADINGS) or CLAUDE_HEADING.fullmatch(heading.rstrip())):
             continue
         verdict = next((line.strip() for line in rest.splitlines() if line.strip()), '')
@@ -121,6 +134,8 @@ def resolutions(comments: list[dict], head: str) -> list[dict]:
     found = []
     for index, comment in enumerate(comments):
         body = comment.get('body') or ''
+        if not trusted(comment):
+            continue  # a stranger's marker clears nothing
         if (comment.get('user') or {}).get('login') == LANE_BOT or body.lstrip().startswith('Lane report'):
             continue  # the runner's hold line quotes the template; a report is not a person's resolution
         for match in RESOLUTION.finditer(body):
@@ -301,7 +316,8 @@ def save_cache(path: Path | None, everything: dict, repo: str) -> None:
 
 def compact(comments: list[dict]) -> list[dict]:
     return [{'id': c.get('id'), 'html_url': c.get('html_url') or '', 'body': (c.get('body') or '')[:CACHE_BODY],
-             'user': {'login': (c.get('user') or {}).get('login')}} for c in comments]
+             'author_association': c.get('author_association'), 'user': {'login': (c.get('user') or {}).get('login')}}
+            for c in comments]
 
 
 def find_holds(tree: Path, repo: str, base_ref: str, head: str, pr: int, api=gh_api, cache: Path | None = None) -> list[dict]:
@@ -318,8 +334,8 @@ def find_holds(tree: Path, repo: str, base_ref: str, head: str, pr: int, api=gh_
     sources, fresh = {}, {}
     for number, updated in sorted(source_numbers(api, repo, tree, introduced, pr).items()):
         entry = kept.get(str(number))
-        if updated and entry and entry.get('updated') == updated:
-            comments = entry['comments']
+        if updated and entry and entry.get('updated') == updated and all('author_association' in c for c in entry['comments']):
+            comments = entry['comments']  # an entry cached before #1822 lacks the author's association: fetch it again
         else:
             comments = compact(api(f'repos/{repo}/issues/{number}/comments?per_page=100', True))
         if updated:

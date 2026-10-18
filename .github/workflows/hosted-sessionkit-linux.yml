@@ -1,0 +1,71 @@
+# Hosted T1 on Linux: SessionKit's Foundation-only modules and their tests (SessionKitCoreTests) on a
+# GitHub-hosted ubuntu runner, the job linux-t1.yml runs on the owner's VPS today (#1389).
+#
+# Draft, started by hand only. The private repo's free Linux minutes ran out on 2026-10-07 (#1023), and
+# spending money needs the owner. Once the repo is public, standard hosted runners are free, and this
+# takes over from linux-t1.yml as the per-PR T1 (the PR that adds a pull_request trigger here retires
+# linux-t1.yml and the sm-vps-t1 runner in the same change).
+# GitHub offers workflow_dispatch only for a workflow file that is on the default branch (main). Until
+# the owner moves main past this file, `gh workflow run <file> --ref next` is likely to be refused.
+#
+# #1384's benchmark: `swift:6.2` on ubuntu-latest clean-built and tested a package of this shape in about
+# 3.5 minutes. The toolchain is pinned to 6.2.4, the same as the VPS runner, so the two can't disagree.
+name: hosted-sessionkit-linux
+
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: 'Optional `swift test --filter` (a suite or test name); empty runs SessionKitCoreTests whole'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-sessionkit-linux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sessionkit-core:
+    runs-on: ubuntu-latest
+    container: swift:6.2.4
+    timeout-minutes: 30
+    steps:
+      - name: Start the clock
+        run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
+      # Package.swift's Linux SQLite3 system library needs the headers; the swift image ships only the runtime.
+      - name: Install SQLite headers
+        run: apt-get update -qq && apt-get install -y -qq libsqlite3-dev
+      # A full (shallow) checkout without LFS: the tests read fixtures from Contracts/, Site/ and research/,
+      # and none of the LFS files (the app's voice models).
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # The build folder: dependency checkouts and their built products. Our own sources are always newer
+      # than the restored objects (the checkout sets fresh times), so only the dependencies are reused.
+      # A relative path: inside the container the workspace is /__w/..., not github.workspace's host path.
+      - uses: actions/cache@v4
+        with:
+          path: .build-linux
+          key: sessionkit-linux-swift6.2.4-${{ hashFiles('Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: sessionkit-linux-swift6.2.4-
+      - name: SessionKitCoreTests
+        env:
+          FILTER: ${{ inputs.filter }}
+        run: |
+          # The script runs from Packages/SessionKit, so the scratch path must be absolute.
+          SCRATCH="$GITHUB_WORKSPACE/.build-linux"
+          swift --version
+          if [ -n "$FILTER" ]; then
+            bash scripts/run-sessionkit-linux-tests.sh --scratch-path "$SCRATCH" --filter "$FILTER"
+          else
+            bash scripts/run-sessionkit-linux-tests.sh --scratch-path "$SCRATCH"
+          fi
+      - name: Report time
+        if: always()
+        run: |
+          seconds=$(( $(date +%s) - STARTED ))
+          echo "hosted-sessionkit-linux took ${seconds}s on ubuntu-latest (swift:6.2.4)." | tee -a "$GITHUB_STEP_SUMMARY"

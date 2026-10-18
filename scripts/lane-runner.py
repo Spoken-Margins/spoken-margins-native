@@ -157,6 +157,12 @@ AUDITS = ('**Codex audit (Astra)', '## Codex audit', '**Claude audit on `')
 AUDITED = {'audio': 'the audio session', 'persistence': 'persistence', 'packet': 'packets'}
 BOT = ('github-actions[bot]', '41898282+github-actions[bot]@users.noreply.github.com')
 RUNNER_TIERS = ('T2', 'T3')
+# Whose PR comments the runner reads (#1719). Once the repository is public, anyone can comment, and a /lane
+# request runs the PR's code on the Mac; a fake report or note could also answer a request or lift the T3 hold.
+# So the runner sees only comments from the owner, the organisation's members and the repository's
+# collaborators (GitHub's author_association), and from the project's own bot, the workflows' github-actions.
+TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
+TRUSTED_BOTS = (BOT[0],)
 APP_TEST_TARGET = 'SpokenMarginsAppTests'
 PLANS = {'app': 'AppBehavior', 'adapters': 'AudioAdapters'}
 # The device build compiles without signing: the runner is a background service with no access to
@@ -184,6 +190,15 @@ LANE_WORKFLOW = 'lane.yml'
 
 
 # ---- Requests -----------------------------------------------------------------------------------
+
+def trusted_comment(comment: dict) -> bool:
+    """Whether the runner may act on this comment: the owner's, a member's or collaborator's, or the project's bot.
+
+    A comment without author_association (GitHub always sends it) is not trusted.
+    """
+    login = (comment.get('user') or {}).get('login')
+    return comment.get('author_association') in TRUSTED_ASSOCIATIONS or login in TRUSTED_BOTS
+
 
 def parse_request(body: str) -> dict | None:
     """The /lane line and the `key: value` lines after it, or None if the comment isn't a request."""
@@ -302,15 +317,17 @@ STEP_RUNS: list[dict] = []  # this job's step runs, for the step ledger once the
 TESTED_BASE = ''  # the next commit the job is testing now (remember_tested)
 
 
-def note_step(name: str, verdict: str, seconds: float, failed=(), zero_tests: bool = False) -> None:
+def note_step(name: str, verdict: str, seconds: float, failed=(), zero_tests: bool = False, ran=None) -> None:
+    """ran: the tests this run executed (#1830), or None when the step can't say; the ledger closes a named test
+    failure only on a run that ran it."""
     STEP_RUNS.append({'step': name, 'verdict': verdict, 'seconds': seconds, 'base': TESTED_BASE,
-                      'failed': list(failed), 'zero_tests': zero_tests})
+                      'failed': list(failed), 'zero_tests': zero_tests, 'ran': None if ran is None else list(ran)})
 
 
 def ledger_step(name: str, read=None):
     """Note each run of the decorated step for the step ledger: its verdict (the result's first item) and wall
-    time, and through read(args, result) what failed and whether it ran zero tests. A step that raises is a
-    runner fault."""
+    time, and through read(args, result) what failed, whether it ran zero tests and, when it can say, which tests it
+    ran: (failed, zero) or (failed, zero, ran). A step that raises is a runner fault."""
     def wrap(function):
         @functools.wraps(function)
         def run(*args, **kwargs):
@@ -320,21 +337,23 @@ def ledger_step(name: str, read=None):
             except BaseException:
                 note_step(name, 'ERROR', time.monotonic() - started)
                 raise
-            failed, zero = [], False
+            failed, zero, ran = [], False, None
             try:
-                failed, zero = read(args, result) if read else ([], False)
+                failed, zero, *rest = read(args, result) if read else ([], False)
+                ran = rest[0] if rest else None
             except Exception:  # noqa: BLE001 - the ledger never changes a step's result
                 pass
-            note_step(name, result[0], time.monotonic() - started, failed, zero)
+            note_step(name, result[0], time.monotonic() - started, failed, zero, ran)
             return result
         return run
     return wrap
 
 
-def manifest_failures(*outputs: Path) -> tuple[list[str], bool]:
-    """(The failed tests, or failed steps when a step names no tests, and whether no test ran) in the
-    verify-tests.py manifests under <outputs>."""
-    failed, counted = [], 0
+def manifest_failures(*outputs: Path) -> tuple[list[str], bool, list[str]]:
+    """(The failed tests, or failed steps when a step names no tests, whether no test ran, and the names of the
+    tests that did run) in the verify-tests.py manifests under <outputs>. A SessionKit step skipped as already
+    passed (#1328) ran no test and adds no names."""
+    failed, counted, ran = [], 0, []
     for output in outputs:
         manifest = _read_manifest(output)
         if manifest.get('sessionkit_pass'):  # SessionKit's tests were skipped as already passed (#1328): not a run of none
@@ -344,10 +363,11 @@ def manifest_failures(*outputs: Path) -> tuple[list[str], bool]:
                 continue
             tests = step.get('tests') or {}
             counted += len(tests)
+            ran += [test for test, record in tests.items() if record.get('status') != 'skipped']  # a skip is not a run
             failed += [test for test, record in tests.items() if record.get('status') == 'failed']
             if step.get('exit_code') and not step.get('interrupted') and not tests:
                 failed.append(str(step.get('name')))
-    return failed, counted == 0
+    return failed, counted == 0, list(dict.fromkeys(ran))
 
 
 STALL_ISSUE = 1802  # the evidence log for app startup stalls and simulator boot stalls (#705 is closed)
@@ -654,7 +674,13 @@ def changed_paths_for_tests(tree: Path, base: str) -> list[str] | None:
     return sorted(set(paths)) or None
 
 
-@ledger_step('host tests', lambda args, result: (manifest_failures(args[0] / 'fast')[0], False))
+def fast_manifest(args, result):
+    """What the host tests failed and ran, for the step ledger; their zero-test case is not a runner fault."""
+    failed, _, ran = manifest_failures(args[0] / 'fast')
+    return failed, False, ran
+
+
+@ledger_step('host tests', fast_manifest)
 def run_fast(evidence: Path, runner=run_bounded, changed: list[str] | None = None) -> tuple[str, list[str]]:
     """--plan fast (host tests): returns (PASS, FAIL or INCONCLUSIVE, details).
 
@@ -2115,8 +2141,15 @@ class GitHub:
         return json.loads(self.api(f'repos/{self.repo}/pulls/{self.pr}'))
 
     def comments(self) -> list[dict]:
+        """The PR's comments the runner may act on: only trusted authors' (trusted_comment, #1719)."""
         lines = self.api('--paginate', '--jq', '.[] | @json', f'repos/{self.repo}/issues/{self.pr}/comments')
-        return [json.loads(line) for line in lines.splitlines() if line.strip()]
+        comments = [json.loads(line) for line in lines.splitlines() if line.strip()]
+        kept = [comment for comment in comments if trusted_comment(comment)]
+        if len(kept) < len(comments):
+            ignored = sorted({(c.get('user') or {}).get('login') or 'unknown' for c in comments if not trusted_comment(c)})
+            print(f'[lane] ignored {len(comments) - len(kept)} comment(s) from authors who are not the owner, a '
+                  f'collaborator or the project\'s bot: {", ".join(ignored)}', flush=True)
+        return kept
 
     def comment(self, body: str) -> str:
         return json.loads(self.api(f'repos/{self.repo}/issues/{self.pr}/comments', '-f', f'body={body}'))['html_url']

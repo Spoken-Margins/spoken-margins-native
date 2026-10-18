@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import comment_trust
 import sm_status
 
 HEALTH = 'Check health'
@@ -150,7 +151,7 @@ def claim_activity(api, issue, now):
     n = issue['number']
     events = api.pages(f'issues/{n}/events')
     since = sm_status.label_since(events, 'in-progress')
-    comments = api.pages(f'issues/{n}/comments')
+    comments = comment_trust.trusted_only(api.pages(f'issues/{n}/comments'))  # #1822
     active, seen, stopped_at = {}, [], None
     for comment in comments:
         body, at = comment.get('body') or '', comment['created_at']

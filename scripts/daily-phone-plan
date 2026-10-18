@@ -30,6 +30,7 @@ loader = importlib.machinery.SourceFileLoader('phone_build', str(SCRIPTS / 'phon
 spec = importlib.util.spec_from_loader('phone_build', loader)
 phone = importlib.util.module_from_spec(spec)
 loader.exec_module(phone)
+sys.path.insert(0, str(phone.PUBLIC / 'scripts'))
 import lane_ledger
 
 
@@ -81,7 +82,7 @@ def collect(sha, previous):
         issue = next(issue for issue in pending if issue['number'] == number)
         sources = [(node or {}).get('source') or {} for node in
                    (issue.get('timelineItems') or {}).get('nodes') or []]
-        named = {int(a or b) for comment in (issue.get('comments') or {}).get('nodes') or []
+        named = {int(a or b) for comment in phone.trusted_nodes(issue)
                  for a, b in phone.FIXED_IN.findall(comment.get('body') or '')}
         if not (named & reverted or any(pr.get('number') in reverted for pr in sources)):
             raise RuntimeError(f'previous still-open issue #{number} lost its build evidence')
@@ -172,7 +173,7 @@ def propose(items, catalog, folder):
 
 def validate(request, plan_id):
     command = shlex.split(os.environ.get('SM_DAILY_VALIDATOR', str(
-        SCRIPTS.parent / 'Packages/SessionKit/.build/release/phone-plan')))
+        phone.PUBLIC / 'Packages/SessionKit/.build/release/phone-plan')))
     result = subprocess.run([*command, plan_id], input=json.dumps(request), text=True,
                             capture_output=True, timeout=30)
     if result.returncode:

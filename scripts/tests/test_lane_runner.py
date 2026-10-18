@@ -1008,11 +1008,13 @@ class AutomergeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             verdict, details = lane.run_fast(Path(folder), runner=run)
             self.assertEqual((verdict, details), ('PASS', ['SessionKitCoreTests: the parallel run failed']))
-            self.assertEqual(lane.manifest_failures(Path(folder) / 'fast'), ([], False))
+            # the superseded parallel step's records are not a run: the serial run's one test is what ran
+            self.assertEqual(lane.manifest_failures(Path(folder) / 'fast'),
+                             ([], False, ['SessionKitCoreTests/A/testX']))
             steps[1]['tests']['SessionKitCoreTests/A/testX']['status'] = 'failed'
             (Path(folder) / 'fast/manifest.json').write_text(json.dumps({'steps': steps}))
             self.assertEqual(lane.manifest_failures(Path(folder) / 'fast'),
-                             (['SessionKitCoreTests/A/testX'], False))
+                             (['SessionKitCoreTests/A/testX'], False, ['SessionKitCoreTests/A/testX']))
 
     def test_skipped_sessionkit_tests_are_not_a_run_of_zero_tests(self):
         # #1328: a skipped run has no test records, and the step ledger counted that as a runner fault.
@@ -1020,10 +1022,22 @@ class AutomergeTests(unittest.TestCase):
             (Path(folder) / 'manifest.json').write_text(json.dumps({
                 'status': 'verified', 'sessionkit_pass': {'reused': 'k'},
                 'steps': [{'name': 'runner-tests', 'exit_code': 0}, {'name': 'package', 'skipped': 'already passed'}]}))
-            self.assertEqual(lane.manifest_failures(Path(folder)), ([], False))
+            self.assertEqual(lane.manifest_failures(Path(folder)), ([], False, []))  # skipped: ran nothing, adds no names
             (Path(folder) / 'manifest.json').write_text(json.dumps({
                 'status': 'verified', 'steps': [{'name': 'runner-tests', 'exit_code': 0}]}))
-            self.assertEqual(lane.manifest_failures(Path(folder)), ([], True))  # still zero without the record
+            self.assertEqual(lane.manifest_failures(Path(folder)), ([], True, []))  # still zero without the record
+
+    def test_the_tests_a_run_executed_are_every_test_across_manifests_once_each(self):
+        # #1830: the ledger closes a named failure only on a run that ran it, so ran lists the passed and failed
+        # tests of every verify-* manifest, a test named in two plans once, and no step name.
+        with tempfile.TemporaryDirectory() as folder:
+            for plan, tests in (('app', {'A/a': {'status': 'passed'}, 'B/b': {'status': 'failed'}}),
+                                ('adapters', {'B/b': {'status': 'failed'}, 'C/c': {'status': 'passed'}})):
+                (Path(folder) / f'verify-{plan}').mkdir()
+                (Path(folder) / f'verify-{plan}' / 'manifest.json').write_text(json.dumps({
+                    'steps': [{'name': 'xctest', 'exit_code': 1, 'tests': tests}]}))
+            failed, zero, ran = lane.manifest_failures(*sorted(Path(folder).glob('verify-*')))
+            self.assertEqual((failed, zero, sorted(ran)), (['B/b', 'B/b'], False, ['A/a', 'B/b', 'C/c']))
 
     def test_a_lane_fault_in_the_host_tests_is_inconclusive_not_a_pr_fail(self):
         # #909: with the lane Mac's lid closed every real-player test failed, so every PR read FAIL.
@@ -1207,7 +1221,7 @@ class MergeTests_Runner(unittest.TestCase):
         self.assertEqual(events, ['build', 'comment', 'push m1', 'sweep'])  # the check is on the PR before the merge
         self.assertTrue(github.posted[0].startswith(f'**Merge check (triage desk) on `{HEAD[:7]}`: PASS.**'))
         import merge_audit  # the comment satisfies the merge audit's rule
-        self.assertTrue(merge_audit.has_merge_check([dict(body=github.posted[0], created_at='2026-09-29T20:00:00Z')],
+        self.assertTrue(merge_audit.has_merge_check([dict(body=github.posted[0], created_at='2026-09-29T20:00:00Z', user={'login': 'github-actions[bot]'})],
                                                     HEAD, '2026-09-29T20:00:01Z'))
         self.assertIn('merged into next as m100000', details[-1])
 
@@ -1617,9 +1631,12 @@ class WarmBuildTests(unittest.TestCase):
         self.assertEqual(len(self.caches()), 1)  # this key's
 
     def test_the_floor_that_clears_idle_caches_sits_above_the_finisher_pause(self):
-        # The Mac finisher pauses below 20 GiB (ops/claude/sm_claude_worker.py MIN_FREE_GIB), the build runner
-        # waits below 20 GB. Caches must go before either, not after (#1775).
-        self.assertGreater(lane.WARM_FREE_FLOOR, 20 * 2**30)
+        # The Mac finisher pauses below MIN_FREE_GIB (ops/claude/sm_claude_worker.py), the build runner
+        # waits below 20 GB. Caches must go before either, not after (#1775). Read the worker's own line, not a copy.
+        worker_spec = importlib.util.spec_from_file_location('sm_claude_worker_for_floor', SCRIPTS.parent / 'ops' / 'claude' / 'sm_claude_worker.py')
+        worker = importlib.util.module_from_spec(worker_spec)
+        worker_spec.loader.exec_module(worker)
+        self.assertGreater(lane.WARM_FREE_FLOOR, worker.MIN_FREE_GIB * 2**30)
         self.assertGreater(lane.WARM_FREE_FLOOR, lane.BUILD_RUNNER_FREE_DISK)
 
     def test_a_cache_in_use_by_another_runner_job_is_left_alone(self):
@@ -2732,7 +2749,8 @@ class GhCliTests(unittest.TestCase):
     def test_pull_comments_and_comment_use_the_pr_s_rest_paths(self):
         github = lane.GitHub('owner/repo', 5)
         self.answer('{"head": {"sha": "abc"}, "labels": []}',
-                    json.dumps({'body': 'one'}) + '\n\n' + json.dumps({'body': 'two'}) + '\n',
+                    json.dumps({'body': 'one', 'author_association': 'OWNER'}) + '\n\n'
+                    + json.dumps({'body': 'two', 'author_association': 'OWNER'}) + '\n',
                     json.dumps({'html_url': 'https://example.test/c1'}))
         self.assertEqual(github.pull(), {'head': {'sha': 'abc'}, 'labels': []})
         self.assertEqual([c['body'] for c in github.comments()], ['one', 'two'])  # blank lines are skipped
@@ -3317,6 +3335,72 @@ class BootStallRetryTests(unittest.TestCase):
     def test_no_boot_stall_file_posts_nothing(self):
         with tempfile.TemporaryDirectory() as folder:
             self.assertEqual(lane.log_recovered_stalls(Path(folder), 5, HEAD, 'u', self.fail, 'PASS'), 0)
+
+
+
+class TrustedCommentTests(unittest.TestCase):
+    """Once the repository is public, only the owner, collaborators and the project's bot steer the lane (#1719)."""
+
+    @staticmethod
+    def comment(body, login, association):
+        return {'body': body, 'user': {'login': login}, 'author_association': association,
+                'html_url': f'https://example.test/{login}'}
+
+    def test_who_is_trusted(self):
+        for login, association, trusted in (
+                ('uncomposed', 'OWNER', True),
+                ('a-member', 'MEMBER', True),
+                ('a-collaborator', 'COLLABORATOR', True),
+                ('github-actions[bot]', 'NONE', True),
+                ('stranger', 'NONE', False),
+                ('past-contributor', 'CONTRIBUTOR', False),
+                ('first-timer', 'FIRST_TIME_CONTRIBUTOR', False),
+                ('first-timer', 'FIRST_TIMER', False),
+                ('mannequin', 'MANNEQUIN', False),
+                ('chatgpt-codex-connector[bot]', 'NONE', False),
+                ('github-actions', 'NONE', False),  # not the bot: the [bot] suffix is reserved for apps
+                ('owner-lookalike', 'owner', False),  # GitHub sends it upper case; anything else is not trusted
+                ('no-association', None, False)):
+            with self.subTest(login=login, association=association):
+                self.assertEqual(lane.trusted_comment(self.comment('/lane T3', login, association)), trusted)
+        self.assertFalse(lane.trusted_comment({'body': '/lane T3'}))  # no author at all
+
+    def comments_from(self, *comments):
+        github = lane.GitHub('o/r', 5)
+        lines = '\n'.join(json.dumps(c) for c in comments)
+        with mock.patch.object(github, 'api', return_value=lines), mock.patch('builtins.print') as printed:
+            return github.comments(), printed
+
+    def test_a_strangers_lane_request_is_never_run(self):
+        kept, printed = self.comments_from(
+            self.comment('/lane T3\ntests: SpeechTests', 'uncomposed', 'OWNER'),
+            self.comment('/lane T2\ncommit: deadbeef', 'stranger', 'NONE'))
+        request, _ = lane.pending_requests(kept)
+        self.assertEqual((request['tier'], request['author']), ('T3', 'uncomposed'))
+        self.assertIn('ignored 1 comment(s)', printed.call_args.args[0])
+        self.assertIn('stranger', printed.call_args.args[0])
+
+    def test_a_contributors_request_alone_leaves_nothing_to_run(self):
+        kept, _ = self.comments_from(self.comment('/lane T3\ntests: SpeechTests', 'drive-by', 'CONTRIBUTOR'))
+        self.assertEqual(lane.pending_requests(kept), (None, False))
+
+    def test_a_fake_report_cannot_answer_a_request_or_lift_the_t3_hold(self):
+        identity = json.dumps(lane.identity('T3', HEAD, 'b' * 40, []))
+        fake = f'Lane report r1 — PASS\n<!-- lane-request: {identity} -->'
+        kept, _ = self.comments_from(self.comment('/lane T3\ncommit: aaaaaaa', 'uncomposed', 'OWNER'),
+                                     self.comment(fake, 'stranger', 'NONE'))
+        request, _ = lane.pending_requests(kept)
+        self.assertIsNotNone(request)  # still waiting for the real runner
+        self.assertIsNotNone(lane.t3_gate(kept))  # still held: no trusted T3 report
+
+    def test_the_project_bots_reports_still_count(self):
+        identity = json.dumps(lane.identity('T3', HEAD, 'b' * 40, []))
+        report = f'Lane report r1 — PASS\n<!-- lane-request: {identity} -->'
+        kept, printed = self.comments_from(self.comment('/lane T3\ncommit: aaaaaaa', 'uncomposed', 'OWNER'),
+                                           self.comment(report, 'github-actions[bot]', 'NONE'))
+        self.assertEqual(len(kept), 2)
+        self.assertEqual(lane.pending_requests(kept), (None, False))
+        printed.assert_not_called()
 
 
 if __name__ == '__main__':
