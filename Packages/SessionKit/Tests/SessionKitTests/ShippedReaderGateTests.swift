@@ -84,6 +84,43 @@ final class ShippedReaderGateTests: XCTestCase {
         XCTAssertEqual(try ShippedPacketReader.importPacket(at: url).sorted(), ["margin-001", "margin-002", "margin-003"])
     }
 
+    // MARK: The Margin comparison (#1898)
+
+    func testTheComparisonNamesEveryWayTheShippedBuildCanDisagree() {
+        XCTAssertNil(shippedMarginsMismatch(sent: ["a", "b"], shippedBuildRead: ["b", "a"]), "order does not matter")
+        XCTAssertNil(shippedMarginsMismatch(sent: [], shippedBuildRead: []))
+        XCTAssertNil(shippedMarginsMismatch(sent: nil, shippedBuildRead: ["a"]), "no commentary layer, nothing to compare")
+
+        XCTAssertEqual(shippedMarginsMismatch(sent: ["a", "b", "c"], shippedBuildRead: ["c", "a"]),
+                       .marginsDiffer(sent: ["a", "b", "c"], shippedBuildRead: ["a", "c"]), "a dropped Margin")
+        XCTAssertEqual(shippedMarginsMismatch(sent: ["a"], shippedBuildRead: ["a", "x"]),
+                       .marginsDiffer(sent: ["a"], shippedBuildRead: ["a", "x"]), "a Margin that was never sent")
+        XCTAssertEqual(shippedMarginsMismatch(sent: ["a", "b"], shippedBuildRead: ["a", "z"]),
+                       .marginsDiffer(sent: ["a", "b"], shippedBuildRead: ["a", "z"]), "a different Margin")
+        XCTAssertEqual(shippedMarginsMismatch(sent: ["a", "b"], shippedBuildRead: ["a", "a"]),
+                       .marginsDiffer(sent: ["a", "b"], shippedBuildRead: ["a", "a"]), "the same Margin twice")
+        XCTAssertEqual(shippedMarginsMismatch(sent: ["a"], shippedBuildRead: []),
+                       .marginsDiffer(sent: ["a"], shippedBuildRead: []), "everything dropped")
+    }
+
+    func testTheGateRefusesAPacketWhoseMarginTheShippedBuildDrops() throws {
+        let prepared = try prepare([selection("margin-001"), selection("margin-002"), selection("margin-003")])
+        let url = root.appendingPathComponent("dropped.spokenmargins")
+        // A reader that decodes the zip but loses the last Margin, which is what a Margin kind Build 29 can't read looks like.
+        let dropsOne: (URL) throws -> [String] = { try ShippedPacketReader.importPacket(at: $0).sorted().dropLast().map { $0 } }
+        XCTAssertThrowsError(try exportPacket(prepared, to: url, shippedBuildReader: dropsOne)) {
+            XCTAssertEqual($0 as? ShippedReaderGateError,
+                           .marginsDiffer(sent: ["margin-001", "margin-002", "margin-003"], shippedBuildRead: ["margin-001", "margin-002"]))
+        }
+    }
+
+    func testTheGateAcceptsAPacketWhoseMarginsTheShippedBuildReadsInAnyOrder() throws {
+        let prepared = try prepare([selection("margin-001"), selection("margin-002")])
+        let url = root.appendingPathComponent("reordered.spokenmargins")
+        let reversed: (URL) throws -> [String] = { try ShippedPacketReader.importPacket(at: $0).sorted().reversed().map { $0 } }
+        XCTAssertNoThrow(try exportPacket(prepared, to: url, shippedBuildReader: reversed))
+    }
+
     // MARK: Nothing writes a packet around the gate
 
     private func swiftFiles(under folder: URL) throws -> [URL] {
