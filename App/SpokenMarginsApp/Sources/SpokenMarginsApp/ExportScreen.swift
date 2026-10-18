@@ -25,7 +25,7 @@ struct ExportScreen: View {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Share Margins")
                                 .font(.headline)
-                            Text("Review the words, voice version, item transport, and anchor evidence that will leave your device.")
+                            Text("Review the words, voice version, item transport, and where each Margin sits in the source that will leave your device.")
                                 .font(.callout)
                                 .foregroundStyle(AppColors.secondaryText)
                             Button(action: model.prepareExportShareInterjections) {

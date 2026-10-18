@@ -190,13 +190,13 @@ struct SpokenMarginsPackageImportView: View {
 
     private var importExplanation: String {
         if review.matchingItemId != nil {
-            return "Spoken Margins found this item in your library and will resolve the shared anchors against it. Nothing will play automatically."
+            return "Spoken Margins found this item in your library and will place the shared Margins in it. Nothing will play automatically."
         }
         switch review.contents.manifest.itemTransport.kind {
         case .embeddedText:
             return "The sender included the exact text they listened to. Spoken Margins will add it to your library and resolve the Margins. Nothing will play automatically."
         case .reference:
-            return "Spoken Margins will reconstruct this linked item and then resolve the shared anchors. Nothing will play automatically."
+            return "Spoken Margins will reconstruct this linked item and then place the shared Margins in it. Nothing will play automatically."
         case .recipientSupplied:
             if SharedEpisodeFeedMatcher.isPrivatePodcastSource(review.contents.manifest) {
                 return "These Margins came from a private podcast feed, so the episode is not included. Add the same episode to your library, for example by pasting your own feed link in the import screen, then reopen this .spokenmargins file."
@@ -230,7 +230,7 @@ struct InterjectionSharingView: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("Review what you are sending")
                                         .font(.headline)
-                                    Text("The package includes only selected Margins, the reviewed text and voice version shown below, bounded anchor context, item identity, and optional acoustic signatures. It never includes the podcast audio, raw diagnostics, or unrelated sessions.")
+                                    Text("The package includes only selected Margins, the reviewed text and voice version shown below, the words around each Margin, item identity, and optional acoustic signatures. It never includes the podcast audio, raw diagnostics, or unrelated sessions.")
                                         .font(.callout)
                                         .foregroundStyle(AppColors.secondaryText)
                                 }
@@ -645,7 +645,7 @@ struct InterjectionSharingView: View {
                         .foregroundStyle(.orange)
                 }
 
-                DisclosureGroup("Shared anchor context") {
+                DisclosureGroup("Words around the Margin") {
                     VStack(alignment: .leading, spacing: 8) {
                         TextField("Context before", text: Binding(
                             get: { model.sharingState.drafts.first(where: { $0.id == draft.id })?.anchorBefore ?? "" },

@@ -187,7 +187,7 @@ private struct AIDataSharingConsentView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     Label("Send this content to OpenAI?", systemImage: "hand.raised.fill")
                         .font(.title2.bold())
-                    Text("A live AI request can include the source text needed for the task, your Margin transcripts, the current follow-up, nearby anchors, and recent conversation turns.")
+                    Text("A live AI request can include the source text needed for the task, your Margin transcripts, the current follow-up, nearby words, and recent conversation turns.")
                     Text("Spoken Margins does not send recorded audio, local file paths, or internal database identifiers. Requests disable OpenAI response storage. You can revoke permission or delete your API key in Settings.")
                         .foregroundStyle(AppColors.secondaryText)
                     Link("Read the Privacy Policy", destination: AppLinks.privacy)
@@ -489,7 +489,7 @@ struct InterjectionDetailView: View {
                     }
                 }
                 Button("Cancel", role: .cancel) { pendingDeletion = nil }
-            } message: { Text(pendingDeletion == .transcript ? "The transcript will be removed." : (current.captureKind == .written ? "Its words will be removed." : "Its voice recording and words will be removed.")) }
+            } message: { Text(pendingDeletion == .transcript ? "The transcript will be removed." : "This Margin will be removed.") }
         }
     }
 }

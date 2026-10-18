@@ -111,7 +111,7 @@ struct BatchExportScreen: View {
         if model.visibleBatchExportRows.isEmpty {
             ProductPanel {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(model.batchExportFilter == .withInterjections ? "No sessions with interjections" : "No sessions yet")
+                    Text(model.batchExportFilter == .withInterjections ? "No sessions with Margins" : "No sessions yet")
                         .font(.headline)
                     if model.batchExportFilter == .withInterjections, !model.batchExportRows.isEmpty {
                         Text("Choose All Sessions to include listening sessions without Margins.")
