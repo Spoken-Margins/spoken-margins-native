@@ -417,7 +417,7 @@ OPS_TEST_TRIGGERS = ('ops/', 'scripts/', '.github/', 'project.yml', 'TestPlans/'
 # Linux job (.github/workflows/hosted-portable.yml). Every step the fast plan can run is named here, either to
 # run (PORTABLE_STEPS) or with the reason it is left out (PORTABLE_LEFT_OUT); the run prints the left-out ones as
 # skipped. test_verification fails when the plan code names a step that is in neither table.
-PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'surfaces', 'inventory', 'browser', 'share-link', 'research')
+PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'browser', 'share-link', 'research')
 PORTABLE_LEFT_OUT = {
     'package-build': 'needs the Swift toolchain on macOS; hosted-sessionkit-linux.yml builds the Foundation-only modules on Linux',
     'package-core': 'needs the Swift toolchain on macOS (SessionKitCoreTests also run in hosted-sessionkit-linux.yml)',
