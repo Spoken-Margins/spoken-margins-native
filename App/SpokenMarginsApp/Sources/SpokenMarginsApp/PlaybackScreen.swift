@@ -313,6 +313,7 @@ struct PlaybackScreen: View {
         .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.18)).frame(height: 1) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("playback.controls")
+        .boundedScrollDock(dynamicTypeSize.isAccessibilitySize)
     }
 
     /// Add a Margin (spoken) with the pencil (written) beside it.
