@@ -20,6 +20,14 @@ Simulator driving pitfalls observed September 24:
 - **The first listen on a fresh install opens the Terms of Use sheet. This is expected, not a bug.** Its two buttons, "Agree and Enable On-Device Voice" and "Use iOS Voice", sit at the very end of the long scrolling text (`SpokenMarginsTermsView.swift`), not in a toolbar. Swipe up until a swipe changes nothing on screen, then tap "Use iOS Voice" (or Agree, if the run needs the on-device voice). Desks have reported this sheet as "no way out" several times because they stopped scrolling too early.
 - **Before reporting a control as missing or a step as blocked, check the code.** Search the app source for the control's label (`grep -rn "<label>" App/SpokenMarginsApp/Sources`) and see where it is placed. If the code puts it somewhere you haven't reached (further down a scroll, behind a menu, after a sheet), go there first. Quote the file and line in a FAIL that still stands.
 
+Driving with AXe (no simulator panel), observed October 18 on iOS 26.5 with Xcode 27:
+- **Always pass `--tap-style physical`.** The default style answers "completed successfully" and changes nothing on screen.
+- **The first AXe call after a boot or a launch can fail** with "No translation object returned for simulator". Wait a few seconds and try once more; the second call worked both times.
+- **The accessibility tree includes views covered by a sheet.** With the "Follow a few favourites" sheet open, the Library's Start buttons were still listed, and a tap on one landed on the sheet. Close sheets first, and check with the OCR reader or a screenshot what is actually on top.
+- **Some identifiers appear twice** (a group and its button share one). AXe then refuses the tap; use the label or the point instead.
+- **In `axe batch`, a selector tap right after swipes can miss** an element that is plainly on screen (the Terms sheet's "Use iOS Voice"), probably from a stale snapshot taken mid-scroll. Run the tap as its own command after the swipes, or pass `--ax-cache perStep`.
+- **Long text is listed in full.** The Terms sheet puts every paragraph in the tree, about 7k characters; grep the ax-look output for what you need.
+
 **Scripted journeys.** Some journeys also have a script: a UI test in `App/SpokenMarginsAppUITests/` that runs in the integration run, on probation until the Test Desk has seen it pass twice (`TestPlans/scripted-journeys.json`; rules in `docs/workstreams/test-lane.md`, Scripted journeys). A script never replaces the agent run or the owner's pass for the same journey.
 
 Use a Library that already has content, not only a fresh install. Many of the worst bugs appeared only with real history: old containers, earlier builds' data, long episodes.
