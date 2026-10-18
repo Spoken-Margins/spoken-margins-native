@@ -23,6 +23,7 @@ import host_audio
 import lane_sim
 import sessionkit_pass
 import lane_sim_pool
+import xcodebuild_finish
 from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
                         state_dir, SIMULATOR_SLOTS)
 
@@ -560,6 +561,17 @@ def stop_process_group(process, grace=10):
     process.wait()
 
 
+def feed_new_lines(path, offset, watch):
+    """Feed the complete lines written to `path` since byte `offset` to `watch`; returns the new offset."""
+    with path.open('rb') as handle:
+        handle.seek(offset)
+        data = handle.read()
+    end = data.rfind(b'\n') + 1
+    for line in data[:end].splitlines():
+        watch.feed(line.decode(errors='replace'))
+    return offset + end
+
+
 PACKAGE_BUILD_TIMEOUT = 900  # SessionKit build with tests; cold, under load
 PACKAGE_TEST_TIMEOUT = 600  # the SessionKit tests alone (#844)
 # #1767: on a busy Mac the same tests run two to three times slower than the 230 s they take on a quiet one, and
@@ -800,6 +812,9 @@ class Run:
             attempt = 1
             watching = startup is not None
             scan_from = 0  # each launch is judged by its own part of the shared log
+            # #2053: an xcodebuild test run that has printed its summary and then goes quiet is finished, not hung.
+            finish = xcodebuild_finish.FinishWatch() if tests and args[0] == 'xcodebuild' else None
+            finish_offset = 0
             process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
                                        start_new_session=True)
             try:
@@ -822,6 +837,15 @@ class Run:
                         break
                     except subprocess.TimeoutExpired:
                         pass
+                    if finish is not None:
+                        finish_offset = feed_new_lines(self.output / f'{name}.log', finish_offset, finish)
+                        if (quiet := finish.overdue()) is not None:
+                            entry['forced_after_summary'] = {'quiet_seconds': round(quiet, 1),
+                                                             'stopped_by': signal.Signals(
+                                                                 xcodebuild_finish.stop_group(process)).name}
+                            result = finish.result()
+                            print(f'warning: {name}: {finish.note(quiet)}', flush=True)
+                            break
                     if not watching:
                         continue
                     text = (self.output / f'{name}.log').read_text(errors='replace')[scan_from:]
@@ -857,6 +881,8 @@ class Run:
                         log.flush()
                         scan_from = len((self.output / f'{name}.log').read_text(errors='replace'))
                         attempt_start = time.monotonic()
+                        if finish is not None:
+                            finish = xcodebuild_finish.FinishWatch()
                         process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
                                                    start_new_session=True)
             except (subprocess.TimeoutExpired, KeyboardInterrupt, InterruptedError, StartupStall) as stopped:

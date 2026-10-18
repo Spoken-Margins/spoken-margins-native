@@ -145,7 +145,9 @@ Setup: this folder is a worktree. Run git fetch origin && git switch --detach or
 then scripts/setup-worktree.sh. Never create branches here. Build each job in a worktree of
 its own: .claude/worktrees/lane-integration-<sha7> for next's tip, and lane-build29 (kept)
 for Build 29. The understudy's worktrees are intrun-<sha7>; never touch them, and it never
-touches yours. Build through scripts/xcodebuild-lane.
+touches yours. Build through scripts/xcodebuild-lane. A test run there, or a verify-tests
+test step, that prints its final summary and then goes quiet for 2 minutes is stopped and
+reports its tests' result with a "(forced, #2053)" note; don't kill it by hand.
 
 What wakes you: next's tip moving. Check #184 and next about every 45 minutes (waits of 20 s
 or less at a time, or a background wait: a foreground sleep of 30 s or more is blocked).
