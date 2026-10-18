@@ -20,9 +20,13 @@ The Test Desk takes **T4 and T5** requests. T2 and T3 go to the self-hosted runn
 
 1. **Worktree at the requested commit.** Never test in a stream's worktree or the owner's checkout:
    `git worktree add --detach .claude/worktrees/lane-<id> <sha>`
-2. **Build** there with the wrapper, unless a kept desk build of the same commit exists (Driving, step 1). The wrapper queues for a Mac-wide build slot and uses `.build/dd` in that worktree:
-   `scripts/xcodebuild-lane -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS Simulator' build`
-   The app is then at `.build/dd/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app`.
+2. **Install a ready-made build when there is one; build only when there isn't.** The integration run keeps a Debug simulator build of each tip it tests, so most desk starts need no build:
+   - **A request pinned to a commit** (a PR head, a named SHA): `scripts/sim-build-latest --for <sha>`. It prints the app path, then the SHA, and exits 1 when there is no build of exactly that commit; then build.
+   - **A check of the base branch's tip** (no commit named, or "test next"): `scripts/sim-build-latest`. It also says on stderr how many commits it is behind `origin/next` as last fetched, so `git fetch origin` first. Behind 0: use it. Behind more: run `git diff --stat <its sha> origin/next -- App Packages project.yml Contracts`; if nothing the request checks changed, use it. Either way, name the SHA you installed in the report.
+   - **Otherwise, build** in the worktree with the wrapper. It queues for a Mac-wide build slot and uses `.build/dd` there:
+     `scripts/xcodebuild-lane -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS Simulator' build`
+     The app is then at `.build/dd/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app`.
+   - The kept build is the same app target in Debug, with the app-hosted test bundle in its `PlugIns` folder. It installs with `xcrun simctl install <udid> <app path>`. Don't delete or edit it: other desks share it, and the integration run replaces it. Without a build here, the worktree in step 1 is still where you read the journey docs and the code.
 3. **Simulator: a pool device, erased for every request.**
 
    ```bash
@@ -48,7 +52,7 @@ The desk session stays a lean lead. It finds the build, holds the device and wri
 
 **What the lead does**
 
-1. **Build once.** Reuse a kept desk build of the same commit if one exists: a `.claude/worktrees/lane-*` worktree whose `git -C <worktree> rev-parse HEAD` is the commit and which holds `.build/dd*/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app`. Otherwise build as in Setup step 2. (The integration script in `ops/testdesk/` removes its worktree after each run, so today it leaves no app to reuse.)
+1. **Build once, if at all.** Use the ready-made build from Setup step 2 when it fits. Else reuse a kept desk build of the same commit: a `.claude/worktrees/lane-*` worktree whose `git -C <worktree> rev-parse HEAD` is the commit and which holds `.build/dd*/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app`. Otherwise build as in Setup step 2.
 2. **Take the device and install once** (Setup steps 3 and 4). Only the lead runs `scripts/lane-sim-boot`, installs and gives the device back; helpers never boot, erase, install or `--done`.
 3. **Hand out journeys one at a time.** One helper per journey, in order, with `run_in_background: false`: there is one device, so two helpers never drive it at once. Journeys share the install, so J2, J3 and J5 build their history as they go; when a journey needs a clean start, the lead reinstalls between helpers. Use the brief below.
 4. **After each helper:** note its verdict, its screenshot path and its `subagent_tokens` (the Agent tool's usage line), and run one crash check. A FAIL stops that journey, not the batch: go on to the next journey unless the app no longer launches or a crash flood stopped the run.
