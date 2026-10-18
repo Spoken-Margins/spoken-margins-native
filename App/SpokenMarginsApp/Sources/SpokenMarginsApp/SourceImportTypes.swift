@@ -42,3 +42,10 @@ enum SourceFileImportError: LocalizedError {
         }
     }
 }
+
+struct ObsidianImportBatch: Sendable {
+    let prepared: [PreparedObsidianImport]
+    let failures: [String]
+    /// The same failures with the raw error text, for diagnostics only (#1965).
+    var rawFailures: [String] = []
+}

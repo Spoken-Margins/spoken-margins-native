@@ -23,13 +23,6 @@ struct ObsidianImportRequest: Sendable {
     let itemId: String
 }
 
-struct ObsidianImportBatch: Sendable {
-    let prepared: [PreparedObsidianImport]
-    let failures: [String]
-    /// The same failures with the raw error text, for diagnostics only (#1965).
-    var rawFailures: [String] = []
-}
-
 @MainActor
 final class Gate1AppModel: ObservableObject {
     static let welcomeSampleItemId = "item-spoken-margins-overview"
