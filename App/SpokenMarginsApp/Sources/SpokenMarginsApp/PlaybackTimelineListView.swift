@@ -16,6 +16,8 @@ struct PlaybackTimelineListView<Details: View>: View {
                                 action: { perform(entry.action) })
                     .equatable()
                     .contextMenu { details(entry.action) }
+                    // The same actions for VoiceOver and Switch Control, which can't long-press (#1917).
+                    .accessibilityActions { details(entry.action) }
                     .id(entry.id)
                     .accessibilityIdentifier(entry.accessibilityIdentifier)
             }
