@@ -111,6 +111,7 @@
  ],
  "comments": [
   {
+   "author_association": "OWNER",
    "body": "/lane T3\ncommit: 9ca5436\nchanged: while a voice Margin records, a Now Playing play/pause/skip-forward/stop command ends and saves it\ntests: SpokenMarginsAppTests/Gate2CompactControlTests",
    "created_at": "2026-10-14T18:30:50Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1596#issuecomment-6175469936",
@@ -121,6 +122,7 @@
    }
   },
   {
+   "author_association": "NONE",
    "body": "Lane report pr1596-r38615805313 \u2014 FAIL\ncommit 9ca5436 (tested merged with next at 5c615e7) \u00b7 tier auto \u00b7 no build \u00b7 5s\nran: hot-file ratchet: failed\nran beside a simulator job (trial): memory pressure normal, 36 GiB free\n<!-- lane-request: {\"commit\": \"9ca54362dde08b722e9aa8081d3780c6c757f473\", \"next\": \"5c615e7a49c24099f1a0cd2b41cb848e239f3e54\", \"tests\": [], \"tier\": \"auto\"} -->",
    "created_at": "2026-10-14T18:41:56Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1596#issuecomment-6175676749",
@@ -131,6 +133,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "Hot-file ratchet FAIL fixed in c7c6de0: the mapping moved out of `Gate1AppModel.swift` (now unchanged, 4554 lines) into `dispatchGate2CompactCommand` in `Gate1AppModel+CompactCommands.swift`, and the podcast Now Playing route calls dispatch instead of perform.\n\n/lane T3\ncommit: c7c6de0\nchanged: whil",
    "created_at": "2026-10-14T18:42:52Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1596#issuecomment-6175694317",
@@ -141,6 +144,7 @@
    }
   },
   {
+   "author_association": "NONE",
    "body": "Lane report pr1596-r38615805925 \u2014 PASS\ncommit 9ca5436 (tested merged with next at e55e639) \u00b7 tier T3 \u00b7 cloned iPhone 17, iOS 26.5 \u00b7 7m20s\nran: Gate2CompactControlTests, Gate1AppModelWorkflowTests (234 passed; app plan, build and tests, 2m49s)\nbuild folders: cold, new cache (SessionKit c8223991e725-31a6df51)\n<!-- lane-request: {\"commit\": \"9ca54362dde08b722e9aa8081d3780c6c757f473\", \"next\": \"e55e6398c753c410655ef1620c97618930b5825b\", \"tests\": [\"SpokenMarginsAppTests/Gate2CompactControlTests\"], \"tier\": \"T3\"} -->",
    "created_at": "2026-10-14T18:43:52Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1596#issuecomment-6175713262",
@@ -151,6 +155,7 @@
    }
   },
   {
+   "author_association": "NONE",
    "body": "Lane: lane:queued is set, but there is no `/lane T2` or `/lane T3` request comment newer than the last lane report, so nothing ran. Comment the request (format in docs/workstreams/test-lane.md), then add lane:queued.\n<!-- lane-note -->",
    "created_at": "2026-10-14T19:02:36Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1596#issuecomment-6176071280",
@@ -161,6 +166,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "/lane T3\ncommit: c7c6de0\nchanged: while a voice Margin records, a Now Playing play/pause/skip-forward/stop command ends and saves it (the earlier PASS was for 9ca5436; this head moves the mapping into dispatchGate2CompactCommand)\ntests: SpokenMarginsAppTests/Gate2CompactControlTests",
    "created_at": "2026-10-14T19:02:56Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1596#issuecomment-6176077731",
@@ -171,6 +177,7 @@
    }
   },
   {
+   "author_association": "NONE",
    "body": "Lane report pr1596-r38620380556 \u2014 PASS\ncommit c7c6de0 (tested merged with next at de750f8) \u00b7 tier T3 \u00b7 cloned iPhone 17, iOS 26.5 \u00b7 5m14s\nran: Gate2CompactControlTests (51 passed; app plan, build and tests, 34s)\nbuild folders: cold, new cache (SessionKit bb3f5e023819-31a6df51)\n<!-- lane-request: {\"commit\": \"c7c6de0ef7d9120a1897e4084b57080571561a01\", \"next\": \"de750f8822a9de969e3a1847e431e3e72dd82191\", \"tests\": [\"SpokenMarginsAppTests/Gate2CompactControlTests\"], \"tier\": \"T3\"} -->",
    "created_at": "2026-10-14T19:08:44Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1596#issuecomment-6176186981",

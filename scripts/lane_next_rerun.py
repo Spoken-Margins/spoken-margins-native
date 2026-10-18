@@ -22,6 +22,8 @@ import re
 import subprocess
 import sys
 
+import comment_trust
+
 # unittest's failure headings: "FAIL: test_x (module.Class.test_x)" on Python 3.11+, "(module.Class)" before;
 # a subTest adds " (name='a')", and a class fixture reads "ERROR: setUpClass (module.Class)".
 PY_FAILURE = re.compile(r'^(?:FAIL|ERROR): (\w+) \(([\w.]+)\)', re.M)
@@ -198,7 +200,9 @@ def report_broken_on_next(api, repo: str, tests: list[str], sha: str, pr: int, r
     try:
         listed = api('--paginate', '--jq', '.[] | @json', f'repos/{repo}/issues?state=open&per_page=100')
         open_issues = [json.loads(line) for line in listed.splitlines() if line.strip()]
-        open_issues = [issue for issue in open_issues if 'pull_request' not in issue]
+        # Only issues from the team can already name a failing test: a stranger titling an issue after one must not
+        # stop the real regression issue being filed, or collect the runner's comment (#1822).
+        open_issues = [issue for issue in comment_trust.trusted_only(open_issues) if 'pull_request' not in issue]
     except (OSError, subprocess.SubprocessError, ValueError) as error:
         return [f'could not read the open issues to report them ({error!r})']
     milestone = None

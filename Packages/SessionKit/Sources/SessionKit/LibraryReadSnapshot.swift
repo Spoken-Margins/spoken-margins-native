@@ -9,6 +9,8 @@ public struct LibraryReadSnapshot: Sendable {
     public let jobs: [AudioPreparationJob]
     public let downloads: [PodcastDownloadRecord]
     public var structuredDocumentItemIds: Set<String> = []
+    /// Margins other people shared, counted per item (#1792). Items with none are absent.
+    public var sharedMarginsByItemId: [String: SharedMarginTally] = [:]
 
     public init(
         items: [Item],
@@ -16,7 +18,8 @@ public struct LibraryReadSnapshot: Sendable {
         manifests: [PreparedAudioManifest],
         jobs: [AudioPreparationJob],
         downloads: [PodcastDownloadRecord],
-        structuredDocumentItemIds: Set<String> = []
+        structuredDocumentItemIds: Set<String> = [],
+        sharedMarginsByItemId: [String: SharedMarginTally] = [:]
     ) {
         self.items = items
         self.sessions = sessions
@@ -24,5 +27,6 @@ public struct LibraryReadSnapshot: Sendable {
         self.jobs = jobs
         self.downloads = downloads
         self.structuredDocumentItemIds = structuredDocumentItemIds
+        self.sharedMarginsByItemId = sharedMarginsByItemId
     }
 }

@@ -57,11 +57,7 @@ mkdir -p ~/SpokenMarginsOps/disk-relief
 ```
 
 ```zsh
-cp ~/Documents/GitHub/spoken-margins-native/ops/disk/com.spokenmargins.disk-relief.plist ~/Library/LaunchAgents/
-```
-
-```zsh
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.spokenmargins.disk-relief.plist
+/usr/bin/python3 ~/Documents/GitHub/spoken-margins-native/ops/install-launchd.py --install disk-relief
 ```
 
 To turn it off:

@@ -60,9 +60,9 @@ public enum FeedParserError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .responseTooLarge: return "The feed exceeds the 16 MB safety limit."
-        case .malformed: return "The feed is malformed."
-        case .tooDeep: return "The feed XML nesting exceeds the safety limit."
-        case .unsupported: return "The response is not RSS, Atom, or JSON Feed."
+        case .malformed: return "That link isn't a podcast or news feed. Check the address."
+        case .tooDeep: return "That link isn't a podcast or news feed. Check the address."
+        case .unsupported: return "That link isn't a podcast or news feed. Check the address."
         }
     }
 }

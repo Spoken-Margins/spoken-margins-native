@@ -32,6 +32,29 @@ import subprocess
 import sys
 import time
 
+# Whose comments count (#1822). .github/workflows/merge-audit.yml checks out this one file, so the rule of
+# scripts/comment_trust.py is copied here, not imported; test_comment_trust.py fails if the two drift.
+TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
+TRUSTED_BOTS = ('github-actions[bot]',)
+GRAPHQL_BOT_LOGINS = ('github-actions', 'app/github-actions')
+
+
+def trusted(item: dict) -> bool:
+    """Whether a comment (REST or `gh --json` shape) is from the owner, a member, a collaborator or the bot."""
+    person = item.get('user') or item.get('author') or {}
+    login = person.get('login') or ''
+    association = item.get('author_association', item.get('authorAssociation'))
+    if (isinstance(association, str) and association in TRUSTED_ASSOCIATIONS) or login in TRUSTED_BOTS:
+        return True
+    author = item.get('author')
+    return (isinstance(author, dict) and login in GRAPHQL_BOT_LOGINS
+            and (author.get('__typename') == 'Bot' or author.get('is_bot') is True))
+
+
+def trusted_only(items: list[dict]) -> list[dict]:
+    return [item for item in items or [] if trusted(item)]
+
+
 PREFIX = '**Merge check (triage desk)'
 LABEL = 'merge-audit'
 LABEL_COLOR = 'b60205'
@@ -54,7 +77,7 @@ def parse_time(text: str) -> datetime.datetime:
 def has_merge_check(comments: list[dict], head_sha: str, merged_at: str) -> bool:
     """Whether a triage-desk merge check for this head was posted before the merge."""
     sha7, merged = head_sha[:7], parse_time(merged_at)
-    for comment in comments:
+    for comment in trusted_only(comments):  # #1822: a stranger's look-alike is not a merge check
         body = (comment.get('body') or '').lstrip()
         if body.startswith(PREFIX) and sha7 in body and parse_time(comment['created_at']) < merged:
             return True
@@ -68,7 +91,7 @@ def same_commit(a: str, b: str) -> bool:
 def lane_reports(comments: list[dict], head_sha: str, merged: datetime.datetime) -> list[tuple[str, str]]:
     """(verdict, tier) of the runner's lane reports on this head posted before the merge, oldest first."""
     found = []
-    for comment in comments:
+    for comment in trusted_only(comments):
         if (comment.get('user') or {}).get('login') != LANE_BOT or parse_time(comment['created_at']) >= merged:
             continue
         body = (comment.get('body') or '').lstrip()
@@ -85,7 +108,7 @@ def lane_reports(comments: list[dict], head_sha: str, merged: datetime.datetime)
 def audit_verdict(comments: list[dict], head_sha: str, merged: datetime.datetime) -> str | None:
     """The verdict line of the newest Codex or Claude audit naming this head posted before the merge, if any."""
     verdict = None
-    for comment in comments:
+    for comment in trusted_only(comments):  # #1822: only the owner's, a collaborator's or the bot's
         body = (comment.get('body') or '').lstrip()
         heading, _, rest = body.partition('\n')
         is_audit = (body.startswith(AUDITS[:2]) or

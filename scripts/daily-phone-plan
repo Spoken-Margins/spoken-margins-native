@@ -30,6 +30,7 @@ loader = importlib.machinery.SourceFileLoader('phone_build', str(SCRIPTS / 'phon
 spec = importlib.util.spec_from_loader('phone_build', loader)
 phone = importlib.util.module_from_spec(spec)
 loader.exec_module(phone)
+sys.path.insert(0, str(phone.PUBLIC / 'scripts'))
 import lane_ledger
 
 
@@ -81,7 +82,7 @@ def collect(sha, previous):
         issue = next(issue for issue in pending if issue['number'] == number)
         sources = [(node or {}).get('source') or {} for node in
                    (issue.get('timelineItems') or {}).get('nodes') or []]
-        named = {int(a or b) for comment in (issue.get('comments') or {}).get('nodes') or []
+        named = {int(a or b) for comment in phone.trusted_nodes(issue)
                  for a, b in phone.FIXED_IN.findall(comment.get('body') or '')}
         if not (named & reverted or any(pr.get('number') in reverted for pr in sources)):
             raise RuntimeError(f'previous still-open issue #{number} lost its build evidence')
@@ -162,17 +163,58 @@ def propose(items, catalog, folder):
     (folder / 'writer.json').write_text('writer started\n')
     result = subprocess.run([*command, '-p', '-', '--output-format', 'json', '--tools', '',
                              '--strict-mcp-config', '--permission-mode', 'dontAsk', '--no-session-persistence'],
-                            input=prompt, text=True, capture_output=True, timeout=180, cwd=str(phone.ROOT))
+                            input=prompt, text=True, capture_output=True, timeout=180, cwd=str(phone.ROOT),
+                            env=writer_env())
     (folder / 'writer.json').write_text(result.stdout)
     response = json.loads(result.stdout)
     if result.returncode or response.get('is_error'):
         raise RuntimeError('plan writer failed; previous plan kept')
-    return json.loads(response['result'])
+    return writer_plan(response['result'])
+
+
+KEYCHAIN_SERVICE = 'claude-code-oauth'  # the audit job's token (ops/codex/sm_codex_audit.py)
+
+
+def writer_env():
+    # launchd has no Claude login; use the audit's Keychain token, as the worker does (2026-10-17:
+    # the first tick failed "Not logged in"). Never bill an API key instead of the plan.
+    env = dict(os.environ)
+    env.pop('ANTHROPIC_API_KEY', None)
+    if not env.get('CLAUDE_CODE_OAUTH_TOKEN'):
+        found = subprocess.run(['/usr/bin/security', 'find-generic-password', '-s', KEYCHAIN_SERVICE, '-w'],
+                               text=True, capture_output=True, timeout=30)
+        if found.returncode == 0 and found.stdout.strip():
+            env['CLAUDE_CODE_OAUTH_TOKEN'] = found.stdout.strip()
+    return env
+
+
+FENCE = re.compile(r'\A\s*```[A-Za-z]*\s*\n(.*)\n\s*```\s*\Z', re.S)
+
+
+def writer_plan(text):
+    # The writer may wrap its JSON in a Markdown fence (2026-10-17 first delivery); accept that.
+    match = FENCE.match(text)
+    return json.loads(match.group(1) if match else text)
+
+
+OMITTED = 'The plan writer left this issue out; coordinator must write its check.'
+
+
+def add_omitted(proposal, items):
+    # The writer can drop one issue from a long list (2026-10-17: 75 of 76, #777 missing), and the
+    # coverage audit then rejects the whole paid plan. Block an omitted issue visibly instead; it is
+    # never turned into a check, and a prerequisite block keeps its own reason.
+    covered = {number for check in proposal.get('checks', []) for number in check.get('issues', [])}
+    covered |= {entry.get('issue') for entry in proposal.get('blocked', [])}
+    for item in items:
+        if item['number'] not in covered:
+            proposal.setdefault('blocked', []).append(
+                {'issue': item['number'], 'reason': item['blocked'] or OMITTED})
 
 
 def validate(request, plan_id):
     command = shlex.split(os.environ.get('SM_DAILY_VALIDATOR', str(
-        SCRIPTS.parent / 'Packages/SessionKit/.build/release/phone-plan')))
+        phone.PUBLIC / 'Packages/SessionKit/.build/release/phone-plan')))
     result = subprocess.run([*command, plan_id], input=json.dumps(request), text=True,
                             capture_output=True, timeout=30)
     if result.returncode:
@@ -232,6 +274,7 @@ def deliver(now, state, state_path, on_request=False):
     else:
         started = time.monotonic()
         proposal = propose(items, catalog, archive)
+        add_omitted(proposal, items)
         # A writer cannot turn an explicitly blocked prerequisite into a check.
         blocked = {entry['issue']: entry['reason'] for entry in proposal['blocked']}
         if any(item['blocked'] and blocked.get(item['number']) != item['blocked'] for item in items):

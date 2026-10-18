@@ -37,7 +37,7 @@ struct ExperienceLibraryScreen: View {
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 6)
                 }
 
-                if model.shouldShowOnboardingCard {
+                if model.shouldShowOnboardingCard, screenState.allowsAddingContent {
                     onboardingStrip
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
@@ -86,6 +86,7 @@ struct ExperienceLibraryScreen: View {
             } label: {
                 Label("Add", systemImage: "plus")
             }
+            .disabled(!screenState.allowsAddingContent)
             .accessibilityIdentifier("home.addSource.button")
         }
     }
@@ -256,6 +257,13 @@ struct ExperienceLibraryScreen: View {
                     }
                 }
             }
+            Section("Shared Margins") {
+                Picker("Shared Margins", selection: $model.libraryQuery.sharedMargins) {
+                    ForEach(LibrarySharedMarginsFilter.allCases, id: \.self) { option in
+                        Text(option.title).tag(option)
+                    }
+                }
+            }
         } label: {
             if dynamicTypeSize.isAccessibilitySize {
                 Image(systemName: "line.3.horizontal.decrease.circle")
@@ -300,11 +308,26 @@ struct ExperienceLibraryScreen: View {
         model.libraryQuery.contentType != .all
             || model.libraryQuery.listeningState != .unfinished
             || model.libraryQuery.offlineState != .all
+            || model.libraryQuery.sharedMargins != .all
+    }
+
+    /// A build that can't open the Library shows that, never the empty state (#1969).
+    private var screenState: LibraryScreenState {
+        LibraryScreenState.resolve(
+            accessError: model.libraryAccessError,
+            itemCount: model.libraryItems.count,
+            isCaughtUp: model.libraryIsCaughtUp,
+            visibleCount: model.visibleLibraryItems.count
+        )
     }
 
     @ViewBuilder
     private var items: some View {
-        if model.libraryItems.isEmpty {
+        switch screenState {
+        case .cannotOpen(let note):
+            LibraryCannotOpenNote(note: note) { model.retryLibraryOpen() }
+                .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+        case .empty:
             SMExperienceEmptyState(
                 systemImage: "books.vertical",
                 title: "Your Library is ready",
@@ -312,7 +335,7 @@ struct ExperienceLibraryScreen: View {
                 actionTitle: "Add Source"
             ) { addSourceRoute = .linkOrPodcast }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-        } else if model.libraryIsCaughtUp {
+        case .caughtUp:
             SMExperienceEmptyState(
                 systemImage: "checkmark.circle",
                 title: "You’re caught up",
@@ -320,7 +343,7 @@ struct ExperienceLibraryScreen: View {
                 actionTitle: "Show completed"
             ) { model.showCompletedLibraryItems() }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-        } else if model.visibleLibraryItems.isEmpty {
+        case .noMatches:
             SMExperienceEmptyState(
                 systemImage: "magnifyingglass",
                 title: "No matches",
@@ -331,7 +354,7 @@ struct ExperienceLibraryScreen: View {
                 model.libraryQueryChanged()
             }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-        } else {
+        case .list:
             ForEach(listEntries) { entry in
                 let row = entry.row
                 ExperienceLibraryCompactRow(
@@ -396,6 +419,7 @@ private struct ExperienceLibraryCompactRow: View {
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                         .multilineTextAlignment(.leading)
+                    sharedMarginsLine
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -502,6 +526,23 @@ private struct ExperienceLibraryCompactRow: View {
             }
         } else {
             Text(detail.rest).lineLimit(1)
+        }
+    }
+
+    /// Where a friend left Margins, and whether any are new (#1792). The words carry it, not the color.
+    @ViewBuilder private var sharedMarginsLine: some View {
+        if let line = row.sharedMargins.libraryLine {
+            HStack(spacing: 6) {
+                Image(systemName: "person.2.fill")
+                    .accessibilityHidden(true)
+                Text(line)
+                if row.sharedMargins.new > 0 { NewMarginBadge() }
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(AppColors.evergreen)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(row.sharedMargins.accessibilityLine ?? line)
+            .accessibilityIdentifier("library.sharedMargins.\(row.id)")
         }
     }
 

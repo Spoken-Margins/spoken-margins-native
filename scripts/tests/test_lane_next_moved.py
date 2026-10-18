@@ -326,7 +326,7 @@ class RunAutoAfterNextMovedTests(RealGit):
         # The second merge check satisfies the merge audit but doesn't tell phone-build the tip was tested.
         second = github.posted[-1]
         import merge_audit
-        self.assertTrue(merge_audit.has_merge_check([dict(body=second, created_at='2026-10-01T10:00:00Z')],
+        self.assertTrue(merge_audit.has_merge_check([dict(body=second, created_at='2026-10-01T10:00:00Z', user={'login': 'github-actions[bot]'})],
                                                     head, '2026-10-01T10:00:01Z'))
         self.assertNotIn(f'Pushing `{landed[:7]}`', second)
         self.assertIn('not re-tested', second)

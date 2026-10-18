@@ -15,6 +15,12 @@ public protocol LibraryQueryRow {
     var addedAt: Date? { get }
     var lastListenedAt: Date? { get }
     var storageRecencyRank: Int { get }
+    var sharedMargins: SharedMarginTally { get }
+}
+
+extension LibraryQueryRow {
+    /// Rows that don't track shared Margins have none.
+    public var sharedMargins: SharedMarginTally { .none }
 }
 
 /// Library query rules shared by the app and host tests.
@@ -42,7 +48,8 @@ public enum LibraryQueryEngine {
             case .completed: listeningMatch = row.isCompleted
             }
             let offlineMatch = libraryQuery.offlineState == .all || row.offlineState == libraryQuery.offlineState
-            return metadataMatch && contentMatch && listeningMatch && offlineMatch
+            let sharedMatch = libraryQuery.sharedMargins.matches(row.sharedMargins)
+            return metadataMatch && contentMatch && listeningMatch && offlineMatch && sharedMatch
         }
         return filtered.sorted { lhs, rhs in
             let ordered: ComparisonResult
@@ -84,6 +91,7 @@ public enum LibraryQueryEngine {
         !libraryItems.isEmpty && libraryItems.allSatisfy(\.isCompleted)
             && libraryQuery.listeningState == .unfinished
             && libraryQuery.contentType == .all && libraryQuery.offlineState == .all
+            && libraryQuery.sharedMargins == .all
             && libraryQuery.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -101,6 +109,9 @@ public enum LibraryQueryEngine {
         }
         if libraryQuery.offlineState != .all {
             selections.append(Self.displayName(libraryQuery.offlineState.rawValue))
+        }
+        if libraryQuery.sharedMargins != .all {
+            selections.append(libraryQuery.sharedMargins.title)
         }
         return selections.isEmpty ? "All items" : selections.joined(separator: " · ")
     }

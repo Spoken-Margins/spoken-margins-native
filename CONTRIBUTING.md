@@ -26,3 +26,9 @@ Don't submit code you copied from elsewhere unless its licence is compatible and
 ## Not legal advice
 
 This file explains the project's terms in plain words. It is not legal advice. The project's owner chose this licence without a lawyer. A lawyer's review is planned only before three things: share links for the public, Listening Maps for the public, and a public App Store release.
+
+## Checking for secrets
+
+Before you push, run `scripts/check-gitleaks.sh`. It scans tracked files, plus new files you haven't ignored, with [gitleaks](https://github.com/gitleaks/gitleaks) (`brew install gitleaks`) and fails on anything that looks like a key or token. `scripts/check-gitleaks.sh --all-refs` scans every commit instead. If gitleaks isn't installed, the script says it skipped.
+
+A hit that is truly not a secret, such as a made-up token in a test, goes in `.gitleaks.toml` with a one-line reason. Name the file and, where you can, the exact value; never a whole folder. Don't change a fixture just to quiet the scan.
