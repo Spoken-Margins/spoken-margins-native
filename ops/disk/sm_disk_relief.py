@@ -62,10 +62,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, List, Optional, Tuple
 
-import sm_lane_prune as lane_prune
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+import sm_lane_prune as lane_prune  # noqa: E402
+import sm_paths  # noqa: E402
 
 GiB = 1024 ** 3
 HOME = Path.home()
+# The owner's development checkout, which is not this script's own (SM_REPO replaces it, #1844).
+DEV_CHECKOUT = sm_paths.repo(__file__, default=HOME / 'Documents/GitHub/spoken-margins-native')
 
 CACHE_IDLE_SECONDS = 30 * 60
 ARTIFACT_AGE_SECONDS = 2 * 86400
@@ -89,8 +93,8 @@ PHONE_BUILD_NAME = re.compile(r'^\d{8}-\d{6}-[0-9a-f]{7}$')
 @dataclass
 class Config:
     home: Path = HOME
-    repo: Path = HOME / 'Documents/GitHub/spoken-margins-native'
-    checkout_glob: str = str(HOME / 'Documents/GitHub/spoken-margins-native*')
+    repo: Path = DEV_CHECKOUT
+    checkout_glob: str = str(DEV_CHECKOUT) + '*'
     data_volume: Path = Path('/System/Volumes/Data')
     drive: Path = Path('/Volumes/SlawBulk')
     offload_dir: str = 'Codex-Offload'
@@ -105,7 +109,7 @@ class Config:
     snapshot_volume: Path = Path('/')
     night_start_hour: int = 2
     night_end_hour: int = 5
-    ops_dir: Path = HOME / 'SpokenMarginsOps/disk-relief'
+    ops_dir: Path = sm_paths.state_dir('disk-relief', home=HOME)
     phone_dir: Path = HOME / 'SpokenMargins-phone'
     device_support: Path = HOME / 'Library/Developer/Xcode/iOS DeviceSupport'
     launch_agents: Path = HOME / 'Library/LaunchAgents'

@@ -1025,6 +1025,7 @@ class Run:
         # A hosted checkout has no Git LFS files; the voice model pointers still name each file's size and hash.
         self.command('contracts', [sys.executable, 'scripts/validate-contracts.py',
                                    *(['--allow-lfs-pointers'] if portable else [])])
+        self.command('public-tree', [sys.executable, 'scripts/check-public-tree.py'])
         self.command('surfaces', [sys.executable, 'scripts/validate-surface-contracts.py'])
         self.command('inventory', [sys.executable, 'scripts/test_inventory.py'])
         if not (ROOT / 'node_modules').exists():

@@ -55,6 +55,29 @@ extension LibraryOfflineStateFilter {
     }
 }
 
+/// Which items the Library shows by the Margins other people shared on them (#1792).
+public enum LibrarySharedMarginsFilter: String, Equatable, CaseIterable, Sendable {
+    case all
+    case fromOthers = "from_others"
+    case newToMe = "new_to_me"
+
+    public var title: String {
+        switch self {
+        case .all: "Any Margins"
+        case .fromOthers: "With shared Margins"
+        case .newToMe: "New shared Margins"
+        }
+    }
+
+    public func matches(_ tally: SharedMarginTally) -> Bool {
+        switch self {
+        case .all: true
+        case .fromOthers: tally.total > 0
+        case .newToMe: tally.new > 0
+        }
+    }
+}
+
 public enum LibrarySort: String, Codable, Equatable, CaseIterable, Sendable {
     case recentlyAdded = "recently_added"
     case recentlyListened = "recently_listened"
@@ -67,20 +90,34 @@ public struct LibraryQuery: Codable, Equatable, Sendable {
     public var contentType: LibraryContentTypeFilter
     public var listeningState: LibraryListeningStateFilter
     public var offlineState: LibraryOfflineStateFilter
+    /// Not saved between launches: a leftover filter would hide the Library behind a choice nobody remembers.
+    public var sharedMargins: LibrarySharedMarginsFilter = .all
     public var sort: LibrarySort
+
+    private enum CodingKeys: String, CodingKey { case query, contentType, listeningState, offlineState, sort }
 
     public init(
         query: String = "",
         contentType: LibraryContentTypeFilter = .all,
         listeningState: LibraryListeningStateFilter = .unfinished,
         offlineState: LibraryOfflineStateFilter = .all,
+        sharedMargins: LibrarySharedMarginsFilter = .all,
         sort: LibrarySort = .recentlyAdded
     ) {
         self.query = query
         self.contentType = contentType
         self.listeningState = listeningState
         self.offlineState = offlineState
+        self.sharedMargins = sharedMargins
         self.sort = sort
+    }
+
+    /// Restores the everyday view; the search and sort stay.
+    public mutating func resetFilters() {
+        contentType = .all
+        listeningState = .unfinished
+        offlineState = .all
+        sharedMargins = .all
     }
 
     public var persistedSelection: LibraryQuery {

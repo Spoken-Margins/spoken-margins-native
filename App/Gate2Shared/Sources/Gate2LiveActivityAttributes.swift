@@ -25,6 +25,52 @@ public enum SkimDestinationLabel {
     }
 }
 
+/// What VoiceOver reads for the Live Activity's controls and state images (#1913). The widget asked
+/// each button for a label and fell back to its command string, so VoiceOver said "skipBack".
+public enum Gate2LiveActivityAccessibility {
+    /// The commands the transport row draws as buttons, in the order they appear.
+    public static let transportCommands = [
+        "skimBackward", "skipBack", "togglePlayPause", "skipForward", "skimForward",
+    ]
+
+    /// One label per transport command. Skim's own label names its destination and is passed by the
+    /// caller; the entries here are the fallback when it has no destination.
+    public static let transportLabels: [String: String] = [
+        "skimBackward": SkimDestinationLabel.accessibilityLabel(destinationMs: nil, backward: true),
+        "skipBack": "Back 15 seconds",
+        "togglePlayPause": "Play or pause",
+        "skipForward": "Forward 15 seconds",
+        "skimForward": SkimDestinationLabel.accessibilityLabel(destinationMs: nil, backward: false),
+    ]
+
+    /// The label for a transport button. A command with no entry reads as spaced words, never as
+    /// the raw camelCase string.
+    public static func label(forCommand command: String) -> String {
+        transportLabels[command] ?? spacedWords(command)
+    }
+
+    /// The play/pause button names the action it will take, not the state.
+    public static func playPauseLabel(isPlaying: Bool) -> String {
+        isPlaying ? "Pause" : "Play"
+    }
+
+    public static let playSharedMargin = "Play shared Margin"
+    public static let skipSharedMargin = "Skip shared Margin"
+    public static let listenToSharedMargin = "Listen to shared Margin"
+    public static let dismissSharedMargin = "Dismiss shared Margin"
+    public static let sharedMarginIcon = "New shared Margin"
+
+    /// "skipBack" becomes "skip back".
+    static func spacedWords(_ camelCase: String) -> String {
+        var words = ""
+        for character in camelCase {
+            if character.isUppercase, !words.isEmpty { words.append(" ") }
+            words.append(contentsOf: String(character).lowercased())
+        }
+        return words
+    }
+}
+
 /// Whether the microphone is really taking in sound while a spoken Margin records (#937). The Live
 /// Activity says "REC" only for `capturing`.
 public enum Gate2LiveActivityMicrophone: String, Codable, Hashable, Sendable {

@@ -18,6 +18,7 @@ struct ExperienceCanonicalNavigationTree: View {
                             HStack(spacing: 10) {
                                 Image(systemName: "doc.text")
                                     .foregroundStyle(AppColors.evergreen)
+                                    .accessibilityHidden(true)
                                 Text(node.title)
                                     .foregroundStyle(AppColors.text)
                                     .multilineTextAlignment(.leading)

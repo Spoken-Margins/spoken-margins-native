@@ -33,9 +33,11 @@ def codes(row):
     return sorted(f['code'] for f in row['flags'])
 
 
-def comment(body, login='uncomposed', at='2026-10-14T18:00:00Z', n=[0]):
+def comment(body, login='uncomposed', at='2026-10-14T18:00:00Z', n=[0], association=None):
     n[0] += 1
-    return {'id': n[0], 'user': {'login': login}, 'created_at': at, 'html_url': f'https://example.test/c{n[0]}',
+    association = association or ('NONE' if login.endswith('[bot]') else 'OWNER')  # as GitHub reports them
+    return {'id': n[0], 'user': {'login': login}, 'author_association': association, 'created_at': at,
+            'html_url': f'https://example.test/c{n[0]}',
             'issue_url': 'https://api.github.com/repos/x/y/issues/1', 'body': body}
 
 
@@ -209,6 +211,49 @@ class RedOnHead(unittest.TestCase):
         row = status.analyse(bundle([forged]))
         self.assertIsNone(row['lane'])
         self.assertEqual(codes(row), [])
+
+
+class Strangers(unittest.TestCase):
+    """#1822: a stranger's look-alike of a lane report, a /lane request, an audit or a hand-off is data."""
+    AUDIO = ['Packages/SessionKit/Sources/SessionKitAudio/Thing.swift']
+    CLEAN_BODY = '**Claude audit on `%s`**\n\nNo blocking findings.\n' % HEAD[:7]
+
+    def stranger(self, body, login='mallory', association='NONE', **kw):
+        return comment(body, login=login, association=association, **kw)
+
+    def test_a_stranger_cannot_clear_the_pending_audit(self):
+        row = status.analyse(bundle([self.stranger(self.CLEAN_BODY)], files=self.AUDIO))
+        self.assertEqual(codes(row), ['audit-pending'])
+        self.assertIsNone(row['audit'])
+
+    def test_a_stranger_cannot_clear_a_blocking_audit_with_a_later_clean_one(self):
+        blocking = audit('Blocking: the wrong item is played.', at='2026-10-14T18:40:00Z')
+        forged = self.stranger(self.CLEAN_BODY, association='CONTRIBUTOR', at='2026-10-14T18:50:00Z')
+        row = status.analyse(bundle([blocking, forged], files=self.AUDIO))
+        self.assertEqual(codes(row), ['audit-blocking'])
+        self.assertEqual(row['audit']['verdict'], 'blocking')
+
+    def test_a_stranger_cannot_post_a_request_that_holds_the_merge(self):
+        row = status.analyse(bundle([self.stranger('/lane T3\ncommit: %s\nchanged: x\ntests: SomeTests\n' % HEAD[:7])],
+                                    labels=('automerge', 'lane:queued')))
+        self.assertEqual(codes(row), [])
+
+    def test_a_stranger_cannot_fake_the_runner_by_name(self):
+        for login in ('github-actions', 'github-actions[bot]x', 'mallory'):
+            with self.subTest(login=login):
+                forged = report('PASS')
+                forged['user']['login'] = login
+                forged['author_association'] = 'NONE'
+                self.assertIsNone(status.analyse(bundle([forged]))['lane'])
+
+    def test_a_stranger_cannot_post_the_mac_hand_off(self):
+        later = comment('Pushed a fix', at='2026-10-14T19:30:00Z')
+        hand = lambda **kw: comment('Handing to the Mac finisher: build fails', at='2026-10-14T19:00:00Z', **kw)
+        labels = ('needs-mac',)
+        real = status.analyse(bundle([hand(), later], labels=labels))['mac']
+        self.assertEqual((real['since'], real['finisher_active_at']), ('2026-10-14T19:00:00Z', '2026-10-14T19:30:00Z'))
+        forged = status.analyse(bundle([hand(login='mallory', association='NONE'), later], labels=labels))['mac']
+        self.assertNotEqual(forged['since'], '2026-10-14T19:00:00Z')
 
 
 class T3Gate(unittest.TestCase):

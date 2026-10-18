@@ -1,0 +1,5 @@
+# Tracked files that look like secrets but are not (scripts/check-public-tree.py, #1838).
+# One `path: reason` per line. A line without a reason, or for a file that is no longer tracked, fails the check.
+research/B4/server/internal/appattest/apple_app_attestation_root_ca.pem: Apple's public App Attest root certificate
+research/B4/server/cmd/smserver/main_test.go: dummy sk-ant-test key constant used as a redaction test input
+docs/scheduled-jobs.md: prose names the dummy sk-ant-test value from the 2026-10-16 audit

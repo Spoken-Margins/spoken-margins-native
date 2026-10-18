@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Claude Mac worker tick for Spoken Margins, every 10 minutes. Template: not installed by default.
+  Install steps are in ops/claude/README.md. A tick only decides and, at most, starts one
+  detached child, so it returns in seconds. AbandonProcessGroup keeps launchd from killing
+  that child when the tick exits.
+  The worker's own log is ~/SpokenMarginsOps/claude-worker/log.txt; launchd stderr (crashes
+  and permission errors only) goes to claude-worker/launchd.err.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.spokenmargins.claude-worker</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>@HOME@/SpokenMarginsOps/repo/ops/claude/sm_claude_worker.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>@HOME@/SpokenMarginsOps/repo</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>@HOME@/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>GH_PROMPT_DISABLED</key>
+    <string>1</string>
+    <key>GIT_TERMINAL_PROMPT</key>
+    <string>0</string>
+  </dict>
+
+  <key>StartInterval</key>
+  <integer>600</integer>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>AbandonProcessGroup</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/dev/null</string>
+
+  <key>StandardErrorPath</key>
+  <string>@HOME@/SpokenMarginsOps/claude-worker/launchd.err</string>
+</dict>
+</plist>

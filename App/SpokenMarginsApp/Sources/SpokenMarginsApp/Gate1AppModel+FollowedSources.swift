@@ -48,7 +48,7 @@ extension Gate1AppModel {
                 self.reportConfirmation("Source followed. New entries stay in the inbox until you import them.")
             } catch {
                 await self.recordFollowFailure(error)
-                self.reportFailure(error, context: "Follow source failed")
+                self.reportFailure(error)
             }
         }
     }
@@ -88,7 +88,7 @@ extension Gate1AppModel {
                 self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Source followed. New entries stay in the inbox until you import them.")
             } catch {
-                self.reportFailure(error, context: "Follow source failed")
+                self.reportFailure(error)
             }
         }
     }
@@ -217,7 +217,7 @@ extension Gate1AppModel {
                 self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
             } catch {
                 await self.recordFollowFailure(error)
-                self.reportFailure(error, context: "Follow source failed")
+                self.reportFailure(error)
             }
         }
     }
@@ -385,7 +385,8 @@ extension Gate1AppModel {
                 guard let subscription = try store.loadFeedSubscriptions().first(where: { $0.id == entry.subscriptionId }) else {
                     throw FollowedSourceError.noFeedCandidates
                 }
-                let entry = await self.followedSourceCoordinator?.publisherAudioEntry(for: entry) ?? entry
+                let lookup = await self.followedSourceCoordinator?.publisherAudioLookup(for: entry)
+                let entry = lookup?.entry ?? entry
                 let imported: Bool
                 // Posts with the publisher's own audio (#545) and text-only posts (#641) import as articles.
                 let route = try await self.followedSourceCoordinator?.importRoute(for: entry, subscriptionKind: subscription.source.kind)
@@ -398,15 +399,20 @@ extension Gate1AppModel {
                         startSession: false
                     ), feedEntry: entry, subscription: subscription)
                     imported = importedItemId != nil
+                    self.recordFollowedPublisherAudio(lookup?.outcome, itemId: importedItemId, saved: false)
                     if let importedItemId { if openWhenFinished { self.openItem(id: importedItemId) }; if playWhenFinished { self.startItem(id: importedItemId) } } // Play now (#478)
                 } else {
                     let handoff = self.listeningSignals.followedArticle(try await FollowedArticleImport.handoff(for: entry, url: url, using: self.readablePageExtractor, record: { self.diagnostics.merge($0) { _, new in new } }), for: entry)
                     // With something already playing, importBrowserText only adds; Add and open still opens it (#567).
                     if openWhenFinished, !playWhenFinished, !entry.hasPublisherAudio, !self.hasActiveSession {
-                        imported = self.importBrowserTextItem(handoff).map { self.listeningSignals.followedArticleImported($0, for: entry) } != nil
+                        let itemId = self.importBrowserTextItem(handoff).map { self.listeningSignals.followedArticleImported($0, for: entry) }
+                        self.recordFollowedPublisherAudio(lookup?.outcome, itemId: itemId, saved: false)
+                        imported = itemId != nil
                     } else {
                         let itemId = self.listeningSignals.followedArticleImported(try self.importBrowserTextInBackground(handoff), for: entry)
-                        if let audio = try PublisherAudioDetector.publisherAudio(for: entry, itemId: itemId)?.keepingTextMap(of: store.loadPublisherAudio(itemId: itemId)) { try store.savePublisherAudio(audio); PublisherAudioTextMapper.start(audio, store: store, transcriber: self.sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(itemId): \($0)" } }
+                        let audio = try PublisherAudioDetector.publisherAudio(for: entry, itemId: itemId)?.keepingTextMap(of: store.loadPublisherAudio(itemId: itemId))
+                        if let audio { try store.savePublisherAudio(audio); PublisherAudioTextMapper.start(audio, store: store, transcriber: self.sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(itemId): \($0)" } }
+                        self.recordFollowedPublisherAudio(lookup?.outcome, itemId: audio?.itemId ?? itemId, saved: audio != nil)
                         if openWhenFinished { self.openItem(id: itemId) }; if playWhenFinished { self.startItem(id: itemId) } // Play now (#478)
                         imported = true
                     }

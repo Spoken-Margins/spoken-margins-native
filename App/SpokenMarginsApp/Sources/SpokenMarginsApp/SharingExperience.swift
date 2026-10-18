@@ -484,6 +484,7 @@ struct InterjectionSharingView: View {
                             .padding(10)
                             .background(AppColors.inputBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .increasedContrastEdge(cornerRadius: 12)
                         Text("Expand to edit individual words and pauses.")
                             .font(.caption2)
                             .foregroundStyle(AppColors.secondaryText)
@@ -559,6 +560,7 @@ struct InterjectionSharingView: View {
                         .padding(10)
                         .background(AppColors.inputBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .increasedContrastEdge(cornerRadius: 12)
                     if isLong {
                         Button {
                             toggleTranscriptExpansion(draft.id)

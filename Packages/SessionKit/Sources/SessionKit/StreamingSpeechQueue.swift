@@ -84,6 +84,9 @@ public final class StreamingSpeechQueue {
         // and resumed from a fresh stream request. Only stop speech this queue is actually driving.
         let ownsSpeech = current != nil || worker != nil
         isPausedForInterjection = true
+        // The cancelled worker wakes later. A new generation makes it leave `worker` and `current` alone, so it
+        // can't clear the handle of the worker a quick resume starts (#1895).
+        generation += 1
         worker?.cancel()
         worker = nil
         if let current {
@@ -159,7 +162,7 @@ public final class StreamingSpeechQueue {
                         }
                     }
                     guard playbackStarted else {
-                        if self.current == unit {
+                        if workerGeneration == self.generation, self.current == unit {
                             self.current = nil
                         }
                         break

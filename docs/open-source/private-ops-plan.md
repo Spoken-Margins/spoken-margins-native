@@ -28,7 +28,6 @@ Buckets:
 | `ops/audio-loopback/` | Audio loopback harness for host and hosted CI audio tests | Public | No owner values; a contributor can run it. |
 | `ops/claude/` (worker + plist) | Claude Mac worker: takes `ready` issues and stalled PRs with a full-tool headless agent | Private | Agent automation with Bash and Edit rights on the owner's Mac and account. |
 | `ops/codex/sm_codex_audit.py`, `codex_limits.py`, audit plist, README | The merge-gating audit (headless Claude, read-only) | Private | Owner's account posts the verdict; the runner trusts it. |
-| `ops/codex/sm_codex_worker.py` + plist | Retired Codex worker (#1195) | Private, then delete | Retired after 2026-10-15. Delete rather than move. |
 | `ops/dial/` (gate, deploy.sh, systemd units) | The Dial: paces threads from #589, deploys to the VPS | Private | Owner pacing, owner VPS. |
 | `ops/disk/` (disk relief, lane prune, plist) | Frees disk; moves artifacts to `SlawBulk` | Private | Names the owner's external drives and home layout. |
 | `ops/lane/sm_lane_power_guard.py` + plist | Pauses runner services on battery or lid closed | Private | The owner's Mac and runner service names. |
@@ -36,7 +35,6 @@ Buckets:
 | `ops/lane/sm_lane_stall.py` | Lane stall detection | Example | Goes with the lane (see `scripts/` lane row). |
 | `ops/ledger/` | Claude and Codex plan usage reports | Private | The owner's subscriptions and session logs. |
 | `ops/power/` (Amphetamine, keep-awake plist) | Keeps the Mac awake for builds | Private | The owner's Mac and apps. |
-| `ops/release/` (cut_candidate + plist) | Spent one-shot release cut for Build 30 | Private, then delete | Stale (`docs/scheduled-jobs.md` "Needs a fix" 2). |
 | `ops/testdesk/` (integration run, revert, plist) | Integration run on `next`'s tip; reverts a culprit | Private | Acts with the owner's account (reverts, labels). |
 | `ops/runner-guard/` (PR #1791, not merged) | Job-started hook that refuses fork jobs | Example | Useful to any self-hosted runner; holds no secrets. |
 
@@ -122,13 +120,13 @@ Once the repo is public, anyone can file an issue, comment, or open a fork PR. T
 | `merge-audit.yml` | Pushes to `next` | Labels | Only writers can push | None |
 | Audit (`sm_codex_audit.py`) | PR title, description, diff, comments | Posts the verdict that lets audio, persistence, packet and lane PRs merge | Read-only tools, `dontAsk` | Audit only same-repo PRs by collaborators; quote PR text inside a marked data block; never let text in the PR set the verdict wording. |
 | Claude Mac worker (`sm_claude_worker.py`, not live) | `ready` issue body, PR comments, hand-off notes | Full agent: Bash, Edit, Write, opens and arms PRs | Only labelled issues; budget and turn caps | Take only issues opened by, or labelled `ready` by, the owner or a collaborator (check the label event's actor); trust hand-off notes only from its own account. |
-| Codex worker | `ready` issues | Workspace-write agent | Retired | Unload and delete. |
+| Codex worker | `ready` issues | Workspace-write agent | Deleted (#1853) | Unloaded 2026-10-17. |
 | Integration run (`sm_integration_run.py`) | Merged code, comments on #184 | Reverts a culprit, removes `automerge` | Merged code is already reviewed; Claude is read-only | Same author filter on #184 comments. |
 | Dial gate (`dial_gate.py`) | #589 boxes, #337 tick, claim and stop notes on any issue | Sets how many threads run, fires the relay | None | Author filter on comments; a stranger's fake claim note or tick changes pacing. |
 | Phone build (`scripts/phone-build`) | Integration reports on #184 | Builds sooner | None | Author filter. |
 | Daily phone plan | Merged PRs and issues | Writes the owner's test plan (Claude, no tools) | No tools | Only merged PRs and owner or collaborator issues, so a stranger can't put a step on his phone plan. |
 | Board sync, sweep, status | Issues and labels | Board fields, labels | None | Low risk; same author filter for any comment it parses. |
-| Cloud daily triage routine | Every new issue | Adds `ready`, starts threads | None | **The widest door.** An outside issue gets `needs-triage`, never `ready`, until the owner or the coordinator reads it. Thread prompts quote issue text as data. |
+| Cloud daily triage routine | Every new issue | Adds `ready`, starts threads | None | **The widest door.** An outside issue gets `needs-triage-review`, never `ready`, until the owner or the coordinator reads it. Thread prompts quote issue text as data. |
 | Hourly dispatch routine | Lane reports, audits, `automerge` PRs | Labels, comments, thread starts | None | Same author filter as the lane. |
 | Mac finisher, Test Desk | `needs-mac` PRs, T4/T5 lane requests (journey scenario text) | Commits to PR branches; drives the simulator | None | Act only on requests from collaborators; scenario text is data. |
 
@@ -165,10 +163,13 @@ Keep them on separate system users and units as now (`smserver`, `smt1`, the Dia
 
 ## 6. Order of steps
 
-Each step is its own PR or owner action. Nothing in steps 1 to 4 deletes a file from this repo.
+Each step is its own PR or owner action. Only step 1 deletes files from this repo, and they were dead jobs.
 
-1. **Retire the dead jobs** (no move needed): unload and delete `codex-worker` and `release-cut`. Owner unloads the launchd jobs; a PR deletes the files.
+1. **Retire the dead jobs** (no move needed). Done: the owner unloaded the Codex worker and the release cut was not loaded (2026-10-17), and #1853 deleted both jobs' files.
 2. **Make the private scripts location-independent while they are still here:** `SM_REPO` and `SM_OPS_HOME`, plist templates and `install-launchd.py`. Behaviour stays the same, so the 10-minute pull keeps working.
+   - Done (#1844): `scripts/sm_paths.py` (and `sm_paths.sh` for shell scripts) gives `repo()` and `ops_home()`. The scripts in `ops/` (except the retired Codex worker and release cut, and the public audio loopback), `phone-build`, `daily-phone-plan` and `sm_status.py` use it; `sm_sweep.py` reaches the checkout through `sm_status`. `scripts/tests/test_sm_paths.py` pins both the defaults and the settings.
+   - Limits: `ops/power/amph` (AppleScript, untested off the Mac) still writes its hold file under `~/SpokenMarginsOps`, and the integration run's evidence still lands in `artifacts/` of the checkout, so they ignore `SM_OPS_HOME`.
+   - Still open: plist templates and `install-launchd.py` (#1843).
 3. **Add the author filters** in section 3 (PR #1797 for the lane; one PR each for the audit, Dial, integration run, phone build and worker). The routine changes are the owner's or the coordinator's.
 4. **Create `spoken-margins-ops`** (owner's account, owner's tap), carry history over with `git filter-repo`, clone it to `~/SpokenMarginsOps/ops`, and extend the existing 10-minute pull to it.
 5. **Switch jobs one at a time,** lowest risk first: ledger (no job), disk relief, keep-awake, power guard, Dial on the VPS, integration run, phone build and daily plan, and last the audit. For each: render the new plist, `launchctl bootout` the old label, `bootstrap` the new one, and confirm one normal tick in its log before the next. Interval jobs miss at most one tick. The audit goes last and is confirmed by a real audit comment on a real PR, because merges wait on it.
@@ -179,7 +180,7 @@ Each step is its own PR or owner action. Nothing in steps 1 to 4 deletes a file 
 ## Needs the owner
 
 1. Creating the private `spoken-margins-ops` repo on his account (step 4).
-2. Unloading `codex-worker` and `release-cut` on the Mac (step 1).
+2. ~~Unloading the retired jobs on the Mac (step 1).~~ Done 2026-10-17.
 3. The merge taps for #1791 and anything else touching `.github/` or `scripts/lane-runner.py`.
 4. A yes to splitting `AGENTS.md` (step 7).
 5. The cloud routine changes (triage never marks an outside issue `ready`) are in his project instructions.

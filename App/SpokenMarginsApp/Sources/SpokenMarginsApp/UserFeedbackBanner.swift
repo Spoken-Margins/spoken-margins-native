@@ -69,7 +69,22 @@ extension Gate1AppModel {
 /// with an action (#784).
 struct UserFeedbackBanner: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.feedbackDeliveryEffects) private var effects
+    @Environment(\.feedbackBannerHold) private var hold
+    @AccessibilityFocusState private var focusedPart: Part?
     let feedback: UserFeedbackEvent
+
+    private enum Part: Hashable { case message, action }
+
+    /// Only the listener dismisses it, or a newer banner replaces it. An error always has been so; with
+    /// VoiceOver or Switch Control a banner that offers an action is too (#1927).
+    private var staysUntilDismissed: Bool {
+        FeedbackBannerPolicy.autoDismissSeconds(
+            for: feedback.kind,
+            offersAction: feedback.action != nil,
+            assistiveTechnologyRunning: effects.assistiveTechnologyRunning()
+        ) == nil
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -83,6 +98,7 @@ struct UserFeedbackBanner: View {
                 Spacer(minLength: 8)
             }
             .accessibilityElement(children: .combine)
+            .accessibilityFocused($focusedPart, equals: .message)
             .accessibilityIdentifier("app.feedback.banner")
             if let action = feedback.action {
                 Button(action.title) {
@@ -92,18 +108,19 @@ struct UserFeedbackBanner: View {
                 .filledActionButton()
                 .frame(minHeight: 44)
                 .accessibilityLabel(action.accessibilityLabel)
+                .accessibilityFocused($focusedPart, equals: .action)
                 .accessibilityIdentifier(action.identifier)
             }
-            if feedback.kind == .error {
-                if let retry = feedback.retry {
-                    Button("Retry") {
-                        model.dismissFeedback(id: feedback.id)
-                        retry.action()
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(AppColors.evergreen)
-                    .accessibilityIdentifier("app.feedback.retry")
+            if feedback.kind == .error, let retry = feedback.retry {
+                Button("Retry") {
+                    model.dismissFeedback(id: feedback.id)
+                    retry.action()
                 }
+                .buttonStyle(.bordered)
+                .tint(AppColors.evergreen)
+                .accessibilityIdentifier("app.feedback.retry")
+            }
+            if feedback.kind == .error || staysUntilDismissed {
                 Button {
                     model.dismissFeedback(id: feedback.id)
                 } label: {
@@ -120,8 +137,14 @@ struct UserFeedbackBanner: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(AppColors.border))
         .padding(.top, 44)
-        .allowsHitTesting(feedback.kind == .error || feedback.action != nil)
-
+        .allowsHitTesting(feedback.kind == .error || feedback.action != nil || staysUntilDismissed)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in hold?.setTouched(true) }
+                .onEnded { _ in hold?.setTouched(false) }
+        )
+        .onChange(of: focusedPart) { _, part in hold?.setFocused(part != nil) }
+        .onDisappear { hold?.reset() }
     }
 
     private var iconName: String {

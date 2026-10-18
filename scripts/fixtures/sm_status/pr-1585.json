@@ -123,6 +123,7 @@
  ],
  "comments": [
   {
+   "author_association": "OWNER",
    "body": "/lane T3\ncommit: 3bf2d68\nchanged: PDF re-import upgrades the existing item, retires old narration, and keeps new-reader preparation eligible\ntests: Gate1AppModelWorkflowTests, OfflineStorageLedgerTests, PreparedAudioCoordinatorTests, PDFReimportLifetimeTests, SupertonicSpeechTests",
    "created_at": "2026-10-14T16:58:38Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1585#issuecomment-6173725972",
@@ -133,6 +134,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "/lane T3\ncommit: ce61813\nchanged: PDF re-import upgrades the existing item, retires old narration, and keeps new-reader preparation eligible\ntests: Gate1AppModelWorkflowTests, OfflineStorageLedgerTests, PreparedAudioCoordinatorTests, PDFReimportLifetimeTests, SupertonicSpeechTests",
    "created_at": "2026-10-14T17:08:07Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1585#issuecomment-6173907686",
@@ -143,6 +145,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "/lane T3\ncommit: 0700632\nchanged: PDF re-import upgrades the existing item, retires old narration, and keeps new-reader preparation eligible\ntests: Gate1AppModelWorkflowTests, OfflineStorageLedgerTests, PreparedAudioCoordinatorTests, PDFReimportLifetimeTests, SupertonicSpeechTests",
    "created_at": "2026-10-14T17:11:42Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1585#issuecomment-6173975182",
@@ -153,6 +156,7 @@
    }
   },
   {
+   "author_association": "NONE",
    "body": "Lane report pr1585-r38602681515 \u2014 FAIL\ncommit 3bf2d68 (tested merged with next at eeb34a4) \u00b7 tier T3 \u00b7 cloned iPhone 17, iOS 26.5 \u00b7 16m05s\nran: Gate1AppModelWorkflowTests, OfflineStorageLedgerTests, PreparedAudioCoordinatorTests, PDFReimportLifetimeTests, SupertonicSpeechTests (336 passed, 3 failed; app plan, build and tests, 2m38s); SupertonicSpeechTests (1 passed; adapters plan, build and tests, 16s)\nbuild folders: cold, new cache (SessionKit f7b054af021e-c4a32e63)\n<!-- lane-request: {\"commit\": \"3bf2d686fe0a8764cae16344e0a0d51918740c7d\", \"next\": \"eeb34a4a0ea0e7fa623977a34d9ba18e597c6b2a\", \"tests\": [\"Gate1AppModelWorkflowTests\", \"OfflineStorageLedgerTests\", \"PDFReimportLifetimeTests\", \"PreparedAudioCoordinatorTests\", \"SupertonicSpeechTests\"], \"tier\": \"T3\"} -->",
    "created_at": "2026-10-14T17:21:29Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1585#issuecomment-6174161694",
@@ -163,6 +167,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "/lane T3\ncommit: be77e06\nchanged: eligible PDF re-import upgrades in place, safely retires old narration, and refreshes same-text speech roles\ntests: Gate1AppModelWorkflowTests, OfflineStorageLedgerTests, PreparedAudioCoordinatorTests, PDFReimportLifetimeTests, SupertonicSpeechTests",
    "created_at": "2026-10-14T18:26:20Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1585#issuecomment-6175385204",
@@ -173,6 +178,7 @@
    }
   },
   {
+   "author_association": "NONE",
    "body": "Lane report pr1585-r38615162101 \u2014 FAIL\ncommit be77e06 (tested merged with next at fecb41a) \u00b7 tier T3 \u00b7 cloned iPhone 17, iOS 26.5 \u00b7 6m39s\nran: Gate1AppModelWorkflowTests, OfflineStorageLedgerTests, PreparedAudioCoordinatorTests, PDFReimportLifetimeTests, SupertonicSpeechTests (341 passed, 3 failed; app plan, build and tests, 3m09s); SupertonicSpeechTests (1 passed; adapters plan, build and tests, 21s)\nbuild folders: cold, new cache (SessionKit 413dea52eab5-31a6df51)\n<!-- lane-request: {\"commit\": \"be77e06854644d65a38603eb687299cafc3768a4\", \"next\": \"fecb41af5aade6fa4bba794539de2648fa4d50dd\", \"tests\": [\"Gate1AppModelWorkflowTests\", \"OfflineStorageLedgerTests\", \"PDFReimportLifetimeTests\", \"PreparedAudioCoordinatorTests\", \"SupertonicSpeechTests\"], \"tier\": \"T3\"} -->",
    "created_at": "2026-10-14T18:36:06Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1585#issuecomment-6175569164",
@@ -183,6 +189,7 @@
    }
   },
   {
+   "author_association": "NONE",
    "body": "Lane report pr1585-r38615169308 \u2014 INCONCLUSIVE\ncommit be77e06 (tested merged with next at de750f8) \u00b7 tier auto \u00b7 no simulator \u00b7 0s\nran: nothing\nran beside a simulator job (trial): memory pressure normal, 31 GiB free\n<!-- lane-request: {\"commit\": \"be77e06854644d65a38603eb687299cafc3768a4\", \"next\": \"de750f8822a9de969e3a1847e431e3e72dd82191\", \"tests\": [], \"tier\": \"auto\"} -->",
    "created_at": "2026-10-14T18:58:12Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1585#issuecomment-6175985107",

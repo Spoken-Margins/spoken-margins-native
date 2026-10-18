@@ -20,9 +20,15 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/build29-db.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 db="$work/current.sqlite"
 
+# A step's own exit status decides, not the summary lines grep picks out of its output: a failing XCTest
+# in the writer used to vanish into `swift test | grep | tail` and the script still passed (#1899).
+summarize() { printf '%s\n' "$1" | grep -E "error|Executed .* test" | tail -2 || true; }
+
 echo "== writing a database with the current code"
-SM_BUILD29_DB="$db" swift test --package-path "$repo/Packages/SessionKit" --filter Build29DatabaseFixtureTests 2>&1 \
-    | grep -E "error|Executed .* test" | tail -2
+status=0
+out=$(SM_BUILD29_DB="$db" swift test --package-path "$repo/Packages/SessionKit" --filter Build29DatabaseFixtureTests 2>&1) || status=$?
+summarize "$out"
+[ "$status" -eq 0 ] || { echo "FAIL the writer's tests failed (swift test exited $status)" >&2; exit 1; }
 [ -f "$db.expected.json" ] || { echo "FAIL the writer produced no database" >&2; exit 1; }
 
 echo "== building Build 29's persistence code from $tag ($(git -C "$repo" rev-parse --short "$tag^{commit}"))"
@@ -45,7 +51,10 @@ let package = Package(
     ]
 )
 SWIFT
-swift build --package-path "$work/b29" 2>&1 | grep -E "error|Compiling reader|Build complete" | tail -3
+status=0
+out=$(swift build --package-path "$work/b29" 2>&1) || status=$?
+printf '%s\n' "$out" | grep -E "error|Compiling reader|Build complete" | tail -3 || true
+[ "$status" -eq 0 ] || { echo "FAIL Build 29's reader did not build (swift build exited $status)" >&2; exit 1; }
 
 echo "== reading it with Build 29"
 "$work/b29/.build/debug/reader" "$db"

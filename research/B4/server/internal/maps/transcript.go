@@ -4,8 +4,10 @@
 // transcript. Anyone can then fetch the map for that episode.
 //
 // Rules this package enforces, not just documents:
-//   - A transcript is never served, and is deleted as soon as its map is made
-//     or dropped. The hourly sweep deletes any older than TranscriptMaxAge.
+//   - A transcript is never served and never written to disk. It waits in
+//     memory for the worker and is dropped as soon as its map is made or
+//     dropped; the hourly sweep drops any older than TranscriptMaxAge, and a
+//     restart drops them all.
 //   - The first upload for an episode wins; later ones cause no new work.
 //   - Spending stops at a hard monthly cap kept in a ledger on disk.
 //   - Neither the episode key nor the API key is ever logged.
