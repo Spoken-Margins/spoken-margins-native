@@ -533,7 +533,7 @@ private struct ExperienceLibraryCompactRow: View {
         if dynamicTypeSize.isAccessibilitySize {
             Text(detail.fullLine)
         } else if let length = detail.length {
-            HStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
                 Text(length).fixedSize().layoutPriority(1)
                 Text(detail.restAfterLength).lineLimit(detailLineLimit)
             }
