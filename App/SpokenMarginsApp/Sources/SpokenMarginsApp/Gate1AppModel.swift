@@ -2752,12 +2752,7 @@ final class Gate1AppModel: ObservableObject {
             let signature: TTSRenderSignature
             if let cached = frontierSignatures[voice.rawValue] { signature = cached }
             else {
-                let existing = currentSupertonicRenderSignature
-                signature = try await Task.detached(priority: .utility) {
-                    if let existing,
-                       existing.voiceStyleHash == SupertonicRenderIdentity.sha256(try Data(contentsOf: assets.voiceStyleURL(for: voice))) { return existing }
-                    return try SupertonicRenderIdentity.make(assets: assets, voice: voice)
-                }.value
+                signature = try await SupertonicAssetResolver.renderSignature(assets: assets, voice: voice, reusing: currentSupertonicRenderSignature)
                 frontierSignatures[voice.rawValue] = signature
             }
             let root = try applicationSupportDirectory().appendingPathComponent("PreparedAudio")

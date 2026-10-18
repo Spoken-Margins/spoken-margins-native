@@ -27,4 +27,15 @@ enum SupertonicAssetResolver {
     }
 
     static var isAvailable: Bool { location() != nil }
+
+    /// The render signature for `voice` at `assets`, off the main actor. `existing` is reused while its
+    /// voice style still hashes the same, so a playing item doesn't rehash the model files.
+    static func renderSignature(assets: SupertonicAssetLocation, voice: SupertonicVoiceID,
+                                reusing existing: TTSRenderSignature?) async throws -> TTSRenderSignature {
+        try await Task.detached(priority: .utility) {
+            if let existing,
+               existing.voiceStyleHash == SupertonicRenderIdentity.sha256(try Data(contentsOf: assets.voiceStyleURL(for: voice))) { return existing }
+            return try SupertonicRenderIdentity.make(assets: assets, voice: voice)
+        }.value
+    }
 }
