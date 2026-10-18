@@ -9,8 +9,8 @@ import SessionKitSharing
 /// these forwarders keep their names and the task launch shells (their weak-self captures and cleanup) here.
 extension Gate1AppModel {
     /// Opens the files the Share extension left in the inbox. A file that needs a newer app stays, so the listener
-    /// can open it after updating; it is tried again each launch, tells the listener once per app version, and
-    /// goes after 30 days (#1983). Every other file is removed once it has been tried.
+    /// can open it after updating; it is tried again once per app version, which tells the listener, and
+    /// goes after 30 days or when five newer ones are kept (#1983). Every other file is removed once it has been tried.
     func consumePendingSpokenMarginsPackageHandoffs(
         from packageStore: SpokenMarginsPackageHandoffStore,
         keptNotices: KeptPackageNotices = KeptPackageNotices(),
@@ -27,8 +27,14 @@ extension Gate1AppModel {
                     diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "expired"
                     continue
                 }
-                let packageURL = try packageStore.packageURL(payloadID: payloadID)
                 let announces = keptNotices.shouldAnnounce(payloadID: payloadID, appVersion: appVersion)
+                // The same build can't open what it already couldn't, so a kept file is staged again only when
+                // the app version has changed. Staging copies the whole file, which is too heavy for every foreground.
+                if keptNotices.isKept(payloadID: payloadID), !announces {
+                    diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "kept_needs_newer_app"
+                    continue
+                }
+                let packageURL = try packageStore.packageURL(payloadID: payloadID)
                 let outcome = stageSpokenMarginsPackage(from: packageURL, announcesRejection: announces)
                 if outcome == .rejectedNeedsNewerApp {
                     keptNotices.noteKept(payloadID: payloadID, appVersion: appVersion, now: now)
@@ -45,6 +51,11 @@ extension Gate1AppModel {
                 reportFailure(error, context: "Shared Margins package could not be opened")
             }
         }
+        for payloadID in keptNotices.overflowIDs() {
+            try? packageStore.deletePackage(payloadID: payloadID)
+            keptNotices.forget(payloadID: payloadID)
+        }
+        keptNotices.forgetAll(except: Set(try packageStore.pendingPayloadIDs()))
     }
 
     enum SpokenMarginsPackageStageOutcome: Equatable {

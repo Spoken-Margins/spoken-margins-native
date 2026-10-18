@@ -8,6 +8,8 @@ import Foundation
 /// is copied in, and it would expire at once.
 public struct KeptPackageNotices {
     public static let retention: TimeInterval = 30 * 24 * 60 * 60
+    /// The most files kept at once; the oldest go first, so repeated shares can't grow the inbox without bound.
+    public static let maximumKept = 5
     private static let defaultsKey = "keptPackageNotices.v1"
 
     private struct Entry: Codable, Equatable {
@@ -40,6 +42,25 @@ public struct KeptPackageNotices {
         let since = all[payloadID]?.keptSince ?? now
         all[payloadID] = Entry(keptSince: since, toldInVersion: appVersion)
         save(all)
+    }
+
+    /// True when the file is being kept for an update.
+    public func isKept(payloadID: String) -> Bool {
+        entries()[payloadID] != nil
+    }
+
+    /// The oldest kept files beyond `maximumKept`.
+    public func overflowIDs() -> [String] {
+        let oldestFirst = entries().sorted { $0.value.keptSince < $1.value.keptSince }.map(\.key)
+        return Array(oldestFirst.dropLast(Self.maximumKept))
+    }
+
+    /// Drops the notes of files that are no longer in the inbox.
+    public func forgetAll(except pendingIDs: Set<String>) {
+        let all = entries()
+        let stale = all.keys.filter { !pendingIDs.contains($0) }
+        guard !stale.isEmpty else { return }
+        save(all.filter { pendingIDs.contains($0.key) })
     }
 
     public func hasExpired(payloadID: String, now: Date) -> Bool {

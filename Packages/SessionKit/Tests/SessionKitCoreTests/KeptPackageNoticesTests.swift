@@ -45,4 +45,16 @@ final class KeptPackageNoticesTests: XCTestCase {
         XCTAssertTrue(notices().shouldAnnounce(payloadID: "a", appVersion: "v1"))
         XCTAssertFalse(notices().hasExpired(payloadID: "a", now: start.addingTimeInterval(400 * day)))
     }
+
+    func testOnlyTheNewestFiveAreKeptAndNotesForGoneFilesAreDropped() {
+        for index in 0..<7 {
+            notices().noteKept(payloadID: "f\(index)", appVersion: "v1", now: start.addingTimeInterval(Double(index)))
+        }
+        XCTAssertEqual(notices().overflowIDs(), ["f0", "f1"], "the oldest beyond five go first")
+
+        notices().forgetAll(except: ["f3", "f4"])
+        XCTAssertTrue(notices().isKept(payloadID: "f3"))
+        XCTAssertFalse(notices().isKept(payloadID: "f5"))
+        XCTAssertEqual(notices().overflowIDs(), [])
+    }
 }

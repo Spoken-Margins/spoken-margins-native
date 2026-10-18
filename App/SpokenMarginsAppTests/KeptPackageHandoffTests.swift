@@ -32,7 +32,7 @@ final class KeptPackageHandoffTests: XCTestCase {
         XCTAssertEqual(h.model.diagnostics["pendingSpokenMarginsPackage:\(damaged)"], "rejected")
     }
 
-    func testTheMessageComesOncePerAppVersionAndTheFileIsTriedAgainEachLaunch() throws {
+    func testTheMessageComesOncePerAppVersionAndTheFileStaysForTheNextOne() throws {
         let h = try makeHarness()
         let newer = try h.store.savePackage(from: try writePacket(manifestSchema: "spoken-margins.package.v99"))
 
