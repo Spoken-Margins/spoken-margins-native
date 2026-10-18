@@ -300,7 +300,7 @@ struct MarginRow: Identifiable, Equatable, Sendable {
         switch interjection.targetType {
         case .item: "Source"
         case .assistantTurn: "Assistant response"
-        case .summaryTurn: "Interjection summary"
+        case .summaryTurn: "Margin summary"
         }
     }
 }

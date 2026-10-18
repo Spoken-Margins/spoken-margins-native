@@ -52,7 +52,7 @@ struct ExportScreen: View {
                                 )
                             ) {
                                 ForEach(model.selectedItem.sessionRows) { row in
-                                    Text("\(sessionDateDescription(row.session)) · \(sessionProgressDescription(row.session)) · \(row.interjectionCount) notes")
+                                    Text("\(sessionDateDescription(row.session)) · \(sessionProgressDescription(row.session)) · \(row.interjectionCount) Margin\(row.interjectionCount == 1 ? "" : "s")")
                                         .tag(row.id)
                                 }
                             }
@@ -68,7 +68,7 @@ struct ExportScreen: View {
 
                             Picker("Scope", selection: $model.exportScope) {
                                 Text("Original").tag("original")
-                                Text("Source Notes").tag("source_interjections")
+                                Text("Margins").tag("source_interjections")
                                 Text("Full Session").tag("full_session")
                             }
                             .pickerStyle(.segmented)
@@ -90,7 +90,7 @@ struct ExportScreen: View {
                             Toggle("Listening Map", isOn: $model.exportIncludesListeningMap)
                                 .accessibilityIdentifier("export.includeListeningMap.toggle")
                                 .onCompatibleChange(of: model.exportIncludesListeningMap) { _ in model.exportOptionsChanged() }
-                            Toggle("Interjections", isOn: $model.exportIncludesInterjections)
+                            Toggle("Margins", isOn: $model.exportIncludesInterjections)
                                 .accessibilityIdentifier("export.includeInterjections.toggle")
                                 .onCompatibleChange(of: model.exportIncludesInterjections) { _ in model.exportOptionsChanged() }
                             Toggle("AI Turns", isOn: $model.exportIncludesTurns)
