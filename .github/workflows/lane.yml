@@ -15,11 +15,18 @@
 # when next moves, so a PR last pushed before this file reached next gets no run (#221) until it
 # merges next and pushes; a PR that conflicts with next gets no run either. The other triggers
 # don't help: comment events and pull_request_target always use the default branch's (main's)
-# copy of this file, and main doesn't carry it.
+# copy of this file, and main's copy is the old one from the last release, not next's.
 # The job checks out the PR head, takes lane-runner.py from the base branch, and lets it merge the
 # newest base in itself, so a report always tests the PR against the current next.
 #
 # `lane-check/**` bases exist only to test a change to the lane before it reaches next.
+#
+# Forks (#1719): every job that takes a pull_request event checks that the PR's head repository is this
+# one. `release` takes only workflow_dispatch, which needs write access, and lane-runner.py re-checks the
+# PR's head repository before it tests anything. pull_request_target is not used: it would run main's copy
+# of this file, which lags next's, with a write token next to PR code. A fork's PR can still edit
+# this file in its own merge ref, so the runners' own job-started hook (ops/runner-guard) is what actually
+# keeps fork code off the Mac and the VPS.
 #
 # workflow_dispatch (#1209): when a T3 PASS releases a held automerge run whose host tests have to run again, the
 # lane job on the simulator runner dispatches this workflow on the base branch with the PR, its head and the T3
@@ -82,8 +89,9 @@ jobs:
     outputs:
       lane: ${{ steps.route.outputs.lane }}
       automerge: ${{ steps.route.outputs.automerge }}
-      skip_lane: ${{ steps.dedupe.outputs.skip_lane }}
-      skip_automerge: ${{ steps.dedupe.outputs.skip_automerge }}
+      # A sender without write access (and not the bot) starts neither Mac queue (#1822).
+      skip_lane: ${{ steps.sender.outputs.trusted == 'false' && 'true' || steps.dedupe.outputs.skip_lane }}
+      skip_automerge: ${{ steps.sender.outputs.trusted == 'false' && 'true' || steps.dedupe.outputs.skip_automerge }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -94,6 +102,7 @@ jobs:
           sparse-checkout: |
             scripts/test-scope.py
             scripts/lane_dedupe.py
+            scripts/lane_sender.py
             project.yml
           sparse-checkout-cone-mode: false
       - name: Discover runners and changed paths
@@ -115,6 +124,16 @@ jobs:
           else
             echo '::warning::Runner routing unavailable; using the normal Mac queues.'
           fi
+      - name: Check who sent the event
+        id: sender
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SENDER: ${{ github.event.sender.login }}
+        run: |
+          # Whoever added the label or pushed must have write access, or be the project bot (#1822). Fails closed:
+          # when GitHub can't say, no run starts, and a trusted person re-adding the label starts it.
+          python3 scripts/lane_sender.py "$SENDER" >> "$GITHUB_OUTPUT"
       - name: Drop stale and duplicate runs
         id: dedupe
         env:
@@ -392,7 +411,10 @@ jobs:
   # Verdict steps don't depend on it.
   lane-open-lane:
     needs: [route, lane]
-    if: "!cancelled() && needs.lane.result != 'skipped'"
+    # The same-repo check repeats route's, so this VPS job never depends on another job's `if` alone (#1719).
+    if: >-
+      !cancelled() && needs.lane.result != 'skipped' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, sm-vps]
     timeout-minutes: 3
     permissions:
@@ -422,7 +444,9 @@ jobs:
 
   lane-open-automerge:
     needs: [route, automerge]
-    if: "!cancelled() && needs.automerge.result != 'skipped'"
+    if: >-
+      !cancelled() && needs.automerge.result != 'skipped' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, sm-vps]
     timeout-minutes: 3
     permissions:

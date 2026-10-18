@@ -2,8 +2,12 @@
 import math
 import random
 import tempfile
+import contextlib
+import io
+import json
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import loopback
 
@@ -177,6 +181,69 @@ class TranscriptTests(unittest.TestCase):
         self.assertTrue(any('twice' in p for p in problems))
         self.assertTrue(any('word error rate' in p for p in problems))
         self.assertEqual(loopback.verdict(report, allow_repeats=True, max_wer=1.0), [])
+
+
+class ChunkedTranscriptionTests(unittest.TestCase):
+    """The on-device recogniser drops what it heard when a long pause follows (#1790), so transcribe() must
+    hand it stretches of speech with only short silence around them, and say why when nothing came back."""
+
+    def setUp(self):
+        self.fixture = Fixture()
+        self.addCleanup(self.fixture.dir.cleanup)
+
+    def test_chunks_split_only_at_long_pauses(self):
+        # Frames are 10 ms: a 0.5 s pause stays inside a chunk, a 2 s pause splits; padding is clamped to the file.
+        chunks = loopback.speech_chunks([(0, 100), (150, 300), (500, 600)], 610)
+        self.assertEqual(chunks, [(0.0, 3.2), (4.8, 6.1)])
+        self.assertEqual(loopback.speech_chunks([], 100), [])
+
+    def test_each_chunk_has_no_long_silence_and_words_keep_recording_time(self):
+        # The 10-17 proof recording's shape: 4.9 s of silence first, a short pause, a long pause, 4.4 s at the end.
+        samples = (silence(4.9) + speech(1, 2.7) + silence(0.6) + speech(2, 2.4) + silence(2.0) + speech(3, 1.5)
+                   + silence(4.4))
+        seen = []
+
+        def run(piece, locale):
+            report = loopback.analyse(piece)
+            seen.append(report)
+            n = len(seen)
+            return {'text': f'chunk {n}', 'words': [{'word': 'chunk', 'start': 0.5, 'duration': 0.2}]}
+
+        heard = loopback.transcribe(self.fixture.wav(samples), run=run)
+        self.assertEqual(len(seen), 2)
+        for report in seen:
+            self.assertLessEqual(report['first_sound'], loopback.CHUNK_PAD + 0.05)
+            self.assertLessEqual(report['seconds'] - report['last_sound'], loopback.CHUNK_PAD + 0.05)
+        self.assertEqual(heard['text'], 'chunk 1 chunk 2')
+        self.assertNotIn('empty_reason', heard)
+        first, second = heard['chunks']
+        self.assertAlmostEqual(first['start'], 4.9 - loopback.CHUNK_PAD, delta=0.05)
+        self.assertAlmostEqual(second['start'], 4.9 + 2.7 + 0.6 + 2.4 + 2.0 - loopback.CHUNK_PAD, delta=0.1)
+        self.assertEqual([w['start'] for w in heard['words']], [round(c['start'] + 0.5, 3) for c in heard['chunks']])
+
+    def test_no_words_says_why(self):
+        empty = {'text': '', 'words': [{'word': '', 'start': 0, 'duration': 0}], 'empty_reason': 'no speech detected'}
+        heard = loopback.transcribe(self.fixture.wav(speech(4, 2.0) + silence(3)), run=lambda piece, locale: empty)
+        self.assertEqual((heard['text'], heard['words']), ('', []))
+        self.assertIn('heard no words', heard['empty_reason'])
+        self.assertIn('no speech detected', heard['empty_reason'])
+
+    def test_a_silent_recording_never_reaches_the_recogniser(self):
+        heard = loopback.transcribe(self.fixture.wav(silence(3)), run=lambda piece, locale: self.fail('called'))
+        self.assertIn('no sound', heard['empty_reason'])
+
+    def test_check_with_an_empty_transcript_reports_why_not_a_word_error_rate(self):
+        wav = self.fixture.wav(speech(5, 3.0))
+        expected = Path(self.fixture.dir.name) / 'expected.txt'
+        expected.write_text('one two three')
+        empty = {'text': '', 'words': [], 'empty_reason': 'the recogniser heard no words in 3.0 s of sound'}
+        out = io.StringIO()
+        with mock.patch.object(loopback, 'transcribe', return_value=empty), contextlib.redirect_stdout(out):
+            status = loopback.main(['check', str(wav), '--expected', str(expected), '--max-wer', '0.2'])
+        report = json.loads(out.getvalue())
+        self.assertEqual((status, report['verdict']), (1, 'FAIL'))
+        self.assertIn('could not check the words: the recogniser heard no words in 3.0 s of sound', report['problems'])
+        self.assertFalse(any('word error rate' in p for p in report['problems']))
 
 
 if __name__ == '__main__':

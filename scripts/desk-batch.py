@@ -44,6 +44,9 @@ import shlex
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import comment_trust  # noqa: E402  (#1822: a stranger's /lane T4 request is not a request)
+
 ROOT = Path(__file__).resolve().parents[1]
 REPO = os.environ.get('SM_DESK_REPO', 'uncomposed/spoken-margins-native')
 GH = shlex.split(os.environ.get('SM_DESK_GH', 'gh'))
@@ -151,7 +154,7 @@ def comments_since(api, since):
         chunk = api.get(f'issues/comments?since={since}&sort=created&direction=asc&per_page=100&page={page}')
         found += chunk
         if len(chunk) < 100:
-            return found
+            return comment_trust.trusted_only(found)
         page += 1
     raise RuntimeError('more than 30000 comments in the window; shorten --window-days')
 

@@ -75,6 +75,7 @@
  ],
  "comments": [
   {
+   "author_association": "NONE",
    "body": "Lane report pr1568-r38505916560 \u2014 PASS\ncommit 7e93598 (tested merged with next at 9025974) \u00b7 tier auto \u00b7 host only \u00b7 10m05s\nran: host tests (--plan fast): passed\ntested the merge commit 070694b (next at 9025974 first, then this PR); build folders: in the workspace, no cache kept (automerge runs build no app)\n<!-- lane-checks: {\"commit\": \"7e935989319483c09253e75422ec62c5b4e8c6f5\", \"next\": \"90259744f291f0ead50c43168b128d84ffa0dcc3\", \"ran\": \"host tests (--plan fast): passed\", \"where\": \"host only\"} -->\n<!-- lane-request: {\"commit\": \"7e935989319483c09253e75422ec62c5b4e8c6f5\", \"next\": \"90259744f291f0ead50c43168b128d84ffa0dcc3\", \"tests\": [], \"tier\": \"auto\"} -->",
    "created_at": "2026-10-14T03:43:28Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1568#issuecomment-6160390478",
@@ -85,6 +86,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "**Claude audit on `7e93598`**\n\n**Verdict: two blocking findings (1 and 2), plus one Done-when item to keep open (3).**\n",
    "created_at": "2026-10-14T03:50:16Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1568#issuecomment-6160465858",
@@ -95,6 +97,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "Finisher Codex taking this.\n\nThread \"Codex worker 1\" finishing #1568",
    "created_at": "2026-10-14T03:53:48Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1568#issuecomment-6160505749",
@@ -105,6 +108,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "Thread \"Codex worker 1\" finished #1568.\n\nPart of #1556\n\nLane simulators use the Mac's built-in microphone and speakers instead of wireless defaults. Saved defaults return after the last holder shuts down, unless a non-wireless choice was made during the run. Wired and virtual devices remain untouche",
    "created_at": "2026-10-14T04:16:41Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1568#issuecomment-6160767109",
@@ -115,6 +119,7 @@
    }
   },
   {
+   "author_association": "NONE",
    "body": "Lane report pr1568-r38510568085 \u2014 PASS\ncommit 688ed3d (tested merged with next at 9025974) \u00b7 tier auto \u00b7 host only \u00b7 5m01s\nran: host tests (--plan fast): passed\ntested the merge commit c663135 (next at 9025974 first, then this PR); build folders: in the workspace, no cache kept (automerge runs build no app)\n<!-- lane-checks: {\"commit\": \"688ed3dd475ea64adaaa8f4d563398da2b986405\", \"next\": \"90259744f291f0ead50c43168b128d84ffa0dcc3\", \"ran\": \"host tests (--plan fast): passed\", \"where\": \"host only\"} -->\n<!-- lane-request: {\"commit\": \"688ed3dd475ea64adaaa8f4d563398da2b986405\", \"next\": \"90259744f291f0ead50c43168b128d84ffa0dcc3\", \"tests\": [], \"tier\": \"auto\"} -->",
    "created_at": "2026-10-14T04:22:10Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1568#issuecomment-6160829248",
@@ -125,6 +130,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "**Claude audit on `688ed3d`**\n\n**Verdict: blocking findings 1, 2 and 3.** The previous audit's finding 2 (host tests reading the real pin file) is fixed: `scripts/tests/test_verification.py:159` now sets `SM_LANE_STATE_DIR`, and a new test checks it. The previous finding 1 is fixed only for runs that have a watcher. The Test Desk run doesn't have one (finding 1 below).\n",
    "created_at": "2026-10-14T04:28:18Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1568#issuecomment-6160897593",
@@ -135,6 +141,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "Finisher Codex taking this.\n\nThread \"Codex worker 1\" finishing #1568",
    "created_at": "2026-10-14T07:15:43Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1568#issuecomment-6163026025",
@@ -145,6 +152,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "Thread \"Codex worker 1\" finished #1568.\n\nPart of #1556\n\nTest Desk now refreshes simulator audio defaults during its own simulator runs. AirPods first pinned during refresh are no longer selected by the lane when the run ends. Issue #1556 stays open for the owner's phone check.\n\n## Audit findings res",
    "created_at": "2026-10-14T07:47:00Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1568#issuecomment-6163523637",
@@ -155,6 +163,7 @@
    }
   },
   {
+   "author_association": "NONE",
    "body": "Lane report pr1568-r38530606004 \u2014 PASS\ncommit e56a6b6 (tested merged with next at ecfc4c8) \u00b7 tier auto \u00b7 host only \u00b7 10m18s\nran: host tests (--plan fast): passed\ntested the merge commit 1d0f6a6 (next at ecfc4c8 first, then this PR); build folders: in the workspace, no cache kept (automerge runs build no app)\n<!-- lane-checks: {\"commit\": \"e56a6b6142eee4b2b4ba24b167fec54d87020c66\", \"next\": \"ecfc4c8d3979507c639a828230bb10579922a789\", \"ran\": \"host tests (--plan fast): passed\", \"where\": \"host only\"} -->\n<!-- lane-request: {\"commit\": \"e56a6b6142eee4b2b4ba24b167fec54d87020c66\", \"next\": \"ecfc4c8d3979507c639a828230bb10579922a789\", \"tests\": [], \"tier\": \"auto\"} -->",
    "created_at": "2026-10-14T08:02:49Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1568#issuecomment-6163777422",
@@ -165,6 +174,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "**Claude audit on `e56a6b6`**\n\n**Verdict: one blocking finding, which is the PR description (1).** The code fixes both blocking code findings from the audit on `688ed3d`:\n- **Test Desk refresh is fixed.** A `verify-tests.py` run that boots its own simulator now refreshes the pin about once a second in its command loop (`scripts/verify-tests.py:595-597`). The refresh is turned on after boot (`:982`) and off before shutdown (`:1014`). A new test covers the self-booted case, the externally booted case, and the failure path (`scripts/tests/test_verification.py:1343`).",
    "created_at": "2026-10-14T08:09:24Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1568#issuecomment-6163883082",
@@ -175,6 +185,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "Codex finisher round limit reached. Two rounds started in the last 24 h. Leaving this PR for a human; no further finisher round until the window clears.",
    "created_at": "2026-10-14T08:16:34Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1568#issuecomment-6164000118",
@@ -185,6 +196,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "/claude-audit\nThe only blocking finding on e56a6b6 was the PR description (\"Closes #1556\"). It now says \"Part of #1556\". Please audit the current head again.",
    "created_at": "2026-10-14T18:25:12Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1568#issuecomment-6175363870",
@@ -195,6 +207,7 @@
    }
   },
   {
+   "author_association": "NONE",
    "body": "Lane report pr1568-r38615263730 \u2014 PASS\ncommit eccda27 (tested merged with next at de750f8) \u00b7 tier auto \u00b7 host only \u00b7 14m34s\nran: host tests (--plan fast): passed\nran beside a simulator job (trial): memory pressure normal, 35 GiB free\n<!-- lane-checks: {\"commit\": \"eccda279004d094626e6d345e94866effbf77c04\", \"next\": \"de750f8822a9de969e3a1847e431e3e72dd82191\", \"ran\": \"host tests (--plan fast): passed\", \"where\": \"host only\"} -->\n<!-- lane-request: {\"commit\": \"eccda279004d094626e6d345e94866effbf77c04\", \"next\": \"de750f8822a9de969e3a1847e431e3e72dd82191\", \"tests\": [], \"tier\": \"auto\"} -->",
    "created_at": "2026-10-14T19:15:07Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1568#issuecomment-6176316374",
@@ -205,6 +218,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "**Claude audit on `eccda27`**\n\nNo blocking findings.**\n",
    "created_at": "2026-10-14T19:18:17Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1568#issuecomment-6176382470",

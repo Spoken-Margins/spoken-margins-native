@@ -15,11 +15,11 @@
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
-    <string>/Users/colemiller/SpokenMarginsOps/repo/ops/codex/sm_codex_audit.py</string>
+    <string>@HOME@/SpokenMarginsOps/repo/ops/codex/sm_codex_audit.py</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/colemiller/SpokenMarginsOps/repo</string>
+  <string>@HOME@/SpokenMarginsOps/repo</string>
 
   <key>EnvironmentVariables</key>
   <dict>
@@ -41,6 +41,6 @@
   <string>/dev/null</string>
 
   <key>StandardErrorPath</key>
-  <string>/Users/colemiller/SpokenMarginsOps/repo/artifacts/ops/codex-audit.launchd.err</string>
+  <string>@HOME@/SpokenMarginsOps/repo/artifacts/ops/codex-audit.launchd.err</string>
 </dict>
 </plist>

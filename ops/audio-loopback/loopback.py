@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import unicodedata
 import wave
 from pathlib import Path
@@ -358,7 +359,8 @@ def tool():
     return str(binary)
 
 
-def transcribe(path, locale='en-US'):
+def transcribe_file(path, locale='en-US'):
+    """One `loopback transcribe` run on one file. Use transcribe() for recordings: this one loses words at pauses."""
     result = subprocess.run([tool(), 'transcribe', str(path), '--locale', locale], capture_output=True, text=True)
     if result.returncode == -6 or result.returncode == 134:
         # macOS kills a process that asks for Speech Recognition when the app responsible for it (the
@@ -368,6 +370,59 @@ def transcribe(path, locale='en-US'):
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or 'transcription failed')
     return json.loads(result.stdout)
+
+
+# macOS's on-device recogniser forgets what it heard when a pause of more than about a second follows it:
+# the final result keeps only the speech after the last long pause, or nothing when the file ends in silence
+# (2026-10-17, #1790: clean `say` speech plus 1 s of trailing silence transcribed, plus 2 s came back empty,
+# and a 2 s pause between two sentences dropped the first). So transcribe() cuts the recording at pauses
+# longer than CHUNK_PAUSE and transcribes each stretch of speech on its own.
+CHUNK_PAUSE = 0.8    # split at silences longer than this (s); pauses within a sentence stay in one chunk
+CHUNK_PAD = 0.2      # silence kept around each chunk (s), well under the pause that resets the recogniser
+
+
+def speech_chunks(found, frames, pause=CHUNK_PAUSE, pad=CHUNK_PAD):
+    """[(start_s, end_s)] to transcribe: sound segments joined across pauses up to `pause`, padded, clamped."""
+    chunks = []
+    for a, b in found:
+        if chunks and (a - chunks[-1][1]) * HOP <= pause:
+            chunks[-1][1] = b
+        else:
+            chunks.append([a, b])
+    end = frames * HOP
+    return [(round(max(0.0, a * HOP - pad), 3), round(min(end, b * HOP + pad), 3)) for a, b in chunks]
+
+
+def transcribe(path, locale='en-US', silence_db=-45.0, run=transcribe_file):
+    """On-device transcript of a whole recording, one chunk of speech at a time, with word starts in the
+    recording's own time. `empty_reason` says why when no words came back."""
+    rate, samples = read_wav(path)
+    small_rate, small = downsample(rate, samples)
+    env = envelope(small_rate, small)
+    chunks = speech_chunks(segments(env, silence_db, 0.25, 0.05), len(env))
+    result = {'text': '', 'words': [], 'locale': locale, 'on_device': True, 'chunks': []}
+    if not chunks:
+        result['empty_reason'] = f'no sound above {silence_db} dBFS in the recording'
+        return result
+    texts, reasons = [], []
+    with tempfile.TemporaryDirectory() as folder:
+        for index, (start, end) in enumerate(chunks):
+            piece = Path(folder) / f'chunk-{index}.wav'
+            write_wav(piece, rate, samples[int(start * rate):int(end * rate)])
+            heard = run(piece, locale)
+            text = heard.get('text', '').strip()
+            if text:
+                texts.append(text)
+            elif heard.get('empty_reason'):
+                reasons.append(f"{start}–{end} s: {heard['empty_reason']}")
+            result['words'] += [{**w, 'start': round(w['start'] + start, 3)} for w in heard.get('words', [])
+                                if w.get('word')]
+            result['chunks'].append({'start': start, 'end': end, 'words': len(words(text))})
+    result['text'] = ' '.join(texts)
+    if not texts:
+        result['empty_reason'] = ('the recogniser heard no words in ' + str(round(sum(e - s for s, e in chunks), 2))
+                                  + ' s of sound' + (' (' + '; '.join(reasons) + ')' if reasons else ''))
+    return result
 
 
 # --- Checks -----------------------------------------------------------------------------------------------
@@ -413,6 +468,11 @@ def main(argv=None):
     sc.add_argument('transcript', help='text file, or the JSON `loopback transcribe` printed')
     sc.add_argument('expected')
 
+    tr = sub.add_parser('transcribe', help='on-device transcript of a recording, split at pauses (JSON)')
+    tr.add_argument('wav')
+    tr.add_argument('--locale', default='en-US')
+    tr.add_argument('--silence-db', type=float, default=-45.0)
+
     capture = sub.add_parser('capture', help='route output to BlackHole, record, and run a command meanwhile')
     capture.add_argument('--seconds', type=float, required=True)
     capture.add_argument('--out', required=True)
@@ -430,13 +490,20 @@ def main(argv=None):
         return 0
     if args.command == 'capture':
         return capture_run(args)
+    if args.command == 'transcribe':
+        heard = transcribe(args.wav, args.locale, args.silence_db)
+        print(json.dumps(heard, indent=2))
+        return 0 if heard['text'] else 1
     report = analyse(args.wav, args.silence_db, args.stall)
     if args.transcribe or args.expected:
         try:
-            report['transcript'] = transcribe(args.wav, args.locale)
+            report['transcript'] = transcribe(args.wav, args.locale, args.silence_db)
         except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
             report['transcript_error'] = str(error)
-        if args.expected and 'transcript' in report:
+        if args.expected and 'transcript' in report and not report['transcript']['text'].strip():
+            # An empty transcript of a recording with sound means the words weren't checked; say why.
+            report['transcript_error'] = report['transcript'].get('empty_reason', 'the recogniser returned no words')
+        elif args.expected and 'transcript' in report:
             report['score'] = score(report['transcript']['text'], Path(args.expected).read_text())
     report['problems'] = verdict(report, args.max_stall, args.allow_repeats, args.max_wer, args.min_sound, args.allow_trailing)
     if args.expected and 'transcript_error' in report:

@@ -132,25 +132,23 @@ final class SpokenMarginsPackageImportCoordinator {
                 throw SpokenMarginsPackageArchiveError.invalidDigest
             }
             let store = try environment.requireStore()
-            if let existing = try store.loadImportedCommentaryLayer(packageDigest: digest),
-               existing.sourceResolutionStatus != .wrongSource,
-               let associatedItemId = existing.itemId,
-               let associatedItem = try? store.loadItem(id: associatedItemId),
-               associatedItem.deletedAt == nil,
-               SharedPacketItemMatcher.layerHasValidItemAssociation(existing, item: associatedItem,
-                   ownedAudiobookDigest: environment.localAudiobookDigest(associatedItem)) {
-                if let itemId = existing.itemId {
-                    environment.openItem(itemId)
-                    if let item = try? store.loadItem(id: itemId), item.mediaType == "audiobook" {
-                        return .restoreAudio(RestoreAudio(item: item, contents: contents, directory: root))
-                    }
-                    if let localURL = environment.validatedLocalURL(itemId) {
-                        environment.resolvePodcastCommentary(itemId, localURL)
-                    }
-                    environment.reportSuccess("These shared Margins are already in your library. Playback has not started.")
-                } else {
-                    environment.reportSuccess("These shared Margins are already in your library.")
+            let existing = try store.loadImportedCommentaryLayer(packageDigest: digest)
+            let duplicateCheck = PackageImportPolicy.duplicateCheck(
+                existing: existing,
+                loadItem: { try? store.loadItem(id: $0) },
+                hasValidItemAssociation: { layer, item in
+                    SharedPacketItemMatcher.layerHasValidItemAssociation(layer, item: item,
+                        ownedAudiobookDigest: environment.localAudiobookDigest(item))
+                })
+            if case .alreadyImported(let itemId) = duplicateCheck {
+                environment.openItem(itemId)
+                if let item = try? store.loadItem(id: itemId), item.mediaType == "audiobook" {
+                    return .restoreAudio(RestoreAudio(item: item, contents: contents, directory: root))
                 }
+                if let localURL = environment.validatedLocalURL(itemId) {
+                    environment.resolvePodcastCommentary(itemId, localURL)
+                }
+                environment.reportSuccess("These shared Margins are already in your library. Playback has not started.")
                 environment.recordDiagnostic("lastSpokenMarginsPackageImport", "duplicate:\(digest)")
                 try? FileManager.default.removeItem(at: root)
                 return .staged
@@ -163,11 +161,8 @@ final class SpokenMarginsPackageImportCoordinator {
                 contents: contents,
                 matchingItemId: matchingItemId
             )
-            if try store.loadImportedCommentaryLayer(packageDigest: digest) == nil {
-                environment.recordDiagnostic("lastSpokenMarginsPackageImport", "previewed:\(digest)")
-            } else {
-                environment.recordDiagnostic("lastSpokenMarginsPackageImport", "repair_previewed:\(digest)")
-            }
+            environment.recordDiagnostic("lastSpokenMarginsPackageImport",
+                duplicateCheck == .review(isRepair: true) ? "repair_previewed:\(digest)" : "previewed:\(digest)")
             return .staged
         } catch {
             if let workingDirectory { try? FileManager.default.removeItem(at: workingDirectory) }
@@ -246,13 +241,18 @@ final class SpokenMarginsPackageImportCoordinator {
         do {
             let store = try environment.requireStore()
             let itemId: String?
-            if let matching = review.matchingItemId {
-                itemId = matching
-            } else if review.contents.manifest.itemTransport.kind == .embeddedText {
+            switch PackageImportPolicy.itemSource(
+                matchingItemId: review.matchingItemId,
+                transportKind: review.contents.manifest.itemTransport.kind,
+                itemType: review.contents.manifest.item.itemType
+            ) {
+            case .existing(let matchingId):
+                itemId = matchingId
+            case .embeddedText:
                 itemId = try installEmbeddedItem(from: review.contents, store: store)
-            } else if review.contents.manifest.item.itemType == .podcast {
+            case .acquirePodcast:
                 itemId = try await environment.acquirePodcast(review.contents.manifest.item)
-            } else {
+            case .acquireArticle:
                 itemId = try await environment.acquireArticle(review.contents.manifest.item)
             }
             let item = try itemId.map { try store.loadItem(id: $0) }

@@ -40,7 +40,7 @@ Scripted journeys are UI tests in `App/SpokenMarginsAppUITests/` that each follo
 
 - **Where they run.** Only in the integration run on `next`'s merged tip, never as a per-PR gate. Per PR, a script only has to compile: `scripts/test-scope.py` puts `App/SpokenMarginsAppUITests/` at T2 and never adds its classes to a T3 request.
 - **Who writes them.** A thread that changes a listener's flow may add or update the script for the journey it affects, and names that journey in the PR.
-- **Probation.** `TestPlans/scripted-journeys.json` is the one list the integration run reads. A new or changed script goes under `probation` in the same PR. It runs and is reported, but can't turn the integration run red. The Test Desk moves it to `gating` after seeing it pass twice on the simulator, and moves a gating script that flakes twice back to `probation`. `scripts/test_inventory.py` rejects an entry that names no real UI test or no journey.
+- **Probation.** `TestPlans/scripted-journeys.json` is the one list the integration run reads. A new or changed script goes under `probation` in the same PR. It runs and is reported, but can't turn the integration run red. The integration script counts each script's passes and bad runs in its state file and names the scripts that are due in its report (`journeys due to move:`); `ops/testdesk/journey_promotion.py --apply` then moves them in the listing, and the Test Desk opens that PR into next. A script moves to `gating` after two passing runs in a row, and back to `probation` after two bad runs in a row. `scripts/test_inventory.py` rejects an entry that names no real UI test or no journey.
 - **What they don't cover.** Audible content, the Lock Screen, Bluetooth, and anything that only looks wrong. Agent-driven journeys and the owner's phone keep those.
 - **How this differs from the retired plans.** `--plan ui`, `speech-canary` and `release` ran a broad route suite as a gate and stay retired (`AGENTS.md`). Scripted journeys are one short script per journey, each earning its place on probation.
 
@@ -158,7 +158,8 @@ When next's tip has no integration report on #184, run one job on that tip, in t
    TestPlans/scripted-journeys.json (gating, then probation). They launch with --ui-testing,
    which resets the app's library, so they run before step 3 builds the journey library. A
    probation failure goes in the report but doesn't make it FAIL. Move a script to gating
-   after two passes, and back to probation after two flakes, in a PR into next. Run them
+   after two passes, and back to probation after two bad runs, in a PR into next
+   (ops/testdesk/journey_promotion.py). Run them
    with scripts/verify-tests.py --plan journeys --device <udid>; its manifest's gating and
    probation maps give each script's result.
 3. Then the journeys in docs/journeys.md. Finish the app tests' device with --done and take one
@@ -266,6 +267,17 @@ Simulators:
   wait until the watcher has exited (`ps -p $(cat ~/Library/Caches/SpokenMarginsLane/watch-<udid>.pid)` lists no
   process; the file stays behind, so don't wait for it to go), and the next --pool deletes it. A device that only fails
   to erase stays in the pool and is passed over; the helper prints STOP only when no pool device will erase, so report that on #184.
+- **One fresh device after a boot stall (#1802).** A boot stall is SpringBoard restarting or vanishing while the
+  device boots, with no crash report. From 10-09 to 10-16 it caused 26 of 45 INCONCLUSIVE integration runs and 22 of
+  42 INCONCLUSIVE T3s, on fresh devices too (#1389). `lane_sim.boot_with_retry` marks the stalled device unsafe,
+  deletes it, and boots one fresh device in its place: a new clone for the runner's T3, a new Test Runner for
+  `verify-tests.py`, another pool device for `--pool`, a new device for `--fresh`. A device named on the command
+  line (`lane-sim-boot <udid>`, `verify-tests.py --device`) gets no retry. A second stall, a failed `simctl boot`,
+  a crash report and a timeout all stop as before. Before a retry the lane waits 150 s for late crash reports; one
+  naming the stalled device means a possible crash flood, and nothing is retried. The retry happens before any app
+  is installed or test runs, so it can't hide an app failure; the report names the retry and the replaced device.
+  Each stall is logged on #1802: the runner posts it after its report, with the link and verdict; the other
+  callers post it from `lane_sim.py`.
 - The old standing device, "SM Lane Desk erase-approval" (1330F268-5467-4421-9D55-1FCC3FF5CF8A),
   stays retired: never boot, erase or reuse it. Stay on iOS 26.5: iOS 27's Apple Intelligence
   services crash-flood on this Mac (#184). `--fresh` still makes a one-off device, for work that

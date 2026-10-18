@@ -39,6 +39,7 @@
  ],
  "comments": [
   {
+   "author_association": "NONE",
    "body": "Lane report pr1595-r38610693713 \u2014 PASS\ncommit 094206d (tested merged with next at 5c615e7) \u00b7 tier auto \u00b7 host only \u00b7 15m24s\nran: host tests (--plan fast): passed\nran beside a simulator job (trial): memory pressure normal, 36 GiB free\n<!-- lane-checks: {\"commit\": \"094206d6295292e1a2c5e18f73f12148270ab788\", \"next\": \"5c615e7a49c24099f1a0cd2b41cb848e239f3e54\", \"ran\": \"host tests (--plan fast): passed\", \"where\": \"host only\"} -->\n<!-- lane-request: {\"commit\": \"094206d6295292e1a2c5e18f73f12148270ab788\", \"next\": \"5c615e7a49c24099f1a0cd2b41cb848e239f3e54\", \"tests\": [], \"tier\": \"auto\"} -->",
    "created_at": "2026-10-14T18:57:40Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1595#issuecomment-6175975149",
@@ -49,6 +50,7 @@
    }
   },
   {
+   "author_association": "OWNER",
    "body": "**Claude audit on `094206d`**\n\n**Blocking: the PR description has no \"Cost and catch\" section.** AGENTS.md requires one for any PR that adds or changes a recurring cost, and this PR changes several:\n",
    "created_at": "2026-10-14T19:04:55Z",
    "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1595#issuecomment-6176115351",

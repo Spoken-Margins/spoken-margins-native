@@ -61,6 +61,7 @@ permissions:
 
 jobs:
   compat:
+    # Same-repo PRs only (#1719); ops/runner-guard backs this up on the runner itself.
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, macOS, sm-lane]
     concurrency:
