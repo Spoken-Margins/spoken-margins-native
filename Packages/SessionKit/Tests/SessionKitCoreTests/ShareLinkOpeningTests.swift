@@ -109,18 +109,37 @@ final class ShareLinkOpeningTests: XCTestCase {
         XCTAssertGreaterThan(requested.maximumBytes.first ?? 0, 20 << 20, "the cap must leave room for the sealing header")
     }
 
-    func testEveryNonSuccessAnswerSaysTheLinkExpiredOrCannotBeReached() async throws {
+    /// #1967: a gone link, a server fault and an odd answer are three different things to tell the listener.
+    func testEachNonSuccessAnswerSaysWhatItMeans() async throws {
         let key = ShareLinkSealing.Key.random()
         let sealed = try ShareLinkSealing.seal(packet: packet, preview: preview, key: key)
-        for status in [204, 301, 404, 410, 429, 500, 503] {
+        let table: [(status: Int, expected: ShareLinkPacketDownloader.Failure)] = [
+            (404, .expired), (410, .expired),
+            (429, .serverProblem), (500, .serverProblem), (503, .serverProblem), (599, .serverProblem),
+            (204, .expiredOrUnreachable), (301, .expiredOrUnreachable), (403, .expiredOrUnreachable)
+        ]
+        for (status, expected) in table {
             let downloader = ShareLinkPacketDownloader { _, _ in (status, sealed.packet) }
-            await assertFails(downloader, link: try link(key: key), as: .expiredOrUnreachable, "status \(status)")
+            await assertFails(downloader, link: try link(key: key), as: expected, "status \(status)")
         }
     }
 
-    func testANetworkErrorOrAnOversizedAnswerSaysTheLinkCannotBeReached() async throws {
+    /// #1967: with no connection the link is fine; the listener must not be told it expired.
+    func testNoConnectionSaysOfflineAndOffersARetry() async throws {
         let key = ShareLinkSealing.Key.random()
-        for code in [URLError.Code.notConnectedToInternet, .timedOut, .dataLengthExceedsMaximum, .secureConnectionFailed] {
+        let codes: [URLError.Code] = [
+            .notConnectedToInternet, .timedOut, .networkConnectionLost, .cannotConnectToHost, .cannotFindHost,
+            .dnsLookupFailed, .dataNotAllowed, .internationalRoamingOff, .callIsActive
+        ]
+        for code in codes {
+            let downloader = ShareLinkPacketDownloader { _, _ in throw URLError(code) }
+            await assertFails(downloader, link: try link(key: key), as: .offline, "\(code)")
+        }
+    }
+
+    func testAnOversizedAnswerOrAFailedSecureConnectionSaysTheLinkCannotBeReached() async throws {
+        let key = ShareLinkSealing.Key.random()
+        for code in [URLError.Code.dataLengthExceedsMaximum, .secureConnectionFailed] {
             let downloader = ShareLinkPacketDownloader { _, _ in throw URLError(code) }
             await assertFails(downloader, link: try link(key: key), as: .expiredOrUnreachable, "\(code)")
         }
@@ -205,6 +224,17 @@ final class ShareLinkOpeningTests: XCTestCase {
     func testTheMessagesTheListenerSees() {
         XCTAssertEqual(ShareLinkPacketDownloader.Failure.expiredOrUnreachable.message, "This link has expired or can't be reached.")
         XCTAssertEqual(ShareLinkPacketDownloader.Failure.incompleteOrDamaged.message, "This link is incomplete or damaged.")
+        XCTAssertEqual(ShareLinkPacketDownloader.Failure.offline.message, "You're offline. Reconnect, then tap the link again.")
+        XCTAssertEqual(ShareLinkPacketDownloader.Failure.expired.message, "This link has expired. Ask your friend to share it again.")
+        XCTAssertEqual(ShareLinkPacketDownloader.Failure.serverProblem.message, "The server had a problem. Try again in a minute.")
+    }
+
+    func testOnlyAConnectionOrServerProblemIsWorthRetrying() {
+        typealias Failure = ShareLinkPacketDownloader.Failure
+        XCTAssertEqual(
+            [Failure.offline, .expired, .serverProblem, .expiredOrUnreachable, .incompleteOrDamaged].map(\.isRetryable),
+            [true, false, true, false, false]
+        )
     }
 
     private func assertFails(
