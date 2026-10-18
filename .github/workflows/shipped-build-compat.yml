@@ -23,13 +23,15 @@ on:
       # Build 29's reader builds the whole SessionKit target, so any of them can change what it
       # reads. Derived from the types SessionKitPersistence and SessionKitSharing name, plus the
       # Codable types those files reach. A new model file matches *Models*.swift; any other new
-      # file that defines a stored type must be added here.
+      # file that defines a stored type must be added here; scripts/tests/test_shipped_compat_filter.py
+      # fails when one is missing.
       - 'Packages/SessionKit/Sources/SessionKit/*Models*.swift'
       - 'Packages/SessionKit/Sources/SessionKit/BridgeManifest.swift'
       - 'Packages/SessionKit/Sources/SessionKit/CommunityMapUpload.swift'
       - 'Packages/SessionKit/Sources/SessionKit/FeedNewItemPolicy.swift'
       - 'Packages/SessionKit/Sources/SessionKit/InterjectionCleanup.swift'
       - 'Packages/SessionKit/Sources/SessionKit/ItemCollection.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/LinkedEpisode.swift'
       - 'Packages/SessionKit/Sources/SessionKit/ListeningEdition.swift'
       - 'Packages/SessionKit/Sources/SessionKit/ListeningMoment.swift'
       - 'Packages/SessionKit/Sources/SessionKit/MarginConversation.swift'

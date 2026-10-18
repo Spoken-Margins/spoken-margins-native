@@ -57,6 +57,7 @@ struct Build23RecipientSharingExperience: View {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Shared Margins")
                     .font(.title2.weight(.bold))
+                    .screenTitle()
                     .foregroundStyle(AppColors.text)
 
                 if let snapshot = coordinator.recipientSnapshot {

@@ -462,6 +462,7 @@ struct SettingsScreen: View {
                         Button("Reset Library and Load Sample", role: .destructive) {
                             isResetConfirmationPresented = true
                         }
+                        .disabled(model.libraryAccessError != nil) // never reset a Library this build couldn't open (#1969)
                         .accessibilityIdentifier("settings.reset.button")
                         Button("Refresh Diagnostics", action: model.refreshDiagnostics)
                             .accessibilityIdentifier("settings.diagnostics.button")

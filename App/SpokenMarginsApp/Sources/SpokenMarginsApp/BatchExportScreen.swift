@@ -21,6 +21,7 @@ struct BatchExportScreen: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Export Sessions")
                                 .font(.largeTitle.bold())
+                                .screenTitle()
                             Text("Choose listening sessions and share one Markdown file for each session.")
                                 .foregroundStyle(AppColors.secondaryText)
                         }

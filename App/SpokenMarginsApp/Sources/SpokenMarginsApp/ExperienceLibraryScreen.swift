@@ -37,7 +37,7 @@ struct ExperienceLibraryScreen: View {
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 6)
                 }
 
-                if model.shouldShowOnboardingCard {
+                if model.shouldShowOnboardingCard, screenState.allowsAddingContent {
                     onboardingStrip
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
@@ -86,6 +86,7 @@ struct ExperienceLibraryScreen: View {
             } label: {
                 Label("Add", systemImage: "plus")
             }
+            .disabled(!screenState.allowsAddingContent)
             .accessibilityIdentifier("home.addSource.button")
         }
     }
@@ -131,34 +132,64 @@ struct ExperienceLibraryScreen: View {
         return "\(recent) item\(recent == 1 ? "" : "s") recently ready"
     }
 
+    private var onboardingIcon: some View {
+        Image(systemName: "sparkles")
+            .foregroundStyle(AppColors.ochre)
+            .frame(width: 36, height: 36)
+            .background(AppColors.ochre.opacity(0.12), in: Circle())
+            .accessibilityHidden(true)
+    }
+
+    private var onboardingContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Start with a two-minute tour")
+                .font(.headline)
+            Text("Hear the core loop, then practice making a Margin.")
+                .font(.subheadline)
+                .foregroundStyle(AppColors.secondaryText)
+            // The two buttons stack when they don't fit side by side in the narrowed column (#1937).
+            ViewThatFits(in: .horizontal) {
+                HStack { onboardingActions }
+                VStack(alignment: .leading) { onboardingActions }
+            }
+        }
+    }
+
+    @ViewBuilder private var onboardingActions: some View {
+        Button("Hear overview") { model.startItem(id: Gate1AppModel.welcomeSampleItemId) }
+            .buttonStyle(PrimaryButtonStyle())
+        Button("Practice") { model.startGuidedOnboarding() }
+            .buttonStyle(.bordered)
+    }
+
+    private var onboardingDismiss: some View {
+        Button(action: model.dismissOnboardingCard) {
+            Image(systemName: "xmark")
+                .frame(width: 44, height: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Dismiss getting started")
+    }
+
     private var onboardingStrip: some View {
         ExperienceSurface(tint: AppColors.ochre.opacity(0.7)) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(AppColors.ochre)
-                    .frame(width: 36, height: 36)
-                    .background(AppColors.ochre.opacity(0.12), in: Circle())
-                    .accessibilityHidden(true)
+            if dynamicTypeSize.isAccessibilitySize {
+                // The icon and the dismiss button share a line so the text gets the whole width (#1937).
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Start with a two-minute tour")
-                        .font(.headline)
-                    Text("Hear the core loop, then practice making a Margin.")
-                        .font(.subheadline)
-                        .foregroundStyle(AppColors.secondaryText)
-                    HStack {
-                        Button("Hear overview") { model.startItem(id: Gate1AppModel.welcomeSampleItemId) }
-                            .buttonStyle(PrimaryButtonStyle())
-                        Button("Practice") { model.startGuidedOnboarding() }
-                            .buttonStyle(.bordered)
+                    HStack(spacing: 12) {
+                        onboardingIcon
+                        Spacer(minLength: 0)
+                        onboardingDismiss
                     }
+                    onboardingContent
                 }
-                Spacer(minLength: 0)
-                Button(action: model.dismissOnboardingCard) {
-                    Image(systemName: "xmark")
-                        .frame(width: 44, height: 44)
+            } else {
+                HStack(alignment: .top, spacing: 12) {
+                    onboardingIcon
+                    onboardingContent
+                    Spacer(minLength: 0)
+                    onboardingDismiss
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Dismiss getting started")
             }
         }
         .accessibilityIdentifier("library.onboarding.starters")
@@ -256,6 +287,13 @@ struct ExperienceLibraryScreen: View {
                     }
                 }
             }
+            Section("Shared Margins") {
+                Picker("Shared Margins", selection: $model.libraryQuery.sharedMargins) {
+                    ForEach(LibrarySharedMarginsFilter.allCases, id: \.self) { option in
+                        Text(option.title).tag(option)
+                    }
+                }
+            }
         } label: {
             if dynamicTypeSize.isAccessibilitySize {
                 Image(systemName: "line.3.horizontal.decrease.circle")
@@ -300,11 +338,26 @@ struct ExperienceLibraryScreen: View {
         model.libraryQuery.contentType != .all
             || model.libraryQuery.listeningState != .unfinished
             || model.libraryQuery.offlineState != .all
+            || model.libraryQuery.sharedMargins != .all
+    }
+
+    /// A build that can't open the Library shows that, never the empty state (#1969).
+    private var screenState: LibraryScreenState {
+        LibraryScreenState.resolve(
+            accessError: model.libraryAccessError,
+            itemCount: model.libraryItems.count,
+            isCaughtUp: model.libraryIsCaughtUp,
+            visibleCount: model.visibleLibraryItems.count
+        )
     }
 
     @ViewBuilder
     private var items: some View {
-        if model.libraryItems.isEmpty {
+        switch screenState {
+        case .cannotOpen(let note):
+            LibraryCannotOpenNote(note: note) { model.retryLibraryOpen() }
+                .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+        case .empty:
             SMExperienceEmptyState(
                 systemImage: "books.vertical",
                 title: "Your Library is ready",
@@ -312,7 +365,7 @@ struct ExperienceLibraryScreen: View {
                 actionTitle: "Add Source"
             ) { addSourceRoute = .linkOrPodcast }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-        } else if model.libraryIsCaughtUp {
+        case .caughtUp:
             SMExperienceEmptyState(
                 systemImage: "checkmark.circle",
                 title: "You’re caught up",
@@ -320,7 +373,7 @@ struct ExperienceLibraryScreen: View {
                 actionTitle: "Show completed"
             ) { model.showCompletedLibraryItems() }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-        } else if model.visibleLibraryItems.isEmpty {
+        case .noMatches:
             SMExperienceEmptyState(
                 systemImage: "magnifyingglass",
                 title: "No matches",
@@ -331,7 +384,7 @@ struct ExperienceLibraryScreen: View {
                 model.libraryQueryChanged()
             }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-        } else {
+        case .list:
             ForEach(listEntries) { entry in
                 let row = entry.row
                 ExperienceLibraryCompactRow(
@@ -358,6 +411,9 @@ struct ExperienceLibraryScreen: View {
 
 private struct ExperienceLibraryCompactRow: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    // The icon tile scales with the text, up to twice its size, so a large glyph is not cut by a fixed frame (#1937).
+    @ScaledMetric(relativeTo: .body) private var iconWidth: CGFloat = 38
+    @ScaledMetric(relativeTo: .body) private var iconHeight: CGFloat = 44
 
     let row: LibraryItemRow
     var isCurrentItem = false
@@ -376,7 +432,7 @@ private struct ExperienceLibraryCompactRow: View {
             Image(systemName: mediaSymbol)
                 .font(.body.weight(.semibold))
                 .foregroundStyle(AppColors.evergreen)
-                .frame(width: 38, height: 44)
+                .frame(width: min(max(iconWidth, 38), 76), height: min(max(iconHeight, 44), 88))
                 .background(AppColors.softGreen.opacity(isCurrentItem ? 0.85 : 0.55))
                 // The row's own text already says the kind (`LibraryRowDetail`), so the icon is not a third stop per row.
                 .accessibilityHidden(true)
@@ -396,6 +452,7 @@ private struct ExperienceLibraryCompactRow: View {
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                         .multilineTextAlignment(.leading)
+                    sharedMarginsLine
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -490,18 +547,39 @@ private struct ExperienceLibraryCompactRow: View {
         LibraryRowDetail(byline: sourceByline, kind: mediaLabel, length: lengthLabel, listening: listeningLabel, status: statusDetail)
     }
 
+    /// One line, except at the largest non-accessibility size, where a status such as "Opening audio unavailable ·
+    /// Live voice available" may take two instead of being cut off (#1937). Default sizes keep the compact row.
+    private var detailLineLimit: Int { dynamicTypeSize >= .xxxLarge ? 2 : 1 }
+
     /// The length keeps its room on the line; a long byline or status truncates instead (#305).
     @ViewBuilder private var detailLineView: some View {
         let detail = detail
         if dynamicTypeSize.isAccessibilitySize {
             Text(detail.fullLine)
         } else if let length = detail.length {
-            HStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
                 Text(length).fixedSize().layoutPriority(1)
-                Text(detail.restAfterLength).lineLimit(1)
+                Text(detail.restAfterLength).lineLimit(detailLineLimit)
             }
         } else {
-            Text(detail.rest).lineLimit(1)
+            Text(detail.rest).lineLimit(detailLineLimit)
+        }
+    }
+
+    /// Where a friend left Margins, and whether any are new (#1792). The words carry it, not the color.
+    @ViewBuilder private var sharedMarginsLine: some View {
+        if let line = row.sharedMargins.libraryLine {
+            HStack(spacing: 6) {
+                Image(systemName: "person.2.fill")
+                    .accessibilityHidden(true)
+                Text(line)
+                if row.sharedMargins.new > 0 { NewMarginBadge() }
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(AppColors.evergreen)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(row.sharedMargins.accessibilityLine ?? line)
+            .accessibilityIdentifier("library.sharedMargins.\(row.id)")
         }
     }
 
@@ -593,6 +671,8 @@ private extension View {
 
 /// The Library row's play button face: a 40 pt circle inside a 44 pt hit area (#151).
 struct LibraryRowPlayLabel: View {
+    // The circle grows with its glyph, up to twice its size, and never below the 44 pt hit area (#1937).
+    @ScaledMetric(relativeTo: .body) private var diameter: CGFloat = 40
     let isReadyOffline: Bool
     let isPreparing: Bool
 
@@ -600,7 +680,7 @@ struct LibraryRowPlayLabel: View {
         ZStack(alignment: .bottomTrailing) {
             Image(systemName: isReadyOffline ? "play.fill" : "play")
                 .foregroundStyle(AppColors.evergreen)
-                .frame(width: 40, height: 40)
+                .frame(width: min(max(diameter, 40), 80), height: min(max(diameter, 40), 80))
                 .background(AppColors.softGreen, in: Circle())
             if isPreparing {
                 ProgressView()

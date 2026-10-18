@@ -200,9 +200,11 @@ final class SpeechEngineSelectionTests: XCTestCase {
         }
     }
 
-    /// What the app did before the rule moved, so a speed saved by an older build reads back the same.
-    func testQuarterStepMultiplierKeepsTheAppsOldResultForValuesThatAreNotNumbers() {
-        XCTAssertEqual(SpeechRateRule.quarterStepMultiplier(.nan), 2.0)
+    /// NaN agrees with `clampedMultiplier` (1×, #1962); infinities keep what the app did before the
+    /// rule moved, so a speed saved by an older build reads back the same.
+    func testQuarterStepMultiplierGivesNormalSpeedForNaNAndKeepsTheOldBoundsForInfinities() {
+        XCTAssertEqual(SpeechRateRule.quarterStepMultiplier(.nan), 1.0)
+        XCTAssertEqual(SpeechRateRule.quarterStepMultiplier(.nan), SpeechRateRule.clampedMultiplier(.nan))
         XCTAssertEqual(SpeechRateRule.quarterStepMultiplier(.infinity), 2.0)
         XCTAssertEqual(SpeechRateRule.quarterStepMultiplier(-.infinity), 0.5)
     }

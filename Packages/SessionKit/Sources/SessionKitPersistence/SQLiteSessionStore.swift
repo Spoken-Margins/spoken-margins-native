@@ -1654,6 +1654,67 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
         }
     }
 
+    /// Margins other people shared, counted per item for the Library rows (#1792). One query in SQL:
+    /// opening the Library must not decode every imported recording, transcript and anchor. Only a
+    /// layer the listener hasn't deleted counts, as on the Margins screens (which ignore the on/off switch).
+    ///
+    /// Each Margin's payload is parsed once, and its layer is found by the primary key `(kind, id)`: the
+    /// layer match must stay a plain equality on `layer.id`, or SQLite scans every layer for every Margin
+    /// (layers x Margins JSON parses on each Library read). A broken payload gives NULL, which matches nothing.
+    /// It joins on the layer's `item_id`, not the Margin's, which can still be NULL for a Margin imported
+    /// before its layer found its item.
+    static let sharedMarginTalliesSQL = """
+        SELECT layer.item_id, COUNT(note.id),
+               SUM(CASE WHEN json_extract(note.payload, '$.firstHeardAt') IS NULL THEN 1 ELSE 0 END)
+        FROM records AS note
+        JOIN records AS layer
+          ON layer.kind = ?2
+         AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
+        WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
+          AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        GROUP BY layer.item_id;
+        """
+
+    public func loadSharedMarginTallies() throws -> [String: SharedMarginTally] {
+        try withConnectionLock {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, Self.sharedMarginTalliesSQL, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_shared_margin_tallies")
+            }
+            defer { sqlite3_finalize(statement) }
+            bind(statement, index: 1, value: "imported_commentary_interjection")
+            bind(statement, index: 2, value: "imported_commentary_layer")
+            var tallies: [String: SharedMarginTally] = [:]
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let raw = sqlite3_column_text(statement, 0) else { continue }
+                tallies[String(cString: raw)] = SharedMarginTally(
+                    total: Int(sqlite3_column_int64(statement, 1)),
+                    new: Int(sqlite3_column_int64(statement, 2))
+                )
+            }
+            return tallies
+        }
+    }
+
+    /// SQLite's plan for `loadSharedMarginTallies`, one line per step, so a test can tell a primary-key
+    /// lookup of each layer from a scan of every layer.
+    func sharedMarginTalliesQueryPlan() throws -> [String] {
+        try withConnectionLock {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "EXPLAIN QUERY PLAN " + Self.sharedMarginTalliesSQL, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_shared_margin_tallies_plan")
+            }
+            defer { sqlite3_finalize(statement) }
+            bind(statement, index: 1, value: "imported_commentary_interjection")
+            bind(statement, index: 2, value: "imported_commentary_layer")
+            var steps: [String] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                if let raw = sqlite3_column_text(statement, 3) { steps.append(String(cString: raw)) }
+            }
+            return steps
+        }
+    }
+
     public func applyStructuredDocumentUpgrade(_ upgrade: StructuredDocumentUpgrade) throws {
         let itemId = upgrade.item.id
         try withTransaction {

@@ -963,6 +963,7 @@ class Run:
         else:
             self.skip('ops', why)
         self.command('contracts', [sys.executable, 'scripts/validate-contracts.py'])
+        self.command('public-tree', [sys.executable, 'scripts/check-public-tree.py'])
         self.command('surfaces', [sys.executable, 'scripts/validate-surface-contracts.py'])
         self.command('inventory', [sys.executable, 'scripts/test_inventory.py'])
         if not (ROOT / 'node_modules').exists():
