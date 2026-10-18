@@ -20,43 +20,75 @@ struct PlaybackChapterRowView: View {
     var skimBackward: () -> Void = {}
     var skimForward: () -> Void = {}
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
-        HStack(spacing: 8) {
-            if backward != .hidden {
-                skimButton(backward: true, enabled: backward == .skim)
-            }
-            if let waitingText {
-                Text(waitingText)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppColors.watchSecondary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    .accessibilityIdentifier("playback.starting.label")
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                // At accessibility sizes this row is the only place the chapter title shows, so the title gets the
+                // full width and the skim controls sit under it instead of squeezing it between them (#1933).
+                VStack(spacing: 4) {
+                    titleView
+                    HStack(spacing: 8) {
+                        backwardControl
+                        Spacer(minLength: 0)
+                        forwardControl
+                    }
+                }
             } else {
-                Button(action: showItem) {
-                    Text(PlaybackSourceLabels.chapterTitle(title, sourceTitle: sourceTitle))
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                HStack(spacing: 8) {
+                    backwardControl
+                    titleView
+                    forwardControl
                 }
-                .accessibilityIdentifier("playback.dock.chapter.button")
-            }
-            switch forward {
-            case .skim, .skimDisabled:
-                skimButton(backward: false, enabled: forward == .skim)
-            case .nextChapter:
-                Button(action: nextChapter) {
-                    Image(systemName: "forward.end")
-                        .frame(minWidth: 44, minHeight: 44)
-                }
-                .accessibilityLabel("Next chapter")
-                .accessibilityIdentifier("playback.nextChapter.button")
-            case .hidden:
-                EmptyView()
             }
         }
         .font(.subheadline.weight(.medium))
         .foregroundStyle(.white)
         .buttonStyle(.plain)
+    }
+
+    /// One line at default sizes; up to three at accessibility sizes, where a one-line title showed a few characters.
+    private var titleLineLimit: Int { dynamicTypeSize.isAccessibilitySize ? 3 : 1 }
+
+    @ViewBuilder private var titleView: some View {
+        if let waitingText {
+            Text(waitingText)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(AppColors.watchSecondary)
+                .lineLimit(titleLineLimit)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .accessibilityIdentifier("playback.starting.label")
+        } else {
+            Button(action: showItem) {
+                Text(PlaybackSourceLabels.chapterTitle(title, sourceTitle: sourceTitle))
+                    .lineLimit(titleLineLimit)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            }
+            .accessibilityIdentifier("playback.dock.chapter.button")
+        }
+    }
+
+    @ViewBuilder private var backwardControl: some View {
+        if backward != .hidden {
+            skimButton(backward: true, enabled: backward == .skim)
+        }
+    }
+
+    @ViewBuilder private var forwardControl: some View {
+        switch forward {
+        case .skim, .skimDisabled:
+            skimButton(backward: false, enabled: forward == .skim)
+        case .nextChapter:
+            Button(action: nextChapter) {
+                Image(systemName: "forward.end")
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+            .accessibilityLabel("Next chapter")
+            .accessibilityIdentifier("playback.nextChapter.button")
+        case .hidden:
+            EmptyView()
+        }
     }
 
     /// A compact Skim arrow. It says where it goes ("Skim to 36:11") for VoiceOver; a dimmed one reads as unavailable.

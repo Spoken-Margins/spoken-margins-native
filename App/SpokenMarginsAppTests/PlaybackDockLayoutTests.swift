@@ -156,6 +156,28 @@ final class PlaybackDockLayoutTests: XCTestCase {
                        "Next chapter takes Skim forward's slot, no wider")
     }
 
+    /// #1933: at accessibility sizes the chapter title was one line between two 44-point buttons and showed a few
+    /// characters, and it is the only place the title appears. The row now gives the title the full width, up to three
+    /// lines, with the skim controls under it.
+    func testChapterRowShowsMoreOfALongTitleAtAccessibilitySizes() {
+        func fittedHeight(title: String, size: DynamicTypeSize) -> CGFloat {
+            let row = PlaybackChapterRowView(
+                title: title, sourceTitle: "An episode", backward: .skim, forward: .skim,
+                skimBackwardTitle: "Back to 12:05", skimForwardTitle: "Skim to 36:11",
+                showItem: {}, nextChapter: {}
+            )
+            return UIHostingController(rootView: row.environment(\.dynamicTypeSize, size))
+                .sizeThatFits(in: CGSize(width: 375 - 44, height: 2_000)).height
+        }
+        let long = "The long and winding road to a chapter title that does not fit on one line"
+        let short = fittedHeight(title: "Intro", size: .accessibility5)
+        XCTAssertGreaterThanOrEqual(short, 88, "the skim controls sit under the title, not beside it")
+        XCTAssertGreaterThanOrEqual(fittedHeight(title: long, size: .accessibility5) - short, 30,
+                                    "a long title must wrap to more than one line at AX5")
+        XCTAssertEqual(fittedHeight(title: long, size: .large), 44, accuracy: 1,
+                       "the default layout is still one 44-point row")
+    }
+
     // MARK: - Assertions
 
     private func assertCompactDock(_ mounted: Mounted, phone: String, size: CGSize) async throws {
