@@ -74,7 +74,7 @@ Paste this into `~/.claude/scheduled-tasks/sm-mac-tick/SKILL.md`, right after st
 
 ### Owner-tap alert backstop (#2047)
 
-`.github/workflows/owner-tap-alert.yml` pushes the owner's phone (a `github-actions[bot]` comment that @mentions him) when a PR only he can merge is ready for his tap. PR pushes and labels start it, and the audit script starts it after an audit on such a PR. A check finishing starts nothing, so the tick runs it too. Paste this after step 2a:
+`.github/workflows/owner-tap-alert.yml` pushes the owner's phone (a `github-actions[bot]` comment that @mentions him) when a PR only he can merge is ready for his tap. The PR check workflows start it as they finish (`owner-tap-alert-dispatch` jobs in `linux-t1.yml` and `shipped-build-compat.yml`), and the audit script starts it after an audit on such a PR. A check from another workflow (a lane run) finishing last starts nothing, so this tick step is an optional backstop. To add it, paste this after step 2a:
 
 ```text
 2c. OWNER-TAP ALERT. Run `gh workflow run owner-tap-alert.yml --repo uncomposed/spoken-margins-native --ref next` and keep going. It posts at most one alert per PR head, so running it every tick never repeats one. If the command fails, note the error in one line in this tick's #337 comment.
