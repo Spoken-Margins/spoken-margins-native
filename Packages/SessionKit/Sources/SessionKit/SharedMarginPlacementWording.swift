@@ -7,7 +7,7 @@ public enum SharedMarginPlacementWording {
     public static let placed = "Placed here"
     public static let approximate = "Placed roughly here"
     public static let confirmed = "Placed where you confirmed"
-    public static let couldntPlace = "Couldn’t place this one. Tap to listen anyway."
+    public static let couldntPlace = "Couldn't place this one. Tap to listen anyway."
 
     /// - Parameter paragraph: the 1-based paragraph the resolution's text offset falls in, when the caller
     ///   can compute it (`MarginPlaceIndex.paragraph(atChar:)`). A text offset with no paragraph is described

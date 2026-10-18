@@ -20,7 +20,7 @@ final class SharedMarginPlacementWordingTests: XCTestCase {
         XCTAssertEqual(line(.timestampFallback), "Placed roughly here")
         XCTAssertEqual(line(.recipientConfirmed), "Placed where you confirmed")
         for unplaced in [AnchorResolutionEvidenceClass.unresolved, .absentFromRecipientEdition, .ambiguous] {
-            XCTAssertEqual(line(unplaced), "Couldn’t place this one. Tap to listen anyway.", "\(unplaced)")
+            XCTAssertEqual(line(unplaced), "Couldn't place this one. Tap to listen anyway.", "\(unplaced)")
         }
         XCTAssertEqual(line(.acousticVerified, isAmbiguous: true), SharedMarginPlacementWording.couldntPlace,
                        "A resolution flagged ambiguous is not placed, whatever its class says")

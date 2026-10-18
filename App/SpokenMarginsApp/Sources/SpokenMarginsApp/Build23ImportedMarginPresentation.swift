@@ -279,10 +279,12 @@ private struct Build23ImportedLayerList: View, Equatable {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityLabel("Margin placement. \(margin.positionDescription)")
 
-            Label(resolutionLabel(margin), systemImage: "scope")
-            .font(.caption)
-            .foregroundStyle(AppColors.secondaryText)
-            .accessibilityLabel(Text("Placement resolution. \(resolutionLabel(margin))"))
+            if let label = resolutionLabel(margin) {
+                Label(label, systemImage: "scope")
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .accessibilityLabel(Text("Placement resolution. \(label)"))
+            }
 
             if margin.hasVoice {
                 Button {
@@ -306,8 +308,14 @@ private struct Build23ImportedLayerList: View, Equatable {
         }
     }
 
-    private func resolutionLabel(_ margin: Build23ImportedMarginSnapshot) -> String {
-        margin.placementLabel ?? Build23ImportedLayerPresentation.marginResolutionLabel(margin.resolution)
+    /// How the place was found, as a second line under the position. A Margin that wasn't placed has nothing to add
+    /// to "Couldn't place this one" (#1974), so it gets no second line; one still being placed says so.
+    private func resolutionLabel(_ margin: Build23ImportedMarginSnapshot) -> String? {
+        if let placementLabel = margin.placementLabel { return placementLabel }
+        switch margin.resolution {
+        case .unresolved, .absentFromRecipientEdition, .ambiguous: return nil
+        default: return Build23ImportedLayerPresentation.marginResolutionLabel(margin.resolution)
+        }
     }
 
     private func stateLabel(_ text: String, systemImage: String) -> some View {
