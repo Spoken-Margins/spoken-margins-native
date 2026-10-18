@@ -4,10 +4,12 @@ import SessionKitSupertonic
 
 /// `speech-bench`: real-time factor of each bundled narration engine on the Mac (#849).
 ///
-///     swift run -c release --package-path Packages/SessionKit speech-bench [--threads 2] [--chunks 12] [--out report.json]
+///     swift run -c release --package-path Packages/SessionKit speech-bench \
+///         --kitten <voice folder> [--supertonic <voice folder>] [--threads 2] [--chunks 12] [--out report.json]
 ///
-/// Run from the repository root (it reads the models under `App/SpokenMarginsApp/Resources`). It renders the
-/// same real article chunks, the ones the player plans, with Kitten (the fallback voice) and Supertonic, and
+/// It is told where the voice files are and looks nowhere else: in the app checkout they are
+/// `App/SpokenMarginsApp/Resources/Kitten` and `App/SpokenMarginsApp/Resources/Supertonic`. It renders the
+/// same real article chunks, the ones the player plans, with each engine it is given a folder for, and
 /// prints audio seconds per wall second for each, once warm, plus the first chunk's time including the model load.
 /// The Mac is several times faster than an iPhone in Low Power Mode: compare engines with each other, and take
 /// the phone's number from the in-app render pace line or VoiceBench (`research/C2/phone-bench`).
@@ -25,6 +27,15 @@ struct EngineReport: Codable {
     var firstChunkAudioSeconds: Double
     var warmRealTimeFactor: Double
     var firstChunkRealTimeFactor: Double
+}
+
+enum BenchError: LocalizedError {
+    case missingArgument(String)
+    var errorDescription: String? {
+        switch self {
+        case .missingArgument(let argument): return "missing \(argument)"
+        }
+    }
 }
 
 func argument(_ name: String) -> String? {
@@ -58,7 +69,13 @@ func measure(engine: String, chunks: [String], render: (String) async throws -> 
 
 let threads = Int(argument("--threads") ?? "") ?? 2
 let chunkCount = Int(argument("--chunks") ?? "") ?? 12
-let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+let usage = "usage: speech-bench --kitten <voice folder> [--supertonic <voice folder>] [--threads N] [--chunks N] [--out report.json]"
+let kittenFolder = argument("--kitten").map { URL(fileURLWithPath: $0, isDirectory: true) }
+let supertonicFolder = argument("--supertonic").map { URL(fileURLWithPath: $0, isDirectory: true) }
+if kittenFolder == nil && supertonicFolder == nil {
+    FileHandle.standardError.write(Data("speech-bench: missing --kitten <voice folder> and --supertonic <voice folder>; give at least one.\n\(usage)\n".utf8))
+    exit(2)
+}
 let output = FileManager.default.temporaryDirectory.appending(path: "speech-bench-\(UUID().uuidString)", directoryHint: .isDirectory)
 defer { try? FileManager.default.removeItem(at: output) }
 
@@ -69,8 +86,9 @@ print("chunks: \(chunks.count) of \(all.count) distinct, \(chunks.map(\.count).r
 
 var reports: [EngineReport] = []
 do {
+    guard let kittenRoot = kittenFolder else { throw BenchError.missingArgument("--kitten <voice folder>") }
     let kitten = try KittenNarrationRenderer(
-        assets: KittenAssetLocation(rootURL: root.appending(path: "App/SpokenMarginsApp/Resources/Kitten")), outputDirectory: output, threads: threads,
+        assets: KittenAssetLocation(rootURL: kittenRoot), outputDirectory: output, threads: threads,
         governor: OnDeviceVoiceGovernor())
     reports.append(try await measure(engine: "kitten", chunks: chunks) { try await kitten.render(text: $0) })
     // The fast-start head the player plays first after a fallback (a warm session).
@@ -86,8 +104,9 @@ do {
     print("kitten: skipped (\(error.localizedDescription))")
 }
 do {
+    guard let supertonicRoot = supertonicFolder else { throw BenchError.missingArgument("--supertonic <voice folder>") }
     let supertonic = try SupertonicNarrationRenderer(
-        assets: SupertonicAssetLocation(rootURL: root.appending(path: "App/SpokenMarginsApp/Resources/Supertonic")), outputDirectory: output,
+        assets: SupertonicAssetLocation(rootURL: supertonicRoot), outputDirectory: output,
         governor: OnDeviceVoiceGovernor())
     reports.append(try await measure(engine: "supertonic", chunks: chunks) { try await supertonic.render(text: $0) })
     await supertonic.unload()

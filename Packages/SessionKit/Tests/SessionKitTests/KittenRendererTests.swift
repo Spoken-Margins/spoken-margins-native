@@ -9,17 +9,14 @@ import SessionKitTestInputs
 /// The model is in the repository (Git LFS), so these skip only when it hasn't been pulled, and not even then
 /// where `CI` or `SM_REQUIRE_MODELS` is set (#1893): a runner without LFS must not report green.
 final class KittenRendererTests: XCTestCase {
-    private static let repoRoot = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        .deletingLastPathComponent().deletingLastPathComponent()
-    private static let assets = KittenAssetLocation(
-        rootURL: repoRoot.appending(path: "App/SpokenMarginsApp/Resources/Kitten", directoryHint: .isDirectory))
-
+    private var assets: KittenAssetLocation!
     private var outputDirectory: URL!
 
     override func setUpWithError() throws {
+        // The voice files live in the app; a package checked out alone skips these tests, naming `voiceAssets`.
+        assets = KittenAssetLocation(rootURL: try TestInputs.directory(.voiceAssets))
         // A Git LFS pointer is a few hundred bytes; the real model is about 57 MB.
-        try TestInputs.requireModel(at: Self.assets.modelURL)
+        try TestInputs.requireModel(at: assets.modelURL)
         outputDirectory = FileManager.default.temporaryDirectory.appending(path: "kitten-tests-\(UUID().uuidString)")
     }
 
@@ -53,7 +50,7 @@ final class KittenRendererTests: XCTestCase {
     }
 
     func testRendersASentenceAsAReadableWavWithTheKittenEngineTag() async throws {
-        let renderer = try KittenNarrationRenderer(assets: Self.assets, outputDirectory: outputDirectory, governor: OnDeviceVoiceGovernor())
+        let renderer = try KittenNarrationRenderer(assets: assets, outputDirectory: outputDirectory, governor: OnDeviceVoiceGovernor())
         let result = try await renderer.render(text: Self.prose[0])
         XCTAssertEqual(result.engine, "kitten")
         XCTAssertEqual(result.sampleRate, 24_000)
@@ -79,7 +76,7 @@ final class KittenRendererTests: XCTestCase {
     /// to say yields too little audio to keep (`emptyAudio`), and anything pronounceable renders. A change that
     /// makes everything throw, or everything render, fails here.
     func testOddInputsHaveTheirOwnOutcome() async throws {
-        let renderer = try KittenNarrationRenderer(assets: Self.assets, outputDirectory: outputDirectory, governor: OnDeviceVoiceGovernor())
+        let renderer = try KittenNarrationRenderer(assets: assets, outputDirectory: outputDirectory, governor: OnDeviceVoiceGovernor())
         do { _ = try await renderer.render(text: "  \n "); XCTFail("empty text must throw") } catch { XCTAssertEqual(error as? KittenNarrationError, .emptyText) }
 
         // No sound to make: punctuation, a dash, an emoji, and a lone letter come back as too short to keep.
@@ -119,7 +116,7 @@ final class KittenRendererTests: XCTestCase {
         // Real time for the inference; a rest moves the clock on without sleeping.
         let slept = Slept()
         let governor = OnDeviceVoiceGovernor(now: { ProcessInfo.processInfo.systemUptime + slept.seconds }, sleep: { slept.add($0) })
-        let renderer = try KittenNarrationRenderer(assets: Self.assets, outputDirectory: outputDirectory, governor: governor)
+        let renderer = try KittenNarrationRenderer(assets: assets, outputDirectory: outputDirectory, governor: governor)
 
         _ = try await renderer.render(text: Self.prose[0])
         _ = try await renderer.render(text: Self.prose[1])
@@ -156,7 +153,7 @@ final class KittenRendererTests: XCTestCase {
         let spoken = NarrationChunkPlanner.spokenPlan(spokenText: SpeechTextNormalizer.normalize(text), articleText: text, articleSpokenStart: 0)
         let chunks = NarrationChunkPlanner.splittingFirstChunk(
             of: spoken.chunks, spokenText: SpeechTextNormalizer.normalize(text), playheadOffset: 0)
-        let renderer = try KittenNarrationRenderer(assets: Self.assets, outputDirectory: outputDirectory, threads: 1, governor: OnDeviceVoiceGovernor())
+        let renderer = try KittenNarrationRenderer(assets: assets, outputDirectory: outputDirectory, threads: 1, governor: OnDeviceVoiceGovernor())
 
         var renderedChunks = 0, rendered = 0.0, wall = 0.0, audio = 0.0, ends = 0.0, longestPause = 0.0, firstReady = 0.0, memoryAfterFirst = 0.0, peak = 0.0
         for (index, chunk) in chunks.enumerated() {
