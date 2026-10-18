@@ -53,6 +53,7 @@ extension Gate1AppModel {
             reportFailure("This isn't a Spoken Margins share link.")
             return
         }
+        withdrawRetryOffer("shareLink:\(link.id)")
         diagnostics["lastShareLink"] = link.key == nil ? "opening:no_key" : "opening"
         shareLinkOpener.open(
             link,
