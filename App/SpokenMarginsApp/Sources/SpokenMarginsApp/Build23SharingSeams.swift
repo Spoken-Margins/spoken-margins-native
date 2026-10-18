@@ -757,12 +757,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     }
 
     nonisolated private static func positionDescription(for resolution: ImportedAnchorResolution, paragraphs: MarginPlaceIndex? = nil) -> String {
-        if let mediaTimeMs = resolution.localMediaTimeMs {
-            let totalSeconds = max(0, mediaTimeMs / 1_000)
-            return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
-        }
         let paragraph = resolution.localStartChar.flatMap { paragraphs?.paragraph(atChar: $0) }
-        return SharedMarginPlacementWording.line(for: resolution, paragraph: paragraph)
+        return SharedMarginPlacementWording.importSheetLine(for: resolution, paragraph: paragraph)
     }
 
     nonisolated private static func transport(_ kind: SharedItemTransportKind) -> Build23RecipientTransport {

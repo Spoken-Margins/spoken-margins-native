@@ -36,6 +36,23 @@ final class SharedMarginPlacementWordingTests: XCTestCase {
         XCTAssertEqual(SharedMarginPlacementWording.line(for: unplaced, paragraph: 7), SharedMarginPlacementWording.couldntPlace)
     }
 
+    /// Audit: an ambiguous podcast match still holds its strongest candidate's media time. The import sheet must
+    /// not print it as if the Margin were placed there.
+    func testTheImportSheetShowsAClockOnlyForAPlacedMargin() {
+        let ambiguous = ImportedAnchorResolution(evidenceClass: .ambiguous, localMediaTimeMs: 754_000, isAmbiguous: true)
+        XCTAssertEqual(SharedMarginPlacementWording.importSheetLine(for: ambiguous), SharedMarginPlacementWording.couldntPlace)
+        let flaggedOnly = ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 754_000, isAmbiguous: true)
+        XCTAssertEqual(SharedMarginPlacementWording.importSheetLine(for: flaggedOnly), SharedMarginPlacementWording.couldntPlace)
+        for evidence in [AnchorResolutionEvidenceClass.unresolved, .absentFromRecipientEdition] {
+            let unplaced = ImportedAnchorResolution(evidenceClass: evidence, localMediaTimeMs: 754_000)
+            XCTAssertEqual(SharedMarginPlacementWording.importSheetLine(for: unplaced), SharedMarginPlacementWording.couldntPlace)
+        }
+        let placed = ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 754_000)
+        XCTAssertEqual(SharedMarginPlacementWording.importSheetLine(for: placed), "12:34")
+        let text = ImportedAnchorResolution(evidenceClass: .articleTextVerified, localStartChar: 18_342)
+        XCTAssertEqual(SharedMarginPlacementWording.importSheetLine(for: text, paragraph: 7), "Near paragraph 7")
+    }
+
     func testNoOutputShowsADigitRunOrAnEnumNameAndNoTwoDifferByOneWord() {
         var outputs: Set<String> = []
         for evidence in allClasses {

@@ -26,4 +26,15 @@ public enum SharedMarginPlacementWording {
             return placed
         }
     }
+
+    /// The import sheet's position line: the clock time when the Margin is placed at a media time, otherwise
+    /// `line(for:)`. A Margin that couldn't be placed never gets a clock, whatever media time its evidence
+    /// carried: an ambiguous podcast match still holds its strongest candidate's time (#1974 audit).
+    public static func importSheetLine(for resolution: ImportedAnchorResolution, paragraph: Int? = nil) -> String {
+        if line(for: resolution) != couldntPlace, let mediaTimeMs = resolution.localMediaTimeMs {
+            let totalSeconds = max(0, mediaTimeMs / 1_000)
+            return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
+        }
+        return line(for: resolution, paragraph: paragraph)
+    }
 }
