@@ -46,6 +46,21 @@ extension Gate2LiveActivityAttributes.ContentState {
         return isStale || status == "paused"
     }
 
+    /// What the state images and the "PLAY" word say to VoiceOver: the state in words (#1913).
+    func stateAccessibilityLabel(isStale: Bool) -> String {
+        if sharedMarginSenderLabel != nil { return Gate2LiveActivityAccessibility.sharedMarginIcon }
+        if isRecording {
+            switch microphone {
+            case .capturing: return "Recording a Margin"
+            case .starting: return "Starting the microphone"
+            case .stopped: return "Microphone stopped"
+            }
+        }
+        if offersResume(isStale: isStale) { return "Paused, tap to resume" }
+        if isLoadingAudio { return "Loading" }
+        return isAudioRunning ? "Playing" : status.capitalized
+    }
+
     /// Where a tap on the card goes. A paused card opens the app and resumes. A card that is playing opens the
     /// playback screen of what is sounding, instead of leaving the app on whatever screen it was last on (#1337).
     /// A recording card, or one showing a friend's Margin, just opens the app.

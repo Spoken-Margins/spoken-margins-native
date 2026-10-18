@@ -327,6 +327,7 @@ struct Build23MarginEditor: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text("Review this Margin")
                         .font(.title3.weight(.semibold))
+                        .screenTitle()
                         .foregroundStyle(AppColors.text)
                         .accessibilityIdentifier("build23.sender.margin.editor.\(margin.id)")
                     Spacer()

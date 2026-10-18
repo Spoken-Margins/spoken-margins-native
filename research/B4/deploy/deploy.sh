@@ -13,7 +13,8 @@
 # log filter; it refuses if the block isn't the plain one it expects,
 # validates the candidate with `caddy validate`, backs up the Caddyfile,
 # reloads (never restarts) Caddy, checks the sites and health, and rolls the
-# Caddyfile back if a check fails. The live Caddyfile never leaves the box
+# Caddyfile back if a check fails. It copies the old smserver binary and unit
+# aside first and puts them back whenever it rolls back. The live Caddyfile never leaves the box
 # except as a diff with hashes masked.
 set -euo pipefail
 IFS=$'\n\t'
@@ -61,6 +62,8 @@ fi
 log="${stage}/apply.log"
 ssh "${ssh_opts[@]}" "${host}" "bash '${remote_dir}/remote-install.sh' apply '${port}' '${server_root}'" | tee "${log}"
 backup="$(sed -n 's/^BACKUP=//p' "${log}")"
+bin_backup="$(sed -n 's/^BIN_BACKUP=//p' "${log}")"
+unit_backup="$(sed -n 's/^UNIT_BACKUP=//p' "${log}")"
 
 echo "== checking from this machine"
 failed=""
@@ -70,9 +73,9 @@ for url in https://proximitytoprogress.com/ "https://${site_host}/" "https://${s
   if [[ "${code}" == 000 || "${code}" -ge 500 ]]; then failed="${url}"; fi
 done
 if [[ -n "${failed}" ]]; then
-  echo "== ${failed} failed from outside; rolling the Caddyfile back" >&2
-  ssh "${ssh_opts[@]}" "${host}" "bash '${remote_dir}/remote-install.sh' rollback '${backup}'"
+  echo "== ${failed} failed from outside; rolling the Caddyfile and smserver back" >&2
+  ssh "${ssh_opts[@]}" "${host}" "SM_SERVER_PORT='${port}' bash '${remote_dir}/remote-install.sh' rollback '${backup}' '${bin_backup}' '${unit_backup}'"
   exit 1
 fi
-echo "== deployed. Caddyfile backup on the box: ${backup}"
+echo "== deployed. Backups on the box: Caddyfile ${backup}, smserver ${bin_backup:-none}, unit ${unit_backup:-none}"
 echo "   Next: stop smserver, send one /api request, and check that journalctl -u caddy shows no remote_ip or X-SM-."

@@ -18,6 +18,8 @@ spec.loader.exec_module(lane)
 BROKEN = 'import unittest\nclass DemoTests(unittest.TestCase):\n    def test_a(self):\n        self.fail("broken")\n'
 WORKING = 'import unittest\nclass DemoTests(unittest.TestCase):\n    def test_a(self):\n        pass\n'
 ID = 'test_demo.DemoTests.test_a'
+OWNER = {'user': {'login': 'uncomposed'}, 'author_association': 'OWNER'}
+STRANGER = {'user': {'login': 'mallory'}, 'author_association': 'NONE'}
 
 
 def git(tree, *args):
@@ -160,14 +162,25 @@ class RecheckTests(unittest.TestCase):
             repo.failed_step()
             for title in (f'Host test fails on next: {ID}', 'DemoTests.test_a fails on the lane Mac'):
                 with self.subTest(title=title):
-                    api = FakeApi(issues=[{'number': 44, 'title': title},
-                                          {'number': 45, 'title': title, 'pull_request': {}}])
+                    api = FakeApi(issues=[{'number': 44, 'title': title, **OWNER},
+                                          {'number': 45, 'title': title, 'pull_request': {}, **OWNER}])
                     verdict, details = repo.recheck(api)
                     self.assertEqual(verdict, 'INCONCLUSIVE')
                     self.assertEqual(api.filed(), [])
                     (comment,) = api.commented()
                     self.assertEqual(comment[0], 'repos/o/r/issues/44/comments')
                     self.assertIn(repo.next[:7], comment[2])
+
+    def test_a_strangers_issue_naming_the_test_does_not_hide_the_regression(self):
+        # #1822: a public issue titled with the failing test's name must not stop the real issue being filed.
+        with tempfile.TemporaryDirectory() as folder:
+            repo = Repo(folder, BROKEN, BROKEN)
+            repo.failed_step()
+            api = FakeApi(issues=[{'number': 44, 'title': f'Host test fails on next: {ID}', **STRANGER}])
+            verdict, details = repo.recheck(api)
+            self.assertEqual(verdict, 'INCONCLUSIVE')
+            self.assertEqual(len(api.filed()), 1)
+            self.assertEqual(api.commented(), [])
 
     def test_a_test_that_passes_on_next_keeps_the_fail(self):
         with tempfile.TemporaryDirectory() as folder:

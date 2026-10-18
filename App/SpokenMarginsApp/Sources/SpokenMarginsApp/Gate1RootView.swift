@@ -654,7 +654,7 @@ enum AppColors {
     static let background = dynamicColor(AppSemanticColorRGB.background)
     static let panel = dynamicColor(AppSemanticColorRGB.panel)
     static let inputBackground = dynamicColor(AppSemanticColorRGB.inputBackground)
-    static let border = dynamicColor(AppSemanticColorRGB.border)
+    static let border = contrastAware(AppSemanticColorRGB.border, increased: AppSemanticColorRGB.borderIncreased)
     static let text = dynamicColor(AppSemanticColorRGB.text)
     static let secondaryText = dynamicColor(AppSemanticColorRGB.secondaryText)
     static let green = dynamicColor(AppSemanticColorRGB.green)
@@ -707,7 +707,7 @@ struct SecondaryButtonStyle: ButtonStyle {
             .frame(minHeight: 42)
             .foregroundStyle(AppColors.text)
             .background(AppColors.softGreen.opacity(configuration.isPressed ? 0.7 : 1))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: 8)).expandedHitArea(vertical: 1)
     }
 }
 
@@ -716,7 +716,7 @@ struct IconButtonStyle: ButtonStyle {
         configuration.label
             .foregroundStyle(AppColors.text)
             .background(AppColors.softGreen.opacity(configuration.isPressed ? 0.7 : 1))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: 8)).expandedHitArea(horizontal: 5, vertical: 5)
     }
 }
 

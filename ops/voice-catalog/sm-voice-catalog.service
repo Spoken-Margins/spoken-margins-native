@@ -1,0 +1,15 @@
+[Unit]
+Description=Spoken Margins weekly voice catalog check (#1818): sources and licences still match what was reviewed
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/sm-voice-catalog/scripts/voice_catalog.py --state-dir /var/lib/sm-voice-catalog check --mirror require --file-issues --token-file /etc/sm-voice-catalog/github-token
+TimeoutStartSec=3h
+StateDirectory=sm-voice-catalog
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/etc/sm-voice-catalog /opt/sm-voice-catalog
+PrivateTmp=true

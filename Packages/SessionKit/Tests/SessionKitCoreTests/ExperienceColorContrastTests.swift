@@ -12,6 +12,23 @@ final class ExperienceColorContrastTests: XCTestCase {
         )
     }
 
+    func testIncreasedContrastEdgesReachThreeToOneInLightAndDark() {
+        XCTAssertEqual(
+            AppColorContrastAudit.failures(for: AppColorContrastAudit.increasedContrastEdgePairs),
+            [],
+            "Under Increase Contrast every border must reach 3:1 against its surface"
+        )
+    }
+
+    func testTheDefaultBorderIsUnchangedAndStillFaint() {
+        // The default look with Increase Contrast off must not move (#1922): the border stays a hairline.
+        let ratio = AppColorContrastAudit.contrastRatio(
+            foreground: AppSemanticColorRGB.border.light, background: AppSemanticColorRGB.panel.light)
+        XCTAssertLessThan(ratio, 2)
+        XCTAssertEqual(AppSemanticColorRGB.border.light, AppColorRGB(red: 0.84, green: 0.87, blue: 0.81))
+        XCTAssertEqual(AppSemanticColorRGB.border.dark, AppColorRGB(red: 0.28, green: 0.34, blue: 0.30))
+    }
+
     func testContrastRatioMatchesTheWCAGDefinitionAtItsEnds() {
         let black = AppColorRGB(red: 0, green: 0, blue: 0)
         let white = AppColorRGB(red: 1, green: 1, blue: 1)

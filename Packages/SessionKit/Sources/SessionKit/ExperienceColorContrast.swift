@@ -89,6 +89,17 @@ public enum AppSemanticColorRGB {
         light: .init(red: 0.55, green: 0.13, blue: 0.11),
         dark: .init(red: 1, green: 0.55, blue: 0.48)
     )
+    /// The hairline around panels, chips and inputs. Faint by design (about 1.4:1 on a panel).
+    public static let border = AppDynamicRGB(
+        light: .init(red: 0.84, green: 0.87, blue: 0.81),
+        dark: .init(red: 0.28, green: 0.34, blue: 0.30)
+    )
+    /// What `border` becomes under Increase Contrast: 3:1 against the panel and the app background, the WCAG
+    /// floor for the edge of a control (#1922).
+    public static let borderIncreased = AppDynamicRGB(
+        light: .init(red: 0.46, green: 0.51, blue: 0.46),
+        dark: .init(red: 0.52, green: 0.60, blue: 0.55)
+    )
     public static let dangerBackground = AppDynamicRGB(
         light: .init(red: 0.96, green: 0.88, blue: 0.86),
         dark: .init(red: 0.34, green: 0.15, blue: 0.13)
@@ -96,10 +107,6 @@ public enum AppSemanticColorRGB {
     public static let inputBackground = AppDynamicRGB(
         light: .init(red: 0.98, green: 0.99, blue: 0.97),
         dark: .init(red: 0.10, green: 0.12, blue: 0.11)
-    )
-    public static let border = AppDynamicRGB(
-        light: .init(red: 0.84, green: 0.87, blue: 0.81),
-        dark: .init(red: 0.28, green: 0.34, blue: 0.30)
     )
     public static let green = AppDynamicRGB(
         light: .init(red: 0.13, green: 0.43, blue: 0.30),
@@ -134,7 +141,7 @@ public enum AppSemanticColorRGB {
         ("panel", panel), ("text", text), ("secondaryText", secondaryText), ("primaryAction", primaryAction),
         ("plum", plum), ("evergreen", evergreen), ("onEvergreen", onEvergreen), ("softGreen", softGreen),
         ("dangerText", dangerText), ("dangerBackground", dangerBackground), ("inputBackground", inputBackground),
-        ("border", border), ("green", green), ("accent", accent), ("accentSoft", accentSoft),
+        ("border", border), ("borderIncreased", borderIncreased), ("green", green), ("accent", accent), ("accentSoft", accentSoft),
         ("watchBackground", watchBackground), ("watchControl", watchControl), ("ochre", ochre), ("coral", coral)
     ]
 }
@@ -228,7 +235,7 @@ public enum AppColorContrastAudit {
         .init(name: "playback accent mark on watch control", foreground: AppSemanticColorRGB.accent, background: AppSemanticColorRGB.watchControl, minimumRatio: 3)
     ]
 
-    public static var allPairs: [Pair] { textBackgroundPairs + nonTextPairs }
+    public static var allPairs: [Pair] { textBackgroundPairs + nonTextPairs + increasedContrastEdgePairs }
 
     /// A pair that fails today, in an appearance, with the issue that fixes it. The audit prints these
     /// instead of hiding them, and fails when one starts to pass so the entry gets removed (#1921).
@@ -260,7 +267,6 @@ public enum AppColorContrastAudit {
     ]
 
 
-
     public struct Measurement: Equatable, Sendable {
         public let pair: String
         public let appearance: String
@@ -270,6 +276,13 @@ public enum AppColorContrastAudit {
         public var fails: Bool { ratio + 0.000_001 < minimumRatio }
         public var description: String { "\(pair) [\(appearance)] \(String(format: "%.2f", ratio)):1" }
     }
+
+    /// Edges that must reach 3:1 against their surface under Increase Contrast (#1922).
+    public static let increasedContrastEdgePairs: [Pair] = [
+        .init(name: "increased border on panel", foreground: AppSemanticColorRGB.borderIncreased, background: AppSemanticColorRGB.panel, minimumRatio: 3),
+        .init(name: "increased border on app background", foreground: AppSemanticColorRGB.borderIncreased, background: AppSemanticColorRGB.background, minimumRatio: 3),
+        .init(name: "increased border on soft green", foreground: AppSemanticColorRGB.borderIncreased, background: AppSemanticColorRGB.softGreen, minimumRatio: 3)
+    ]
 
     public static func contrastRatio(foreground: AppColorRGB, background: AppColorRGB) -> Double {
         let lighter = max(foreground.relativeLuminance, background.relativeLuminance)

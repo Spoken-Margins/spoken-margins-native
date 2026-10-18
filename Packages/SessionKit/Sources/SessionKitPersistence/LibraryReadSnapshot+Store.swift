@@ -6,6 +6,7 @@ extension LibraryReadSnapshot {
     public static func read(store: SQLiteSessionStore) throws -> Self {
         try Self(items: store.listItems(includeDeleted: true), sessions: store.loadSessions(),
                  manifests: store.loadPreparedAudioManifests(), jobs: store.loadAudioPreparationJobs(),
-                 downloads: store.loadPodcastDownloads(), structuredDocumentItemIds: store.loadStructuredDocumentItemIds())
+                 downloads: store.loadPodcastDownloads(), structuredDocumentItemIds: store.loadStructuredDocumentItemIds(),
+                 sharedMarginsByItemId: store.loadSharedMarginTallies())
     }
 }

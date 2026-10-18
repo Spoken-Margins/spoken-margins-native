@@ -126,7 +126,7 @@ Once the repo is public, anyone can file an issue, comment, or open a fork PR. T
 | Phone build (`scripts/phone-build`) | Integration reports on #184 | Builds sooner | None | Author filter. |
 | Daily phone plan | Merged PRs and issues | Writes the owner's test plan (Claude, no tools) | No tools | Only merged PRs and owner or collaborator issues, so a stranger can't put a step on his phone plan. |
 | Board sync, sweep, status | Issues and labels | Board fields, labels | None | Low risk; same author filter for any comment it parses. |
-| Cloud daily triage routine | Every new issue | Adds `ready`, starts threads | None | **The widest door.** An outside issue gets `needs-triage`, never `ready`, until the owner or the coordinator reads it. Thread prompts quote issue text as data. |
+| Cloud daily triage routine | Every new issue | Adds `ready`, starts threads | None | **The widest door.** An outside issue gets `needs-triage-review`, never `ready`, until the owner or the coordinator reads it. Thread prompts quote issue text as data. |
 | Hourly dispatch routine | Lane reports, audits, `automerge` PRs | Labels, comments, thread starts | None | Same author filter as the lane. |
 | Mac finisher, Test Desk | `needs-mac` PRs, T4/T5 lane requests (journey scenario text) | Commits to PR branches; drives the simulator | None | Act only on requests from collaborators; scenario text is data. |
 
@@ -167,6 +167,9 @@ Each step is its own PR or owner action. Only step 1 deletes files from this rep
 
 1. **Retire the dead jobs** (no move needed). Done: the owner unloaded the Codex worker and the release cut was not loaded (2026-10-17), and #1853 deleted both jobs' files.
 2. **Make the private scripts location-independent while they are still here:** `SM_REPO` and `SM_OPS_HOME`, plist templates and `install-launchd.py`. Behaviour stays the same, so the 10-minute pull keeps working.
+   - Done (#1844): `scripts/sm_paths.py` (and `sm_paths.sh` for shell scripts) gives `repo()` and `ops_home()`. The scripts in `ops/` (except the retired Codex worker and release cut, and the public audio loopback), `phone-build`, `daily-phone-plan` and `sm_status.py` use it; `sm_sweep.py` reaches the checkout through `sm_status`. `scripts/tests/test_sm_paths.py` pins both the defaults and the settings.
+   - Limits: `ops/power/amph` (AppleScript, untested off the Mac) still writes its hold file under `~/SpokenMarginsOps`, and the integration run's evidence still lands in `artifacts/` of the checkout, so they ignore `SM_OPS_HOME`.
+   - Still open: plist templates and `install-launchd.py` (#1843).
 3. **Add the author filters** in section 3 (PR #1797 for the lane; one PR each for the audit, Dial, integration run, phone build and worker). The routine changes are the owner's or the coordinator's.
 4. **Create `spoken-margins-ops`** (owner's account, owner's tap), carry history over with `git filter-repo`, clone it to `~/SpokenMarginsOps/ops`, and extend the existing 10-minute pull to it.
 5. **Switch jobs one at a time,** lowest risk first: ledger (no job), disk relief, keep-awake, power guard, Dial on the VPS, integration run, phone build and daily plan, and last the audit. For each: render the new plist, `launchctl bootout` the old label, `bootstrap` the new one, and confirm one normal tick in its log before the next. Interval jobs miss at most one tick. The audit goes last and is confirmed by a real audit comment on a real PR, because merges wait on it.

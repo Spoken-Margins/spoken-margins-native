@@ -82,14 +82,27 @@ public enum PublisherNarrationEvidence {
         return post["has_voiceover"] as? Bool == true ? "no_recording_listed" : "no_recording"
     }
 
-    /// `window._preloads` as a dictionary, decoded as data (publisher scripts never run).
+    /// `window._preloads` as a dictionary, decoded as data (publisher scripts never run). Substack has served it two
+    /// ways: as a string literal, `window._preloads = JSON.parse("…")`, and, since October 2026, as a JSON script tag,
+    /// `<script type="application/json" id="preloads-json">{…}</script>`, that an inline script parses (#2024).
     private static func preloads(in html: String) -> [String: Any]? {
-        let pattern = #"window\._preloads\s*=\s*JSON\.parse\((\"(?:\\.|[^\"\\])*\")\)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
+        let json: Data
+        if let literal = firstCapture(#"window\._preloads\s*=\s*JSON\.parse\((\"(?:\\.|[^\"\\])*\")\)"#, in: html),
+           let decoded = try? JSONDecoder().decode(String.self, from: Data(literal.utf8)) {
+            json = Data(decoded.utf8)
+        } else if let tag = firstCapture(#"<script\b[^>]*\bid\s*=\s*(["']?)preloads-json\1(?=[\s/>])[^>]*>([\s\S]*?)</script\s*>"#, group: 2, in: html) {
+            json = Data(tag.utf8)
+        } else {
+            return nil
+        }
+        return try? JSONSerialization.jsonObject(with: json) as? [String: Any]
+    }
+
+    private static func firstCapture(_ pattern: String, group: Int = 1, in html: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
               let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..<html.endIndex, in: html)),
-              let range = Range(match.range(at: 1), in: html),
-              let json = try? JSONDecoder().decode(String.self, from: Data(html[range].utf8)) else { return nil }
-        return try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+              let range = Range(match.range(at: group), in: html) else { return nil }
+        return String(html[range])
     }
 
     private static func post(inPostPage html: String) -> [String: Any]? {
@@ -156,7 +169,7 @@ public enum PublisherNarrationEvidence {
     /// Whether a page the link resolver already read declares Substack's `_preloads`, so it can be read for a
     /// voiceover whatever its address. Reading costs no request.
     public static func declaresPreloads(_ page: Data) -> Bool {
-        page.range(of: Data("window._preloads".utf8)) != nil
+        page.range(of: Data("window._preloads".utf8)) != nil || page.range(of: Data("preloads-json".utf8)) != nil
     }
 
     /// `/p/<slug>`, with an optional trailing slash: Substack's post path on every publication's domain.
