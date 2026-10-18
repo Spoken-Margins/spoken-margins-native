@@ -19,6 +19,14 @@ import PDFKit
 
 /// Library bootstrap and launch seeding (#1020).
 extension Gate1AppModel {
+    /// Try again on the "this version can't open your Library" note (#1969). A half-finished open can leave a store
+    /// behind that the bootstrap guard would trust, so this forgets it and opens again. Nothing is reset or deleted.
+    func retryLibraryOpen() {
+        guard libraryAccessError != nil else { return }
+        store = nil
+        bootstrapLibraryIfNeeded()
+    }
+
     func bootstrapLibraryIfNeeded() {
         guard pendingUITestingSeed != nil || (libraryItems.isEmpty && store == nil) else { return }
         SessionShareFiles.removeLeftovers() // files of a multi-session share whose sheet died with the app (#1528)

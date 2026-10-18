@@ -291,5 +291,55 @@ class DeliveryTests(unittest.TestCase):
                 module.propose(self.items, {}, folder)
 
 
+class WriterOutputTests(unittest.TestCase):
+    def test_plan_json_is_read_with_or_without_a_markdown_fence(self):
+        plan = {'checks': [{'issues': [1]}], 'blocked': []}
+        body = json.dumps(plan)
+        for text in (body, '```json\n' + body + '\n```', '```\n' + body + '\n```',
+                     '  ```json\n' + body + '\n```  \n', '\n' + body + '\n'):
+            with self.subTest(text=text[:12]):
+                self.assertEqual(daily.writer_plan(text), plan)
+
+    def test_text_that_is_not_json_still_fails(self):
+        for text in ('', 'Here is the plan:', '```json\nnot json\n```'):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                daily.writer_plan(text)
+
+    def test_writer_uses_the_keychain_token_and_never_an_api_key(self):
+        found = subprocess.CompletedProcess([], 0, stdout='token-from-keychain\n', stderr='')
+        with patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'sk-x'}, clear=False), \
+                patch.object(daily.subprocess, 'run', return_value=found) as run:
+            os.environ.pop('CLAUDE_CODE_OAUTH_TOKEN', None)
+            env = daily.writer_env()
+        self.assertEqual(env['CLAUDE_CODE_OAUTH_TOKEN'], 'token-from-keychain')
+        self.assertNotIn('ANTHROPIC_API_KEY', env)
+        self.assertIn('claude-code-oauth', run.call_args.args[0])
+
+    def test_an_existing_token_is_kept_without_reading_the_keychain(self):
+        with patch.dict(os.environ, {'CLAUDE_CODE_OAUTH_TOKEN': 'already'}, clear=False), \
+                patch.object(daily.subprocess, 'run') as run:
+            env = daily.writer_env()
+        self.assertEqual(env['CLAUDE_CODE_OAUTH_TOKEN'], 'already')
+        run.assert_not_called()
+
+
+class OmittedIssueTests(unittest.TestCase):
+    def test_an_issue_the_writer_left_out_is_blocked_not_checked(self):
+        items = [{'number': 1, 'blocked': ''}, {'number': 2, 'blocked': ''},
+                 {'number': 3, 'blocked': ''}, {'number': 4, 'blocked': 'Fix was reverted.'}]
+        proposal = {'checks': [{'issues': [1]}], 'blocked': [{'issue': 2, 'reason': 'No check.'}]}
+        daily.add_omitted(proposal, items)
+        self.assertEqual(proposal['checks'], [{'issues': [1]}])
+        self.assertEqual(proposal['blocked'], [{'issue': 2, 'reason': 'No check.'},
+                                               {'issue': 3, 'reason': daily.OMITTED},
+                                               {'issue': 4, 'reason': 'Fix was reverted.'}])
+
+    def test_a_complete_plan_is_unchanged(self):
+        items = [{'number': 1, 'blocked': ''}, {'number': 2, 'blocked': ''}]
+        proposal = {'checks': [{'issues': [1, 2]}], 'blocked': []}
+        daily.add_omitted(proposal, items)
+        self.assertEqual(proposal, {'checks': [{'issues': [1, 2]}], 'blocked': []})
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -23,11 +23,6 @@ struct ObsidianImportRequest: Sendable {
     let itemId: String
 }
 
-struct ObsidianImportBatch: Sendable {
-    let prepared: [PreparedObsidianImport]
-    let failures: [String]
-}
-
 @MainActor
 final class Gate1AppModel: ObservableObject {
     static let welcomeSampleItemId = "item-spoken-margins-overview"
@@ -1948,9 +1943,7 @@ final class Gate1AppModel: ObservableObject {
 
     func resetLibraryFilters() {
         // Preserve the search and sort while restoring the everyday view.
-        libraryQuery.contentType = .all
-        libraryQuery.listeningState = .unfinished
-        libraryQuery.offlineState = .all
+        libraryQuery.resetFilters()
         libraryQueryChanged()
     }
 

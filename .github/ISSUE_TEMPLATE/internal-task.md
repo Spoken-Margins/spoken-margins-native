@@ -1,8 +1,9 @@
 ---
-name: Agent task
-about: A piece of work any session can pick up and prove done
-labels: ready
+name: Internal task
+about: For the owner and collaborators only. A piece of work any session can pick up and prove done
 ---
+
+_For the owner and collaborators. If you are not one, please use "Report a bug" or "Suggest an idea" instead. This template carries no labels: a collaborator adds `ready` by hand once every field below is filled in._
 
 **Outcome.** What changes for the listener, in one or two sentences.
 
