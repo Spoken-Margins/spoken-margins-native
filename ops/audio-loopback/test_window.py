@@ -13,6 +13,7 @@ import window
 from test_loopback import RATE, speech
 
 TONE = [0.5 * math.sin(2 * math.pi * 1000 * i / RATE) for i in range(int(0.3 * RATE))]
+FAKE_APP = Path('/nonexistent/SpokenMarginsLaneRecorder.app')
 
 
 class FakeRecorder:
@@ -23,8 +24,8 @@ class FakeRecorder:
         self.lines, self.stopped = ['loopback: recording BlackHole 2ch'], False
         self.started = threading.Event()
 
-    def __call__(self, wav, seconds):
-        self.wav, self.seconds = wav, seconds
+    def __call__(self, wav, seconds, app=None):
+        self.wav, self.seconds, self.app = wav, seconds, app
         return self
 
     def start(self):
@@ -56,7 +57,7 @@ class WindowTests(unittest.TestCase):
     def run_window(self, samples, raw=None, check=None, **kwargs):
         recorder = kwargs.pop('recorder', FakeRecorder(samples))
         options = dict(recorder_factory=recorder, pilot=lambda tone: None, lock=no_lock,
-                       device_present=lambda: True, clock=lambda: 100.0)
+                       device_present=lambda: True, clock=lambda: 100.0, recorder_app=lambda: FAKE_APP)
         if check:
             options['check'] = check
         options.update(kwargs)
@@ -85,7 +86,7 @@ class WindowTests(unittest.TestCase):
     def test_digital_silence_without_the_pilot_is_unavailable(self):
         result, _ = self.run_window([0.0] * (5 * RATE), {'seconds': 5, 'min_sound': 2})
         self.assertEqual(result['verdict'], 'UNAVAILABLE')
-        self.assertIn('microphone access', result['reason'])
+        self.assertIn('microphone access', result['reason'].lower())
 
     def test_words_that_could_not_be_checked_are_unavailable_not_a_pass(self):
         def check(path, expected, **options):
@@ -153,7 +154,7 @@ class LockTests(unittest.TestCase):
         with window.audio_lock('another lane test'):
             result = window.run_window(folder, 'w', {'seconds': 5, 'lock_wait': 0},
                                        recorder_factory=FakeRecorder(TONE), pilot=lambda tone: None,
-                                       device_present=lambda: True)
+                                       device_present=lambda: True, recorder_app=lambda: FAKE_APP)
         self.assertEqual(result['verdict'], 'UNAVAILABLE')
         self.assertIn('another audio window', result['reason'])
 

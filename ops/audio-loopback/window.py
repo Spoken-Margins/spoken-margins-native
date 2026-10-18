@@ -10,17 +10,22 @@ through files in that folder (the Simulator writes straight to the Mac's disk):
 3. The server takes the Mac-wide audio lock (one window at a time, like the simulator slot), makes BlackHole
    the default output through `loopback route` (which always puts the old one back), starts recording, and
    plays a short pilot tone straight to BlackHole. When the recorder runs it writes `<id>.recording`.
+   The recorder, and the transcriber, run as SpokenMarginsLaneRecorder.app, started through LaunchServices, so
+   macOS charges Microphone and Speech Recognition to that app, which the owner allowed once, and not to the
+   runner's node, which it refuses without asking (README, The recorder app).
 4. The test plays its item. The Simulator's audio follows the Mac's default output, so it lands in BlackHole.
 5. When the window ends the default output is restored and the lock released. The server cuts the pilot off,
    runs loopback.py's check on the rest, and writes `<id>.result.json`.
 
 The verdict is PASS, FAIL (the audio broke an expectation: the app's fault) or UNAVAILABLE (the lane couldn't
 listen: no BlackHole, the lock stayed busy, the recorder heard digital silence, so not even the pilot tone, or
-the words couldn't be transcribed). A test skips on UNAVAILABLE, which the lane reports as INCONCLUSIVE.
+the words couldn't be transcribed, or the recorder app isn't installed or allowed). A test skips on
+UNAVAILABLE, which the lane reports as INCONCLUSIVE.
 """
 import argparse
 import contextlib
 import datetime
+import functools
 import fcntl
 import json
 import math
@@ -120,14 +125,23 @@ def parse_request(raw):
     return float(seconds), expected, min(float(lock_wait), LOCK_WAIT), options
 
 
-class Recorder:
-    """`loopback route --to BlackHole -- loopback record …`: route restores the old default output however
-    record ends, and a route killed with -9 is undone by the next route or `loopback restore`."""
+def recorder_command(binary, app, wav, seconds, device=DEVICE, python=sys.executable):
+    """`loopback route --to BlackHole -- loopback.py app-run … -- record …`. route needs no permission, so it runs
+    here; record runs as the recorder app. app-run waits for the app, passes its stderr through, and copies the
+    recording and the app's own log (`<wav>.recorder.log`) back into the evidence folder."""
+    wav = Path(wav)
+    return [binary, 'route', '--to', device, '--', python, str(Path(loopback.__file__).resolve()), 'app-run',
+            '--app', str(app), '--timeout', str(round(seconds * 2 + 20)),
+            '--collect', f'recording.wav={wav}', '--collect', f'stderr={wav.with_suffix(".recorder.log")}',
+            '--', 'record', '--device', device, '--seconds', str(seconds), '--out', '{job}/recording.wav']
 
-    def __init__(self, wav, seconds, device=DEVICE, binary=None):
-        binary = binary or loopback.tool()
-        self.command = [binary, 'route', '--to', device, '--', binary, 'record', '--device', device,
-                        '--seconds', str(seconds), '--out', str(wav)]
+
+class Recorder:
+    """`loopback route --to BlackHole -- (the recorder app) record …`: route restores the old default output
+    however record ends, and a route killed with -9 is undone by the next route or `loopback restore`."""
+
+    def __init__(self, wav, seconds, app, device=DEVICE, binary=None):
+        self.command = recorder_command(binary or loopback.tool(), app, wav, seconds, device)
         self.lines = []
         self.started = threading.Event()
         self.process = None
@@ -142,6 +156,9 @@ class Recorder:
             self.lines.append(line.rstrip())
             if line.startswith('loopback: recording '):
                 self.started.set()
+        # Ended without recording (the app wasn't allowed Microphone, say): let the caller read the exit status
+        # now rather than wait out START_TIMEOUT.
+        self.started.set()
 
     def wait(self, timeout):
         try:
@@ -201,7 +218,7 @@ def unavailable(reason, **extra):
 
 
 def run_window(folder, request_id, raw, recorder_factory=Recorder, pilot=play_pilot, check=loopback.check_recording,
-               lock=audio_lock, device_present=None, clock=time.monotonic):
+               lock=audio_lock, device_present=None, clock=time.monotonic, recorder_app=loopback.installed_app):
     """One window, start to verdict. Never raises for a bad request or a missing device: it answers instead."""
     folder = Path(folder)
     try:
@@ -211,12 +228,26 @@ def run_window(folder, request_id, raw, recorder_factory=Recorder, pilot=play_pi
     present = device_present() if device_present else device_listed()
     if not present:
         return unavailable(f'{DEVICE} is not installed on this Mac (ops/audio-loopback/README.md, Installing)')
+    app = recorder_app()
+    if not app:
+        return unavailable(f'the recorder app is not installed at {loopback.app_path()}: the owner runs '
+                           'ops/audio-loopback/setup-recorder-app.sh once at the Mac (README, The recorder app)')
+    result = listen(folder, request_id, seconds, expected, lock_wait, options, app, recorder_factory, pilot, check,
+                    lock, clock)
+    if result['verdict'] == 'UNAVAILABLE' and loopback.app_is_stale(app):
+        result['reason'] += ('. The installed recorder app was built from an older loopback.swift: '
+                             'rerun ops/audio-loopback/setup-recorder-app.sh')
+    return result
+
+
+def listen(folder, request_id, seconds, expected, lock_wait, options, app, recorder_factory, pilot, check, lock,
+           clock):
     wav, app_wav, tone = (folder / f'{request_id}.wav', folder / f'{request_id}.app.wav', folder / 'pilot.wav')
     pilot_tone(tone)
     try:
         with lock(f'audio window {request_id} (pid {os.getpid()})', max_wait=lock_wait):
             # Pilot plus the test's window, plus a margin for the request and the result to cross.
-            recorder = recorder_factory(wav, seconds + PILOT_SECONDS + PILOT_GUARD + 1.0).start()
+            recorder = recorder_factory(wav, seconds + PILOT_SECONDS + PILOT_GUARD + 1.0, app).start()
             try:
                 if not recorder.started.wait(START_TIMEOUT):
                     recorder.stop()
@@ -234,11 +265,14 @@ def run_window(folder, request_id, raw, recorder_factory=Recorder, pilot=play_pi
                 return unavailable(f'the recorder exited {status}: ' + ' / '.join(recorder.lines[-3:]))
     except TimeoutError as error:
         return unavailable(str(error))
+    if not wav.exists():
+        return unavailable('the recorder app reported success but wrote no recording')
     if not trim(wav, offset, app_wav):
         return unavailable('the recorder heard digital silence, not even the pilot tone played straight to '
-                           f'{DEVICE}: the process running the lane may lack microphone access (README, Permissions)',
+                           f'{DEVICE}: the recorder app may lack Microphone access (README, The recorder app)',
                            wav=str(wav))
-    report = check(app_wav, expected, **options)
+    # The words are transcribed by the recorder app too: it holds the Speech Recognition permission.
+    report = check(app_wav, expected, run=functools.partial(loopback.transcribe_file, app=app), **options)
     result = {'verdict': report['verdict'], 'report': report, 'wav': str(app_wav)}
     if report['problems'] and all(p.startswith('could not check the words') for p in report['problems']):
         result = unavailable(report['problems'][0], report=report, wav=str(app_wav))
