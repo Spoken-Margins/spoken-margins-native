@@ -1708,7 +1708,7 @@ private struct GuidedOnboardingPlaybackCard: View {
             Text("Practice making a Margin")
                 .font(.title3.bold())
                 .screenTitle()
-            Text("Let the welcome source play until an idea occurs to you, then record a short note. Spoken Margins will anchor it to this listening session.")
+            Text("Let the welcome source play until an idea occurs to you, then record a short note. Spoken Margins will keep it with this listening session.")
                 .foregroundStyle(AppColors.secondaryText)
             if model.snapshot.isRecording {
                 Button("Done Recording", action: model.finishInterjection)
