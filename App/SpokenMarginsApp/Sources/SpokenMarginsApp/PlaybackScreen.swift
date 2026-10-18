@@ -1982,8 +1982,8 @@ private struct TimelineInterjectionRow: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                // The label names the action, which already says the state; a value would read it twice.
                 .accessibilityLabel(isStarred ? "Remove sharing star" : "Star Margin for sharing")
-                .accessibilityValue(isStarred ? "Starred" : "Not starred")
                 .accessibilityIdentifier("timeline.interjection.star.\(interjectionID)")
             }
         }

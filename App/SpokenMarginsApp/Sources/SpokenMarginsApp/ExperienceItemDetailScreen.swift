@@ -575,8 +575,10 @@ struct ExperienceItemDetailScreen: View {
                         ProgressView(value: progress)
                             .tint(readinessColor)
                             .frame(width: 72)
+                            .accessibilityLabel("Download progress")
                     } else {
                         ProgressView()
+                            .accessibilityLabel("Downloading")
                             .tint(readinessColor)
                     }
                 case .availableOffline, .none:

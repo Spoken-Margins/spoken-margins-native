@@ -218,6 +218,7 @@ struct ExperienceMarginsScreen: View {
                                 Image(systemName: "chevron.right")
                                     .font(.caption.weight(.bold))
                                     .foregroundStyle(AppColors.secondaryText)
+                                    .accessibilityHidden(true)
                             }
                             .padding(.vertical, 12)
                             .frame(maxWidth: .infinity, alignment: .leading)

@@ -118,6 +118,7 @@ struct ExperienceSourcesScreen: View {
             HStack(spacing: 10) {
                 Image(systemName: "dot.radiowaves.left.and.right")
                     .foregroundStyle(AppColors.evergreen)
+                    .accessibilityHidden(true)
                 Text(manageFeedsTitle)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppColors.text)
@@ -125,6 +126,7 @@ struct ExperienceSourcesScreen: View {
                 Image(systemName: "chevron.right")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppColors.secondaryText)
+                    .accessibilityHidden(true)
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .contentShape(Rectangle())
@@ -807,6 +809,7 @@ private struct SourceInboxRow: View {
                 .foregroundStyle(AppColors.evergreen)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(AppColors.softGreen)
+                .accessibilityHidden(true)
         case .initial(let letter):
             Text(letter)
                 .font(.title2.weight(.semibold))
