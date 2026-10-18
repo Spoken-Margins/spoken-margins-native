@@ -9,6 +9,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -149,6 +150,22 @@ class PortableStepTable(unittest.TestCase):
             failing = subprocess.run([sys.executable, '-c', verification.PORTABLE_RUNNER_LOADER, 'test_apple.'],
                                      cwd=temporary, capture_output=True, text=True)
             self.assertNotEqual(failing.returncode, 0)  # a test that is not listed still fails the step
+
+
+class SupertonicModelSkips(unittest.TestCase):
+    """#1820: the package step allows exactly the tests that read Supertonic's downloaded model to skip."""
+
+    def test_the_allowed_skips_are_exactly_the_tests_that_read_the_model(self):
+        tests = ROOT / 'Packages/SessionKit/Tests/SessionKitTests'
+        readers = set()
+        for path in tests.glob('*.swift'):
+            text = path.read_text()
+            for match in re.finditer(r'func (test\w+)\(\)[^{]*\{', text):
+                body = text[match.end():text.find('\n    }\n', match.end())]
+                if 'SupertonicTestModel.assets()' in body:
+                    readers.add(f'SessionKitTests/{path.stem}/{match.group(1)}')
+        self.assertTrue(readers)
+        self.assertEqual(readers, set(verification.SUPERTONIC_MODEL_TESTS))
 
 
 class LfsPointerCheck(unittest.TestCase):

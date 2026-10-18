@@ -533,6 +533,19 @@ POCKET_WEIGHT_TESTS = frozenset(f'SessionKitTests/PocketRendererTests/{test}' fo
 ))
 
 
+# Supertonic's render tests need its model, which is a download since #1820, in neither the repository nor the app.
+# Without `scripts/voice-catalog fetch supertonic-3-int8` (or SESSIONKIT_SUPERTONIC_DIR) they skip, naming the
+# supertonicModel input; SM_REQUIRE_MODELS makes them fail instead.
+SUPERTONIC_MODEL_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
+    'SupertonicChunkingTests/testNumberHeavyTableSpanRendersNoChunkNearTheBabbleLength',
+    'SupertonicChunkingTests/testSystemVoiceReadsAFlaggedChunkInSupertonicsFormat',
+    'SupertonicNarrationTests/testDiscardDeletesOnlyAudioTheRendererGenerated',
+    'SupertonicNarrationTests/testRealRenderComesBackTrimmedToItsSpeech',
+    'SupertonicNarrationTests/testRealRendersArePacedByWhoAskedNotBySharedState',
+    'SupertonicVoiceSelectionTests/testJamesAndLilyReadTheSameSentenceInTheirOwnAudibleVoices',
+))
+
+
 def in_codex_sandbox():
     return bool(os.environ.get('CODEX_SANDBOX'))
 
@@ -1157,7 +1170,7 @@ class Run:
                          timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
                          expected=expected - core if split else expected, tests=True,
                          allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus',
-                                        *POCKET_WEIGHT_TESTS},
+                                        *POCKET_WEIGHT_TESTS, *SUPERTONIC_MODEL_TESTS},
                          probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
         except RuntimeError as error:
             step = self.manifest['steps'][-1]
