@@ -94,6 +94,7 @@ extension Gate1AppModel {
             reportFailure("This isn't a Spoken Margins share link.")
             return
         }
+        withdrawRetryOffer("shareLink:\(link.id)")
         diagnostics["lastShareLink"] = link.key == nil ? "opening:no_key" : "opening"
         shareLinkOpener.open(
             link,
@@ -102,9 +103,12 @@ extension Gate1AppModel {
                 let opened = self.stageSpokenMarginsPackageImport(from: file)
                 self.diagnostics["lastShareLink"] = opened ? "opened" : "rejected"
             },
-            fail: { [weak self] message in
+            fail: { [weak self] message, retryable in
                 self?.diagnostics["lastShareLink"] = "failed"
-                self?.reportFailure(message)
+                let retry: UserFeedbackEvent.Retry? = retryable
+                    ? .init(key: "shareLink:\(link.id)") { [weak self] in self?.openShareLink(url) }
+                    : nil
+                self?.reportFailure(message, retry: retry)
             }
         )
     }

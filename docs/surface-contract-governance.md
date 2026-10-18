@@ -8,7 +8,7 @@ Surface contracts describe what a UI surface may display, command, or delegate. 
 - Snapshot fields: `validation/contracts/snapshot-fields.json`
 - Delegation modes: `validation/contracts/delegation-modes.json`
 - Surface contract shape: `schemas/surface-contract.schema.json`
-- Trace shape: `schemas/session-trace.schema.json`
+- Trace shape: `Contracts/schemas/session-trace.schema.json`
 - Fixture/schema validation: `scripts/validate-contracts.py`
 - Surface reference validation: `scripts/validate-surface-contracts.py`
 

@@ -27,22 +27,22 @@ struct Gate1RootView: View {
             } else {
                 switch model.screen {
                 case .home:
-                    ExperienceRootTabs(navigation: $navigation, showsMiniPlayer: !keyboardIsPresented && model.shouldShowMiniPlayer)
+                    ExperienceRootTabs(navigation: $navigation, showsMiniPlayer: !keyboardIsPresented && model.shouldShowMiniPlayer).announcesScreenChange()
                 case .item:
                     ExperienceItemDetailScreen()
                 case .playback:
                     PlaybackScreen()
                 case .timeline:
-                    ExperienceTimelineRailScreen()
+                    ExperienceTimelineRailScreen().announcesScreenChange()
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 case .settings:
-                    SettingsScreen()
+                    SettingsScreen().announcesScreenChange()
                 case .offlineStorage:
-                    ExperienceStorageScreen()
+                    ExperienceStorageScreen().announcesScreenChange()
                 case .export:
-                    ExportScreen()
+                    ExportScreen().announcesScreenChange()
                 case .batchExport:
-                    BatchExportScreen()
+                    BatchExportScreen().announcesScreenChange()
                 }
             }
         }
@@ -653,17 +653,17 @@ enum AppColors {
     static let listeningAccent = dynamicColor(AppSemanticColorRGB.listeningAccent)
     static let background = dynamicColor(AppSemanticColorRGB.background)
     static let panel = dynamicColor(AppSemanticColorRGB.panel)
-    static let inputBackground = dynamicColor(light: (0.98, 0.99, 0.97), dark: (0.10, 0.12, 0.11))
+    static let inputBackground = dynamicColor(AppSemanticColorRGB.inputBackground)
     static let border = contrastAware(AppSemanticColorRGB.border, increased: AppSemanticColorRGB.borderIncreased)
     static let text = dynamicColor(AppSemanticColorRGB.text)
     static let secondaryText = dynamicColor(AppSemanticColorRGB.secondaryText)
-    static let green = dynamicColor(light: (0.13, 0.43, 0.30), dark: (0.50, 0.84, 0.62))
+    static let green = dynamicColor(AppSemanticColorRGB.green)
     static let primaryAction = dynamicColor(AppSemanticColorRGB.primaryAction)
     static let softGreen = dynamicColor(AppSemanticColorRGB.softGreen)
-    static let accent = dynamicColor(light: (0.48, 0.82, 0.59), dark: (0.56, 0.89, 0.67))
-    static let accentSoft = dynamicColor(light: (0.67, 0.91, 0.72), dark: (0.25, 0.39, 0.28))
-    static let watchBackground = Color(red: 0.09, green: 0.13, blue: 0.11)
-    static let watchControl = Color(red: 0.18, green: 0.24, blue: 0.21)
+    static let accent = dynamicColor(AppSemanticColorRGB.accent)
+    static let accentSoft = dynamicColor(AppSemanticColorRGB.accentSoft)
+    static let watchBackground = dynamicColor(AppSemanticColorRGB.watchBackground)
+    static let watchControl = dynamicColor(AppSemanticColorRGB.watchControl)
     static let watchSecondary = dynamicColor(AppSemanticColorRGB.listeningSecondary)
     static let dangerText = dynamicColor(AppSemanticColorRGB.dangerText)
     static let dangerBackground = dynamicColor(AppSemanticColorRGB.dangerBackground)
@@ -671,20 +671,9 @@ enum AppColors {
     static let bone = dynamicColor(AppSemanticColorRGB.bone)
     static let evergreen = dynamicColor(AppSemanticColorRGB.evergreen)
     static let onEvergreen = dynamicColor(AppSemanticColorRGB.onEvergreen)
-    static let ochre = dynamicColor(light: (0.76, 0.52, 0.16), dark: (0.94, 0.72, 0.32))
-    static let coral = dynamicColor(light: (0.70, 0.27, 0.20), dark: (1.00, 0.57, 0.48))
+    static let ochre = dynamicColor(AppSemanticColorRGB.ochre)
+    static let coral = dynamicColor(AppSemanticColorRGB.coral)
     static let plum = dynamicColor(AppSemanticColorRGB.plum)
-
-    private static func dynamicColor(light: (Double, Double, Double), dark: (Double, Double, Double)) -> Color {
-        #if canImport(UIKit)
-        return Color(UIColor { traits in
-            let values = traits.userInterfaceStyle == .dark ? dark : light
-            return UIColor(red: values.0, green: values.1, blue: values.2, alpha: 1)
-        })
-        #else
-        return Color(red: light.0, green: light.1, blue: light.2)
-        #endif
-    }
 
     private static func dynamicColor(_ colors: AppDynamicRGB) -> Color {
         #if canImport(UIKit)

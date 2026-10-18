@@ -229,19 +229,24 @@ struct ExperienceMarginsScreen: View {
                         // The star on the row is a picture; the listener hears it as the row's value.
                         .accessibilityValue(row.interjection.isStarredForSharing == true ? "Starred for sharing" : "")
                         .accessibilityIdentifier("margins.row.\(row.id)")
-                        .contextMenu {
-                            Button("Play this moment", systemImage: "play.fill") { _ = model.playMarginMoment(row) }
-                            Button("Copy with Context", systemImage: "doc.on.doc") { model.copyInterjectionWithContext(row.interjection) }
-                            Button(row.interjection.isStarredForSharing == true ? "Unstar" : "Star", systemImage: "star") {
-                                model.setInterjectionStarredForSharing(row.interjection.id, sessionId: row.interjection.sessionId, starred: row.interjection.isStarredForSharing != true)
-                            }
-                        }
+                        .contextMenu { ownMarginActions(row) }
+                        // The same actions for VoiceOver and Switch Control, which can't long-press (#1917).
+                        .accessibilityActions { ownMarginActions(row) }
                         .overlay(alignment: .bottom) {
                             Rectangle().fill(AppColors.border.opacity(0.75)).frame(height: 1)
                         }
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func ownMarginActions(_ row: MarginRow) -> some View {
+        Button("Play this moment", systemImage: "play.fill") { _ = model.playMarginMoment(row) }
+        Button("Copy with Context", systemImage: "doc.on.doc") { model.copyInterjectionWithContext(row.interjection) }
+        Button(row.interjection.isStarredForSharing == true ? "Unstar" : "Star", systemImage: "star") {
+            model.setInterjectionStarredForSharing(row.interjection.id, sessionId: row.interjection.sessionId, starred: row.interjection.isStarredForSharing != true)
         }
     }
 

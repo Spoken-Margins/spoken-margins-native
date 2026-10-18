@@ -538,9 +538,16 @@ private struct ExperienceLibraryCompactRow: View {
                 Button("Mark Unfinished", action: onMarkUnfinished)
             }
         }
-        .accessibilityAction(named: "Prepare Offline", onPrepareOffline)
-        .accessibilityAction(named: "Add to Collection", onAddToCollection)
-        .accessibilityAction(named: "Move to Recently Deleted", onDelete)
+        // The same guards as the context menu and swipe actions above (#1917).
+        .accessibilityActions {
+            if row.offlineState != .readyOffline {
+                Button("Prepare Offline", action: onPrepareOffline)
+            }
+            Button("Add to Collection", action: onAddToCollection)
+            if row.canDelete {
+                Button("Move to Recently Deleted", action: onDelete)
+            }
+        }
     }
 
     private var detail: LibraryRowDetail {

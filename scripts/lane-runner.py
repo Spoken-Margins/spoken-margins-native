@@ -58,6 +58,11 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   then merges without repeating them unless next has since moved in ways that matter (untested_moves).
   Anywhere else, or with no room to build, the automerge run skips its checks and reports itself held
   straight away, and the T3 PASS's lane job runs them before it merges.
+- Hosted fast checks (#1389), only with the LANE_HOSTED_FAST repository variable `on` (a rollout guard for going
+  public): when both hosted-portable.yml jobs passed on the PR's head and recorded a merge tree that matches this
+  head merged onto the next they tested, and next's commits since can't matter (untested_moves), the automerge
+  run takes them for the portable steps and SessionKitCoreTests and runs only --plan fast-mac-rest on the Mac.
+  Anything short of that, and with the variable unset, it runs the whole --plan fast as before.
   When those checks have to run (none passed, or next has since moved in ways that matter), the lane job on the
   simulator runner doesn't run them itself (#1209): it dispatches lane.yml's release job (workflow_dispatch, which
   unlike a label starts a run from the workflow's token), posts a note, and moves on to the next T3. The release
@@ -127,6 +132,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -686,9 +692,20 @@ def run_fast(evidence: Path, runner=run_bounded, changed: list[str] | None = Non
 
     changed: the PR's changed paths, so the plan can leave out the lane's own Python tests when nothing they
     read changed (#862). Without it every step runs."""
+    return run_host_plan('fast', evidence, runner, changed)
+
+
+@ledger_step('host tests (Mac rest)', fast_manifest)
+def run_mac_rest(evidence: Path, runner=run_bounded, changed: list[str] | None = None) -> tuple[str, list[str]]:
+    """--plan fast-mac-rest (#1389): the host tests the hosted fast checks don't run, when they stand
+    (hosted_fast_checks). Its own ledger step, so the ledger shows what the Mac still spends per PR."""
+    return run_host_plan('fast-mac-rest', evidence, runner, changed)
+
+
+def run_host_plan(plan: str, evidence: Path, runner, changed: list[str] | None) -> tuple[str, list[str]]:
     python = ROOT / '.venv/bin/python'
     output, log_path = evidence / 'fast', evidence / 'verify-fast.log'
-    command = [str(python if python.exists() else sys.executable), 'scripts/verify-tests.py', '--plan', 'fast',
+    command = [str(python if python.exists() else sys.executable), 'scripts/verify-tests.py', '--plan', plan,
                '--output', str(output)]
     if changed:
         changed_file = evidence / 'changed-files.txt'
@@ -697,18 +714,18 @@ def run_fast(evidence: Path, runner=run_bounded, changed: list[str] | None = Non
     with log_path.open('w') as log:
         code = runner(command, log, FAST_TIMEOUT)
     if code is None:
-        return 'INCONCLUSIVE', [f'host tests (--plan fast) — no result after {duration(FAST_TIMEOUT)}; interrupted. '
+        return 'INCONCLUSIVE', [f'host tests (--plan {plan}) — no result after {duration(FAST_TIMEOUT)}; interrupted. '
                                 f'evidence: {log_path}']
     manifest = _read_manifest(output)
     if manifest.get('lane_fault'):  # #909: the Mac, not the PR (its lid is closed, so there is no sound output)
-        return 'INCONCLUSIVE', [f'host tests (--plan fast) — lane fault: {manifest["lane_fault"]}. Ask the owner to open '
+        return 'INCONCLUSIVE', [f'host tests (--plan {plan}) — lane fault: {manifest["lane_fault"]}. Ask the owner to open '
                                 f'the lid or connect an audio output, then re-run. evidence: {log_path}']
     if code == 0 and manifest.get('status') == 'verified':
         # A suite the Mac could not run (no `go`, say) passed nothing: the report says so (#1033).
         return 'PASS', [f'{step["name"]} skipped: {reason}' for step in manifest.get('steps', [])
                         if isinstance(step.get('skipped'), list) for reason in step['skipped']] + [
                         str(note) for note in manifest.get('notes', [])]
-    return 'FAIL', [f'host tests (--plan fast) — expected: verified. observed: exit {code}. evidence: {log_path}',
+    return 'FAIL', [f'host tests (--plan {plan}) — expected: verified. observed: exit {code}. evidence: {log_path}',
                     *[f'  {line}' for line in first_errors(log_path)]]
 
 
@@ -757,10 +774,14 @@ def run_ops(evidence: Path, runner=run_bounded) -> tuple[str, list[str]]:
 
 def run_automerge(scope: dict, evidence: Path, fast=run_fast,
                   ratchet=lambda: [], changed=lambda: None, recheck=None,
-                  hosted: bool = False) -> tuple[str, str, str, list[str]]:
+                  hosted: bool = False, hosted_fast: dict | None = None,
+                  mac_rest=run_mac_rest) -> tuple[str, str, str, list[str]]:
     """Returns verdict, where, ran, details for the checks the PR's diff needs: the hot-file ratchet, then
     --plan fast unless the diff is T0, or only ops folder tests in hosted mode.
     Never an app build (NO_APP_BUILD_PER_PR).
+
+    hosted_fast: the hosted fast checks that stand for this merge (hosted_fast_checks, #1389); then the Mac runs
+    only --plan fast-mac-rest instead of --plan fast.
 
     recheck(evidence, details): what a FAIL of the host tests becomes once their failing tests have been
     re-run on plain next (#1204); None leaves the FAIL as it is."""
@@ -778,16 +799,126 @@ def run_automerge(scope: dict, evidence: Path, fast=run_fast,
     if hosted:
         verdict, more = run_ops(evidence)
         return verdict, 'VPS runner', 'ops folder tests: ' + verdict.lower(), details + more
-    verdict, more = fast(evidence, changed=changed())
+    if hosted_fast:
+        label = hosted_fast_ran(hosted_fast)
+        details += hosted_fast_lines(hosted_fast)
+        verdict, more = mac_rest(evidence, changed=changed())
+    else:
+        label = 'host tests (--plan fast)'
+        verdict, more = fast(evidence, changed=changed())
     if verdict == 'FAIL' and recheck:
         verdict, more = recheck(evidence, more)
     details += more
     if verdict != 'PASS':
-        return verdict, 'host only', 'host tests (--plan fast): ' + verdict.lower(), details
+        return verdict, 'host only', f'{label}: ' + verdict.lower(), details
     if tier == 1:
-        return 'PASS', 'host only', 'host tests (--plan fast): passed', details + [
+        return 'PASS', 'host only', f'{label}: passed', details + [
             'no app build: nothing in the diff reaches the app (T1)']
-    return 'PASS', 'host only', 'host tests (--plan fast): passed', details + [NO_APP_BUILD_PER_PR]
+    return 'PASS', 'host only', f'{label}: passed', details + [NO_APP_BUILD_PER_PR]
+
+
+# #1389: once the repo is public, the fast plan's portable steps and SessionKitCoreTests run on GitHub-hosted
+# runners (hosted-portable.yml), on GitHub's merge commit of the PR, and the Mac runs only --plan fast-mac-rest.
+# Rollout guard, not a feature switch: unset (today, a private repo whose hosted minutes cost money) the Mac runs
+# the whole --plan fast as before. The lead sets the repository variable to `on` once the repo is public; lane.yml
+# hands it to this runner, and the same variable starts the hosted jobs. Retire the variable and the old path
+# together once hosted runs have carried the lane for a while.
+HOSTED_FAST_SWITCH = 'LANE_HOSTED_FAST'
+# check run name (the job's `name:` in hosted-portable.yml) -> the verify-tests.py plan it ran
+HOSTED_FAST_CHECKS = {'hosted fast: portable': 'fast-portable',
+                      'hosted fast: SessionKit core': 'fast-hosted-sessionkit'}
+HOSTED_TESTED_TITLE = 'lane-hosted-tested'
+HOSTED_TESTED = re.compile(r'^plan=(\S+) tree=([0-9a-f]{40}) parents=([0-9a-f]{40}) ([0-9a-f]{40})\s*$')
+
+
+def hosted_fast_on(env=None) -> bool:
+    return (os.environ if env is None else env).get(HOSTED_FAST_SWITCH, '').strip().lower() == 'on'
+
+
+def hosted_tested(annotations: list[dict]) -> dict | None:
+    """What a hosted fast job tested, from its `lane-hosted-tested` notice: the plan, the merge commit's tree, next
+    (parent 1) and the PR's head (parent 2). None without exactly one such notice."""
+    found = [HOSTED_TESTED.match(str(a.get('message', '')).strip()) for a in annotations
+             if a.get('title') == HOSTED_TESTED_TITLE and a.get('annotation_level') == 'notice']
+    if len(found) != 1 or not found[0]:
+        return None
+    plan, tree, base, head = found[0].groups()
+    return {'plan': plan, 'tree': tree, 'base': base, 'head': head}
+
+
+def hosted_fast_records(github, head: str) -> tuple[dict | None, str]:
+    """({check name: what it tested}, '') when every required hosted fast check has a successful newest run on the PR's
+    <head> that says what it tested; else (None, why not)."""
+    found = {}
+    for name, plan in HOSTED_FAST_CHECKS.items():
+        runs = json.loads(github.api(f'repos/{github.repo}/commits/{head}/check-runs?check_name='
+                                     f'{urllib.parse.quote(name, safe="")}&filter=latest&per_page=50'))
+        # Only GitHub Actions' own runs: another app could post a check run with the same name.
+        runs = [run for run in runs.get('check_runs', []) if (run.get('app') or {}).get('slug') == 'github-actions']
+        if not runs:
+            return None, f'no "{name}" check ran on {head[:7]}'
+        run = max(runs, key=lambda run: (run.get('started_at') or '', run.get('id') or 0))
+        if run.get('status') != 'completed':
+            return None, f'"{name}" had not finished on {head[:7]}'
+        if run.get('conclusion') != 'success':
+            return None, f'"{name}" ended {run.get("conclusion")} on {head[:7]}'
+        record = hosted_tested(json.loads(github.api(f'repos/{github.repo}/check-runs/{run["id"]}/annotations')))
+        if not record or record['plan'] != plan or record['head'] != head:
+            return None, f'"{name}" on {head[:7]} did not record that it tested {plan} on this head'
+        found[name] = {**record, 'url': run.get('html_url', '')}
+    return found, ''
+
+
+def merged_tree(tree: Path, base: str, head: str) -> str | None:
+    """The tree of <head> merged onto <base>, as a merge commit would hold it; None on a conflict."""
+    done = subprocess.run(['git', '-C', str(tree), 'merge-tree', '--write-tree', base, head],
+                          capture_output=True, text=True)
+    return done.stdout.split('\n', 1)[0].strip() if done.returncode == 0 else None
+
+
+def hosted_fast_checks(github, tree: Path, base: str, head: str, base_sha: str, env=None,
+                       records=hosted_fast_records) -> tuple[dict | None, str]:
+    """(the hosted fast checks that stand for <head> merged onto <base> at <base_sha>, '') or (None, why the Mac runs
+    the whole --plan fast). '' as the reason while the switch is off.
+
+    A hosted run stands when it tested exactly <head> merged onto some next (its merge tree matches the one this
+    runner computes for that next), and that next is <base_sha> or next's commits since can't change what it showed:
+    the rule a held PASS meets after next moves (untested_moves)."""
+    if not hosted_fast_on(env):
+        return None, ''
+    try:
+        found, why = records(github, head)
+        if found is None:
+            return None, why
+        for name, record in found.items():
+            if merged_tree(tree, record['base'], head) != record['tree']:
+                return None, (f'"{name}" tested a tree that is not {head[:7]} merged onto {base} at '
+                              f'{record["base"][:7]}')
+            if record['base'] != base_sha:
+                skipped, why = untested_moves(tree, record['base'], base_sha, head)
+                if skipped is None:
+                    return None, f'"{name}" tested it on {base} at {record["base"][:7]}, and {base} since: {why}'
+                record['moved'] = skipped
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as error:
+        return None, f'the runner could not read the hosted fast checks ({error!r})'
+    return found, ''
+
+
+def hosted_fast_ran(found: dict) -> str:
+    bases = sorted({record['base'][:7] for record in found.values()})
+    return (f'host tests (hosted: --plan fast-portable and SessionKitCoreTests with next at {", ".join(bases)}; '
+            'Mac: --plan fast-mac-rest)')
+
+
+def hosted_fast_lines(found: dict) -> list[str]:
+    lines = []
+    for name, record in found.items():
+        moved = record.get('moved')
+        since = (f'; next\'s {len(moved)} commit{"s" if len(moved) != 1 else ""} since touch none of this PR\'s files '
+                 'and no build inputs its checks read' if moved else '')
+        lines.append(f'hosted check "{name}": PASS on this head merged with next at {record["base"][:7]} '
+                     f'(tree {record["tree"][:7]}){since}. {record.get("url", "")}'.rstrip())
+    return lines
 
 
 AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
@@ -1262,10 +1393,14 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             warm = 'no Mac build folders needed' if hosted else host_build_folders(ROOT)
             scope = diff_scope(ROOT, base)
             (tried / 'scope.json').write_text(json.dumps(scope, indent=2))
+            found, why = (None, '') if hosted else hosted_fast_checks(github, ROOT, base, head, base_sha)
+            if why:
+                notes.append(f'the whole --plan fast ran on the Mac: {why}')
             verdict, where, ran, checks = run_automerge(
                 scope, tried, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)),
                 changed=lambda: changed_paths_for_tests(ROOT, base),
-                recheck=recheck_on_base(github, base_sha), **({'hosted': True} if hosted else {}))
+                recheck=recheck_on_base(github, base_sha), **({'hosted': True} if hosted else {}),
+                **({'hosted_fast': found} if found else {}))
             tested = f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR); {warm}'
             if verdict != 'PASS':
                 return verdict, where, ran, [tested] + notes + checks

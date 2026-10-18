@@ -25,9 +25,8 @@ rsync -a --exclude .build --exclude .swiftpm "$PACKAGE/" "$WORK/SessionKit/"
 cd "$WORK/SessionKit"
 
 # Sources read nothing by repository path. Comments may name docs, so only string literals count.
-# Known exception: SpeechBench, a Mac bench tool run from the repository root, reads the app's bundled
-# voice resources by default. It is narration code, left for the voice work to move (#1387 report).
-LEAKS="$(grep -rnE '"(\.\./)*(Contracts|App|research|Site)/' Sources | grep -v '^Sources/SpeechBench/' || true)"
+# SpeechBench is held to the same rule: it takes --kitten and --supertonic folders and has no default.
+LEAKS="$(grep -rnE '"(\.\./)*(Contracts|App|research|Site)/' Sources || true)"
 if [[ -n "$LEAKS" ]]; then
   echo "Sources name paths outside the package:" >&2
   echo "$LEAKS" >&2

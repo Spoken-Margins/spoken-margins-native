@@ -393,8 +393,9 @@ RUNNER_TEST_TRIGGERS = ('scripts/', '.github/', '.gitignore')
 # checks that the hot files exist under App/; the research harness test reads research/; and the lane
 # runner's T3 scope and "only testing" tests, and one lane-sim test, plan against the real TestPlans/ and the
 # app test sources; the sharing kit's tests read docs/sharing-test-kit/ and the packet and sharing sources under
-# Packages/ and App/; the SessionKit pass key's reader guard reads every Swift file of the package (re-measured
-# 2026-10-09; the guard added 2026-10-10, #1328). A diff that touches those inputs (and no lane path) runs just
+# Packages/ and App/; the BUILDING.md test reads that file, README.md, package.json, .gitattributes,
+# the hosted workflow and the App Group names in App/; the SessionKit pass key's reader guard reads every
+# Swift file of the package (re-measured 2026-10-09; the guard added 2026-10-10, #1328). A diff that touches those inputs (and no lane path) runs just
 # these (a module, or a module.Class); the rest of the suite reads only scripts/.
 # To re-measure the list, copy scripts/, .github/ and .gitignore into a fresh git repository, run
 # `python -m unittest discover -s scripts/tests` there and on a full checkout: the classes that fail only in
@@ -404,9 +405,10 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_validate_contracts', 'test_hot_file_ratchet', 'test_research_tests',
                        'test_lane_runner.OnlyTestingTests', 'test_lane_runner.ScopeClassTests',
                        'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
-                       'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved')
+                       'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved',
+                       'test_building_md')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
-                      'docs/sharing-test-kit/')
+                      'docs/sharing-test-kit/', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes')
 # The ops tests read their own folder and scripts/lane-runner.py (the audit's test), test-scope and the release
 # files, so they follow the ops tools and anything the runner tests follow, plus the build inputs. The Codex
 # audit's tests also check that AGENTS.md is at the repository root. Re-measured 2026-10-09 the same way as
@@ -442,6 +444,16 @@ PORTABLE_RUNNER_TESTS_LEFT_OUT = {
     'test_lane_slots.VerifyTestsSlotTests.test_runner_xcodebuild_steps_take_a_slot_and_record_it': 'runs xcodebuild',
 }
 PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snapshots and the Mac-only caches'}
+# --plan fast-hosted-sessionkit and --plan fast-mac-rest (#1389): the fast plan split three ways once the repo is
+# public. hosted-portable.yml runs fast-portable on Linux and fast-hosted-sessionkit (SessionKit's build and
+# SessionKitCoreTests) on a GitHub-hosted Mac, on GitHub's merge commit of the PR. The lane runner accepts those two
+# PASSes for the commit it would push (lane-runner.py hosted_fast_checks) and runs only fast-mac-rest on the lane
+# Mac: the runner and ops tests that drive Apple tools or measure the Mac, and the SessionKitTests and
+# SessionKitTraceTests targets, whose real-time AVFoundation tests need a sound output (PORTABLE_LEFT_OUT 'package').
+# Between them the three plans run every fast-plan step (test_fast_split.py checks it).
+FAST_SPLIT_PLANS = ('fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest')
+HOSTED_SESSIONKIT_STEPS = ('package-build', 'package-core', 'package-core-serial')
+MAC_REST_STEPS = ('runner-tests', 'ops', 'package-build', 'package')
 # runner-tests without the tests above: discover scripts/tests as the plain step does, then drop the listed ids.
 PORTABLE_RUNNER_LOADER = '''
 import sys, unittest
@@ -452,6 +464,18 @@ def tests(suite):
         yield from tests(item) if isinstance(item, unittest.TestSuite) else [item]
 kept = unittest.TestSuite(t for t in tests(unittest.defaultTestLoader.discover("scripts/tests"))
                           if not t.id().startswith(left_out))
+sys.exit(not unittest.TextTestRunner().run(kept).wasSuccessful())
+'''
+# fast-mac-rest's runner-tests: only the tests PORTABLE_RUNNER_TESTS_LEFT_OUT names, the inverse of the loader above.
+MAC_REST_RUNNER_LOADER = '''
+import sys, unittest
+sys.path.insert(0, "scripts/tests")
+only = tuple(sys.argv[1:])
+def tests(suite):
+    for item in suite:
+        yield from tests(item) if isinstance(item, unittest.TestSuite) else [item]
+kept = unittest.TestSuite(t for t in tests(unittest.defaultTestLoader.discover("scripts/tests"))
+                          if t.id().startswith(only))
 sys.exit(not unittest.TextTestRunner().run(kept).wasSuccessful())
 '''
 
@@ -793,7 +817,7 @@ class Run:
             if held:
                 entry['build_slot'] = held
             start = attempt_start = last_output = time.monotonic()
-            if ceiling and self.manifest['plan'] == 'fast':
+            if ceiling and self.manifest['plan'] in ('fast', 'fast-mac-rest'):
                 ceiling = max(timeout, min(ceiling, FAST_PLAN_SECONDS - (start - self.started)))
                 entry['ceiling_seconds'] = round(ceiling)
             log_size = 0
@@ -976,13 +1000,67 @@ class Run:
     def fast(self):
         if self.manifest['plan'] == 'fast-portable':
             return self.portable()
+        if self.manifest['plan'] == 'fast-hosted-sessionkit':
+            return self.hosted_sessionkit()
         # The host steps share two Mac-wide host-test slots with every session and the runner (#350);
         # the package step's swift test runs inside this run's slot.
         with host_test_slot(f'verify-tests {self.manifest["plan"]} in {ROOT}', out=sys.stdout,
                             max_wait=BUILD_SLOT_WAIT_SECONDS) as held:
             self.manifest['host_test_slot'] = held
             self.save()
-            self.host_steps()
+            if self.manifest['plan'] == 'fast-mac-rest':
+                self.mac_rest()
+            else:
+                self.host_steps()
+
+    def hosted_sessionkit(self):
+        """SessionKit's build and SessionKitCoreTests on a GitHub-hosted Mac (#1389), for hosted-portable.yml. No
+        sound output there, so SessionKitTests and SessionKitTraceTests are left to the lane Mac (fast-mac-rest)."""
+        core = {f'SessionKitCoreTests/{test}' for test in swift_tests(ROOT / 'Packages/SessionKit/Tests/SessionKitCoreTests')}
+        if not core:
+            raise RuntimeError('fast-hosted-sessionkit found no SessionKitCoreTests to run')
+        self.command('package-build', [*PACKAGE_RUNNER, '--build-only'], timeout=PACKAGE_BUILD_TIMEOUT)
+        self.package_core(core)
+        self.skip('package', 'SessionKitTests and SessionKitTraceTests need a sound output; the lane Mac runs them '
+                             '(--plan fast-mac-rest)')
+        if input_identity() != self.manifest['input_sha256']:
+            raise RuntimeError(inputs_changed_message('Inputs changed during hosted SessionKit verification', self.input_files))
+
+    def mac_rest(self):
+        """What neither hosted plan runs (#1389): the runner tests that drive Apple tools, ops/disk, and SessionKit's
+        two serial targets. Each runs only when the full fast plan would have run it for this diff."""
+        scope, why = runner_test_scope(self.changed)
+        if in_codex_sandbox():
+            self.skip('runner-tests')
+        elif scope != 'all':
+            self.skip('runner-tests', why or 'the diff reaches none of the runner tests that drive Apple tools')
+        else:
+            self.command('runner-tests', [sys.executable, '-c', MAC_REST_RUNNER_LOADER, *PORTABLE_RUNNER_TESTS_LEFT_OUT],
+                         timeout=RUNNER_TESTS_TIMEOUT)
+        needed, why = ops_tests_needed(self.changed)
+        if needed:
+            self.ops_steps(only=PORTABLE_OPS_LEFT_OUT)
+        else:
+            self.skip('ops', why)
+        expected = set()
+        for target in ('SessionKitTests', 'SessionKitTraceTests'):
+            expected.update(f'{target}/{test}' for test in swift_tests(ROOT / f'Packages/SessionKit/Tests/{target}'))
+        # A full SessionKit pass of this exact tree on this Mac (#1328) covers the rest too. A rest-only pass is
+        # never recorded as one: it didn't run SessionKitCoreTests here.
+        identity = None if in_codex_sandbox() else sessionkit_pass.toolchain()
+        pass_key = sessionkit_pass.key(ROOT, identity)
+        earlier = sessionkit_pass.find(state_dir(), pass_key) if self.changed else None
+        if earlier:
+            why = (f'the same SessionKit inputs, toolchain and test runner passed all {earlier.get("tests", "its")} tests '
+                   f'at {earlier.get("passed_at")} (commit {str(earlier.get("head"))[:7]})')
+            self.manifest['sessionkit_pass'] = {'reused': pass_key, **earlier}
+            self.manifest.setdefault('notes', []).append('SessionKit build and tests skipped: ' + why)
+            self.skip('package-build', why)
+            self.skip('package', why)
+        else:
+            self.package_steps(expected, core_elsewhere=True)
+        if input_identity() != self.manifest['input_sha256']:
+            raise RuntimeError(inputs_changed_message('Inputs changed during Mac-only verification', self.input_files))
 
     def portable(self):
         """The fast plan's steps that run anywhere (#1847), then every step it leaves out, named as skipped.
@@ -1061,8 +1139,9 @@ class Run:
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError(inputs_changed_message('Inputs changed during fast verification', self.input_files))
 
-    def package_steps(self, expected):
-        """Build SessionKit and run its tests: SessionKitCoreTests in parallel (#1328), the rest serially."""
+    def package_steps(self, expected, core_elsewhere=False):
+        """Build SessionKit and run its tests: SessionKitCoreTests in parallel (#1328), the rest serially.
+        core_elsewhere: SessionKitCoreTests ran on a hosted Mac (fast-mac-rest, #1389); run only the rest."""
         # The build gets its own limit, so a cold build under load can't use up the tests' time (#844).
         # The tests' limit covers about 1,000 tests, including real-time AVPlayer tests that took
         # 150 s of a 230 s run with the Mac's load average at 40 to 180 (2026-10-05).
@@ -1070,9 +1149,9 @@ class Run:
         audio = self.manifest['audio_output'] = host_audio.audio_output()
         # Inside Codex's sandbox the audio tests are tolerated and the runner stays as it was: one serial step.
         core = {test for test in expected if test.startswith('SessionKitCoreTests/')}
-        split = bool(core) and not in_codex_sandbox()
+        split = (bool(core) and not in_codex_sandbox()) or core_elsewhere
         try:
-            if split:
+            if split and not core_elsewhere:
                 self.package_core(core)
             self.command('package', [*PACKAGE_RUNNER, '--rest' if split else '--skip-build'],
                          timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
@@ -1124,12 +1203,15 @@ class Run:
         self.save()
         print(f'{name}: skipped ({reason})', flush=True)
 
-    def ops_steps(self, root=None, left_out=None):
+    def ops_steps(self, root=None, left_out=None, only=None):
         """The ops tools' own tests (ops/dial, ops/codex), one step per folder: each folder imports its
         module from beside its tests, so each is its own discovery top level. `left_out` maps a folder
-        (relative to the root) to why it does not run here; it is named as skipped."""
+        (relative to the root) to why it does not run here; it is named as skipped. `only`: run just these
+        folders, and pass over the rest without a word (another plan runs them)."""
         base = Path(root or ROOT)
         for folder in ops_test_folders(base):
+            if only is not None and folder.relative_to(base).as_posix() not in only:
+                continue
             name = 'ops-' + '-'.join(folder.relative_to(base).parts[1:]) if folder != base / 'ops' else 'ops'
             if left_out and folder.relative_to(base).as_posix() in left_out:
                 self.skip(name, left_out[folder.relative_to(base).as_posix()])
@@ -1339,7 +1421,8 @@ def read_changed_files(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--plan', choices=['fast', 'fast-portable', *PLANS], default='fast')
+    parser.add_argument('--plan', choices=['fast', 'fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest', *PLANS],
+                        default='fast')
     parser.add_argument('--device', help='Supported simulator UDID (including iPad); overrides phone preference')
     parser.add_argument('--ios', type=int, help='Required iOS major version, e.g. 26 or 27; never falls back to another OS')
     parser.add_argument('--simulator-slot-fd', type=int, help=argparse.SUPPRESS)
@@ -1380,13 +1463,14 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         output = args.output or ROOT / 'artifacts/test-runs' / (
             datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '-' + args.plan)
-        run = Run(output.resolve(), args.plan, read_changed_files(args.changed_files) if args.plan == 'fast' else None)
+        run = Run(output.resolve(), args.plan,
+                  read_changed_files(args.changed_files) if args.plan in ('fast', 'fast-mac-rest') else None)
         try:
             if args.build_only:
                 run.xcode_build(args.plan, args.runtime, args.rebuild)
-            elif args.plan in ('fast', 'fast-portable', 'release'):
+            elif args.plan in ('fast', *FAST_SPLIT_PLANS, 'release'):
                 run.fast()
-            if args.plan not in ('fast', 'fast-portable') and not args.build_only:
+            if args.plan not in ('fast', *FAST_SPLIT_PLANS) and not args.build_only:
                 if journeys:
                     run.manifest['scripted_journeys'] = journeys
                     run.xcode(args.plan, args.device, args.rebuild, args.ios,

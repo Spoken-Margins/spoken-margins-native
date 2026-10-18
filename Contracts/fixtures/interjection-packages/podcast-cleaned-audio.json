@@ -3,10 +3,9 @@
   "packageId": "package-podcast-001",
   "createdAt": "2026-08-22T12:00:00Z",
   "contentDigest": "1111111111111111111111111111111111111111111111111111111111111111",
-  "source": {
-    "sourceType": "podcast",
+  "item": {
+    "itemType": "podcast",
     "canonicalURL": "https://example.com/podcast/episode-1",
-    "feedURL": "https://example.com/podcast/feed.xml",
     "title": "An Episode",
     "publisher": "Example Publisher",
     "showTitle": "Example Show",
@@ -15,11 +14,21 @@
     "publishedAt": "2026-08-20T12:00:00Z",
     "durationMs": 1800000,
     "exactEditionSHA256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "languageCode": "en"
+    "languageCode": "en",
+    "source": {
+      "sourceType": "podcast_feed",
+      "canonicalURL": "https://example.com/podcast/feed.xml",
+      "title": "Example Show"
+    }
+  },
+  "itemTransport": {
+    "kind": "reference"
   },
   "senderDisplayLabel": "A Friend",
   "suggestedRevealMode": "companion",
-  "requiredCapabilities": ["spoken-margins.commentary-layer.v1"],
+  "requiredCapabilities": [
+    "spoken-margins.commentary-layer.v1"
+  ],
   "artifacts": [
     {
       "id": "commentary-layer",
@@ -46,11 +55,11 @@
   "redactions": {
     "rawAudioOmitted": true,
     "rawTranscriptOmitted": true,
-    "fullSourceTextOmitted": true,
-    "sourceAudioOmitted": true,
     "diagnosticsOmitted": true,
     "filesystemPathsOmitted": true,
     "unrelatedTurnsOmitted": true,
-    "privateRepresentationsOmitted": true
+    "privateRepresentationsOmitted": true,
+    "fullItemOmitted": true,
+    "itemAudioOmitted": true
   }
 }

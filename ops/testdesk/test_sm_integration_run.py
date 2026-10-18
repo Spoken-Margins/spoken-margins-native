@@ -46,6 +46,7 @@ def load_phone_build():
 
 _STATE = tempfile.TemporaryDirectory()
 os.environ['SM_LANE_STATE_DIR'] = _STATE.name  # the catch ledger (#1789) must not write to the real lane state
+os.environ['SM_SIM_BUILDS'] = str(Path(_STATE.name) / 'sim-builds')  # nor the kept simulator builds
 
 
 class ReportsTests(unittest.TestCase):
@@ -752,3 +753,63 @@ class StrangerTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SimBuildTests(unittest.TestCase):
+    """The tip's simulator app is kept for desks (scripts/sim-build-latest), only when it is the tip's own good build."""
+
+    class BuildingOps(FakeOps):
+        def __init__(self, tmp, plans, head=SHA, built=True, **kw):
+            super().__init__(tmp, plans, **kw)
+            self.head, self.built = head, built
+
+        def test_plan(self, wt, output, plan, fds, only=()):
+            result = super().test_plan(wt, output, plan, fds, only)
+            app = (wt / '.build/verification/SpokenMarginsAppBehavior/Build/Products/Debug-iphonesimulator'
+                   / 'SpokenMarginsApp.app')
+            app.mkdir(parents=True, exist_ok=True)
+            (app / 'Info.plist').write_text('<plist/>')
+            steps = [{'name': 'build-for-testing', 'exit_code': 0 if self.built else 65}]
+            if self.built:
+                steps.append({'name': 'bundle-contracts', 'exit_code': 0})
+            output.mkdir(parents=True, exist_ok=True)
+            (output / 'manifest.json').write_text(json.dumps(dict(result, head=self.head,
+                                                                  steps=steps + result['steps'])))
+            return result
+
+    def setUp(self):
+        self.root = Path(os.environ['SM_SIM_BUILDS'])
+        run.shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_a_tested_tip_leaves_its_app_and_latest_points_at_it(self):
+        with tempfile.TemporaryDirectory() as tmp, mac_with_room():
+            ops = self.BuildingOps(tmp, [manifest({TEST: 'passed'})], bodies=[report_comment(OLD[:7], 'PASS')])
+            self.assertEqual(run.tick(ops), 'PASS')
+            log = (ops.home / 'log.txt').read_text()
+        self.assertEqual(run.sim_builds.latest(self.root)['sha'], SHA)
+        self.assertIn('simulator build kept', log)
+
+    def test_a_failing_tip_is_still_kept_for_desks(self):
+        plans = [manifest({TEST: 'failed'})] * 3
+        with tempfile.TemporaryDirectory() as tmp, mac_with_room():
+            ops = self.BuildingOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')])
+            self.assertEqual(run.tick(ops), 'FAIL')
+        self.assertEqual(run.sim_builds.latest(self.root)['sha'], SHA)
+
+    def test_a_broken_build_or_another_commit_s_build_is_not_kept(self):
+        for head, built, why in ((SHA, False, 'no good simulator build'), (OLD, True, 'not ' + SHA[:7])):
+            with self.subTest(why=why), tempfile.TemporaryDirectory() as tmp, mac_with_room():
+                ops = self.BuildingOps(tmp, [manifest({TEST: 'passed'})], head=head, built=built,
+                                       bodies=[report_comment(OLD[:7], 'PASS')])
+                run.tick(ops)
+                self.assertIn(why, (ops.home / 'log.txt').read_text())
+                self.assertIsNone(run.sim_builds.latest(self.root))
+
+    def test_no_copy_when_the_build_left_the_mac_under_ten_gigabytes(self):
+        with tempfile.TemporaryDirectory() as tmp, mac_with_room():
+            ops = self.BuildingOps(tmp, [manifest({TEST: 'passed'})], bodies=[report_comment(OLD[:7], 'PASS')])
+            room = iter([50 * GB, 9 * 1024 ** 3])  # room to start; the build itself ate the rest
+            with patch.object(ops, 'free_bytes', side_effect=lambda: next(room)):
+                self.assertEqual(run.tick(ops), 'PASS')
+            self.assertIn('under the 10 GB floor', (ops.home / 'log.txt').read_text())
+        self.assertIsNone(run.sim_builds.latest(self.root))
