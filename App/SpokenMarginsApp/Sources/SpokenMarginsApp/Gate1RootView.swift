@@ -27,28 +27,22 @@ struct Gate1RootView: View {
             } else {
                 switch model.screen {
                 case .home:
-                    ExperienceRootTabs(navigation: $navigation, showsMiniPlayer: !keyboardIsPresented && model.shouldShowMiniPlayer)
-                        .announcesScreenChange()
+                    ExperienceRootTabs(navigation: $navigation, showsMiniPlayer: !keyboardIsPresented && model.shouldShowMiniPlayer).announcesScreenChange()
                 case .item:
                     ExperienceItemDetailScreen()
                 case .playback:
                     PlaybackScreen()
                 case .timeline:
-                    ExperienceTimelineRailScreen()
-                        .announcesScreenChange()
+                    ExperienceTimelineRailScreen().announcesScreenChange()
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 case .settings:
-                    SettingsScreen()
-                        .announcesScreenChange()
+                    SettingsScreen().announcesScreenChange()
                 case .offlineStorage:
-                    ExperienceStorageScreen()
-                        .announcesScreenChange()
+                    ExperienceStorageScreen().announcesScreenChange()
                 case .export:
-                    ExportScreen()
-                        .announcesScreenChange()
+                    ExportScreen().announcesScreenChange()
                 case .batchExport:
-                    BatchExportScreen()
-                        .announcesScreenChange()
+                    BatchExportScreen().announcesScreenChange()
                 }
             }
         }
