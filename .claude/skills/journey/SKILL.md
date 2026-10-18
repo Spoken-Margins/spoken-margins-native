@@ -90,6 +90,8 @@ From docs/journeys.md, which wins if they differ:
 - The app's Paste button doesn't see `xcrun simctl pbcopy`. Type values instead.
 - Keyboard tips can swallow the next tap. Take a screenshot before tapping near the bottom of the screen.
 - A cold Debug launch can be blank for about 5 s. Wait before the first tap.
+- The first listen on a fresh install opens the Terms of Use sheet. Its buttons are at the very bottom of the scrolling text: swipe until nothing changes, then tap "Use iOS Voice". It is not a bug.
+- Before a FAIL that says a control is missing or a step is blocked, grep the app source for the control's label and go where the code puts it. Quote the file and line in the report.
 - You can't hear audio. A moving clock shows the app thinks it's playing. Mark audible content "owner to confirm".
 
 ## Keep bulk out of the lead's context
