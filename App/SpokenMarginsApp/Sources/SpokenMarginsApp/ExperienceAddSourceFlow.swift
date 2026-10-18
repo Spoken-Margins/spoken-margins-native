@@ -387,6 +387,7 @@ struct ExperienceAddSourceFlow: View {
                         } label: {
                             HStack {
                                 Image(systemName: "doc.text")
+                                    .accessibilityHidden(true)
                                 VStack(alignment: .leading) {
                                     Text(file.name).font(.headline)
                                     Text(file.modifiedAtDescription)
@@ -395,6 +396,7 @@ struct ExperienceAddSourceFlow: View {
                                 }
                                 Spacer()
                                 Image(systemName: "plus")
+                                    .accessibilityHidden(true)
                             }
                             .frame(minHeight: 44)
                         }

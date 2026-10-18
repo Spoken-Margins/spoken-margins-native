@@ -437,6 +437,7 @@ struct Build23SenderSharingExperience: View {
                 coordinator.send(.selectMargin(margins[max(0, selectedIndex - 1)].id))
             }
             .labelStyle(.iconOnly)
+            .accessibilityLabel("Previous Margin")
             .disabled(margins.isEmpty || selectedIndex == 0)
 
             Menu {
@@ -451,6 +452,7 @@ struct Build23SenderSharingExperience: View {
                         .font(.headline)
                     Spacer()
                     Image(systemName: "chevron.up.chevron.down")
+                        .accessibilityHidden(true)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
@@ -463,6 +465,7 @@ struct Build23SenderSharingExperience: View {
                 coordinator.send(.selectMargin(margins[min(margins.count - 1, selectedIndex + 1)].id))
             }
             .labelStyle(.iconOnly)
+            .accessibilityLabel("Next Margin")
             .disabled(margins.isEmpty || selectedIndex + 1 >= margins.count)
         }
         .buttonStyle(.bordered)

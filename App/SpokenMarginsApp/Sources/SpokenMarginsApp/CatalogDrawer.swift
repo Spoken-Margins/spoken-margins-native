@@ -431,6 +431,7 @@ private struct CatalogDrawerRow: View, Equatable {
         switch state {
         case .following:
             ProgressView().frame(minWidth: 96, minHeight: 44)
+                .accessibilityLabel("Following \(entry.title)")
         case .followed:
             Label("Following", systemImage: "checkmark")
                 .font(.subheadline.weight(.semibold))
@@ -440,6 +441,7 @@ private struct CatalogDrawerRow: View, Equatable {
             Button("Retry", action: toggleFollow)
                 .buttonStyle(.bordered)
                 .frame(minWidth: 96, minHeight: 44)
+                .accessibilityLabel("Retry following \(entry.title)")
                 .accessibilityIdentifier("catalog.follow.\(entry.id)")
         case nil:
             Button("Follow", action: toggleFollow)
@@ -503,6 +505,7 @@ private struct CatalogSearchResultRow: View {
         switch state {
         case .following:
             ProgressView().frame(minWidth: 96, minHeight: 44)
+                .accessibilityLabel("Following \(show.title)")
         case .followed:
             Label("Following", systemImage: "checkmark")
                 .font(.subheadline.weight(.semibold))
@@ -512,6 +515,7 @@ private struct CatalogSearchResultRow: View {
             Button("Retry", action: toggleFollow)
                 .buttonStyle(.bordered)
                 .frame(minWidth: 96, minHeight: 44)
+                .accessibilityLabel("Retry following \(show.title)")
                 .accessibilityIdentifier("catalog.search.follow.\(show.id)")
         case nil:
             Button("Follow", action: toggleFollow)
