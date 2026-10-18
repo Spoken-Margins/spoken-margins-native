@@ -45,6 +45,44 @@ public enum SpokenMarginsPackageArchiveError: Error, Equatable, LocalizedError {
     }
 }
 
+/// What a listener is told when a `.spokenmargins` file can't be opened (#1968). The technical wording in
+/// `errorDescription` ("manifest", "capability", paths) stays for diagnostics and bug reports.
+extension SpokenMarginsPackageArchiveError {
+    public enum ListenerOutcome: Equatable, Sendable {
+        /// The file is fine but uses something this version doesn't know.
+        case needsNewerApp
+        /// The file is bigger than the app opens.
+        case tooLarge
+        /// The file is unreadable, changed in transit, or unsafe.
+        case damaged
+        /// The file may be fine, but it doesn't line up with what is in the listener's own Library (a missing or
+        /// different audio file or edition). `invalidManifest` and `invalidAsset` are thrown for these local
+        /// faults as well as for real archive faults, so neither can honestly be called "damaged".
+        case doesNotMatchLibrary
+
+        public var message: String {
+            switch self {
+            case .needsNewerApp: "These Margins need a newer Spoken Margins. Update the app, then open them again."
+            case .tooLarge: "This file is bigger than Spoken Margins can open. Ask your friend to send fewer Margins at a time."
+            case .damaged: "This file looks damaged. Ask your friend to send it again."
+            case .doesNotMatchLibrary: "These Margins don't match what is in your Library. Check you have the same item and edition, then open them again. If it still fails, ask your friend to send them again."
+            }
+        }
+    }
+
+    public var listenerOutcome: ListenerOutcome {
+        switch self {
+        case .unsupportedSchema, .unsupportedRequiredCapability: .needsNewerApp
+        case .packageTooLarge, .audioTooLarge, .audioTooLong: .tooLarge
+        case .invalidManifest, .invalidAsset: .doesNotMatchLibrary
+        case .malformedArchive, .invalidEntry, .duplicateEntry, .manifestMissing, .manifestTooLarge,
+             .invalidDigest, .excessiveCompression: .damaged
+        }
+    }
+
+    public var listenerMessage: String { listenerOutcome.message }
+}
+
 /// A package value that can only be created by a successful archive read.
 public struct VerifiedSpokenMarginsPackage: Sendable {
     public let manifest: SpokenMarginsPackageManifest
