@@ -27,7 +27,8 @@ Test Suite 'Selected tests' {verdict} at 2026-10-18 14:00:00.001.
 '''
 
 # Prints the summary, then hangs. FAKE_IGNORE_INT makes it shrug off SIGINT, FAKE_GRANDCHILD leaves a
-# descendant holding its output and exits at once, FAKE_INNER_ONLY prints only a class summary, pauses and exits.
+# descendant holding its output and exits at once, FAKE_INNER_ONLY prints only a class summary, pauses and exits,
+# FAKE_FLOOD prints that many bytes before the summary.
 FAKE_XCODEBUILD = f'''#!/usr/bin/env python3
 import os, signal, subprocess, sys, time
 summary = {SUMMARY!r}
@@ -42,6 +43,9 @@ if os.environ.get("FAKE_INNER_ONLY"):
     time.sleep(float(os.environ["FAKE_INNER_ONLY"]))
     print("finished on its own", flush=True)
     sys.exit(0)
+if os.environ.get("FAKE_FLOOD"):
+    for _ in range(int(os.environ["FAKE_FLOOD"]) // 64):
+        sys.stdout.write("x" * 63 + "\\n")
 sys.stdout.write(summary.format(failures=failures, verdict="failed" if failures != "0" else "passed"))
 sys.stdout.flush()
 if os.environ.get("FAKE_GRANDCHILD"):
@@ -157,6 +161,44 @@ class WrapperTests(Fakes):
         result, _ = self.wrapper('test')
         self.assertEqual(result.returncode, 65, result.stderr)
         self.assertIn('every test bundle', result.stderr)
+
+    def test_a_closed_output_pipe_does_not_hold_the_wrapper(self):
+        # `xcodebuild-lane ... test | head`: once head exits, the wrapper must keep draining and watching, or
+        # xcodebuild blocks on a full pipe, the summary is never seen, and the build slot is held for good.
+        with open(self.dir / 'stderr', 'w+') as stderr:
+            wrapper = subprocess.Popen([sys.executable, str(SCRIPTS / 'xcodebuild-lane'), '-scheme', 'S', ONE, 'test'],
+                                       cwd=SCRIPTS.parent, env={**self.env, 'FAKE_FLOOD': str(1 << 20)},
+                                       stdout=subprocess.PIPE, stderr=stderr)
+            wrapper.stdout.close()  # the reader went away before reading anything
+            try:
+                returncode = wrapper.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                wrapper.kill()
+                wrapper.wait()
+                self.fail('the wrapper was still running 60 s after its reader closed the pipe')
+            stderr.seek(0)
+            errors = stderr.read()
+        self.assertEqual(returncode, 0, errors)
+        self.assertIn('forced', errors)
+        self.assertFalse(any(alive(pid) for pid in self.fake_pids()))
+
+
+    def test_a_reader_that_closes_partway_through_does_not_leave_xcodebuild_running(self):
+        # `xcodebuild-lane ... test 2>&1 | head`: both outputs share the pipe, and head exits after its lines.
+        # The wrapper's own notes must not fail on the closed pipe either, or it exits without stopping xcodebuild.
+        wrapper = subprocess.Popen([sys.executable, str(SCRIPTS / 'xcodebuild-lane'), '-scheme', 'S', ONE, 'test'],
+                                   cwd=SCRIPTS.parent, env={**self.env, 'FAKE_FLOOD': str(1 << 20)},
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        wrapper.stdout.read(4096)
+        wrapper.stdout.close()
+        try:
+            returncode = wrapper.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            wrapper.kill()
+            wrapper.wait()
+            self.fail('the wrapper was still running 60 s after its reader closed the pipe')
+        self.assertEqual(returncode, 0)
+        self.assertFalse(any(alive(pid) for pid in self.fake_pids()))
 
 
 class VerifyTestsTests(Fakes):
