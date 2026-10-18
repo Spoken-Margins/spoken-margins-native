@@ -90,13 +90,13 @@ extension Gate1AppModel {
                 selectedItem = try loadItemDetail(id: restoredSession.itemId, store: store)
                 diagnostics["restoredSession"] = restoredSession.id
                 diagnostics["restoredSessionMode"] = "paused_without_autoplay"
-                writtenMarginNotice = restoreUnfinishedWrittenMargin(store: store)
             } else if let first = rows.first {
                 activeItemId = first.id
                 selectedItem = try loadItemDetail(id: first.id, store: store)
             } else {
                 selectedItem = ItemDetailState()
             }
+            writtenMarginNotice = restoreUnfinishedWrittenMargin(store: store)
             refreshMarginRows()
             tryRefreshOfflineStorageUsage()
             diagnostics["libraryBootstrap"] = "loaded:\(rows.count)"

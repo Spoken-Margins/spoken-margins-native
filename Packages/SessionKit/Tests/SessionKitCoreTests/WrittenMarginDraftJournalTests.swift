@@ -124,6 +124,43 @@ final class WrittenMarginDraftJournalTests: XCTestCase {
         XCTAssertEqual(saved.captureKind, .written)
     }
 
+    /// Audit finding 1: a source played to the end is stored as finished, so no "resume" opens it. Its draft must
+    /// still come back, by opening that session first.
+    func testADraftOnAFinishedSourceComesBackAfterARelaunch() throws {
+        let first = newEngine()
+        let capture = try capture(of: first, itemId: "item-a")
+        let sessionId = try XCTUnwrap(first.currentSession?.id)
+        var session = try XCTUnwrap(try store.loadSession(id: sessionId))
+        session.status = "finished"
+        session.completionPercent = 100
+        try store.saveSession(session)
+        try journal.write(WrittenMarginDraftRecord(capture: capture, text: "A closing thought", updatedAt: Date()))
+
+        let relaunched = newEngine()
+        let record = try XCTUnwrap(
+            WrittenMarginDraftJournal.restoreOrder(try journal.load().drafts, restoredSessionId: nil).first
+        )
+        _ = try relaunched.inspectSession(sessionId: record.sessionId)
+        let restored = try relaunched.restoreWrittenInterjection(record.capture)
+        _ = try relaunched.saveWrittenInterjection(captureId: restored.id, text: record.text)
+        XCTAssertEqual(try store.loadInterjections(sessionId: sessionId).first?.displayText, "A closing thought")
+    }
+
+    /// Audit finding 2: nothing is dropped for age, and the restored session's draft is not displaced by a newer one.
+    func testAnOldDraftIsKeptAndTheRestoredSessionsDraftComesFirst() throws {
+        let a = try capture(of: newEngine(), itemId: "item-a")
+        let b = try capture(of: newEngine(), itemId: "item-b")
+        let old = WrittenMarginDraftRecord(capture: a, text: "Five weeks old", updatedAt: Date(timeIntervalSinceNow: -35 * 24 * 3600))
+        let new = WrittenMarginDraftRecord(capture: b, text: "Yesterday", updatedAt: Date(timeIntervalSinceNow: -24 * 3600))
+        try journal.write(old)
+        try journal.write(new)
+
+        let drafts = try journal.load().drafts
+        XCTAssertEqual(drafts.count, 2, "the journal itself never expires a draft")
+        XCTAssertEqual(WrittenMarginDraftJournal.restoreOrder(drafts, restoredSessionId: nil).map(\.text), ["Yesterday", "Five weeks old"])
+        XCTAssertEqual(WrittenMarginDraftJournal.restoreOrder(drafts, restoredSessionId: old.sessionId).map(\.text), ["Five weeks old", "Yesterday"])
+    }
+
     func testARestoreForAnotherSessionIsRefused() throws {
         let first = newEngine()
         let capture = try capture(of: first, itemId: "item-a")

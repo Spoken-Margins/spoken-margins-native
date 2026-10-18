@@ -31,19 +31,20 @@ extension Gate1AppModel {
         writtenMarginDraftKeeper.discard(captureId: captureId)
     }
 
-    /// A draft for an item that is gone, or untouched for a month, can never be reopened, so it is removed. Every
-    /// other draft stays until its Margin is saved or discarded.
+    /// A draft for an item that is gone can never be reopened, so it is removed. Every other draft stays until its
+    /// Margin is saved or discarded, however long ago it was typed.
     private func discardAbandonedWrittenMarginDrafts(_ drafts: [WrittenMarginDraftRecord], journal: WrittenMarginDraftJournal, store: SQLiteSessionStore) -> [WrittenMarginDraftRecord] {
-        let cutoff = Date().addingTimeInterval(-30 * 24 * 3600)
-        return drafts.filter { draft in
-            guard draft.updatedAt < cutoff || (try? store.loadItem(id: draft.itemId)) == nil else { return true }
+        drafts.filter { draft in
+            guard (try? store.loadItem(id: draft.itemId)) == nil else { return true }
             try? journal.remove(id: draft.id)
             return false
         }
     }
 
-    /// Launch: reopens the unfinished Margin that belongs to the restored session, with its text. A draft for a
-    /// session that isn't open is left where it is. Returns what to tell the listener, or nil.
+    /// Launch: reopens an unfinished Margin with its text, whatever state its item was left in. The draft that
+    /// belongs to the restored session wins; otherwise the newest one does, and its session is opened for it (a
+    /// source played to the end is not "in progress", so nothing else would bring the listener back to it).
+    /// Returns what to tell the listener, or nil.
     func restoreUnfinishedWrittenMargin(store: SQLiteSessionStore) -> String? {
         guard let engine, writtenMarginDraft == nil,
               let support = try? applicationSupportDirectory() else { return nil }
@@ -52,15 +53,25 @@ extension Gate1AppModel {
             let loaded = try journal.load()
             if !loaded.unreadableFileNames.isEmpty { diagnostics["writtenMarginDraftsUnreadable"] = "\(loaded.unreadableFileNames.count)" }
             let drafts = discardAbandonedWrittenMarginDrafts(loaded.drafts, journal: journal, store: store)
-            guard let sessionId = engine.currentSession?.id,
-                  let record = drafts.first(where: { $0.sessionId == sessionId }) else { return nil }
-            let capture = try engine.restoreWrittenInterjection(record.capture)
-            snapshot = engine.snapshot
-            var draft = makeWrittenMarginDraft(for: capture, store: store, reply: nil)
-            draft.text = record.text
-            marginCapture.openDraft(draft)
-            diagnostics["writtenMarginDraftRestored"] = capture.id
-            return "Your unfinished Margin was kept."
+            let restoredSessionId = engine.currentSession?.id
+            let candidates = WrittenMarginDraftJournal.restoreOrder(drafts, restoredSessionId: restoredSessionId)
+            for record in candidates {
+                if record.sessionId != restoredSessionId {
+                    guard (try? store.loadSessions().contains { $0.id == record.sessionId }) == true else { continue }
+                    activeItemId = record.itemId
+                    snapshot = try engine.inspectSession(sessionId: record.sessionId)
+                    try prepareSourceMediaPlayback(itemId: record.itemId)
+                    selectedItem = try loadItemDetail(id: record.itemId, store: store)
+                }
+                let capture = try engine.restoreWrittenInterjection(record.capture)
+                snapshot = engine.snapshot
+                var draft = makeWrittenMarginDraft(for: capture, store: store, reply: nil)
+                draft.text = record.text
+                marginCapture.openDraft(draft)
+                diagnostics["writtenMarginDraftRestored"] = capture.id
+                return "Your unfinished Margin was kept."
+            }
+            return nil
         } catch {
             diagnostics["writtenMarginDraftRestore"] = "failed:\(error.localizedDescription)"
             return nil

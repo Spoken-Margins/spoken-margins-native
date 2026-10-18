@@ -71,6 +71,16 @@ public final class WrittenMarginDraftJournal: @unchecked Sendable {
         try Self.encoder.encode(record).write(to: fileURL(for: record.id), options: .atomic)
     }
 
+    /// The order a launch tries drafts in: the one for the session that was just restored first, so a listener who
+    /// is already there is not moved, then the newest. A draft is never skipped for being old or for sitting on a
+    /// finished source (#1970 audit): the caller opens whichever session the winner belongs to.
+    public static func restoreOrder(_ drafts: [WrittenMarginDraftRecord], restoredSessionId: String?) -> [WrittenMarginDraftRecord] {
+        drafts.sorted {
+            let lhsMatches = $0.sessionId == restoredSessionId, rhsMatches = $1.sessionId == restoredSessionId
+            return lhsMatches != rhsMatches ? lhsMatches : $0.updatedAt > $1.updatedAt
+        }
+    }
+
     public func remove(id: String) throws {
         let url = fileURL(for: id)
         guard fileManager.fileExists(atPath: url.path) else { return }
