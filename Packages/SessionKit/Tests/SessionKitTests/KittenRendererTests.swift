@@ -1,12 +1,13 @@
 import AVFoundation
 import Foundation
 import XCTest
+import SessionKitTestInputs
 @testable import SessionKit
 @testable import SessionKitSupertonic
-import SessionKitTestInputs
 
 /// Tests of the bundled fallback voice (#849) with the real model, text front end and ONNX runtime, on the Mac.
-/// The model is in the repository (Git LFS), so these skip only when it hasn't been pulled.
+/// The model is in the repository (Git LFS), so these skip only when it hasn't been pulled, and not even then
+/// where `CI` or `SM_REQUIRE_MODELS` is set (#1893): a runner without LFS must not report green.
 final class KittenRendererTests: XCTestCase {
     private var assets: KittenAssetLocation!
     private var outputDirectory: URL!
@@ -15,8 +16,7 @@ final class KittenRendererTests: XCTestCase {
         // The voice files live in the app; a package checked out alone skips these tests, naming `voiceAssets`.
         assets = KittenAssetLocation(rootURL: try TestInputs.directory(.voiceAssets))
         // A Git LFS pointer is a few hundred bytes; the real model is about 57 MB.
-        let size = (try? FileManager.default.attributesOfItem(atPath: assets.modelURL.path)[.size] as? Int) ?? 0
-        guard size > 1_000_000 else { throw XCTSkip("skipped: Kitten model not pulled (git lfs pull)") }
+        try TestInputs.requireModel(at: assets.modelURL)
         outputDirectory = FileManager.default.temporaryDirectory.appending(path: "kitten-tests-\(UUID().uuidString)")
     }
 
@@ -72,12 +72,27 @@ final class KittenRendererTests: XCTestCase {
         XCTAssertEqual(diagnostics.sessionLoadCount, 2)
     }
 
-    func testEmptyAndPunctuationOnlyTextFailsWithoutCrashing() async throws {
+    /// Each odd input has the outcome the real model gives it (measured with the bundled model): text with nothing
+    /// to say yields too little audio to keep (`emptyAudio`), and anything pronounceable renders. A change that
+    /// makes everything throw, or everything render, fails here.
+    func testOddInputsHaveTheirOwnOutcome() async throws {
         let renderer = try KittenNarrationRenderer(assets: assets, outputDirectory: outputDirectory, governor: OnDeviceVoiceGovernor())
         do { _ = try await renderer.render(text: "  \n "); XCTFail("empty text must throw") } catch { XCTAssertEqual(error as? KittenNarrationError, .emptyText) }
-        for text in ["...", "—", "42", "🎧", "A", "Mr. Dr. St. etc."] {
-            if let result = try? await renderer.render(text: text) { XCTAssertGreaterThan(result.duration, 0.05, text) }
+
+        // No sound to make: punctuation, a dash, an emoji, and a lone letter come back as too short to keep.
+        for text in ["...", "—", "🎧", "A"] {
+            do {
+                let result = try await renderer.render(text: text)
+                XCTFail("\(text) should have no audio, got \(result.duration) s")
+            } catch {
+                XCTAssertEqual(error as? KittenNarrationError, .emptyAudio, text)
+            }
         }
+        // Spoken: digits become words, and abbreviations are expanded.
+        let digits = try await renderer.render(text: "42")
+        XCTAssertGreaterThan(digits.duration, 0.15, "forty-two")
+        let abbreviations = try await renderer.render(text: "Mr. Dr. St. etc.")
+        XCTAssertGreaterThan(abbreviations.duration, 1.0, "mister doctor saint et cetera")
     }
 
     func testMissingAssetsAreNamed() throws {

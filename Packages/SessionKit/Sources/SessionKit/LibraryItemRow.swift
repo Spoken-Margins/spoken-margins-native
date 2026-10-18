@@ -36,6 +36,8 @@ public struct LibraryItemRow: Identifiable, Hashable, Sendable {
     /// Marked complete by hand, not finished by listening, so Mark Unfinished can clear it (#273).
     public var canMarkUnfinished = false
     public var textCharacterCount: Int?  // a text item's length for its time estimate (#305); nil for recorded audio
+    /// Margins other people shared on this item, and how many of them the listener hasn't heard (#1792).
+    public var sharedMargins = SharedMarginTally.none
 
     public init(
         id: String,

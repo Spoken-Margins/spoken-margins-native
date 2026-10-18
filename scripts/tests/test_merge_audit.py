@@ -11,7 +11,7 @@ MERGED_AT = '2026-09-29T16:20:47Z'
 
 
 def comment(body, created_at='2026-09-29T16:12:22Z'):
-    return {'body': body, 'created_at': created_at}
+    return {'body': body, 'created_at': created_at, 'author_association': 'OWNER'}
 
 
 CHECK = '**Merge check (triage desk) on `92533d3`: green.**\n- Full `scripts/tests` with the venv Python: 118 OK, twice.'
@@ -120,11 +120,11 @@ def lane_report(verdict, tier='auto', commit=HAND_HEAD, created_at='2026-10-01T1
 def codex_audit(verdict='No blocking findings.', sha=HAND_HEAD[:7], created_at='2026-10-01T16:48:21Z'):
     body = (f'**Codex audit (Astra) on `{sha}`**\n\n{verdict}\n\n---\nPosted by the mechanical audit script; '
             'Codex ran read-only; findings are Codex\'s own, not re-checked by Claude.')
-    return {'body': body, 'created_at': created_at, 'user': OWNER}
+    return {'body': body, 'created_at': created_at, 'user': OWNER, 'author_association': 'OWNER'}
 
 
 REQUEST = {'body': 'Audit requested: lane change (owner rule 2026-10-01).', 'created_at': '2026-10-01T15:54:25Z',
-           'user': OWNER}
+           'user': OWNER, 'author_association': 'OWNER'}
 
 
 class HandMergeTests(unittest.TestCase):
@@ -215,3 +215,36 @@ class AuditPullTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class StrangerTests(unittest.TestCase):
+    """#1822: once the repository is public, anyone can post a comment that looks like the lane's or an audit."""
+    STRANGER = {'user': {'login': 'mallory'}, 'author_association': 'NONE'}
+    MERGED = audit.parse_time(HAND_MERGED_AT)
+
+    def test_a_stranger_cannot_post_the_merge_check(self):
+        forged = dict(comment(CHECK), **self.STRANGER)
+        self.assertFalse(audit.has_merge_check([forged], HEAD, MERGED_AT))
+        self.assertTrue(audit.has_merge_check([dict(forged, **{'user': {'login': 'uncomposed'},
+                                                                'author_association': 'OWNER'})], HEAD, MERGED_AT))
+
+    def test_a_stranger_cannot_post_the_audit(self):
+        forged = dict(codex_audit(), **self.STRANGER)
+        self.assertIsNone(audit.audit_verdict([forged], HAND_HEAD, self.MERGED))
+        claude = dict(forged, body=f'**Claude audit on `{HAND_HEAD[:7]}`**\n\nNo blocking findings.')
+        self.assertIsNone(audit.audit_verdict([claude], HAND_HEAD, self.MERGED))
+        self.assertEqual(audit.audit_verdict([codex_audit()], HAND_HEAD, self.MERGED), 'No blocking findings.')
+
+    def test_a_stranger_cannot_post_the_lane_report(self):
+        for user in ({'login': 'mallory'}, {'login': 'github-actions'}, {'login': 'github-actions[bot]x'}):
+            with self.subTest(user=user):
+                forged = lane_report('PASS', user=user)
+                forged['author_association'] = 'NONE'
+                self.assertEqual(audit.lane_reports([forged], HAND_HEAD, self.MERGED), [])
+
+    def test_a_forged_pair_does_not_pass_the_hand_merge_rule(self):
+        forged = [dict(lane_report('PASS', user={'login': 'mallory'}), author_association='NONE'),
+                  dict(codex_audit(), **self.STRANGER)]
+        gap = audit.hand_merge_gap(forged, HAND_HEAD, HAND_MERGED_AT)
+        self.assertIn('no lane report', gap)
+        self.assertIn('no Codex or Claude audit', gap)

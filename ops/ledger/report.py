@@ -11,7 +11,9 @@ import subprocess
 import sys
 from zoneinfo import ZoneInfo
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 import claude_sessions
+import comment_trust  # #1822: only trusted authors' comments count as a confirmed fix
 import usage
 
 REPO = 'uncomposed/spoken-margins-native'
@@ -117,7 +119,7 @@ class GitHub:
         return self.get(f'pulls/{number}')
 
     def comments(self, number):
-        return self.get(f'issues/{number}/comments?per_page=100', paginate=True)
+        return comment_trust.trusted_only(self.get(f'issues/{number}/comments?per_page=100', paginate=True))  # #1822
 
     def compare(self, head, sha):
         return self.get(f'compare/{head}...{sha}')

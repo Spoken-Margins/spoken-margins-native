@@ -123,6 +123,7 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
                                 HStack(spacing: 12) {
                                     Image(systemName: "checkmark.circle.fill")
                                         .foregroundStyle(AppColors.evergreen)
+                                        .accessibilityHidden(true)
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(row.title)
                                             .font(.headline)
@@ -232,6 +233,7 @@ private struct AudioPreparationQueueItemRow: View {
             if row.plannedChunkCount > 0 {
                 ProgressView(value: row.progress)
                     .tint(AppColors.ochre)
+                    .accessibilityLabel("Audio preparation progress")
             }
 
             Text(statusDetail)

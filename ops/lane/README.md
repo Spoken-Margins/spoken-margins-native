@@ -113,11 +113,7 @@ mkdir -p ~/SpokenMarginsOps/lane-power-guard
 ```
 
 ```zsh
-cp ~/Documents/GitHub/spoken-margins-native/ops/lane/com.spokenmargins.lane-power-guard.plist ~/Library/LaunchAgents/
-```
-
-```zsh
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.spokenmargins.lane-power-guard.plist
+/usr/bin/python3 ~/Documents/GitHub/spoken-margins-native/ops/install-launchd.py --install lane-power-guard
 ```
 
 To turn it off:

@@ -23,6 +23,8 @@ let package = Package(
         .executable(name: "coop-packet", targets: ["CoopPacket"]),
         .executable(name: "speech-bench", targets: ["SpeechBench"]),
         .executable(name: "phone-plan", targets: ["PhonePlan"]),
+        // The daily Substack format canary (#2027), run by .github/workflows/substack-canary.yml. The app never links it.
+        .executable(name: "substack-canary", targets: ["SubstackCanary"]),
         // The last shipped build's packet reader, for the app's own test bundle only (#1039): it
         // reads the packet the real app exporter writes. The app target never links it.
         .library(name: "ShippedPacketReader", targets: ["ShippedPacketReader"])
@@ -95,6 +97,13 @@ let package = Package(
             name: "SessionKitFeeds",
             dependencies: ["SessionKit"]
         ),
+        // The canary's verdict rules (#2027), Foundation only so they host-test on Linux; and the canary itself,
+        // which reads live Substack pages with the app's parser. Neither is in the app.
+        .target(name: "SubstackCanaryCore"),
+        .executableTarget(
+            name: "SubstackCanary",
+            dependencies: ["SessionKit", "SessionKitFeeds", "SubstackCanaryCore"]
+        ),
         // The last shipped build's packet reader, frozen for tests (scripts/freeze-shipped-reader.sh, #317).
         // Only the ShippedPacketReader product exposes them, and only the app's test bundle links it.
         .target(name: "ShippedSessionKit", path: "Tests/ShippedReader/SessionKit"),
@@ -134,6 +143,7 @@ let package = Package(
                 "SessionKitFeeds",
                 "SessionKitSpeechFrontEnd",
                 "SessionKitTestInputs",
+                "SubstackCanaryCore",
                 .product(name: "ZIPFoundation", package: "ZIPFoundation")
             ]
         ),
@@ -175,6 +185,8 @@ let package = Package(
 let linuxTargets: Set<String> = [
     "SessionKit", "SessionKitPersistence", "SessionKitAI", "SessionKitEPUB", "SessionKitFeeds",
     "SessionKitSpeechFrontEnd", "SessionKitTestInputs", "SessionKitCoreTests",
+    // The Substack canary (#2027) runs on the VPS runner; "substack-canary" is its product's name.
+    "SubstackCanaryCore", "SubstackCanary", "substack-canary",
 ]
 package.targets.removeAll { !linuxTargets.contains($0.name) }
 package.products.removeAll { !linuxTargets.contains($0.name) }

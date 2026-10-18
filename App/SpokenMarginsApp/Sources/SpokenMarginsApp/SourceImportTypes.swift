@@ -32,7 +32,7 @@ enum SourceFileImportError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .pdfHasNoExtractableText:
-            return "This PDF has no extractable text. Scanned PDFs need OCR before they can be imported."
+            return "This PDF is only pictures of pages, so there is no text to read aloud. Try a PDF you can select text in."
         case .pdfImportUnavailable:
             return "PDF text extraction is unavailable in this build."
         case .remotePDFInvalidResponse:
@@ -41,4 +41,11 @@ enum SourceFileImportError: LocalizedError {
             return "This PDF is larger than the 50 MB import limit."
         }
     }
+}
+
+struct ObsidianImportBatch: Sendable {
+    let prepared: [PreparedObsidianImport]
+    let failures: [String]
+    /// The same failures with the raw error text, for diagnostics only (#1965).
+    var rawFailures: [String] = []
 }

@@ -192,6 +192,7 @@ extension Gate1AppModel {
     private nonisolated static func prepareObsidianImports(_ requests: [ObsidianImportRequest]) async -> ObsidianImportBatch {
         var prepared: [PreparedObsidianImport] = []
         var failures: [String] = []
+        var rawFailures: [String] = []
         for request in requests {
             do {
                 let imported = try await importableText(from: request.url)
@@ -199,10 +200,11 @@ extension Gate1AppModel {
                     imported, fileURL: request.url, itemId: request.itemId, createdAt: Date()
                 ))
             } catch {
-                failures.append("\(request.url.lastPathComponent): \(error)")
+                failures.append("\(request.url.lastPathComponent)\n\(ListenerErrorText.message(for: error))")
+                rawFailures.append("\(request.url.lastPathComponent): \(error)")
             }
         }
-        return ObsidianImportBatch(prepared: prepared, failures: failures)
+        return ObsidianImportBatch(prepared: prepared, failures: failures, rawFailures: rawFailures)
     }
 
     private nonisolated static func importableText(from url: URL) async throws -> ImportedSourceText {
@@ -249,6 +251,7 @@ extension Gate1AppModel {
             let preservedSelectedItemId = selectedItem.id
             var imported: [Item] = []
             var failures = batch.failures
+            var rawFailures = batch.rawFailures
             for prepared in batch.prepared {
                 do {
                     try store.saveItem(prepared.item)
@@ -260,11 +263,13 @@ extension Gate1AppModel {
                     }
                     imported.append(prepared.item)
                 } catch {
-                    failures.append("\(prepared.item.title): \(error)")
+                    failures.append("\(prepared.item.title)\n\(ListenerErrorText.message(for: error))")
+                    rawFailures.append("\(prepared.item.title): \(error)")
                 }
             }
             guard !imported.isEmpty else {
-                reportFailure(failures.isEmpty ? "No source files were imported." : failures.joined(separator: "\n"))
+                reportFailure(failures.isEmpty ? "No source files were imported." : failures.joined(separator: "\n\n"))
+                if !rawFailures.isEmpty { diagnostics["recentFailure"] = rawFailures.joined(separator: "\n") }
                 return
             }
             if engine == nil {

@@ -42,10 +42,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator, List, Optional, Tuple
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+import sm_paths  # noqa: E402
+
 HOME = Path.home()
 LAUNCH_AGENTS = HOME / 'Library' / 'LaunchAgents'
 RUNNER_PREFIX = 'actions.runner.uncomposed-spoken-margins-native.'
-STATE_DIR = HOME / 'SpokenMarginsOps' / 'lane-power-guard'
+STATE_DIR = sm_paths.state_dir('lane-power-guard', home=HOME)
 LOG = STATE_DIR / 'log.txt'
 PAUSED = STATE_DIR / 'paused'  # one runner label per line: the runners this guard stopped
 LOCK = STATE_DIR / 'lock'  # held for a whole look-decide-act cycle (#836)

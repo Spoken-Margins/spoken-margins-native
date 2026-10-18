@@ -5,39 +5,48 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
+	"sync"
 	"time"
 )
 
-// TranscriptMaxAge is how long the sweep lets a transcript wait. The sweep
-// runs hourly, so no transcript outlives 24 hours even if the worker is
-// stuck; normally the worker deletes it within a minute of the upload.
-const TranscriptMaxAge = 23 * time.Hour
+// TranscriptMaxAge is how long the sweep lets a transcript wait in memory.
+// The sweep runs hourly, so none outlives about three hours even if the
+// worker is stuck; normally the worker drops it within a minute of the
+// upload. A restart drops them all, since they were never written anywhere.
+const TranscriptMaxAge = 2 * time.Hour
 
 var ErrNotFound = errors.New("maps: not found")
 
-// Store keeps maps, waiting transcripts and withdrawn keys as one small file
-// each, named by episode key, under one directory only the service can read.
+// Store keeps maps and withdrawn keys as one small file each, named by
+// episode key, under one directory only the service can read. Waiting
+// transcripts live in memory only (#1730): nothing of a transcript is ever
+// written to disk, so there is no file to retain, sweep or delete.
 //
 //	maps/<key>.json         served
-//	transcripts/<key>.json  waiting for the worker, never served
 //	withdrawn/<key>         taken down by the owner; no new map is made
-type Store struct{ dir string }
+type Store struct {
+	dir string
+
+	mu    sync.Mutex
+	queue map[string]waiting
+	order []string // keys in arrival order, oldest first
+}
 
 func OpenStore(dir string) (*Store, error) {
-	for _, sub := range []string{"maps", "transcripts", "withdrawn"} {
+	for _, sub := range []string{"maps", "withdrawn"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o700); err != nil {
 			return nil, err
 		}
 	}
-	return &Store{dir: dir}, nil
+	// An earlier version queued transcripts as files. None may outlive the
+	// upgrade, and the worker could not use them now.
+	if err := os.RemoveAll(filepath.Join(dir, "transcripts")); err != nil {
+		return nil, err
+	}
+	return &Store{dir: dir, queue: map[string]waiting{}}, nil
 }
 
-func (s *Store) mapPath(key string) string { return filepath.Join(s.dir, "maps", key+".json") }
-func (s *Store) transcriptPath(key string) string {
-	return filepath.Join(s.dir, "transcripts", key+".json")
-}
+func (s *Store) mapPath(key string) string       { return filepath.Join(s.dir, "maps", key+".json") }
 func (s *Store) withdrawnPath(key string) string { return filepath.Join(s.dir, "withdrawn", key) }
 
 func writeAtomic(path string, data []byte) error {
@@ -112,7 +121,7 @@ func (s *Store) Takedown(key string) (bool, error) {
 	if err := writeAtomic(s.withdrawnPath(key), nil); err != nil {
 		return false, err
 	}
-	os.Remove(s.transcriptPath(key))
+	s.DeleteTranscript(key)
 	err := os.Remove(s.mapPath(key))
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
@@ -120,120 +129,93 @@ func (s *Store) Takedown(key string) (bool, error) {
 	return err == nil, err
 }
 
-// waiting is a transcript on disk with the time it arrived, which the sweep
-// reads instead of file times so a test can drive it with a fake clock.
+// waiting is a transcript in memory with the time it arrived, which the
+// sweep reads so a test can drive it with a fake clock.
 type waiting struct {
-	ReceivedAt time.Time  `json:"receivedAt"`
-	Transcript Transcript `json:"transcript"`
+	ReceivedAt time.Time
+	Transcript Transcript
 }
 
 // HasTranscript reports whether a transcript for key is waiting.
 func (s *Store) HasTranscript(key string) bool {
-	return ValidKey(key) && exists(s.transcriptPath(key))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.queue[key]
+	return ok
 }
 
-// PutTranscript queues a transcript for the worker.
+// PutTranscript queues a transcript for the worker, in memory only. One
+// already waiting for the episode is kept, and the new one is dropped.
 func (s *Store) PutTranscript(t Transcript, now time.Time) error {
-	data, err := json.Marshal(waiting{ReceivedAt: now.UTC(), Transcript: t})
-	if err != nil {
-		return err
+	if !ValidKey(t.EpisodeKey) {
+		return ErrNotFound
 	}
-	return writeAtomic(s.transcriptPath(t.EpisodeKey), data)
-}
-
-func (s *Store) DeleteTranscript(key string) error {
-	err := os.Remove(s.transcriptPath(key))
-	if errors.Is(err, os.ErrNotExist) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.queue[t.EpisodeKey]; ok {
 		return nil
 	}
-	return err
+	s.queue[t.EpisodeKey] = waiting{ReceivedAt: now.UTC(), Transcript: t}
+	s.order = append(s.order, t.EpisodeKey)
+	return nil
 }
 
-func (s *Store) transcriptKeys() ([]string, error) {
-	entries, err := os.ReadDir(filepath.Join(s.dir, "transcripts"))
-	if err != nil {
-		return nil, err
-	}
-	var keys []string
-	for _, e := range entries {
-		key, ok := strings.CutSuffix(e.Name(), ".json")
-		if ok && ValidKey(key) {
-			keys = append(keys, key)
+// DeleteTranscript drops a waiting transcript. Dropping one that isn't
+// waiting is not an error.
+func (s *Store) DeleteTranscript(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.queue, key)
+	for i, k := range s.order {
+		if k == key {
+			s.order = append(s.order[:i], s.order[i+1:]...)
+			break
 		}
 	}
-	return keys, nil
+	return nil
 }
 
 // CountTranscripts is how many transcripts are waiting.
 func (s *Store) CountTranscripts() (int, error) {
-	keys, err := s.transcriptKeys()
-	return len(keys), err
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.queue), nil
 }
 
-func (s *Store) readWaiting(key string) (waiting, error) {
-	var w waiting
-	data, err := os.ReadFile(s.transcriptPath(key))
-	if err != nil {
-		return w, err
-	}
-	return w, json.Unmarshal(data, &w)
-}
-
-// WaitingKeys lists the waiting transcripts' keys, oldest file first. It
-// reads no transcript, so the worker holds at most one in memory at a time.
+// WaitingKeys lists the waiting transcripts' keys, oldest first. It copies
+// no transcript, so the worker holds at most the one it is mapping.
 func (s *Store) WaitingKeys() ([]string, error) {
-	keys, err := s.transcriptKeys()
-	if err != nil {
-		return nil, err
-	}
-	mtime := make(map[string]time.Time, len(keys))
-	for _, key := range keys {
-		if info, err := os.Stat(s.transcriptPath(key)); err == nil {
-			mtime[key] = info.ModTime()
-		}
-	}
-	sort.SliceStable(keys, func(i, j int) bool { return mtime[keys[i]].Before(mtime[keys[j]]) })
-	return keys, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.order...), nil
 }
 
-// ReadTranscript loads one waiting transcript. One that can't be read is
-// deleted: it can never be mapped, and must not linger.
+// ReadTranscript returns one waiting transcript, or ErrNotFound.
 func (s *Store) ReadTranscript(key string) (Transcript, error) {
-	w, err := s.readWaiting(key)
-	if err != nil {
-		s.DeleteTranscript(key)
-		return Transcript{}, err
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	w, ok := s.queue[key]
+	if !ok {
+		return Transcript{}, ErrNotFound
 	}
 	return w.Transcript, nil
 }
 
-// Sweep deletes every transcript older than maxAge, and any it can't read,
-// and returns how many it deleted. Stray temporary files go too.
+// Sweep drops every waiting transcript older than maxAge and returns how
+// many it dropped.
 func (s *Store) Sweep(now time.Time, maxAge time.Duration) (int, error) {
-	dir := filepath.Join(s.dir, "transcripts")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return 0, err
-	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept := s.order[:0]
 	n := 0
-	for _, e := range entries {
-		key, ok := strings.CutSuffix(e.Name(), ".json")
-		if !ok || !ValidKey(key) {
-			// A temporary file an interrupted write left behind. A fresh one
-			// may be a write in progress, so only old ones go.
-			if info, err := e.Info(); err == nil && now.Sub(info.ModTime()) >= time.Hour &&
-				os.Remove(filepath.Join(dir, e.Name())) == nil {
-				n++
-			}
+	for _, key := range s.order {
+		if now.Sub(s.queue[key].ReceivedAt) < maxAge {
+			kept = append(kept, key)
 			continue
 		}
-		w, err := s.readWaiting(key)
-		if err == nil && now.Sub(w.ReceivedAt) < maxAge {
-			continue
-		}
-		if s.DeleteTranscript(key) == nil {
-			n++
-		}
+		delete(s.queue, key)
+		n++
 	}
+	s.order = kept
 	return n, nil
 }
