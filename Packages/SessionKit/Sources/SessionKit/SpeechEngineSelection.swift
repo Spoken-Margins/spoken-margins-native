@@ -201,11 +201,12 @@ public enum SpeechRateRule {
     /// A speed read from storage or a control, rounded to the nearest quarter step (ties go up) and
     /// held inside `multiplierRange`.
     ///
-    /// Unlike `clampedMultiplier`, a value that is not a number lands on a bound instead of 1: NaN and
-    /// +∞ give 2×, −∞ gives 0.5×. The app has always done this, so the saved speeds it reads back
-    /// stay the same; changing it would need its own issue.
+    /// Like `clampedMultiplier`, NaN gives 1× (#1962), so a bad value can't put playback at 2×. Infinite
+    /// values still land on a bound: +∞ gives 2×, −∞ gives 0.5×. The app has always done that, so the
+    /// saved speeds it reads back stay the same; every finite value is unchanged.
     public static func quarterStepMultiplier(_ multiplier: Double) -> Double {
-        max(multiplierRange.lowerBound, min(multiplierRange.upperBound, (multiplier * 4).rounded() / 4))
+        guard !multiplier.isNaN else { return 1 }
+        return max(multiplierRange.lowerBound, min(multiplierRange.upperBound, (multiplier * 4).rounded() / 4))
     }
 
     /// The speed the speed button moves to from `current`: the next one up, wrapping from the top to
