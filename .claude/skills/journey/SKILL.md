@@ -46,6 +46,13 @@ The desk session stays a lean lead. It finds the build, holds the device and wri
 
 **The simulator tool, never computer use or Device Hub.** Lead and helpers drive the simulator with the iOS simulator tool (`mcp__Claude_Code_iOS_Simulator__control`), passing the pool device's UDID as `device`. Never use computer use for the simulator, and never open Device Hub or Simulator.app: on 2026-10-16 opening Device Hub booted a pool device outside the lane (no watcher, no slot), held up `--pool` for about 15 minutes, and quitting it shut down another pool device. Don't inject state or use test-only launch arguments in an agent-driven journey.
 
+**Unattended desks drive through AXe instead of the panel.** The simulator panel detaches on every boot, and only the owner can re-attach it, so a desk that runs while he is away can't use the simulator tool across a reboot or a crash (2026-10-18, #184). AXe (`axe`, MIT, installed at `~/.local/bin/axe`) taps, types and swipes through the simulator's own input and accessibility layer. It needs no panel, no macOS permission and no approval per device or per boot: checked on 2026-10-18 on a pool device, before and after a `--done` and a fresh `--pool`. It is a plain shell command, so the lane guard lets it through; boots still go through `scripts/lane-sim-boot`. A helper driving with AXe uses Bash instead of the simulator tool, under the same rules.
+- Read the screen with `scripts/ax-look <udid>`: one line per control with its centre point, role, label, value and identifier, about 4k characters a screen. `axe describe-ui` alone prints about 500k. The OCR reader `artifacts/desk-operator/look`, if present, is smaller (about 1k) and shows only what is visible.
+- Tap with `axe tap --id <identifier> --tap-style physical --udid <udid>`, or `--label '<label>'`, or `-x <x> -y <y>` from ax-look. **Always pass `--tap-style physical`**: the default style reports success and does nothing in this app.
+- Type with `axe type '<text>' --udid <udid>` after tapping the field. Scroll with `axe swipe --start-x 200 --start-y 750 --end-x 200 --end-y 250 --duration 0.3 --udid <udid>`.
+- Confirm every step by reading the screen again. AXe confirms only that the touch was sent.
+- Pitfalls are in docs/journeys.md under "Driving with AXe".
+
 **What the lead does**
 
 1. **Build once.** Reuse a kept desk build of the same commit if one exists: a `.claude/worktrees/lane-*` worktree whose `git -C <worktree> rev-parse HEAD` is the commit and which holds `.build/dd*/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app`. Otherwise build as in Setup step 2. (The integration script in `ops/testdesk/` removes its worktree after each run, so today it leaves no app to reuse.)
@@ -60,6 +67,7 @@ The desk session stays a lean lead. It finds the build, holds the device and wri
 You are a Test Desk helper for Spoken Margins. Drive one journey on one simulator and report.
 Device UDID: <udid> (already booted, app installed: <app path>). Evidence folder: <artifacts/lane/<id>/<journey>/>.
 Use only mcp__Claude_Code_iOS_Simulator__control with device=<udid>, plus Bash for the crash check.
+(Unattended desk: instead use Bash with axe and scripts/ax-look <udid>, always with --tap-style physical.)
 Never use computer use, Device Hub or Simulator.app; never boot, erase, install, shut down or
 run scripts/lane-sim-boot. If a simulator call is blocked, stop and say "blocked by the lane guard".
 Rules: .claude/skills/journey/SKILL.md, "Screenshot budget" and "Simulator pitfalls".
