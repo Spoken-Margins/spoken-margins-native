@@ -180,7 +180,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         model.handleIncomingURL(anotherURL)
         model.confirmSpokenMarginsPackageImport()
         for _ in 0..<250 where model.isImportingSpokenMarginsPackage { try await Task.sleep(for: .milliseconds(20)) }
-        XCTAssertTrue(model.spokenMarginsPackageImportError?.contains("audio bytes do not match") == true)
+        XCTAssertEqual(model.spokenMarginsPackageImportError, SpokenMarginsPackageArchiveError.invalidManifest("").listenerMessage)
         XCTAssertEqual(try store.loadImportedCommentaryLayers(itemId: item.id).count, 1)
     }
 
