@@ -88,9 +88,13 @@ func TestAnswerSceneCountIsBounded(t *testing.T) {
 			t.Errorf("%d scenes: %d scenes, %v; want accepted", n, len(scenes), err)
 		}
 	}
-	for _, n := range []int{MinScenes - 1, MaxScenes + 1, 59} {
-		if _, err := CheckAnswer(tr, answerWith(n)); err == nil {
-			t.Errorf("%d scenes: accepted", n)
+	// Too many scenes are merged down to MaxScenes rather than refused.
+	for _, n := range []int{MaxScenes + 1, 59} {
+		if scenes, err := CheckAnswer(tr, answerWith(n)); err != nil || len(scenes) != MaxScenes {
+			t.Errorf("%d scenes: %d scenes, %v; want merged to %d", n, len(scenes), err, MaxScenes)
 		}
+	}
+	if _, err := CheckAnswer(tr, answerWith(MinScenes-1)); err == nil {
+		t.Errorf("%d scenes: accepted", MinScenes-1)
 	}
 }
