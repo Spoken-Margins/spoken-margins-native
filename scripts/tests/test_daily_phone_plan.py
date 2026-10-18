@@ -323,5 +323,23 @@ class WriterOutputTests(unittest.TestCase):
         run.assert_not_called()
 
 
+class OmittedIssueTests(unittest.TestCase):
+    def test_an_issue_the_writer_left_out_is_blocked_not_checked(self):
+        items = [{'number': 1, 'blocked': ''}, {'number': 2, 'blocked': ''},
+                 {'number': 3, 'blocked': ''}, {'number': 4, 'blocked': 'Fix was reverted.'}]
+        proposal = {'checks': [{'issues': [1]}], 'blocked': [{'issue': 2, 'reason': 'No check.'}]}
+        daily.add_omitted(proposal, items)
+        self.assertEqual(proposal['checks'], [{'issues': [1]}])
+        self.assertEqual(proposal['blocked'], [{'issue': 2, 'reason': 'No check.'},
+                                               {'issue': 3, 'reason': daily.OMITTED},
+                                               {'issue': 4, 'reason': 'Fix was reverted.'}])
+
+    def test_a_complete_plan_is_unchanged(self):
+        items = [{'number': 1, 'blocked': ''}, {'number': 2, 'blocked': ''}]
+        proposal = {'checks': [{'issues': [1, 2]}], 'blocked': []}
+        daily.add_omitted(proposal, items)
+        self.assertEqual(proposal, {'checks': [{'issues': [1, 2]}], 'blocked': []})
+
+
 if __name__ == '__main__':
     unittest.main()

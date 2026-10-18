@@ -197,6 +197,21 @@ def writer_plan(text):
     return json.loads(match.group(1) if match else text)
 
 
+OMITTED = 'The plan writer left this issue out; coordinator must write its check.'
+
+
+def add_omitted(proposal, items):
+    # The writer can drop one issue from a long list (2026-10-17: 75 of 76, #777 missing), and the
+    # coverage audit then rejects the whole paid plan. Block an omitted issue visibly instead; it is
+    # never turned into a check, and a prerequisite block keeps its own reason.
+    covered = {number for check in proposal.get('checks', []) for number in check.get('issues', [])}
+    covered |= {entry.get('issue') for entry in proposal.get('blocked', [])}
+    for item in items:
+        if item['number'] not in covered:
+            proposal.setdefault('blocked', []).append(
+                {'issue': item['number'], 'reason': item['blocked'] or OMITTED})
+
+
 def validate(request, plan_id):
     command = shlex.split(os.environ.get('SM_DAILY_VALIDATOR', str(
         phone.PUBLIC / 'Packages/SessionKit/.build/release/phone-plan')))
@@ -259,6 +274,7 @@ def deliver(now, state, state_path, on_request=False):
     else:
         started = time.monotonic()
         proposal = propose(items, catalog, archive)
+        add_omitted(proposal, items)
         # A writer cannot turn an explicitly blocked prerequisite into a check.
         blocked = {entry['issue']: entry['reason'] for entry in proposal['blocked']}
         if any(item['blocked'] and blocked.get(item['number']) != item['blocked'] for item in items):
