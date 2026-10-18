@@ -92,6 +92,8 @@ public enum SharedTextListeningMapImporter {
         let overview = senderLabel.map { "Chapters shared by \($0)." } ?? "Chapters shared with you."
         let map = ListeningMap(id: "shared-map-" + item.id, itemId: item.id, overview: overview, chapters: plan.placement.chapters)
         if let attach { try attach(map) } else { try repository.saveListeningMap(map) }
+        // A map that replaces another leaves only itself, so the item never reads the old one.
+        try repository.removePortableListeningMapProposals(itemId: item.id)
         try repository.savePortableListeningMapProposal(localProposal(from: plan.proposal, placement: plan.placement), itemId: item.id)
         return .added(placed: plan.placement.scenes.count, total: plan.placement.totalSceneCount, replacedAnotherMap: plan.existing == .differentMap)
     }

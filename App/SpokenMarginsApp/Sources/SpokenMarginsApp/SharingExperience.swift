@@ -61,6 +61,13 @@ struct SpokenMarginsPackageImportReview: Identifiable {
     let extractionDirectory: URL
     let contents: VerifiedSpokenMarginsPackage
     let matchingItemId: String?
+    /// A map packet whose item already carries a different shared map: adding this one replaces it.
+    var replacesExistingMap = false
+
+    /// A file that carries a Listening Map for an article or PDF and no Margins (#1471).
+    var isListeningMap: Bool { ListeningMapPacket.isMapPacket(contents.manifest) }
+
+    var mapChapterCount: Int? { ListeningMapPacket.proposal(in: contents)?.scenes.count }
 
     var marginCount: Int {
         contents.commentaryLayers.reduce(0) { $0 + $1.interjections.count }
@@ -75,7 +82,9 @@ struct SpokenMarginsPackageImportReview: Identifiable {
     }
 
     var requiresRecipientItem: Bool {
-        contents.manifest.itemTransport.kind == .recipientSupplied && matchingItemId == nil
+        // A PDF or EPUB can't be fetched from a link, so the listener picks their copy even when the sender had a link.
+        let needsPickedFile = isListeningMap && contents.manifest.item.itemType != .text
+        return (contents.manifest.itemTransport.kind == .recipientSupplied || needsPickedFile) && matchingItemId == nil
     }
 }
 

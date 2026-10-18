@@ -147,6 +147,12 @@ struct Build23RecipientImportSnapshot: Equatable {
     /// A podcast packet whose source was private: the sender's links were dropped (#168), so the
     /// recipient can recover the episode from their own feed (#454).
     var isPrivatePodcastSource = false
+    /// Set for a file that carries a Listening Map and no Margins (#1471): how many chapters it holds.
+    var mapChapterCount: Int? = nil
+    /// The item already has a different shared map; adding this one replaces it.
+    var replacesExistingMap = false
+
+    var isListeningMap: Bool { mapChapterCount != nil }
 }
 
 struct Build23RecipientSourceRequest: Identifiable, Equatable {
@@ -376,7 +382,9 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             isImporting: model.isImportingSpokenMarginsPackage,
             errorMessage: model.spokenMarginsPackageImportError,
             canImport: !review.requiresRecipientItem && !model.isImportingSpokenMarginsPackage,
-            isPrivatePodcastSource: SharedEpisodeFeedMatcher.isPrivatePodcastSource(review.contents.manifest)
+            isPrivatePodcastSource: SharedEpisodeFeedMatcher.isPrivatePodcastSource(review.contents.manifest),
+            mapChapterCount: review.isListeningMap ? review.mapChapterCount : nil,
+            replacesExistingMap: review.replacesExistingMap
         )
     }
 

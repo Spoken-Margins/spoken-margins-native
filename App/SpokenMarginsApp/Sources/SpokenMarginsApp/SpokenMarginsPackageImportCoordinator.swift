@@ -50,6 +50,8 @@ final class SpokenMarginsPackageImportCoordinator {
         var publishReview: @MainActor (SpokenMarginsPackageImportReview?) -> Void
         var publishIsImporting: @MainActor (Bool) -> Void
         var publishError: @MainActor (String?) -> Void
+        /// Saves a shared Listening Map for a text item and tells a running session about it. Nil saves straight to the store.
+        var attachListeningMap: (@MainActor (ListeningMap) throws -> Void)? = nil
     }
 
     enum StageResult {
@@ -155,14 +157,8 @@ final class SpokenMarginsPackageImportCoordinator {
                 try? FileManager.default.removeItem(at: root)
                 return .staged
             }
-            let matchingItemId = try matchingItemID(for: contents.manifest.item, store: store)
             importError = nil
-            review = SpokenMarginsPackageImportReview(
-                packageURL: copiedPackage,
-                extractionDirectory: root,
-                contents: contents,
-                matchingItemId: matchingItemId
-            )
+            review = try makeReview(packageURL: copiedPackage, extractionDirectory: root, contents: contents, store: store)
             if try store.loadImportedCommentaryLayer(packageDigest: digest) == nil {
                 environment.recordDiagnostic("lastSpokenMarginsPackageImport", "previewed:\(digest)")
             } else {
@@ -206,18 +202,20 @@ final class SpokenMarginsPackageImportCoordinator {
               !isImporting else { return }
         do {
             let store = try environment.requireStore()
-            let matchingItemId = try matchingItemID(for: review.contents.manifest.item, store: store)
-            self.review = SpokenMarginsPackageImportReview(
-                packageURL: review.packageURL,
-                extractionDirectory: review.extractionDirectory,
-                contents: review.contents,
-                matchingItemId: matchingItemId
+            let refreshed = try makeReview(
+                packageURL: review.packageURL, extractionDirectory: review.extractionDirectory,
+                contents: review.contents, store: store
             )
-            if matchingItemId == nil {
-                importError = "That source does not match the item described by this package yet. Add the same item or cancel the import."
+            self.review = refreshed
+            if refreshed.matchingItemId == nil {
+                importError = refreshed.isListeningMap
+                    ? "That source does not match the item this map was made for yet. Add the same item or cancel."
+                    : "That source does not match the item described by this package yet. Add the same item or cancel the import."
             } else {
                 importError = nil
-                environment.reportConfirmation("Source matched. Review the shared Margins before importing.")
+                environment.reportConfirmation(refreshed.isListeningMap
+                    ? "Source matched. Review the shared map before adding it."
+                    : "Source matched. Review the shared Margins before importing.")
             }
         } catch {
             importError = SharedMarginsImportMessage.userFacing(error)
@@ -245,6 +243,10 @@ final class SpokenMarginsPackageImportCoordinator {
     func confirm(_ review: SpokenMarginsPackageImportReview) async {
         do {
             let store = try environment.requireStore()
+            if ListeningMapPacket.isMapPacket(review.contents.manifest) {
+                try await confirmListeningMap(review, store: store)
+                return
+            }
             let itemId: String?
             if let matching = review.matchingItemId {
                 itemId = matching
@@ -418,16 +420,84 @@ final class SpokenMarginsPackageImportCoordinator {
         return itemID
     }
 
+    private func makeReview(
+        packageURL: URL, extractionDirectory: URL, contents: VerifiedSpokenMarginsPackage, store: SQLiteSessionStore
+    ) throws -> SpokenMarginsPackageImportReview {
+        let matchingItemId = try matchingItemID(for: contents, store: store)
+        var review = SpokenMarginsPackageImportReview(
+            packageURL: packageURL, extractionDirectory: extractionDirectory,
+            contents: contents, matchingItemId: matchingItemId
+        )
+        if let matchingItemId, let proposal = ListeningMapPacket.proposal(in: contents) {
+            review.replacesExistingMap = try SharedTextListeningMapImporter.existing(
+                for: proposal, itemId: matchingItemId, repository: store
+            ) == .differentMap
+        }
+        return review
+    }
+
     private func matchingItemID(
-        for itemIdentity: SharedItemIdentity,
+        for contents: VerifiedSpokenMarginsPackage,
         store: SQLiteSessionStore
     ) throws -> String? {
         if environment.consumeForcedSourceMiss() {
             environment.recordDiagnostic("uiTestSharedSourceMiss", "forced_once")
             return nil
         }
+        let items = try store.listItems()
+        if let proposal = ListeningMapPacket.proposal(in: contents) {
+            switch ListeningMapPacketItemMatcher.match(packetItem: contents.manifest.item, proposal: proposal, among: items) {
+            case .item(let id): return id
+            case .ambiguous:
+                environment.recordDiagnostic("lastSpokenMarginsPackageImport", "map_source_ambiguous")
+                return nil
+            case .none: return nil
+            }
+        }
         return SharedPacketItemMatcher.matchingItemId(
-            for: itemIdentity, among: try store.listItems(),
+            for: contents.manifest.item, among: items,
             ownedAudiobookDigest: { [environment] in environment.localAudiobookDigest($0) })
+    }
+
+    // MARK: Listening Map
+
+    /// A shared Listening Map (#1471): finds or fetches the item, places the chapters on its text and saves them.
+    /// No Margins are made and playback does not start.
+    private func confirmListeningMap(_ review: SpokenMarginsPackageImportReview, store: SQLiteSessionStore) async throws {
+        let manifest = review.contents.manifest
+        let itemId: String
+        if let matching = review.matchingItemId {
+            itemId = matching
+        } else {
+            do {
+                itemId = try await environment.acquireArticle(manifest.item)
+            } catch let error as SessionKitError {
+                if case .persistenceFailed("shared_article_unreadable") = error {
+                    throw SessionKitError.persistenceFailed("shared_map_article_unreadable")
+                }
+                throw error
+            }
+        }
+        let item = try store.loadItem(id: itemId)
+        let contents = review.contents
+        // Searching a long text for every chapter is slow, so it runs off the main actor; saving does not.
+        let plan = try await Task.detached(priority: .userInitiated) {
+            try SharedTextListeningMapImporter.plan(contents, for: item, repository: store)
+        }.value
+        var attach: ((ListeningMap) throws -> Void)?
+        if let hook = environment.attachListeningMap { attach = { map in try hook(map) } }
+        let outcome = try SharedTextListeningMapImporter.commit(
+            plan, to: item, senderLabel: manifest.senderDisplayLabel, repository: store, attach: attach
+        )
+        switch outcome {
+        case .alreadyAdded(let count):
+            environment.recordDiagnostic("lastSpokenMarginsPackageImport", "duplicate_map:\(itemId):\(count)")
+        case .added(let placed, let total, let replaced):
+            environment.recordDiagnostic("lastSpokenMarginsPackageImport", "map_added:\(itemId):\(placed)/\(total):replaced=\(replaced)")
+        }
+        try environment.showImportedItem(itemId, store)
+        self.review = nil
+        isImporting = false
+        environment.reportConfirmation(outcome.message)
     }
 }

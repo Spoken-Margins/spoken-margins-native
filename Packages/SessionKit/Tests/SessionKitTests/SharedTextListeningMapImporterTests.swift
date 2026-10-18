@@ -93,6 +93,10 @@ final class SharedTextListeningMapImporterTests: XCTestCase {
         let outcome = try SharedTextListeningMapImporter.importMap(contents, into: item, repository: store)
         XCTAssertEqual(outcome, .added(placed: 5, total: 5, replacedAnotherMap: true))
         XCTAssertEqual(try store.loadListeningMap(itemId: item.id)?.chapters.count, 5)
+        XCTAssertEqual(try store.loadPortableListeningMapProposals(itemId: item.id).map(\.id), ["map-b"], "only the new map is left to read")
+        // Going back to the first map is a replacement again, not "already there".
+        let first = try XCTUnwrap(ListeningMapPacket.proposal(in: try package(mapId: "map-a")))
+        XCTAssertEqual(try SharedTextListeningMapImporter.existing(for: first, itemId: item.id, repository: store), .differentMap)
     }
 
     func testAnItemWithNoMapSaysNoneAndAHeadingMapDoesNotCountAsAnotherMap() throws {
