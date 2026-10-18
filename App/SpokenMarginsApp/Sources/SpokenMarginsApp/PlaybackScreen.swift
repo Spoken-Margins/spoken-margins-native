@@ -163,7 +163,7 @@ struct PlaybackScreen: View {
                 }
                 .onCompatibleChange(of: model.guidedOnboardingStage) { stage in
                     if stage == .reviewTimeline {
-                        withAnimation {
+                        withMotion {
                             proxy.scrollTo("playback.timeline", anchor: .top)
                         }
                     }
@@ -663,7 +663,7 @@ struct PlaybackScreen: View {
                     Label("\(model.marginMomentTitle) in \(countdown)", systemImage: "text.bubble")
                         .font(.headline)
                         .foregroundStyle(.white)
-                        .contentTransition(.numericText())
+                        .numericTextTransition()
                         .accessibilityIdentifier("marginMoment.countdown")
                     if model.marginMomentPositionIsApproximate {
                         Text("Approximate position: ads can differ between copies.")

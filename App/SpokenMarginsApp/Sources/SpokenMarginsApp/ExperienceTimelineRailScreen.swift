@@ -122,7 +122,7 @@ struct ExperienceTimelineRailScreen: View {
                 guard isFocused else { return }
                 Task { @MainActor in
                     await Task.yield()
-                    withAnimation(.easeOut(duration: 0.2)) {
+                    withMotion(.easeOut(duration: 0.2)) {
                         proxy.scrollTo("timeline.reflection.composer", anchor: .bottom)
                     }
                 }
@@ -572,7 +572,7 @@ struct ExperienceTimelineRailScreen: View {
         Task { @MainActor in
             await Task.yield()
             guard !responseEditorFocused else { return }
-            withAnimation(.snappy) { proxy.scrollTo(id, anchor: .center) }
+            withMotion(.snappy) { proxy.scrollTo(id, anchor: .center) }
             if model.requestedTimelineFocusMarginID == requested {
                 model.requestedTimelineFocusMarginID = nil
             }
@@ -581,7 +581,7 @@ struct ExperienceTimelineRailScreen: View {
 
     private func returnToPlayback() {
         responseEditorFocused = false
-        withAnimation(.snappy(duration: 0.34)) {
+        withMotion(.snappy(duration: 0.34)) {
             if let onReturnToPlayback { onReturnToPlayback() } else { model.leaveTimeline() }
         }
     }

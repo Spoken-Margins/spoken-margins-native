@@ -34,7 +34,7 @@ struct Gate1RootView: View {
                     PlaybackScreen()
                 case .timeline:
                     ExperienceTimelineRailScreen()
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .motionTransition(.move(edge: .bottom).combined(with: .opacity))
                 case .settings:
                     SettingsScreen()
                 case .offlineStorage:
