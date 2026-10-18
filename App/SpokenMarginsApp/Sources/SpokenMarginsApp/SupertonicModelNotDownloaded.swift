@@ -1,4 +1,5 @@
 import Foundation
+import SessionKit
 import SessionKitSupertonic
 
 /// Supertonic's model is a download, no longer part of the app (#1820). When the listener's voice is James or Lily
@@ -14,6 +15,8 @@ struct SupertonicModelNotDownloaded: SupertonicRendering {
 
     /// The player's "may Supertonic render now?" while the model isn't there: never.
     static let renderingAllowed: @Sendable () -> Bool = { false }
+    /// The same question once it is there: the phone's heat, memory and power decide, as always.
+    static let governorAllowsRendering: @Sendable () -> Bool = { OnDeviceVoiceGovernor.app.supertonicRenderingBlock() == nil }
 
     func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
         throw SupertonicNarrationError.missingAsset("Supertonic")

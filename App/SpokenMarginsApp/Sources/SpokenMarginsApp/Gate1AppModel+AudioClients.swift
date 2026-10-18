@@ -80,7 +80,11 @@ extension Gate1AppModel {
                 renderedSpeechDiskCache = created
                 diskCache = created
             }
-            diagnostics["sessionTTS"] = assets == nil ? SupertonicModelNotDownloaded.sessionDescription : "Supertonic 3 INT8 \(voice.rawValue)"
+            let modelMissing = assets == nil
+            let renderingAllowed = modelMissing
+                ? SupertonicModelNotDownloaded.renderingAllowed
+                : SupertonicModelNotDownloaded.governorAllowsRendering
+            diagnostics["sessionTTS"] = modelMissing ? SupertonicModelNotDownloaded.sessionDescription : "Supertonic 3 INT8 \(voice.rawValue)"
             diagnostics["renderedSpeechCacheLimitMB"] = "\(renderedSpeechCacheLimitMB)"
             diagnostics["renderedSpeechCacheBytes"] = "\(diskCache.sizeBytes)"
             return SupertonicSpeechPlaybackClient(
@@ -92,9 +96,7 @@ extension Gate1AppModel {
                 diskCache: diskCache,
                 preparedAudioDirectory: supportDirectory.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory),
                 voiceChangeCue: { [chime = NarrationVoiceChangeChime()] in _ = chime.play() },
-                onDeviceRenderingAllowed: assets == nil
-                    ? SupertonicModelNotDownloaded.renderingAllowed
-                    : { OnDeviceVoiceGovernor.app.supertonicRenderingBlock() == nil },
+                onDeviceRenderingAllowed: renderingAllowed,
                 pressureRenderer: makeKittenRenderer(),
                 interruptionHandler: { [weak self] event in
                     Task { @MainActor [weak self] in
@@ -179,7 +181,7 @@ extension Gate1AppModel {
                 onBundledVoice: { [weak self] block, offset, _ in
                     Task { @MainActor [weak self] in
                         // Not downloaded is not a warm-phone warning; the one-time download card explains it (#1820).
-                        if assets == nil { self?.diagnostics["supertonicFallback"] = SupertonicModelNotDownloaded.fallbackCode; return }
+                        if modelMissing { self?.diagnostics["supertonicFallback"] = SupertonicModelNotDownloaded.fallbackCode; return }
                         self?.reportBundledVoiceTookOver(block: block, offset: offset)
                     }
                 },
