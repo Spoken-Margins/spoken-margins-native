@@ -194,6 +194,7 @@ struct Build23SenderSharingExperience: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Choose Margins")
                         .font(.title3.weight(.semibold))
+                        .screenTitle()
                     Text("\(includedCount) of \(snapshot.margins.count) selected")
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)

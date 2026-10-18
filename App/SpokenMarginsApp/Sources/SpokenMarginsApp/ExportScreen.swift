@@ -16,6 +16,7 @@ struct ExportScreen: View {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Share")
                         .font(.largeTitle.bold())
+                        .screenTitle()
                     Text(model.selectedItem.title)
                         .font(.headline)
                         .fixedSize(horizontal: false, vertical: true)

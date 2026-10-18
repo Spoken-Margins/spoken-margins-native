@@ -153,6 +153,7 @@ struct ExperienceAddSourceFlow: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Add to Library")
                 .font(.title2.weight(.bold))
+                .screenTitle()
                 .foregroundStyle(AppColors.text)
             // One column at accessibility sizes: two columns broke headline titles mid-word (#1934).
             LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize ? [GridItem(.flexible())] : [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
@@ -410,6 +411,7 @@ struct ExperienceAddSourceFlow: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Choose the matching episode")
                 .font(.title2.weight(.bold))
+                .screenTitle()
                 .foregroundStyle(AppColors.text)
                 .accessibilityIdentifier("sourceLink.candidateReview.sheet")
             Text("More than one public episode matches this link.")
