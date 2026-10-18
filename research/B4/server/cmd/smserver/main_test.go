@@ -134,7 +134,7 @@ func TestServeNeverPrintsTheAPIKey(t *testing.T) {
 	if !sawKey {
 		t.Fatalf("the provider never received the key\n%s", logs)
 	}
-	if !strings.Contains(logs, "maps: making maps with anthropic/claude-haiku-4-5, capped at $10.00 a month") ||
+	if !strings.Contains(logs, "maps: making maps with anthropic/claude-haiku-5-5, capped at $10.00 a month") ||
 		!strings.Contains(logs, "HTTP 401") || !strings.Contains(logs, "dropped a transcript") {
 		t.Fatalf("expected startup and failure lines missing:\n%s", logs)
 	}

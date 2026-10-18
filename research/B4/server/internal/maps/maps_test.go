@@ -62,6 +62,16 @@ func TestParseTranscriptRefusals(t *testing.T) {
 	if _, err := ParseTranscript(encode(t, big)); err == nil {
 		t.Error("over 2 MB: accepted")
 	}
+	long := testTranscript()
+	long.Segments[0].Text = strings.Repeat("a", MaxPromptBytes)
+	if _, err := ParseTranscript(encode(t, long)); err == nil {
+		t.Error("over the prompt limit: accepted")
+	}
+	fits := testTranscript()
+	fits.Segments[0].Text = strings.Repeat("a", MaxPromptBytes-4000)
+	if _, err := ParseTranscript(encode(t, fits)); err != nil {
+		t.Errorf("under the prompt limit: refused: %v", err)
+	}
 	if _, err := ParseTranscript([]byte(`{"schema":`)); err == nil {
 		t.Error("broken JSON: accepted")
 	}
@@ -86,15 +96,18 @@ func TestCheckAnswer(t *testing.T) {
 
 	quote := strings.Join(words(tr.Segments[7].Text)[2:12], " ") // ten words in a row
 	bad := map[string]string{
-		"malformed":    `{"scenes": [`,
-		"two scenes":   answerJSON([3]string{"s0", "A", "B"}, [3]string{"s5", "C", "D"}),
-		"unknown id":   answerJSON([3]string{"s0", "A", "B"}, [3]string{"s99", "C", "D"}, [3]string{"s15", "E", "F"}),
-		"out of order": answerJSON([3]string{"s0", "A", "B"}, [3]string{"s14", "C", "D"}, [3]string{"s7", "E", "F"}),
-		"same start":   answerJSON([3]string{"s0", "A", "B"}, [3]string{"s7", "C", "D"}, [3]string{"s7", "E", "F"}),
-		"long title":   answerJSON([3]string{"s0", strings.Repeat("t", 81), "B"}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-		"long summary": answerJSON([3]string{"s0", "A", strings.Repeat("s", 301)}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-		"empty title":  answerJSON([3]string{"s0", " ", "B"}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-		"quotes":       answerJSON([3]string{"s0", "A", "B"}, [3]string{"s7", "C", "As they put it: " + strings.ToUpper(quote) + "!"}, [3]string{"s14", "E", "F"}),
+		"malformed":         `{"scenes": [`,
+		"two scenes":        answerJSON([3]string{"s0", "A", "B"}, [3]string{"s5", "C", "D"}),
+		"unknown id":        answerJSON([3]string{"s0", "A", "B"}, [3]string{"s99", "C", "D"}, [3]string{"s15", "E", "F"}),
+		"out of order":      answerJSON([3]string{"s0", "A", "B"}, [3]string{"s14", "C", "D"}, [3]string{"s7", "E", "F"}),
+		"same start":        answerJSON([3]string{"s0", "A", "B"}, [3]string{"s7", "C", "D"}, [3]string{"s7", "E", "F"}),
+		"long title":        answerJSON([3]string{"s0", strings.Repeat("t", 81), "B"}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
+		"long summary":      answerJSON([3]string{"s0", "A", strings.Repeat("s", 301)}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
+		"nine-word title":   answerJSON([3]string{"s0", "one two three four five six seven eight nine", "B"}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
+		"29-word summary":   answerJSON([3]string{"s0", "A", strings.Repeat("word ", 29)}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
+		"name not in scene": answerJSON([3]string{"s0", "A", "The host thanks Margaret Thatcher for the tip."}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
+		"empty title":       answerJSON([3]string{"s0", " ", "B"}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
+		"quotes":            answerJSON([3]string{"s0", "A", "B"}, [3]string{"s7", "C", "As they put it: " + strings.ToUpper(quote) + "!"}, [3]string{"s14", "E", "F"}),
 		// A run that crosses from one segment into the next still counts.
 		"quotes across segments": answerJSON([3]string{"s0", "A", strings.Join(append(words(tr.Segments[0].Text)[14:], words(tr.Segments[1].Text)[:5]...), " ")},
 			[3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
@@ -590,5 +603,26 @@ func TestSubmitSpendingRacesPayOnce(t *testing.T) {
 	wg.Wait()
 	if n, _ := svc.Store.CountTranscripts(); n != 3 {
 		t.Fatalf("%d transcripts waiting, want MaxWaiting 3", n)
+	}
+}
+
+func TestNameGrounding(t *testing.T) {
+	source := "Grace Hopper joined the navy. Hopper's compiler changed things in Boston."
+	cases := []struct {
+		summary string
+		want    string
+	}{
+		{"The story of Grace Hopper in Boston.", ""},
+		{"Hopper's compiler comes up.", ""},
+		{"Dr. Hopper is introduced.", ""},                // abbreviation, not a sentence end
+		{"Compilers matter. Lovelace is mentioned.", ""}, // sentence start is skipped
+		{"A talk about Ada Lovelace.", "Ada"},
+		{"The host visits Paris.", "Paris"},
+		{"A short plain summary with no names.", ""},
+	}
+	for _, c := range cases {
+		if got := ungroundedName(c.summary, source); got != c.want {
+			t.Errorf("%q: got %q, want %q", c.summary, got, c.want)
+		}
 	}
 }
