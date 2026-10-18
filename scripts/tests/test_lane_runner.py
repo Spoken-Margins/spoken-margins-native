@@ -2173,8 +2173,10 @@ class MainFlowTests(unittest.TestCase):
     def test_the_workflow_fails_its_verdict_step_and_tidies_only_when_nothing_was_reported(self):
         workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/lane.yml').read_text()
         # Every Mac job checks out the Git LFS models: --plan fast's contracts check reads them (#301). The third is
-        # the release job a T3 PASS hands to a build runner (#1209).
-        self.assertEqual(workflow.count('lfs: true'), 2)
+        # the release job a T3 PASS hands to a build runner (#1209). The lane job checks them out on the Mac, and on a
+        # GitHub-hosted Mac fetches them from a cache instead (#1389 phase 2, test_lane_hosted_app.py).
+        self.assertEqual(workflow.count('lfs: true'), 1)
+        self.assertIn("lfs: ${{ runner.environment != 'github-hosted' }}", workflow)
         self.assertIn("lfs: ${{ !contains(fromJSON(needs.route.outputs.automerge || '[]'), 'sm-vps-t1') }}", workflow)
         self.assertEqual(workflow.count('persist-credentials: false'), 4)  # hosted routing plus the three Mac jobs
         self.assertIn("if: steps.run.outputs.reported == 'true'", workflow)
