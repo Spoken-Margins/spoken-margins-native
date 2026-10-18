@@ -46,7 +46,22 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
         XCTAssertTrue(helper.contains("scheduleTranscription(for:"))
     }
 
-    func testFeedSaveKeepsPublicationSignalsGUIDsAndAutomaticImportCandidates() throws {
+    /// The coordinator's recording is proven in FollowedSourceSignalTests; this keeps the app from handing it no
+    /// recorder (#1896).
+    func testTheAppBuildsEveryFollowedSourceCoordinatorWithTheAppSignalLog() throws {
+        for file in ["Gate1AppModel.swift", "Gate1AppModel+LazyServices.swift"] {
+            let source = try appSource(file)
+            let builds = source.components(separatedBy: "FollowedSourceCoordinator(repository:").dropFirst()
+            XCTAssertFalse(builds.isEmpty, "\(file) no longer builds the coordinator: update this guard")
+            for build in builds {
+                let line = String(build.prefix { $0 != "\n" })
+                XCTAssertTrue(line.contains("signals: .app)"), "\(file): the coordinator needs the app's signal log, got: \(line)")
+            }
+        }
+    }
+
+    // The item_published signal itself is proven by a recorded row in FollowedSourceSignalTests (#1896).
+    func testFeedSaveKeepsGUIDsAndAutomaticImportCandidates() throws {
         let source = try packageSource(at: "Sources/SessionKitFeeds/FollowedSourceCoordinator.swift")
         let save = try body(source, from: "private func save(entries:", to: "private static func entryID(")
         XCTAssertFalse(save.contains("<<<<<<<"), "The feed-save merge must be resolved")
@@ -56,7 +71,6 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
             "var saved: [FeedEntry] = []",
             "try repository.saveFeedEntry(entry)",
             "saved.append(entry)",
-            "signals?.record(.itemPublished",
             "return (saved, existingEntries)",
         ], in: save)
         XCTAssertFalse(save.contains("if existing[id] == nil {"),
