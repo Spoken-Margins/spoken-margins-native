@@ -1,0 +1,69 @@
+# Push the owner's phone when a PR into next waits only for his merge tap (#2047).
+#
+# The lane runner never merges a PR touching scripts/lane-runner.py or .github/ (owner rule 2026-10-09). Agents
+# post as the owner, and GitHub doesn't notify anyone of their own activity, so nothing told him one was ready:
+# on 2026-10-18 #1964, #1966, #2038 and #1885 sat waiting only for his tap. scripts/owner_tap_alert.py checks
+# every open PR into next and, for one that touches those paths and is ready (not a draft, no conflict, head
+# checks finished with none failed, a clean Claude audit on the head where the audit covers it), posts one
+# comment as github-actions[bot] that @mentions the owner, once per head. The GitHub mobile app pushes mentions.
+#
+# Triggers: a push, label or ready-for-review on a PR that touches those paths, and workflow_dispatch (run with
+# `--ref next`: main carries no workflows). The audit script dispatches it after posting an audit, which is
+# usually the last thing a tap PR waits for; the Mac tick dispatches it as a backstop (ops/lane/README.md).
+# Lane reports and merges made with the workflow token start no workflow, so those two dispatches matter.
+#
+# The script is taken from next's tip (or the PR's base) with no credentials kept, and reads PRs only through
+# the API. A same-repo PR that edits this file runs its own copy on pull_request; only collaborators can open
+# those (forks are skipped below). One run at a time; a newer waiting run replaces an older waiting one, which
+# is safe because every run checks all open PRs.
+name: owner-tap-alert
+
+on:
+  pull_request:
+    branches: [next]
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+    paths: ['.github/**', 'scripts/lane-runner.py']
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'Check only this PR (default: every open PR into next)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+  checks: read
+  statuses: read
+
+concurrency:
+  group: owner-tap-alert
+  cancel-in-progress: false
+
+jobs:
+  alert:
+    # The script ignores its own job by this name while it checks the head's other checks.
+    name: owner-tap-alert
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft)
+    runs-on: [self-hosted, Linux, sm-vps]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Policy and code from the base, never PR code.
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/owner_tap_alert.py
+            scripts/comment_trust.py
+          sparse-checkout-cone-mode: false
+      - name: Alert the owner about PRs ready for his merge tap
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MENTION: ${{ github.repository_owner }}
+          ONLY_PR: ${{ inputs.pr }}
+        run: python3 scripts/owner_tap_alert.py --base next --mention "$MENTION" ${ONLY_PR:+--pr "$ONLY_PR"}

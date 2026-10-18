@@ -72,6 +72,14 @@ Paste this into `~/.claude/scheduled-tasks/sm-mac-tick/SKILL.md`, right after st
 2a. LANE STALL. Run `cd ~/Documents/GitHub/spoken-margins-native && python3 ops/lane/sm_lane_stall.py` and keep its one line. If it starts with STALL or ERROR, put that line, in bold, as the first line of this tick's #337 comment, above the time heading, and add after it: "Check the runner: `gh run list --workflow lane.yml --limit 5` and the newest lane change merged into next." Don't revert anything, comment /lane, or touch labels yourself. If it says OK, add nothing. It only reads GitHub, so a failure to run it is an ERROR line, never a reason to skip the rest of the tick.
 ```
 
+### Owner-tap alert backstop (#2047)
+
+`.github/workflows/owner-tap-alert.yml` pushes the owner's phone (a `github-actions[bot]` comment that @mentions him) when a PR only he can merge is ready for his tap. PR pushes and labels start it, and the audit script starts it after an audit on such a PR. A check finishing starts nothing, so the tick runs it too. Paste this after step 2a:
+
+```text
+2c. OWNER-TAP ALERT. Run `gh workflow run owner-tap-alert.yml --repo uncomposed/spoken-margins-native --ref next` and keep going. It posts at most one alert per PR head, so running it every tick never repeats one. If the command fails, note the error in one line in this tick's #337 comment.
+```
+
 ## Tests
 
 ```zsh

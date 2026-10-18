@@ -1017,6 +1017,25 @@ def build_prompt(batch: list[dict], blocks: list[str], base_sha: str) -> str:
     return "\n".join(head + blocks + tail)
 
 
+# PRs the lane runner never merges (scripts/lane-runner.py OWNER_TAP_FILES, OWNER_TAP_PREFIXES). After an audit on
+# one, the owner-tap alert runs at once (#2047): the audit is often the last thing such a PR waits for, and a
+# comment posted with the owner's token starts no workflow that could notice it.
+OWNER_TAP_FILES = {"scripts/lane-runner.py"}
+OWNER_TAP_PREFIXES = (".github/",)
+
+
+def touches_owner_tap(files: list[dict] | None) -> bool:
+    paths = {p for f in files or [] for p in (f.get("filename") or f.get("path"), f.get("previous_filename")) if p}
+    return any(p in OWNER_TAP_FILES or p.startswith(OWNER_TAP_PREFIXES) for p in paths)
+
+
+def dispatch_tap_alert(number: int) -> str:
+    """Start .github/workflows/owner-tap-alert.yml for one PR; a failure is logged, the Mac tick backstops it."""
+    res = run(["gh", "workflow", "run", "owner-tap-alert.yml", "--repo", REPO, "--ref", BASE_BRANCH,
+               "-f", f"pr={number}"], cwd=REPO_ROOT, check=False)
+    return "tap alert dispatched" if res.returncode == 0 else f"tap alert dispatch failed: {res.stderr.strip()[:80]}"
+
+
 def kill_tree(proc: subprocess.Popen) -> None:
     try:
         os.killpg(proc.pid, signal.SIGTERM)
@@ -1222,6 +1241,8 @@ def audit_batch(batch: list[dict]) -> None:
             usage_run.checkpoint(targets=targets)
             if res.returncode == 0:
                 clear_failure(n)
+                if touches_owner_tap(c.get("files")):
+                    results.append(f"#{n} {dispatch_tap_alert(n)}")
             else:  # the head is still unaudited, so count it or every tick pays for the same audit again (#1456)
                 record_failure(n, failure_key(c))
             results.append(f"#{n} posted" if res.returncode == 0 else f"#{n} post failed: {res.stderr.strip()[:120]}")
