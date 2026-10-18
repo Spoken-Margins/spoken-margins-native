@@ -68,6 +68,8 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  # read: the automerge runs read the hosted fast checks' results on the PR's head (#1389).
+  checks: read
 
 jobs:
   route:
@@ -259,6 +261,9 @@ jobs:
       BASE_REF: ${{ github.event.pull_request.base.ref }}
       RUN_ID: ${{ github.run_id }}
       HOSTED_ARGS: ${{ contains(fromJSON(needs.route.outputs.automerge || '[]'), 'sm-vps-t1') && '--hosted' || '' }}
+      # #1389 rollout guard: `on` once the repo is public, and the runner takes the hosted fast checks' PASS
+      # (hosted-portable.yml) and runs only --plan fast-mac-rest on the Mac. Unset, the whole --plan fast, as before.
+      LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -335,6 +340,7 @@ jobs:
       T3_REPORT: ${{ inputs.t3 }}
       BASE_REF: ${{ github.ref_name }}
       RUN_ID: ${{ github.run_id }}
+      LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
     steps:
       - uses: actions/checkout@v4
         with:
