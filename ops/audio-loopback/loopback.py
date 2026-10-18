@@ -13,8 +13,10 @@ Standard library only, so the analysis is host-tested in the fast plan and runs 
 """
 import argparse
 import array
+import contextlib
 import json
 import math
+import os
 import re
 import shutil
 import subprocess
@@ -494,24 +496,35 @@ def main(argv=None):
         heard = transcribe(args.wav, args.locale, args.silence_db)
         print(json.dumps(heard, indent=2))
         return 0 if heard['text'] else 1
-    report = analyse(args.wav, args.silence_db, args.stall)
-    if args.transcribe or args.expected:
-        try:
-            report['transcript'] = transcribe(args.wav, args.locale, args.silence_db)
-        except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
-            report['transcript_error'] = str(error)
-        if args.expected and 'transcript' in report and not report['transcript']['text'].strip():
-            # An empty transcript of a recording with sound means the words weren't checked; say why.
-            report['transcript_error'] = report['transcript'].get('empty_reason', 'the recogniser returned no words')
-        elif args.expected and 'transcript' in report:
-            report['score'] = score(report['transcript']['text'], Path(args.expected).read_text())
-    report['problems'] = verdict(report, args.max_stall, args.allow_repeats, args.max_wer, args.min_sound, args.allow_trailing)
-    if args.expected and 'transcript_error' in report:
-        # A check that couldn't run is not a pass.
-        report['problems'].append('could not check the words: ' + report['transcript_error'])
-    report['verdict'] = 'FAIL' if report['problems'] else 'PASS'
+    report = check_recording(args.wav, Path(args.expected).read_text() if args.expected else None,
+                             transcribe_too=args.transcribe, locale=args.locale, silence_db=args.silence_db,
+                             stall=args.stall, max_stall=args.max_stall, allow_repeats=args.allow_repeats,
+                             max_wer=args.max_wer, min_sound=args.min_sound, allow_trailing=args.allow_trailing)
     print(json.dumps(report, indent=2))
     return 1 if report['problems'] else 0
+
+
+def check_recording(path, expected=None, transcribe_too=False, locale='en-US', silence_db=-45.0, stall=2.0,
+                    max_stall=None, allow_repeats=False, max_wer=None, min_sound=None, allow_trailing=False,
+                    run=transcribe_file):
+    """The `check` report for one recording: the analysis, the transcript and score when `expected` text is
+    given, `problems` and `verdict`. A words check that couldn't run is a problem, never a pass."""
+    report = analyse(path, silence_db, stall)
+    if transcribe_too or expected is not None:
+        try:
+            report['transcript'] = transcribe(path, locale, silence_db, run=run)
+        except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
+            report['transcript_error'] = str(error)
+        if expected is not None and 'transcript' in report and not report['transcript']['text'].strip():
+            # An empty transcript of a recording with sound means the words weren't checked; say why.
+            report['transcript_error'] = report['transcript'].get('empty_reason', 'the recogniser returned no words')
+        elif expected is not None and 'transcript' in report:
+            report['score'] = score(report['transcript']['text'], expected)
+    report['problems'] = verdict(report, max_stall, allow_repeats, max_wer, min_sound, allow_trailing)
+    if expected is not None and 'transcript_error' in report:
+        report['problems'].append('could not check the words: ' + report['transcript_error'])
+    report['verdict'] = 'FAIL' if report['problems'] else 'PASS'
+    return report
 
 
 def capture_run(args):
@@ -521,13 +534,18 @@ def capture_run(args):
     record = [binary, 'record', '--device', args.device, '--seconds', str(args.seconds), '--out', args.out]
     command = args.cmd[1:] if args.cmd[:1] == ['--'] else args.cmd
     recorder_cmd = record if args.no_route else [binary, 'route', '--to', args.device, '--', *record]
-    recorder = subprocess.Popen(recorder_cmd)
-    status = 0
-    try:
-        if command:
-            status = subprocess.run(command).returncode
-    finally:
-        recorded = recorder.wait()
+    # A routing capture holds the Mac-wide audio window (window.py), so it never overlaps a lane test's window:
+    # two routes at once would each save the other's BlackHole as "the device to put back".
+    import window
+    with contextlib.nullcontext() if args.no_route else window.audio_lock(f'loopback.py capture (pid {os.getpid()})',
+                                                                          max_wait=window.LOCK_WAIT):
+        recorder = subprocess.Popen(recorder_cmd)
+        status = 0
+        try:
+            if command:
+                status = subprocess.run(command).returncode
+        finally:
+            recorded = recorder.wait()
     return recorded or status
 
 

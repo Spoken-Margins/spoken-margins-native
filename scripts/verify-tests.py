@@ -20,6 +20,7 @@ from lane_xcresult_attachments import export_failed_attachments
 
 from check_posterboard_repair import crash_snapshot, new_crash
 import host_audio
+import lane_audio_window
 import lane_sim
 import sessionkit_pass
 import lane_sim_pool
@@ -1307,11 +1308,18 @@ class Run:
             if startup is not None:
                 self.manifest['settle_before_tests'] = settle_before_tests(chosen['udid'])
                 self.save()
-            self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
-                         'test-without-building', '-parallel-testing-enabled', 'NO',
-                         '-collect-test-diagnostics', 'never',
-                         '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
-                         timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup)
+            # An AudioLoopback test asks the Mac to record what it plays (#1790); only then does a server start.
+            with lane_audio_window.serve(self.output, expected if scheme == 'SpokenMarginsAppBehavior' else ()) as audio:
+                self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
+                             'test-without-building', '-parallel-testing-enabled', 'NO',
+                             '-collect-test-diagnostics', 'never',
+                             '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
+                             timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup)
+            if audio:
+                step = self.manifest['steps'][-1]
+                step['audio_windows'] = lane_audio_window.attachments(audio)
+                step.setdefault('attachments', []).extend(step['audio_windows'])
+                self.save()
         finally:
             if scheme == 'SpokenMarginsAppBehavior':
                 lane_sim.mark_quiet(chosen['udid'])

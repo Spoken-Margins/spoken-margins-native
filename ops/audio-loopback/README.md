@@ -16,6 +16,7 @@ What it can't tell you: whether the audio sounds good (pitch, clicks, a voice th
 - `loopback.swift`: the macOS tool (CoreAudio, AVFoundation and Speech; no dependencies). Build it with `./build.sh`; the binary goes to `.build/loopback`, which git ignores.
 - `loopback.py`: the analysis and the `check` command. Standard library only.
 - `prove-host.sh`: the host proof. Says a known phrase straight into BlackHole while recording it, then runs `check` with a stall, sound-time and word-error limit. It never switches the default output.
+- `window.py`: the window server for unattended lane tests (below, "In a lane T3"). `test_window.py` tests it on the host.
 - `test_loopback.py`: host tests on synthetic speech-like wavs. They run in the fast plan (`verify-tests.py` runs every `ops/*/test_*.py` folder) and need no audio device.
 
 ## Quick start on the Mac
@@ -122,6 +123,20 @@ The runner user has password-less sudo, so the cask installs without a prompt. A
 GitHub-hosted macOS runners have no audio hardware, so BlackHole is also what gives the Simulator an output at all there. Granting the runner Microphone access needs a write to the TCC database, which the hosted images allow for the runner's own processes; that step is still to be proven on a hosted run.
 
 ## Using it from a test
+
+### In a lane T3 (unattended)
+
+Name an `AudioLoopback` test in a `/lane T3` request (`tests: AudioLoopbackPlaybackTests`); [test-lane.md](../../docs/workstreams/test-lane.md#audio-checks-hearing-what-the-simulator-played-1790) has the request and the report line. The pieces:
+
+- `window.py serve --dir <folder>` is the window server. `scripts/lane_audio_window.py` starts it beside an app test run that includes an `AudioLoopback` test and passes the folder to the test as `SM_AUDIO_WINDOW`. The Simulator reads and writes that folder on the Mac's disk.
+- `AudioLoopbackWindow` (app tests) asks for a window: its length, the expected text, and the limits. It waits until the Mac records, plays, then waits for the verdict. FAIL fails the test; UNAVAILABLE skips it (INCONCLUSIVE on the lane).
+- One window at a time, Mac-wide: an flock at `~/Library/Caches/SpokenMarginsLane/audio-window.lock`, beside the simulator slots. A routing `loopback.py capture` takes the same lock, because two routes at once would each save the other's BlackHole as the device to put back.
+- **The pilot tone.** Before the test plays, the server plays 0.3 s of 1 kHz straight to BlackHole and cuts it from the recording afterwards. A recording with no pilot means the recorder can't hear: the process running the lane may lack Microphone access. That answers UNAVAILABLE rather than blaming the app for silence. A recording with the pilot and then silence is the app's fault: FAIL.
+- **Restoring the default output.** The recorder runs inside `loopback route`, which puts the old default output back when the window ends, fails or is stopped. The server stops it with TERM when the test run ends, and a `kill -9` is undone by the next route.
+
+To write another audio test: open a window before playing, `waitUntilRecording()`, play the item, then `require(try await verdict())`. Keep the window longer than the audio and use `allowTrailing`, unless the test is about audio that stops early.
+
+### By hand
 
 The window is: start recording, do the thing, stop. For the Simulator through the lane (a T4 request to the Test Desk; never boot a simulator from a thread):
 
