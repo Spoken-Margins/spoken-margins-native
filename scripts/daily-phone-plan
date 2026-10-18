@@ -163,12 +163,38 @@ def propose(items, catalog, folder):
     (folder / 'writer.json').write_text('writer started\n')
     result = subprocess.run([*command, '-p', '-', '--output-format', 'json', '--tools', '',
                              '--strict-mcp-config', '--permission-mode', 'dontAsk', '--no-session-persistence'],
-                            input=prompt, text=True, capture_output=True, timeout=180, cwd=str(phone.ROOT))
+                            input=prompt, text=True, capture_output=True, timeout=180, cwd=str(phone.ROOT),
+                            env=writer_env())
     (folder / 'writer.json').write_text(result.stdout)
     response = json.loads(result.stdout)
     if result.returncode or response.get('is_error'):
         raise RuntimeError('plan writer failed; previous plan kept')
-    return json.loads(response['result'])
+    return writer_plan(response['result'])
+
+
+KEYCHAIN_SERVICE = 'claude-code-oauth'  # the audit job's token (ops/codex/sm_codex_audit.py)
+
+
+def writer_env():
+    # launchd has no Claude login; use the audit's Keychain token, as the worker does (2026-10-17:
+    # the first tick failed "Not logged in"). Never bill an API key instead of the plan.
+    env = dict(os.environ)
+    env.pop('ANTHROPIC_API_KEY', None)
+    if not env.get('CLAUDE_CODE_OAUTH_TOKEN'):
+        found = subprocess.run(['/usr/bin/security', 'find-generic-password', '-s', KEYCHAIN_SERVICE, '-w'],
+                               text=True, capture_output=True, timeout=30)
+        if found.returncode == 0 and found.stdout.strip():
+            env['CLAUDE_CODE_OAUTH_TOKEN'] = found.stdout.strip()
+    return env
+
+
+FENCE = re.compile(r'\A\s*```[A-Za-z]*\s*\n(.*)\n\s*```\s*\Z', re.S)
+
+
+def writer_plan(text):
+    # The writer may wrap its JSON in a Markdown fence (2026-10-17 first delivery); accept that.
+    match = FENCE.match(text)
+    return json.loads(match.group(1) if match else text)
 
 
 def validate(request, plan_id):
