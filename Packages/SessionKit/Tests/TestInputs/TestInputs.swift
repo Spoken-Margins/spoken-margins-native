@@ -79,4 +79,47 @@ public enum TestInputs {
     public static func packageURL(_ relative: String) -> URL {
         packageRoot.appending(path: relative)
     }
+
+    // MARK: Model files
+
+    /// What a test that needs a Git LFS model should do (#1893).
+    public enum ModelCheck: Equatable, Sendable {
+        case present
+        /// The file is a pointer or missing, and nothing says a model is required: skip.
+        case skip
+        /// The file is a pointer or missing, and `CI` or `SM_REQUIRE_MODELS` says a runner must have it: fail.
+        case fail
+    }
+
+    /// Variables that say a missing model is a broken runner, not a reason to skip.
+    public static let requireModelsVariables = ["SM_REQUIRE_MODELS", "CI"]
+
+    /// A model larger than `minimumBytes` is present; a Git LFS pointer is a few hundred bytes. Where a runner
+    /// is expected to have the models (`CI`, or `SM_REQUIRE_MODELS` set to anything), a pointer fails the test
+    /// instead of skipping it, so a runner without LFS can't report green without testing the model.
+    public static func modelCheck(
+        sizeInBytes: Int, minimumBytes: Int = 1_000_000,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> ModelCheck {
+        if sizeInBytes > minimumBytes { return .present }
+        let required = requireModelsVariables.contains { !(environment[$0] ?? "").isEmpty }
+        return required ? .fail : .skip
+    }
+
+    public struct ModelNotPulled: Error, CustomStringConvertible {
+        public let path: String
+        public var description: String {
+            "the model at \(path) is missing or a Git LFS pointer, and this run requires models (CI or SM_REQUIRE_MODELS is set): run `git lfs pull`"
+        }
+    }
+
+    /// Returns when the model at `url` is there; otherwise skips, or throws `ModelNotPulled` where models are required.
+    public static func requireModel(at url: URL, minimumBytes: Int = 1_000_000) throws {
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+        switch modelCheck(sizeInBytes: size, minimumBytes: minimumBytes) {
+        case .present: return
+        case .skip: throw XCTSkip("skipped: \(url.lastPathComponent) not pulled (git lfs pull)")
+        case .fail: throw ModelNotPulled(path: url.path)
+        }
+    }
 }
