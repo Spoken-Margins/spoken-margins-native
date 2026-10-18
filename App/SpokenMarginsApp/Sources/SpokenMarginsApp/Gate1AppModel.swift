@@ -487,6 +487,8 @@ final class Gate1AppModel: ObservableObject {
     let connectivity = ConnectivityMonitor()
     var requestedPodcastTransportReplacements: Set<String> = []
     var offlineStorageLedger: OfflineStorageLedger?
+    /// Settings › Voices (#1819); created on first use by `requireVoiceDownloads()`.
+    var voiceDownloadsModel: VoiceDownloadsModel?
     private var localSourceImporter: LocalSourceImporter?
     var followedSourceCoordinator: FollowedSourceCoordinator?
     /// A fresh install: the Library was empty before the welcome sample was added (B1 drawer).
@@ -2745,12 +2747,11 @@ final class Gate1AppModel: ObservableObject {
         frontierPublicationKey = key
         guard let itemID = snapshot.itemId, let voice = ttsVoiceSelection.supertonicVoice,
               [TargetType.itemTextTTS.rawValue, TargetType.transcriptBackedMedia.rawValue].contains(snapshot.targetType ?? ""),
-              let store, let resources = Bundle.main.resourceURL else { return }
+              let store, let assets = SupertonicAssetResolver.location() else { return }
         do {
             let signature: TTSRenderSignature
             if let cached = frontierSignatures[voice.rawValue] { signature = cached }
             else {
-                let assets = SupertonicAssetLocation(rootURL: resources.appendingPathComponent("Supertonic"))
                 let existing = currentSupertonicRenderSignature
                 signature = try await Task.detached(priority: .utility) {
                     if let existing,

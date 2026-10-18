@@ -29,6 +29,12 @@ targets:
       - path: App/SpokenMarginsApp/Resources/Legal
         type: folder
         buildPhase: resources
+      - path: App/SpokenMarginsApp/Resources/VoiceCatalog
+        type: folder
+        buildPhase: resources
+      - path: Contracts/voice-models/licenses
+        type: folder
+        buildPhase: resources
       - path: App/SharedResources/browserTextCapture.js
         buildPhase: resources
       - path: App/SharedResources/Defuddle-LICENSE.txt

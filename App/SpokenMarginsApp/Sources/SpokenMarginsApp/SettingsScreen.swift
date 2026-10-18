@@ -63,6 +63,12 @@ struct SettingsScreen: View {
                     Text("Adds a per-session option to the listening screen. It lets music or other audio continue, but Lock Screen and headphone controls may control the other app. Each listening session starts with this option off.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
+                    NavigationLink {
+                        VoicesSettingsScreen(voices: model.requireVoiceDownloads()).miniPlayerKeepOut()
+                    } label: {
+                        Label("Voices", systemImage: "waveform")
+                    }
+                    .accessibilityIdentifier("settings.voices.link")
                     Picker("App Voice", selection: $model.ttsVoiceSelection) {
                         ForEach(AppTTSVoiceSelection.allCases) { voice in
                             Text(voice.displayName).tag(voice)

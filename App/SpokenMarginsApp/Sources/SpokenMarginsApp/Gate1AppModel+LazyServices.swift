@@ -14,6 +14,21 @@ extension Gate1AppModel {
         return ledger
     }
 
+    /// Settings › Voices (#1819), created on first use and kept, so a download outlives the screen. An
+    /// installed or removed voice refreshes Storage and the screens that list voices.
+    func requireVoiceDownloads() -> VoiceDownloadsModel {
+        if let voiceDownloadsModel { return voiceDownloadsModel }
+        let support = (try? applicationSupportDirectory()) ?? FileManager.default.temporaryDirectory
+        let model = VoiceDownloadsModel.make(supportDirectory: support, repository: try? requireStore())
+        model.onInstalledVoicesChanged = { [weak self] in
+            guard let self else { return }
+            self.tryRefreshOfflineStorageUsage()
+            self.objectWillChange.send()
+        }
+        voiceDownloadsModel = model
+        return model
+    }
+
     /// The prepared-audio coordinator, created on first use under `<support>/PreparedAudio` and kept.
     /// `makeSpeechPlaybackClient` still replaces it unconditionally (#1003).
     func requirePreparedAudioCoordinator(store: SQLiteSessionStore, supportDirectory: URL) -> PreparedAudioCoordinator {

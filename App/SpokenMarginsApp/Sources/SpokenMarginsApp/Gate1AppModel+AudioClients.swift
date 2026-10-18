@@ -45,10 +45,9 @@ extension Gate1AppModel {
             let renderer = try makeSupertonicRenderer()
             let supportDirectory = try applicationSupportDirectory()
             guard let store else { throw SessionKitError.persistenceFailed("prepared_audio_store_unavailable") }
-            guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
+            guard let assets = SupertonicAssetResolver.location() else {
                 throw SupertonicNarrationError.missingAsset("Supertonic")
             }
-            let assets = SupertonicAssetLocation(rootURL: resourceRoot)
             let signatureTask = Task.detached(priority: .userInitiated) {
                 try SupertonicRenderIdentity.make(assets: assets, voice: voice)
             }
@@ -192,10 +191,7 @@ extension Gate1AppModel {
     func makeSupertonicRenderer() throws -> SupertonicNarrationRenderer {
         try verifyCurrentTermsForOnDeviceVoice()
         if let supertonicRenderer { return supertonicRenderer }
-        guard let resourceRoot = Bundle.main.resourceURL?.appending(
-            path: "Supertonic",
-            directoryHint: .isDirectory
-        ) else {
+        guard let assets = SupertonicAssetResolver.location() else {
             throw SupertonicNarrationError.missingAsset("Supertonic")
         }
         let cachesDirectory = try FileManager.default.url(
@@ -205,7 +201,7 @@ extension Gate1AppModel {
             create: true
         )
         let renderer = try SupertonicNarrationRenderer(
-            assets: SupertonicAssetLocation(rootURL: resourceRoot),
+            assets: assets,
             outputDirectory: cachesDirectory.appending(path: "SupertonicPlayback", directoryHint: .isDirectory),
             governor: .app
         )
