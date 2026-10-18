@@ -147,6 +147,15 @@ class TheShippedSources(unittest.TestCase):
         self.assertFalse(by_id["supertonic-3-int8"]["bundled"])
         self.assertFalse(by_id["pocket-tts-alba"]["bundled"])
 
+    def test_supertonic_is_checked_against_the_archive_its_mirror_files_came_from(self):
+        sources = vc.load_sources()
+        supertonic = next(v for v in sources["voices"] if v["id"] == "supertonic-3-int8")
+        manifest = json.loads((tools.SUPERTONIC / "asset-manifest.json").read_text(encoding="utf-8"))["quantizedArchive"]
+        self.assertEqual([(a["url"], a["sha256"]) for a in supertonic["upstreamArchives"]], [(manifest["url"], manifest["sha256"])])
+        derived = [f for f in supertonic["files"] if "origin" in f]
+        self.assertEqual(len(derived), 4)  # the four INT8 networks
+        self.assertTrue(all(f["origin"]["url"] == manifest["url"] for f in derived))
+
     def test_mirrored_files_are_only_those_the_licence_allows(self):
         by_id = {v["id"]: v for v in vc.load_sources()["voices"]}
         self.assertTrue(all(f["mirrored"] for f in by_id["supertonic-3-int8"]["files"]))
@@ -200,6 +209,8 @@ class ValidatingSources(unittest.TestCase):
             "no reviewed text": lambda s: alpha(s)["licenses"][0].pop("reviewedText"),
             "http licence url": lambda s: alpha(s)["licenses"][0].update(textURL="http://example.test/L"),
             "http watch url": lambda s: alpha(s)["licenses"][0].update(watchURL="ftp://example.test/L"),
+            "archive without a hash": lambda s: alpha(s).update(upstreamArchives=[{"url": "https://example.test/a.tar", "byteCount": 5}]),
+            "http archive": lambda s: alpha(s).update(upstreamArchives=[{"url": "http://example.test/a.tar", "byteCount": 5, "sha256": sha(b"a")}]),
             "wrong schema version": lambda s: s.update(schemaVersion="voice-catalog-sources.v0"),
             "base url without slash": lambda s: s["site"].update(baseURL="https://example.test"),
         }
@@ -220,9 +231,9 @@ class CheckingTheSources(unittest.TestCase):
         self.sources = make_sources(self.server.base, self.base)
         serve_everything(self.server, self.sources)
 
-    def run_check(self, **kwargs):
+    def run_check(self, now=NOW, **kwargs):
         lines: list[str] = []
-        report = vc.check(self.sources, self.state, now=NOW, out=lines.append, base_dir=self.base, **kwargs)
+        report = vc.check(self.sources, self.state, now=now, out=lines.append, base_dir=self.base, http=vc.Http(timeout=5, retry_delay=0), **kwargs)
         return report, lines
 
     def test_a_clean_run_holds_nothing_and_prints_one_line_per_voice(self):
@@ -293,6 +304,45 @@ class CheckingTheSources(unittest.TestCase):
         self.assertEqual(report["voices"]["beta"]["problems"][0]["kind"], "licence-unreachable")
         self.assertTrue(report["voices"]["beta"]["held"])
 
+    def test_a_file_seen_unchanged_is_still_downloaded_again_after_a_month(self):
+        self.run_check()
+        self.run_check(now=NOW + dt.timedelta(days=10))
+        self.assertEqual(self.server.gets("/up/model.onnx"), 1)
+        self.run_check(now=NOW + dt.timedelta(days=31))
+        self.assertEqual(self.server.gets("/up/model.onnx"), 2)
+
+    def test_an_upstream_archive_that_changed_holds_the_voice_even_when_the_mirror_is_only_noted(self):
+        archive = b"archive bytes " * 50
+        self.sources["voices"][0]["upstreamArchives"] = [{"url": self.server.base + "up/archive.tar.bz2", "byteCount": len(archive), "sha256": sha(archive)}]
+        self.server.files["/up/archive.tar.bz2"] = (200, archive)
+        self.server.files.pop("/voices/files/alpha/1.0/styles/a.json")  # a mirror miss alone would only be noted
+        self.assertFalse(self.run_check(mirror="note")[0]["voices"]["alpha"]["held"])
+        self.server.files["/up/archive.tar.bz2"] = (200, archive[:-1] + b"!")
+        report, lines = self.run_check(mirror="note")
+        self.assertTrue(report["voices"]["alpha"]["held"])
+        self.assertEqual(report["voices"]["alpha"]["problems"][0]["subject"], "archive archive.tar.bz2")
+        self.assertIn("HELD", lines[0])
+        self.server.files["/up/archive.tar.bz2"] = (404, b"")
+        self.assertEqual(self.run_check(mirror="note")[0]["voices"]["alpha"]["problems"][0]["kind"], "missing")
+
+    def test_one_flaky_answer_does_not_hold_a_voice(self):
+        answers = iter([503])
+        original = self.server.files["/beta/LICENSE"]
+
+        class Flaky(vc.Http):
+            def _get_once(inner, url, limit):
+                if url.endswith("/beta/LICENSE"):
+                    try:
+                        return next(answers), b""
+                    except StopIteration:
+                        pass
+                return super()._get_once(url, limit)
+
+        lines: list[str] = []
+        report = vc.check(self.sources, self.state, now=NOW, out=lines.append, base_dir=self.base, http=Flaky(timeout=5, retry_delay=0))
+        self.assertFalse(report["voices"]["beta"]["held"])
+        self.assertEqual(original, self.server.files["/beta/LICENSE"])
+
     def test_a_missing_mirror_only_holds_the_voice_when_it_is_required(self):
         self.server.files.pop("/voices/files/alpha/1.0/styles/a.json")
         noted, _ = self.run_check(mirror="note")
@@ -321,11 +371,13 @@ class FilingIssues(unittest.TestCase):
     def setUp(self):
         self.created: list[dict] = []
         self.existing: list[dict] = []
+        self.searches: list[str] = []
         outer = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
-                body = json.dumps(outer.existing).encode()
+                outer.searches.append(self.path)
+                body = json.dumps({"items": outer.existing}).encode()
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
@@ -371,6 +423,16 @@ class FilingIssues(unittest.TestCase):
         self.existing = [{"title": "Voice licence changed: alpha / example"}]
         filed = vc.file_issues(self.report, self.state, "tok", repo="o/r", api=self.api, out=lambda _: None)
         self.assertEqual(filed, ["Voice source problem: alpha"])
+
+    def test_the_duplicate_check_asks_for_the_exact_title_so_a_long_issue_list_cannot_hide_it(self):
+        vc.file_issues(self.report, self.state, "tok", repo="o/r", api=self.api, out=lambda _: None)
+        self.assertTrue(all(path.startswith("/search/issues?q=") for path in self.searches))
+        self.assertIn("Voice%20licence%20changed", self.searches[0])
+
+    def test_a_similar_title_is_not_mistaken_for_the_same_issue(self):
+        self.existing = [{"title": "Voice licence changed: alpha / example (older)"}]
+        filed = vc.file_issues(self.report, self.state, "tok", repo="o/r", api=self.api, out=lambda _: None)
+        self.assertIn("Voice licence changed: alpha / example", filed)
 
     def test_nothing_held_files_nothing(self):
         self.report["voices"]["alpha"]["held"] = False
@@ -502,21 +564,36 @@ class SigningAndTheKey(unittest.TestCase):
 
 @unittest.skipUnless(HAVE_CRYPTO, "needs the cryptography package")
 class Keygen(unittest.TestCase):
-    def test_the_secret_is_stored_in_the_keychain_and_never_printed(self):
+    def test_the_secret_goes_to_the_keychain_on_stdin_and_is_never_printed_or_in_arguments(self):
         calls, printed = [], []
 
         def run(command, **kwargs):
-            calls.append(command)
+            calls.append((command, kwargs))
             if command[1] == "find-generic-password":
                 return subprocess.CompletedProcess(command, 44, "", "not found")
             return subprocess.CompletedProcess(command, 0, "", "")
 
         vc.keygen(run=run, out=printed.append)
-        secret = calls[1][calls[1].index("-w") + 1]
-        self.assertEqual(calls[1][:2], ["security", "add-generic-password"])
+        add_command, add_kwargs = calls[1]
+        self.assertEqual(add_command, ["security", "-i"])
+        stdin = add_kwargs["input"]
+        self.assertTrue(stdin.startswith("add-generic-password "))
+        secret = stdin.split('-w "')[1].split('"')[0]
         self.assertGreaterEqual(len(secret), 40)
+        self.assertFalse(any(secret in part for call in calls for part in call[0]))
         self.assertFalse(any(secret in line for line in printed))
         self.assertTrue(any("VoiceCatalogTrustedKey(keyId:" in line for line in printed))
+
+    def test_a_failed_store_never_echoes_the_secret(self):
+        def run(command, **kwargs):
+            if command[1] == "find-generic-password":
+                return subprocess.CompletedProcess(command, 44, "", "")
+            secret = kwargs["input"].split('-w "')[1].split('"')[0]
+            return subprocess.CompletedProcess(command, 1, "", f"failed to add {secret}")
+
+        with self.assertRaises(vc.CatalogToolError) as raised:
+            vc.keygen(run=run, out=lambda _: None)
+        self.assertIn("<secret>", str(raised.exception))
 
     def test_an_existing_key_is_never_replaced(self):
         key = tools._key(b"existing")
@@ -532,7 +609,17 @@ class Keygen(unittest.TestCase):
 
         with self.assertRaises(vc.CatalogToolError):
             vc.keygen(run=run, out=lambda _: None)
-        self.assertFalse(any(c[1] == "add-generic-password" for c in calls))
+        self.assertFalse(any(c[1] in ("add-generic-password", "-i") for c in calls))
+
+    def test_a_locked_or_refused_keychain_is_not_mistaken_for_no_key(self):
+        def run(command, **kwargs):
+            return subprocess.CompletedProcess(command, 36, "", "User interaction is not allowed.")
+
+        with self.assertRaises(vc.CatalogToolError) as raised:
+            vc.keychain_key(run)
+        self.assertIn("Keychain", str(raised.exception))
+        with self.assertRaises(vc.CatalogToolError):
+            vc.keygen(run=run, out=lambda _: None)
 
     def test_without_the_mac_tool_it_says_where_to_run_it(self):
         def run(command, **kwargs):
@@ -613,8 +700,16 @@ class Publishing(unittest.TestCase):
     def publish(self, apply=False, http=None, run=None, now=NOW, live="fetch"):
         lines: list[str] = []
         vc.publish(self.sources, self.state, self.site, apply=apply, http=http or StandInNetwork(None), run=run or (lambda *a, **k: subprocess.CompletedProcess(a, 0)),
-                   now=now, live_version=live, swift_path=self.swift, out=lines.append)
+                   now=now, live=live, swift_path=self.swift, out=lines.append)
         return lines
+
+    def live(self, version, mutate=None):
+        """The catalog as listeners have it: today's, at another version, optionally edited."""
+        payload = copy.deepcopy(vc.published_payload(self.site))
+        payload["catalogVersion"] = version
+        if mutate:
+            mutate(payload)
+        return payload
 
     def test_a_dry_run_stages_and_reports_but_runs_no_deploy(self):
         ran = []
@@ -657,14 +752,41 @@ class Publishing(unittest.TestCase):
         cases = {
             "a check more than a day old": lambda: self.publish(now=later, live=None),
             "sources edited since the check": lambda: (self.sources["voices"][0].update(publisher="Someone Else"), self.publish(live=None)),
-            "a catalog older than the live one": lambda: self.publish(live=2),
-            "a live manifest that cannot be read": lambda: self.publish(http=StandInNetwork(None, manifest_status=500)),
+            "a catalog older than the live one": lambda: self.publish(live=self.live(2)),
+            "a live catalog that cannot be read": lambda: self.publish(http=StandInNetwork(None, catalog_status=500)),
+            "a live voice missing from the new catalog": lambda: self.publish(live=self.live(0, lambda p: p["voices"].append(dict(p["voices"][0], id="gone")))),
+            "a check made after the catalog was built": lambda: (vc.write_json(self.state / "check.json", {**json.loads((self.state / "check.json").read_text()), "checkedAt": vc.iso(NOW + dt.timedelta(minutes=5))}), self.publish(now=NOW + dt.timedelta(minutes=6), live=None)),
         }
         for name, attempt in cases.items():
             with self.subTest(name):
                 self.setUp()
                 with self.assertRaises(vc.CatalogToolError, msg=name):
                     attempt()
+
+    def hold(self, voice_id):
+        report = json.loads((self.state / "check.json").read_text())
+        report["voices"][voice_id]["held"] = True
+        vc.write_json(self.state / "check.json", report)
+
+    def test_a_held_voice_must_go_out_exactly_as_it_is_live(self):
+        live = self.live(0, lambda p: p["voices"][0].update(version="0.9"))
+        self.hold("alpha")  # same check, so the build pairing holds; the catalog still carries alpha's new entry
+        with self.assertRaises(vc.CatalogToolError) as raised:
+            self.publish(live=live)
+        self.assertIn("held", str(raised.exception))
+
+    def test_a_held_voice_that_was_never_live_must_stay_out(self):
+        self.hold("alpha")
+        with self.assertRaises(vc.CatalogToolError):
+            self.publish(live=None)
+
+    def test_a_held_voice_kept_as_it_is_live_publishes(self):
+        live = self.live(0)
+        self.hold("alpha")
+        vc.build(self.sources, self.state, self.site, now=NOW, out=lambda _: None)
+        vc.sign(self.sources, self.state, self.site, self.key, out=lambda _: None)
+        vc.write_page(self.sources, self.site, out=lambda _: None)
+        self.publish(live=live)
 
     def test_a_catalog_signed_by_a_key_the_app_does_not_trust_is_refused(self):
         self.swift.write_text("public enum VoiceCatalogTrust {\n    public static let production: [VoiceCatalogTrustedKey] = [\n        " + vc.swift_key_line(tools._key(b"someone else")) + ",\n    ]\n}\n", encoding="utf-8")
@@ -701,12 +823,21 @@ class Publishing(unittest.TestCase):
 class StandInNetwork:
     """What publish reads from the live site: the manifest's version and the mirror files' sizes."""
 
-    def __init__(self, deployed_version, manifest_status=200):
+    def __init__(self, deployed_version, manifest_status=200, live_catalog=None, catalog_status=None):
         self.deployed_version = deployed_version
         self.manifest_status = manifest_status
+        self.live_catalog = live_catalog
+        self.catalog_status = catalog_status
         self.mirror_size = None
 
     def get(self, url, limit=0):
+        if url.endswith(vc.CATALOG_REL):
+            if self.catalog_status:
+                return self.catalog_status, b""
+            if self.live_catalog is None:
+                return 404, b""
+            import base64
+            return 200, json.dumps({"payload": base64.b64encode(tools.pretty(self.live_catalog)).decode()}).encode()
         if self.manifest_status != 200:
             return self.manifest_status, b""
         if self.deployed_version is None:

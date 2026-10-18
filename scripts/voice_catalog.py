@@ -31,6 +31,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -55,6 +56,7 @@ KEY_ID = "sm-voices-1"
 USER_AGENT = "SpokenMargins-VoiceCatalogCheck/1"
 SOURCES_VERSION = "voice-catalog-sources.v1"
 MAX_CHECK_AGE_HOURS = 24
+REVERIFY_DAYS = 30
 LICENCE_TEXT_LIMIT = 2 * 1024 * 1024
 ISSUE_REPO = "uncomposed/spoken-margins-native"
 
@@ -132,6 +134,14 @@ def validate_sources(sources: dict, base_dir: Path = SOURCES_PATH.parent, allow_
             errors.append(f"{where}: a bundled voice lists no files")
         if not voice.get("bundled") and not files:
             errors.append(f"{where}: a downloadable voice lists at least one file")
+        for archive in voice.get("upstreamArchives", []):
+            label = f"{where} upstream archive {archive.get('url')}"
+            if not url_ok(archive.get("url")):
+                errors.append(f"{label}: url must be an https URL")
+            if not (isinstance(archive.get("byteCount"), int) and archive["byteCount"] > 0):
+                errors.append(f"{label}: byteCount must be a positive integer")
+            if not SHA256_RE.fullmatch(str(archive.get("sha256", ""))):
+                errors.append(f"{label}: sha256 must be 64 lowercase hex characters")
         license_ids = [lic.get("id") for lic in voice.get("licenses", [])]
         if not license_ids:
             errors.append(f"{where}: at least one licence")
@@ -228,15 +238,24 @@ def schema_errors(payload: dict) -> list[str] | None:
 class Http:
     """Plain requests that carry no cookies, identifiers or query strings of ours; tests point it at a local server."""
 
-    def __init__(self, timeout: int = 60):
+    def __init__(self, timeout: int = 60, retry_delay: float = 2.0):
         self.timeout = timeout
+        self.retry_delay = retry_delay
 
     def _open(self, url: str, method: str):
         request = urllib.request.Request(url, method=method, headers={"User-Agent": USER_AGENT})
         return urllib.request.urlopen(request, timeout=self.timeout)
 
     def head(self, url: str) -> dict:
-        """{'status', 'size', 'etag', 'error'}: size and etag are None when the server doesn't say."""
+        """{'status', 'size', 'etag', 'error'}: size and etag are None when the server doesn't say. One retry on a
+        network error or a 5xx, so a single flake doesn't hold a voice."""
+        answer = self._head_once(url)
+        if answer["status"] is None or answer["status"] >= 500:
+            time.sleep(self.retry_delay)
+            answer = self._head_once(url)
+        return answer
+
+    def _head_once(self, url: str) -> dict:
         for method in ("HEAD", "GET"):
             try:
                 with self._open(url, method) as response:
@@ -251,6 +270,13 @@ class Http:
         return {"status": None, "size": None, "etag": None, "error": "no answer"}
 
     def get(self, url: str, limit: int = LICENCE_TEXT_LIMIT) -> tuple[int | None, bytes]:
+        status, body = self._get_once(url, limit)
+        if status is None or status >= 500:
+            time.sleep(self.retry_delay)
+            status, body = self._get_once(url, limit)
+        return status, body
+
+    def _get_once(self, url: str, limit: int) -> tuple[int | None, bytes]:
         try:
             with self._open(url, "GET") as response:
                 return response.status, response.read(limit + 1)[:limit]
@@ -287,7 +313,9 @@ def _load_json_or(path: Path, default):
 def check(sources: dict, state_dir: Path, *, http=None, full: bool = False, mirror: str = "note",
           now: dt.datetime | None = None, out=print, base_dir: Path = SOURCES_PATH.parent) -> dict:
     """Request every source and licence text. `mirror` is 'skip', 'note' (reported, never holds a voice) or
-    'require' (a missing or wrong mirror file holds the voice). Returns the report it also writes."""
+    'require' (a missing or wrong mirror file holds the voice). Our mirror's only copy of a file the publisher
+    ships inside an archive is covered by the voice's `upstreamArchives`, which are always checked. Returns the
+    report it also writes."""
     http = http or Http()
     now = now or dt.datetime.now(dt.timezone.utc)
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -308,48 +336,56 @@ def check(sources: dict, state_dir: Path, *, http=None, full: bool = False, mirr
             problems.append({"kind": kind, "subject": subject, "url": url, "detail": text, "mirror": is_mirror})
             note(f"PROBLEM {voice['id']} {subject} {kind}: {text} <{url}>")
 
+        def verify(url: str, subject: str, byte_count: int, digest_expected: str, is_mirror: bool) -> None:
+            """One URL against the reviewed size and hash. Downloads only when it has to: never verified, the
+            reviewed hash changed, size or ETag moved, or the last full check is over a month old."""
+            answer = http.head(url)
+            status, size, etag = answer["status"], answer["size"], answer["etag"]
+            note(f"{voice['id']} {subject} {url} status={status} size={size} etag={etag}")
+            if status != 200:
+                kind = "missing" if status in (404, 410) else "unreachable"
+                text = f"HTTP {status}" if status else f"no answer ({answer['error']})"
+                if is_mirror and mirror == "note":
+                    notes.append(f"mirror {kind}: {subject} ({text})")
+                    note(f"NOTE mirror {kind}: {subject}")
+                else:
+                    problem(kind, subject, url, text, is_mirror)
+                return
+            record = seen.get(url, {})
+            verified_at = record.get("verifiedAt")
+            old = verified_at is None or now - parse_iso(verified_at) > dt.timedelta(days=REVERIFY_DAYS)
+            if not (full or old or record.get("sha256") != digest_expected or (size is not None and size != byte_count)
+                    or (etag is not None and record.get("etag") != etag)):
+                return
+            target = state_dir / "tmp" / "download"
+            status, count, digest = http.download(url, target)
+            if digest == digest_expected and count == byte_count:
+                seen[url] = {"etag": etag, "size": count, "sha256": digest, "verifiedAt": iso(now)}
+                target.unlink(missing_ok=True)
+                return
+            kept = state_dir / "changed" / voice["id"] / subject.replace("/", "_")
+            kept.parent.mkdir(parents=True, exist_ok=True)
+            if status == 200:
+                shutil.move(str(target), kept)
+            else:
+                target.unlink(missing_ok=True)
+            seen.pop(url, None)
+            what = (f"now {count} bytes, sha256 {digest}; reviewed {byte_count} bytes, sha256 {digest_expected}; kept at {kept}"
+                    if status == 200 else f"download failed (HTTP {status})")
+            kind = "hash-differs" if status == 200 else "unreachable"
+            if is_mirror and mirror == "note":
+                notes.append(f"mirror {kind}: {subject}")
+            else:
+                problem(kind, subject, url, what, is_mirror)
+
         for file in voice["files"]:
             for url in file_source_urls(sources, voice, file):
                 is_mirror = url.startswith(prefix)
                 if is_mirror and mirror == "skip":
                     continue
-                answer = http.head(url)
-                status, size, etag = answer["status"], answer["size"], answer["etag"]
-                note(f"{voice['id']} {file['path']} {url} status={status} size={size} etag={etag}")
-                if status != 200:
-                    kind = "missing" if status in (404, 410) else "unreachable"
-                    text = f"HTTP {status}" if status else f"no answer ({answer['error']})"
-                    if is_mirror and mirror == "note":
-                        notes.append(f"mirror {kind}: {file['path']} ({text})")
-                        note(f"NOTE mirror {kind}: {file['path']}")
-                    else:
-                        problem(kind, file["path"], url, text, is_mirror)
-                    continue
-                record = seen.get(url, {})
-                stale = (full or record.get("sha256") != file["sha256"] or (size is not None and size != file["byteCount"])
-                         or (etag is not None and record.get("etag") != etag))
-                if not stale:
-                    continue
-                target = state_dir / "tmp" / "download"
-                status, count, digest = http.download(url, target)
-                if digest == file["sha256"] and count == file["byteCount"]:
-                    seen[url] = {"etag": etag, "size": count, "sha256": digest, "verifiedAt": iso(now)}
-                    target.unlink(missing_ok=True)
-                    continue
-                kept = state_dir / "changed" / voice["id"] / file["path"]
-                kept.parent.mkdir(parents=True, exist_ok=True)
-                if status == 200:
-                    shutil.move(str(target), kept)
-                else:
-                    target.unlink(missing_ok=True)
-                seen.pop(url, None)
-                what = (f"now {count} bytes, sha256 {digest}; reviewed {file['byteCount']} bytes, sha256 {file['sha256']}; kept at {kept}"
-                        if status == 200 else f"download failed (HTTP {status})")
-                kind = "hash-differs" if status == 200 else "unreachable"
-                if is_mirror and mirror == "note":
-                    notes.append(f"mirror {kind}: {file['path']}")
-                else:
-                    problem(kind, file["path"], url, what, is_mirror)
+                verify(url, file["path"], file["byteCount"], file["sha256"], is_mirror)
+        for archive in voice.get("upstreamArchives", []):
+            verify(archive["url"], "archive " + archive["url"].rsplit("/", 1)[-1], archive["byteCount"], archive["sha256"], False)
         for licence in voice["licenses"]:
             url = licence.get("watchURL") or licence["textURL"]
             status, body = http.get(url)
@@ -421,7 +457,7 @@ def issue_for(voice_id: str, report_voice: dict, state_dir: Path) -> list[tuple[
 
 
 def file_issues(report: dict, state_dir: Path, token: str, *, repo: str = ISSUE_REPO, api: str = "https://api.github.com", out=print) -> list[str]:
-    """Open one issue per held voice and kind of change, unless an open issue with that title exists."""
+    """Open one issue per held voice and kind of change, unless an open issue with that exact title exists."""
     def call(method: str, path: str, body: dict | None = None):
         request = urllib.request.Request(api + path, method=method, data=json.dumps(body).encode() if body is not None else None,
                                          headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "User-Agent": USER_AGENT, "Content-Type": "application/json"})
@@ -431,10 +467,10 @@ def file_issues(report: dict, state_dir: Path, token: str, *, repo: str = ISSUE_
     wanted = [item for voice_id, v in report["voices"].items() if v["held"] for item in issue_for(voice_id, v, state_dir)]
     if not wanted:
         return []
-    open_titles = {issue["title"] for issue in call("GET", f"/repos/{repo}/issues?state=open&per_page=100")}
     filed = []
     for title, body in wanted:
-        if title in open_titles:
+        query = urllib.parse.quote(f'repo:{repo} is:issue state:open in:title "{title}"')
+        if any(item["title"] == title for item in call("GET", f"/search/issues?q={query}&per_page=100")["items"]):
             out(f"issue already open: {title}")
             continue
         call("POST", f"/repos/{repo}/issues", {"title": title, "body": body + "\n\n---\n_Generated by [Claude Code](https://claude.ai/code)_", "labels": ["ready"]})
@@ -484,15 +520,17 @@ def build(sources: dict, state_dir: Path, site_dir: Path, *, now: dt.datetime | 
     if problems is None:
         out("note: jsonschema is not installed, so the schema check was skipped.")
     write_json(state_dir / "catalog.payload.json", payload)
+    # publish refuses a catalog built from a different check than the one it sees (a voice may have become held since).
+    write_json(state_dir / "build.json", {"checkedAt": (report or {}).get("checkedAt"), "sourcesSHA256": sha256_hex(json.dumps(sources, sort_keys=True).encode())})
     out(f"catalog version {version}" + (" (unchanged)" if previous and version == previous["catalogVersion"] else ""))
     return payload
 
 
 # --- keys and signing ----------------------------------------------------------------------------------------
 
-def _security(arguments: list[str], run=subprocess.run):
+def _security(arguments: list[str], run=subprocess.run, stdin: str | None = None):
     try:
-        return run(["security", *arguments], capture_output=True, text=True)
+        return run(["security", *arguments], capture_output=True, text=True, input=stdin)
     except FileNotFoundError as error:
         raise CatalogToolError("the macOS `security` tool is not here; keys are made and used on the Mac") from error
 
@@ -502,8 +540,10 @@ def keychain_key(run=subprocess.run):
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
     result = _security(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEY_ID, "-w"], run)
-    if result.returncode != 0:
+    if result.returncode == 44:  # errSecItemNotFound
         return None
+    if result.returncode != 0:
+        raise CatalogToolError(f"could not read the signing key from the login Keychain (exit {result.returncode}): {result.stderr.strip()}")
     return Ed25519PrivateKey.from_private_bytes(base64.b64decode(result.stdout.strip()))
 
 
@@ -525,8 +565,8 @@ def keygen(run=subprocess.run, out=print) -> None:
         raise CatalogToolError(f"a key named {KEY_ID!r} is already in the login Keychain; refusing to replace it (delete it in Keychain Access first, if you mean to rotate)")
     key = Ed25519PrivateKey.generate()
     secret = base64.b64encode(key.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())).decode()
-    # `security` takes the secret as an argument; macOS shows a process's arguments only to its own user.
-    stored = _security(["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEY_ID, "-w", secret], run)
+    # `security -i` reads its command from standard input, so the secret is never in a process's arguments.
+    stored = _security(["-i"], run, stdin=f'add-generic-password -s "{KEYCHAIN_SERVICE}" -a "{KEY_ID}" -w "{secret}"\n')
     if stored.returncode != 0:
         raise CatalogToolError("could not store the key in the login Keychain: " + stored.stderr.strip().replace(secret, "<secret>"))
     out(f"signing key {KEY_ID} is in the login Keychain (service {KEYCHAIN_SERVICE!r}). It never leaves it.")
@@ -615,7 +655,7 @@ def render_page(catalog: dict, sources: dict) -> str:
             where = "Ships inside the app. Nothing is downloaded."
             size = "Included in the app"
         else:
-            where = "Downloads from " + ", ".join(hosts) + ". The app tries them in this order and checks every file against the size and SHA-256 listed below."
+            where = "Downloads from " + " and ".join(hosts) + ". For each file the app tries the publisher first where it has that file, then our mirror, and checks it against the size and SHA-256 listed below."
             size = format_bytes(sum(f["byteCount"] for f in voice["files"]))
         status = {"available": "", "withdrawn": " <strong>Withdrawn:</strong> the app no longer offers it.",
                   "superseded": f" <strong>Superseded</strong> by <code>{_esc(voice.get('supersededBy', ''))}</code>."}[voice["status"]]
@@ -691,7 +731,7 @@ def stage_mirror(sources: dict, state_dir: Path) -> tuple[Path, int, int]:
 
 
 def publish(sources: dict, state_dir: Path, site_dir: Path, *, apply: bool = False, http=None, run=subprocess.run,
-            now: dt.datetime | None = None, live_version="fetch", swift_path: Path = TRUST_SWIFT, out=print) -> None:
+            now: dt.datetime | None = None, live="fetch", swift_path: Path = TRUST_SWIFT, out=print) -> None:
     http = http or Http()
     now = now or dt.datetime.now(dt.timezone.utc)
     report = _load_json_or(state_dir / "check.json", None)
@@ -712,25 +752,38 @@ def publish(sources: dict, state_dir: Path, site_dir: Path, *, apply: bool = Fal
         raise CatalogToolError("manifest.json does not describe catalog.json; run `sign` again")
     if (site_dir / PAGE_REL).read_text(encoding="utf-8") != render_page(catalog, sources):
         raise CatalogToolError("Site/voices/index.html is out of date with the catalog; run `page` again")
-    in_catalog = {v["id"]: v for v in catalog["voices"]}
-    for voice in sources["voices"]:
-        if not report["voices"][voice["id"]]["held"] and in_catalog.get(voice["id"]) != voice_entry(sources, voice):
-            raise CatalogToolError(f"the signed catalog's entry for {voice['id']} is not what sources.json says; run `build`, `sign` and `page` again")
+    built_from = _load_json_or(state_dir / "build.json", None)
+    if built_from is None or built_from.get("checkedAt") != report["checkedAt"] or built_from.get("sourcesSHA256") != report["sourcesSHA256"]:
+        raise CatalogToolError("the catalog was not built from the latest check; run `build`, `sign` and `page` again")
     keys = trusted_keys(swift_path)
     if not keys:
         raise CatalogToolError("no signing key is compiled into the app yet (VoiceCatalogTrust.production is empty); publishing a catalog no build trusts does nothing")
     if envelope["keyId"] not in keys or not envelope_signature_ok(envelope, keys[envelope["keyId"]]):
         raise CatalogToolError(f"the catalog is not signed by a key the app trusts ({envelope['keyId']}); `sign` with the key whose public half is in VoiceCatalogTrust.production")
-    if live_version == "fetch":
-        status, body = http.get(sources["site"]["baseURL"] + MANIFEST_REL)
+    # What listeners get right now. A held voice must go out exactly as it is live (or stay out if it never was), and a
+    # live voice must not vanish: withdraw it with status "withdrawn" instead.
+    if live == "fetch":
+        status, body = http.get(sources["site"]["baseURL"] + CATALOG_REL)
         if status == 404:
-            live_version = None
+            live = None
         elif status == 200:
-            live_version = json.loads(body)["contentVersion"]
+            live = json.loads(base64.b64decode(json.loads(body)["payload"]))
         else:
-            raise CatalogToolError(f"could not read the live manifest (HTTP {status}); not moving the catalog without knowing its version")
-    if live_version is not None and catalog["catalogVersion"] < live_version:
-        raise CatalogToolError(f"catalogVersion {catalog['catalogVersion']} is lower than the live {live_version}; the app would reject it as a rollback")
+            raise CatalogToolError(f"could not read the live catalog (HTTP {status}); not changing it without knowing what is there")
+    in_catalog = {v["id"]: v for v in catalog["voices"]}
+    live_voices = {v["id"]: v for v in (live or {}).get("voices", [])}
+    for voice in sources["voices"]:
+        held = report["voices"][voice["id"]]["held"]
+        if not held and in_catalog.get(voice["id"]) != voice_entry(sources, voice):
+            raise CatalogToolError(f"the signed catalog's entry for {voice['id']} is not what sources.json says; run `build`, `sign` and `page` again")
+        if held and in_catalog.get(voice["id"]) != live_voices.get(voice["id"]):
+            raise CatalogToolError(f"{voice['id']} is held, so its entry must stay exactly as it is live; the signed catalog differs. Run `build` with the live catalog in Site/voices/v1/ (git pull), then `sign` and `page`")
+    for voice_id in live_voices:
+        if voice_id not in in_catalog:
+            raise CatalogToolError(f"{voice_id} is live but missing from this catalog; mark it withdrawn instead of removing it")
+    if live is not None and catalog["catalogVersion"] < live["catalogVersion"]:
+        raise CatalogToolError(f"catalogVersion {catalog['catalogVersion']} is lower than the live {live['catalogVersion']}; the app would reject it as a rollback")
+    live_version = live["catalogVersion"] if live else None
     stage, mirror_count, mirror_bytes = stage_mirror(sources, state_dir)
     out(f"catalog version {catalog['catalogVersion']} ({len(catalog['voices'])} voices); live version: {live_version if live_version is not None else 'none yet'}")
     out(f"mirror: {mirror_count} files, {format_bytes(mirror_bytes)}, staged at {stage}")

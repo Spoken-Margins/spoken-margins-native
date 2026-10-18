@@ -73,13 +73,20 @@ if [[ -n "${mirror_directory}" ]]; then
     "${vps_remote}:${web_root}/voices/files/"
 fi
 
+# voices/files/ is never deleted. A checkout with no Site/voices/ (the voice catalog is committed only after a publish)
+# leaves the server's whole voices/ folder alone, because rsync cannot delete a folder that still holds a protected one.
+voice_excludes=(--exclude '/voices/files/')
+if [[ ! -d "${site_directory}/voices" ]]; then
+  voice_excludes=(--exclude '/voices/')
+fi
+
 echo "Uploading ${site_directory}/."
 rsync \
   --archive \
   --compress \
   --delete \
   --exclude '.DS_Store' \
-  --exclude '/voices/files/' \
+  "${voice_excludes[@]}" \
   -e "ssh -S ${control_socket}" \
   "${site_directory}/" \
   "${vps_remote}:${web_root}/"

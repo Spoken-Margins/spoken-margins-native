@@ -18,14 +18,14 @@ The site publishes the signed list of voices the app can download, plus a plain 
 
 Each prints one line per voice and writes the detail to `artifacts/voice-catalog/`.
 
-1. `check` requests every source and licence text. It downloads a file only the first time, or when its ETag or size changes (`--full` forces every file), and compares the SHA-256 with `sources.json`. A voice whose file or licence text no longer matches is **held**. `--mirror require` also holds a voice whose mirror copy is missing or wrong; the default only notes it.
+1. `check` requests every source and licence text. It downloads a file only the first time, when its ETag or size changes, or when it was last verified over 30 days ago (`--full` forces every file), and compares the SHA-256 with `sources.json`. Files the publisher ships only inside an archive (Supertonic's INT8 networks) can't be requested one by one, so the voice's `upstreamArchives` entry (the sherpa-onnx archive, with its size and hash) is checked instead, always counting against the voice. A voice whose file or licence text no longer matches is **held**. `--mirror require` also holds a voice whose mirror copy is missing or wrong; the default only notes it.
 2. `build` writes the unsigned catalog. A held voice keeps the entry from the last published catalog, or is left out if it was never published. `catalogVersion` rises only when the voices changed; an unchanged catalog keeps its version and date, so the app treats a re-sign as a refresh.
 3. `keygen` (once, on the Mac) makes the key and prints the line for `VoiceCatalogTrust.production`.
 4. `sign` signs the built catalog and writes the envelope and manifest.
 5. `page` renders the page from the signed catalog.
 6. `publish` is a dry run. `publish --apply` uploads the mirror files and then the site through `scripts/deploy-spoken-margins-site.sh`, and afterwards checks the live manifest and every mirror file's size.
 
-`publish` refuses unless: the last `check` is under a day old and was made against this `sources.json`; the signed catalog, manifest and page agree with each other and with `sources.json`; a key compiled into the app signed the catalog; the version is not below the live one; and every mirror file's bytes match the reviewed hash (a Git LFS pointer fails this: run `git lfs pull`).
+`publish` refuses unless: the last `check` is under a day old, was made against this `sources.json`, and is the one `build` used; the signed catalog, manifest and page agree with each other and with `sources.json`; a key compiled into the app signed the catalog; compared with the catalog listeners have right now, the version is not lower, no live voice is missing (withdraw it with `status: withdrawn` instead), and every held voice goes out exactly as it is live (or stays out if it never was); and every mirror file's bytes match the reviewed hash (a Git LFS pointer fails this: run `git lfs pull`). Run `git pull` before `build`, so the last published `Site/voices/` is there to keep held voices from.
 
 ## First publish (the owner's Mac, once)
 
@@ -43,6 +43,12 @@ A systemd timer on the VPS (the Mac does not have to be awake) runs `check --mir
 - **Voice source problem: `<voice>`**, for a file that moved, vanished or changed in place.
 
 The token that files them stays on the host in `/etc/sm-voice-catalog/github-token`; the deploy script never copies or prints it. The VPS keeps `seen.json` (each URL's ETag and verified hash) in `/var/lib/sm-voice-catalog`, so a normal week is a few dozen small requests.
+
+## What it does not do
+
+- It does not watch prose that is not a licence file. The Pocket TTS prohibited-use summary comes from Kyutai's model page; if that page changes, nobody is told. Re-read the page whenever `sources.json` moves to a new revision.
+- It never deletes a mirror file from the server. Removing one (a withdrawn voice, or a licence that stops allowing redistribution) is a manual step on the host.
+- A single failed request is retried once; two in a row hold the voice and open a "source problem" issue.
 
 ## Privacy
 

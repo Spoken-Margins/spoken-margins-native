@@ -21,6 +21,13 @@
       "bundled": false,
       "mirrorDir": "supertonic-3-int8/2026-05-11/",
       "mirrorFrom": "App/SpokenMarginsApp/Resources/Supertonic/",
+      "upstreamArchives": [
+        {
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2",
+          "byteCount": 128774318,
+          "sha256": "82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427"
+        }
+      ],
       "files": [
         {
           "path": "onnx/duration_predictor.onnx",
