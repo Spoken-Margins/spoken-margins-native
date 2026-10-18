@@ -654,7 +654,8 @@ enum AppColors {
     static let background = dynamicColor(AppSemanticColorRGB.background)
     static let panel = dynamicColor(AppSemanticColorRGB.panel)
     static let inputBackground = dynamicColor(light: (0.98, 0.99, 0.97), dark: (0.10, 0.12, 0.11))
-    static let border = dynamicColor(light: (0.84, 0.87, 0.81), dark: (0.28, 0.34, 0.30))
+    /// A hairline by default; under Increase Contrast it reaches 3:1 on its surface (#1922).
+    static let border = dynamicColor(AppSemanticColorRGB.border, increased: AppSemanticColorRGB.borderIncreased)
     static let text = dynamicColor(AppSemanticColorRGB.text)
     static let secondaryText = dynamicColor(AppSemanticColorRGB.secondaryText)
     static let green = dynamicColor(light: (0.13, 0.43, 0.30), dark: (0.50, 0.84, 0.62))
@@ -683,6 +684,18 @@ enum AppColors {
         })
         #else
         return Color(red: light.0, green: light.1, blue: light.2)
+        #endif
+    }
+
+    private static func dynamicColor(_ colors: AppDynamicRGB, increased: AppDynamicRGB) -> Color {
+        #if canImport(UIKit)
+        return Color(UIColor { traits in
+            let chosen = traits.accessibilityContrast == .high ? increased : colors
+            let value = traits.userInterfaceStyle == .dark ? chosen.dark : chosen.light
+            return UIColor(red: value.red, green: value.green, blue: value.blue, alpha: 1)
+        })
+        #else
+        return Color(red: colors.light.red, green: colors.light.green, blue: colors.light.blue)
         #endif
     }
 

@@ -82,6 +82,7 @@ struct TapTargetIcon: View {
 }
 
 struct ExperienceFilterChip<Content: View>: View {
+    private let preferences = AppAccessibilityPreferences()
     let isActive: Bool
     let content: Content
 
@@ -91,7 +92,13 @@ struct ExperienceFilterChip<Content: View>: View {
     }
 
     var body: some View {
-        content
+        HStack(spacing: 5) {
+            // Under Differentiate Without Color the active chip says so with a glyph as well as its fill (#1922).
+            if isActive && preferences.differentiatesWithoutColor {
+                Image(systemName: "checkmark").font(.caption.weight(.bold)).accessibilityHidden(true)
+            }
+            content
+        }
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(isActive ? AppColors.onEvergreen : AppColors.text)
             .padding(.horizontal, 13)
@@ -256,5 +263,6 @@ extension View {
     func inputEditorBackground() -> some View {
         scrollContentBackground(.hidden)
             .background(AppColors.inputBackground)
+            .increasedContrastEdge(cornerRadius: 8)
     }
 }
