@@ -5,10 +5,11 @@ import (
 	"unicode"
 )
 
-// These mirror the phone's ListeningMapSummaryValidator (the title word limit,
+// These follow the phone's ListeningMapSummaryValidator (the title word limit,
 // and the rule that a capitalised name in a summary must appear in the
-// scene's own text), so a community map meets the same standard as one made
-// on the device.
+// source), so a community map meets nearly the same standard as one made on
+// the device. The server's source is a little wider: the scene and its two
+// neighbours, since the model, not the phone, drew the scene's edges.
 const MaxTitleWords = 8
 
 var nameAbbreviations = map[string]bool{
@@ -46,17 +47,64 @@ func capitalisedNames(text string) []string {
 	return names
 }
 
+// maxInitialism is the longest run of source words whose initials an
+// all-capital name may spell ("AI" for "artificial intelligence").
+const maxInitialism = 6
+
 // ungroundedName returns the first capitalised name in summary that is not a
-// word of source, or "".
+// word of source, or "". An acronym counts as grounded when source has it in
+// dotted form ("AI" and "A.I."), as the initials of words in a row ("AI" and
+// "artificial intelligence"), or in the singular ("LLMs" and "LLM").
 func ungroundedName(summary, source string) string {
 	known := map[string]bool{}
 	for _, w := range words(source) {
 		known[w] = true
 	}
+	for _, token := range strings.Fields(source) {
+		// "A.I." splits into "a" and "i"; joined, it is "ai".
+		known[strings.Join(words(token), "")] = true
+	}
+	initials := map[string]bool{}
+	sourceWords := words(source)
+	for i := range sourceWords {
+		var b strings.Builder
+		for j := i; j < len(sourceWords) && j-i < maxInitialism; j++ {
+			b.WriteRune([]rune(sourceWords[j])[0])
+			if j > i {
+				initials[b.String()] = true
+			}
+		}
+	}
+	grounded := func(name string) bool {
+		lower := strings.ToLower(name)
+		if known[lower] {
+			return true
+		}
+		if !isAcronym(name) {
+			return false
+		}
+		stem := strings.TrimSuffix(lower, "s")
+		return initials[lower] || (strings.HasSuffix(name, "s") && (known[stem] || initials[stem]))
+	}
 	for _, name := range capitalisedNames(summary) {
-		if !known[strings.ToLower(name)] {
+		if !grounded(name) {
 			return name
 		}
 	}
 	return ""
+}
+
+// isAcronym reports whether name is all capitals, allowing a plural "s"
+// ("NASA", "LLMs").
+func isAcronym(name string) bool {
+	r := []rune(strings.TrimSuffix(name, "s"))
+	if len(r) < 2 {
+		return false
+	}
+	for _, c := range r {
+		if !unicode.IsUpper(c) && !unicode.IsDigit(c) {
+			return false
+		}
+	}
+	return true
 }
