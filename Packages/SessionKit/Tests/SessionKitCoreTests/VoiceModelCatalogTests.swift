@@ -128,10 +128,12 @@ final class VoiceModelCatalogTests: XCTestCase {
         try assertVerifyThrows(.badSignature, JSONEncoder().encode(envelope))
     }
 
-    func testEmptyProductionKeyListFailsClosed() throws {
+    func testProductionKeyListDoesNotTrustTheTestKey() throws {
         XCTAssertThrowsError(try VoiceModelCatalogVerifier.verify(envelopeData: fixture("envelope-valid.json"), trustedKeys: VoiceCatalogTrust.production)) {
             XCTAssertEqual($0 as? VoiceCatalogError, .unknownKey("sm-test-1"))
         }
+        XCTAssertEqual(VoiceCatalogTrust.production.map(\.keyId), ["sm-voices-1"])
+        XCTAssertTrue(VoiceCatalogTrust.production.allSatisfy { $0.publicKey.count == 32 })
     }
 
     func testOlderCatalogThanTheLastAcceptedIsARollback() throws {
