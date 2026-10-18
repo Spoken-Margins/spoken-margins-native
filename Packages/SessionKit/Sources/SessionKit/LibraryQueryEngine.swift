@@ -120,7 +120,9 @@ public enum LibraryQueryEngine {
         Self.displayName(libraryQuery.sort.rawValue)
     }
 
-    private static func displayName(_ rawValue: String) -> String {
+    /// The words the Library's filter and sort menus show for a raw filter or sort value, so "pdf"
+    /// reads "PDF" in the menu and in the filter summary alike (#972).
+    public static func displayName(_ rawValue: String) -> String {
         switch rawValue {
         case "pdf": return "PDF"
         case "epub": return "EPUB"
