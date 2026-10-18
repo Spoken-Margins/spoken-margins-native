@@ -153,8 +153,10 @@ struct ExperienceAddSourceFlow: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Add to Library")
                 .font(.title2.weight(.bold))
+                .screenTitle()
                 .foregroundStyle(AppColors.text)
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+            // One column at accessibility sizes: two columns broke headline titles mid-word (#1934).
+            LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize ? [GridItem(.flexible())] : [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 ForEach(primaryRoutes) { route in
                     Button {
                         if route == .documentOrBook {
@@ -387,6 +389,7 @@ struct ExperienceAddSourceFlow: View {
                         } label: {
                             HStack {
                                 Image(systemName: "doc.text")
+                                    .accessibilityHidden(true)
                                 VStack(alignment: .leading) {
                                     Text(file.name).font(.headline)
                                     Text(file.modifiedAtDescription)
@@ -395,6 +398,7 @@ struct ExperienceAddSourceFlow: View {
                                 }
                                 Spacer()
                                 Image(systemName: "plus")
+                                    .accessibilityHidden(true)
                             }
                             .frame(minHeight: 44)
                         }
@@ -409,6 +413,7 @@ struct ExperienceAddSourceFlow: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Choose the matching episode")
                 .font(.title2.weight(.bold))
+                .screenTitle()
                 .foregroundStyle(AppColors.text)
                 .accessibilityIdentifier("sourceLink.candidateReview.sheet")
             Text("More than one public episode matches this link.")

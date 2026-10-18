@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-model-catalog-neighbour-inputs.schema.json",
+  "title": "Voice catalog neighbouring-input table (#1816)",
+  "description": "Inputs next to the edge of each field rule in voice-model-catalog.schema.json, with whether each is valid. validate-contracts holds the schema's patterns to every row and the SessionKit host tests hold VoiceModelCatalogRules to the same rows.",
+  "type": "object",
+  "required": ["note", "sha256", "httpsURL", "filePath", "id", "spdxId", "runtimeName"],
+  "additionalProperties": false,
+  "properties": {
+    "note": {"type": "string"},
+    "sha256": {"$ref": "#/$defs/rows"},
+    "httpsURL": {"$ref": "#/$defs/rows"},
+    "filePath": {"$ref": "#/$defs/rows"},
+    "id": {"$ref": "#/$defs/rows"},
+    "spdxId": {"$ref": "#/$defs/rows"},
+    "runtimeName": {"$ref": "#/$defs/rows"}
+  },
+  "$defs": {
+    "rows": {
+      "type": "array",
+      "minItems": 6,
+      "items": {
+        "type": "object",
+        "required": ["value", "valid", "why"],
+        "additionalProperties": false,
+        "properties": {
+          "value": {"type": "string"},
+          "valid": {"type": "boolean"},
+          "why": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

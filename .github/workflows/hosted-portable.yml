@@ -1,0 +1,66 @@
+# Hosted portable checks (#1847, #1389): the fast plan's Python and Node steps on a GitHub-hosted ubuntu runner,
+# so the Mac doesn't spend a slot on them. `scripts/verify-tests.py --plan fast-portable` runs the runner tests
+# (without the ones that drive Apple tools), the ops tests (without ops/disk), the contract and surface
+# validators, the test inventory, the browser-extraction and share-link suites, and the research suites. It
+# prints each step it leaves out (the SessionKit package steps need Swift; hosted-sessionkit-linux.yml covers
+# the Foundation-only modules) and a host test fails if a fast-plan step is in neither list.
+#
+# Draft, started by hand only, like hosted-sessionkit-linux.yml. The private repo's free Linux minutes ran out on
+# 2026-10-07 (#1023), and spending money needs the owner. Once the repo is public, standard hosted runners are
+# free; the PR that adds the pull_request trigger below (same-repo PRs only, as linux-t1.yml guards) is a
+# separate change, after a measured first run.
+# GitHub offers workflow_dispatch only for a workflow file that is on the default branch (main). Until the
+# owner moves main past this file, `gh workflow run hosted-portable.yml --ref next` is likely to be refused.
+#
+# No secrets, a read-only token, no pull_request_target, no Git LFS (the voice models stay pointers; the
+# contracts step checks each pointer's recorded size and hash against the manifest).
+name: hosted-portable
+
+on:
+  workflow_dispatch:
+  # The per-PR trigger, for the change that turns this on:
+  # pull_request:
+  #   branches: [next]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-portable-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable:
+    # Same-repo PRs only: a fork's PR would run its own code (here on a GitHub machine with no secrets, but the
+    # same guard as every other job keeps the rule in one place). Always true for workflow_dispatch.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Start the clock
+        run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
+      # A shallow checkout without LFS: nothing here needs the app's voice models.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # research/B4/server's tests; its go.mod names the version.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: research/B4/server/go.mod
+      - name: Python tools and Node packages
+        run: |
+          bash scripts/bootstrap-python-tools.sh
+          npm ci
+      - name: Portable fast plan
+        run: .venv/bin/python scripts/verify-tests.py --plan fast-portable
+      - name: Report time
+        if: always()
+        run: |
+          seconds=$(( $(date +%s) - STARTED ))
+          echo "hosted-portable took ${seconds}s on ubuntu-latest." | tee -a "$GITHUB_STEP_SUMMARY"

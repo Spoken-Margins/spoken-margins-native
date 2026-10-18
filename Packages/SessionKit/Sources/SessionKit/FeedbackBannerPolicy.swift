@@ -14,12 +14,32 @@ public enum FeedbackBannerPolicy {
 
     /// Seconds before the banner dismisses itself, or nil when only the listener dismisses it.
     /// A confirmation that offers an action (Play now, #784) stays long enough to reach it.
-    public static func autoDismissSeconds(for kind: Kind, offersAction: Bool = false) -> Double? {
+    ///
+    /// With VoiceOver or Switch Control running, finding and activating a banner takes longer than the
+    /// fixed timers allow, and a warning can carry an instruction ("Tap Play to resume"). So a banner
+    /// that offers an action stays until the listener dismisses it or a newer banner replaces it, and
+    /// the others stay about twice as long (#1927).
+    public static func autoDismissSeconds(
+        for kind: Kind,
+        offersAction: Bool = false,
+        assistiveTechnologyRunning: Bool = false
+    ) -> Double? {
         switch kind {
-        case .success: offersAction ? 8 : 3
-        case .warning: 6
-        case .error: nil
+        case .error:
+            return nil
+        case .success:
+            if assistiveTechnologyRunning { return offersAction ? nil : 6 }
+            return offersAction ? 8 : 3
+        case .warning:
+            if assistiveTechnologyRunning { return offersAction ? nil : 12 }
+            return 6
         }
+    }
+
+    /// Whether the listener is on the banner, by touch or by VoiceOver or Switch Control focus. The
+    /// timer waits while this is true and runs again when they move away (#1927).
+    public static func timerIsHeld(touched: Bool, focused: Bool) -> Bool {
+        touched || focused
     }
 
     /// Whether a new banner may take the place of the one on screen. Another error always may, so

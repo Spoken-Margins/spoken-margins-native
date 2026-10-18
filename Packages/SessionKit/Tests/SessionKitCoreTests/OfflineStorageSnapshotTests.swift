@@ -110,21 +110,25 @@ final class OfflineStorageSnapshotTests: XCTestCase {
     }
 
     func testCategoryRowsFollowTheCategoryOrderAndSumEachCategory() {
+        // `.preparedAudio` (raw "prepared_audio") precedes `.audiobook` in `allCases` but sorts after it by
+        // raw value, so a snapshot that sorts rows by raw value or by byte count fails here.
+        let order = OfflineAssetCategory.allCases
+        XCTAssertLessThan(order.firstIndex(of: .preparedAudio)!, order.firstIndex(of: .audiobook)!)
+        XCTAssertGreaterThan(OfflineAssetCategory.preparedAudio.rawValue, OfflineAssetCategory.audiobook.rawValue)
+
         let snapshot = OfflineStorageSnapshot.make(
             budget: OfflineStorageBudget(limitBytes: 10_000),
             assets: [
-                offlineAsset(id: "rec", category: .recording, byteCount: 10, isReproducible: false),
-                offlineAsset(id: "p1", category: .podcast, byteCount: 100, isReproducible: true),
-                offlineAsset(id: "p2", category: .podcast, byteCount: 50, isReproducible: true),
-                offlineAsset(id: "empty", category: .audiobook, byteCount: 0, isReproducible: false)
+                offlineAsset(id: "book", category: .audiobook, byteCount: 500, isReproducible: false),
+                offlineAsset(id: "pa1", category: .preparedAudio, byteCount: 100, isReproducible: true),
+                offlineAsset(id: "pa2", category: .preparedAudio, byteCount: 50, isReproducible: true),
+                offlineAsset(id: "empty", category: .recording, byteCount: 0, isReproducible: false)
             ],
             reservations: []
         )
 
-        let order = OfflineAssetCategory.allCases
-        XCTAssertEqual(snapshot.categories.map(\.category), [.podcast, .recording])
-        XCTAssertEqual(snapshot.categories.map(\.byteCount), [150, 10])
-        XCTAssertLessThan(order.firstIndex(of: .podcast)!, order.firstIndex(of: .recording)!)
+        XCTAssertEqual(snapshot.categories.map(\.category), [.preparedAudio, .audiobook])
+        XCTAssertEqual(snapshot.categories.map(\.byteCount), [150, 500])
     }
 
     func testEveryCategoryHasAListenerFacingTitleAndTheRowIDIsTheRawValue() {

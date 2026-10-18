@@ -194,7 +194,7 @@ func TestMapKeyCannotEscapeTheMapsDirectory(t *testing.T) {
 		t.Fatalf("upload: HTTP %d", status)
 	}
 	h.svc.ProcessWaiting(context.Background())
-	// Queue a second transcript the worker never gets to: transcripts/<key2>.json.
+	// Queue a second transcript the worker never gets to.
 	const otherKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	if status, _ := h.postJSON(t, transcriptBody(otherKey)); status != 202 {
 		t.Fatalf("second upload: HTTP %d", status)
@@ -204,9 +204,12 @@ func TestMapKeyCannotEscapeTheMapsDirectory(t *testing.T) {
 	if err != nil || !bytes.Contains(ledger, []byte("spentMicroUSD")) {
 		t.Fatalf("control: ledger file %q, %v", ledger, err)
 	}
-	waiting, err := os.ReadFile(filepath.Join(h.dir, "transcripts", otherKey+".json"))
-	if err != nil || !bytes.Contains(waiting, []byte("alpha")) {
-		t.Fatalf("control: waiting transcript %q, %v", waiting, err)
+	// The waiting transcript is in memory only (#1730), so there is no file to reach.
+	if !h.svc.Store.HasTranscript(otherKey) {
+		t.Fatal("control: the second transcript is not waiting")
+	}
+	if _, err := os.Stat(filepath.Join(h.dir, "transcripts")); err == nil {
+		t.Fatal("a transcripts directory exists on disk")
 	}
 	if status, data := h.get(t, episodeKey); status != 200 || bytes.Contains(data, []byte("alpha")) {
 		t.Fatalf("control: the real map: HTTP %d %s", status, data)
