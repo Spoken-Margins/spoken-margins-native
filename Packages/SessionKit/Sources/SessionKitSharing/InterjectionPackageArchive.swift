@@ -55,12 +55,17 @@ extension SpokenMarginsPackageArchiveError {
         case tooLarge
         /// The file is unreadable, changed in transit, or unsafe.
         case damaged
+        /// The file may be fine, but it doesn't line up with what is in the listener's own Library (a missing or
+        /// different audio file or edition). `invalidManifest` and `invalidAsset` are thrown for these local
+        /// faults as well as for real archive faults, so neither can honestly be called "damaged".
+        case doesNotMatchLibrary
 
         public var message: String {
             switch self {
             case .needsNewerApp: "These Margins need a newer Spoken Margins. Update the app, then open them again."
             case .tooLarge: "This file is bigger than Spoken Margins can open. Ask your friend to send fewer Margins at a time."
             case .damaged: "This file looks damaged. Ask your friend to send it again."
+            case .doesNotMatchLibrary: "These Margins don't match what is in your Library. Check you have the same item and edition, then open them again. If it still fails, ask your friend to send them again."
             }
         }
     }
@@ -69,8 +74,9 @@ extension SpokenMarginsPackageArchiveError {
         switch self {
         case .unsupportedSchema, .unsupportedRequiredCapability: .needsNewerApp
         case .packageTooLarge, .audioTooLarge, .audioTooLong: .tooLarge
+        case .invalidManifest, .invalidAsset: .doesNotMatchLibrary
         case .malformedArchive, .invalidEntry, .duplicateEntry, .manifestMissing, .manifestTooLarge,
-             .invalidManifest, .invalidDigest, .invalidAsset, .excessiveCompression: .damaged
+             .invalidDigest, .excessiveCompression: .damaged
         }
     }
 

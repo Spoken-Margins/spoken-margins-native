@@ -3,7 +3,7 @@ import SessionKitSharing
 import XCTest
 
 /// #1968: what a listener reads when a `.spokenmargins` file can't be opened. Every error case maps to one of
-/// three plain outcomes, and none of them uses the code's words.
+/// four plain outcomes, and none of them uses the code's words.
 final class PackageArchiveListenerMessageTests: XCTestCase {
     private typealias ArchiveError = SpokenMarginsPackageArchiveError
 
@@ -19,9 +19,12 @@ final class PackageArchiveListenerMessageTests: XCTestCase {
             (.duplicateEntry("manifest.json"), .damaged),
             (.manifestMissing, .damaged),
             (.manifestTooLarge, .damaged),
-            (.invalidManifest("default representation is absent"), .damaged),
+            // Thrown for the listener's own missing or different audio as well as for bad archives (the audit on
+            // #1984), so they must not say "damaged".
+            (.invalidManifest("Local source audio is unavailable"), .doesNotMatchLibrary),
+            (.invalidManifest("The audio bytes do not match this listening package"), .doesNotMatchLibrary),
+            (.invalidAsset("assets/x"), .doesNotMatchLibrary),
             (.invalidDigest, .damaged),
-            (.invalidAsset("assets/x"), .damaged),
             (.excessiveCompression("audio/a.m4a"), .damaged)
         ]
         for (error, expected) in table {
@@ -33,7 +36,13 @@ final class PackageArchiveListenerMessageTests: XCTestCase {
         }
     }
 
-    func testTheThreeMessages() {
+    func testALocalLibraryProblemIsNotCalledADamagedFile() {
+        let message = ArchiveError.invalidManifest("Local source audio is unavailable").listenerMessage
+        XCTAssertFalse(message.lowercased().contains("damaged"), message)
+        XCTAssertTrue(message.contains("Library"), message)
+    }
+
+    func testTheFourMessages() {
         XCTAssertEqual(ArchiveError.unsupportedRequiredCapability("x").listenerMessage,
                        "These Margins need a newer Spoken Margins. Update the app, then open them again.")
         XCTAssertEqual(ArchiveError.invalidDigest.listenerMessage, "This file looks damaged. Ask your friend to send it again.")
