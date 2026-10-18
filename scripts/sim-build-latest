@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Print the newest ready-made simulator build of the base branch: its .app path, then its full SHA.
+
+    scripts/sim-build-latest              newest kept build; also says on stderr how far behind origin it is
+    scripts/sim-build-latest --for SHA    the kept build of exactly that commit, else exit 1 (build it yourself)
+    scripts/sim-build-latest --json       the same, as one JSON object with `behind` (commits, or null)
+
+Exit 1 when there is no matching build. The builds come from the integration run (scripts/sim_builds.py).
+Install one with: xcrun simctl install <udid> "$(scripts/sim-build-latest | head -1)"
+"""
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import sim_builds  # noqa: E402
+
+
+def behind(sha: str, branch: str, cwd: Path) -> int | None:
+    """Commits on origin/<branch> after `sha`, from what this checkout last fetched; None when unknown."""
+    res = subprocess.run(['git', 'rev-list', '--count', f'{sha}..origin/{branch}'], cwd=cwd,
+                         capture_output=True, text=True, timeout=30)
+    return int(res.stdout.strip()) if res.returncode == 0 and res.stdout.strip().isdigit() else None
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('--for', dest='sha', help='only the build of this commit (full SHA or a prefix of 7+)')
+    ap.add_argument('--json', action='store_true')
+    args = ap.parse_args(argv)
+    folder = sim_builds.root()
+    build = sim_builds.find(folder, args.sha) if args.sha else sim_builds.latest(folder)
+    if not build:
+        what = f'commit {args.sha}' if args.sha else 'any commit'
+        print(f'No ready-made simulator build of {what} in {folder}; build it yourself.', file=sys.stderr)
+        return 1
+    lag = behind(build['sha'], build.get('branch', 'next'), Path.cwd())
+    if args.json:
+        print(json.dumps({'app': build['app'], 'sha': build['sha'], 'branch': build.get('branch'),
+                          'built_at': build.get('built_at'), 'size_bytes': build.get('size_bytes'),
+                          'behind': lag}))
+        return 0
+    print(build['app'])
+    print(build['sha'])
+    if lag is not None:
+        print(f"{lag} commit(s) behind origin/{build.get('branch', 'next')} as last fetched here", file=sys.stderr)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

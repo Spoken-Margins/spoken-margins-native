@@ -2,25 +2,31 @@
 # so the Mac doesn't spend a slot on them. `scripts/verify-tests.py --plan fast-portable` runs the runner tests
 # (without the ones that drive Apple tools), the ops tests (without ops/disk), the contract and surface
 # validators, the test inventory, the browser-extraction and share-link suites, and the research suites. It
-# prints each step it leaves out (the SessionKit package steps need Swift; hosted-sessionkit-linux.yml covers
-# the Foundation-only modules) and a host test fails if a fast-plan step is in neither list.
+# prints each step it leaves out and a host test fails if a fast-plan step is in neither list.
+# The second job, `sessionkit`, runs `--plan fast-hosted-sessionkit` on a GitHub-hosted Mac: SessionKit's build and
+# SessionKitCoreTests. SessionKitTests and SessionKitTraceTests need a sound output and stay on the lane Mac.
 #
-# Draft, started by hand only, like hosted-sessionkit-linux.yml. The private repo's free Linux minutes ran out on
-# 2026-10-07 (#1023), and spending money needs the owner. Once the repo is public, standard hosted runners are
-# free; the PR that adds the pull_request trigger below (same-repo PRs only, as linux-t1.yml guards) is a
-# separate change, after a measured first run.
+# Per PR, only once the lane takes hosted results (#1389): the pull_request trigger is here, but both jobs are
+# skipped, and cost nothing, until the repository variable LANE_HOSTED_FAST is `on`. The private repo's free
+# minutes ran out on 2026-10-07 (#1023); once the repo is public, standard hosted runners are free and the lead
+# sets the variable (`gh variable set LANE_HOSTED_FAST --body on`). The same variable tells the lane runner
+# (lane.yml) to accept these two PASSes on the merge commit it would push and run only `--plan fast-mac-rest` on
+# the Mac. Unset or anything else, the lane runs the whole --plan fast on the Mac as before.
+# On a PASS each job records what it tested as a notice annotation (`lane-hosted-tested`): the merge commit's tree
+# and its two parents (next, then the PR's head). The runner reads it from the check run and matches the tree
+# against its own merge (lane-runner.py hosted_fast_checks).
+#
 # GitHub offers workflow_dispatch only for a workflow file that is on the default branch (main). Until the
 # owner moves main past this file, `gh workflow run hosted-portable.yml --ref next` is likely to be refused.
 #
 # No secrets, a read-only token, no pull_request_target, no Git LFS (the voice models stay pointers; the
-# contracts step checks each pointer's recorded size and hash against the manifest).
+# contracts step checks each pointer's recorded size and hash against the manifest; SessionKit reads no LFS file).
 name: hosted-portable
 
 on:
   workflow_dispatch:
-  # The per-PR trigger, for the change that turns this on:
-  # pull_request:
-  #   branches: [next]
+  pull_request:
+    branches: [next]
 
 permissions:
   contents: read
@@ -33,7 +39,11 @@ jobs:
   portable:
     # Same-repo PRs only: a fork's PR would run its own code (here on a GitHub machine with no secrets, but the
     # same guard as every other job keeps the rule in one place). Always true for workflow_dispatch.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # And, for a PR, only once the lane takes hosted results (LANE_HOSTED_FAST, above).
+    name: 'hosted fast: portable'
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -59,8 +69,59 @@ jobs:
           npm ci
       - name: Portable fast plan
         run: .venv/bin/python scripts/verify-tests.py --plan fast-portable
+      - name: Record what was tested, for the lane runner
+        if: success() && github.event_name == 'pull_request'
+        run: |
+          # GitHub's merge commit: parent 1 is next, parent 2 the PR's head. The runner matches the tree.
+          parents=$(git cat-file -p HEAD | awk '/^parent /{print $2}' | tr '\n' ' ')
+          echo "::notice title=lane-hosted-tested::plan=fast-portable tree=$(git rev-parse 'HEAD^{tree}') parents=$parents"
       - name: Report time
         if: always()
         run: |
           seconds=$(( $(date +%s) - STARTED ))
           echo "hosted-portable took ${seconds}s on ubuntu-latest." | tee -a "$GITHUB_STEP_SUMMARY"
+
+  sessionkit:
+    name: 'hosted fast: SessionKit core'
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on')
+    # The image and Xcode the lane Mac builds with (hosted-app-macos.yml says why), so the two can't disagree.
+    runs-on: xcode-27
+    timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+    steps:
+      # The Mac-wide host-test slots (lane_slots.py) live in the state folder: this machine is the job's alone.
+      - name: Start the clock
+        run: |
+          echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
+          echo "SM_LANE_STATE_DIR=$RUNNER_TEMP/lane-state" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # The package's build folder: dependency checkouts (onnxruntime's binary framework is the big one) and their
+      # products. Our own sources are always newer than the restored objects, so only the dependencies are reused.
+      - uses: actions/cache@v4
+        with:
+          path: Packages/SessionKit/.build
+          key: sessionkit-macos-xcode27.0-${{ hashFiles('Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: sessionkit-macos-xcode27.0-
+      - name: SessionKit build and SessionKitCoreTests
+        run: |
+          swift --version
+          python3 scripts/verify-tests.py --plan fast-hosted-sessionkit
+      - name: Record what was tested, for the lane runner
+        if: success() && github.event_name == 'pull_request'
+        run: |
+          # GitHub's merge commit: parent 1 is next, parent 2 the PR's head. The runner matches the tree.
+          parents=$(git cat-file -p HEAD | awk '/^parent /{print $2}' | tr '\n' ' ')
+          echo "::notice title=lane-hosted-tested::plan=fast-hosted-sessionkit tree=$(git rev-parse 'HEAD^{tree}') parents=$parents"
+      - name: Report time
+        if: always()
+        run: |
+          seconds=$(( $(date +%s) - STARTED ))
+          echo "hosted fast SessionKit core took ${seconds}s on xcode-27." | tee -a "$GITHUB_STEP_SUMMARY"

@@ -57,6 +57,7 @@ import integration_revert as revert  # noqa: E402
 import journey_promotion  # noqa: E402
 import lane_ledger  # noqa: E402
 import lane_slots  # noqa: E402
+import sim_builds  # noqa: E402  (ready-made simulator builds for desks)
 from lane_xcresult_attachments import report_lines  # noqa: E402
 
 REPORT_RE = re.compile(r'^Lane report integration-([0-9a-f]{7,40}) — (PASS|FAIL|INCONCLUSIVE)\b')
@@ -713,6 +714,30 @@ def drop_bundles(evidence: Path) -> None:
         shutil.rmtree(bundle, ignore_errors=True)
 
 
+def keep_sim_build(ops: Ops, wt: Path, manifest_path: Path, sha: str) -> str:
+    """Copy the tip's simulator app for desks to install (scripts/sim-build-latest). Never raises.
+
+    Only a build of exactly `sha` that passed bundle-contracts is kept, whatever the tests said: desks
+    test the tip, failing or not."""
+    try:
+        manifest = json.loads(manifest_path.read_text())
+        if manifest.get('head') != sha:
+            return f'not kept: the app plan built {str(manifest.get("head"))[:7]}, not {sha[:7]}'
+        if not any(s.get('name') == 'bundle-contracts' and s.get('exit_code') == 0 for s in manifest.get('steps', [])):
+            return 'not kept: no good simulator build'
+        apps = sorted((wt / '.build' / 'verification').glob(f'*/Build/Products/Debug-iphonesimulator/{sim_builds.APP_NAME}'),
+                      key=lambda p: p.stat().st_mtime)
+        if not apps:
+            return 'not kept: the build left no app'
+        app = apps[-1]
+        kept = sim_builds.store(app, sha, BASE_BRANCH, sim_builds.root(), free_bytes=ops.free_bytes())
+        if not kept['stored']:
+            return 'not kept: ' + kept['why']
+        return f"kept {kept['app']} ({kept['size_bytes'] / 1024 ** 2:.0f} MB); removed {kept['removed'] or 'none'}"
+    except Exception as error:  # noqa: BLE001 - the report must still go out
+        return 'not kept: ' + str(error)[:300]
+
+
 def run_tests(ops: Ops, wt: Path, evidence: Path, fds: tuple) -> dict:
     first = summarize(ops.test_plan(wt, evidence / 'app', 'app', fds))
     reruns = []
@@ -841,6 +866,7 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
             added = True
             ops.must(['scripts/setup-worktree.sh'], cwd=wt)
             result = run_tests(ops, wt, evidence, fds)
+            ops.log('simulator build ' + keep_sim_build(ops, wt, evidence / 'app' / 'manifest.json', sha))
             if result['verdict'] == 'FAIL':
                 result['culprit'] = search_culprit(ops, wt, evidence, green, sha, result['failed'], fds)
         except Exception as error:
