@@ -70,4 +70,12 @@ extension Gate1AppModel {
         refreshQuickAccessFolder()
         refreshFollowedSources(force: force)
     }
+
+    /// Pull-down refresh on Following (#1438): the toolbar button's refresh, awaited so the spinner stays until
+    /// the feeds are read. The refresh runs in its own task so that SwiftUI cancelling the gesture's task when
+    /// the list redraws can't cut it short; a pull while a refresh runs returns at once and starts no second one.
+    func pullToRefreshFollowing() async {
+        refreshQuickAccessFolder()
+        await Task { [self] in await self.performFollowedSourceRefresh(force: true) }.value
+    }
 }

@@ -1,0 +1,11 @@
+{
+  "note": "Public halves of the keys the fixtures are signed with. Test keys only: their private halves are derived in scripts/voice_catalog_tools.py and sign nothing real.",
+  "trusted": {
+    "keyId": "sm-test-1",
+    "publicKey": "ZHsoQax5jfoRcNpHcoBwC3/MgeIwivX+/fB5CYOs+sQ="
+  },
+  "untrusted": {
+    "keyId": "sm-unknown-key",
+    "publicKey": "MT2pOlfbBsBRFxY1007yU4t2jEiqQMh0Coa4bu3/6sw="
+  }
+}

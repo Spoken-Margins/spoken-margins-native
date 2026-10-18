@@ -14,6 +14,7 @@ struct ExperienceItemDetailScreen: View {
     @State private var asksForEpisodeLink = false
     @State private var episodeLinkText = ""
     @State private var showsReactions = false
+    @State private var collectionItem: LibraryItemRow?
     private let episodeLinker = ImportedFileEpisodeLinker()
 
     var body: some View {
@@ -74,6 +75,7 @@ struct ExperienceItemDetailScreen: View {
                             model.openExport(sessionId: model.selectedItem.sessions.first?.id)
                         }
                         .disabled(model.selectedItem.sessions.isEmpty)
+                        quickActionButtons
                         if episodeLinkStatus.canLink && !episodeLinkStatus.canChange {
                             Button("Episode can't change: friends' Margins are on it", systemImage: "link") {}
                                 .disabled(true)
@@ -105,6 +107,9 @@ struct ExperienceItemDetailScreen: View {
                 }
             }
             .task(id: model.selectedItem.id) { refreshEpisodeLinkStatus() }
+            .sheet(item: $collectionItem) { item in
+                ItemCollectionSheet(item: item).environmentObject(model)
+            }
             .sheet(isPresented: $showsReactions) {
                 ExperienceReactionsScreen().environmentObject(model)
             }
@@ -140,6 +145,7 @@ struct ExperienceItemDetailScreen: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(model.selectedItem.title)
                 .font(.title.weight(.bold))
+                .screenTitle()
                 .foregroundStyle(AppColors.text)
                 .fixedSize(horizontal: false, vertical: true)
             if let published = model.selectedItem.publishedDateText {
@@ -225,6 +231,30 @@ struct ExperienceItemDetailScreen: View {
             : model.selectedItem.chapters.count
     }
 
+    /// The Library row's Mark Complete, Add to Collection and Prepare Offline, as visible menu entries (#1973).
+    /// They call what the row's swipe and long-press call. The row is the Library's, so an item the Library
+    /// doesn't list gets none.
+    @ViewBuilder private var quickActionButtons: some View {
+        if let row = model.libraryItems.first(where: { $0.id == model.selectedItem.id }) {
+            ForEach(ItemQuickAction.actions(for: row), id: \.self) { action in
+                switch action {
+                case .markComplete:
+                    Button("Mark Complete", systemImage: "checkmark.circle") { model.markItemCompleted(id: row.id) }
+                        .accessibilityIdentifier("item.markComplete.button")
+                case .markUnfinished:
+                    Button("Mark Not Complete", systemImage: "arrow.uturn.backward.circle") { model.markItemUnfinished(id: row.id) }
+                        .accessibilityIdentifier("item.markUnfinished.button")
+                case .addToCollection:
+                    Button("Add to Collection…", systemImage: "folder.badge.plus") { collectionItem = row }
+                        .accessibilityIdentifier("item.addToCollection.button")
+                case .prepareOffline:
+                    Button("Prepare Offline", systemImage: "arrow.down.circle") { model.prioritizeOfflinePreparation(id: row.id) }
+                        .accessibilityIdentifier("item.prepareOffline.button")
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     private var secondaryActions: some View {
         if model.selectedItemPreferredContinuationSession != nil || !itemMargins.isEmpty {
@@ -250,6 +280,7 @@ struct ExperienceItemDetailScreen: View {
             } label: {
                 Label("Where people reacted", systemImage: "person.2.fill")
                     .frame(maxWidth: .infinity, minHeight: 40)
+                    .expandedHitArea(vertical: 2)
             }
             .buttonStyle(.bordered)
             .tint(AppColors.evergreen)
@@ -291,6 +322,7 @@ struct ExperienceItemDetailScreen: View {
             } label: {
                 Label("New session", systemImage: "plus.circle")
                     .frame(minHeight: 40)
+                    .expandedHitArea(vertical: 2)
             }
             .buttonStyle(.bordered)
             .tint(AppColors.evergreen)
@@ -304,6 +336,7 @@ struct ExperienceItemDetailScreen: View {
             } label: {
                 Label("Review Margins", systemImage: "quote.bubble")
                     .frame(minHeight: 40)
+                    .expandedHitArea(vertical: 2)
             }
             .buttonStyle(.bordered)
             .tint(AppColors.evergreen)
@@ -545,8 +578,10 @@ struct ExperienceItemDetailScreen: View {
                         ProgressView(value: progress)
                             .tint(readinessColor)
                             .frame(width: 72)
+                            .accessibilityLabel("Download progress")
                     } else {
                         ProgressView()
+                            .accessibilityLabel("Downloading")
                             .tint(readinessColor)
                     }
                 case .availableOffline, .none:

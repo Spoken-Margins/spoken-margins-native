@@ -66,9 +66,15 @@ enum PacketBuilder {
         case missingParent(String, String)
         case noPlace(String)
         case voiceFailed(String)
+        case embeddedTextIsEmpty
+        case embeddedTextForPodcast
+        case embeddedTextKeepsALink
 
         var description: String {
             switch self {
+            case .embeddedTextIsEmpty: return "embeddedText has no words to embed"
+            case .embeddedTextForPodcast: return "embeddedText can't stand in for a podcast: the reader only accepts embedded text for a text, pdf, epub or other item"
+            case .embeddedTextKeepsALink: return "an item with embeddedText must have no canonicalURL: the reader takes embedded text only from an item with no link"
             case .noItem: return "the plan needs a base packet or an item"
             case .missingParent(let packet, let margin): return "\(packet) has no Margin \(margin)"
             case .noPlace(let id): return "Margin \(id) has no place: give atMs, quote, anchor or replyTo"
@@ -95,7 +101,9 @@ enum PacketBuilder {
         }
 
         let base = try plan.base.map(packet)
-        guard let item = plan.item ?? base?.contents.manifest.item else { throw PlanError.noItem }
+        guard let planItem = plan.item ?? base?.contents.manifest.item else { throw PlanError.noItem }
+        let embedding = try plan.embeddedText.map { try embedded($0, in: planItem) }
+        let item = embedding?.item ?? planItem
         let createdAt = plan.createdAt ?? Date()
         let scratch = FileManager.default.temporaryDirectory
             .appendingPathComponent("coop-packet-voice-\(UUID().uuidString)", isDirectory: true)
@@ -177,8 +185,8 @@ enum PacketBuilder {
         let machineEvidence = copiedEvidence.values.sorted { $0.id < $1.id }
 
         let transport: ReviewedItemTransportSelection
-        if let text = plan.embeddedText {
-            transport = .embeddedText(text: text, originalMediaType: "text/plain", rightsBasis: .appAuthored)
+        if let embedding {
+            transport = embedding.transport
         } else if base?.contents.manifest.itemTransport.kind == .recipientSupplied {
             transport = .recipientSupplied
         } else {
@@ -208,6 +216,36 @@ enum PacketBuilder {
             replyCount: selections.filter { $0.replyTo != nil }.count,
             byteCount: bytes
         )
+    }
+
+    /// The item and transport for a packet that carries its own text. The reader checks the embedded item
+    /// against the manifest: its media type is the item's type (`text`, not `text/plain`, as the app's
+    /// exporter writes it), and the item's two hashes are the text's, so they are set from `text` here
+    /// whatever the plan's item says (#1849).
+    static func embedded(
+        _ text: String, in item: SharedItemIdentity
+    ) throws -> (item: SharedItemIdentity, transport: ReviewedItemTransportSelection) {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw PlanError.embeddedTextIsEmpty }
+        guard item.itemType != .podcast else { throw PlanError.embeddedTextForPodcast }
+        guard item.canonicalURL == nil else { throw PlanError.embeddedTextKeepsALink }
+        let hashed = SharedItemIdentity(
+            itemType: item.itemType,
+            canonicalURL: nil,
+            originalURL: item.originalURL,
+            title: item.title,
+            author: item.author,
+            publisher: item.publisher,
+            showTitle: item.showTitle,
+            episodeGUID: item.episodeGUID,
+            enclosureURL: item.enclosureURL,
+            publishedAt: item.publishedAt,
+            durationMs: item.durationMs,
+            normalizedContentSHA256: PortableArticleAnchorResolver.normalizedContentSHA256(text),
+            exactEditionSHA256: PortableArticleAnchorResolver.exactEditionSHA256(text),
+            languageCode: item.languageCode,
+            source: item.source
+        )
+        return (hashed, .embeddedText(text: text, originalMediaType: item.itemType.rawValue, rightsBasis: .appAuthored))
     }
 
     /// Where a Margin sits. A reply without its own place takes its parent's anchor, evidence and all.

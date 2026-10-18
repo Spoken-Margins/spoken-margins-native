@@ -45,7 +45,7 @@ Paths are relative to the plan file.
 | `base` | The packet being answered. The item, fingerprint spine and acoustic evidence come from it. |
 | `item` | The item (a `SharedItemIdentity`), when there's no base: a thread the synthetic listener starts. |
 | `episodeAudio` | A downloaded copy of the episode. Each Margin placed by time gets ShazamKit evidence made from it, as the sender's phone would, so it lands right on a copy with different ads. |
-| `embeddedText` | Article text to embed instead of a link. |
+| `embeddedText` | Article text to embed instead of a link. The item must be a text, pdf, epub or other item with no `canonicalURL`; its two hashes are set from the text. |
 | `margins[].replyTo` | The parent: `margin` is its package-scoped id, and `packet` defaults to `base`. A reply to a reply joins its parent's conversation. |
 | `margins[].atMs`, `offsetMs` | Where it sits. Without `atMs`, a reply sits at its parent's place and carries the parent's evidence. Any offset drops that evidence, so the Margin is placed by time only. |
 | `margins[].quote` | For an article: the words it's anchored to. |

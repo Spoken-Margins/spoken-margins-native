@@ -25,6 +25,15 @@ NOT_REPOSITORY_READS = {
     'research/C2/.venv/bin/python': 'git-ignored local Python for the scoring script (a read); POCKET_TTS_PYTHON overrides it',
 }
 
+# Package tests that still name the app's or the research folder's files themselves instead of going through
+# TestInputs (#1851). Each waits for its voice to move to the download registry; delete the entry when it moves.
+NOT_YET_THROUGH_HELPER = {
+    'SupertonicChunkingTests.swift': 'Supertonic voice files, until the voice downloads land (#1391, #1820)',
+    'SupertonicNarrationTests.swift': 'Supertonic voice files, until the voice downloads land (#1391, #1820)',
+    'SupertonicVoiceSelectionTests.swift': 'Supertonic voice files, until the voice downloads land (#1391, #1820)',
+    'PocketRendererTests.swift': 'Pocket weights and research results, until its voice moves (#1392)',
+}
+
 
 def git(root, *args):
     subprocess.run(['git', *args], cwd=root, check=True, capture_output=True)
@@ -203,6 +212,24 @@ class ReaderGuardTests(unittest.TestCase):
                 uncovered.setdefault(literal, path.name)
         self.assertEqual(uncovered, {}, 'the SessionKit tests name repository paths that sessionkit_pass.READS does not '
                          'cover: add the path to READS, or to NOT_REPOSITORY_READS here with the reason it is not a read')
+
+    def test_package_tests_reach_app_and_research_files_only_through_the_helper(self):
+        """A package test that names `App/...` or `research/...` itself works inside the repository and fails in a package
+        checked out alone, instead of skipping with the input named (#1851). Reads go through TestInputs."""
+        tests = ROOT / 'Packages/SessionKit/Tests'
+        helper = tests / 'TestInputs/TestInputs.swift'
+        naming = {}
+        for path in sorted(tests.rglob('*.swift')):
+            if '.build' in path.parts or path == helper:
+                continue
+            literals = re.findall(r'"((?:[^"\\\n]|\\.)*)"', path.read_text(errors='replace'))
+            if any(re.match(r'(App|research)/', literal) for literal in literals):
+                naming[path.name] = path
+        self.assertEqual(sorted(set(naming) - set(NOT_YET_THROUGH_HELPER)), [],
+                         'these package tests name App/ or research/ paths themselves: read them through TestInputs '
+                         '(add an input there if none fits) so a package checked out alone skips them with the input named')
+        self.assertEqual(sorted(set(NOT_YET_THROUGH_HELPER) - set(naming)), [],
+                         'NOT_YET_THROUGH_HELPER lists a test that no longer names App/ or research/ paths: delete the entry')
 
     def test_every_read_exists_in_the_repository(self):
         tracked = subprocess.check_output(['git', 'ls-files', '--cached', '--others', '--exclude-standard'], cwd=ROOT,

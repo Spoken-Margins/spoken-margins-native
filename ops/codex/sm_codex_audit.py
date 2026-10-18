@@ -1017,6 +1017,30 @@ def build_prompt(batch: list[dict], blocks: list[str], base_sha: str) -> str:
     return "\n".join(head + blocks + tail)
 
 
+# PRs the lane runner never merges (scripts/lane-runner.py OWNER_TAP_FILES, OWNER_TAP_PREFIXES). After an audit on
+# one, the owner-tap alert checks it at once (#2047): the audit is often the last thing such a PR waits for. This
+# script posts as the owner, whose comment notifies nobody and starts no workflow, and GitHub refuses a
+# workflow_dispatch of owner-tap-alert.yml until main carries it (#1492). So it removes and re-adds the
+# `owner-tap-check` label; the labeled run of .github/workflows/owner-tap-alert.yml posts the alert as the bot.
+OWNER_TAP_FILES = {"scripts/lane-runner.py"}
+OWNER_TAP_PREFIXES = (".github/",)
+OWNER_TAP_LABEL = "owner-tap-check"
+
+
+def touches_owner_tap(files: list[dict] | None) -> bool:
+    paths = {p for f in files or [] for p in (f.get("filename") or f.get("path"), f.get("previous_filename")) if p}
+    return any(p in OWNER_TAP_FILES or p.startswith(OWNER_TAP_PREFIXES) for p in paths)
+
+
+def request_tap_check(number: int) -> str:
+    """Re-add owner-tap-check so a fresh `labeled` event starts the alert check; a failure is only logged."""
+    run(["gh", "api", "-X", "DELETE", f"repos/{REPO}/issues/{number}/labels/{OWNER_TAP_LABEL}"],
+        cwd=REPO_ROOT, check=False)  # a PR without the label answers 404, which is fine
+    res = run(["gh", "api", "-X", "POST", f"repos/{REPO}/issues/{number}/labels", "-f", f"labels[]={OWNER_TAP_LABEL}"],
+              cwd=REPO_ROOT, check=False)
+    return "tap check requested" if res.returncode == 0 else f"tap check request failed: {res.stderr.strip()[:80]}"
+
+
 def kill_tree(proc: subprocess.Popen) -> None:
     try:
         os.killpg(proc.pid, signal.SIGTERM)
@@ -1222,6 +1246,8 @@ def audit_batch(batch: list[dict]) -> None:
             usage_run.checkpoint(targets=targets)
             if res.returncode == 0:
                 clear_failure(n)
+                if touches_owner_tap(c.get("files")):
+                    results.append(f"#{n} {request_tap_check(n)}")
             else:  # the head is still unaudited, so count it or every tick pays for the same audit again (#1456)
                 record_failure(n, failure_key(c))
             results.append(f"#{n} posted" if res.returncode == 0 else f"#{n} post failed: {res.stderr.strip()[:120]}")

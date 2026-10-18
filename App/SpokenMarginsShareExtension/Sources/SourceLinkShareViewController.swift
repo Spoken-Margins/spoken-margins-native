@@ -383,12 +383,17 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             statusLabel.bottomAnchor.constraint(lessThanOrEqualTo: cardView.bottomAnchor, constant: -14),
 
             closeButton.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
-            closeButton.centerYAnchor.constraint(equalTo: iconView.centerYAnchor)
+            closeButton.centerYAnchor.constraint(equalTo: iconView.centerYAnchor),
+            // Done is the only way out after an error, so it gets a 44 pt hit area (#1918).
+            closeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            closeButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
         ])
     }
 
     private func updateStatus(_ text: String) {
         statusLabel.text = text
+        // The label changes in place, which VoiceOver doesn't speak by itself, and a saved share closes soon after.
+        UIAccessibility.post(notification: .announcement, argument: text)
     }
 
     private func showError(_ message: String) {
@@ -399,7 +404,12 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     private func showSaved(_ message: String) {
         updateStatus(message)
         closeButton.isHidden = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+        // With VoiceOver or Switch Control on, stay until Done so the status can be heard and Done reached.
+        guard ShareSheetSavedClosePolicy.closesAutomatically(
+            voiceOverRunning: UIAccessibility.isVoiceOverRunning,
+            switchControlRunning: UIAccessibility.isSwitchControlRunning
+        ) else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + ShareSheetSavedClosePolicy.closeDelay) { [weak self] in
             self?.close()
         }
     }

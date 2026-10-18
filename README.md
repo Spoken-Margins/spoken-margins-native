@@ -59,8 +59,9 @@ The former iOS 16.7 compatibility app was retired by product-owner decision on 2
 
 ## Repository Map
 
-- `Contracts/`: canonical schemas, fixtures, traces, and current product documentation bundled by the app
-- `docs/`, `schemas/`, `fixtures/`, `traces/`: legacy mirrors retained while references migrate to `Contracts/`
+- `Contracts/`: canonical schemas, fixtures, traces, and current product documentation bundled by the app. It is also the home of the portable formats (packets, Listening Maps, session exports) and their reference validator: [Contracts/README.md](Contracts/README.md)
+- `schemas/`: only the developer-recording, link-resolution and surface-contract schemas, which have no copy in `Contracts/`
+- `docs/`, `fixtures/`, `traces/`: `docs/` holds durable notes; root `fixtures/` and `traces/` are legacy mirrors retained while references migrate to `Contracts/`
 - `Packages/SessionKit/`: canonical session, persistence, audio, and AI-domain behavior
 - `App/`: iPhone app plus Safari and share extensions
 
@@ -69,6 +70,8 @@ For readers new to the project: [how it is built](docs/overview/architecture.md)
 The active product boundary and stopping rules are in `Contracts/docs/recovery-mvp.md`. Older gate documents describe project history rather than current priorities.
 
 ## Development Setup
+
+Starting from a fresh clone? [BUILDING.md](BUILDING.md) has the tool versions, the Git LFS step, the host tests and the simulator build. In short:
 
 Bootstrap the repository-local Python environment before running the contract validators:
 

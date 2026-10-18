@@ -37,11 +37,14 @@ The package's sources read nothing outside it. Some tests read files the package
 - `Contracts/`: the canonical schemas, fixtures and traces. `SESSIONKIT_CONTRACTS_DIR` can point somewhere else.
 - `Site/`: the onboarding catalog the website publishes.
 - `research/`: recorded fixtures and reference vectors.
+- `voiceAssets`: the bundled Kitten voice (`App/SpokenMarginsApp/Resources/Kitten`). `SESSIONKIT_VOICE_ASSETS_DIR` can point somewhere else.
 - The app's sources and tests, for a few guards that check the app still calls an extracted helper.
 
 Inside the spoken-margins-native checkout all of them are found. In a package checked out alone, a test that needs one is reported as skipped, with the input named; it never passes silently. `scripts/sessionkit_pass.py` lists the same folders, so the lane's cached-pass key changes when any of them does.
 
-Not converted yet: the voice tests (Kitten, Supertonic, Pocket) still find the bundled models in `App/SpokenMarginsApp/Resources/` and the references in `research/C2/` on their own. They move to the download registry with #1391 and #1392.
+The Kitten tests (`KittenFrontEndTests`, `KittenRendererTests`) read the voice and the reference vectors through these inputs. `speech-bench` takes `--kitten <folder>` and `--supertonic <folder>` and has no default.
+
+Not converted yet: the Supertonic and Pocket tests still find their models in `App/SpokenMarginsApp/Resources/` and `research/C2/` on their own. They move to the download registry with #1391 and #1392, and `scripts/tests/test_sessionkit_pass.py` lists them until then.
 
 ## Versions
 

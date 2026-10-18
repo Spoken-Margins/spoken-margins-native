@@ -8,32 +8,73 @@ import SessionKitSharing
 /// Packet import entry points. The review, confirm and placement flow lives in `SpokenMarginsPackageImportCoordinator` (T5, #963);
 /// these forwarders keep their names and the task launch shells (their weak-self captures and cleanup) here.
 extension Gate1AppModel {
+    /// Opens the files the Share extension left in the inbox. A file that needs a newer app stays, so the listener
+    /// can open it after updating; it is tried again once per app version, which tells the listener, and
+    /// goes after 30 days or when five newer ones are kept (#1983). Every other file is removed once it has been tried.
     func consumePendingSpokenMarginsPackageHandoffs(
-        from packageStore: SpokenMarginsPackageHandoffStore
+        from packageStore: SpokenMarginsPackageHandoffStore,
+        keptNotices: KeptPackageNotices = KeptPackageNotices(),
+        appVersion: String = KeptPackageNotices.currentAppVersion,
+        now: Date = Date()
     ) throws {
         let payloadIDs = try packageStore.pendingPayloadIDs()
         diagnostics["pendingSpokenMarginsPackages"] = "\(payloadIDs.count)"
         for payloadID in payloadIDs where spokenMarginsPackageImportReview == nil {
             do {
+                if keptNotices.hasExpired(payloadID: payloadID, now: now) {
+                    try packageStore.deletePackage(payloadID: payloadID)
+                    keptNotices.forget(payloadID: payloadID)
+                    diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "expired"
+                    continue
+                }
+                let announces = keptNotices.shouldAnnounce(payloadID: payloadID, appVersion: appVersion)
+                // The same build can't open what it already couldn't, so a kept file is staged again only when
+                // the app version has changed. Staging copies the whole file, which is too heavy for every foreground.
+                if keptNotices.isKept(payloadID: payloadID), !announces {
+                    diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "kept_needs_newer_app"
+                    continue
+                }
                 let packageURL = try packageStore.packageURL(payloadID: payloadID)
-                let didOpen = stageSpokenMarginsPackageImport(from: packageURL)
+                let outcome = stageSpokenMarginsPackage(from: packageURL, announcesRejection: announces)
+                if outcome == .rejectedNeedsNewerApp {
+                    keptNotices.noteKept(payloadID: payloadID, appVersion: appVersion, now: now)
+                    diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "kept_needs_newer_app"
+                    continue
+                }
                 try packageStore.deletePackage(payloadID: payloadID)
-                diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = didOpen ? "opened" : "rejected"
+                keptNotices.forget(payloadID: payloadID)
+                diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = outcome == .opened ? "opened" : "rejected"
             } catch {
                 try? packageStore.deletePackage(payloadID: payloadID)
+                keptNotices.forget(payloadID: payloadID)
                 diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "rejected:\(error.localizedDescription)"
                 reportFailure(error, context: "Shared Margins package could not be opened")
             }
         }
+        for payloadID in keptNotices.overflowIDs() {
+            try? packageStore.deletePackage(payloadID: payloadID)
+            keptNotices.forget(payloadID: payloadID)
+        }
+        keptNotices.forgetAll(except: Set(try packageStore.pendingPayloadIDs()))
+    }
+
+    enum SpokenMarginsPackageStageOutcome: Equatable {
+        case opened
+        case rejected
+        case rejectedNeedsNewerApp
     }
 
     @discardableResult
     func stageSpokenMarginsPackageImport(from sourceURL: URL) -> Bool {
-        switch packageImport.stage(from: sourceURL) {
-        case .rejected:
-            return false
+        stageSpokenMarginsPackage(from: sourceURL, announcesRejection: true) == .opened
+    }
+
+    func stageSpokenMarginsPackage(from sourceURL: URL, announcesRejection: Bool) -> SpokenMarginsPackageStageOutcome {
+        switch packageImport.stage(from: sourceURL, announcesRejection: announcesRejection) {
+        case .rejected(let needsNewerApp):
+            return needsNewerApp ? .rejectedNeedsNewerApp : .rejected
         case .staged:
-            return true
+            return .opened
         case .restoreAudio(let restore):
             Task { @MainActor [weak self] in
                 defer { try? FileManager.default.removeItem(at: restore.directory) }
@@ -41,7 +82,7 @@ extension Gate1AppModel {
                 await self.packageImport.restoreAudio(restore)
                 withExtendedLifetime(self) {} // the model stays retained until the work ends, as the old task body did
             }
-            return true
+            return .opened
         }
     }
 
@@ -53,6 +94,7 @@ extension Gate1AppModel {
             reportFailure("This isn't a Spoken Margins share link.")
             return
         }
+        withdrawRetryOffer("shareLink:\(link.id)")
         diagnostics["lastShareLink"] = link.key == nil ? "opening:no_key" : "opening"
         shareLinkOpener.open(
             link,
@@ -61,9 +103,12 @@ extension Gate1AppModel {
                 let opened = self.stageSpokenMarginsPackageImport(from: file)
                 self.diagnostics["lastShareLink"] = opened ? "opened" : "rejected"
             },
-            fail: { [weak self] message in
+            fail: { [weak self] message, retryable in
                 self?.diagnostics["lastShareLink"] = "failed"
-                self?.reportFailure(message)
+                let retry: UserFeedbackEvent.Retry? = retryable
+                    ? .init(key: "shareLink:\(link.id)") { [weak self] in self?.openShareLink(url) }
+                    : nil
+                self?.reportFailure(message, retry: retry)
             }
         )
     }

@@ -213,6 +213,38 @@ extension StreamingSpeechQueueTests {
         XCTAssertEqual(audio.played.last, "stream:turn-f:0")
     }
 
+    /// #1895: Margin capture pauses and resumes the queue in one synchronous run when the recorder won't start. The
+    /// worker the pause cancelled used to wake after the resume and clear the new worker's handle, so the next
+    /// enqueue started a second worker and two sentences spoke at once.
+    func testPausingAndResumingInOneRunNeverLetsTwoSentencesSpeakAtOnce() async throws {
+        let audio = OverlapCountingAudioClient()
+        let queue = StreamingSpeechQueue(speech: audio)
+        var drained: [String] = []
+        queue.onTurnDrained = { drained.append($0) }
+        queue.enqueue(["One."], turnId: "turn-g")
+        try await waitUntil { audio.playedTargets.count == 1 }
+
+        queue.pauseForInterjection()
+        queue.resumeAfterInterjection()   // no await between: the cancelled worker has not woken yet
+        try await Task.sleep(for: .milliseconds(150))
+        queue.enqueue(["Two.", "Three."], turnId: "turn-g")
+        try await Task.sleep(for: .milliseconds(150))
+
+        XCTAssertEqual(audio.playedTargets, ["stream:turn-g:0", "stream:turn-g:0"], "One plays again after the resume; Two waits for it")
+        XCTAssertEqual(audio.maxActive, 1, "only one sentence speaks at a time")
+
+        audio.finish("stream:turn-g:0")
+        try await waitUntil { audio.playedTargets.count == 3 }
+        XCTAssertEqual(audio.playedTargets.last, "stream:turn-g:1")
+        XCTAssertEqual(audio.maxActive, 1)
+        audio.finish("stream:turn-g:1")
+        try await waitUntil { audio.playedTargets.count == 4 }
+        audio.finish("stream:turn-g:2")
+        try await waitUntil { drained == ["turn-g"] }
+        XCTAssertEqual(audio.playedTargets, ["stream:turn-g:0", "stream:turn-g:0", "stream:turn-g:1", "stream:turn-g:2"])
+        XCTAssertEqual(audio.maxActive, 1)
+    }
+
     private func waitUntil(_ condition: @MainActor () -> Bool, file: StaticString = #filePath, line: UInt = #line) async throws {
         for _ in 0..<200 where !condition() {
             try await Task.sleep(for: .milliseconds(10))
@@ -246,4 +278,37 @@ private final class ScriptedAudioClient: AudioPlaybackClient, @unchecked Sendabl
     func stop() throws { lock.withLock { stops += 1 } }
     func playbackStartStatus(targetId: String) -> PlaybackStartStatus { startStatus }
     func isPlaybackComplete(targetId: String) -> Bool { true }
+}
+
+/// Speaks every sentence until the test finishes it, and counts how many were speaking at once.
+private final class OverlapCountingAudioClient: AudioPlaybackClient, @unchecked Sendable {
+    private let lock = NSLock()
+    private var played: [String] = []
+    private var active: Set<String> = []
+    private var finished: Set<String> = []
+    private var peak = 0
+
+    var playedTargets: [String] { lock.withLock { played } }
+    var maxActive: Int { lock.withLock { peak } }
+
+    func finish(_ targetId: String) {
+        lock.withLock {
+            finished.insert(targetId)
+            active.remove(targetId)
+        }
+    }
+
+    func prepareSpeechText(_ text: String) throws -> String { text }
+    func play(targetId: String) throws {
+        lock.withLock {
+            played.append(targetId)
+            finished.remove(targetId)
+            active.insert(targetId)
+            peak = max(peak, active.count)
+        }
+    }
+    func pause() throws {}
+    func stop() throws { lock.withLock { active.removeAll() } }
+    func playbackStartStatus(targetId: String) -> PlaybackStartStatus { .confirmed }
+    func isPlaybackComplete(targetId: String) -> Bool { lock.withLock { finished.contains(targetId) } }
 }

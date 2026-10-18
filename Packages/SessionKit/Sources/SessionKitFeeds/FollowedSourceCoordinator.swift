@@ -41,6 +41,13 @@ public enum FollowedSourceError: Error, LocalizedError {
     }
 }
 
+/// What `FollowedSourceCoordinator.publisherAudioLookup` found for a followed entry (#2024): the entry, confirmed when
+/// the post page names its publisher's voice, and a short diagnostic token saying what happened.
+public struct PublisherAudioLookup: Equatable, Sendable {
+    public let entry: FeedEntry
+    public let outcome: String
+}
+
 public actor FollowedSourceCoordinator {
     private static let maximumFeedBytes = FeedParserLimits.defaultMaximumBytes
     public static let maximumRetainedSuggestionsPerFeed = 25
@@ -301,15 +308,46 @@ public actor FollowedSourceCoordinator {
     /// An ambiguous enclosure remains a podcast if corroboration fails. Public page metadata
     /// identifies narration without extracting or replacing subscriber feed text.
     public func publisherAudioEntry(for entry: FeedEntry) async -> FeedEntry {
-        guard entry.publisherNarrationConfirmed != true, entry.publisherPlatform == "substack",
-              (entry.bodyWordCount ?? 0) >= PublisherAudioDetector.minimumBodyWords,
-              let url = Self.validHTTPSURL(entry.canonicalURL),
-              let html = try? await fetchHTML(url: url),
-              let confirmed = PublisherNarrationEvidence.confirmedEntry(entry, html: html) else { return entry }
+        await publisherAudioLookup(for: entry).entry
+    }
+
+    /// `publisherAudioEntry`, with a short token saying what the lookup found or why it kept no publisher voice,
+    /// for the `followedPublisherAudio` diagnostic (#2024). Tokens carry no address or page text.
+    public func publisherAudioLookup(for entry: FeedEntry) async -> PublisherAudioLookup {
+        if entry.publisherNarrationConfirmed == true {
+            return PublisherAudioLookup(entry: entry, outcome: "already_confirmed")
+        }
+        guard entry.publisherPlatform == "substack" else {
+            return PublisherAudioLookup(entry: entry, outcome: "not_substack:\(entry.publisherPlatform == nil ? "none" : "other")")
+        }
+        let words = entry.bodyWordCount ?? 0
+        guard words >= PublisherAudioDetector.minimumBodyWords else {
+            return PublisherAudioLookup(entry: entry, outcome: "short_body:\(entry.bodyWordCount.map(String.init) ?? "unknown")")
+        }
+        guard let url = Self.validHTTPSURL(entry.canonicalURL) else {
+            return PublisherAudioLookup(entry: entry, outcome: "invalid_url")
+        }
+        let html: String
+        do {
+            let page = try await loadHTML(url: url)
+            guard (200..<300).contains(page.status) else {
+                return PublisherAudioLookup(entry: entry, outcome: "fetch_failed:http_\(page.status)")
+            }
+            guard let text = page.html else { return PublisherAudioLookup(entry: entry, outcome: "fetch_failed:too_large") }
+            html = text
+        } catch {
+            let token = (error as? URLError).map { "url_error_\($0.code.rawValue)" } ?? String(describing: type(of: error))
+            return PublisherAudioLookup(entry: entry, outcome: "fetch_failed:\(token)")
+        }
+        guard let confirmed = PublisherNarrationEvidence.confirmedEntry(entry, html: html) else {
+            let found = PublisherNarrationEvidence.voiceover(inPostPage: html) ?? PublisherNarrationEvidence.generatedVoice(inPostPage: html)
+            let reason = found == nil ? PublisherNarrationEvidence.absence(inPostPage: html) : "url_mismatch"
+            return PublisherAudioLookup(entry: entry, outcome: "none:\(reason)")
+        }
         // A refresh, dismissal or unfollow may finish while the page request awaits. Cache only
         // against the unchanged entry, so corroboration cannot restore a removed/stale row.
         try? PublisherNarrationEvidence.cache(confirmed, replacing: entry, in: repository)
-        return confirmed
+        return PublisherAudioLookup(entry: confirmed, outcome: confirmed.publisherNarrationGenerated == true ? "found:generated_voice" : "found:voiceover")
     }
 
     /// How Following adds `entry` (#641). For an entry that could be an episode, this looks up its
@@ -489,14 +527,19 @@ public actor FollowedSourceCoordinator {
     }
 
     private func fetchHTML(url: URL) async throws -> String {
+        let page = try await loadHTML(url: url)
+        guard (200..<300).contains(page.status) else { throw FollowedSourceError.invalidResponse }
+        guard let html = page.html else { throw FollowedSourceError.htmlResponseTooLarge }
+        return html
+    }
+
+    /// The page's HTTP status and its text, or nil text past the 1 MB limit.
+    private func loadHTML(url: URL) async throws -> (status: Int, html: String?) {
         var request = URLRequest(url: url)
         request.setValue("text/html, application/xhtml+xml", forHTTPHeaderField: "Accept")
         let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw FollowedSourceError.invalidResponse
-        }
-        guard data.count <= 1 * 1_024 * 1_024 else { throw FollowedSourceError.htmlResponseTooLarge }
-        return String(decoding: data, as: UTF8.self)
+        guard let http = response as? HTTPURLResponse else { throw FollowedSourceError.invalidResponse }
+        return (http.statusCode, data.count <= 1 * 1_024 * 1_024 ? String(decoding: data, as: UTF8.self) : nil)
     }
 
     private static func alternateFeedURLs(in html: String, baseURL: URL) -> [URL] {

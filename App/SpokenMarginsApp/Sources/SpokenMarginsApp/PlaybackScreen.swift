@@ -313,6 +313,7 @@ struct PlaybackScreen: View {
         .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.18)).frame(height: 1) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("playback.controls")
+        .boundedScrollDock(dynamicTypeSize.isAccessibilitySize)
     }
 
     /// Add a Margin (spoken) with the pencil (written) beside it.
@@ -933,9 +934,11 @@ struct PlaybackScreen: View {
                 if usesVerbosePlaybackActions {
                     PlaybackControlLabel(title: "Text", systemImage: "doc.plaintext")
                     .frame(minHeight: 32)
+                    .expandedHitArea(vertical: 6)
                 } else {
                     Image(systemName: "doc.plaintext")
                     .frame(minWidth: 24, minHeight: 32)
+                    .expandedHitArea(horizontal: 10, vertical: 6)
                 }
             }
             .accessibilityLabel("View native source text")
@@ -952,6 +955,7 @@ struct PlaybackScreen: View {
                     systemImage: model.mixesWithOtherAudio ? "checkmark.circle.fill" : "circle"
                 )
                 .frame(minHeight: 32)
+                .expandedHitArea(vertical: 6)
             }
             .toggleStyle(.button)
             .disabled(model.snapshot.isRecording)
@@ -967,9 +971,11 @@ struct PlaybackScreen: View {
                 PlaybackControlLabel(title: model.sleepTimerIsActive ? model.sleepTimerDescription : "Sleep", systemImage: "moon.zzz")
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .frame(minHeight: 32)
+                    .expandedHitArea(vertical: 6)
             } else {
                 Image(systemName: "moon.zzz")
                     .frame(minWidth: 24, minHeight: 32)
+                    .expandedHitArea(horizontal: 10, vertical: 6)
             }
         }
         .accessibilityLabel(model.sleepTimerDescription)
@@ -986,10 +992,12 @@ struct PlaybackScreen: View {
                 PlaybackControlLabel(title: model.compactPlaybackRateDescription, systemImage: "speedometer")
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .frame(minHeight: 32)
+                    .expandedHitArea(vertical: 6)
             } else {
                 Text(model.compactPlaybackRateDescription)
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .frame(minHeight: 32)
+                    .expandedHitArea(vertical: 6)
                     .fixedSize(horizontal: true, vertical: false)
             }
         }
@@ -1699,6 +1707,7 @@ private struct GuidedOnboardingPlaybackCard: View {
         case .practiceInterjection:
             Text("Practice making a Margin")
                 .font(.title3.bold())
+                .screenTitle()
             Text("Let the welcome source play until an idea occurs to you, then record a short note. Spoken Margins will anchor it to this listening session.")
                 .foregroundStyle(AppColors.secondaryText)
             if model.snapshot.isRecording {
@@ -1714,6 +1723,7 @@ private struct GuidedOnboardingPlaybackCard: View {
         case .reviewTimeline:
             Text("Use the timeline")
                 .font(.title3.bold())
+                .screenTitle()
             Text("Tap your saved Margin to review it, or tap any source chapter to jump there. Either action completes this step.")
                 .foregroundStyle(AppColors.secondaryText)
             Button("Show Timeline", action: showTimeline)
@@ -1722,6 +1732,7 @@ private struct GuidedOnboardingPlaybackCard: View {
         case .optionalAI:
             Text("AI is optional")
                 .font(.title3.bold())
+                .screenTitle()
             Text(model.remoteProviderExperienceEnabled
                 ? "Summarize Notes sums up this session’s Margins. Discuss answers a question using relevant source and session context. Both require your OpenAI API key, network access, and permission to send content."
                 : "Summarize Notes uses Apple’s on-device model when it is available. Nothing is sent to a third-party AI service. You can also copy notes to another chatbot and paste its response back here.")
@@ -1751,6 +1762,7 @@ private struct GuidedOnboardingPlaybackCard: View {
         case .exportSession:
             Text("Keep the useful context")
                 .font(.title3.bold())
+                .screenTitle()
             Text("Open the session export, then share it or copy its Markdown or JSON. Completion is recorded only after a share succeeds or the export is copied.")
                 .foregroundStyle(AppColors.secondaryText)
             Button("Open Session Export", action: model.openExport)
@@ -1760,6 +1772,7 @@ private struct GuidedOnboardingPlaybackCard: View {
         case .complete:
             Text("You know the core loop")
                 .font(.title3.bold())
+                .screenTitle()
             Text("You can now add a source of your own, or keep exploring the welcome session. Source-specific setup remains available in Help.")
                 .foregroundStyle(AppColors.secondaryText)
             Button("Finish Tour", action: model.finishGuidedOnboarding)
@@ -1910,7 +1923,7 @@ private struct TimelineRow: View {
                         if isCurrent {
                             Text("NOW")
                                 .font(.caption2.weight(.bold))
-                                .foregroundStyle(AppColors.primaryAction)
+                                .foregroundStyle(AppColors.text)
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 3)
                                 .background(AppColors.accentSoft)
@@ -1977,8 +1990,8 @@ private struct TimelineInterjectionRow: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                // The label names the action, which already says the state; a value would read it twice.
                 .accessibilityLabel(isStarred ? "Remove sharing star" : "Star Margin for sharing")
-                .accessibilityValue(isStarred ? "Starred" : "Not starred")
                 .accessibilityIdentifier("timeline.interjection.star.\(interjectionID)")
             }
         }
@@ -2039,6 +2052,7 @@ private struct LightButtonStyle: ButtonStyle {
             .foregroundStyle(AppColors.text)
             .background(AppColors.panel.opacity(configuration.isPressed ? 0.75 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
+            .expandedHitArea(vertical: 1)
     }
 }
 
