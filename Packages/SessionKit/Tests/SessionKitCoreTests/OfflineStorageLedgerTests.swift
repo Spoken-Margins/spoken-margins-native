@@ -118,6 +118,8 @@ final class OfflineStorageLedgerTests: XCTestCase {
 
         XCTAssertEqual(residual, 0)
         XCTAssertEqual(inventory, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: audio.appending(path: "episode.m4a").path), "the evicted file is deleted, not only its row")
+        XCTAssertTrue(try fixture.repository.loadOwnedOfflineAssets().isEmpty, "the evicted row is gone")
     }
 
     // #237: eviction deleted an article's rendered narration while the article still pointed at it,
