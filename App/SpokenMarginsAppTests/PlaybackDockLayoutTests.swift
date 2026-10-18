@@ -172,8 +172,11 @@ final class PlaybackDockLayoutTests: XCTestCase {
         let long = "The long and winding road to a chapter title that does not fit on one line"
         let short = fittedHeight(title: "Intro", size: .accessibility5)
         XCTAssertGreaterThanOrEqual(short, 88, "the skim controls sit under the title, not beside it")
-        XCTAssertGreaterThanOrEqual(fittedHeight(title: long, size: .accessibility5) - short, 30,
-                                    "a long title must wrap to more than one line at AX5")
+        // A one-line row is a 44-point title, a 4-point gap and the 44-point control line: 92 points. Two reserved
+        // title lines at AX5 are well over 44 points, so a long title wraps and a short one keeps the same room.
+        XCTAssertGreaterThanOrEqual(short, 92 + 30, "the title slot reserves a second line at AX5")
+        XCTAssertEqual(fittedHeight(title: long, size: .accessibility5), short, accuracy: 1,
+                       "a long and a short title take the same height (#357, #430)")
         XCTAssertEqual(fittedHeight(title: long, size: .large), 44, accuracy: 1,
                        "the default layout is still one 44-point row")
     }
