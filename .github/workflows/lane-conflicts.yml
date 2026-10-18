@@ -1,0 +1,79 @@
+# Catch a merge conflict with next on a hosted job, before the PR waits for a Mac (#683).
+#
+# A conflict was found only when the PR's job reached a Mac runner: #604 passed T2, waited three hours in the
+# queue, and ended in a 0-second job that said "does not merge cleanly into next". This job asks the same
+# question on the owner's VPS runner (sm-vps), so a Mac slot is never spent on it. For every open PR into next
+# that carries `automerge` or `lane:queued`, scripts/lane_conflicts.py tries `git merge --no-commit --no-ff` of
+# the PR head onto next's tip in a throwaway worktree. A clean merge does nothing. On a conflict it posts one
+# comment naming the files (in the Mac finisher's hand-off format), adds `needs-mac`, removes `lane:queued` and
+# `automerge`, and cancels the PR's lane runs whose Mac job has not started. It never pushes to any branch.
+#
+# Triggers: a lane label or a push on a PR, and every push to next. Each runs the same sweep of all armed PRs,
+# since a PR merged ahead of one is what creates most conflicts. GitHub starts no workflow for events made
+# with the workflow token, so the lane runner's own merges to next do not trigger the sweep; the next label,
+# push or owner merge does, and the Mac's own merge check (lane-runner.py) still backstops every case.
+# `pull_request` runs are built from the PR's merge ref, which GitHub does not create for a PR that already
+# conflicts, so those PRs are found by the sweep instead.
+#
+# The script is taken from next's tip (or the PR's base) with no credentials kept, and reads the PR head as git
+# data only, never running it. GitHub builds a pull_request run's workflow file from the PR's merge ref, so a
+# same-repo PR that edits this file runs its own copy; only collaborators can open those (forks are skipped
+# below), and pull_request_target is no help because main carries no workflows. One check at a time; a newer
+# waiting one replaces an older waiting one, which is safe because every run sweeps all armed PRs.
+name: lane-conflicts
+
+on:
+  pull_request:
+    branches: [next, 'lane-check/**']
+    types: [labeled, synchronize, reopened]
+  push:
+    branches: [next]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'Check only this PR (default: every armed PR)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  # write: cancelling the conflicting PR's queued lane runs (scripts/lane_dedupe.py helpers).
+  actions: write
+
+concurrency:
+  group: lane-conflicts
+  cancel-in-progress: false
+
+jobs:
+  check:
+    # Only same-repo PRs that carry a lane label (and, on a label event, only when it is one of the two).
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       (contains(github.event.pull_request.labels.*.name, 'automerge') ||
+        contains(github.event.pull_request.labels.*.name, 'lane:queued')) &&
+       (github.event.action != 'labeled' ||
+        github.event.label.name == 'automerge' || github.event.label.name == 'lane:queued'))
+    runs-on: [self-hosted, Linux, sm-vps]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Policy and code from the base, never PR code.
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/lane_conflicts.py
+            scripts/lane_dedupe.py
+          sparse-checkout-cone-mode: false
+      - name: Check armed PRs for conflicts with the base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BASE_REF: ${{ github.event.pull_request.base.ref || 'next' }}
+          # Only a manual dispatch narrows the check. Every PR event sweeps all armed PRs, because a waiting run
+          # for one PR can replace another's under the single concurrency group.
+          ONLY_PR: ${{ inputs.pr }}
+        run: python3 scripts/lane_conflicts.py --base "$BASE_REF" ${ONLY_PR:+--pr "$ONLY_PR"}

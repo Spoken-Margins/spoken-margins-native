@@ -89,6 +89,17 @@ public enum AppSemanticColorRGB {
         light: .init(red: 0.55, green: 0.13, blue: 0.11),
         dark: .init(red: 1, green: 0.55, blue: 0.48)
     )
+    /// The hairline around panels, chips and inputs. Faint by design (about 1.4:1 on a panel).
+    public static let border = AppDynamicRGB(
+        light: .init(red: 0.84, green: 0.87, blue: 0.81),
+        dark: .init(red: 0.28, green: 0.34, blue: 0.30)
+    )
+    /// What `border` becomes under Increase Contrast: 3:1 against the panel and the app background, the WCAG
+    /// floor for the edge of a control (#1922).
+    public static let borderIncreased = AppDynamicRGB(
+        light: .init(red: 0.46, green: 0.51, blue: 0.46),
+        dark: .init(red: 0.52, green: 0.60, blue: 0.55)
+    )
     public static let dangerBackground = AppDynamicRGB(
         light: .init(red: 0.96, green: 0.88, blue: 0.86),
         dark: .init(red: 0.34, green: 0.15, blue: 0.13)
@@ -128,6 +139,13 @@ public enum AppColorContrastAudit {
         .init(name: "label on evergreen", foreground: AppSemanticColorRGB.onEvergreen, background: AppSemanticColorRGB.evergreen, minimumRatio: 4.5),
         .init(name: "body on soft green", foreground: AppSemanticColorRGB.text, background: AppSemanticColorRGB.softGreen, minimumRatio: 4.5),
         .init(name: "danger label", foreground: AppSemanticColorRGB.dangerText, background: AppSemanticColorRGB.dangerBackground, minimumRatio: 4.5)
+    ]
+
+    /// Edges that must reach 3:1 against their surface under Increase Contrast (#1922).
+    public static let increasedContrastEdgePairs: [Pair] = [
+        .init(name: "increased border on panel", foreground: AppSemanticColorRGB.borderIncreased, background: AppSemanticColorRGB.panel, minimumRatio: 3),
+        .init(name: "increased border on app background", foreground: AppSemanticColorRGB.borderIncreased, background: AppSemanticColorRGB.background, minimumRatio: 3),
+        .init(name: "increased border on soft green", foreground: AppSemanticColorRGB.borderIncreased, background: AppSemanticColorRGB.softGreen, minimumRatio: 3)
     ]
 
     public static func contrastRatio(foreground: AppColorRGB, background: AppColorRGB) -> Double {

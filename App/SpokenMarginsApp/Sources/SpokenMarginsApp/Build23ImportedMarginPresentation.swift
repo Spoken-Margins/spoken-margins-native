@@ -119,6 +119,7 @@ private struct Build23ImportedLayerList: View, Equatable {
         VStack(alignment: .leading, spacing: 16) {
             Text("Shared Margins")
                 .font(.title3.weight(.bold))
+                .screenTitle()
                 .foregroundStyle(AppColors.text)
 
             if layers.isEmpty {
