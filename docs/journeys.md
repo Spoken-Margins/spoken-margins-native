@@ -17,6 +17,8 @@ Simulator driving pitfalls observed September 24:
 - The app's Paste button reads the simulator pasteboard. `xcrun simctl pbcopy` did not reach it, so type values instead.
 - iOS keyboard tips can appear over the keyboard and swallow the next tap. Screenshot before tapping near the bottom of the screen.
 - Wait a few seconds after launch before the first tap. A cold Debug launch can show a blank screen for about 5 s.
+- **The first listen on a fresh install opens the Terms of Use sheet. This is expected, not a bug.** Its two buttons, "Agree and Enable On-Device Voice" and "Use iOS Voice", sit at the very end of the long scrolling text (`SpokenMarginsTermsView.swift`), not in a toolbar. Swipe up until a swipe changes nothing on screen, then tap "Use iOS Voice" (or Agree, if the run needs the on-device voice). Desks have reported this sheet as "no way out" several times because they stopped scrolling too early.
+- **Before reporting a control as missing or a step as blocked, check the code.** Search the app source for the control's label (`grep -rn "<label>" App/SpokenMarginsApp/Sources`) and see where it is placed. If the code puts it somewhere you haven't reached (further down a scroll, behind a menu, after a sheet), go there first. Quote the file and line in a FAIL that still stands.
 
 **Scripted journeys.** Some journeys also have a script: a UI test in `App/SpokenMarginsAppUITests/` that runs in the integration run, on probation until the Test Desk has seen it pass twice (`TestPlans/scripted-journeys.json`; rules in `docs/workstreams/test-lane.md`, Scripted journeys). A script never replaces the agent run or the owner's pass for the same journey.
 

@@ -56,9 +56,8 @@ private struct TimelineRailRow: View, Equatable {
                     (dynamicTypeSize.isAccessibilitySize
                         ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
                         : AnyLayout(HStackLayout(alignment: .firstTextBaseline))) {
-                        Label(dynamicTypeSize.isAccessibilitySize ? entry.provenanceLabel : entry.provenanceLabel.uppercased(), systemImage: entry.provenance.systemImage)
-                            .font(.caption2.weight(.bold))
-                            .tracking(dynamicTypeSize.isAccessibilitySize ? 0 : 0.8)
+                        Label(entry.provenanceLabel, systemImage: entry.provenance.systemImage)
+                            .font(.caption.weight(.semibold))
                             .foregroundStyle(provenanceColor)
                             .fixedSize(horizontal: false, vertical: true)
                         if entry.isNew { NewMarginBadge() }
