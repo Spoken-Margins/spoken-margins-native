@@ -718,8 +718,7 @@ struct SecondaryButtonStyle: ButtonStyle {
             .frame(minHeight: 42)
             .foregroundStyle(AppColors.text)
             .background(AppColors.softGreen.opacity(configuration.isPressed ? 0.7 : 1))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .expandedHitArea(vertical: 1)
+            .clipShape(RoundedRectangle(cornerRadius: 8)).expandedHitArea(vertical: 1)
     }
 }
 
@@ -728,9 +727,7 @@ struct IconButtonStyle: ButtonStyle {
         configuration.label
             .foregroundStyle(AppColors.text)
             .background(AppColors.softGreen.opacity(configuration.isPressed ? 0.7 : 1))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            // The 34 pt icon buttons get a 44 pt hit area; the look is unchanged (#1929).
-            .expandedHitArea(horizontal: 5, vertical: 5)
+            .clipShape(RoundedRectangle(cornerRadius: 8)).expandedHitArea(horizontal: 5, vertical: 5)
     }
 }
 
