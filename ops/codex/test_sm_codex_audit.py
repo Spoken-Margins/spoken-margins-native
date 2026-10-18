@@ -785,7 +785,7 @@ class HeadFiles(unittest.TestCase):
 
 
 class OwnerTapAlertDispatch(unittest.TestCase):
-    """After an audit on a PR only the owner merges, the owner-tap alert runs for it (#2047)."""
+    """After an audit on a PR only the owner merges, the owner-tap alert checks it (#2047)."""
 
     def test_which_prs_dispatch(self):
         rows = [
@@ -810,13 +810,20 @@ class OwnerTapAlertDispatch(unittest.TestCase):
         self.assertEqual(A.OWNER_TAP_FILES, lane.OWNER_TAP_FILES)
         self.assertEqual(A.OWNER_TAP_PREFIXES, lane.OWNER_TAP_PREFIXES)
 
-    def test_dispatch_names_the_workflow_ref_and_pr(self):
+    def test_request_removes_then_adds_the_label(self):
         with patch.object(A, "run", return_value=SimpleNamespace(returncode=0, stderr="")) as ran:
-            self.assertEqual(A.dispatch_tap_alert(42), "tap alert dispatched")
-        cmd = ran.call_args.args[0]
-        self.assertEqual(cmd[:4], ["gh", "workflow", "run", "owner-tap-alert.yml"])
-        self.assertIn("next", cmd)
-        self.assertIn("pr=42", cmd)
+            self.assertEqual(A.request_tap_check(42), "tap check requested")
+        remove, add = (c.args[0] for c in ran.call_args_list)
+        self.assertEqual(remove[:4], ["gh", "api", "-X", "DELETE"])
+        self.assertTrue(remove[4].endswith("/issues/42/labels/owner-tap-check"))
+        self.assertEqual(add[:4], ["gh", "api", "-X", "POST"])
+        self.assertIn("labels[]=owner-tap-check", add)
+
+    def test_label_matches_the_workflow_and_script(self):
+        root = Path(__file__).resolve().parents[2]
+        self.assertIn(f"github.event.label.name == '{A.OWNER_TAP_LABEL}'",
+                      (root / ".github" / "workflows" / "owner-tap-alert.yml").read_text())
+        self.assertIn(f"LABEL = '{A.OWNER_TAP_LABEL}'", (root / "scripts" / "owner_tap_alert.py").read_text())
 
 
 class UsageRecording(unittest.TestCase):

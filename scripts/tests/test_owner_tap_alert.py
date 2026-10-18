@@ -3,6 +3,8 @@ import contextlib
 import importlib.util
 import io
 import re
+import subprocess
+import tempfile
 import sys
 import unittest
 from pathlib import Path
@@ -73,7 +75,7 @@ class ReadinessTable(unittest.TestCase):
             ('in-progress check', {'runs': [run('lane', status='in_progress', conclusion=None)]}, False, 'pending'),
             ('our own running job is ignored', {'runs': GREEN + [run('owner-tap-alert', 'in_progress', None)]},
              True, 'ready'),
-            ('the dispatching job is ignored', {'runs': GREEN + [run('owner-tap-alert-dispatch', 'queued', None)]},
+            ('the other workflow\'s alert job is ignored too', {'runs': GREEN + [run('owner-tap-alert', 'queued', None)]},
              True, 'ready'),
             ('failed commit status', {'statuses': [{'context': 'ci', 'state': 'failure'}]}, False, 'failed: ci'),
             ('pending commit status', {'statuses': [{'context': 'ci', 'state': 'pending'}]}, False, 'pending'),
@@ -136,7 +138,7 @@ class SameRulesAsTheRunner(unittest.TestCase):
 
 class FakeApi:
     def __init__(self, heads=(HEAD, HEAD), comments=CLEAN):
-        self.repo, self.heads, self.comments, self.posted = REPO, list(heads), list(comments), []
+        self.repo, self.heads, self.comments, self.posted, self.labels = REPO, list(heads), list(comments), [], []
 
     def get(self, path):
         return pr(head={'sha': self.heads.pop(0), 'repo': {'full_name': REPO}})
@@ -152,6 +154,12 @@ class FakeApi:
 
     def comment(self, number, body):
         self.posted.append((number, body))
+
+    def readd_label(self, number, label):
+        self.labels.append(('readd', number, label))
+
+    def remove_label(self, number, label):
+        self.labels.append(('remove', number, label))
 
 
 class CheckPr(unittest.TestCase):
@@ -169,6 +177,32 @@ class CheckPr(unittest.TestCase):
         api = FakeApi()
         self.assertIn('dry run', alert.check_pr(api, 7, 'uncomposed', dry_run=True))
         self.assertEqual(api.posted, [])
+
+    def test_via_label_re_adds_the_label_and_posts_nothing(self):
+        # On the Mac `gh` is the owner, whose comment would notify nobody: ask the labeled Actions run instead.
+        api = FakeApi()
+        self.assertIn('re-added', alert.check_pr(api, 7, 'uncomposed', dry_run=False, via_label=alert.LABEL))
+        self.assertEqual((api.posted, api.labels), ([], [('readd', 7, 'owner-tap-check')]))
+
+    def test_via_label_leaves_a_pr_that_is_not_ready_alone(self):
+        api = FakeApi(comments=[])
+        api.get_all = lambda path, base=api.get_all: ([run('lane', 'queued', None)] if '/check-runs' in path
+                                                       else base(path))
+        self.assertIn('checks pending', alert.check_pr(api, 7, 'uncomposed', dry_run=False, via_label=alert.LABEL))
+        self.assertEqual(api.labels, [])
+
+    def test_clear_label_removes_it_after_the_check(self):
+        api = FakeApi()
+        with mock.patch.object(alert, 'GitHubApi', return_value=api), contextlib.redirect_stdout(io.StringIO()):
+            alert.main(['--repo', REPO, '--pr', '7', '--clear-label', alert.LABEL])
+        self.assertEqual(len(api.posted), 1)
+        self.assertEqual(api.labels, [('remove', 7, 'owner-tap-check')])
+
+    def test_mention_defaults_to_the_repository_owner(self):
+        api = FakeApi()
+        with mock.patch.object(alert, 'GitHubApi', return_value=api), contextlib.redirect_stdout(io.StringIO()):
+            alert.main(['--repo', REPO, '--pr', '7'])
+        self.assertTrue(api.posted[0][1].startswith('@owner '))
 
     def test_mention_must_be_a_plain_login(self):
         with mock.patch.dict('os.environ', {'GH_REPO': REPO}), self.assertRaises(SystemExit), \
@@ -188,28 +222,48 @@ class Workflow(unittest.TestCase):
 
     def test_job_names_are_the_ones_the_script_ignores(self):
         self.assertRegex(self.text, r'(?m)^\s+name: owner-tap-alert$')
-        self.assertEqual(alert.OWN_CHECKS, {'owner-tap-alert', 'owner-tap-alert-dispatch'})
+        self.assertEqual(alert.OWN_CHECKS, {'owner-tap-alert'})
+
+    def test_labeled_runs_only_for_the_check_label_and_clear_it(self):
+        self.assertIn(f"github.event.label.name == '{alert.LABEL}'", self.text)
+        self.assertIn('--clear-label "$CLEAR"', self.text)
 
     def test_concurrency_is_per_pr(self):
         self.assertIn("group: owner-tap-alert-${{ inputs.pr || github.event.pull_request.number || 'sweep' }}",
                       self.text)
 
-    def test_check_workflows_dispatch_it_from_a_job_that_runs_no_pr_code(self):
+    def test_check_workflows_end_with_an_alert_job_from_the_base(self):
         for name, needs in (('linux-t1.yml', 'sessionkit-core'), ('shipped-build-compat.yml', 'compat')):
             with self.subTest(name):
                 text = (SCRIPTS.parent / '.github' / 'workflows' / name).read_text()
-                head, _, job = text.partition('\n  owner-tap-alert-dispatch:\n')
-                self.assertTrue(job, 'no owner-tap-alert-dispatch job')
+                head, _, job = text.partition('\n  owner-tap-alert:\n')
+                self.assertTrue(job, 'no owner-tap-alert job')
+                self.assertIn('    name: owner-tap-alert\n', job)
                 self.assertIn(f'    needs: {needs}\n', job)
                 self.assertIn('    if: always() && github.event.pull_request.head.repo.full_name == github.repository\n',
                               job)
-                self.assertIn('    permissions:\n      actions: write\n      pull-requests: read\n', job)
-                self.assertNotIn('uses:', job, 'no checkout, no PR code')
-                self.assertIn('gh workflow run owner-tap-alert.yml --repo "$GH_REPO" --ref next -f pr="$PR"', job)
-                self.assertIn("grep -qE '^(\\.github/|scripts/lane-runner\\.py$)'", job)
+                self.assertIn('    runs-on: [self-hosted, Linux, sm-vps]\n', job)
+                self.assertIn('      issues: write\n', job)
+                self.assertNotIn('actions: write', job)
+                self.assertIn('ref: ${{ github.event.pull_request.base.sha }}', job)
+                self.assertIn('persist-credentials: false', job)
+                self.assertIn('python3 scripts/owner_tap_alert.py --pr "$PR"', job)
                 # The job that runs PR code keeps the read-only workflow token.
                 self.assertIn('\npermissions:\n  contents: read\n\n', head)
-                self.assertNotIn('actions: write', head)
+                self.assertNotIn('issues: write', head)
+
+    def test_a_base_without_the_script_skips_quietly(self):
+        # Before this merges, the base has no script: the job must pass with a note, not fail (PR #2054's first run).
+        for name in ('owner-tap-alert.yml', 'linux-t1.yml', 'shipped-build-compat.yml'):
+            with self.subTest(name):
+                text = (SCRIPTS.parent / '.github' / 'workflows' / name).read_text()
+                step = text[text.index('          if [ ! -f scripts/owner_tap_alert.py ]; then'):]
+                script = '\n'.join(line[10:] for line in step.splitlines())
+                with tempfile.TemporaryDirectory() as empty:
+                    done = subprocess.run(['bash', '-e', '-c', script], cwd=empty, text=True, capture_output=True,
+                                          env={'PATH': '/usr/bin:/bin', 'PR': '7'})
+                self.assertEqual(done.returncode, 0, done.stderr)
+                self.assertIn('nothing to check', done.stdout)
 
 if __name__ == '__main__':
     unittest.main()

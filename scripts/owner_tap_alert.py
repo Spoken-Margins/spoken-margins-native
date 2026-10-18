@@ -6,8 +6,8 @@ The lane runner never merges a PR touching `scripts/lane-runner.py` or anything 
 one was ready: every agent comment is posted under his own account, and GitHub never notifies anyone of their
 own activity. On 2026-10-18 #1964, #1966, #2038 and #1885 sat waiting only for his tap.
 
-This script runs in .github/workflows/owner-tap-alert.yml as `github-actions[bot]`. For each open PR into the base
-that touches those paths and is ready, it posts one comment that @mentions the owner. The GitHub mobile app pushes
+Run in GitHub Actions as `github-actions[bot]` (see "Where it runs" below), for each open PR into the base that
+touches those paths and is ready, it posts one comment that @mentions the owner. The GitHub mobile app pushes
 mentions by default, and tapping the push opens the PR. A PR is ready when all of these hold (`readiness`):
 
 1. it is not a draft, and its head is in this repository (no forks);
@@ -24,9 +24,21 @@ stranger's look-alike audit or alert marker can't start or stop an alert.
 
 Any doubt (an API error, a head that moved during the run) posts nothing for that PR; the next run tries again.
 
-  python3 scripts/owner_tap_alert.py --base next --mention uncomposed [--pr N] [--dry-run]
+Where it runs. The alert must come from the bot, so it is posted only inside GitHub Actions:
+  * at the end of linux-t1.yml and shipped-build-compat.yml (their `owner-tap-alert` job, `--pr N`), so it is
+    decided when a PR's checks finish. A workflow_dispatch can't start it: GitHub reads a workflow's dispatch
+    trigger from main, which doesn't carry this one until #1492 (hosted-app-macos.yml records the same limit);
+  * in owner-tap-alert.yml when the PR gets the `owner-tap-check` label (`--pr N --clear-label owner-tap-check`).
+From the Mac, where `gh` is the owner and a comment would notify nobody, `--via-label owner-tap-check` checks the
+same rules and, for a ready PR, removes and re-adds that label instead of commenting; the labeled run posts. The
+audit script re-adds the label after auditing an owner-tap PR.
 
-GH_TOKEN and GH_REPO (owner/name) come from the environment. Stdlib only.
+  python3 scripts/owner_tap_alert.py --pr N [--clear-label owner-tap-check]       (in Actions)
+  python3 scripts/owner_tap_alert.py --via-label owner-tap-check [--pr N]           (on the Mac)
+  python3 scripts/owner_tap_alert.py --dry-run
+
+GH_TOKEN (Actions) and GH_REPO (owner/name) come from the environment; --mention defaults to the repository's
+owner. Stdlib only.
 """
 from __future__ import annotations
 
@@ -50,9 +62,9 @@ AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
 CLEAN_AUDIT = re.compile(r'no (blocking )?findings\b', re.I)
 MARKER = '<!-- owner-tap-alert: {sha} -->'
 MARKER_RE = re.compile(r'<!-- owner-tap-alert: ([0-9a-f]{40}) -->')
-# This workflow's own job, and the jobs that dispatch it at the end of linux-t1.yml and shipped-build-compat.yml:
-# they can still show as running on the head while this run checks it.
-OWN_CHECKS = {'owner-tap-alert', 'owner-tap-alert-dispatch'}
+# The job that runs this script (the same name in all three workflows): it is running on the head while it checks it.
+OWN_CHECKS = {'owner-tap-alert'}
+LABEL = 'owner-tap-check'  # the Mac's and the audit script's way to ask Actions for a check (--via-label)
 FAILED = {'failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure', 'stale'}
 
 
@@ -178,8 +190,21 @@ class GitHubApi:
     def comment(self, number: int, body: str) -> None:
         self._run(['-X', 'POST', f'repos/{self.repo}/issues/{number}/comments', '-f', f'body={body}'])
 
+    def remove_label(self, number: int, label: str) -> None:
+        """Remove a label from the PR; one it doesn't carry is not an error."""
+        try:
+            self._run(['-X', 'DELETE', f'repos/{self.repo}/issues/{number}/labels/{label}'])
+        except subprocess.CalledProcessError as exc:
+            if 'HTTP 404' not in (exc.stderr or ''):
+                raise
 
-def check_pr(api: GitHubApi, number: int, mention: str, dry_run: bool) -> str:
+    def readd_label(self, number: int, label: str) -> None:
+        """Remove and add the label, so GitHub sends a `labeled` event even when the PR already carried it."""
+        self.remove_label(number, label)
+        self._run(['-X', 'POST', f'repos/{self.repo}/issues/{number}/labels', '-f', f'labels[]={label}'])
+
+
+def check_pr(api: GitHubApi, number: int, mention: str, dry_run: bool, via_label: str | None = None) -> str:
     files = api.get_all(f'pulls/{number}/files?per_page=100')
     if not owner_tap_paths(files):
         return 'no owner-tap paths'
@@ -197,6 +222,9 @@ def check_pr(api: GitHubApi, number: int, mention: str, dry_run: bool) -> str:
     body = alert_body(pr, tap, mention, head_audit_verdict(comments, head) is not None)
     if dry_run:
         return why + ' (dry run, nothing posted)'
+    if via_label:  # the owner's own comment would notify nobody: ask the labeled Actions run to post it
+        api.readd_label(number, via_label)
+        return why + f', `{via_label}` re-added for Actions to post the alert'
     if alerted(api.get_all(f'issues/{number}/comments?per_page=100'), head):  # another run posted meanwhile
         return f'already alerted on {head[:7]}'
     api.comment(number, body)
@@ -207,12 +235,17 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     ap.add_argument('--repo', default=os.environ.get('GH_REPO', ''))
     ap.add_argument('--base', default='next')
-    ap.add_argument('--mention', required=True, help='login to @mention (the repository owner)')
+    ap.add_argument('--mention', help='login to @mention (default: the repository owner)')
     ap.add_argument('--pr', type=int, help='check only this PR')
     ap.add_argument('--dry-run', action='store_true')
+    ap.add_argument('--via-label', metavar='LABEL', help='for a ready PR, re-add this label instead of commenting')
+    ap.add_argument('--clear-label', metavar='LABEL', help='with --pr: remove this label after the check')
     args = ap.parse_args(argv)
+    args.mention = args.mention or args.repo.partition('/')[0]
     if not args.repo or not re.fullmatch(r'[A-Za-z0-9_.-]+', args.mention):
         ap.error('need --repo (or GH_REPO) and a plain --mention login')
+    if args.clear_label and not args.pr:
+        ap.error('--clear-label needs --pr')
     api = GitHubApi(args.repo)
     if args.pr:
         numbers = [args.pr]
@@ -221,11 +254,16 @@ def main(argv: list[str] | None = None) -> int:
     failures = 0
     for number in numbers:
         try:
-            print(f'#{number}: {check_pr(api, number, args.mention, args.dry_run)}')
+            print(f'#{number}: {check_pr(api, number, args.mention, args.dry_run, args.via_label)}')
         except (subprocess.SubprocessError, ValueError, KeyError) as exc:  # this PR waits for the next run
             failures += 1
             detail = (getattr(exc, 'stderr', '') or str(exc)).strip().splitlines()
             print(f'#{number}: skipped, {type(exc).__name__}: {detail[0][:160] if detail else ""}')
+    if args.clear_label and not args.dry_run:
+        try:  # so the next re-add sends a fresh labeled event
+            api.remove_label(args.pr, args.clear_label)
+        except subprocess.SubprocessError as exc:
+            print(f'#{args.pr}: could not remove `{args.clear_label}`: {(getattr(exc, "stderr", "") or "").strip()[:160]}')
     print(f'{len(numbers)} open PRs into {args.base} checked, {failures} skipped on errors')
     return 0
 

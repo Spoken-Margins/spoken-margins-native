@@ -79,29 +79,41 @@ jobs:
       - name: A database written by this code opens in Build 29
         run: scripts/check-build29-database.sh
 
-  owner-tap-alert-dispatch:
-    # When the compatibility check finishes, start .github/workflows/owner-tap-alert.yml for this PR if only the owner merges it
-    # (it touches .github/ or scripts/lane-runner.py; #2047). The workflow token may start a workflow_dispatch run,
-    # the one event it is allowed to start, so the alert comes when the checks do, not on the next Mac tick. This
-    # job runs no PR code and is the only one here that may start workflows. Moves to check_suite or workflow_run
-    # in owner-tap-alert.yml once main carries workflows (#1492).
+  owner-tap-alert:
+    # When the compatibility check finishes, tell the owner's phone if this PR now waits only for his merge tap (#2047):
+    # scripts/owner_tap_alert.py posts one github-actions[bot] comment that @mentions him, once per head, when the
+    # PR touches .github/ or scripts/lane-runner.py and is ready. It runs here, not as a dispatched workflow,
+    # because GitHub reads dispatch triggers from main, which doesn't carry owner-tap-alert.yml until #1492. The
+    # script comes from the PR's base with no credentials kept, never from the PR, and this is the only job here
+    # whose token may comment. A base that doesn't have the script yet skips quietly.
+    name: owner-tap-alert
     needs: compat
     if: always() && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, sm-vps]
     timeout-minutes: 5
     permissions:
-      actions: write
+      contents: read
       pull-requests: read
+      issues: write
+      checks: read
+      statuses: read
     steps:
-      - name: Start the owner-tap alert when this PR touches .github/ or scripts/lane-runner.py
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/owner_tap_alert.py
+            scripts/comment_trust.py
+          sparse-checkout-cone-mode: false
+      - name: Alert the owner if this PR is ready for his merge tap
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: |
-          if gh api "repos/$GH_REPO/pulls/$PR/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)' \
-              | grep -qE '^(\.github/|scripts/lane-runner\.py$)'; then
-            gh workflow run owner-tap-alert.yml --repo "$GH_REPO" --ref next -f pr="$PR"
-          else
-            echo "PR $PR touches no owner-tap path; no alert to start."
+          if [ ! -f scripts/owner_tap_alert.py ]; then
+            echo "The base has no scripts/owner_tap_alert.py yet; nothing to check."
+            exit 0
           fi
+          python3 scripts/owner_tap_alert.py --pr "$PR"
