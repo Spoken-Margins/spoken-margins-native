@@ -14,6 +14,7 @@ struct ExperienceItemDetailScreen: View {
     @State private var asksForEpisodeLink = false
     @State private var episodeLinkText = ""
     @State private var showsReactions = false
+    @State private var collectionItem: LibraryItemRow?
     private let episodeLinker = ImportedFileEpisodeLinker()
 
     var body: some View {
@@ -74,6 +75,7 @@ struct ExperienceItemDetailScreen: View {
                             model.openExport(sessionId: model.selectedItem.sessions.first?.id)
                         }
                         .disabled(model.selectedItem.sessions.isEmpty)
+                        quickActionButtons
                         if episodeLinkStatus.canLink && !episodeLinkStatus.canChange {
                             Button("Episode can't change: friends' Margins are on it", systemImage: "link") {}
                                 .disabled(true)
@@ -105,6 +107,9 @@ struct ExperienceItemDetailScreen: View {
                 }
             }
             .task(id: model.selectedItem.id) { refreshEpisodeLinkStatus() }
+            .sheet(item: $collectionItem) { item in
+                ItemCollectionSheet(item: item).environmentObject(model)
+            }
             .sheet(isPresented: $showsReactions) {
                 ExperienceReactionsScreen().environmentObject(model)
             }
@@ -223,6 +228,30 @@ struct ExperienceItemDetailScreen: View {
         model.selectedItem.chapters.isEmpty
             ? model.selectedItem.mediaChapters.count
             : model.selectedItem.chapters.count
+    }
+
+    /// The Library row's Mark Complete, Add to Collection and Prepare Offline, as visible menu entries (#1973).
+    /// They call what the row's swipe and long-press call. The row is the Library's, so an item the Library
+    /// doesn't list gets none.
+    @ViewBuilder private var quickActionButtons: some View {
+        if let row = model.libraryItems.first(where: { $0.id == model.selectedItem.id }) {
+            ForEach(ItemQuickAction.actions(for: row), id: \.self) { action in
+                switch action {
+                case .markComplete:
+                    Button("Mark Complete", systemImage: "checkmark.circle") { model.markItemCompleted(id: row.id) }
+                        .accessibilityIdentifier("item.markComplete.button")
+                case .markUnfinished:
+                    Button("Mark Not Complete", systemImage: "arrow.uturn.backward.circle") { model.markItemUnfinished(id: row.id) }
+                        .accessibilityIdentifier("item.markUnfinished.button")
+                case .addToCollection:
+                    Button("Add to Collection…", systemImage: "folder.badge.plus") { collectionItem = row }
+                        .accessibilityIdentifier("item.addToCollection.button")
+                case .prepareOffline:
+                    Button("Prepare Offline", systemImage: "arrow.down.circle") { model.prioritizeOfflinePreparation(id: row.id) }
+                        .accessibilityIdentifier("item.prepareOffline.button")
+                }
+            }
+        }
     }
 
     @ViewBuilder
