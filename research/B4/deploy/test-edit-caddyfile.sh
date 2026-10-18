@@ -58,7 +58,7 @@ for filter_line in \
   'log default {' 'format filter {' 'wrap json' \
   'request>remote_ip delete' 'request>remote_port delete' 'request>client_ip delete' \
   'request>headers delete' 'request>tls delete' \
-  'request>uri regexp ^/api/v1/maps/.* /api/v1/maps/*'; do
+  'request>uri regexp ^(/api/v1/maps|/l)/.* $1/*'; do
   grep -qxF -e "${filter_line}" <<<"${global_block}" || die "log filter line missing from the global block: ${filter_line}"
 done
 grep -q 'reverse_proxy 127.0.0.1:8795' "${work}/c1" || die "port not rendered"

@@ -413,6 +413,48 @@ RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validati
 # the runner tests: with only these copied, every ops suite passes.
 OPS_TEST_TRIGGERS = ('ops/', 'scripts/', '.github/', 'project.yml', 'TestPlans/', 'AGENTS.md')
 
+# --plan fast-portable (#1847): the fast plan's steps that need neither Swift nor an Apple tool, for a hosted
+# Linux job (.github/workflows/hosted-portable.yml). Every step the fast plan can run is named here, either to
+# run (PORTABLE_STEPS) or with the reason it is left out (PORTABLE_LEFT_OUT); the run prints the left-out ones as
+# skipped. test_verification fails when the plan code names a step that is in neither table.
+PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'browser', 'share-link', 'research')
+PORTABLE_LEFT_OUT = {
+    'package-build': 'needs the Swift toolchain on macOS; hosted-sessionkit-linux.yml builds the Foundation-only modules on Linux',
+    'package-core': 'needs the Swift toolchain on macOS (SessionKitCoreTests also run in hosted-sessionkit-linux.yml)',
+    'package-core-serial': 'needs the Swift toolchain on macOS',
+    'package': 'needs the Swift toolchain, AVFoundation and a sound output; only the Mac lane runs the whole package',
+}
+# Inside runner-tests and ops, the tests that drive an Apple tool. Each is matched as a test id prefix (module,
+# class or test) in scripts/tests, or as a folder under ops/.
+PHONE_BUILD_NEEDS_MAC = 'builds an app with xcodebuild and a fake xcrun on a Mac'
+PORTABLE_RUNNER_TESTS_LEFT_OUT = {
+    'test_phone_build.InstallerTests.': 'runs the zsh phone installer, which calls plutil and xcrun',
+    'test_phone_build.PhoneBuildTests.test_a_failed_release_build_opens_one_item_updates_it_and_the_next_success_closes_it': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_merge_check_that_passed_and_pushed_this_commit_skips_the_host_checks': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_merge_check_that_pushed_another_commit_does_not_count_so_the_host_checks_run': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_merge_check_that_says_fail_does_not_count_so_the_host_checks_run': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_safe_remerge_builds_release_without_repeating_host_or_simulator_checks': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_builds_writes_plan_and_points_latest': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_if_changed_skips_when_latest_is_the_tip': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_plan_starts_at_the_installed_build': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_release_cache_and_source_survive_and_are_reused_for_the_next_tip': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_untested_commit_runs_host_checks_first': PHONE_BUILD_NEEDS_MAC,
+    'test_lane_slots.VerifyTestsSlotTests.test_runner_xcodebuild_steps_take_a_slot_and_record_it': 'runs xcodebuild',
+}
+PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snapshots and the Mac-only caches'}
+# runner-tests without the tests above: discover scripts/tests as the plain step does, then drop the listed ids.
+PORTABLE_RUNNER_LOADER = '''
+import sys, unittest
+sys.path.insert(0, "scripts/tests")
+left_out = tuple(sys.argv[1:])
+def tests(suite):
+    for item in suite:
+        yield from tests(item) if isinstance(item, unittest.TestSuite) else [item]
+kept = unittest.TestSuite(t for t in tests(unittest.defaultTestLoader.discover("scripts/tests"))
+                          if not t.id().startswith(left_out))
+sys.exit(not unittest.TextTestRunner().run(kept).wasSuccessful())
+'''
+
 
 def touches(changed, prefixes):
     return any(path == prefix or path.startswith(prefix) for path in changed for prefix in prefixes)
@@ -932,6 +974,8 @@ class Run:
         return (f'{name} {why}: {results} test results in the log, load average {load[0] if load else "unknown"}{slot}')
 
     def fast(self):
+        if self.manifest['plan'] == 'fast-portable':
+            return self.portable()
         # The host steps share two Mac-wide host-test slots with every session and the runner (#350);
         # the package step's swift test runs inside this run's slot.
         with host_test_slot(f'verify-tests {self.manifest["plan"]} in {ROOT}', out=sys.stdout,
@@ -940,9 +984,23 @@ class Run:
             self.save()
             self.host_steps()
 
-    def host_steps(self):
+    def portable(self):
+        """The fast plan's steps that run anywhere (#1847), then every step it leaves out, named as skipped.
+        No host-test slot: that is the Mac's shared pool, and a hosted job is alone on its machine."""
+        self.host_steps(portable=True)
+        print('fast-portable runner-tests left out ' + ', '.join(PORTABLE_RUNNER_TESTS_LEFT_OUT), flush=True)
+        for name, reason in PORTABLE_LEFT_OUT.items():
+            self.skip(name, reason)
+        print('fast-portable left out ' + ', '.join(PORTABLE_LEFT_OUT) + '; the fast plan on the Mac runs them.', flush=True)
+        if input_identity() != self.manifest['input_sha256']:
+            raise RuntimeError(inputs_changed_message('Inputs changed during portable verification', self.input_files))
+
+    def host_steps(self, portable=False):
         scope, why = runner_test_scope(self.changed)
-        if in_codex_sandbox():
+        if portable:
+            self.command('runner-tests', [sys.executable, '-c', PORTABLE_RUNNER_LOADER, *PORTABLE_RUNNER_TESTS_LEFT_OUT],
+                         timeout=RUNNER_TESTS_TIMEOUT)
+        elif in_codex_sandbox():
             self.skip('runner-tests')
         elif scope == 'none':
             self.skip('runner-tests', why)
@@ -958,11 +1016,15 @@ class Run:
             self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'],
                          timeout=RUNNER_TESTS_TIMEOUT)
         needed, why = ops_tests_needed(self.changed)
-        if needed:
+        if portable:
+            self.ops_steps(left_out=PORTABLE_OPS_LEFT_OUT)
+        elif needed:
             self.ops_steps()
         else:
             self.skip('ops', why)
-        self.command('contracts', [sys.executable, 'scripts/validate-contracts.py'])
+        # A hosted checkout has no Git LFS files; the voice model pointers still name each file's size and hash.
+        self.command('contracts', [sys.executable, 'scripts/validate-contracts.py',
+                                   *(['--allow-lfs-pointers'] if portable else [])])
         self.command('public-tree', [sys.executable, 'scripts/check-public-tree.py'])
         self.command('surfaces', [sys.executable, 'scripts/validate-surface-contracts.py'])
         self.command('inventory', [sys.executable, 'scripts/test_inventory.py'])
@@ -973,6 +1035,8 @@ class Run:
         # The Go server, the research Python tests and the Caddy script (#1033); a suite that can't run
         # here is reported as skipped with its reason, not passed.
         self.command('research', [sys.executable, 'scripts/research_tests.py'], timeout=300)
+        if portable:
+            return
         expected = set()
         for target in ('SessionKitCoreTests', 'SessionKitTests', 'SessionKitTraceTests'):
             expected.update(f'{target}/{test}' for test in swift_tests(ROOT / f'Packages/SessionKit/Tests/{target}'))
@@ -1060,12 +1124,16 @@ class Run:
         self.save()
         print(f'{name}: skipped ({reason})', flush=True)
 
-    def ops_steps(self, root=None):
+    def ops_steps(self, root=None, left_out=None):
         """The ops tools' own tests (ops/dial, ops/codex), one step per folder: each folder imports its
-        module from beside its tests, so each is its own discovery top level."""
+        module from beside its tests, so each is its own discovery top level. `left_out` maps a folder
+        (relative to the root) to why it does not run here; it is named as skipped."""
         base = Path(root or ROOT)
         for folder in ops_test_folders(base):
             name = 'ops-' + '-'.join(folder.relative_to(base).parts[1:]) if folder != base / 'ops' else 'ops'
+            if left_out and folder.relative_to(base).as_posix() in left_out:
+                self.skip(name, left_out[folder.relative_to(base).as_posix()])
+                continue
             self.command(name, [sys.executable, '-m', 'unittest', 'discover', '-s', str(folder), '-t', str(folder)])
 
     def simulator(self, device, ios=None):
@@ -1271,7 +1339,7 @@ def read_changed_files(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--plan', choices=['fast', *PLANS], default='fast')
+    parser.add_argument('--plan', choices=['fast', 'fast-portable', *PLANS], default='fast')
     parser.add_argument('--device', help='Supported simulator UDID (including iPad); overrides phone preference')
     parser.add_argument('--ios', type=int, help='Required iOS major version, e.g. 26 or 27; never falls back to another OS')
     parser.add_argument('--simulator-slot-fd', type=int, help=argparse.SUPPRESS)
@@ -1300,7 +1368,9 @@ def main():
     if args.list:
         print('\n'.join(f'{t} ({status})' for status, tests in journeys.items() for t in tests) if journeys
               else '\n'.join(sorted(plan_tests(ROOT, PLANS[args.plan][1]))) if args.plan in PLANS
-              else 'runner-tests, ops tests, contracts, surfaces, inventory, browser, all SessionKit tests')
+              else ('fast-portable runs ' + ', '.join(PORTABLE_STEPS) + '; it leaves out ' + ', '.join(PORTABLE_LEFT_OUT)
+                    if args.plan == 'fast-portable'
+                    else 'runner-tests, ops tests, contracts, surfaces, inventory, browser, all SessionKit tests'))
         return 0
     if journeys is not None and not any(journeys.values()):
         print('No scripted journeys are listed in TestPlans/scripted-journeys.json; nothing to run.')
@@ -1314,9 +1384,9 @@ def main():
         try:
             if args.build_only:
                 run.xcode_build(args.plan, args.runtime, args.rebuild)
-            elif args.plan in ('fast', 'release'):
+            elif args.plan in ('fast', 'fast-portable', 'release'):
                 run.fast()
-            if args.plan != 'fast' and not args.build_only:
+            if args.plan not in ('fast', 'fast-portable') and not args.build_only:
                 if journeys:
                     run.manifest['scripted_journeys'] = journeys
                     run.xcode(args.plan, args.device, args.rebuild, args.ios,
