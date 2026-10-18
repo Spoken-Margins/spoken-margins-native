@@ -47,3 +47,30 @@ jobs:
         run: |
           seconds=$(( $(date +%s) - STARTED ))
           echo "linux-t1 took ${seconds}s on sm-vps-t1." | tee -a "$GITHUB_STEP_SUMMARY"
+
+  owner-tap-alert-dispatch:
+    # When SessionKitCoreTests finishes, start .github/workflows/owner-tap-alert.yml for this PR if only the owner merges it
+    # (it touches .github/ or scripts/lane-runner.py; #2047). The workflow token may start a workflow_dispatch run,
+    # the one event it is allowed to start, so the alert comes when the checks do, not on the next Mac tick. This
+    # job runs no PR code and is the only one here that may start workflows. Moves to check_suite or workflow_run
+    # in owner-tap-alert.yml once main carries workflows (#1492).
+    needs: sessionkit-core
+    if: always() && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, sm-vps]
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      pull-requests: read
+    steps:
+      - name: Start the owner-tap alert when this PR touches .github/ or scripts/lane-runner.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if gh api "repos/$GH_REPO/pulls/$PR/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)' \
+              | grep -qE '^(\.github/|scripts/lane-runner\.py$)'; then
+            gh workflow run owner-tap-alert.yml --repo "$GH_REPO" --ref next -f pr="$PR"
+          else
+            echo "PR $PR touches no owner-tap path; no alert to start."
+          fi

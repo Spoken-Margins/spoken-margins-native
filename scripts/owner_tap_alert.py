@@ -50,8 +50,9 @@ AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
 CLEAN_AUDIT = re.compile(r'no (blocking )?findings\b', re.I)
 MARKER = '<!-- owner-tap-alert: {sha} -->'
 MARKER_RE = re.compile(r'<!-- owner-tap-alert: ([0-9a-f]{40}) -->')
-# This workflow's own job: it is always running on the head of the PR that started it.
-OWN_CHECK = 'owner-tap-alert'
+# This workflow's own job, and the jobs that dispatch it at the end of linux-t1.yml and shipped-build-compat.yml:
+# they can still show as running on the head while this run checks it.
+OWN_CHECKS = {'owner-tap-alert', 'owner-tap-alert-dispatch'}
 FAILED = {'failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure', 'stale'}
 
 
@@ -91,7 +92,7 @@ def checks_state(check_runs: list[dict], statuses: list[dict]) -> tuple[str, lis
     failed, pending = [], []
     for run in check_runs:
         name = run.get('name') or '?'
-        if name == OWN_CHECK:
+        if name in OWN_CHECKS:
             continue
         if run.get('status') != 'completed':
             pending.append(name)
@@ -196,6 +197,8 @@ def check_pr(api: GitHubApi, number: int, mention: str, dry_run: bool) -> str:
     body = alert_body(pr, tap, mention, head_audit_verdict(comments, head) is not None)
     if dry_run:
         return why + ' (dry run, nothing posted)'
+    if alerted(api.get_all(f'issues/{number}/comments?per_page=100'), head):  # another run posted meanwhile
+        return f'already alerted on {head[:7]}'
     api.comment(number, body)
     return why + ', alert posted'
 

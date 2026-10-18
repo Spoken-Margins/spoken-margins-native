@@ -71,7 +71,9 @@ class ReadinessTable(unittest.TestCase):
             ('pending check', {'runs': GREEN + [run('lane-conflicts', status='queued', conclusion=None)]},
              False, 'checks pending'),
             ('in-progress check', {'runs': [run('lane', status='in_progress', conclusion=None)]}, False, 'pending'),
-            ('our own running job is ignored', {'runs': GREEN + [run(alert.OWN_CHECK, 'in_progress', None)]},
+            ('our own running job is ignored', {'runs': GREEN + [run('owner-tap-alert', 'in_progress', None)]},
+             True, 'ready'),
+            ('the dispatching job is ignored', {'runs': GREEN + [run('owner-tap-alert-dispatch', 'queued', None)]},
              True, 'ready'),
             ('failed commit status', {'statuses': [{'context': 'ci', 'state': 'failure'}]}, False, 'failed: ci'),
             ('pending commit status', {'statuses': [{'context': 'ci', 'state': 'pending'}]}, False, 'pending'),
@@ -184,9 +186,30 @@ class Workflow(unittest.TestCase):
         self.assertIn('persist-credentials: false', self.text)
         self.assertIn('github.event.pull_request.head.repo.full_name == github.repository', self.text)
 
-    def test_job_name_is_the_one_the_script_ignores(self):
-        self.assertRegex(self.text, rf'(?m)^\s+name: {re.escape(alert.OWN_CHECK)}$')
+    def test_job_names_are_the_ones_the_script_ignores(self):
+        self.assertRegex(self.text, r'(?m)^\s+name: owner-tap-alert$')
+        self.assertEqual(alert.OWN_CHECKS, {'owner-tap-alert', 'owner-tap-alert-dispatch'})
 
+    def test_concurrency_is_per_pr(self):
+        self.assertIn("group: owner-tap-alert-${{ inputs.pr || github.event.pull_request.number || 'sweep' }}",
+                      self.text)
+
+    def test_check_workflows_dispatch_it_from_a_job_that_runs_no_pr_code(self):
+        for name, needs in (('linux-t1.yml', 'sessionkit-core'), ('shipped-build-compat.yml', 'compat')):
+            with self.subTest(name):
+                text = (SCRIPTS.parent / '.github' / 'workflows' / name).read_text()
+                head, _, job = text.partition('\n  owner-tap-alert-dispatch:\n')
+                self.assertTrue(job, 'no owner-tap-alert-dispatch job')
+                self.assertIn(f'    needs: {needs}\n', job)
+                self.assertIn('    if: always() && github.event.pull_request.head.repo.full_name == github.repository\n',
+                              job)
+                self.assertIn('    permissions:\n      actions: write\n      pull-requests: read\n', job)
+                self.assertNotIn('uses:', job, 'no checkout, no PR code')
+                self.assertIn('gh workflow run owner-tap-alert.yml --repo "$GH_REPO" --ref next -f pr="$PR"', job)
+                self.assertIn("grep -qE '^(\\.github/|scripts/lane-runner\\.py$)'", job)
+                # The job that runs PR code keeps the read-only workflow token.
+                self.assertIn('\npermissions:\n  contents: read\n\n', head)
+                self.assertNotIn('actions: write', head)
 
 if __name__ == '__main__':
     unittest.main()
