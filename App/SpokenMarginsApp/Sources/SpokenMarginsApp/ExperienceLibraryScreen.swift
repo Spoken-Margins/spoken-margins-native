@@ -317,7 +317,7 @@ struct ExperienceLibraryScreen: View {
     private var items: some View {
         switch screenState {
         case .cannotOpen(let note):
-            LibraryCannotOpenNote(note: note) { model.bootstrapLibraryIfNeeded() }
+            LibraryCannotOpenNote(note: note) { model.retryLibraryOpen() }
                 .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
         case .empty:
             SMExperienceEmptyState(
