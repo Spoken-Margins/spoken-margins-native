@@ -103,7 +103,12 @@ extension Gate1AppModel {
             diagnostics["pendingSpokenMarginsPackageImport"] = "unavailable:\(error.localizedDescription)"
         }
         var addedItemIds: [String] = []
-        defer { reportPendingHandoffsAdded(itemIds: addedItemIds) }
+        var failedSharedArticles = 0
+        // The failure goes last, so a success banner for another share in the same drain can't cover it.
+        defer {
+            reportPendingHandoffsAdded(itemIds: addedItemIds)
+            announceFailedSharedArticles(count: failedSharedArticles)
+        }
 
         do {
             let handoffStore = try resolvedSourceLinkHandoffStore()
@@ -131,8 +136,6 @@ extension Gate1AppModel {
             let handoffStore = try resolvedBrowserTextHandoffStore()
             let payloadIDs = try handoffStore.pendingPayloadIDs()
             diagnostics["pendingBrowserTextPayloads"] = "\(payloadIDs.count)"
-            var failedSharedArticles = 0
-            defer { announceFailedSharedArticles(count: failedSharedArticles) }
             for payloadID in payloadIDs {
                 do {
                     let handoff = try handoffStore.handoff(payloadID: payloadID)
@@ -145,9 +148,15 @@ extension Gate1AppModel {
                 } catch Gate5BrowserTextHandoffStoreError.missingPayload {
                     diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "missing"
                 } catch {
-                    try? handoffStore.quarantine(payloadID: payloadID, reason: error.localizedDescription)
-                    diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "quarantined:\(error.localizedDescription)"
-                    failedSharedArticles += 1
+                    // Announced only once it sits in the Import Inbox: a payload that can't be quarantined stays
+                    // pending, and announcing it would repeat the banner on every drain with nothing behind "See why".
+                    do {
+                        try handoffStore.quarantine(payloadID: payloadID, reason: error.localizedDescription)
+                        diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "quarantined:\(error.localizedDescription)"
+                        failedSharedArticles += 1
+                    } catch {
+                        diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "quarantine_failed:\(error.localizedDescription)"
+                    }
                 }
             }
         } catch {
