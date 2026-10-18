@@ -37,7 +37,7 @@ struct ExperienceLibraryScreen: View {
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 6)
                 }
 
-                if model.shouldShowOnboardingCard {
+                if model.shouldShowOnboardingCard, screenState.allowsAddingContent {
                     onboardingStrip
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
@@ -86,6 +86,7 @@ struct ExperienceLibraryScreen: View {
             } label: {
                 Label("Add", systemImage: "plus")
             }
+            .disabled(!screenState.allowsAddingContent)
             .accessibilityIdentifier("home.addSource.button")
         }
     }
@@ -302,9 +303,23 @@ struct ExperienceLibraryScreen: View {
             || model.libraryQuery.offlineState != .all
     }
 
+    /// A build that can't open the Library shows that, never the empty state (#1969).
+    private var screenState: LibraryScreenState {
+        LibraryScreenState.resolve(
+            accessError: model.libraryAccessError,
+            itemCount: model.libraryItems.count,
+            isCaughtUp: model.libraryIsCaughtUp,
+            visibleCount: model.visibleLibraryItems.count
+        )
+    }
+
     @ViewBuilder
     private var items: some View {
-        if model.libraryItems.isEmpty {
+        switch screenState {
+        case .cannotOpen(let note):
+            LibraryCannotOpenNote(note: note) { model.bootstrapLibraryIfNeeded() }
+                .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+        case .empty:
             SMExperienceEmptyState(
                 systemImage: "books.vertical",
                 title: "Your Library is ready",
@@ -312,7 +327,7 @@ struct ExperienceLibraryScreen: View {
                 actionTitle: "Add Source"
             ) { addSourceRoute = .linkOrPodcast }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-        } else if model.libraryIsCaughtUp {
+        case .caughtUp:
             SMExperienceEmptyState(
                 systemImage: "checkmark.circle",
                 title: "You’re caught up",
@@ -320,7 +335,7 @@ struct ExperienceLibraryScreen: View {
                 actionTitle: "Show completed"
             ) { model.showCompletedLibraryItems() }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-        } else if model.visibleLibraryItems.isEmpty {
+        case .noMatches:
             SMExperienceEmptyState(
                 systemImage: "magnifyingglass",
                 title: "No matches",
@@ -331,7 +346,7 @@ struct ExperienceLibraryScreen: View {
                 model.libraryQueryChanged()
             }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-        } else {
+        case .list:
             ForEach(listEntries) { entry in
                 let row = entry.row
                 ExperienceLibraryCompactRow(
