@@ -25,6 +25,8 @@ final class MarginCaptureCoordinator: ObservableObject {
     @Published private(set) var isFinishing = false
     @Published private(set) var restartShield = MarginRestartShield()
     @Published private(set) var writtenDraft: WrittenMarginDraft?
+    /// Holds the object that journals the written Margin being typed (#1970). Only stored here; the model creates and uses it.
+    var draftKeeper: WrittenMarginDraftKeeper?
     private(set) var pendingVoiceRequestID: UUID?
     /// The shared Margin the spoken Margin being started answers (#473). Not published, like the request ID: the
     /// recording screen is redrawn by `presentationContext`, which is always set after this. It goes with the context.

@@ -80,6 +80,7 @@ extension Gate1AppModel {
             libraryItems = rows
             recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
             let availableItemIDs = Set(rows.map(\.id))
+            var writtenMarginNotice: String?
             if let restoredSession = try store.loadSessions().first(where: {
                 Self.isResumableSession($0) && availableItemIDs.contains($0.itemId)
             }), let engine {
@@ -89,6 +90,7 @@ extension Gate1AppModel {
                 selectedItem = try loadItemDetail(id: restoredSession.itemId, store: store)
                 diagnostics["restoredSession"] = restoredSession.id
                 diagnostics["restoredSessionMode"] = "paused_without_autoplay"
+                writtenMarginNotice = restoreUnfinishedWrittenMargin(store: store)
             } else if let first = rows.first {
                 activeItemId = first.id
                 selectedItem = try loadItemDetail(id: first.id, store: store)
@@ -100,6 +102,7 @@ extension Gate1AppModel {
             diagnostics["libraryBootstrap"] = "loaded:\(rows.count)"
             reportSuccess(rows.isEmpty ? "Add a source to begin." : "Library ready.")
             if let recordingDraftNotice { reportWarning(recordingDraftNotice) }
+            if let writtenMarginNotice { reportWarning(writtenMarginNotice) }
             try refreshAudioPreparationPresentation(store: store, announceNewCompletions: true)
             scheduleAutomaticAudioPreparationIfNeeded()
             // Recover missing opening windows as well as durable jobs. Yield
