@@ -10,6 +10,7 @@ from pathlib import Path
 from jsonschema import Draft202012Validator, FormatChecker
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import voice_catalog  # noqa: E402
 import voice_catalog_tools  # noqa: E402
 
 
@@ -144,6 +145,24 @@ def validate_voice_catalogs() -> list[str]:
         errors += check_issued_at(draft_path, load_json(draft_path))
     errors += voice_catalog_tools.check_envelope_payloads()
     errors += voice_catalog_tools.check_draft_matches_manifest()
+    errors += validate_voice_sources()
+    return errors
+
+
+def validate_voice_sources() -> list[str]:
+    """The hand-kept source list behind the site's catalog (#1818): its own rules, and that the Supertonic entry
+    builds exactly the reviewed draft, so the two lists of the same 23 files cannot drift apart."""
+    path = CONTRACTS / "voice-models/sources.json"
+    if not path.is_file():
+        return []
+    sources = load_json(path)
+    errors = [f"{path}: {message}" for message in voice_catalog.validate_sources(sources, path.parent)]
+    draft = load_json(voice_catalog_tools.DRAFT)["voices"][0]
+    supertonic = next((v for v in sources["voices"] if v["id"] == draft["id"]), None)
+    if supertonic is None:
+        errors.append(f"{path}: no {draft['id']} voice, which the draft catalog lists")
+    elif voice_catalog.voice_entry(sources, supertonic) != draft:
+        errors.append(f"{path}: the {draft['id']} entry builds something other than {voice_catalog_tools.DRAFT.name}; they list the same files")
     return errors
 
 

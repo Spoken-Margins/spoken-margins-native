@@ -27,9 +27,10 @@ SIGNING_CONTEXT = b"SpokenMargins-VoiceModelCatalog-v1\n"
 TEST_KEY_ID = "sm-test-1"
 OTHER_KEY_ID = "sm-unknown-key"
 
-# Where the files will be mirrored on the owner's site. Not published yet: the site slice of #1391
-# serves these paths. Only files whose licence allows redistribution list it.
-MIRROR_BASE = "https://spokenmargins.proximitytoprogress.com/voices/supertonic-3-int8/2026-05-11/"
+# Where the files are mirrored on the owner's site (scripts/voice-catalog publish uploads them). Not published
+# yet. They live under voices/files/ so the site deploy can leave that folder alone. Only files whose licence
+# allows redistribution list it; Contracts/voice-models/sources.json is the source of truth for the same URLs.
+MIRROR_BASE = "https://spokenmargins.proximitytoprogress.com/voices/files/supertonic-3-int8/2026-05-11/"
 HF_BASE = "https://huggingface.co/Supertone/supertonic-3/resolve/"
 
 # The Terms of Use bind listeners to paragraph 5 and Attachment A of the Open RAIL-M licence.
