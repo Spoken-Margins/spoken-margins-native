@@ -23,11 +23,6 @@ struct ObsidianImportRequest: Sendable {
     let itemId: String
 }
 
-struct ObsidianImportBatch: Sendable {
-    let prepared: [PreparedObsidianImport]
-    let failures: [String]
-}
-
 @MainActor
 final class Gate1AppModel: ObservableObject {
     static let welcomeSampleItemId = "item-spoken-margins-overview"

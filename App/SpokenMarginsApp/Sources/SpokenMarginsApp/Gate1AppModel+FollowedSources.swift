@@ -48,7 +48,7 @@ extension Gate1AppModel {
                 self.reportConfirmation("Source followed. New entries stay in the inbox until you import them.")
             } catch {
                 await self.recordFollowFailure(error)
-                self.reportFailure(error, context: "Follow source failed")
+                self.reportFailure(error)
             }
         }
     }
@@ -88,7 +88,7 @@ extension Gate1AppModel {
                 self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Source followed. New entries stay in the inbox until you import them.")
             } catch {
-                self.reportFailure(error, context: "Follow source failed")
+                self.reportFailure(error)
             }
         }
     }
@@ -217,7 +217,7 @@ extension Gate1AppModel {
                 self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
             } catch {
                 await self.recordFollowFailure(error)
-                self.reportFailure(error, context: "Follow source failed")
+                self.reportFailure(error)
             }
         }
     }
