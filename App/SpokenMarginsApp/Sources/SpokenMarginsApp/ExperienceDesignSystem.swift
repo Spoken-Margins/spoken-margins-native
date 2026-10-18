@@ -102,6 +102,7 @@ struct ExperienceFilterChip<Content: View>: View {
                 Capsule().stroke(isActive ? AppColors.evergreen : AppColors.border)
             }
             .minimumTapTarget()
+            .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 }
 

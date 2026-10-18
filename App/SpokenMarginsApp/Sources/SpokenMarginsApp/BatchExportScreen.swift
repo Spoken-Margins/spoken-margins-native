@@ -148,7 +148,8 @@ struct BatchExportScreen: View {
                         }
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("\(selected ? "Deselect" : "Select") \(row.itemTitle), \(row.interjectionCount) \(row.interjectionCount == 1 ? "Margin" : "Margins"), \(row.session.completionPercent) percent complete")
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                    .accessibilityLabel("\(row.itemTitle), \(row.interjectionCount) \(row.interjectionCount == 1 ? "Margin" : "Margins"), \(row.session.completionPercent) percent complete")
                     .accessibilityIdentifier("batchExport.session.\(row.id)")
                 }
             }
