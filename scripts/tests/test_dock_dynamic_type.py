@@ -27,12 +27,24 @@ class DockDynamicTypeTests(unittest.TestCase):
         self.assertIn("BoundedDockHeight.height(", dock)
         self.assertIn("ScrollView(", dock)
 
+    def test_a_dock_taller_than_its_cap_keeps_the_transport_in_view(self):
+        dock = _strip((APP / "PlaybackBoundedDock.swift").read_text())
+        self.assertIn(".defaultScrollAnchor(.bottom)", dock)
+
     def test_the_chapter_title_gets_more_lines_and_the_skim_controls_move_below_it(self):
         row = _strip((APP / "PlaybackChapterRowView.swift").read_text())
         self.assertIn("dynamicTypeSize.isAccessibilitySize ? 2 : 1", row)
         self.assertEqual(row.count(".lineLimit(1)"), 0, "no title is pinned to one line at every size")
         accessibility = row[row.index("if dynamicTypeSize.isAccessibilitySize {"):row.index("} else {")]
         self.assertIn("VStack", accessibility)
+
+    def test_the_chapter_row_keeps_one_height_whatever_it_shows(self):
+        # The dock never changes height while the listener scrubs or starts a source (#357, #430).
+        row = _strip((APP / "PlaybackChapterRowView.swift").read_text())
+        self.assertEqual(row.count("reservesSpace: reservesTitleSpace"), 2, "title and waiting text reserve alike")
+        accessibility = row[row.index("if dynamicTypeSize.isAccessibilitySize {"):row.index("} else {")]
+        self.assertNotIn("if backward", accessibility, "the control line is not removed when both sides are hidden")
+        self.assertIn(".frame(minHeight: 44)", accessibility)
 
 
 if __name__ == "__main__":

@@ -27,15 +27,16 @@ struct PlaybackChapterRowView: View {
             if dynamicTypeSize.isAccessibilitySize {
                 // At accessibility sizes this row is the only place the chapter title shows, so the title gets the
                 // full width and the skim controls sit under it instead of squeezing it between them (#1933).
+                // The control line is always laid out, with its 44 pt slot, so the row keeps one height whether
+                // Skim, Next chapter or neither is showing (#357, #430).
                 VStack(spacing: 4) {
                     titleView
-                    if backward != .hidden || forward != .hidden {
-                        HStack(spacing: 8) {
-                            backwardControl
-                            Spacer(minLength: 0)
-                            forwardControl
-                        }
+                    HStack(spacing: 8) {
+                        backwardControl
+                        Spacer(minLength: 0)
+                        forwardControl
                     }
+                    .frame(minHeight: 44)
                 }
             } else {
                 HStack(spacing: 8) {
@@ -53,18 +54,22 @@ struct PlaybackChapterRowView: View {
     /// One line at default sizes; up to two at accessibility sizes, where a one-line title showed a few characters.
     private var titleLineLimit: Int { dynamicTypeSize.isAccessibilitySize ? 2 : 1 }
 
+    /// Two lines are reserved at accessibility sizes, so a short title, a long one and the waiting text all take the
+    /// same height and the dock does not move when the listener starts a source or crosses a chapter (#357, #430).
+    private var reservesTitleSpace: Bool { dynamicTypeSize.isAccessibilitySize }
+
     @ViewBuilder private var titleView: some View {
         if let waitingText {
             Text(waitingText)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(AppColors.watchSecondary)
-                .lineLimit(titleLineLimit)
+                .lineLimit(titleLineLimit, reservesSpace: reservesTitleSpace)
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .accessibilityIdentifier("playback.starting.label")
         } else {
             Button(action: showItem) {
                 Text(PlaybackSourceLabels.chapterTitle(title, sourceTitle: sourceTitle))
-                    .lineLimit(titleLineLimit)
+                    .lineLimit(titleLineLimit, reservesSpace: reservesTitleSpace)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             }
             .accessibilityIdentifier("playback.dock.chapter.button")

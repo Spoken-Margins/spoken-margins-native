@@ -178,6 +178,31 @@ final class PlaybackDockLayoutTests: XCTestCase {
                        "the default layout is still one 44-point row")
     }
 
+    /// #357, #430: the dock never changes height while the listener scrubs or starts a source. At accessibility sizes
+    /// the stacked row must take the same height with a short title, a long one, the waiting text, and no skim controls.
+    func testChapterRowKeepsOneHeightAtAccessibilitySizes() {
+        func fittedHeight(
+            title: String, waitingText: String? = nil,
+            backward: NextChapterSummaryRule.ChapterRowControl = .skim,
+            forward: NextChapterSummaryRule.ChapterRowControl = .skim
+        ) -> CGFloat {
+            let row = PlaybackChapterRowView(
+                title: title, sourceTitle: "An episode", backward: backward, forward: forward,
+                skimBackwardTitle: "Back to 12:05", skimForwardTitle: "Skim to 36:11", waitingText: waitingText,
+                showItem: {}, nextChapter: {}
+            )
+            return UIHostingController(rootView: row.environment(\.dynamicTypeSize, .accessibility3))
+                .sizeThatFits(in: CGSize(width: 375 - 44, height: 2_000)).height
+        }
+        let long = "The long and winding road to a chapter title that does not fit on one line"
+        let reference = fittedHeight(title: long)
+        XCTAssertEqual(fittedHeight(title: "Intro"), reference, accuracy: 1, "a short title keeps the two-line slot")
+        XCTAssertEqual(fittedHeight(title: "Intro", waitingText: "Starting"), reference, accuracy: 1,
+                       "the waiting text takes the title's slot")
+        XCTAssertEqual(fittedHeight(title: "Intro", backward: .hidden, forward: .hidden), reference, accuracy: 1,
+                       "the row keeps its control line when no control shows")
+    }
+
     // MARK: - Assertions
 
     private func assertCompactDock(_ mounted: Mounted, phone: String, size: CGSize) async throws {

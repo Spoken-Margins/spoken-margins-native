@@ -26,6 +26,9 @@ private struct PlaybackBoundedDock: ViewModifier {
                     }
                 )
         }
+        // When the dock is taller than its cap, the transport and Add a Margin rows (the last ones) stay in view
+        // and the pane switch scrolls off the top.
+        .defaultScrollAnchor(.bottom)
         .onPreferenceChange(PlaybackDockHeightPreferenceKey.self) { contentHeight = $0 }
         .containerRelativeFrame(.vertical, alignment: .bottom) { container, _ in
             CGFloat(BoundedDockHeight.height(content: Double(contentHeight), container: Double(container)))
