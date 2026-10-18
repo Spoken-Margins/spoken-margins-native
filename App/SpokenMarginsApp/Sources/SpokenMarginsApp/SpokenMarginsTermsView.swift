@@ -10,6 +10,7 @@ struct SpokenMarginsTermsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Spoken Margins Terms of Use")
                         .font(.title2.bold())
+                        .screenTitle()
                     Text("Version \(SpokenMarginsTerms.currentVersion) · Effective \(SpokenMarginsTerms.effectiveDate)")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)

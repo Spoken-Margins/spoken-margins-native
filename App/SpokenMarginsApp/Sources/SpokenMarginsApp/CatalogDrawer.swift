@@ -392,6 +392,41 @@ struct CatalogDrawerView: View {
     }
 }
 
+/// Artwork, details and a Follow control for one show. At accessibility text sizes the control stacks under the
+/// artwork and text instead of growing beside them and crushing the title (#1934).
+private struct CatalogShowRowLayout<Details: View, Control: View>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let artworkURL: URL?
+    @ViewBuilder let details: Details
+    @ViewBuilder let control: Control
+
+    var body: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 12) {
+                    artwork
+                    details
+                }
+                control
+            }
+        } else {
+            HStack(spacing: 12) {
+                artwork
+                details
+                Spacer(minLength: 8)
+                control
+            }
+        }
+    }
+
+    private var artwork: some View {
+        ArtworkThumbnail(url: artworkURL)
+            .frame(width: 56, height: 56)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .accessibilityHidden(true)
+    }
+}
+
 /// One drawer row. It gets its follow state from the list's single pass instead of observing the
 /// drawer, so a Follow tap re-renders only the row whose state changed (#246).
 private struct CatalogDrawerRow: View, Equatable {
@@ -403,15 +438,12 @@ private struct CatalogDrawerRow: View, Equatable {
         lhs.entry == rhs.entry && lhs.state == rhs.state
     }
 
-    var body: some View {
-        HStack(spacing: 12) {
-            ArtworkThumbnail(url: entry.artworkURL.flatMap(URL.init(string:)))
-                .frame(width: 56, height: 56)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .accessibilityHidden(true)
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
+    var body: some View {
+        CatalogShowRowLayout(artworkURL: entry.artworkURL.flatMap(URL.init(string:))) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(entry.title).font(.headline).lineLimit(2)
+                Text(entry.title).font(.headline).lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
                 if let author = entry.author {
                     Text(author).font(.caption).foregroundStyle(AppColors.secondaryText).lineLimit(1)
                 }
@@ -419,7 +451,7 @@ private struct CatalogDrawerRow: View, Equatable {
                     Text(message).font(.caption).foregroundStyle(AppColors.secondaryText).lineLimit(2)
                 }
             }
-            Spacer(minLength: 8)
+        } control: {
             followButton
         }
         .padding(.vertical, 4)
@@ -431,6 +463,7 @@ private struct CatalogDrawerRow: View, Equatable {
         switch state {
         case .following:
             ProgressView().frame(minWidth: 96, minHeight: 44)
+                .accessibilityLabel("Following \(entry.title)")
         case .followed:
             Label("Following", systemImage: "checkmark")
                 .font(.subheadline.weight(.semibold))
@@ -440,6 +473,7 @@ private struct CatalogDrawerRow: View, Equatable {
             Button("Retry", action: toggleFollow)
                 .buttonStyle(.bordered)
                 .frame(minWidth: 96, minHeight: 44)
+                .accessibilityLabel("Retry following \(entry.title)")
                 .accessibilityIdentifier("catalog.follow.\(entry.id)")
         case nil:
             Button("Follow", action: toggleFollow)
@@ -472,15 +506,12 @@ private struct CatalogSearchResultRow: View {
     let state: CatalogDrawerModel.FollowState?
     let toggleFollow: () -> Void
 
-    var body: some View {
-        HStack(spacing: 12) {
-            ArtworkThumbnail(url: show.artworkURL.flatMap(URL.init(string:)))
-                .frame(width: 56, height: 56)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .accessibilityHidden(true)
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
+    var body: some View {
+        CatalogShowRowLayout(artworkURL: show.artworkURL.flatMap(URL.init(string:))) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(show.title).font(.headline).lineLimit(2)
+                Text(show.title).font(.headline).lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
                 if let author = show.author {
                     Text(author).font(.caption).foregroundStyle(AppColors.secondaryText).lineLimit(1)
                 }
@@ -491,7 +522,7 @@ private struct CatalogSearchResultRow: View {
                     Text(message).font(.caption).foregroundStyle(AppColors.secondaryText).lineLimit(2)
                 }
             }
-            Spacer(minLength: 8)
+        } control: {
             if show.feed != nil { followButton }
         }
         .padding(.vertical, 4)
@@ -503,6 +534,7 @@ private struct CatalogSearchResultRow: View {
         switch state {
         case .following:
             ProgressView().frame(minWidth: 96, minHeight: 44)
+                .accessibilityLabel("Following \(show.title)")
         case .followed:
             Label("Following", systemImage: "checkmark")
                 .font(.subheadline.weight(.semibold))
@@ -512,6 +544,7 @@ private struct CatalogSearchResultRow: View {
             Button("Retry", action: toggleFollow)
                 .buttonStyle(.bordered)
                 .frame(minWidth: 96, minHeight: 44)
+                .accessibilityLabel("Retry following \(show.title)")
                 .accessibilityIdentifier("catalog.search.follow.\(show.id)")
         case nil:
             Button("Follow", action: toggleFollow)

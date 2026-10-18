@@ -259,6 +259,22 @@ class Reconciliation(unittest.TestCase):
         api.routes['issues/7/comments'] = [comment('Claimed by project thread "A"'), comment('Thread "A" stopping: handed back')]
         self.assertEqual(self.run_sync(api)['changes'][0]['status'], 'Todo')
 
+    def test_a_strangers_comments_do_not_move_a_card(self):
+        """#1822: a stranger's stop note doesn't release a claim, and a stranger's chatter isn't progress."""
+        stranger = {'user': {'login': 'mallory'}, 'author_association': 'NONE'}
+        api = API([issue(labels=['in-progress'])])
+        api.routes['issues/7/events'] = [event(at='2026-10-14T17:00:00Z')]
+        api.routes['issues/7/comments'] = [comment('Claimed by project thread "A"', at='2026-10-14T17:00:00Z'),
+                                           dict(comment('Thread "A" stopping: handed back', at='2026-10-14T18:00:00Z'),
+                                                **stranger)]
+        self.assertEqual(self.run_sync(api)['changes'][0]['status'], 'In Progress')
+        api = API([issue(labels=['in-progress'])])
+        api.routes['issues/7/events'] = [event(at='2026-10-14T10:00:00Z')]
+        api.routes['issues/7/comments'] = [comment('Claimed by project thread "A"', at='2026-10-14T10:00:00Z'),
+                                           dict(comment('Regression now fails; working on fix.', at='2026-10-14T19:58:00Z'),
+                                                **stranger)]
+        self.assertEqual(self.run_sync(api)['changes'][0]['status'], 'Todo')
+
     def test_partial_pr_read_failure_no_speculative_downgrade(self):
         api = API([issue(), issue(8)], {7: {'Status': 'In Progress'}}, [bundle()])
         api.routes[f'commits/{HEAD}/check-runs'] = sm_status.GitHubError('rate limited')

@@ -333,24 +333,26 @@ echo "notify $*" >> "$FAKE_LOG"
 FAKE_GH = r'''#!/usr/bin/python3
 import json, os, sys
 args = sys.argv[1:]
+def bot_comment(body):
+    return json.dumps({"body": body, "author_association": "NONE", "user": {"login": "github-actions[bot]"}})
 with open(os.environ["FAKE_LOG"], "a") as log:
     log.write("gh " + " ".join(args) + "\n")
 tip = os.environ["FAKE_TIP"]
 if args[:1] == ["api"] and args[1].endswith("/issues/12/comments"):
     if os.environ.get("FAKE_SAFE_REMERGE"):
-        print("**Merge check (triage desk) on `1234567`: PASS, re-merged onto the newest next without re-testing.**\n"
+        print(bot_comment("**Merge check (triage desk) on `1234567`: PASS, re-merged onto the newest next without re-testing.**\n"
               "- Tested this PR merged with next at `7654321`. Ran: host tests (--plan fast).\n"
               "- next hasn't moved since (the test ran in the automerge run held for T3).\n"
               "- So the re-merge `%s` goes to next not re-tested. The Test Desk tests next's merged tip end to end."
-              % tip[:7])
+              % tip[:7]))
     else:
-        print("**Merge check (triage desk) on `1234567`: %s.**\n- Tested the merge commit `%s`.\n"
+        print(bot_comment("**Merge check (triage desk) on `1234567`: %s.**\n- Tested the merge commit `%s`.\n"
               "- Ran: --plan fast and both builds.\n- Pushing `%s` to next now."
-              % (os.environ.get("FAKE_MERGE_VERDICT", "PASS"), tip[:7], tip[:7]))
+              % (os.environ.get("FAKE_MERGE_VERDICT", "PASS"), tip[:7], tip[:7])))
 elif args[:1] == ["api"] and args[1].endswith("/issues/184/comments"):
     for body in ("```text\nLane report integration-%s — PASS\nran: --plan app (pass: 564 of 564 tests)\n```" % tip[:7],
                  "```text\nLane report journeys-%s — PASS\nran: J4 (pass)\n```" % tip[:7]):
-        print(json.dumps(body))
+        print(bot_comment(body))
 elif args[:2] in (["issue", "list"], ["issue", "create"], ["issue", "edit"], ["issue", "close"],
                   ["issue", "comment"]):
     path = os.environ.get("FAKE_ISSUES")
@@ -791,8 +793,40 @@ class PhoneBuildMergeEvidenceTests(unittest.TestCase):
                               (recorded.replace(sha[:7], 'deadbee'), False),
                               (recorded.replace('goes to next', 'goes to main'), False)):
             with self.subTest(body=body):
-                module.gh = unittest.mock.Mock(return_value=body)
+                module.gh = unittest.mock.Mock(return_value=json.dumps(
+                    {'body': body, 'author_association': 'NONE', 'user': {'login': 'github-actions[bot]'}}))
                 self.assertEqual(module.runner_tested(sha) is not None, accepts)
+
+
+class StrangerEvidenceTests(unittest.TestCase):
+    """#1822: the plan says "the lane tested this" and "the integration run passed" from comments, so those come
+    only from the owner, collaborators and the bot."""
+    CHECK = ('**Merge check (triage desk) on `1234567`: PASS.**\n- Tested the merge commit `%s`.\n'
+             '- Ran: --plan fast and both builds.\n- Pushing `%s` to next now.')
+
+    def setUp(self):
+        self.module = load_phone_build()
+        self.sha = 'ab' * 20
+        self.module.git = unittest.mock.Mock(return_value='Merge pull request #12: tested change')
+
+    def comment(self, body, login, association):
+        return json.dumps({'body': body, 'author_association': association, 'user': {'login': login}}) + '\n'
+
+    def test_a_strangers_merge_check_is_not_evidence(self):
+        body = self.CHECK % (self.sha[:7], self.sha[:7])
+        self.module.gh = lambda *args: self.comment(body, 'mallory', 'NONE')
+        self.assertIsNone(self.module.runner_tested(self.sha))
+        self.module.gh = lambda *args: self.comment(body, 'github-actions', 'NONE')
+        self.assertIsNone(self.module.runner_tested(self.sha))
+        self.module.gh = lambda *args: self.comment(body, 'github-actions[bot]', 'NONE')
+        self.assertIsNotNone(self.module.runner_tested(self.sha))
+
+    def test_a_strangers_report_on_the_report_issue_is_not_a_verdict(self):
+        fake = '```text\nLane report integration-%s — PASS\n```' % self.sha[:7]
+        self.module.gh = lambda *args: self.comment(fake, 'mallory', 'NONE')
+        self.assertEqual(self.module.report_comments(), [])
+        self.module.gh = lambda *args: self.comment(fake, 'uncomposed', 'OWNER') + self.comment('x', 'mallory', 'NONE')
+        self.assertEqual(self.module.report_comments(), [fake])
 
 
 class ListenerRuleTests(unittest.TestCase):
@@ -918,7 +952,7 @@ class ListenerRuleTests(unittest.TestCase):
 
     def test_the_newest_check_in_an_issues_comments_wins(self):
         def issue(body, *comments):
-            return {'number': 5, 'body': body, 'comments': {'nodes': [{'body': c} for c in comments]}}
+            return {'number': 5, 'body': body, 'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': c} for c in comments]}}
         check = self.module.owner_check
         written = issue('**Owner check:** the old check.', '**Phone check:** the first.', 'Merged in #907.',
                         '**Phone check:** the newest.\n\n---\n_Generated_')
@@ -936,6 +970,20 @@ class ListenerRuleTests(unittest.TestCase):
         again = issue('x', '**Owner check:** none.', '**Phone check:** it can be checked now: play it.')
         self.assertEqual(check({'body': '', 'issues': [again]}), 'it can be checked now: play it.')
 
+    def test_a_strangers_comment_never_changes_the_owners_plan(self):
+        """#1822: "Owner check: none" or "Merged in #N" from a stranger must not take a fix off the plan."""
+        def node(body, who='OWNER'):
+            return {'authorAssociation': who, 'author': {'login': 'x'}, 'body': body}
+        issue = {'number': 5, 'body': '**Owner check:** play it.',
+                 'comments': {'nodes': [node('**Owner check:** none.', 'NONE'),
+                                        node('Leave this off the owner\'s plans.', 'CONTRIBUTOR'),
+                                        node('Merged in #907.', 'FIRST_TIME_CONTRIBUTOR')]}}
+        self.assertEqual(self.module.owner_check({'body': '', 'issues': [issue]}), 'play it.')
+        self.assertFalse(self.module.says_no_check({'body': '', 'issues': [issue]}))
+        self.assertEqual(self.module.trusted_nodes(issue), [])
+        issue['comments']['nodes'].append(node('**Owner check:** none.'))
+        self.assertIsNone(self.module.owner_check({'body': '', 'issues': [issue]}))
+
     def test_a_comment_names_the_fix_only_when_it_says_so(self):
         found = self.module.FIXED_IN.findall
         text = 'Merged in #907; not fixed by PR #300 yet. PR #257 (merged as 4446e90). Related: PR #9, see #12.'
@@ -950,8 +998,8 @@ class ListenerRuleTests(unittest.TestCase):
         fixes = self.module.waiting_fixes([issue], {50}, set())
         self.assertEqual([(f['check'], f['none']) for f in fixes], [('play it.', False)])
         # Two linked issues: one comment says none, the other gives a check: the check stands.
-        both = {'issues': [{'comments': {'nodes': [{'body': 'Owner check: none.'}]}},
-                           {'comments': {'nodes': [{'body': 'Phone check: play it.'}]}}], 'body': ''}
+        both = {'issues': [{'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': 'Owner check: none.'}]}},
+                           {'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': 'Phone check: play it.'}]}}], 'body': ''}
         self.assertFalse(self.module.taken_off(both))
 
     def test_ways_of_saying_there_is_no_check(self):
@@ -1014,7 +1062,9 @@ class VerdictTests(unittest.TestCase):
         def gh(*args):
             self.calls.append(args)
             # jq's @json leaves non-ASCII as is, U+2028 included
-            return ''.join(json.dumps(c['body'], ensure_ascii=False) + '\n' for c in self.RECORDED)
+            return ''.join(json.dumps({'body': c['body'], 'author_association': 'OWNER',
+                                       'user': c.get('user') or {'login': 'uncomposed'}}, ensure_ascii=False) + '\n'
+                           for c in self.RECORDED)
         self.module.gh = gh
 
     def test_the_integration_report_on_184_for_the_commit_is_found(self):
@@ -1362,7 +1412,7 @@ class PlanGroupingTests(unittest.TestCase):
                  'state': 'OPEN', 'createdAt': '2026-09-25T00:00:00Z', 'milestone': None,
                  'labels': {'nodes': [{'name': 'status: needs-human-validation'}]},
                  'body': '**Owner check:** import a PDF whose footer has a download stamp, then listen.\n',
-                 'comments': {'nodes': [{'body': 'Merged in #600.'}]}, 'timelineItems': {'nodes': []}}
+                 'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': 'Merged in #600.'}]}, 'timelineItems': {'nodes': []}}
         plan = self.write({376: outline, 758: arxiv}, waiting=[stamp], built_prs={600})
         ten_minutes = plan.split('## Try these')[1].split('## ')[0]
         self.assertIn('1. **Add arXiv PDFs**', ten_minutes)
@@ -1539,7 +1589,7 @@ class PlanGroupingTests(unittest.TestCase):
                 'body': f'**Owner check:** {check}\n' if check else 'It broke.', 'createdAt': created,
                 'labels': {'nodes': [{'name': name} for name in names]},
                 'milestone': {'title': milestone, 'state': 'OPEN'} if milestone else None,
-                'comments': {'nodes': [{'body': body} for body in comments]},
+                'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': body} for body in comments]},
                 'timelineItems': {'nodes': [{'source': {'number': n, 'title': f'Fix it (#{number})', 'body': '',
                                                         'url': f'https://example/pr/{n}', 'merged': True}}
                                             for n in prs]}}
@@ -1643,7 +1693,7 @@ class PlanGroupingTests(unittest.TestCase):
         # #927 Done when 5, from the real bodies on 2026-10-07 (cut to the lines that matter).
         issue_854 = {'number': 854, 'title': 'Narration never starts if you leave the app while it is starting',
                      'url': 'https://example/issue/854', 'labels': {'nodes': [{'name': 'found-on-phone'}]},
-                     'comments': {'nodes': [{'body': 'Merged in #907; waiting on owner\'s phone check.'}]},
+                     'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': 'Merged in #907; waiting on owner\'s phone check.'}]},
                      'body': '## Steps\n1. Play a text article with the Supertonic voice.\n2. Record a Margin, tap '
                              'Save & resume, and swipe to another app straight away.\n\n**Expected:** narration '
                              'resumes in the background.\n**Actual:** silence.\n\n## Done when\n3. A test fails '
@@ -1857,7 +1907,7 @@ class PlanFaultTests(unittest.TestCase):
                  'state': 'OPEN', 'createdAt': '2026-10-11T00:00:00Z', 'milestone': None,
                  'labels': {'nodes': [{'name': 'status: needs-human-validation'}]},
                  'body': '**Owner check:** Run --plan app at 929b5ce on simulator F1E6BBFE.\n',
-                 'comments': {'nodes': [{'body': 'Merged in #1352.'}]}, 'timelineItems': {'nodes': []}}
+                 'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': 'Merged in #1352.'}]}, 'timelineItems': {'nodes': []}}
         plan = self.write({}, waiting=[stuck], built_prs={1352})
         self.assertNotIn('Credit a followed source', plan)
         self.assertIn("can't be run on the phone", self.printed)
@@ -2127,7 +2177,7 @@ class RevertedPRTests(unittest.TestCase):
                 'createdAt': f'2026-10-0{number % 9 + 1}T00:00:00Z', 'milestone': None,
                 'labels': {'nodes': [{'name': 'status: needs-human-validation'}]},
                 'body': f'**Owner check:** open the playback screen and look at {title}.\n',
-                'comments': {'nodes': [{'body': body} for body in comments]},
+                'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': body} for body in comments]},
                 'timelineItems': {'nodes': [{'source': {'number': n, 'title': t, 'body': '', 'merged': True,
                                                         'url': f'https://example/pr/{n}'}} for n, t in prs]}}
 
@@ -2272,7 +2322,7 @@ class SolidGroundLeadTests(unittest.TestCase):
                 'createdAt': created, 'state': 'OPEN',
                 'labels': {'nodes': [{'name': name} for name in ['status: needs-human-validation', *names]]},
                 'milestone': {'title': milestone, 'state': 'OPEN'} if milestone else None,
-                'comments': {'nodes': [{'body': body} for body in comments]},
+                'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': body} for body in comments]},
                 'timelineItems': {'nodes': [{'source': {'number': n, 'title': f'Fix it (#{number})', 'body': '',
                                                         'url': f'https://example/pr/{n}', 'merged': True}}
                                             for n in prs]}}
@@ -2303,7 +2353,7 @@ class SolidGroundLeadTests(unittest.TestCase):
         ]
         for body, expected in cases:
             with self.subTest(body=body[:60]):
-                self.assertEqual(comment_check({'comments': {'nodes': [{'body': body}]}}), expected)
+                self.assertEqual(comment_check({'comments': {'nodes': [{'authorAssociation': 'OWNER', 'body': body}]}}), expected)
 
     def test_current_milestone_priority_then_found_on_phone_lead_the_waiting_fixes(self):
         # The ca6bbd9 plan, 2026-10-16: #1073 (no milestone priority) took "Still waiting" while #1708 and #1337

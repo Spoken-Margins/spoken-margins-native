@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitSharing
 
 /// Turns a shared-Margins import failure into a sentence for the import sheet. Internal codes stay in diagnostics.
 enum SharedMarginsImportMessage {
@@ -7,6 +8,9 @@ enum SharedMarginsImportMessage {
         if error is DecodingError {
             // For example a packet from the parked co-op build, which used a Margin type this build doesn't know.
             return unreadablePackageMessage
+        }
+        if let archiveError = error as? SpokenMarginsPackageArchiveError {
+            return archiveError.listenerMessage
         }
         if let urlError = error as? URLError {
             return Gate1AppModel.userFacingMessage(for: urlError)

@@ -58,6 +58,7 @@ struct ExperienceSourcesScreen: View {
                 .background(AppColors.bone)
                 .scrollContentBackground(.hidden)
                 .listStyle(.plain)
+                .refreshable { await model.pullToRefreshFollowing() }
                 .animation(.smooth(duration: 0.24), value: orderedCandidates.map(\.id))
                 .confirmationDialog(
                     "Clear the \(clearableEntryIDs.count) entries listed in New?",
@@ -118,6 +119,7 @@ struct ExperienceSourcesScreen: View {
             HStack(spacing: 10) {
                 Image(systemName: "dot.radiowaves.left.and.right")
                     .foregroundStyle(AppColors.evergreen)
+                    .accessibilityHidden(true)
                 Text(manageFeedsTitle)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppColors.text)
@@ -125,6 +127,7 @@ struct ExperienceSourcesScreen: View {
                 Image(systemName: "chevron.right")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppColors.secondaryText)
+                    .accessibilityHidden(true)
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .contentShape(Rectangle())
@@ -592,44 +595,21 @@ private struct SourceInboxRow: View {
 
     var body: some View {
         Button(action: addAndOpen) {
-            HStack(alignment: .center, spacing: 12) {
-                leadingImage
-                // About the artwork's height (#884): two title lines and one line of show and length. A long
-                // title or show name truncates; it does not make the row taller.
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.headline)
-                        .foregroundStyle(AppColors.text)
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(2)
-                    // The show name gives way first: the length and date keep their space (#1443). At the
-                    // accessibility sizes there is no room for both on one line, so the length and date
-                    // take a line of their own under the show instead of being cut off.
-                    let layout = dynamicTypeSize.isAccessibilitySize
-                        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
-                        : AnyLayout(HStackLayout(spacing: 0))
-                    layout {
-                        Text(provenanceLead)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        if let trail = provenanceTrail {
-                            Text(dynamicTypeSize.isAccessibilitySize ? trail : " · \(trail)")
-                                .lineLimit(1)
-                                .layoutPriority(1)
-                        }
+            if dynamicTypeSize.isAccessibilitySize {
+                // Artwork and the chevron share the top line so the text gets the whole row width (#1936).
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 12) {
+                        leadingImage
+                        Spacer(minLength: 8)
+                        trailingIndicator
                     }
-                    .font(.caption)
-                    .foregroundStyle(AppColors.secondaryText)
+                    textColumn
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                if isImporting {
-                    ProgressView()
-                        .frame(width: 44, height: 44)
-                } else {
-                    Image(systemName: "chevron.right")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(AppColors.secondaryText)
-                        .frame(width: 44, height: 44)
+            } else {
+                HStack(alignment: .center, spacing: 12) {
+                    leadingImage
+                    textColumn
+                    trailingIndicator
                 }
             }
         }
@@ -754,6 +734,51 @@ private struct SourceInboxRow: View {
         return "\(title). \(provenance)"
     }
 
+    /// The row's text. At accessibility sizes the title and the show name wrap fully; the row grows with them (#1936).
+    private var textColumn: some View {
+        // At default sizes the row is about the artwork's height (#884): two title lines and one line of show and
+        // length. A long title or show name truncates; it does not make the row taller.
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.headline)
+                .foregroundStyle(AppColors.text)
+                .multilineTextAlignment(.leading)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+            // The show name gives way first: the length and date keep their space (#1443). At the
+            // accessibility sizes there is no room for both on one line, so the length and date
+            // take a line of their own under the show instead of being cut off.
+            let layout = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
+                : AnyLayout(HStackLayout(spacing: 0))
+            layout {
+                Text(provenanceLead)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    .truncationMode(.tail)
+                if let trail = provenanceTrail {
+                    Text(dynamicTypeSize.isAccessibilitySize ? trail : " · \(trail)")
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(AppColors.secondaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var trailingIndicator: some View {
+        if isImporting {
+            ProgressView()
+                .frame(width: 44, height: 44)
+        } else {
+            Image(systemName: "chevron.right")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(AppColors.secondaryText)
+                .frame(width: 44, height: 44)
+        }
+    }
+
     @ViewBuilder
     private var leadingImage: some View {
         if let row {
@@ -785,6 +810,7 @@ private struct SourceInboxRow: View {
                 .foregroundStyle(AppColors.evergreen)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(AppColors.softGreen)
+                .accessibilityHidden(true)
         case .initial(let letter):
             Text(letter)
                 .font(.title2.weight(.semibold))

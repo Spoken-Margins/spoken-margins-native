@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""Entry point for scripts/voice_catalog.py (#1818): `scripts/voice-catalog check|build|keygen|sign|page|publish`."""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from voice_catalog import main  # noqa: E402
+
+raise SystemExit(main(sys.argv[1:]))

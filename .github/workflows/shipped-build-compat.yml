@@ -23,13 +23,15 @@ on:
       # Build 29's reader builds the whole SessionKit target, so any of them can change what it
       # reads. Derived from the types SessionKitPersistence and SessionKitSharing name, plus the
       # Codable types those files reach. A new model file matches *Models*.swift; any other new
-      # file that defines a stored type must be added here.
+      # file that defines a stored type must be added here; scripts/tests/test_shipped_compat_filter.py
+      # fails when one is missing.
       - 'Packages/SessionKit/Sources/SessionKit/*Models*.swift'
       - 'Packages/SessionKit/Sources/SessionKit/BridgeManifest.swift'
       - 'Packages/SessionKit/Sources/SessionKit/CommunityMapUpload.swift'
       - 'Packages/SessionKit/Sources/SessionKit/FeedNewItemPolicy.swift'
       - 'Packages/SessionKit/Sources/SessionKit/InterjectionCleanup.swift'
       - 'Packages/SessionKit/Sources/SessionKit/ItemCollection.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/LinkedEpisode.swift'
       - 'Packages/SessionKit/Sources/SessionKit/ListeningEdition.swift'
       - 'Packages/SessionKit/Sources/SessionKit/ListeningMoment.swift'
       - 'Packages/SessionKit/Sources/SessionKit/MarginConversation.swift'
@@ -76,3 +78,42 @@ jobs:
         run: scripts/freeze-shipped-reader.sh --check
       - name: A database written by this code opens in Build 29
         run: scripts/check-build29-database.sh
+
+  owner-tap-alert:
+    # When the compatibility check finishes, tell the owner's phone if this PR now waits only for his merge tap (#2047):
+    # scripts/owner_tap_alert.py posts one github-actions[bot] comment that @mentions him, once per head, when the
+    # PR touches .github/ or scripts/lane-runner.py and is ready. It runs here, not as a dispatched workflow,
+    # because GitHub reads dispatch triggers from main, which doesn't carry owner-tap-alert.yml until #1492. The
+    # script comes from the PR's base with no credentials kept, never from the PR, and this is the only job here
+    # whose token may comment. A base that doesn't have the script yet skips quietly.
+    name: owner-tap-alert
+    needs: compat
+    if: always() && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, sm-vps]
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write
+      checks: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/owner_tap_alert.py
+            scripts/comment_trust.py
+          sparse-checkout-cone-mode: false
+      - name: Alert the owner if this PR is ready for his merge tap
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ ! -f scripts/owner_tap_alert.py ]; then
+            echo "The base has no scripts/owner_tap_alert.py yet; nothing to check."
+            exit 0
+          fi
+          python3 scripts/owner_tap_alert.py --pr "$PR"

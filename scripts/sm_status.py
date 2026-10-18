@@ -59,6 +59,7 @@ import sm_paths  # noqa: E402
 
 PUBLIC = sm_paths.repo(__file__)  # the public checkout (SM_REPO): test-scope.py
 sys.path.insert(0, str(PUBLIC / 'scripts'))
+import comment_trust  # noqa: E402  (#1822: who may be believed)
 import merge_audit  # noqa: E402  (the lane's report and audit formats live there; reused so they can't drift)
 
 REPO = os.environ.get('SM_STATUS_REPO', 'uncomposed/spoken-margins-native')
@@ -442,7 +443,8 @@ def mergeable_word(pull: dict) -> str:
 
 def analyse(bundle: dict, classify=None) -> dict:
     """The snapshot row for one PR: facts first, then the flags a status reply must not hide."""
-    pull, comments = bundle['pull'], bundle['comments']
+    pull = bundle['pull']
+    comments = comment_trust.trusted_only(bundle['comments'])  # #1822: a stranger's look-alike comment is data
     head = (pull.get('head') or {}).get('sha') or ''
     head7 = head[:7]
     labels = sorted(label['name'] for label in pull.get('labels', []))

@@ -778,7 +778,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
 
     /// #872: the Hollywood packet's Margins carry only the sender's clock time. After a placement pass has run and
-    /// left them unplaced, the Timeline row says that, not "Position not matched", which reads as a match that
+    /// left them unplaced, the Timeline row says that, not "Couldn't place this one", which reads as a match that
     /// failed. Before any pass has run, a freshly imported podcast layer (`.contextOnly`, no file digest) says
     /// "Not placed yet" for every unplaced Margin, bare or fingerprinted: a pass may still place it.
     func testSharedMarginRowSaysUnresolvedWordingOnlyAfterAPassLeftTheMarginUnplaced() {
@@ -803,7 +803,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(bare.positionDescription, "Sent without a position")
         let fingerprinted = row(fingerprintedAnchor, in: afterPass)
         XCTAssertEqual(fingerprinted.placementStatus, .settled)
-        XCTAssertEqual(fingerprinted.positionDescription, "Position not matched")
+        XCTAssertEqual(fingerprinted.positionDescription, SharedMarginPlacementWording.couldntPlace)
 
         // The state a packet is in right after import into a podcast whose download hasn't finished.
         for anchor in [bareAnchor, fingerprintedAnchor] {

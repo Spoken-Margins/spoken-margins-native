@@ -395,7 +395,10 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     }
 
     private func makeImportedLayers(from item: ItemDetailState) -> [Build23ImportedLayerSnapshot] {
-        item.importedCommentaryLayers
+        // Paragraph numbers for text positions (#1974); the text is only read as far as the furthest offset.
+        let furthestOffset = item.importedCommentaryInterjections.values.joined().compactMap(\.resolution.localStartChar).max()
+        let paragraphs = furthestOffset.map { MarginPlaceIndex(chapters: [], text: item.text, readingUpTo: $0) }
+        return item.importedCommentaryLayers
             .filter { $0.deletedAt == nil }
             .map { layer in
                 let margins = item.importedCommentaryInterjections[layer.id, default: []]
@@ -408,7 +411,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                             id: margin.id,
                             reviewedText: margin.approvedTranscript,
                             resolution: margin.resolution.evidenceClass,
-                            positionDescription: placement.positionDescription ?? Self.positionDescription(for: margin.resolution),
+                            positionDescription: placement.positionDescription ?? Self.positionDescription(for: margin.resolution, paragraphs: paragraphs),
                             isPlayable: Gate1AppModel.isPlayableImportedCommentaryResolution(margin.resolution),
                             hasVoice: margin.audioPath != nil,
                             placementLabel: placement.label
@@ -753,15 +756,9 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         return "Position will be resolved after import"
     }
 
-    nonisolated private static func positionDescription(for resolution: ImportedAnchorResolution) -> String {
-        if let mediaTimeMs = resolution.localMediaTimeMs {
-            let totalSeconds = max(0, mediaTimeMs / 1_000)
-            return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
-        }
-        if let start = resolution.localStartChar {
-            return "Text position \(start)"
-        }
-        return resolution.evidenceClass.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+    nonisolated private static func positionDescription(for resolution: ImportedAnchorResolution, paragraphs: MarginPlaceIndex? = nil) -> String {
+        let paragraph = resolution.localStartChar.flatMap { paragraphs?.paragraph(atChar: $0) }
+        return SharedMarginPlacementWording.importSheetLine(for: resolution, paragraph: paragraph)
     }
 
     nonisolated private static func transport(_ kind: SharedItemTransportKind) -> Build23RecipientTransport {

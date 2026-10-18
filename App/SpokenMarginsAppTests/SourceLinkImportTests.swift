@@ -331,6 +331,8 @@ final class SourceLinkImportTests: XCTestCase {
             XCTAssertEqual(item.text, expected, "Add and open must import decoded feed text")
             XCTAssertNil(item.media)
             XCTAssertEqual(try store.loadPublisherAudio(itemId: item.id)?.audioURL, entry.audioURL)
+            let followed = try XCTUnwrap(model.diagnostics["followedPublisherAudio"], "#2024: the followed path says what it kept")
+            XCTAssertTrue(followed.hasPrefix("\(item.id): ") && followed.hasSuffix("; record=saved"), followed)
             XCTAssertEqual(extractor.calls, 0, "a public 403/teaser must never replace accessible feed text")
             XCTAssertEqual(model.snapshot.sessionId, activeSession)
             XCTAssertEqual(model.selectedItem.id, openWhenFinished ? item.id : "item-pill")

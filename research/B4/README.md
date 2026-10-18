@@ -10,6 +10,7 @@ Needs Go 1.24+. No third-party modules.
 cd research/B4/server && go test ./...                      # unit and end-to-end tests
 research/B4/scripts/demo.sh                                 # health, one attested request, block one install, kill switch
 CADDY=caddy SMSERVER=smserver research/B4/deploy/test-edit-caddyfile.sh   # Caddyfile edit, validate, local routing
+research/B4/deploy/test-server-rollback.sh   # deploy keeps the old smserver and puts it back on rollback
 research/B4/deploy/deploy.sh --dry-run root@<vps>           # from the Mac: show every change on the box, change nothing
 ```
 

@@ -1221,7 +1221,7 @@ class MergeTests_Runner(unittest.TestCase):
         self.assertEqual(events, ['build', 'comment', 'push m1', 'sweep'])  # the check is on the PR before the merge
         self.assertTrue(github.posted[0].startswith(f'**Merge check (triage desk) on `{HEAD[:7]}`: PASS.**'))
         import merge_audit  # the comment satisfies the merge audit's rule
-        self.assertTrue(merge_audit.has_merge_check([dict(body=github.posted[0], created_at='2026-09-29T20:00:00Z')],
+        self.assertTrue(merge_audit.has_merge_check([dict(body=github.posted[0], created_at='2026-09-29T20:00:00Z', user={'login': 'github-actions[bot]'})],
                                                     HEAD, '2026-09-29T20:00:01Z'))
         self.assertIn('merged into next as m100000', details[-1])
 

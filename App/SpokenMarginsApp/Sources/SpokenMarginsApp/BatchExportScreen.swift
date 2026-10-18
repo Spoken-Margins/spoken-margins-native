@@ -21,6 +21,7 @@ struct BatchExportScreen: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Export Sessions")
                                 .font(.largeTitle.bold())
+                                .screenTitle()
                             Text("Choose listening sessions and share one Markdown file for each session.")
                                 .foregroundStyle(AppColors.secondaryText)
                         }
@@ -148,7 +149,8 @@ struct BatchExportScreen: View {
                         }
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("\(selected ? "Deselect" : "Select") \(row.itemTitle), \(row.interjectionCount) \(row.interjectionCount == 1 ? "Margin" : "Margins"), \(row.session.completionPercent) percent complete")
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                    .accessibilityLabel("\(row.itemTitle), \(row.interjectionCount) \(row.interjectionCount == 1 ? "Margin" : "Margins"), \(row.session.completionPercent) percent complete")
                     .accessibilityIdentifier("batchExport.session.\(row.id)")
                 }
             }

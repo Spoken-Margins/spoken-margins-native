@@ -1,5 +1,6 @@
 import XCTest
 @testable import SessionKit
+import SessionKitTestInputs
 
 /// Moved from the app test target (#318): the contrast audit is Foundation only, so it runs on the host.
 final class ExperienceColorContrastTests: XCTestCase {
@@ -9,6 +10,23 @@ final class ExperienceColorContrastTests: XCTestCase {
             [],
             "Every registered foreground/background pair must meet its deterministic contrast floor"
         )
+    }
+
+    func testIncreasedContrastEdgesReachThreeToOneInLightAndDark() {
+        XCTAssertEqual(
+            AppColorContrastAudit.failures(for: AppColorContrastAudit.increasedContrastEdgePairs),
+            [],
+            "Under Increase Contrast every border must reach 3:1 against its surface"
+        )
+    }
+
+    func testTheDefaultBorderIsUnchangedAndStillFaint() {
+        // The default look with Increase Contrast off must not move (#1922): the border stays a hairline.
+        let ratio = AppColorContrastAudit.contrastRatio(
+            foreground: AppSemanticColorRGB.border.light, background: AppSemanticColorRGB.panel.light)
+        XCTAssertLessThan(ratio, 2)
+        XCTAssertEqual(AppSemanticColorRGB.border.light, AppColorRGB(red: 0.84, green: 0.87, blue: 0.81))
+        XCTAssertEqual(AppSemanticColorRGB.border.dark, AppColorRGB(red: 0.28, green: 0.34, blue: 0.30))
     }
 
     func testContrastRatioMatchesTheWCAGDefinitionAtItsEnds() {
@@ -35,5 +53,73 @@ final class ExperienceColorContrastTests: XCTestCase {
             background: AppDynamicRGB(light: .init(red: 1, green: 1, blue: 1), dark: .init(red: 0.5, green: 0.5, blue: 0.5)),
             minimumRatio: 4.5)
         XCTAssertEqual(AppColorContrastAudit.failures(for: [pair]), ["grey on grey [dark] 1.00:1"])
+    }
+}
+
+/// #1921: the audit must cover every colour the app draws with, and say what it knows is failing.
+final class AppColorContrastCoverageTests: XCTestCase {
+    /// Read into a `let` first: a skip thrown inside an `XCTAssert` expression would be recorded as a failure.
+    private func tokenSource() throws -> String {
+        let url = TestInputs.packageRoot.appending(path: "Sources/SessionKit/ExperienceColorContrast.swift")
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func appColorsSource() throws -> String {
+        try TestInputs.text(.appSources, "Gate1RootView.swift")
+    }
+
+    private func block(_ text: String, startingAt header: String) throws -> String {
+        let start = try XCTUnwrap(text.range(of: header), "\(header) not found").upperBound
+        let rest = text[start...]
+        let end = rest.range(of: "\n}\n")?.lowerBound ?? rest.endIndex
+        return String(rest[..<end])
+    }
+
+    private func names(in text: String, pattern: String) throws -> [String] {
+        let regex = try NSRegularExpression(pattern: pattern)
+        let range = NSRange(text.startIndex..., in: text)
+        return regex.matches(in: text, range: range).compactMap { match in
+            Range(match.range(at: 1), in: text).map { String(text[$0]) }
+        }
+    }
+
+    func testEveryTokenIsInTheTokenListAndInAtLeastOnePair() throws {
+        let file = try tokenSource()
+        let body = try block(file, startingAt: "public enum AppSemanticColorRGB {")
+        let declared = try names(in: body, pattern: #"public static let (\w+) = "#).filter { $0 != "all" }
+        let listed = AppSemanticColorRGB.all.map(\.name)
+        XCTAssertEqual(Set(declared), Set(listed), "AppSemanticColorRGB.all must name every token")
+        XCTAssertEqual(Set(listed).count, listed.count)
+
+        // A token is covered when some pair uses its exact values as foreground or background.
+        let used = AppColorContrastAudit.allPairs.flatMap { [$0.foreground, $0.background] }
+        for token in AppSemanticColorRGB.all {
+            XCTAssertTrue(used.contains(token.color), "\(token.name) has no pair in the contrast audit")
+        }
+    }
+
+    func testTheAppBuildsEveryColourFromTheSharedTokens() throws {
+        let app = try appColorsSource()
+        let body = try block(app, startingAt: "enum AppColors {")
+        let colours = try names(in: body, pattern: #"static let (\w+) = "#)
+        XCTAssertGreaterThan(colours.count, 20)
+        for line in body.split(separator: "\n") where line.contains("static let") {
+            XCTAssertTrue(
+                line.contains("AppSemanticColorRGB."),
+                "AppColors must take its values from AppSemanticColorRGB so the audit sees them: \(line)"
+            )
+        }
+    }
+
+    func testKnownFailuresAreListedAndStillFail() {
+        for line in AppColorContrastAudit.knownFailureReport() { print(line) }
+        XCTAssertEqual(AppColorContrastAudit.staleKnownFailures(), [], "delete the entries that now pass")
+    }
+
+    func testBothKindsOfPairAreAudited() {
+        XCTAssertTrue(AppColorContrastAudit.textBackgroundPairs.allSatisfy { $0.minimumRatio == 4.5 })
+        XCTAssertTrue(AppColorContrastAudit.nonTextPairs.allSatisfy { $0.minimumRatio == 3 })
+        let names = AppColorContrastAudit.allPairs.map(\.name)
+        XCTAssertEqual(Set(names).count, names.count, "pair names are unique")
     }
 }

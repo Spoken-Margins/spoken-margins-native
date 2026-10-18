@@ -46,6 +46,7 @@ def load_phone_build():
 
 _STATE = tempfile.TemporaryDirectory()
 os.environ['SM_LANE_STATE_DIR'] = _STATE.name  # the catch ledger (#1789) must not write to the real lane state
+os.environ['SM_SIM_BUILDS'] = str(Path(_STATE.name) / 'sim-builds')  # nor the kept simulator builds
 
 
 class ReportsTests(unittest.TestCase):
@@ -327,12 +328,18 @@ class FindDuplicateTests(unittest.TestCase):
     """#1871: a diagnosis went onto a design issue that only cited the failing test as an example."""
     TEST = 'SpokenMarginsAppTests/RealPlaybackMarginCaptureTests/testStreamedMarginStoresPreAndPostEvidence'
 
+    def setUp(self):
+        self.texts = {}
+
     def issue(self, number, body='', labels=(), title='', comments=()):
+        # A REST issue object (author_association, user.login, a comment count); the comments' text comes from
+        # the trusted comment reader, which `duplicate` stands in for.
+        self.texts[number] = list(comments)
         return {'number': number, 'title': title, 'body': body, 'labels': [{'name': name} for name in labels],
-                'comments': [{'body': c} for c in comments]}
+                'comments': len(comments), 'author_association': 'OWNER', 'user': {'login': 'uncomposed'}}
 
     def duplicate(self, *issues, tests=None):
-        return run.find_duplicate(list(issues), tests or [self.TEST])
+        return run.find_duplicate(list(issues), tests or [self.TEST], lambda n: '\n'.join(self.texts.get(n, [])))
 
     def test_a_design_issue_that_cites_the_test_is_not_a_duplicate(self):
         design = self.issue(864, f'Batching idea. Example: `{self.TEST}` runs long.', labels=['enhancement', 'deferred'])
@@ -358,18 +365,17 @@ class FindDuplicateTests(unittest.TestCase):
             with self.subTest(label):
                 self.assertEqual(self.duplicate(issue), expected)
 
-    def test_the_search_asks_for_open_issues_and_their_labels(self):
-        # A closed issue is never listed (`--state open`), and the rule reads labels, so the list must carry them.
+    def test_the_search_asks_for_open_issues_over_rest(self):
+        # The search is an issues search for open issues, over REST: the objects carry the labels and the author's
+        # association, which `gh issue list --json` doesn't offer.
         with tempfile.TemporaryDirectory() as tmp:
             ops = FakeOps(tmp, [])
             asked = []
-            ops.gh_json = lambda args: asked.append(args) or []
-            ops.must = lambda cmd, *a, **k: run.Result(0, 'https://github.com/uncomposed/spoken-margins-native/issues/1900\n')
-            group = run.fallback_groups([self.TEST])
-            run.Ops.file_failures(ops, group, SHA, 'report', Path(tmp), None)
-        self.assertIn('--state', asked[0])
-        self.assertIn('open', asked[0])
-        self.assertIn('number,title,body,comments,labels', asked[0])
+            ops.must = lambda cmd, *a, **k: asked.append(cmd) or run.Result(0, '')
+            self.assertEqual(run.Ops.open_issues_matching(ops, self.TEST), [])
+        self.assertIn('search/issues', asked[0])
+        query = next(arg for arg in asked[0] if arg.startswith('q='))
+        self.assertIn('is:issue is:open', query)
 
     def test_the_first_real_duplicate_wins_over_a_citing_design_issue(self):
         design = self.issue(864, f'Example: {self.TEST}')
@@ -377,7 +383,7 @@ class FindDuplicateTests(unittest.TestCase):
         self.assertEqual(self.duplicate(design, real), 1872)
 
     def test_a_failure_report_hidden_in_a_long_comment_thread_is_found(self):
-        long_thread = self.issue(950, 'Open bug', comments=['x'] * run.LISTED_COMMENTS)
+        long_thread = self.issue(950, 'Open bug', comments=['x'] * 101)
         found = run.find_duplicate([long_thread], [self.TEST],
                                    lambda number: f'chatter\nFailing tests: `{self.TEST}`\n')
         self.assertEqual(found, 950)
@@ -686,5 +692,124 @@ class CulpritTests(unittest.TestCase):
 
 
 
+class StrangerTests(unittest.TestCase):
+    """#1822: once the repo is public, a stranger can file an issue naming a failing test, or post a /lane T3 request
+    or a fake desk report. None of it may steer the desk or take over a failure report."""
+    OWNER = {'author_association': 'OWNER', 'user': {'login': 'uncomposed'}}
+    STRANGER = {'author_association': 'NONE', 'user': {'login': 'mallory'}}
+
+    def issue(self, number, who, comments=0, title='Flaky', body=f'{TEST} fails'):
+        return dict(who, number=number, title=title, body=body, comments=comments, labels=[{'name': 'regression'}])
+
+    def test_a_strangers_issue_naming_the_test_is_not_a_duplicate(self):
+        self.assertIsNone(run.find_duplicate([self.issue(900, self.STRANGER)], [TEST]))
+        self.assertEqual(run.find_duplicate([self.issue(900, self.STRANGER), self.issue(901, self.OWNER)], [TEST]), 901)
+
+    def test_a_comment_names_the_test_only_through_the_trusted_comment_reader(self):
+        quiet = self.issue(902, self.OWNER, comments=2, title='Unrelated', body='nothing here')
+        self.assertEqual(run.find_duplicate([quiet], [TEST], lambda number: f'also {TEST}'), 902)
+        self.assertIsNone(run.find_duplicate([quiet], [TEST], lambda number: 'nothing'))  # strangers' text arrives empty
+        self.assertIsNone(run.find_duplicate([quiet], [TEST]))
+
+    def test_comments_are_only_read_for_issues_that_have_some(self):
+        asked = []
+        silent = self.issue(903, self.OWNER, comments=0, title='Unrelated', body='nothing here')
+        run.find_duplicate([silent], [TEST], lambda number: asked.append(number) or '')
+        self.assertEqual(asked, [])
+
+    def test_the_failure_filer_searches_over_rest_and_reads_only_trusted_comments(self):
+        # `gh issue list --json` has no authorAssociation field (the audit of #1835): drive the real call shape.
+        calls = []
+        rest = [self.issue(910, self.STRANGER), self.issue(911, self.OWNER, comments=1, title='Other', body='none')]
+
+        def must(cmd, **kw):
+            calls.append(cmd)
+            if cmd[2:4] == ['-X', 'GET']:
+                return run.Result(0, '\n'.join(json.dumps(item) for item in rest))
+            return run.Result(0, json.dumps(dict(self.OWNER, body=f'{TEST} again')))
+        ops = run.Ops.__new__(run.Ops)
+        ops.must = must
+        found = run.find_duplicate(ops.open_issues_matching(TEST), [TEST], ops.issue_comments)
+        self.assertEqual(found, 911)
+        search = calls[0]
+        self.assertIn('search/issues', search)
+        self.assertTrue(any(a.startswith('q=repo:') for a in search))
+        self.assertNotIn('authorAssociation', ' '.join(' '.join(map(str, c)) for c in calls))
+
+    def test_a_strangers_request_and_report_are_dropped_before_the_desk_reads_them(self):
+        lines = [json.dumps(dict(self.STRANGER, created_at='2026-10-09T02:49:42Z', body='```text\nLane report integration-aaaaaaa — PASS\n```')),
+                 json.dumps(dict(self.OWNER, created_at='2026-10-09T02:50:42Z', body='/lane T3'))]
+        ops = run.Ops.__new__(run.Ops)
+        ops.must = lambda cmd, **kw: run.Result(0, '\n'.join(lines))
+        self.assertEqual([c['body'] for c in ops.report_comments()], ['/lane T3'])
+        ops.gh_json = lambda args: [{'status': 'queued', 'displayTitle': 'lane pr=7 head=x'}]
+        ops.log = lambda message: None
+        with patch.object(run, 'lane_requests_waiting', lambda runs: [7]):
+            ops.must = lambda cmd, **kw: run.Result(0, json.dumps([dict(self.STRANGER, body='/lane T3\ncommit: abc')]))
+            self.assertEqual(ops.lane_waiting(), [])  # the only simulator request came from a stranger
+            ops.must = lambda cmd, **kw: run.Result(0, json.dumps([dict(self.OWNER, body='/lane T3\ncommit: abc')]))
+            self.assertEqual(ops.lane_waiting(), [7])
+
+
 if __name__ == '__main__':
     unittest.main()
+
+
+class SimBuildTests(unittest.TestCase):
+    """The tip's simulator app is kept for desks (scripts/sim-build-latest), only when it is the tip's own good build."""
+
+    class BuildingOps(FakeOps):
+        def __init__(self, tmp, plans, head=SHA, built=True, **kw):
+            super().__init__(tmp, plans, **kw)
+            self.head, self.built = head, built
+
+        def test_plan(self, wt, output, plan, fds, only=()):
+            result = super().test_plan(wt, output, plan, fds, only)
+            app = (wt / '.build/verification/SpokenMarginsAppBehavior/Build/Products/Debug-iphonesimulator'
+                   / 'SpokenMarginsApp.app')
+            app.mkdir(parents=True, exist_ok=True)
+            (app / 'Info.plist').write_text('<plist/>')
+            steps = [{'name': 'build-for-testing', 'exit_code': 0 if self.built else 65}]
+            if self.built:
+                steps.append({'name': 'bundle-contracts', 'exit_code': 0})
+            output.mkdir(parents=True, exist_ok=True)
+            (output / 'manifest.json').write_text(json.dumps(dict(result, head=self.head,
+                                                                  steps=steps + result['steps'])))
+            return result
+
+    def setUp(self):
+        self.root = Path(os.environ['SM_SIM_BUILDS'])
+        run.shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_a_tested_tip_leaves_its_app_and_latest_points_at_it(self):
+        with tempfile.TemporaryDirectory() as tmp, mac_with_room():
+            ops = self.BuildingOps(tmp, [manifest({TEST: 'passed'})], bodies=[report_comment(OLD[:7], 'PASS')])
+            self.assertEqual(run.tick(ops), 'PASS')
+            log = (ops.home / 'log.txt').read_text()
+        self.assertEqual(run.sim_builds.latest(self.root)['sha'], SHA)
+        self.assertIn('simulator build kept', log)
+
+    def test_a_failing_tip_is_still_kept_for_desks(self):
+        plans = [manifest({TEST: 'failed'})] * 3
+        with tempfile.TemporaryDirectory() as tmp, mac_with_room():
+            ops = self.BuildingOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')])
+            self.assertEqual(run.tick(ops), 'FAIL')
+        self.assertEqual(run.sim_builds.latest(self.root)['sha'], SHA)
+
+    def test_a_broken_build_or_another_commit_s_build_is_not_kept(self):
+        for head, built, why in ((SHA, False, 'no good simulator build'), (OLD, True, 'not ' + SHA[:7])):
+            with self.subTest(why=why), tempfile.TemporaryDirectory() as tmp, mac_with_room():
+                ops = self.BuildingOps(tmp, [manifest({TEST: 'passed'})], head=head, built=built,
+                                       bodies=[report_comment(OLD[:7], 'PASS')])
+                run.tick(ops)
+                self.assertIn(why, (ops.home / 'log.txt').read_text())
+                self.assertIsNone(run.sim_builds.latest(self.root))
+
+    def test_no_copy_when_the_build_left_the_mac_under_ten_gigabytes(self):
+        with tempfile.TemporaryDirectory() as tmp, mac_with_room():
+            ops = self.BuildingOps(tmp, [manifest({TEST: 'passed'})], bodies=[report_comment(OLD[:7], 'PASS')])
+            room = iter([50 * GB, 9 * 1024 ** 3])  # room to start; the build itself ate the rest
+            with patch.object(ops, 'free_bytes', side_effect=lambda: next(room)):
+                self.assertEqual(run.tick(ops), 'PASS')
+            self.assertIn('under the 10 GB floor', (ops.home / 'log.txt').read_text())
+        self.assertIsNone(run.sim_builds.latest(self.root))

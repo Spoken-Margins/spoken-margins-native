@@ -29,15 +29,21 @@ extension Gate1AppModel {
 
     func reportFailure(_ error: Error, context: String? = nil, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
         let message: String
+        let rawMessage: String
         if let urlError = error as? URLError {
             message = Self.userFacingMessage(for: urlError)
-        } else if let localized = error as? LocalizedError,
-           let description = localized.errorDescription {
-            message = description
+            rawMessage = message
         } else {
-            message = String(describing: error)
+            message = ListenerErrorText.message(for: error)
+            if let localized = error as? LocalizedError, let description = localized.errorDescription {
+                rawMessage = description
+            } else {
+                rawMessage = String(describing: error)
+            }
         }
         reportFailure([context, message].compactMap { $0 }.joined(separator: ": "), itemId: itemId, retry: retry)
+        // Bug reports keep the raw text (#1965); the banner and the item's failure line show the plain one.
+        diagnostics["recentFailure"] = [context, rawMessage].compactMap { $0 }.joined(separator: ": ")
     }
 
     func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil, feedbackMessage: String? = nil, origin: FeedbackOrigin? = nil) {

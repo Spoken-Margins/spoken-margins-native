@@ -19,6 +19,14 @@ import PDFKit
 
 /// Library bootstrap and launch seeding (#1020).
 extension Gate1AppModel {
+    /// Try again on the "this version can't open your Library" note (#1969). A half-finished open can leave a store
+    /// behind that the bootstrap guard would trust, so this forgets it and opens again. Nothing is reset or deleted.
+    func retryLibraryOpen() {
+        guard libraryAccessError != nil else { return }
+        store = nil
+        bootstrapLibraryIfNeeded()
+    }
+
     func bootstrapLibraryIfNeeded() {
         guard pendingUITestingSeed != nil || (libraryItems.isEmpty && store == nil) else { return }
         SessionShareFiles.removeLeftovers() // files of a multi-session share whose sheet died with the app (#1528)
@@ -80,6 +88,7 @@ extension Gate1AppModel {
             libraryItems = rows
             recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
             let availableItemIDs = Set(rows.map(\.id))
+            var writtenMarginNotice: String?
             if let restoredSession = try store.loadSessions().first(where: {
                 Self.isResumableSession($0) && availableItemIDs.contains($0.itemId)
             }), let engine {
@@ -95,11 +104,15 @@ extension Gate1AppModel {
             } else {
                 selectedItem = ItemDetailState()
             }
+            writtenMarginNotice = restoreUnfinishedWrittenMargin(store: store, availableItemIDs: availableItemIDs)
             refreshMarginRows()
             tryRefreshOfflineStorageUsage()
             diagnostics["libraryBootstrap"] = "loaded:\(rows.count)"
             reportSuccess(rows.isEmpty ? "Add a source to begin." : "Library ready.")
-            if let recordingDraftNotice { reportWarning(recordingDraftNotice) }
+            // One status line holds one message, so a spoken-draft notice (#951) and this one share it.
+            if let notice = [recordingDraftNotice, writtenMarginNotice].compactMap({ $0 }).joined(separator: " ").nilIfEmpty {
+                reportWarning(notice)
+            }
             try refreshAudioPreparationPresentation(store: store, announceNewCompletions: true)
             scheduleAutomaticAudioPreparationIfNeeded()
             // Recover missing opening windows as well as durable jobs. Yield
