@@ -79,7 +79,9 @@ struct AudioLoopbackWindow {
         throw XCTSkip("The audio window gave no verdict within \(timeout).")
     }
 
-    /// Attaches the verdict, fails on FAIL, and skips on UNAVAILABLE (the lane couldn't listen).
+    /// Attaches the verdict, fails on FAIL, and skips on UNAVAILABLE (the lane couldn't listen). On the main
+    /// actor: XCTContext throws "Current context must not be nil" off it (first lane run, PR #2050).
+    @MainActor
     func require(_ answer: [String: Any], file: StaticString = #filePath, line: UInt = #line) throws {
         let summary = answer["summary"] as? String ?? "no summary"
         if let data = try? JSONSerialization.data(withJSONObject: answer, options: [.prettyPrinted, .sortedKeys]) {

@@ -16,6 +16,7 @@ final class AudioLoopbackPlaybackTests: XCTestCase {
 
     /// The iOS voice is what a fresh install reads articles with in the Simulator (Supertonic is a download,
     /// and an unaccepted terms sheet falls back to it). This plays through the app's own adapter, at full volume.
+    @MainActor  // XCTContext activities (the verdict's attachment) need the main thread
     func testIOSVoiceSpeaksThePassageOnceWithoutGaps() async throws {
         executionTimeAllowance = 180  // the plan's maximum: a cold speech service (#1230), the window and its check
         try await SystemVoiceRuntime.requireAnsweringVoice()  // loads the speech service before the window opens
@@ -27,8 +28,7 @@ final class AudioLoopbackPlaybackTests: XCTestCase {
         defer { try? client.stop() }
         _ = try client.prepareSpeechText(Self.passage)
 
-        // PROOF ONLY (#1790): expect the wrong text, so the lane shows the check can fail. Reverted next commit.
-        let window = try AudioLoopbackWindow.open(for: self, seconds: 25, expected: "Seven purple elephants sang loudly beside the frozen river at noon.",
+        let window = try AudioLoopbackWindow.open(for: self, seconds: 25, expected: Self.passage,
                                                   limits: .init(maxStall: 2.0, minSound: 4.0, maxWER: 0.25))
         try await window.waitUntilRecording()
         try client.play(targetId: "passage", from: 0)
