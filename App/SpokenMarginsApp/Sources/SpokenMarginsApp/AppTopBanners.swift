@@ -118,10 +118,15 @@ struct TrashUndoBanner: View {
                 .font(.subheadline)
                 .lineLimit(2)
             Spacer()
-            Button("Undo", action: model.undoLastTrash)
-                .font(.subheadline.bold())
+            // Undo and Dismiss each get a 44 pt hit area, with room between them (#1926).
+            Button(action: model.undoLastTrash) {
+                Text("Undo")
+                    .font(.subheadline.bold())
+                    .minimumTapTarget()
+            }
+            .accessibilityIdentifier("trash.undo.button")
             Button(action: model.dismissTrashUndo) {
-                Image(systemName: "xmark")
+                TapTargetIcon(systemName: "xmark")
             }
             .accessibilityLabel("Dismiss")
         }
