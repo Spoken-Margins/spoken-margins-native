@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitPersistence
 
 /// A written Margin the app was closed in the middle of (#1970). The text is journaled while it is typed; the next
 /// launch reopens the written-Margin screen with it. The journal is a small file beside the recordings, never the
