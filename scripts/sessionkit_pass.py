@@ -29,8 +29,9 @@ READS = (
     # Source-scraping tests (appSource(...), Gate1AppModel.swift) and the shipped-reader gate that scans the app tests.
     'App/SpokenMarginsApp/Sources/SpokenMarginsApp/',
     'App/SpokenMarginsAppTests/',
-    # Supertonic's narration tests read the bundled voice resources.
-    'App/SpokenMarginsApp/Resources/Supertonic/',
+    # Supertonic's narration tests read its model from artifacts/voice-catalog/files/ (the supertonicModel input),
+    # which is git-ignored: `scripts/voice-catalog fetch` writes it, each file pinned by sha256 in
+    # Contracts/voice-models/sources.json, which Contracts/ above covers (#1820).
     # The Kitten fallback voice's tests read the bundled model (the voiceAssets input) and the front end's test vectors (#849).
     'App/SpokenMarginsApp/Resources/Kitten/',
     'research/C2/frontend/',

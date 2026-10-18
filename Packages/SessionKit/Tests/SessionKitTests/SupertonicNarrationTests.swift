@@ -44,15 +44,11 @@ final class SupertonicNarrationTests: XCTestCase {
     // renderer: live narration in the foreground is never held back while a preparation render is
     // in flight, and a preparation render ending in the background leaves live narration paced.
     func testRealRendersArePacedByWhoAskedNotBySharedState() async throws {
-        let repoAssets = SupertonicAssetLocation(rootURL: URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appending(path: "App/SpokenMarginsApp/Resources/Supertonic", directoryHint: .isDirectory))
-        guard (try? repoAssets.validate()) != nil else { throw XCTSkip("Supertonic assets not in this checkout") }
+        let model = try SupertonicTestModel.assets()
         let root = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-real-pacing-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
-        let renderer = try SupertonicNarrationRenderer(assets: repoAssets, outputDirectory: root, governor: OnDeviceVoiceGovernor())
+        let renderer = try SupertonicNarrationRenderer(assets: model, outputDirectory: root, governor: OnDeviceVoiceGovernor())
         func render(_ text: String, _ pacing: SupertonicRenderPacing) async throws {
             let result = try await renderer.render(text: text, voice: .m2, language: "en", speed: 1, synthesisSteps: 5, pacing: pacing)
             await renderer.discardGeneratedAudio(at: result.audioURL)
@@ -82,15 +78,11 @@ final class SupertonicNarrationTests: XCTestCase {
     // speech and a short pad, and say how much it cut so the output check still judges the model's
     // own duration.
     func testRealRenderComesBackTrimmedToItsSpeech() async throws {
-        let repoAssets = SupertonicAssetLocation(rootURL: URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appending(path: "App/SpokenMarginsApp/Resources/Supertonic", directoryHint: .isDirectory))
-        guard (try? repoAssets.validate()) != nil else { throw XCTSkip("Supertonic assets not in this checkout") }
+        let model = try SupertonicTestModel.assets()
         let root = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-real-trim-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
-        let renderer = try SupertonicNarrationRenderer(assets: repoAssets, outputDirectory: root, governor: OnDeviceVoiceGovernor())
+        let renderer = try SupertonicNarrationRenderer(assets: model, outputDirectory: root, governor: OnDeviceVoiceGovernor())
         let result = try await renderer.render(
             text: "The listener hears this sentence now.", voice: .m2, language: "en", speed: 1,
             synthesisSteps: 5, pacing: .whenAppBackgrounded
@@ -194,18 +186,14 @@ final class SupertonicNarrationTests: XCTestCase {
     // #258: the player hands the renderer files it didn't make (an article's durable prepared
     // chunks, disk-cache entries) to discard. Only the renderer's own output may be deleted.
     func testDiscardDeletesOnlyAudioTheRendererGenerated() async throws {
-        let repoAssets = SupertonicAssetLocation(rootURL: URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appending(path: "App/SpokenMarginsApp/Resources/Supertonic", directoryHint: .isDirectory))
-        guard (try? repoAssets.validate()) != nil else { throw XCTSkip("Supertonic assets not in this checkout") }
+        let model = try SupertonicTestModel.assets()
         let root = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-discard-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
         let durable = root.appending(path: "PreparedAudio/item/chunk-0001.wav")
         try FileManager.default.createDirectory(at: durable.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("durable prepared chunk".utf8).write(to: durable)
-        let renderer = try SupertonicNarrationRenderer(assets: repoAssets, outputDirectory: root.appending(path: "Playback"), governor: OnDeviceVoiceGovernor())
+        let renderer = try SupertonicNarrationRenderer(assets: model, outputDirectory: root.appending(path: "Playback"), governor: OnDeviceVoiceGovernor())
 
         await renderer.discardGeneratedAudio(at: durable)
         XCTAssertTrue(FileManager.default.fileExists(atPath: durable.path), "a prepared chunk the renderer didn't make survives")

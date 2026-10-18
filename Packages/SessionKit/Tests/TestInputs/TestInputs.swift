@@ -10,8 +10,8 @@ import XCTest
 ///
 /// Inside the spoken-margins-native checkout every input is found next to the package. A package
 /// checked out alone has none of them: a test that needs one is skipped with the input named, never
-/// passed silently. `SESSIONKIT_CONTRACTS_DIR` and `SESSIONKIT_VOICE_ASSETS_DIR` point those two inputs
-/// somewhere else.
+/// passed silently. `SESSIONKIT_CONTRACTS_DIR`, `SESSIONKIT_VOICE_ASSETS_DIR` and `SESSIONKIT_SUPERTONIC_DIR`
+/// point those three inputs somewhere else.
 /// `scripts/sessionkit_pass.py`'s `READS` lists the same folders, so the lane's pass key covers them.
 ///
 /// Read an input into a `let` before asserting on it. XCTest records a skip thrown inside an
@@ -31,11 +31,16 @@ public enum TestInputs {
         case appTests = "App/SpokenMarginsAppTests"
         /// The bundled Kitten voice: its model, pronunciation lexicon and g2p weights (the voice that stays in the app).
         case voiceAssets = "App/SpokenMarginsApp/Resources/Kitten"
+        /// Supertonic's model: the four ONNX graphs, `tts.json`, `unicode_indexer.json` and the voice styles. Neither
+        /// the repository nor the app holds it (#1820). `scripts/voice-catalog fetch supertonic-3-int8` downloads it
+        /// here, each file checked against `Contracts/voice-models/sources.json`. Read it with `supertonicModel()`.
+        case supertonicModel = "artifacts/voice-catalog/files/supertonic-3-int8"
 
         var environmentOverride: String? {
             switch self {
             case .contracts: return "SESSIONKIT_CONTRACTS_DIR"
             case .voiceAssets: return "SESSIONKIT_VOICE_ASSETS_DIR"
+            case .supertonicModel: return "SESSIONKIT_SUPERTONIC_DIR"
             default: return nil
             }
         }
@@ -88,6 +93,26 @@ public enum TestInputs {
     }
 
     // MARK: Model files
+
+    /// Supertonic's fetched model folder (the `supertonicModel` input), or `XCTSkip` saying how to fetch it. It is a
+    /// download, not part of a checkout, so only `SM_REQUIRE_MODELS` turns a missing model into a failure; `CI` alone
+    /// doesn't, because no hosted runner fetches it.
+    public static func supertonicModel(environment: [String: String] = ProcessInfo.processInfo.environment) throws -> URL {
+        let folder = try directory(.supertonicModel)
+        let graph = folder.appending(path: "onnx/vector_estimator.onnx")
+        let size = (try? FileManager.default.attributesOfItem(atPath: graph.path)[.size] as? Int) ?? 0
+        if size > 1_000_000 { return folder }
+        if !(environment["SM_REQUIRE_MODELS"] ?? "").isEmpty { throw ModelNotFetched(path: graph.path) }
+        throw XCTSkip("needs supertonicModel (\(folder.path)): Supertonic's model is a download, not in the repository (#1820). "
+            + "Run `scripts/voice-catalog fetch supertonic-3-int8`, or set SESSIONKIT_SUPERTONIC_DIR to a folder that holds it")
+    }
+
+    public struct ModelNotFetched: Error, CustomStringConvertible {
+        public let path: String
+        public var description: String {
+            "Supertonic's model is not at \(path), and this run requires models (SM_REQUIRE_MODELS is set): run `scripts/voice-catalog fetch supertonic-3-int8`"
+        }
+    }
 
     /// What a test that needs a Git LFS model should do (#1893).
     public enum ModelCheck: Equatable, Sendable {
