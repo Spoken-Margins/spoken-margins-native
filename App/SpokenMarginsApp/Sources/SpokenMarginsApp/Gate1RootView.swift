@@ -11,6 +11,7 @@ struct Gate1RootView: View {
     @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
     @State private var navigation = AppNavigationState()
     @State private var keyboardIsPresented = false
+    @StateObject private var supertonicNotice = SupertonicDownloadNotice()
 
     /// The tabs and the Timeline place their own mini player.
     private var showsRootMiniPlayer: Bool {
@@ -36,7 +37,7 @@ struct Gate1RootView: View {
                     ExperienceTimelineRailScreen().announcesScreenChange()
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 case .settings:
-                    SettingsScreen().announcesScreenChange()
+                    SettingsScreen(supertonicNotice: supertonicNotice).announcesScreenChange()
                 case .offlineStorage:
                     ExperienceStorageScreen().announcesScreenChange()
                 case .export:
@@ -55,6 +56,14 @@ struct Gate1RootView: View {
                 libraryWasEmptyAtLaunch: model.libraryWasEmptyAtLaunch,
                 followedSourceCount: model.feedSubscriptions.count
             )
+            // Scripted UI routes drive their own screens; the card would sit over them (#1820).
+            if !UITestingHooks.isActive {
+                supertonicNotice.presentIfNeeded(
+                    savedVoiceIsSupertonic: model.ttsVoiceSelection.supertonicVoice != nil,
+                    anotherSheetShowing: catalogDrawer.isPresented || model.isTermsOfUsePresented
+                        || model.isAIDataSharingConsentPresented || model.spokenMarginsPackageImportReview != nil
+                )
+            }
         }
         .onChange(of: model.requestedExperienceRoot) { _, root in
             guard let root else { return }
@@ -87,6 +96,15 @@ struct Gate1RootView: View {
         }) {
             CatalogDrawerView()
                 .environmentObject(catalogDrawer)
+        }
+        .sheet(isPresented: $supertonicNotice.isPresented) {
+            SupertonicDownloadNoticeCard(
+                openVoices: {
+                    supertonicNotice.openVoices()
+                    model.openSettings()
+                },
+                notNow: { supertonicNotice.isPresented = false }
+            )
         }
         .sheet(isPresented: $model.isHelpPresented) {
             HelpScreen()

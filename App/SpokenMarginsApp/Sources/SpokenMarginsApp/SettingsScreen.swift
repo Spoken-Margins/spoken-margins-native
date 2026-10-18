@@ -24,6 +24,13 @@ struct SettingsScreen: View {
     @State private var hasNoListeningSignals = false
     @AppStorage(CommunityMapUploadService.optInKey) private var helpsMakeListeningMaps = false
     @AppStorage(CommunityMapFetchService.optInKey) private var looksUpCommunityMaps = false
+    /// The Supertonic download card's "Open Voices" lands here and opens Voices (#1820).
+    private let supertonicNotice: SupertonicDownloadNotice?
+    @State private var showsVoices = false
+
+    init(supertonicNotice: SupertonicDownloadNotice? = nil) {
+        self.supertonicNotice = supertonicNotice
+    }
 
     private enum Field {
         case mapModel
@@ -506,6 +513,10 @@ struct SettingsScreen: View {
             .onAppear {
                 model.refreshSpeechVoiceOptions()
                 model.refreshImportInbox()
+                if supertonicNotice?.takeVoicesRequest() == true { showsVoices = true }
+            }
+            .navigationDestination(isPresented: $showsVoices) {
+                VoicesSettingsScreen(voices: model.requireVoiceDownloads()).miniPlayerKeepOut()
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
