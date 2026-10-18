@@ -94,7 +94,8 @@ public enum SpokenMarginsPackageArchive {
     private static let fixedArchiveDate = Date(timeIntervalSince1970: 315_532_800)
     private static let supportedRequiredCapabilities: Set<String> = [
         SharedCommentaryLayerArtifact.schemaVersion,
-        EmbeddedTextItemArtifact.schemaVersion
+        EmbeddedTextItemArtifact.schemaVersion,
+        ListeningMapPacket.capability
     ]
 
     public static func write(
@@ -617,6 +618,14 @@ public enum SpokenMarginsPackageArchive {
 
         let assetsByID = Dictionary(uniqueKeysWithValues: manifest.assets.map { ($0.id, $0) })
         let layer = commentaryLayers[0]
+        if ListeningMapPacket.isMapPacket(manifest) {
+            try validateMapOnlyPacket(
+                manifest, layer: layer, proposals: proposals, fingerprintSpines: fingerprintSpines,
+                phraseSketches: phraseSketches, embeddedTextItems: embeddedTextItems, conversations: conversations
+            )
+            for proposal in proposals { try validate(proposal, assetsByID: assetsByID, itemText: nil) }
+            return
+        }
         guard !layer.interjections.isEmpty, layer.interjections.count <= maximumInterjections else {
             throw SpokenMarginsPackageArchiveError.invalidManifest("commentary layer is empty or too large")
         }
@@ -634,6 +643,34 @@ public enum SpokenMarginsPackageArchive {
             throw SpokenMarginsPackageArchiveError.invalidManifest("more than one conversation artifact")
         }
         for conversation in conversations { try validate(conversation, packageScopedIds: Set(scopedIDs)) }
+    }
+
+    /// A map-only packet (#1471): one map for an article, PDF or EPUB, the empty layer older builds count before they
+    /// refuse the capability, and nothing else. Each scene is placed by a short quotation of its first words.
+    private static func validateMapOnlyPacket(
+        _ manifest: SpokenMarginsPackageManifest,
+        layer: SharedCommentaryLayerArtifact,
+        proposals: [PortableListeningMapProposalArtifact],
+        fingerprintSpines: [EditionFingerprintSpineArtifact],
+        phraseSketches: [TranscriptPhraseSketchArtifact],
+        embeddedTextItems: [EmbeddedTextItemArtifact],
+        conversations: [MarginConversationArtifact]
+    ) throws {
+        guard layer.interjections.isEmpty, proposals.count == 1, let proposal = proposals.first,
+              fingerprintSpines.isEmpty, phraseSketches.isEmpty, embeddedTextItems.isEmpty, conversations.isEmpty,
+              manifest.assets.isEmpty,
+              manifest.itemTransport.kind != .embeddedText,
+              ListeningMapPacket.itemTypes.contains(manifest.item.itemType),
+              proposal.scenes.count <= ListeningMapPacket.maximumScenes else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("listening map packet is inconsistent")
+        }
+        for scene in proposal.scenes {
+            guard scene.startAnchor.anchorType == .text,
+                  scene.startAnchor.exactText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
+                  scene.summaryAssetId == nil else {
+                throw SpokenMarginsPackageArchiveError.invalidManifest("a listening map scene has no text anchor")
+            }
+        }
     }
 
     /// A repeated entry or a reply with two parents (a fork) is allowed; the importer keeps both
@@ -1103,6 +1140,9 @@ public enum SpokenMarginsPackageArchive {
     ) -> String {
         let interjections = commentaryLayers.flatMap(\.interjections)
         let sender = manifest.senderDisplayLabel?.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+        if ListeningMapPacket.isMapPacket(manifest) {
+            return mapPreviewMarkdown(manifest, sender: sender, proposals: listeningMapProposals)
+        }
         var lines = [
             "# Spoken Margins", "",
             "\(markdownEscaped(sender?.isEmpty == false ? sender! : "Someone")) shared \(interjections.count) reviewed Margin\(interjections.count == 1 ? "" : "s") about **\(markdownEscaped(manifest.item.title))**.",
@@ -1121,6 +1161,32 @@ public enum SpokenMarginsPackageArchive {
             lines.append("")
             lines.append(markdownEscaped(interjection.defaultRepresentation?.approvedTranscript ?? "Unavailable representation"))
             lines.append("")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func mapPreviewMarkdown(
+        _ manifest: SpokenMarginsPackageManifest,
+        sender: String?,
+        proposals: [PortableListeningMapProposalArtifact]
+    ) -> String {
+        let scenes = proposals.first?.scenes.sorted { $0.order < $1.order } ?? []
+        var lines = [
+            "# Spoken Margins", "",
+            "\(markdownEscaped(sender?.isEmpty == false ? sender! : "Someone")) shared a Listening Map of \(scenes.count) chapter\(scenes.count == 1 ? "" : "s") for **\(markdownEscaped(manifest.item.title))**.",
+            "",
+            manifest.item.canonicalURL.map { "Item reference: <\($0)>" } ?? "Item reference: no public URL",
+            "",
+            itemTransportPreview(manifest.itemTransport, embeddedTextItems: []),
+            "The map holds chapter titles and summaries, not the text. It carries no Margins.", ""
+        ]
+        for (index, scene) in scenes.enumerated() {
+            lines.append("## Chapter \(index + 1): \(markdownEscaped(scene.title ?? "Untitled"))")
+            lines.append("")
+            if let summary = scene.summaryText, scene.eligibility == .eligible {
+                lines.append(markdownEscaped(summary))
+                lines.append("")
+            }
         }
         return lines.joined(separator: "\n")
     }
