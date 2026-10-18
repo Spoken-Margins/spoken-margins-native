@@ -102,6 +102,22 @@ final class LibraryQueryEngineTests: XCTestCase {
         XCTAssertEqual(LibraryQueryEngine.loadLibraryListeningFilter(defaults: defaults), .unfinished)
     }
 
+    /// The Library filter menu once labelled these "Pdf" and "Epub" while the summary said "PDF" (#972).
+    func testMenuLabelsAreTheSameWordsAsTheSummary() throws {
+        XCTAssertEqual(LibraryContentTypeFilter.allCases.map { LibraryQueryEngine.displayName($0.rawValue) },
+                       ["All", "Text", "PDF", "EPUB", "Article", "Podcast", "Audiobook"])
+        XCTAssertEqual(LibraryListeningStateFilter.allCases.map { LibraryQueryEngine.displayName($0.rawValue) },
+                       ["All", "Unfinished", "Unplayed", "In Progress", "Completed"])
+        XCTAssertEqual(LibraryOfflineStateFilter.allCases.map { LibraryQueryEngine.displayName($0.rawValue) },
+                       ["All", "Preparing", "Ready Offline", "Needs Repreparation", "Online Only"])
+        XCTAssertEqual(LibrarySort.allCases.map { LibraryQueryEngine.displayName($0.rawValue) },
+                       ["Recently Added", "Recently Listened", "Title", "Progress"])
+        // The menu lives in the app target: it must ask the engine, not capitalize on its own.
+        let screen = try TestInputs.text(.appSources, "ExperienceLibraryScreen.swift")
+        XCTAssertTrue(screen.contains("LibraryQueryEngine.displayName(rawValue)"))
+        XCTAssertFalse(screen.contains(".capitalized"))
+    }
+
     func testCaptionsAndPersistedSpellings() throws {
         XCTAssertEqual(LibraryQueryEngine.libraryFilterDescription(query: .init(listeningState: .all)), "All items")
         XCTAssertEqual(LibraryQueryEngine.libraryFilterDescription(query: .init(contentType: .pdf, listeningState: .unplayed)), "PDF · Unplayed")

@@ -352,7 +352,7 @@ struct ExperienceLibraryScreen: View {
     }
 
     private func displayName(_ rawValue: String) -> String {
-        rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+        LibraryQueryEngine.displayName(rawValue)
     }
 }
 
