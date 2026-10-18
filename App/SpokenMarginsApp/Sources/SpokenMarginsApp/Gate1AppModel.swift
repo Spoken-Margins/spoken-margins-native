@@ -1948,9 +1948,7 @@ final class Gate1AppModel: ObservableObject {
 
     func resetLibraryFilters() {
         // Preserve the search and sort while restoring the everyday view.
-        libraryQuery.contentType = .all
-        libraryQuery.listeningState = .unfinished
-        libraryQuery.offlineState = .all
+        libraryQuery.resetFilters()
         libraryQueryChanged()
     }
 
