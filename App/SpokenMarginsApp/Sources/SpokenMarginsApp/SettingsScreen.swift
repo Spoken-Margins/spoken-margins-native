@@ -12,6 +12,7 @@ struct SettingsScreen: View {
     @State private var showsAdvancedAISettings = false
     @State private var showsDeveloperTools = false
     @State private var pendingPermanentDeletion: LibraryItemRow?
+    @State private var pendingInboxDeletion: ImportInboxEntry?
     @State private var isEmptyRecentlyDeletedConfirmationPresented = false
     @State private var isResetConfirmationPresented = false
     @State private var diagnosticsExportURL: URL?
@@ -330,7 +331,7 @@ struct SettingsScreen: View {
                                     .buttonStyle(.borderless)
                                     .accessibilityIdentifier("importInbox.retry.\(entry.id)")
                                     Button("Delete", role: .destructive) {
-                                        model.deleteImportInboxEntry(entry)
+                                        pendingInboxDeletion = entry
                                     }
                                     .buttonStyle(.borderless)
                                     .accessibilityIdentifier("importInbox.delete.\(entry.id)")
@@ -526,6 +527,23 @@ struct SettingsScreen: View {
                 }
             } message: { item in
                 Text("\(item.title) and all of its sessions, notes, and transcripts will be deleted. This cannot be undone.")
+            }
+            .confirmationDialog(
+                "Delete this shared item?",
+                isPresented: Binding(
+                    get: { pendingInboxDeletion != nil },
+                    set: { if !$0 { pendingInboxDeletion = nil } }
+                ),
+                presenting: pendingInboxDeletion
+            ) { entry in
+                Button("Cancel", role: .cancel) {}
+                Button("Delete", role: .destructive) {
+                    model.deleteImportInboxEntry(entry)
+                    pendingInboxDeletion = nil
+                }
+                .accessibilityIdentifier("importInbox.delete.confirm")
+            } message: { entry in
+                Text("\(entry.title) will be removed. You would have to share it again to add it.")
             }
             .alert("Empty Recently Deleted?", isPresented: $isEmptyRecentlyDeletedConfirmationPresented) {
                 Button("Cancel", role: .cancel) {}

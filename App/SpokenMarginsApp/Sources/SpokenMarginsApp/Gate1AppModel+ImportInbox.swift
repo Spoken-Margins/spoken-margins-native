@@ -28,7 +28,7 @@ extension Gate1AppModel {
                     kind: .sourceLink,
                     title: "Podcast or audio link",
                     source: failed.handoff.inputURL,
-                    reason: failed.reason
+                    reason: ImportInboxReason.plain(failed.reason)
                 ))
             }
         } catch {
@@ -42,7 +42,7 @@ extension Gate1AppModel {
                     kind: .browserText,
                     title: failed.handoff.source.title,
                     source: failed.handoff.source.url,
-                    reason: failed.reason
+                    reason: ImportInboxReason.plain(failed.reason)
                 ))
             }
         } catch {
@@ -131,6 +131,8 @@ extension Gate1AppModel {
             let handoffStore = try resolvedBrowserTextHandoffStore()
             let payloadIDs = try handoffStore.pendingPayloadIDs()
             diagnostics["pendingBrowserTextPayloads"] = "\(payloadIDs.count)"
+            var failedSharedArticles = 0
+            defer { announceFailedSharedArticles(count: failedSharedArticles) }
             for payloadID in payloadIDs {
                 do {
                     let handoff = try handoffStore.handoff(payloadID: payloadID)
@@ -145,6 +147,7 @@ extension Gate1AppModel {
                 } catch {
                     try? handoffStore.quarantine(payloadID: payloadID, reason: error.localizedDescription)
                     diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "quarantined:\(error.localizedDescription)"
+                    failedSharedArticles += 1
                 }
             }
         } catch {
