@@ -66,7 +66,7 @@ enum Build23ImportedLayerPresentation {
         case .ambiguous:
             return "Ambiguous"
         case .absentFromRecipientEdition:
-            return "Position not matched in this edition"
+            return "Not found in this edition"
         case .unresolved:
             return "Unresolved"
         @unknown default:
