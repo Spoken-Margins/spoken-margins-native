@@ -295,43 +295,96 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(h.shownItems.count, 1)
     }
 
-    func testConfirmImportsTheReviewItCapturedWhenAnotherPacketIsStagedMeanwhile() async throws {
+    /// #2122: a packet opened while another imports waits its turn. A's success brings B up for review instead of
+    /// clearing it, and B can then be imported.
+    func testAPacketOpenedDuringAnImportWaitsAndIsShownWhenTheImportSucceeds() async throws {
         let h = try makeHarness()
         let a = try h.writePacket(named: "alpha", text: Self.alphaText)
         let b = try h.writePacket(named: "beta", text: Self.betaText)
         assertStaged(h.coordinator.stage(from: a.url))
         let captured = try XCTUnwrap(h.coordinator.beginConfirmation())
         assertStaged(h.coordinator.stage(from: b.url))
-        let visible = try XCTUnwrap(h.coordinator.review)
-        XCTAssertNotEqual(visible.id, captured.id, "B replaced A on screen without a busy guard")
+        XCTAssertEqual(h.coordinator.review?.id, captured.id, "A's review stays up while A imports")
         XCTAssertTrue(h.coordinator.isImporting)
+        XCTAssertEqual(h.diagnostics["lastSpokenMarginsPackageImport"], "queued:\(b.digest)")
+        XCTAssertEqual(h.confirmations.last, "Another shared packet is waiting. It opens after you finish this one.", "the listener is told B waits")
 
         await h.coordinator.confirm(captured)
 
         XCTAssertNotNil(try h.store.loadImportedCommentaryLayer(packageDigest: a.digest), "A is what was imported")
         XCTAssertNil(try h.store.loadImportedCommentaryLayer(packageDigest: b.digest))
-        XCTAssertNil(h.coordinator.review, "A's success clears whichever review is showing, here B's")
+        let next = try XCTUnwrap(h.coordinator.review, "A's success must not clear B")
+        XCTAssertEqual(next.contents.manifest.packageId, "package-beta")
         XCTAssertFalse(h.coordinator.isImporting)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: captured.extractionDirectory.path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: visible.extractionDirectory.path), "B's folder is not cleaned up")
+        XCTAssertNil(h.coordinator.importError)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: next.extractionDirectory.path), "B's staged files are kept for its review")
+
+        await h.confirmCurrentReview()
+
+        XCTAssertNotNil(try h.store.loadImportedCommentaryLayer(packageDigest: b.digest), "B imports after A")
+        XCTAssertNil(h.coordinator.review)
     }
 
-    func testFailedConfirmationOfACapturedReviewAnnotatesTheReviewThatIsShowing() async throws {
+    /// #2122: A's failure stays on A's screen, never on B's; cancelling A brings B up, and cancelling B removes its files.
+    func testAFailedImportKeepsItsErrorOnItsOwnReviewAndTheWaitingPacketSurvives() async throws {
         let h = try makeHarness()
         let a = try h.writePacket(named: "alpha", text: Self.alphaText)
         let b = try h.writePacket(named: "beta", text: Self.betaText)
         assertStaged(h.coordinator.stage(from: a.url))
         let captured = try XCTUnwrap(h.coordinator.beginConfirmation())
         assertStaged(h.coordinator.stage(from: b.url))
-        let visible = try XCTUnwrap(h.coordinator.review)
         h.showImportedItemFailure = StubFailure()
 
         await h.coordinator.confirm(captured)
 
-        XCTAssertEqual(h.coordinator.review?.id, visible.id, "B stays showing")
-        XCTAssertNotNil(h.coordinator.importError, "with A's error")
+        XCTAssertEqual(h.coordinator.review?.id, captured.id, "A stays showing, with its own error, for a retry or Cancel")
+        XCTAssertNotNil(h.coordinator.importError)
         XCTAssertFalse(h.coordinator.isImporting)
-        XCTAssertNotNil(try h.store.loadImportedCommentaryLayer(packageDigest: a.digest))
+
+        h.coordinator.cancel()
+
+        let waiting = try XCTUnwrap(h.coordinator.review, "cancelling A brings up B")
+        XCTAssertEqual(waiting.contents.manifest.packageId, "package-beta")
+        XCTAssertNil(h.coordinator.importError, "A's error does not follow B")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: captured.extractionDirectory.path))
+
+        h.coordinator.cancel()
+
+        XCTAssertNil(h.coordinator.review)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: waiting.extractionDirectory.path), "B's staged files are removed, not leaked")
+        XCTAssertEqual(h.incomingFolderNames(), [])
+    }
+
+    /// #2122, the map-packet path: a map's success brings up the packet that waited behind it.
+    func testAPacketOpenedDuringAMapImportIsShownWhenTheMapIsAdded() async throws {
+        let h = try makeHarness()
+        _ = try h.seedArticle(id: "mine", reference: "https://example.com/harbour")
+        let map = try h.writeMapPacket(named: "map-a")
+        let b = try h.writePacket(named: "beta", text: Self.betaText)
+        assertStaged(h.coordinator.stage(from: map.url))
+        let captured = try XCTUnwrap(h.coordinator.beginConfirmation())
+        assertStaged(h.coordinator.stage(from: b.url))
+
+        await h.coordinator.confirm(captured)
+
+        XCTAssertEqual(h.coordinator.review?.contents.manifest.packageId, "package-beta", "the map's success must not clear B")
+        XCTAssertFalse(h.coordinator.isImporting)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: captured.extractionDirectory.path), "the map's own copy goes")
+    }
+
+    /// #2122: opening a second packet while the first is only showing does not drop the first or leak its files.
+    func testAPacketOpenedWhileAnotherIsShowingWaitsBehindIt() throws {
+        let h = try makeHarness()
+        let a = try h.writePacket(named: "alpha", text: Self.alphaText)
+        let b = try h.writePacket(named: "beta", text: Self.betaText)
+        assertStaged(h.coordinator.stage(from: a.url))
+        let first = try XCTUnwrap(h.coordinator.review)
+
+        assertStaged(h.coordinator.stage(from: b.url))
+
+        XCTAssertEqual(h.coordinator.review?.id, first.id)
+        h.coordinator.cancel()
+        XCTAssertEqual(h.coordinator.review?.contents.manifest.packageId, "package-beta")
     }
 
     func testRecipientSuppliedPacketCannotBeConfirmedUntilASourceMatches() throws {
