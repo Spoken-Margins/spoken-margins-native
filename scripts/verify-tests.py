@@ -434,6 +434,7 @@ PORTABLE_LEFT_OUT = {
     'package-core': 'needs the Swift toolchain on macOS (SessionKitCoreTests also run in hosted-sessionkit-linux.yml)',
     'package-core-serial': 'needs the Swift toolchain on macOS',
     'package': 'needs the Swift toolchain, AVFoundation and a sound output; only the Mac lane runs the whole package',
+    'shipped-compat': 'builds SessionKit and Build 29\'s persistence code with Swift on macOS; only the Mac lane runs it',
 }
 # Inside runner-tests and ops, the tests that drive an Apple tool. Each is matched as a test id prefix (module,
 # class or test) in scripts/tests, or as a folder under ops/.
@@ -462,7 +463,7 @@ PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snaps
 # Between them the three plans run every fast-plan step (test_fast_split.py checks it).
 FAST_SPLIT_PLANS = ('fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest')
 HOSTED_SESSIONKIT_STEPS = ('package-build', 'package-core', 'package-core-serial')
-MAC_REST_STEPS = ('runner-tests', 'ops', 'package-build', 'package')
+MAC_REST_STEPS = ('runner-tests', 'ops', 'package-build', 'package', 'shipped-compat')
 # runner-tests without the tests above: discover scripts/tests as the plain step does, then drop the listed ids.
 PORTABLE_RUNNER_LOADER = '''
 import sys, unittest
@@ -487,6 +488,55 @@ kept = unittest.TestSuite(t for t in tests(unittest.defaultTestLoader.discover("
                           if t.id().startswith(only))
 sys.exit(not unittest.TextTestRunner().run(kept).wasSuccessful())
 '''
+
+
+# The last shipped build's compatibility checks (#1899): the frozen packet reader still matches the tag, and a
+# database this tree writes opens in that build's own persistence code. .github/workflows/shipped-build-compat.yml
+# runs them too, but the runner pushes a merge commit it built itself, so no required check can stand on it and a
+# red workflow never stopped a PR landing. They run here instead, in the plan the runner merges on, for a diff that
+# touches a file that workflow's `paths` names. They need the Mac (the writer builds SessionKit's test target),
+# so they are a Mac step in the split plans.
+SHIPPED_COMPAT_WORKFLOW = '.github/workflows/shipped-build-compat.yml'
+SHIPPED_COMPAT_COMMAND = 'scripts/freeze-shipped-reader.sh --check && scripts/check-build29-database.sh'
+SHIPPED_COMPAT_TIMEOUT = 2400  # the workflow's own 40-minute budget
+
+
+def shipped_compat_paths(root):
+    """The `paths` globs of the compatibility workflow in <root>, or None when the tree has no such workflow."""
+    workflow = Path(root) / SHIPPED_COMPAT_WORKFLOW
+    if not workflow.is_file():
+        return None
+    text = workflow.read_text()
+    if '    paths:\n' not in text:
+        raise RuntimeError(f'{SHIPPED_COMPAT_WORKFLOW} has no `paths:` list; shipped_compat_paths cannot read it')
+    block = text.split('    paths:\n', 1)[1].split('\npermissions:', 1)[0]
+    paths = [m.group(1) for m in re.finditer(r"^\s*-\s*'([^'!][^']*)'\s*(?:#.*)?$", block, re.M)]
+    entries = [line for line in block.splitlines() if line.strip().startswith('-')]
+    if len(entries) != len(paths):  # a double-quoted, unquoted or `!negated` entry would be dropped, not matched
+        raise RuntimeError(f'{SHIPPED_COMPAT_WORKFLOW} has a `paths:` entry that is not a plain single-quoted glob')
+    if not paths:
+        raise RuntimeError(f'{SHIPPED_COMPAT_WORKFLOW} lists no paths; shipped_compat_paths cannot read it')
+    return paths
+
+
+def github_glob_matches(pattern, path):
+    """GitHub's path glob: `*` stays inside a folder, `**` crosses folders."""
+    regex = re.escape(pattern).replace(r'\*\*', '\0').replace(r'\*', '[^/]*').replace('\0', '.*')
+    return re.fullmatch(regex, path) is not None
+
+
+def shipped_compat_needed(changed, root=None):
+    """(run, reason) for the compatibility checks. changed=None means no diff information: run, as every other
+    step does, so the Test Desk's run on next's tip and an author's own --plan fast keep them."""
+    if not changed:
+        return True, 'no list of changed paths, so every step runs'
+    patterns = shipped_compat_paths(root or ROOT)
+    if patterns is None:
+        return False, f'this tree has no {SHIPPED_COMPAT_WORKFLOW} to take the watched paths from'
+    hit = [path for path in changed if any(github_glob_matches(pattern, path) for pattern in patterns)]
+    if hit:
+        return True, 'the diff touches ' + ', '.join(hit[:3]) + (f' and {len(hit) - 3} more' if len(hit) > 3 else '')
+    return False, 'the diff touches none of the files shipped-build-compat.yml watches'
 
 
 def touches(changed, prefixes):
@@ -1057,6 +1107,16 @@ class Run:
             else:
                 self.host_steps()
 
+    def shipped_compat(self):
+        """The shipped build's packet reader and database checks (#1899), when the diff reaches what they watch.
+        After the SessionKit steps, so the writer's `swift test` finds that build already done."""
+        needed, why = shipped_compat_needed(self.changed)
+        if needed:
+            self.manifest.setdefault('notes', []).append('shipped-build compatibility checks ran: ' + why)
+            self.command('shipped-compat', ['sh', '-c', SHIPPED_COMPAT_COMMAND], timeout=SHIPPED_COMPAT_TIMEOUT)
+        else:
+            self.skip('shipped-compat', why)
+
     def hosted_sessionkit(self):
         """SessionKit's build and SessionKitCoreTests on a GitHub-hosted Mac (#1389), for hosted-portable.yml. No
         sound output there, so SessionKitTests and SessionKitTraceTests are left to the lane Mac (fast-mac-rest)."""
@@ -1103,6 +1163,7 @@ class Run:
             self.skip('package', why)
         else:
             self.package_steps(expected, core_elsewhere=True)
+        self.shipped_compat()
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError(inputs_changed_message('Inputs changed during Mac-only verification', self.input_files))
 
@@ -1179,6 +1240,7 @@ class Run:
             self.package_steps(expected)
             if pass_key and sessionkit_pass.key(ROOT, identity) == pass_key:
                 sessionkit_pass.record(state_dir(), pass_key, head=self.manifest['head'], tests=len(expected))
+        self.shipped_compat()
 
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError(inputs_changed_message('Inputs changed during fast verification', self.input_files))

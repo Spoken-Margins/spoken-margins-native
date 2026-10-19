@@ -459,7 +459,9 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(status, 'verified')
 
     def skipped_steps(self, manifest):
-        return {step['name']: step['skipped'] for step in manifest['steps'] if step.get('skipped')}
+        # shipped-compat follows its own path filter (test_shipped_compat_step.py), not the runner and ops test scopes.
+        return {step['name']: step['skipped'] for step in manifest['steps']
+                if step.get('skipped') and step['name'] != 'shipped-compat'}
 
     def test_a_lane_run_for_an_app_only_diff_runs_just_the_tests_that_read_the_app(self):
         # #862: runner-tests are about 2 minutes of a 10-minute run, and the ones that read App/ are seconds.
