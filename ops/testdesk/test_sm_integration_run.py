@@ -1,5 +1,6 @@
 import contextlib
 import os
+import shutil
 import importlib.machinery
 import importlib.util
 import json
@@ -12,6 +13,9 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sm_integration_run as run
+
+# sim_builds copies and zips apps with ditto, which only macOS has; the lane runs these tests on the Linux VPS.
+needs_ditto = unittest.skipUnless(shutil.which('ditto'), 'ditto is macOS-only')
 
 SHA = 'a' * 40
 OLD = 'b' * 40
@@ -781,6 +785,7 @@ class SimBuildTests(unittest.TestCase):
         self.root = Path(os.environ['SM_SIM_BUILDS'])
         run.shutil.rmtree(self.root, ignore_errors=True)
 
+    @needs_ditto
     def test_a_tested_tip_leaves_its_app_and_latest_points_at_it(self):
         with tempfile.TemporaryDirectory() as tmp, mac_with_room():
             ops = self.BuildingOps(tmp, [manifest({TEST: 'passed'})], bodies=[report_comment(OLD[:7], 'PASS')])
@@ -789,6 +794,7 @@ class SimBuildTests(unittest.TestCase):
         self.assertEqual(run.sim_builds.latest(self.root)['sha'], SHA)
         self.assertIn('simulator build kept', log)
 
+    @needs_ditto
     def test_a_failing_tip_is_still_kept_for_desks(self):
         plans = [manifest({TEST: 'failed'})] * 3
         with tempfile.TemporaryDirectory() as tmp, mac_with_room():
@@ -958,6 +964,8 @@ class HostedRunTests(unittest.TestCase):
                 (OLD, True, f'not packed: the app plan built {OLD[:7]}')]
         for head, built, said in rows:
             with self.subTest(said=said), tempfile.TemporaryDirectory() as tmp:
+                if said == 'packed' and not shutil.which('ditto'):
+                    self.skipTest('ditto is macOS-only')
                 ops = self.BuildingHostedOps(tmp, [manifest({TEST: 'failed'})] * 3, head=head, built=built,
                                              bodies=[report_comment(OLD[:7], 'PASS')])
                 with recording_slot(ops.events), patch.object(run.lane_ledger, 'record_tip'):
