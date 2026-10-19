@@ -209,7 +209,7 @@ class HolderNoteTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which('xcodebuild'), 'needs Xcode')
 class HostSlotTests(unittest.TestCase):
-    """Heavy host tests (#350): two at once, one while a simulator job runs, separate from builds."""
+    """Heavy host tests (#350): two at once, one beside a simulator job unless pressure is normal (#2150), separate from builds."""
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -251,12 +251,42 @@ class HostSlotTests(unittest.TestCase):
                 pass
         self.assertIn('host-test-lane', str(raised.exception))  # who holds them, as xcodebuild-lane says
 
-    def test_only_one_runs_while_a_simulator_job_runs(self):
+    def test_beside_a_simulator_job_a_second_runs_only_while_memory_pressure_is_normal(self):
+        # #2150: one T3 held the simulator slot and every host run queued behind one holder,
+        # about 18 minutes each, with 67% of memory free.
         with self.slots.simulator_slot('a journey', out=self.quiet):
             self.hold('first')
-            with self.assertRaisesRegex(TimeoutError, 'only 1 of 2'):
+            os.environ['SM_LANE_MEMORY_PRESSURE'] = '1'
+            with self.slots.host_test_slot('second', out=self.quiet, max_wait=0.3) as held:
+                self.assertEqual(held['slot'], 1)
+
+    def test_beside_a_simulator_job_only_one_runs_under_warn_or_critical_pressure(self):
+        with self.slots.simulator_slot('a journey', out=self.quiet):
+            self.hold('first')
+            for level, name in (('2', 'warn'), ('4', 'critical')):
+                with self.subTest(level=name):
+                    os.environ['SM_LANE_MEMORY_PRESSURE'] = level
+                    with self.assertRaisesRegex(TimeoutError, f'only 1 of 2 .*memory pressure is {name}'):
+                        with self.slots.host_test_slot('second', out=self.quiet, max_wait=0.3):
+                            pass
+
+    def test_beside_a_simulator_job_only_one_runs_while_the_owner_switched_the_second_off(self):
+        self.state.mkdir(parents=True, exist_ok=True)
+        (self.state / self.slots.SECOND_HOST_SLOT_OFF).write_text('owner: flakes beside T3\n')
+        os.environ['SM_LANE_MEMORY_PRESSURE'] = '1'
+        with self.slots.simulator_slot('a journey', out=self.quiet):
+            self.hold('first')
+            with self.assertRaisesRegex(TimeoutError, r'switched off \(owner: flakes beside T3\)'):
                 with self.slots.host_test_slot('second', out=self.quiet, max_wait=0.3):
                     pass
+
+    def test_the_off_switch_only_matters_beside_a_simulator_job(self):
+        self.state.mkdir(parents=True, exist_ok=True)
+        (self.state / self.slots.SECOND_HOST_SLOT_OFF).write_text('owner\n')
+        os.environ['SM_LANE_MEMORY_PRESSURE'] = '4'
+        self.hold('first')
+        with self.slots.host_test_slot('second', out=self.quiet, max_wait=0.3) as held:
+            self.assertEqual(held['slot'], 1)
 
     def test_a_run_holding_a_slot_passes_it_to_its_own_swift_test(self):
         self.hold('other')

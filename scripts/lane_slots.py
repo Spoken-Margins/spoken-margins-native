@@ -7,8 +7,11 @@ filled swap (2026-09-29, #184), so:
   the second slot hasn't been switched off (after the owner freed memory, 2026-09-29, #184).
 - Build slots: at most two xcodebuild runs at once, and only one while a simulator job runs.
 - Host-test slots: at most two heavy host test runs at once (a --plan fast run, a full `swift test`
-  through scripts/host-test-lane), and only one while a simulator job runs. Ungated, five sessions'
-  runs pushed the load to 150-420 and timing tests flaked (#350). They are separate from the build
+  through scripts/host-test-lane). Ungated, five sessions' runs pushed the load to 150-420 and timing
+  tests flaked (#350). While a simulator job runs, the second opens only while memory pressure is
+  normal and second-host-slot-during-sim.off is absent, as the second simulator slot does; one run
+  held every other run up for about 18 minutes on a mostly idle Mac (2026-10-19, #2150). This is
+  decided when a run takes a slot; a run already holding the second keeps it. They are separate from the build
   slots, so a simulator test run holding the one build slot doesn't stall every merge check. A
   host-slot holder never takes a build slot, so the two can't deadlock, and the slot passes to
   the holder's children (SM_LANE_HOST_SLOT), so a run's own `swift test` doesn't queue again.
@@ -36,6 +39,7 @@ SIMULATOR_SLOT = 'simulator-slot.lock'
 SIMULATOR_SLOTS = [SIMULATOR_SLOT, 'simulator-slot-2.lock']
 SECOND_SLOT_OFF = 'second-simulator-slot.off'
 SIMULATOR_DECISION = 'simulator-slot-decision.lock'
+SECOND_HOST_SLOT_OFF = 'second-host-slot-during-sim.off'
 PRESSURE_NAMES = {1: 'normal', 2: 'warn', 4: 'critical'}
 
 
@@ -138,6 +142,25 @@ def second_slot_status():
     if level not in (1, None):
         return False, f'memory pressure is {PRESSURE_NAMES.get(level, level)}, and a second simulator needs normal'
     return True, 'memory pressure is normal'
+
+
+def second_host_slot_status():
+    """(allowed, why): may a second host-test run start beside a running simulator job now?"""
+    off = state_dir() / SECOND_HOST_SLOT_OFF
+    if off.exists():
+        return False, f'only 1 of 2 while a simulator job runs: the second is switched off ({off.read_text().strip()})'
+    level = memory_pressure_level()
+    if level not in (1, None):
+        return False, (f'only 1 of 2 while a simulator job runs: memory pressure is '
+                       f'{PRESSURE_NAMES.get(level, level)}, and the second needs normal')
+    return True, 'memory pressure is normal'
+
+
+def _host_slots_usable():
+    """Both with no simulator job; beside one, the second needs second_host_slot_status()."""
+    if not simulator_job_running() or second_host_slot_status()[0]:
+        return HOST_SLOTS
+    return 1
 
 
 def disable_second_slot(reason):
@@ -244,7 +267,8 @@ def host_slot_names():
 
 @contextlib.contextmanager
 def host_test_slot(label, out=sys.stderr, max_wait=None):
-    """Hold a host-test slot for the with-block: one of two, or the first only while a simulator job runs.
+    """Hold a host-test slot for the with-block: one of two, or the first only while a simulator job
+    runs and second_host_slot_status() says no.
 
     Inside a process that already holds one (SM_LANE_HOST_SLOT is set), it yields at once.
     Yields {'slot': index or None, 'waited_seconds': seconds}.
@@ -253,7 +277,7 @@ def host_test_slot(label, out=sys.stderr, max_wait=None):
         yield {'slot': None, 'waited_seconds': 0, 'held_by': os.environ[HOST_SLOT_ENV]}
         return
     handle, index, waited = acquire(host_slot_names(), 'host-test slot', label, out, max_wait,
-                                    allowed=lambda: 1 if simulator_job_running() else HOST_SLOTS)
+                                    allowed=_host_slots_usable, why=lambda: second_host_slot_status()[1])
     os.environ[HOST_SLOT_ENV] = label
     try:
         yield {'slot': index, 'waited_seconds': waited}
