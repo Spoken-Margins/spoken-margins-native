@@ -939,8 +939,16 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return values.last
     }
 
+    /// A Listening Edition revision replaces the item's earlier ones (`ListeningEditionMap.supersedes`): each revision has
+    /// its own id, so they piled up and every one travelled in a shared packet (#2118). Existing record kind, no schema change.
     public func savePortableListeningMapProposal(_ proposal: PortableListeningMapProposalArtifact, itemId: String) throws {
-        try save(kind: "portable_listening_map_proposal", id: proposal.id, sessionId: nil, itemId: itemId, value: proposal)
+        try withTransaction {
+            let stored: [PortableListeningMapProposalArtifact] = try loadByItem(kind: "portable_listening_map_proposal", itemId: itemId)
+            for superseded in stored where ListeningEditionMap.supersedes(proposal.id, superseded.id) {
+                try deleteRecord(kind: "portable_listening_map_proposal", id: superseded.id)
+            }
+            try save(kind: "portable_listening_map_proposal", id: proposal.id, sessionId: nil, itemId: itemId, value: proposal)
+        }
     }
 
     public func removePortableListeningMapProposals(itemId: String) throws {

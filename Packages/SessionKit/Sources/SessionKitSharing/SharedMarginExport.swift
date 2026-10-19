@@ -19,6 +19,15 @@ public enum SharedMarginExport {
         }
     }
 
+    /// The one map a packet carries: the one the item plays (its resolved projection's), else the newest stored.
+    /// Every stored proposal used to travel, one manifest descriptor each, and old Listening Edition revisions piled
+    /// up in the store (#2118).
+    public static func mapProposals(_ proposals: [PortableListeningMapProposalArtifact], currentProposalID: String?) -> [PortableListeningMapProposalArtifact] {
+        let current = proposals.first { $0.id == currentProposalID }
+            ?? proposals.max { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
+        return mapProposals(current.map { [$0] } ?? [])
+    }
+
     public static func mapProposals(_ proposals: [PortableListeningMapProposalArtifact]) -> [PortableListeningMapProposalArtifact] {
         // The app exports reviewed Margins and textual map proposals, not the
         // local/imported Skim audio. Do not reference unselected voice assets.
