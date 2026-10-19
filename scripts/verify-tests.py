@@ -558,6 +558,7 @@ POCKET_WEIGHT_TESTS = frozenset(f'SessionKitTests/PocketRendererTests/{test}' fo
 SUPERTONIC_MODEL_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
     'SupertonicChunkingTests/testNumberHeavyTableSpanRendersNoChunkNearTheBabbleLength',
     'SupertonicChunkingTests/testSystemVoiceReadsAFlaggedChunkInSupertonicsFormat',
+    'SupertonicDownloadedModelTests/testThePinnedTreeHashIsTheDownloadedModels',
     'SupertonicNarrationTests/testDiscardDeletesOnlyAudioTheRendererGenerated',
     'SupertonicNarrationTests/testRealRenderComesBackTrimmedToItsSpeech',
     'SupertonicNarrationTests/testRealRendersArePacedByWhoAskedNotBySharedState',

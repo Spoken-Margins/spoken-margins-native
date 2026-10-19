@@ -162,7 +162,8 @@ class SupertonicModelSkips(unittest.TestCase):
             text = path.read_text()
             for match in re.finditer(r'func (test\w+)\(\)[^{]*\{', text):
                 body = text[match.end():text.find('\n    }\n', match.end())]
-                if 'SupertonicTestModel.assets()' in body:
+                # Through the assets helper, or straight from the fetched folder (TestInputs.supertonicModel()).
+                if 'SupertonicTestModel.assets()' in body or 'supertonicModel()' in body:
                     readers.add(f'SessionKitTests/{path.stem}/{match.group(1)}')
         self.assertTrue(readers)
         self.assertEqual(readers, set(verification.SUPERTONIC_MODEL_TESTS))
