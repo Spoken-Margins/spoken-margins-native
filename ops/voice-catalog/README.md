@@ -2,6 +2,8 @@
 
 The site publishes the signed list of voices the app can download, plus a plain page a person can read. `scripts/voice-catalog` builds and checks it. The catalog format and the app's verifier are #1816.
 
+**Since 2026-10-19 the app asks the owner's server for nothing (#2055).** The owner: "Supertonic downloading straight from Hugging Face at pinned revisions and no server." Every file in `sources.json` has a publisher source, none is mirrored, and the app fetches no signed catalog: it uses the snapshot bundled with it (`scripts/voice-catalog app-snapshot`). The signed catalog below needs a home off the server before the app fetches it again; until then, don't `publish --apply`.
+
 ## What lives where
 
 | Piece | Where |
@@ -18,7 +20,7 @@ The site publishes the signed list of voices the app can download, plus a plain 
 
 Each prints one line per voice and writes the detail to `artifacts/voice-catalog/`.
 
-1. `check` requests every source and licence text. It downloads a file only the first time, when its ETag or size changes, or when it was last verified over 30 days ago (`--full` forces every file), and compares the SHA-256 with `sources.json`. Files the publisher ships only inside an archive (Supertonic's INT8 networks) can't be requested one by one, so the voice's `upstreamArchives` entry (the sherpa-onnx archive, with its size and hash) is checked instead, always counting against the voice. A voice whose file or licence text no longer matches is **held**. `--mirror require` also holds a voice whose mirror copy is missing or wrong; the default only notes it.
+1. `check` requests every source and licence text. It downloads a file only the first time, when its ETag or size changes, or when it was last verified over 30 days ago (`--full` forces every file), and compares the SHA-256 with `sources.json`. A voice's `upstreamArchives` entry (Supertonic's sherpa-onnx archive, with its size and hash, kept as a spare source of the INT8 graphs) is checked too, always counting against the voice. A file the catalog carries as text (`contentFile`) is checked against its hash when `sources.json` is validated. A voice whose file or licence text no longer matches is **held**. `--mirror require` also holds a voice whose mirror copy is missing or wrong; the default only notes it.
 2. `build` writes the unsigned catalog. A held voice keeps the entry from the last published catalog, or is left out if it was never published. `catalogVersion` rises only when the voices changed; an unchanged catalog keeps its version and date, so the app treats a re-sign as a refresh.
 3. `keygen` (once, on the Mac) makes the key and prints the line for `VoiceCatalogTrust.production`.
 4. `sign` signs the built catalog and writes the envelope and manifest.
@@ -52,7 +54,7 @@ The token that files them stays on the host in `/etc/sm-voice-catalog/github-tok
 
 ## Privacy
 
-The app's request is a plain GET of `/voices/v1/catalog.json`, then of each file: no identifier, cookie or query string, the same bytes for every listener. `docs/legal/privacy-policy-draft.md` row 18 describes it. The weekly check sends nothing about listeners; it is our server asking publishers for public files.
+The app requests each file from its publisher (Hugging Face, GitHub, apache.org), and today no catalog. When it fetched `/voices/v1/catalog.json`, it was a plain GET: no identifier, cookie or query string, the same bytes for every listener. `docs/legal/privacy-policy-draft.md` row 18 describes it. The weekly check sends nothing about listeners; it is our server asking publishers for public files.
 
 ## Tests
 
