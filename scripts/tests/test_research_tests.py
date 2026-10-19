@@ -69,6 +69,7 @@ class ResearchRunnerTests(unittest.TestCase):
                     patch.object(run, 'ops_steps'), \
                     patch.object(verification, 'swift_tests', return_value=set()), \
                     patch.object(verification, 'in_codex_sandbox', return_value=False), \
+                    patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
                     patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
                 run.host_steps()
         steps = {name: (args, kw) for name, args, kw in calls}
