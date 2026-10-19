@@ -221,14 +221,46 @@ public enum VoiceModelCatalogVerifier {
             }
         }
 
+        guard entry.archives.count <= VoiceModelCatalogRules.maximumArchives else { return .invalidField("archives") }
+        var archiveIDs = Set<String>()
+        for archive in entry.archives {
+            guard VoiceModelCatalogRules.isVoiceID(archive.id), archiveIDs.insert(archive.id).inserted else {
+                return .invalidField("archives.id")
+            }
+            guard VoiceModelArchive.supportedFormats.contains(archive.format) else { return .unsupportedArchiveFormat(archive.format) }
+            guard archive.byteCount >= 1 else { return .invalidField("archives.\(archive.id).byteCount") }
+            guard VoiceModelCatalogRules.isLowercaseSHA256(archive.sha256) else { return .invalidHash(path: "archives.\(archive.id)") }
+            guard !archive.sources.isEmpty else { return .emptySources(path: "archives.\(archive.id)") }
+            guard archive.sources.count <= VoiceModelCatalogRules.maximumSources else { return .invalidField("archives.\(archive.id).sources") }
+            for source in archive.sources where !VoiceModelCatalogRules.isHTTPSURL(source) {
+                return .insecureSource(path: "archives.\(archive.id)")
+            }
+        }
         var paths = Set<String>()
+        var members = Set<String>()
         for file in entry.files {
             guard VoiceModelCatalogRules.isRelativeFilePath(file.path) else { return .invalidField("files.path") }
             // Compared case-insensitively: Model.onnx and model.onnx are one file on a default iPhone volume.
             guard paths.insert(file.path.lowercased()).inserted else { return .duplicatePath(file.path) }
             guard file.byteCount >= 1 else { return .invalidField("files.\(file.path).byteCount") }
             guard VoiceModelCatalogRules.isLowercaseSHA256(file.sha256) else { return .invalidHash(path: file.path) }
-            guard !file.sources.isEmpty else { return .emptySources(path: file.path) }
+            let places = (file.sources.isEmpty ? 0 : 1) + (file.archiveMember == nil ? 0 : 1) + (file.content == nil ? 0 : 1)
+            guard places <= 1 else { return .ambiguousFileSource(path: file.path) }
+            if let member = file.archiveMember {
+                guard archiveIDs.contains(member.archive) else { return .unknownArchive(member.archive) }
+                guard VoiceModelCatalogRules.isRelativeFilePath(member.member) else { return .invalidField("files.\(file.path).archiveMember.member") }
+                // One member written to two paths would be two installs of one file; say so instead.
+                guard members.insert(member.archive + "\u{0}" + member.member).inserted else { return .invalidField("files.\(file.path).archiveMember") }
+            } else if let content = file.content {
+                // The signed catalog carries these bytes, so they can be held to the hash here and now.
+                let bytes = Data(content.utf8)
+                guard bytes.count == file.byteCount, bytes.count <= VoiceModelCatalogRules.maximumContentBytes else {
+                    return .invalidField("files.\(file.path).content")
+                }
+                guard Self.hex(SHA256.hash(data: bytes)) == file.sha256 else { return .invalidHash(path: file.path) }
+            } else {
+                guard !file.sources.isEmpty else { return .emptySources(path: file.path) }
+            }
             guard file.sources.count <= VoiceModelCatalogRules.maximumSources else { return .invalidField("files.\(file.path).sources") }
             for source in file.sources where !VoiceModelCatalogRules.isHTTPSURL(source) {
                 return .insecureSource(path: file.path)
@@ -247,6 +279,10 @@ public enum VoiceModelCatalogVerifier {
             return .duplicatePath(path)
         }
         return nil
+    }
+
+    private static func hex(_ digest: SHA256.Digest) -> String {
+        digest.map { String(format: "%02x", $0) }.joined()
     }
 
     private static func isBlank(_ text: String) -> Bool {
@@ -269,6 +305,9 @@ public enum VoiceModelCatalogRules {
     public static let maximumVoices = 64
     public static let maximumFiles = 256
     public static let maximumSources = 8
+    public static let maximumArchives = 8
+    /// Text a catalog carries in a file's `content`: a notice, never a model.
+    public static let maximumContentBytes = 4_096
     public static let maximumLicenses = 16
     public static let maximumURLCharacters = 2_048
     public static let maximumSummaryCharacters = 1_500

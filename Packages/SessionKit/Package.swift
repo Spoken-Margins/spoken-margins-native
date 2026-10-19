@@ -40,7 +40,14 @@ let package = Package(
         )
     ],
     targets: [
-        .target(name: "SessionKit"),
+        // libbz2 from the Apple SDKs, for the tar.bz2 archives some voices are published in (#2086). A C target
+        // rather than a system library, which Xcode can't resolve as a package dependency. Apple platforms only:
+        // Linux builds SessionKit without it, and BZip2ArchiveDecompressor says so.
+        .target(name: "CBZip2", linkerSettings: [.linkedLibrary("bz2")]),
+        .target(
+            name: "SessionKit",
+            dependencies: [.target(name: "CBZip2")]
+        ),
         .executableTarget(name: "PhonePlan", dependencies: ["SessionKit"]),
         .target(
             name: "SessionKitPersistence",
@@ -197,6 +204,13 @@ package.dependencies = [
 package.targets.append(.systemLibrary(name: "SQLite3", path: "Linux/SQLite3", providers: [.apt(["libsqlite3-dev"])]))
 for target in package.targets where target.name == "SessionKit" || target.name == "SessionKitFeeds" || target.name == "SessionKitCoreTests" {
     target.dependencies.append(.product(name: "Crypto", package: "swift-crypto"))
+}
+for target in package.targets where target.name == "SessionKit" {
+    // CBZip2 is Apple-only (left out above); its dependency goes with it.
+    target.dependencies.removeAll {
+        if case .targetItem(name: "CBZip2", _) = $0 { return true }
+        return false
+    }
 }
 for target in package.targets where target.name == "SessionKitPersistence" {
     target.dependencies.append("SQLite3")

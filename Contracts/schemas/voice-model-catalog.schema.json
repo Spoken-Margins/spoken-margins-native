@@ -67,6 +67,12 @@
           "maxItems": 256,
           "items": {"$ref": "#/$defs/file"}
         },
+        "archives": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {"$ref": "#/$defs/archive"},
+          "description": "Upstream archives some of this voice's files are taken from (#2086), for files a publisher ships only inside an archive. The app downloads each archive a file names, once, checks its size and SHA-256, takes out the named members and deletes it. Archive ids are unique within the voice."
+        },
         "licenses": {
           "type": "array",
           "minItems": 1,
@@ -81,8 +87,14 @@
     },
     "file": {
       "type": "object",
-      "required": ["path", "byteCount", "sha256", "sources"],
+      "required": ["path", "byteCount", "sha256"],
       "additionalProperties": false,
+      "description": "One file of the voice. Its bytes come from exactly one place: sources (fetched as they are), archiveMember (taken out of one of the voice's archives) or content (text the signed catalog carries itself). The app checks every file's byteCount and sha256 whichever way it arrived.",
+      "oneOf": [
+        {"required": ["sources"], "not": {"anyOf": [{"required": ["archiveMember"]}, {"required": ["content"]}]}},
+        {"required": ["archiveMember"], "not": {"anyOf": [{"required": ["sources"]}, {"required": ["content"]}]}},
+        {"required": ["content"], "not": {"anyOf": [{"required": ["sources"]}, {"required": ["archiveMember"]}]}}
+      ],
       "properties": {
         "path": {"$ref": "#/$defs/filePath"},
         "byteCount": {"type": "integer", "minimum": 1},
@@ -95,6 +107,22 @@
           "description": "In order of preference: the upstream pinned revision first; our own mirror only where the licence allows redistributing the file."
         },
         "licenseId": {"$ref": "#/$defs/id", "description": "Which of the voice's licenses governs this file."},
+        "archiveMember": {
+          "type": "object",
+          "required": ["archive", "member"],
+          "additionalProperties": false,
+          "description": "The archive member holding this file's bytes. It is written to path, never extracted under its own name. The app refuses a member named by two files, and an archive id the voice doesn't list.",
+          "properties": {
+            "archive": {"$ref": "#/$defs/id"},
+            "member": {"$ref": "#/$defs/filePath", "description": "The member's path inside the archive."}
+          }
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "description": "The file's UTF-8 text, for a short file no publisher serves (our notice of modification). byteCount and sha256 are of its UTF-8 bytes, at most 4,096."
+        },
         "origin": {
           "type": "object",
           "required": ["url"],
@@ -104,6 +132,24 @@
             "url": {"$ref": "#/$defs/httpsURL"},
             "note": {"type": "string", "maxLength": 500}
           }
+        }
+      }
+    },
+    "archive": {
+      "type": "object",
+      "required": ["id", "format", "byteCount", "sha256", "sources"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "format": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.+-]{0,15}(?![\\s\\S])", "description": "Open on purpose, like runtime.name: the app unpacks 'tar.bz2' and leaves out a voice with an archive in any other format."},
+        "byteCount": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {"$ref": "#/$defs/httpsURL"},
+          "description": "In order of preference, the publisher's pinned release first."
         }
       }
     },

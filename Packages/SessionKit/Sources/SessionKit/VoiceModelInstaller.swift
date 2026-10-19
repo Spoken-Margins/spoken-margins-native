@@ -10,6 +10,11 @@ import Foundation
 // SHA-256, and only then moves the whole folder into `<root>/<voice id>/<version>/` in one rename.
 // A failed install or upgrade never touches an installed version. Nothing in the app calls this yet;
 // background URLSession wiring and the storage ledger belong to the Settings issue.
+//
+// A file the publisher ships only inside an archive (#2086) is taken out of it: the archive downloads
+// once into the staging folder like any file, is checked, is streamed through the decompressor to write
+// each named member to its own path (each member checked too), and is deleted before the folder moves.
+// Peak disk use is the archive plus the members taken out of it, on top of the other files.
 
 public struct VoiceModelInstallFile: Equatable, Sendable {
     /// Where the file lands inside the voice's folder, e.g. `onnx/tts.json`.
@@ -17,14 +22,72 @@ public struct VoiceModelInstallFile: Equatable, Sendable {
     public var byteCount: Int
     /// Lowercase hex.
     public var sha256: String
-    /// HTTPS URLs in order of preference.
+    /// HTTPS URLs in order of preference. Empty for an archive member or carried content.
     public var sources: [String]
+    /// The member of one of the install's archives that holds these bytes.
+    public var archiveMember: VoiceModelArchiveMember?
+    /// The bytes themselves, when the signed catalog carries them.
+    public var content: Data?
 
     public init(path: String, byteCount: Int, sha256: String, sources: [String]) {
         self.path = path
         self.byteCount = byteCount
         self.sha256 = sha256
         self.sources = sources
+    }
+
+    public init(path: String, byteCount: Int, sha256: String, archiveMember: VoiceModelArchiveMember) {
+        self.init(path: path, byteCount: byteCount, sha256: sha256, sources: [])
+        self.archiveMember = archiveMember
+    }
+
+    public init(path: String, byteCount: Int, sha256: String, content: Data) {
+        self.init(path: path, byteCount: byteCount, sha256: sha256, sources: [])
+        self.content = content
+    }
+
+    var isDownloaded: Bool { archiveMember == nil && content == nil }
+}
+
+/// An archive some of an install's files are taken from. Downloaded and checked like a file, then deleted.
+public struct VoiceModelInstallArchive: Equatable, Sendable {
+    public var id: String
+    public var format: String
+    public var byteCount: Int
+    public var sha256: String
+    public var sources: [String]
+
+    public init(id: String, format: String, byteCount: Int, sha256: String, sources: [String]) {
+        self.id = id
+        self.format = format
+        self.byteCount = byteCount
+        self.sha256 = sha256
+        self.sources = sources
+    }
+
+    /// Where it sits in the staging folder while it is needed. Hidden, so it is never installed.
+    var stagingPath: String { "\(VoiceModelInstaller.archiveFolder)/\(id).\(format)" }
+}
+
+extension VoiceModelEntry {
+    /// The installer's view of this voice: every file, and every archive a file is taken from.
+    public var installFiles: [VoiceModelInstallFile] {
+        files.map { file in
+            if let member = file.archiveMember {
+                return VoiceModelInstallFile(path: file.path, byteCount: file.byteCount, sha256: file.sha256, archiveMember: member)
+            }
+            if let content = file.content {
+                return VoiceModelInstallFile(path: file.path, byteCount: file.byteCount, sha256: file.sha256, content: Data(content.utf8))
+            }
+            return VoiceModelInstallFile(path: file.path, byteCount: file.byteCount, sha256: file.sha256, sources: file.sources)
+        }
+    }
+
+    public var installArchives: [VoiceModelInstallArchive] {
+        let used = Set(files.compactMap(\.archiveMember?.archive))
+        return archives.filter { used.contains($0.id) }.map {
+            VoiceModelInstallArchive(id: $0.id, format: $0.format, byteCount: $0.byteCount, sha256: $0.sha256, sources: $0.sources)
+        }
     }
 }
 
@@ -72,21 +135,26 @@ public actor VoiceModelInstaller {
         public var retryDelay: Duration
         /// Free bytes on the volume holding the given folder, or nil when unknown (then nothing is refused).
         public var availableCapacity: @Sendable (URL) -> Int64?
+        /// Opens the archives some voices' files are taken from.
+        public var decompressor: any VoiceModelArchiveDecompressor
 
         public init(
             marginBytes: Int64 = 50_000_000,
             attemptsPerSource: Int = 3,
             retryDelay: Duration = .seconds(1),
-            availableCapacity: @escaping @Sendable (URL) -> Int64? = VoiceModelInstaller.volumeAvailableBytes
+            availableCapacity: @escaping @Sendable (URL) -> Int64? = VoiceModelInstaller.volumeAvailableBytes,
+            decompressor: any VoiceModelArchiveDecompressor = BZip2ArchiveDecompressor()
         ) {
             self.marginBytes = marginBytes
             self.attemptsPerSource = attemptsPerSource
             self.retryDelay = retryDelay
             self.availableCapacity = availableCapacity
+            self.decompressor = decompressor
         }
     }
 
     private static let stagingFolder = ".staging"
+    static let archiveFolder = ".archives"
     private static let partialSuffix = ".partial"
 
     private let root: URL
@@ -123,33 +191,43 @@ public actor VoiceModelInstaller {
 
     /// Installs `version` of the voice and returns its folder. Once it is in place, other versions of the
     /// same voice are deleted. Throws `CancellationError` when the task is cancelled; a partial download
-    /// stays staged so a later call resumes it.
+    /// stays staged so a later call resumes it. Progress counts downloaded bytes: each downloaded file and
+    /// each archive, which is what `VoiceModelEntry.downloadByteCount` shows the listener.
     @discardableResult
     public func install(
         voiceId: String,
         version: String,
         files: [VoiceModelInstallFile],
+        archives: [VoiceModelInstallArchive] = [],
         progress: (@Sendable (VoiceModelInstallProgress) -> Void)? = nil
     ) async throws -> URL {
-        try Self.validate(voiceId: voiceId, version: version, files: files)
+        try Self.validate(voiceId: voiceId, version: version, files: files, archives: archives, formats: configuration.decompressor.formats)
         guard busyVoices.insert(voiceId).inserted else { throw VoiceModelInstallError.busy(voiceId: voiceId) }
         defer { busyVoices.remove(voiceId) }
 
         let staging = stagingURL(voiceId: voiceId, version: version)
-        let total = files.reduce(Int64(0)) { $0 + Int64($1.byteCount) }
+        let total = files.filter(\.isDownloaded).reduce(Int64(0)) { $0 + Int64($1.byteCount) }
+            + archives.reduce(Int64(0)) { $0 + Int64($1.byteCount) }
 
-        try refuseIfNoRoom(files: files, staging: staging, total: total)
+        try refuseIfNoRoom(files: files, archives: archives, staging: staging)
 
         try createFolder(root)
         try createFolder(root.appendingPathComponent(Self.stagingFolder, isDirectory: true))
         try createFolder(staging)
         recoverReplaced(voiceId: voiceId)
-        try pruneStaging(staging, keeping: files)
+        try pruneStaging(staging, keeping: files, archives: archives)
 
         let tracker = ProgressTracker(total: total, report: progress)
-        for file in files {
+        for file in files where file.isDownloaded {
             try await stage(file, in: staging, tracker: tracker)
         }
+        for file in files {
+            if let content = file.content { try place(content, as: file, in: staging) }
+        }
+        for archive in archives {
+            try await unpack(archive, members: files.filter { $0.archiveMember?.archive == archive.id }, in: staging, tracker: tracker)
+        }
+        try removeIfPresent(staging.appendingPathComponent(Self.archiveFolder, isDirectory: true))
 
         return try finalize(staging: staging, voiceId: voiceId, version: version)
     }
@@ -185,13 +263,24 @@ public actor VoiceModelInstaller {
         return (attributes?[.systemFreeSize] as? NSNumber)?.int64Value
     }
 
-    private func refuseIfNoRoom(files: [VoiceModelInstallFile], staging: URL, total: Int64) throws {
+    /// Counts what is still to be written: the rest of each download, each archive member and carried file
+    /// not yet in place, and the rest of each archive whose members aren't all out of it yet. An archive is
+    /// on disk at the same time as its members, so both count.
+    private func refuseIfNoRoom(files: [VoiceModelInstallFile], archives: [VoiceModelInstallArchive], staging: URL) throws {
+        func stillToWrite(_ path: String, _ byteCount: Int) -> Int64 {
+            let have = Self.sizeOfFile(at: staging.appendingPathComponent(path))
+                ?? Self.sizeOfFile(at: staging.appendingPathComponent(path + Self.partialSuffix))
+                ?? 0
+            return max(0, Int64(byteCount) - min(have, Int64(byteCount)))
+        }
         var stillToDownload: Int64 = 0
         for file in files {
-            let have = Self.sizeOfFile(at: staging.appendingPathComponent(file.path))
-                ?? Self.sizeOfFile(at: staging.appendingPathComponent(file.path + Self.partialSuffix))
-                ?? 0
-            stillToDownload += max(0, Int64(file.byteCount) - min(have, Int64(file.byteCount)))
+            stillToDownload += stillToWrite(file.path, file.byteCount)
+        }
+        for archive in archives {
+            let members = files.filter { $0.archiveMember?.archive == archive.id }
+            let done = members.allSatisfy { Self.sizeOfFile(at: staging.appendingPathComponent($0.path)) == Int64($0.byteCount) }
+            if !done { stillToDownload += stillToWrite(archive.stagingPath, archive.byteCount) }
         }
         let needed = stillToDownload + configuration.marginBytes
         if let available = configuration.availableCapacity(root), available < needed {
@@ -372,6 +461,78 @@ public actor VoiceModelInstaller {
         }
     }
 
+    // MARK: Archives and carried files
+
+    /// Writes bytes the catalog carries, after checking them.
+    private func place(_ content: Data, as file: VoiceModelInstallFile, in staging: URL) throws {
+        let finalURL = staging.appendingPathComponent(file.path)
+        guard content.count == file.byteCount, Self.hex(SHA256.hash(data: content)) == file.sha256 else {
+            throw VoiceModelInstallError.checksumMismatch(path: file.path)
+        }
+        try createFolder(finalURL.deletingLastPathComponent())
+        do {
+            try content.write(to: finalURL, options: .atomic)
+        } catch {
+            throw VoiceModelInstallError.storageFailed(error.localizedDescription)
+        }
+    }
+
+    /// Takes `members` out of `archive`. Members already in place with the right bytes are kept, so an
+    /// install that stopped after unpacking doesn't download the archive again. Otherwise the archive is
+    /// downloaded (or resumed) and checked like any file, each member is written to its own path while it
+    /// is hashed, and the archive is deleted once every member is out.
+    private func unpack(_ archive: VoiceModelInstallArchive, members: [VoiceModelInstallFile], in staging: URL, tracker: ProgressTracker) async throws {
+        var missing: [String: VoiceModelInstallFile] = [:]
+        for file in members {
+            let url = staging.appendingPathComponent(file.path)
+            if Self.sizeOfFile(at: url) == Int64(file.byteCount), try Self.sha256(of: url) == file.sha256 { continue }
+            try removeIfPresent(url)
+            if let member = file.archiveMember?.member { missing[member] = file }
+        }
+        let archiveURL = staging.appendingPathComponent(archive.stagingPath)
+        guard !missing.isEmpty else {
+            tracker.complete(Int64(archive.byteCount))
+            try removeIfPresent(archiveURL)
+            return
+        }
+        let asFile = VoiceModelInstallFile(path: archive.stagingPath, byteCount: archive.byteCount, sha256: archive.sha256, sources: archive.sources)
+        try await stage(asFile, in: staging, tracker: tracker)
+
+        let extraction = MemberExtraction(staging: staging, wanted: missing)
+        let reader = TarStreamReader(
+            onMember: { try extraction.begin($0) },
+            onData: { try extraction.write($0) },
+            onMemberEnd: { try extraction.end($0) }
+        )
+        do {
+            try configuration.decompressor.tarBytes(of: archiveURL, format: archive.format) { chunk in
+                if Task.isCancelled { throw CancellationError() }
+                try reader.feed(chunk)
+            }
+            try reader.finish()
+        } catch is CancellationError {
+            extraction.abandon()
+            throw CancellationError()
+        } catch let error as VoiceModelInstallError {
+            extraction.abandon()
+            if case .checksumMismatch = error {
+                // The archive matched its hash, so a member that doesn't is the catalog's mistake; start clean.
+                try? removeIfPresent(staging)
+            }
+            throw error
+        } catch {
+            extraction.abandon()
+            // The archive matched its hash, so bytes that won't unpack can't be fixed by downloading again.
+            try? removeIfPresent(archiveURL)
+            throw VoiceModelInstallError.downloadFailed(path: archive.stagingPath, problem: "the archive couldn't be unpacked (\(error))")
+        }
+        if let left = extraction.remaining.first {
+            extraction.abandon()
+            throw VoiceModelInstallError.downloadFailed(path: left.path, problem: "the archive has no member \(left.archiveMember?.member ?? "")")
+        }
+        try removeIfPresent(archiveURL)
+    }
+
     // MARK: Finishing
 
     private func finalize(staging: URL, voiceId: String, version: String) throws -> URL {
@@ -455,9 +616,10 @@ public actor VoiceModelInstaller {
     }
 
     /// Deletes anything staged that the file list doesn't name, so the folder that gets installed holds
-    /// exactly the listed files.
-    private func pruneStaging(_ staging: URL, keeping files: [VoiceModelInstallFile]) throws {
-        let wanted = Set(files.flatMap { [$0.path, $0.path + Self.partialSuffix] })
+    /// exactly the listed files. An archive still to be unpacked is kept.
+    private func pruneStaging(_ staging: URL, keeping files: [VoiceModelInstallFile], archives: [VoiceModelInstallArchive]) throws {
+        let wanted = Set(files.map(\.path).flatMap { [$0, $0 + Self.partialSuffix] }
+            + archives.map(\.stagingPath).flatMap { [$0, $0 + Self.partialSuffix] })
         guard let enumerator = FileManager.default.enumerator(at: staging, includingPropertiesForKeys: [.isRegularFileKey]) else { return }
         let base = staging.standardizedFileURL.path + "/"
         var unwanted: [URL] = []
@@ -471,10 +633,30 @@ public actor VoiceModelInstaller {
 
     // MARK: Checks
 
-    private static func validate(voiceId: String, version: String, files: [VoiceModelInstallFile]) throws {
+    private static func validate(
+        voiceId: String,
+        version: String,
+        files: [VoiceModelInstallFile],
+        archives: [VoiceModelInstallArchive],
+        formats: Set<String>
+    ) throws {
         try validateName(voiceId, what: "voice id")
         try validateName(version, what: "version")
         guard !files.isEmpty else { throw VoiceModelInstallError.invalidRequest("the file list is empty") }
+        var archiveIDs: Set<String> = []
+        for archive in archives {
+            guard isSafeName(archive.id), isSafeName(archive.format), archiveIDs.insert(archive.id).inserted else {
+                throw VoiceModelInstallError.invalidRequest("\"\(archive.id)\" is not a usable archive id")
+            }
+            guard formats.contains(archive.format) else {
+                throw VoiceModelInstallError.invalidRequest("this build can't open \(archive.format) archives")
+            }
+            guard archive.byteCount >= 1, archive.sha256.count == 64, archive.sha256.allSatisfy({ "0123456789abcdef".contains($0) }) else {
+                throw VoiceModelInstallError.invalidRequest("archive \(archive.id) has a malformed size or checksum")
+            }
+            guard !archive.sources.isEmpty else { throw VoiceModelInstallError.invalidRequest("archive \(archive.id) has no sources") }
+        }
+        var members: Set<String> = []
         var paths: Set<String> = []
         for file in files {
             let components = file.path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
@@ -489,7 +671,22 @@ public actor VoiceModelInstaller {
             guard file.sha256.count == 64, file.sha256.allSatisfy({ "0123456789abcdef".contains($0) }) else {
                 throw VoiceModelInstallError.invalidRequest("\(file.path) has a malformed checksum")
             }
-            guard !file.sources.isEmpty else { throw VoiceModelInstallError.invalidRequest("\(file.path) has no sources") }
+            let places = (file.sources.isEmpty ? 0 : 1) + (file.archiveMember == nil ? 0 : 1) + (file.content == nil ? 0 : 1)
+            guard places == 1 else {
+                throw VoiceModelInstallError.invalidRequest(places == 0 ? "\(file.path) has no sources" : "\(file.path) names more than one source of bytes")
+            }
+            if let member = file.archiveMember {
+                guard archiveIDs.contains(member.archive) else {
+                    throw VoiceModelInstallError.invalidRequest("\(file.path) names archive \(member.archive), which isn't listed")
+                }
+                guard members.insert(member.archive + "\u{0}" + member.member).inserted else {
+                    throw VoiceModelInstallError.invalidRequest("\(member.member) is taken out twice")
+                }
+            }
+        }
+        // An archive no file is taken from would be downloaded for nothing.
+        for id in archiveIDs where !files.contains(where: { $0.archiveMember?.archive == id }) {
+            throw VoiceModelInstallError.invalidRequest("archive \(id) gives no file")
         }
         // A file and a folder can't share a path.
         for path in paths {
@@ -534,7 +731,80 @@ public actor VoiceModelInstaller {
         while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
             hasher.update(data: chunk)
         }
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        return hex(hasher.finalize())
+    }
+
+    private static func hex(_ digest: SHA256.Digest) -> String {
+        digest.map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+/// Writes the wanted members of one tar stream to their own paths in the staging folder, each to a
+/// `.partial` file while it is hashed, moved into place only when its size and SHA-256 match.
+private final class MemberExtraction {
+    private let staging: URL
+    private var wanted: [String: VoiceModelInstallFile]
+    private var current: (file: VoiceModelInstallFile, handle: FileHandle, hasher: SHA256, written: Int64, partial: URL)?
+
+    init(staging: URL, wanted: [String: VoiceModelInstallFile]) {
+        self.staging = staging
+        self.wanted = wanted
+    }
+
+    var remaining: [VoiceModelInstallFile] { wanted.values.sorted { $0.path < $1.path } }
+
+    func begin(_ member: TarStreamReader.Member) throws -> Bool {
+        guard let file = wanted[member.path] else { return false }
+        guard member.size == Int64(file.byteCount) else { throw VoiceModelInstallError.checksumMismatch(path: file.path) }
+        let target = staging.appendingPathComponent(file.path)
+        let partial = staging.appendingPathComponent(file.path + ".partial")
+        do {
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            guard FileManager.default.createFile(atPath: partial.path, contents: nil) else { throw CocoaError(.fileWriteUnknown) }
+            current = (file, try FileHandle(forWritingTo: partial), SHA256(), 0, partial)
+        } catch {
+            throw VoiceModelInstallError.storageFailed(error.localizedDescription)
+        }
+        return true
+    }
+
+    func write(_ data: Data) throws {
+        guard var entry = current else { return }
+        do {
+            try entry.handle.write(contentsOf: data)
+        } catch {
+            throw VoiceModelInstallError.storageFailed(error.localizedDescription)
+        }
+        entry.hasher.update(data: data)
+        entry.written += Int64(data.count)
+        current = entry
+    }
+
+    func end(_ member: TarStreamReader.Member) throws {
+        guard let entry = current, wanted[member.path] != nil else { return }
+        current = nil
+        try? entry.handle.close()
+        let digest = entry.hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        guard entry.written == Int64(entry.file.byteCount), digest == entry.file.sha256 else {
+            try? FileManager.default.removeItem(at: entry.partial)
+            throw VoiceModelInstallError.checksumMismatch(path: entry.file.path)
+        }
+        let target = staging.appendingPathComponent(entry.file.path)
+        do {
+            try? FileManager.default.removeItem(at: target)
+            try FileManager.default.moveItem(at: entry.partial, to: target)
+        } catch {
+            throw VoiceModelInstallError.storageFailed(error.localizedDescription)
+        }
+        wanted[member.path] = nil
+    }
+
+    /// Closes and deletes a member cut off part-way.
+    func abandon() {
+        guard let entry = current else { return }
+        current = nil
+        try? entry.handle.close()
+        try? FileManager.default.removeItem(at: entry.partial)
     }
 }
 
