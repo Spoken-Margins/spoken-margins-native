@@ -7,12 +7,14 @@ When free space on /System/Volumes/Data drops below 50 GiB, this frees space in 
 as soon as free space reaches 70 GiB. Steps 1 to 5 only delete things that rebuild or are finished,
 so they run whether or not the external drive is plugged in; only step 6 needs the drives.
 
-1. Finished worktrees: inside a checkout's `.claude/worktrees/`, clean, HEAD already in
+1. Finished worktrees: inside a checkout's `.claude/worktrees/` or in ~/.codex/worktrees, clean, HEAD already in
    origin/next, idle, untouched for 24 hours, no live Claude Code session working there, and
    holding no ignored files except regenerable ones (`.build/`, `.venv`, `node_modules`, ...).
    Removed with `git worktree remove`, which refuses dirty or locked worktrees.
-2. Regenerable build caches in idle worktrees of this repo: `.build/dd`, `.build/verification`
-   (and anything else in `.build/` except lock files) and `Packages/SessionKit/.build`.
+2. Regenerable build caches in idle worktrees of this repo, Codex's included: `.build/dd`, `.build/verification`
+   (and anything else in `.build/` except lock files) and `Packages/SessionKit/.build`. A worktree under
+   ~/Documents keeps those as links into ~/Library/Caches/SpokenMarginsBuilds/<slot>/ (scripts/sm_build_cache.py),
+   because this job can't read ~/Documents; they're cleared there, and a slot whose worktree is gone goes whole.
    Idle means no process has its working directory inside the worktree, no xcodebuild,
    swift-build or verify-tests command names it, no live agent holds its worktree lock, and
    nothing under the cache changed in the last 30 minutes.
@@ -37,8 +39,8 @@ SpokenMarginsLane, under a size cap and ages out lane evidence; ops/disk/sm_lane
 Once a night (02:00 to 05:00), when no backup is running, it also deletes Time Machine local
 snapshots, which otherwise hold on to everything it deletes. Backups on the Time Machine drive stay.
 
-It never touches the self-hosted runner folders, ~/.codex/worktrees, CoreSimulator, or app data.
-Stale worktrees it may not remove (outside `.claude/worktrees/`, or holding `artifacts/`) are
+It never touches the self-hosted runner folders, CoreSimulator, or app data. Codex worktrees follow the same
+rules as Claude's (owner, 2026-10-19). Stale worktrees it may not remove (elsewhere, or holding `artifacts/`) are
 listed for the owner instead. One run at a time (a lock file); every action goes to
 ~/SpokenMarginsOps/disk-relief/log.txt; a notification appears only when it acted.
 
@@ -115,6 +117,10 @@ class Config:
     launch_agents: Path = HOME / 'Library/LaunchAgents'
     claude_projects: Path = HOME / '.claude/projects'
     codex_sessions: Path = HOME / '.codex/sessions'
+    # Codex app worktrees, `<id>/<checkout name>`; owner, 2026-10-19: same cleanup rules as Claude's.
+    codex_worktrees: Path = HOME / '.codex/worktrees'
+    # Build folders of worktrees under ~/Documents, which this job can't read (scripts/sm_build_cache.py).
+    build_cache_dir: Path = HOME / 'Library/Caches/SpokenMarginsBuilds'
     # Claude Code's per-session scratch (scratchpad/, tasks/ …) and its list of running sessions.
     claude_tmp: Path = Path(f'/private/tmp/claude-{os.getuid()}')
     claude_sessions: Path = HOME / '.claude/sessions'
@@ -152,7 +158,6 @@ class Config:
     def protected(self) -> List[Path]:
         """Paths no action may touch, or contain."""
         paths = [
-            self.home / '.codex/worktrees',
             self.home / 'Library/Developer/CoreSimulator',
             self.home / 'Library/Containers',
             self.home / 'Library/Group Containers',
@@ -428,7 +433,31 @@ def list_worktrees(cfg: Config, machine: Machine) -> List[Worktree]:
             key = real(tree.path)
             if key not in seen and tree.path.exists():
                 seen[key] = Worktree(key, tree.locked)
+    # Without Full Disk Access `git worktree list` can't run in ~/Documents; Codex's worktrees are found
+    # by their `.git` file instead, which points into one of the checkouts above.
+    for tree in codex_worktrees(cfg, roots):
+        seen.setdefault(real(tree), Worktree(real(tree)))
     return list(seen.values())
+
+
+def codex_worktrees(cfg: Config, roots: List[Path]) -> List[Path]:
+    """`~/.codex/worktrees/<id>/<name>` (or `<name>`) folders that are worktrees of one of these checkouts."""
+    git_dirs = [str(root / '.git') + '/' for root in roots] + [str(real(root / '.git')) + '/' for root in roots]
+    found = []
+    for gitfile in sorted([*cfg.codex_worktrees.glob('*/.git'), *cfg.codex_worktrees.glob('*/*/.git')]):
+        try:
+            text = gitfile.read_text(errors='replace').strip()
+        except OSError:
+            continue
+        if text.startswith('gitdir: ') and any(text[len('gitdir: '):].startswith(g) for g in git_dirs):
+            found.append(gitfile.parent)
+    return found
+
+
+def in_codex_worktrees(cfg: Config, path: Path) -> bool:
+    """A Codex worktree itself: `<codex worktrees>/<id>/<name>`, or `<codex worktrees>/<name>` (older runs)."""
+    root = real(cfg.codex_worktrees)
+    return inside(path, root) and len(path.relative_to(root).parts) in (1, 2)
 
 
 def owner_of(path: str, roots: List[Path]) -> Optional[Path]:
@@ -505,6 +534,8 @@ class Candidate:
     why: str
     # Asked again just before acting; a reason means keep it after all.
     recheck: Optional[Callable[[], Optional[str]]] = None
+    # Put back empty after deleting: a worktree's `.build` link points at it (sm_build_cache.py).
+    recreate: bool = False
 
 
 @dataclass
@@ -518,7 +549,7 @@ class Plan:
 def cache_dirs(worktree: Path) -> List[Path]:
     found = []
     build = worktree / '.build'
-    if build.is_dir():
+    if build.is_dir() and not build.is_symlink():  # a link's folder is planned where it lives
         for child in sorted(build.iterdir()):
             if child.name.endswith('.lock') or child.is_symlink():
                 continue
@@ -557,6 +588,93 @@ def plan_caches(cfg: Config, machine: Machine, trees: List[Worktree], busy: dict
             stats = tree_stats(d)
             if stats.disk_bytes:
                 found.append(Candidate('cache', d, stats.disk_bytes, 'build cache in an idle worktree'))
+    plan.candidates += sorted(found, key=lambda c: -c.size)
+
+
+SLOT_OWNER = 'owner.txt'  # sm_build_cache.OWNER_FILE
+
+
+def worktree_gone(owner: Optional[str]) -> bool:
+    """True only when the slot's worktree surely no longer exists. A folder macOS won't let this job
+    look into counts as still there."""
+    if not owner:
+        return True
+    try:
+        os.lstat(owner)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
+def verification_running(folder: Path) -> bool:
+    """Whether verify-tests holds the slot's `verification.lock` (it locks `.build/verification.lock`)."""
+    lock = folder / 'verification.lock'
+    if not lock.exists():
+        return False
+    try:
+        with lock.open('a') as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(handle, fcntl.LOCK_UN)
+    except OSError:
+        return True
+    return False
+
+
+def plan_build_slots(cfg: Config, machine: Machine, procs: List[Proc], protected: List[Path], plan: Plan) -> None:
+    """Build folders that worktrees under ~/Documents keep in ~/Library/Caches/SpokenMarginsBuilds/<slot>/
+    (`root/` is the worktree's `.build`, `sessionkit/` its SessionKit `.build`). Same idle rule as step 2;
+    the folders are emptied, not removed, so the worktree's links keep working. A slot whose worktree is
+    gone goes whole."""
+    root = cfg.build_cache_dir
+    if not root.is_dir() or is_protected(root, protected):
+        return
+    idle_since = machine.now() - CACHE_IDLE_SECONDS
+    found = []
+    for slot in sorted(root.iterdir()):
+        if slot.is_symlink() or not slot.is_dir():
+            continue
+        try:
+            owner = (slot / SLOT_OWNER).read_text(errors='replace').strip() or None
+        except OSError:
+            owner = None
+        watched = [slot] + ([Path(owner)] if owner else [])
+        if busy_paths(watched, procs):
+            plan.skipped.append(f'{slot}: a process works in or builds {owner or slot}')
+            continue
+        if verification_running(slot / 'root'):
+            plan.skipped.append(f'{slot}: verify-tests is running there')
+            continue
+
+        def recheck(slot=slot):
+            if verification_running(slot / 'root'):
+                return 'verify-tests is running there'
+            return None
+
+        if worktree_gone(owner):
+            if tree_stats(slot, stop_if_newer_than=idle_since).newest_mtime > idle_since:
+                plan.skipped.append(f'{slot}: changed in the last 30 minutes')
+                continue
+            size = tree_stats(slot).disk_bytes
+            if size:
+                found.append(Candidate('cache', slot, size, 'build cache of a worktree that no longer exists',
+                                       recheck))
+            continue
+        dirs = []
+        if (slot / 'root').is_dir():
+            dirs += [c for c in sorted((slot / 'root').iterdir())
+                     if c.is_dir() and not c.is_symlink() and not c.name.endswith('.lock')]
+        if (slot / 'sessionkit').is_dir() and any((slot / 'sessionkit').iterdir()):
+            dirs.append(slot / 'sessionkit')
+        for d in dirs:
+            if tree_stats(d, stop_if_newer_than=idle_since).newest_mtime > idle_since:
+                plan.skipped.append(f'{d}: changed in the last 30 minutes')
+                continue
+            size = tree_stats(d).disk_bytes
+            if size:
+                found.append(Candidate('cache', d, size, f'build cache of an idle worktree ({owner})', recheck,
+                                       recreate=d.name == 'sessionkit'))
     plan.candidates += sorted(found, key=lambda c: -c.size)
 
 
@@ -839,8 +957,8 @@ def worktree_keep_reason(cfg: Config, machine: Machine, tree: Worktree, live_cwd
     """Why a stale worktree must stay, or None when `git worktree remove` may take it."""
     standing = {real(cfg.repo)} | {real(p) for p in glob.glob(cfg.checkout_glob)}
     if not any(inside(tree.path, root / '.claude/worktrees') and tree.path != root / '.claude/worktrees'
-               for root in standing):
-        return "not in a checkout's .claude/worktrees"
+               for root in standing) and not in_codex_worktrees(cfg, tree.path):
+        return "not in a checkout's .claude/worktrees or in Codex's worktrees"
     if tree.locked:
         return 'locked'
     for cwd in live_cwds:
@@ -869,6 +987,11 @@ def remove_worktree(machine: Machine, tree: Path) -> Tuple[bool, str]:
     code, _ = machine.git(Path(common.strip()), 'worktree', 'remove', str(tree))
     if code != 0 or tree.exists():
         return False, 'git worktree remove refused'
+    if tree.parent.parent.name == 'worktrees' and tree.parent.parent.parent.name == '.codex':
+        try:  # Codex's `<id>/` folder, now empty
+            tree.parent.rmdir()
+        except OSError:
+            pass
     return True, 'removed (git worktree remove)'
 
 
@@ -955,6 +1078,7 @@ def make_plan(cfg: Config, machine: Machine) -> Plan:
 
     removing = step('worktrees', plan_worktrees, cfg, machine, trees, protected, busy, plan) or set()
     step('caches', plan_caches, cfg, machine, trees, busy, protected, plan, removing)
+    step('build cache folder', plan_build_slots, cfg, machine, procs, protected, plan)
     step('session scratch', plan_session_scratch, cfg, machine, procs, protected, plan)
     step('tmp', plan_tmp, cfg, machine, procs, protected, plan)
     step('device support', plan_device_support, cfg, procs, protected, plan)
@@ -1174,6 +1298,8 @@ def execute(cfg: Config, machine: Machine, plan: Plan, log: Log, start: int) -> 
             else:
                 try:
                     machine.remove(c.path)
+                    if c.recreate:
+                        c.path.mkdir(exist_ok=True)
                     ok, message = True, 'deleted (regenerable)' if c.step in ('cache', 'device-support') else 'deleted'
                 except OSError as error:
                     ok, message = False, f'delete failed: {error}'
