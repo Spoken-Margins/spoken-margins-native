@@ -50,9 +50,9 @@ public final class MainThreadOperationLabels: @unchecked Sendable {
 /// stuck for about that long, and `onHang` is told once, on the main queue, after it comes free.
 ///
 /// While a block waits, the probe's own thread reads `MainThreadOperationLabels`, so the hang names the work
-/// the main thread was in. The duration is the wait of the oldest unanswered block, so it is a little under
-/// the true stall (by up to one interval). Nothing runs on the main thread except that empty block, and the
-/// report when there is a hang.
+/// the main thread was in. The stall began somewhere between the previous block's answer and this block's
+/// send, so the duration is the wait plus half that gap (see `estimateMs`), right to within half a check
+/// interval. Nothing runs on the main thread except that empty block, and the report when there is a hang.
 ///
 /// A phone that suspends the app freezes the probe's timer too. The probe notices a long gap between its own
 /// ticks (when it ticks next, or when the late block finally runs) and drops the block in flight, so a
@@ -85,6 +85,7 @@ public final class MainThreadHangProbe: @unchecked Sendable {
     private var pendingSince: TimeInterval?
     private var stalledOperation = ""
     private var lastTick: TimeInterval?
+    private var lastAnsweredSent: TimeInterval?
 
     /// - Parameters:
     ///   - thresholdMs: the lateness that counts as a hang.
@@ -122,6 +123,7 @@ public final class MainThreadHangProbe: @unchecked Sendable {
         pendingSince = nil
         stalledOperation = ""
         lastTick = nil
+        lastAnsweredSent = nil
         self.intervalMs = interval
         let source = DispatchSource.makeTimerSource(queue: probeQueue)
         source.schedule(deadline: .now() + .milliseconds(interval), repeating: .milliseconds(interval), leeway: .milliseconds(interval / 2))
@@ -139,12 +141,23 @@ public final class MainThreadHangProbe: @unchecked Sendable {
         pendingSince = nil
         stalledOperation = ""
         lastTick = nil
+        lastAnsweredSent = nil
     }
 
     private static func now() -> TimeInterval { ProcessInfo.processInfo.systemUptime }
 
     /// A gap between the probe's own ticks longer than this means the process was frozen, not just the main thread.
     private var frozenGapMs: Double { Double(max(intervalMs * 4, thresholdMs * 4)) }
+
+    /// How long the main thread was stuck, as far as the probe can tell. The block was sent at `sent` and
+    /// answered at `now`, so the stall lasted at least that long. It began after the previous block was
+    /// answered, which was sent at `previousSent`, so it can be that much longer. The estimate takes the middle
+    /// of the two, with the room capped at half the threshold: at a slow pace the unknown stretch is mostly
+    /// idle time, and counting all of it would report every wait.
+    private func estimateMs(now: TimeInterval, sent: TimeInterval, previousSent: TimeInterval?) -> Double {
+        let room = min(max(0, sent - (previousSent ?? sent)) * 1000, Double(thresholdMs) / 2)
+        return (now - sent) * 1000 + room / 2
+    }
 
     private func tick() {
         let now = Self.now()
@@ -155,12 +168,14 @@ public final class MainThreadHangProbe: @unchecked Sendable {
             epoch &+= 1
             pendingSince = nil
             stalledOperation = ""
+            lastAnsweredSent = nil
         }
         lastTick = now
         if let sent = pendingSince {
-            if stalledOperation.isEmpty, (now - sent) * 1000 >= Double(thresholdMs) {
-                stalledOperation = labels.current
-            }
+            // Every tick while the block waits: a stall shorter than a few ticks must still be named. The newest
+            // non-empty sample wins, so a long stall made of several operations names the one it ended in.
+            let sample = labels.current
+            if !sample.isEmpty { stalledOperation = sample }
             lock.unlock()
             return
         }
@@ -179,15 +194,17 @@ public final class MainThreadHangProbe: @unchecked Sendable {
         // suspended with this block in flight, and the wait is the suspension.
         if let last = lastTick, (now - last) * 1000 > frozenGapMs {
             stalledOperation = ""
+            lastAnsweredSent = nil
             lock.unlock()
             return
         }
         var operation = stalledOperation
         stalledOperation = ""
+        let estimate = estimateMs(now: now, sent: sent, previousSent: lastAnsweredSent)
+        lastAnsweredSent = sent
         lock.unlock()
-        let lateMs = Int(((now - sent) * 1000).rounded())
-        guard lateMs >= thresholdMs else { return }
+        guard estimate >= Double(thresholdMs) else { return }
         if operation.isEmpty { operation = labels.current }
-        onHang(Hang(durationMs: lateMs, operation: operation))
+        onHang(Hang(durationMs: Int(estimate.rounded()), operation: operation))
     }
 }

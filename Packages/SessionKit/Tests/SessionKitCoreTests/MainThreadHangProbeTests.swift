@@ -4,6 +4,7 @@ import XCTest
 
 /// #2099: Build 35 recorded no main-thread stall in normal use. These watch a private serial queue standing in
 /// for the main queue (the test's own main thread would not run the probe's blocks while the test waits).
+/// The Done-when tests run at the app's own pace (250 ms threshold, a check every 100 ms; see `HangTelemetry`).
 final class MainThreadHangProbeTests: XCTestCase {
     private let watched = DispatchQueue(label: "test.watched")
     private let labels = MainThreadOperationLabels()
@@ -15,7 +16,7 @@ final class MainThreadHangProbeTests: XCTestCase {
         var value: [MainThreadHangProbe.Hang] { lock.lock(); defer { lock.unlock() }; return all }
     }
 
-    private func makeProbe(into hangs: Hangs, thresholdMs: Int = 200) -> MainThreadHangProbe {
+    private func makeProbe(into hangs: Hangs, thresholdMs: Int = 250) -> MainThreadHangProbe {
         MainThreadHangProbe(thresholdMs: thresholdMs, watched: watched, labels: labels) { hangs.add($0) }
     }
 
@@ -36,36 +37,56 @@ final class MainThreadHangProbeTests: XCTestCase {
         wait(for: [done], timeout: 5)
     }
 
+    /// The check runs every 100 ms, so the same block lands at a different point of the cycle each time; the
+    /// delays below walk it across the cycle.
+    private let cyclePhases = [100, 130, 160, 190, 220, 250, 280, 310]
+
     func testAFourHundredMillisecondBlockRecordsOneHangWithItsLabel() {
         let hangs = Hangs()
         let probe = makeProbe(into: hangs)
-        probe.start(intervalMs: 20)
+        probe.start(intervalMs: 100)
         defer { probe.stop() }
-        settle(100)
-        block(400, label: "refreshLibraryRows")
-        settle()
-        XCTAssertEqual(hangs.value.count, 1)
-        let hang = hangs.value.first
-        XCTAssertNotNil(hang)
-        XCTAssertTrue((330...550).contains(hang?.durationMs ?? 0), "was \(String(describing: hang?.durationMs))")
-        XCTAssertEqual(hang?.operation, "refreshLibraryRows")
+        for (round, phase) in cyclePhases.enumerated() {
+            settle(phase)
+            block(400, label: "refreshLibraryRows")
+            settle(250)
+            XCTAssertEqual(hangs.value.count, round + 1, "one hang per block (phase \(phase))")
+            let hang = hangs.value.last
+            XCTAssertTrue((330...550).contains(hang?.durationMs ?? 0), "was \(String(describing: hang?.durationMs)) (phase \(phase))")
+            XCTAssertEqual(hang?.operation, "refreshLibraryRows")
+        }
+    }
+
+    func testAThreeHundredFiftyMillisecondBlockIsStillRecorded() {
+        let hangs = Hangs()
+        let probe = makeProbe(into: hangs)
+        probe.start(intervalMs: 100)
+        defer { probe.stop() }
+        for (round, phase) in cyclePhases.enumerated() {
+            settle(phase)
+            block(350)
+            settle(250)
+            XCTAssertEqual(hangs.value.count, round + 1, "phase \(phase)")
+        }
     }
 
     func testAHundredMillisecondBlockRecordsNothing() {
         let hangs = Hangs()
         let probe = makeProbe(into: hangs)
-        probe.start(intervalMs: 20)
+        probe.start(intervalMs: 100)
         defer { probe.stop() }
-        settle(100)
-        block(100, label: "run")
-        settle()
+        for phase in cyclePhases {
+            settle(phase)
+            block(100, label: "run")
+        }
+        settle(250)
         XCTAssertEqual(hangs.value, [])
     }
 
     func testNestedLabelsReadOutermostFirstAndAnUnlabelledHangHasNone() {
         let hangs = Hangs()
         let probe = makeProbe(into: hangs)
-        probe.start(intervalMs: 20)
+        probe.start(intervalMs: 100)
         defer { probe.stop() }
         settle(100)
         let done = expectation(description: "block over")
@@ -83,7 +104,7 @@ final class MainThreadHangProbeTests: XCTestCase {
     func testAStoppedProbeRecordsNothingAndASecondHangAfterAFirstIsCounted() {
         let hangs = Hangs()
         let probe = makeProbe(into: hangs)
-        probe.start(intervalMs: 20)
+        probe.start(intervalMs: 100)
         settle(100)
         block(350)
         settle(100)
