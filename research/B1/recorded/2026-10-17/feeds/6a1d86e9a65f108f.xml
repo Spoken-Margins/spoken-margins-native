@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:atom="http://www.w3.org/2005/Atom" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:sy="http://purl.org/rss/1.0/modules/syndication/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">
+  <channel>
+    <title>Articles of Interest</title>
+    <link>https://play.prx.org/listen?uf=https%3A%2F%2Ffeed.articlesofinterest.club%2F</link>
+    <pubDate>Fri, 09 Oct 2026 11:24:00 -0000</pubDate>
+    <lastBuildDate>Wed, 14 Oct 2026 16:35:07 -0000</lastBuildDate>
+    <ttl>60</ttl>
+    <language>en-us</language>
+    <copyright>2022 Perisphere Productions</copyright>
+    <webMaster>help@prx.org (PRX)</webMaster>
+    <description>
+      <![CDATA[<p>Articles of Interest is a show about what we wear.</p><p>Produced and Hosted by Avery Trufelman</p>]]>
+    </description>
+    <generator>PRX Feeder v1.0.0</generator>
+    <docs>http://blogs.law.harvard.edu/tech/rss</docs>
+    <atom:link href="https://feed.articlesofinterest.club/" rel="self" type="application/rss+xml"/>
+    <itunes:new-feed-url>https://feed.articlesofinterest.club/</itunes:new-feed-url>
+    <itunes:author>Avery Trufelman</itunes:author>
+    <itunes:type>episodic</itunes:type>
+    <itunes:category text="Arts">
+      <itunes:category text="Fashion &amp; Beauty"/>
+    </itunes:category>
+    <itunes:image href="https://f.prxu.org/187/images/4610f1dc-cafa-4b1b-8dd0-52a384c81214/Articles_of_Interest.png"/>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:owner>
+      <itunes:email>Maggie.Gourville@prx.org</itunes:email>
+      <itunes:name>Avery Trufelman</itunes:name>
+    </itunes:owner>
+    <itunes:subtitle>Articles of Interest is a show about what we wear. </itunes:subtitle>
+    <itunes:summary>
+      <![CDATA[Articles of Interest is a show about what we wear.
+
+Produced and Hosted by Avery Trufelman]]>
+    </itunes:summary>
+    <media:copyright>2022 Perisphere Productions</media:copyright>
+    <media:category scheme="http://www.itunes.com/dtds/podcast-1.0.dtd">Arts</media:category>
+    <podcast:guid>933b2936-ab74-5adf-b5a7-b8fde7d9d09b</podcast:guid>
+    <podcast:podping usesPodping="true"/>
+    <podcast:locked>yes</podcast:locked>
+    

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:art19="https://art19.com/xmlns/rss-extensions/1.0" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0/" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">
+  <channel>
+    <title>The Oprah Podcast</title>
+    <description>
+      <![CDATA[<p>“The Oprah Podcast” is a weekly video podcast series featuring talk show host, producer and</p><p>philanthropist Oprah Winfrey as she hosts conversations around what matters most to people, available</p><p>to view for free on her YouTube Channel, accessible globally for an international audience. Global media</p><p>leader Oprah welcomes today’s foremost thought leaders, global newsmakers, best-selling authors,</p><p>visionaries and cultural changemakers to explore timely themes including happiness, resilience,</p><p>consciousness and connection to help listeners on their journey to lead their best life. Special episodes</p><p>of “Oprah’s Book Club” feature Oprah as she sits down with the author of her latest selection in front of</p><p>a live audience to discuss the book. In its first year, “The Oprah Podcast” was named a winner by the</p><p>Gracie Awards in Digital Media for Video Podcast Host, and was nominated in four categories by the</p><p>Ambies for Excellence in Podcasting and nominated for a Webby Award. “The Oprah Podcast” is&nbsp;&nbsp;</p><p>executive produced by Oprah Winfrey and Tara Montgomery, co- executive produced by Brian Piotrowicz and Brad Pavone.</p>]]>
+    </description>
+    <managingEditor>Production@theinitialgroup.com (Harpo)</managingEditor>
+    <generator>ART19</generator>
+    <atom:link href="https://rss.art19.com/the-oprah-podcast" rel="self" type="application/rss+xml"/>
+    <link>https://art19.com/shows/the-oprah-podcast</link>
+    <itunes:owner>
+      <itunes:name>Harpo</itunes:name>
+      <itunes:email>Production@theinitialgroup.com</itunes:email>
+    </itunes:owner>
+    <itunes:author>Harpo</itunes:author>
+    <itunes:summary>
+      <![CDATA[<p>“The Oprah Podcast” is a weekly video podcast series featuring talk show host, producer and</p><p>philanthropist Oprah Winfrey as she hosts conversations around what matters most to people, available</p><p>to view for free on her YouTube Channel, accessible globally for an international audience. Global media</p><p>leader Oprah welcomes today’s foremost thought leaders, global newsmakers, best-selling authors,</p><p>visionaries and cultural changemakers to explore timely themes including happiness, resilience,</p><p>consciousness and connection to help listeners on their journey to lead their best life. Special episodes</p><p>of “Oprah’s Book Club” feature Oprah as she sits down with the author of her latest selection in front of</p><p>a live audience to discuss the book. In its first year, “The Oprah Podcast” was named a winner by the</p><p>Gracie Awards in Digital Media for Video Podcast Host, and was nominated in four categories by the</p><p>Ambies for Excellence in Podcasting and nominated for a Webby Award. “The Oprah Podcast” is&nbsp;&nbsp;</p><p>executive produced by Oprah Winfrey and Tara Montgomery, co- executive produced by Brian Piotrowicz and Brad Pavone.</p>]]>
+    </itunes:summary>
+    <language>en</language>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:category text="Society &amp; Culture"/>
+    <itunes:type>episodic</itunes:type>
+    <itunes:image href="https://content.production.cdn.art19.com/images/3d/fd/b1/af/3dfdb1af-b17b-43f1-b9bc-5c1727d2677c/58297b0f5985e7c56e26fd684a6e11ac00e468daff7ea08e6bd03a979b34f3f4531e1d2f26a7d5200871182ffeb5c6091da519ac026e8d496663a73324010db3.jpeg"/>
+    <image>
+      <url>https://content.production.cdn.art19.com/images/3d/fd/b1/af/3dfdb1af-b17b-43f1-b9bc-5c1727d2677c/58297b0f5985e7c56e26fd684a6e11ac00e468daff7ea08e6bd03a979b34f3f4531e1d2f26a7d5200871182ffeb5c6091da519ac026e8d496663a73324010db3.jpeg</url>
+      <link>https://art19.com/shows/the-oprah-podcast</link>
+      <title>The Oprah Podcast</title>
+    </image>
+    

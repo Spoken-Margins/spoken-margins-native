@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="https://audioboom.com/feeds.xsl" media="screen" ?>
+<rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:georss="http://www.georss.org/georss" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0" xml:base="https://audioboom.com/">
+<!--
+
+      ***************************************************************
+      * Hi! You're looking at an RSS feed. If you're not sure what  *
+      * to do here, you can visit our help center to find out more: *
+      *                https://support.audioboom.com                *
+      ***************************************************************
+
+-->
+<channel>
+<title>No Such Thing As A Fish</title>
+<description><![CDATA[<div>
+<p>The official channel for the show about everything: four dorks discuss the most amazing facts they’ve learned over the last seven days.</p>
+
+<p>The multi award-winning, globe-travelling, 600-million-download phenomenon. Hosted by Dan Schreiber, James Harkin, Andrew Hunter Murray and Anna Ptaszynski.</p>
+
+</div>
+]]></description>
+<link>http://nosuchthingasafish.com</link>
+<generator>audioboom.com</generator>
+<atom:link href="https://audioboom.com/channels/2399216" rel="alternate" type="text/html" />
+<atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
+<atom:link href="https://audioboom.com/channels/2399216.rss" rel="self" type="application/rss+xml" />
+<pubDate>Thu, 15 Oct 2026 22:57:00 +0000</pubDate>
+<language>en</language>
+<image>
+  <url>https://audioboom.com/i/41239450.png</url>
+  <title>No Such Thing As A Fish</title>
+  <link>http://nosuchthingasafish.com</link>
+</image>
+<itunes:image href="https://audioboom.com/i/41239450.png" />
+<itunes:category text="Comedy" />
+<itunes:category text="Science"><itunes:category text="Nature" /></itunes:category>
+<itunes:category text="History" />
+<itunes:explicit>false</itunes:explicit>
+<itunes:author>No Such Thing As A Fish</itunes:author>
+<itunes:owner>
+  <itunes:name>No Such Thing As A Fish</itunes:name>
+  <itunes:email>tech@qi.com</itunes:email>
+</itunes:owner>
+<podcast:guid>58b1a7dd-3f14-50b4-b794-fe15e7927961</podcast:guid>
+<copyright>© 2014 Quite Interesting Ltd	</copyright>
+<itunes:new-feed-url>https://audioboom.com/channels/2399216.rss</itunes:new-feed-url>
+<itunes:type>episodic</itunes:type>
+

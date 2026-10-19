@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <atom:link href="https://feeds.simplecast.com/FO6kxYGj" rel="self" title="MP3 Audio" type="application/atom+xml"/>
+    <atom:link href="https://simplecast.superfeedr.com" rel="hub" xmlns="http://www.w3.org/2005/Atom"/>
+    <generator>https://simplecast.com</generator>
+    <title>Ologies with Alie Ward</title>
+    <description>Volcanoes. Trees. Drunk butterflies. Mars missions. Slug sex. Death. Beauty standards. Anxiety busters. Beer science. Bee drama. Take away a pocket full of science knowledge and charming, bizarre stories about what fuels these professional -ologists&apos; obsessions. Humorist and science correspondent Alie Ward asks smart people stupid questions and the answers might change your life.</description>
+    <copyright>2026 Alie Ward</copyright>
+    <language>en-us</language>
+    <pubDate>Wed, 14 Oct 2026 08:15:00 +0000</pubDate>
+    <lastBuildDate>Fri, 16 Oct 2026 15:35:13 +0000</lastBuildDate>
+    <image>
+      <link>https://www.siriusxm.com</link>
+      <title>Ologies with Alie Ward</title>
+      <url>https://image.simplecastcdn.com/images/89060b63-e603-4297-b6e8-5a654e50244e/f9713c33-7eca-4512-8d96-7a668e274cb2/3000x3000/image.jpg?aid=rss_feed</url>
+    </image>
+    <link>https://www.siriusxm.com</link>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>Volcanoes. Trees. Drunk butterflies. Mars missions. Slug sex. Death. Beauty standards. Anxiety busters. Beer science. Bee drama. Take away a pocket full of science knowledge and charming, bizarre stories about what fuels these professional -ologists&apos; obsessions. Humorist and science correspondent Alie Ward asks smart people stupid questions and the answers might change your life.</itunes:summary>
+    <itunes:author>Alie Ward</itunes:author>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:image href="https://image.simplecastcdn.com/images/89060b63-e603-4297-b6e8-5a654e50244e/f9713c33-7eca-4512-8d96-7a668e274cb2/3000x3000/image.jpg?aid=rss_feed"/>
+    <itunes:new-feed-url>https://feeds.simplecast.com/FO6kxYGj</itunes:new-feed-url>
+    <itunes:owner>
+      <itunes:name>Alie Ward</itunes:name>
+      <itunes:email>helloalieward@gmail.com</itunes:email>
+    </itunes:owner>
+    <itunes:applepodcastsverify>3ee17d90-6192-11f0-b2b7-c99a1b7415bd</itunes:applepodcastsverify>
+    <itunes:category text="Science"/>
+    <itunes:category text="Comedy"/>
+    <itunes:category text="Society &amp; Culture"/>
+    

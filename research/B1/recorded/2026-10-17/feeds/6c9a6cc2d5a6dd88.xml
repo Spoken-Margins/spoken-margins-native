@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="https://audioboom.com/feeds.xsl" media="screen" ?>
+<rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:georss="http://www.georss.org/georss" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0" xml:base="https://audioboom.com/">
+<!--
+
+      ***************************************************************
+      * Hi! You're looking at an RSS feed. If you're not sure what  *
+      * to do here, you can visit our help center to find out more: *
+      *                https://support.audioboom.com                *
+      ***************************************************************
+
+-->
+<channel>
+<title>Bulwark Takes</title>
+<description><![CDATA[<div><p>The news cycle doesn’t slow down, and neither does The Bulwark. Bulwark Takes brings you bite-sized takes on the news of the day from the entire Bulwark team, including Tim Miller, Sarah Longwell, and Bill Kristol, and more.</p>
+</div>
+]]></description>
+<link>https://www.thebulwark.com/listen</link>
+<generator>audioboom.com</generator>
+<atom:link href="https://audioboom.com/channels/5149464" rel="alternate" type="text/html" />
+<atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
+<atom:link href="https://audioboom.com/channels/5149464.rss" rel="self" type="application/rss+xml" />
+<atom:link href="https://audioboom.com/channels/5149464.rss?page=2" rel="next" type="application/rss+xml" />
+<pubDate>Fri, 16 Oct 2026 23:30:00 +0000</pubDate>
+<language>en</language>
+<image>
+  <url>https://audioboom.com/i/43757337.jpg</url>
+  <title>Bulwark Takes</title>
+  <link>https://www.thebulwark.com/listen</link>
+</image>
+<itunes:image href="https://audioboom.com/i/43757337.jpg" />
+<itunes:category text="News"><itunes:category text="Politics" /></itunes:category>
+<itunes:category text="News"><itunes:category text="News Commentary" /></itunes:category>
+<itunes:category text="Society &amp; Culture" />
+<itunes:explicit>false</itunes:explicit>
+<itunes:author>The Bulwark</itunes:author>
+<itunes:owner>
+  <itunes:name>Audioboom</itunes:name>
+</itunes:owner>
+<podcast:guid>94cd73ca-1b84-59ee-91e4-7d94ece41ce4</podcast:guid>
+<copyright>Bulwark Media</copyright>
+<itunes:new-feed-url>https://audioboom.com/channels/5149464.rss</itunes:new-feed-url>
+<itunes:type>episodic</itunes:type>
+

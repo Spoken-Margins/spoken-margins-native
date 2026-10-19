@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:psc="http://podlove.org/simple-chapters" xmlns:omny="https://omny.fm/rss-extensions" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:acast="https://schema.acast.com/1.0/" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">
+  <channel>
+    <omny:organizationId>e73c998e-6e60-432f-8610-ae210140c5b1</omny:organizationId>
+    <omny:networkId>20e860d7-8468-40c2-998c-ae3e01418c48</omny:networkId>
+    <omny:programId>e5f91208-cc7e-4726-a312-ae280140ad11</omny:programId>
+    <omny:playlistId>d64f756d-6d5e-4fae-b24f-ae280140ad36</omny:playlistId>
+    <language>en-US</language>
+    <atom:link rel="self" type="application/rss+xml" href="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/e5f91208-cc7e-4726-a312-ae280140ad11/d64f756d-6d5e-4fae-b24f-ae280140ad36/podcast.rss" />
+    <atom:link rel="first" type="application/rss+xml" href="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/e5f91208-cc7e-4726-a312-ae280140ad11/d64f756d-6d5e-4fae-b24f-ae280140ad36/podcast.rss?page=1" />
+    <atom:link rel="last" type="application/rss+xml" href="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/e5f91208-cc7e-4726-a312-ae280140ad11/d64f756d-6d5e-4fae-b24f-ae280140ad36/podcast.rss?page=1" />
+    <itunes:new-feed-url>https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/e5f91208-cc7e-4726-a312-ae280140ad11/d64f756d-6d5e-4fae-b24f-ae280140ad36/podcast.rss</itunes:new-feed-url>
+    <title>Behind the Bastards</title>
+    <itunes:subtitle>Everything you don't know about History's greatest monsters</itunes:subtitle>
+    <link>https://www.iheart.com/podcast/105-behind-the-bastards-29236323/</link>
+    <description><![CDATA[There’s a reason the History Channel has produced hundreds of documentaries about Hitler but only a few about Dwight D. Eisenhower. Bad guys (and gals) are eternally fascinating. Behind the Bastards dives in past the Cliffs Notes of the worst humans in history and exposes the bizarre realities of their lives. Listeners will learn about the young adult novels that helped Hitler form his monstrous ideology, the founder of Blackwater’s insane quest to build his own Air Force, the bizarre lives of the sons and daughters of dictators and Saddam Hussein’s side career as a trashy romance novelist.]]></description>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>There’s a reason the History Channel has produced hundreds of documentaries about Hitler but only a few about Dwight D. Eisenhower. Bad guys (and gals) are eternally fascinating. Behind the Bastards dives in past the Cliffs Notes of the worst humans in history and exposes the bizarre realities of their lives. Listeners will learn about the young adult novels that helped Hitler form his monstrous ideology, the founder of Blackwater’s insane quest to build his own Air Force, the bizarre lives of the sons and daughters of dictators and Saddam Hussein’s side career as a trashy romance novelist.</itunes:summary>
+    <itunes:owner>
+      <itunes:name>iHeartPodcasts</itunes:name>
+      <itunes:email>applepodcast@howstuffworks.com</itunes:email>
+    </itunes:owner>
+    <itunes:author>Cool Zone Media and iHeartPodcasts</itunes:author>
+    <copyright>2026 iHeartMedia, Inc. © Any use of this intellectual property for text and data mining or computational analysis including as training material for artificial intelligence systems is strictly prohibited without express written consent from iHeartMedia</copyright>
+    <itunes:explicit>yes</itunes:explicit>
+    <itunes:category text="Society &amp; Culture"></itunes:category>
+    <itunes:category text="History"></itunes:category>
+    <itunes:category text="News"></itunes:category>
+    <itunes:image href="https://www.omnycontent.com/d/programs/e73c998e-6e60-432f-8610-ae210140c5b1/e5f91208-cc7e-4726-a312-ae280140ad11/image.jpg?t=1749761552&amp;size=Large" />
+    <image>
+      <url>https://www.omnycontent.com/d/programs/e73c998e-6e60-432f-8610-ae210140c5b1/e5f91208-cc7e-4726-a312-ae280140ad11/image.jpg?t=1749761552&amp;size=Large</url>
+      <title>Behind the Bastards</title>
+      <link>https://www.iheart.com/podcast/105-behind-the-bastards-29236323/</link>
+    </image>
+    

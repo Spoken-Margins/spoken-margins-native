@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/SGP8517078272" rel="self" type="application/rss+xml"/>
+    <title>Get Sleepy: stories for sleep</title>
+    <link>https://slumberstudios.com/getsleepy/</link>
+    <language>en</language>
+    <copyright>2026 Slumber Studios</copyright>
+    <description>Get Sleepy is the #1 sleep podcast for relaxing bedtime stories to help you fall asleep. Our soothing sleep stories give busy minds somewhere peaceful to go, helping you unwind and drift into a good night’s sleep.
+
+Get Sleepy is a production of Slumber Studios. Listen ad-free on our premium feed or in the Slumber app.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/784ec55a-44d1-11ed-bc62-2b0607f8c6a2/image/f8a91fecce3e75aaf5d9f1f7569af4d5.png?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>Get Sleepy: stories for sleep</title>
+      <link>https://slumberstudios.com/getsleepy/</link>
+    </image>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle></itunes:subtitle>
+    <itunes:author>Slumber Studios</itunes:author>
+    <itunes:summary>Get Sleepy is the #1 sleep podcast for relaxing bedtime stories to help you fall asleep. Our soothing sleep stories give busy minds somewhere peaceful to go, helping you unwind and drift into a good night’s sleep.
+
+Get Sleepy is a production of Slumber Studios. Listen ad-free on our premium feed or in the Slumber app.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>Get Sleepy is the #1 sleep podcast for relaxing bedtime stories to help you fall asleep. Our soothing sleep stories give busy minds somewhere peaceful to go, helping you unwind and drift into a good night’s sleep.</p>
+<p>Get Sleepy is a production of Slumber Studios. Listen ad-free on our premium feed or in the Slumber app.</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Slumber Studios</itunes:name>
+      <itunes:email>michael@getsleepy.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/784ec55a-44d1-11ed-bc62-2b0607f8c6a2/image/f8a91fecce3e75aaf5d9f1f7569af4d5.png?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Health &amp; Fitness">
+      <itunes:category text="Alternative Health"/>
+    </itunes:category>
+    <itunes:category text="Fiction">
+      <itunes:category text="Drama"/>
+    </itunes:category>
+    <itunes:category text="Kids &amp; Family">
+      <itunes:category text="Stories for Kids"/>
+    </itunes:category>
+    

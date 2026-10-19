@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/WSJ4693364973" rel="self" type="application/rss+xml"/>
+    <title>The Journal.</title>
+    <link>https://www.wsj.com/podcasts/the-journal</link>
+    <language>en</language>
+    <copyright>Copyright © Dow Jones &amp; Company, Inc. All rights reserved.</copyright>
+    <description>The most important stories about money, business and power. Hosted by Ryan Knutson and Jessica Mendoza. The Journal is a co-production of Spotify and The Wall Street Journal.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/b84f9932-8174-11e9-bbd8-7f261513f0c9/image/d84a4f4d55158df9d14f6f2d4b219a28.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>The Journal.</title>
+      <link>https://www.wsj.com/podcasts/the-journal</link>
+    </image>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle></itunes:subtitle>
+    <itunes:author>The Wall Street Journal &amp; Spotify Studios</itunes:author>
+    <itunes:summary>The most important stories about money, business and power. Hosted by Ryan Knutson and Jessica Mendoza. The Journal is a co-production of Spotify and The Wall Street Journal.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>The most important stories about money, business and power. Hosted by Ryan Knutson and Jessica Mendoza. The Journal is a co-production of Spotify and The Wall Street Journal.</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>The Wall Street Journal</itunes:name>
+      <itunes:email>podcasts@dowjones.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/b84f9932-8174-11e9-bbd8-7f261513f0c9/image/d84a4f4d55158df9d14f6f2d4b219a28.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="News">
+      <itunes:category text="Daily News"/>
+      <itunes:category text="Business News"/>
+    </itunes:category>
+    

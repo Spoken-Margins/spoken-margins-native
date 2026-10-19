@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/ARML6214944307" rel="self" type="application/rss+xml"/>
+    <title>Decoded | Unlock The Secrets of Human Behavior, Emotion and Motivation</title>
+    <link>https://bizziegold.com/podcast</link>
+    <language>en-us</language>
+    <copyright>Elisabeth McKay | Mental Health Innovator and PredictiveMind Founder</copyright>
+    <description>Unlock the Hidden Code Running Your Life—And Rewrite It for Good.
+
+Your thoughts, relationships, addictions, and self-sabotaging behaviors aren’t random—they’re programmed patterns your brain has been running on autopilot.
+
+Decoded breaks down the subconscious lies shaping your reality and gives you the tools to rewire them. Whether you're stuck in toxic cycles, battling destructive coping mechanisms, or just tired of feeling out of control, this podcast hands you the blueprint to disrupt the patterns, take back your mind, and start living with intention.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/a8b0be3e-9b2f-11f1-8732-df87a56ae1b0/image/05d25208b5326b272aacb972ca6577a4.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>Decoded | Unlock The Secrets of Human Behavior, Emotion and Motivation</title>
+      <link>https://bizziegold.com/podcast</link>
+    </image>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle></itunes:subtitle>
+    <itunes:author>Elisabeth McKay | Mental Health Innovator and PredictiveMind Founder</itunes:author>
+    <itunes:summary>Unlock the Hidden Code Running Your Life—And Rewrite It for Good.
+
+Your thoughts, relationships, addictions, and self-sabotaging behaviors aren’t random—they’re programmed patterns your brain has been running on autopilot.
+
+Decoded breaks down the subconscious lies shaping your reality and gives you the tools to rewire them. Whether you're stuck in toxic cycles, battling destructive coping mechanisms, or just tired of feeling out of control, this podcast hands you the blueprint to disrupt the patterns, take back your mind, and start living with intention.</itunes:summary>
+    <content:encoded>
+      <![CDATA[Unlock the Hidden Code Running Your Life—And Rewrite It for Good.
+
+Your thoughts, relationships, addictions, and self-sabotaging behaviors aren’t random—they’re programmed patterns your brain has been running on autopilot.
+
+Decoded breaks down the subconscious lies shaping your reality and gives you the tools to rewire them. Whether you're stuck in toxic cycles, battling destructive coping mechanisms, or just tired of feeling out of control, this podcast hands you the blueprint to disrupt the patterns, take back your mind, and start living with intention.]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Elisabeth McKay | Mental Health Innovator and PredictiveMind Founder</itunes:name>
+      <itunes:email>info@bizziegold.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/a8b0be3e-9b2f-11f1-8732-df87a56ae1b0/image/05d25208b5326b272aacb972ca6577a4.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Health &amp; Fitness">
+      <itunes:category text="Mental Health"/>
+    </itunes:category>
+    

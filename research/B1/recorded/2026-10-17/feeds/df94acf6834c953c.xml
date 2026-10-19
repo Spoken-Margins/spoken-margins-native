@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/zach-lowe" rel="self" type="application/rss+xml"/>
+    <title>The Zach Lowe Show</title>
+    <link>https://www.theringer.com</link>
+    <language>en</language>
+    <copyright>© All rights reserved.</copyright>
+    <description>Same Zach. New home. The Zach Lowe Show keeps you in the know around the Association with a variety of NBA conversations and game breakdowns. Plus guests, including his friends covering the league and some of the biggest names shaping it. Episodes weekly on Tuesdays and Thursdays.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/745e06ba-08ef-11f0-ac3b-234508f92d6b/image/aef7061da638e1893d0ab7fdb85207d4.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>The Zach Lowe Show</title>
+      <link>https://www.theringer.com</link>
+    </image>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle></itunes:subtitle>
+    <itunes:author>The Ringer</itunes:author>
+    <itunes:summary>Same Zach. New home. The Zach Lowe Show keeps you in the know around the Association with a variety of NBA conversations and game breakdowns. Plus guests, including his friends covering the league and some of the biggest names shaping it. Episodes weekly on Tuesdays and Thursdays.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>Same Zach. New home. The Zach Lowe Show keeps you in the know around the Association with a variety of NBA conversations and game breakdowns. Plus guests, including his friends covering the league and some of the biggest names shaping it. Episodes weekly on Tuesdays and Thursdays.</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>The Ringer</itunes:name>
+      <itunes:email>ringerfeed@spotify.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/745e06ba-08ef-11f0-ac3b-234508f92d6b/image/aef7061da638e1893d0ab7fdb85207d4.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Sports">
+      <itunes:category text="Basketball"/>
+    </itunes:category>
+    

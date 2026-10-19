@@ -396,7 +396,9 @@ RUNNER_TEST_TRIGGERS = ('scripts/', '.github/', '.gitignore')
 # app test sources; the sharing kit's tests read docs/sharing-test-kit/ and the packet and sharing sources under
 # Packages/ and App/; the BUILDING.md test reads that file, README.md, package.json, .gitattributes,
 # the hosted workflow and the App Group names in App/; the SessionKit pass key's reader guard reads every
-# Swift file of the package (re-measured 2026-10-09; the guard added 2026-10-10, #1328). A diff that touches those inputs (and no lane path) runs just
+# Swift file of the package (re-measured 2026-10-09; the guard added 2026-10-10, #1328), and the
+# starter-catalog test reads Site/onboarding/ and research/B1/ (#1732). A diff that touches those inputs
+# (and no lane path) runs just
 # these (a module, or a module.Class); the rest of the suite reads only scripts/.
 # To re-measure the list, copy scripts/, .github/ and .gitignore into a fresh git repository, run
 # `python -m unittest discover -s scripts/tests` there and on a full checkout: the classes that fail only in
@@ -407,7 +409,8 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_lane_runner.OnlyTestingTests', 'test_lane_runner.ScopeClassTests',
                        'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
                        'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved',
-                       'test_building_md', 'test_third_party_notices')
+                       'test_building_md', 'test_third_party_notices',
+                       'test_starter_catalog')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
                       'docs/sharing-test-kit/', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
                       # test_third_party_notices reads the dependency manifests and its own list (#1823).

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<?xml-stylesheet href="https://rss.buzzsprout.com/styles.xsl" type="text/xsl"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:podcast="https://podcastindex.org/namespace/1.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:psc="http://podlove.org/simple-chapters" xmlns:atom="http://www.w3.org/2005/Atom">
+<channel>
+  <atom:link href="https://rss.buzzsprout.com/1236866.rss" rel="self" type="application/rss+xml" />
+  <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" xmlns="http://www.w3.org/2005/Atom" />
+  <title>3 Takeaways™</title>
+
+  <lastBuildDate>Fri, 16 Oct 2026 20:52:24 -0400</lastBuildDate>
+  <link>https://www.3takeaways.com/</link>
+  <language>en-us</language>
+  <copyright>© 2026 3 Takeaways™</copyright>
+  <podcast:locked>yes</podcast:locked>
+    <podcast:guid>ff50fc33-29be-5642-838f-d98835a43b3f</podcast:guid>
+  <itunes:author>Lynn Thoman</itunes:author>
+  <itunes:type>episodic</itunes:type>
+  <itunes:explicit>false</itunes:explicit>
+  <description><![CDATA[<p>3 Takeaways™ features insights from the world’s best thinkers, business leaders, writers, politicians, scientists and other newsmakers. Each episode ends with 3 key takeaways to help you understand the world in new ways that can benefit your life and career. Hosted by Lynn Thoman. A global top 1% podcast.</p>]]></description>
+  <generator>Buzzsprout (https://www.buzzsprout.com)</generator>
+  <itunes:keywords>533482, leadership, insight, knowledge, education, career, career tips, leadership lessons, leaders, learning from the best, top leaders, thinkers</itunes:keywords>
+  <itunes:owner>
+    <itunes:name>Lynn Thoman</itunes:name>
+  </itunes:owner>
+  <image>
+     <url>https://storage.buzzsprout.com/wpz6wfpvgkgl16xbig4s57l5qhao?.jpg</url>
+     <title>3 Takeaways™</title>
+     <link>https://www.3takeaways.com/</link>
+  </image>
+  <itunes:image href="https://storage.buzzsprout.com/wpz6wfpvgkgl16xbig4s57l5qhao?.jpg" />
+  <itunes:category text="Business">
+    <itunes:category text="Management" />
+  </itunes:category>
+  <itunes:category text="Education">
+    <itunes:category text="Courses" />
+  </itunes:category>
+  <itunes:category text="Society &amp; Culture">
+    <itunes:category text="Philosophy" />
+  </itunes:category>
+  

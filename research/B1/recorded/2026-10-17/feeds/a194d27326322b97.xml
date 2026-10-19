@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet type="text/xsl" href="/global/feed/rss.xslt" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podaccess="https://access.acast.com/schema/1.0/" xmlns:acast="https://schema.acast.com/1.0/">
+   <script src="https://feeds.acast.com/global/feed/xslt-polyfill.min.js" xmlns="http://www.w3.org/1999/xhtml"></script>
+    <channel>
+		<ttl>60</ttl>
+		<generator>acast.com</generator>
+		<title>Pablo Torre Finds Out</title>
+		<link>http://www.pablo.show</link>
+		<atom:link href="https://feeds.acast.com/public/shows/68b1d0ea993d10acb9c3fe4f" rel="self" type="application/rss+xml"/>
+		<language>en</language>
+		<copyright>376634</copyright>
+		<itunes:keywords/>
+		<itunes:author>The Athletic</itunes:author>
+		<itunes:subtitle/>
+		<itunes:summary><![CDATA[<p>Follow Pablo down the rabbit hole, beyond the game — every Tuesday, Thursday and Friday — on his Pulitzer-winning video podcast, part of The Athletic Podcast Network.</p><br><p>You’ll get a deep-dive "talkumentary" episode, reported by Pablo and Curiosity Correspondents like Emmy-winning comedian Wyatt Cenac and Oscar-winning director Ezra Edelman, answering urgent questions such as: Are you smarter than an NFL quarterback? Does Giannis intentionally miss free throws to win free chicken for fans? And why does the FBI director play so much hockey? This storytelling has been honored by the Pulitzer Prizes, the Emmy Awards, the Peabody Awards and the Edward R. Murrow Awards. (Journalism!)</p><br><p>Plus: Pablo hangs out with handpicked figures from sports, culture and politics like Sue Bird, Action Bronson and U.S. Senators… plays Share &amp; Tell with friends like Domonique Foxworth, Mina Kimes, Katie Nolan and Dan Le Batard (aka his boss)… and unveils the secrets of capitalism with David Samson and John Skipper on The Sporting Class.</p><br><p><br></p><p>Follow PTFO…</p><br><p>https://www.youtube.com/@PabloTorreFindsOut</p><br><p>https://www.instagram.com/pablotorrefindsout</p><br><p>https://x.com/pablofindsout</p><br><p>and subscribe to Pablo's newsletter: https://pablo.show</p><hr><p style='color:grey; font-size:0.75em;'> Hosted on Acast. See <a style='color:grey;' target='_blank' rel='noopener noreferrer' href='https://acast.com/privacy'>acast.com/privacy</a> for more information.</p>]]></itunes:summary>
+		<description><![CDATA[<p>Follow Pablo down the rabbit hole, beyond the game — every Tuesday, Thursday and Friday — on his Pulitzer-winning video podcast, part of The Athletic Podcast Network.</p><br><p>You’ll get a deep-dive "talkumentary" episode, reported by Pablo and Curiosity Correspondents like Emmy-winning comedian Wyatt Cenac and Oscar-winning director Ezra Edelman, answering urgent questions such as: Are you smarter than an NFL quarterback? Does Giannis intentionally miss free throws to win free chicken for fans? And why does the FBI director play so much hockey? This storytelling has been honored by the Pulitzer Prizes, the Emmy Awards, the Peabody Awards and the Edward R. Murrow Awards. (Journalism!)</p><br><p>Plus: Pablo hangs out with handpicked figures from sports, culture and politics like Sue Bird, Action Bronson and U.S. Senators… plays Share &amp; Tell with friends like Domonique Foxworth, Mina Kimes, Katie Nolan and Dan Le Batard (aka his boss)… and unveils the secrets of capitalism with David Samson and John Skipper on The Sporting Class.</p><br><p><br></p><p>Follow PTFO…</p><br><p>https://www.youtube.com/@PabloTorreFindsOut</p><br><p>https://www.instagram.com/pablotorrefindsout</p><br><p>https://x.com/pablofindsout</p><br><p>and subscribe to Pablo's newsletter: https://pablo.show</p><hr><p style='color:grey; font-size:0.75em;'> Hosted on Acast. See <a style='color:grey;' target='_blank' rel='noopener noreferrer' href='https://acast.com/privacy'>acast.com/privacy</a> for more information.</p>]]></description>
+		<itunes:explicit>false</itunes:explicit>
+		<itunes:owner>
+			<itunes:name>Pablo Torre</itunes:name>
+			<itunes:email>podcasts@theathletic.com</itunes:email>
+		</itunes:owner>
+		<acast:showId>68b1d0ea993d10acb9c3fe4f</acast:showId>
+		<acast:showUrl>pablo-torre-finds-out</acast:showUrl>
+		<acast:signature key="EXAMPLE" algorithm="aes-256-cbc"><![CDATA[wbG1Z7+6h9QOi+CR1Dv0uQ==]]></acast:signature>
+		<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmU13c0otUap75NIyVufnZVBoBcFwz3Y0zGA/pFjpP70+3oZt3+5O3uX8mfQZWzV35Kby8OfdHfDJlQAYxij1gc0J63rxgoMm4loq58gBzd9i]]></acast:settings>
+        <acast:network id="67f9268d2308a71dab8db95a" slug="the-athletic-network"><![CDATA[The Athletic]]></acast:network>
+		<acast:importedFeed>https://feeds.megaphone.fm/LBE7667857024</acast:importedFeed>
+		<itunes:type>episodic</itunes:type>
+			<itunes:image href="https://assets.pippa.io/shows/68b1d0ea993d10acb9c3fe4f/1775008407441-209a6288-80af-4538-9c37-9728cb9397d3.jpeg"/>
+			<image>
+				<url>https://assets.pippa.io/shows/68b1d0ea993d10acb9c3fe4f/1775008407441-209a6288-80af-4538-9c37-9728cb9397d3.jpeg</url>
+				<link>http://www.pablo.show</link>
+				<title>Pablo Torre Finds Out</title>
+			</image>
+			<itunes:new-feed-url>https://feeds.acast.com/public/shows/68b1d0ea993d10acb9c3fe4f</itunes:new-feed-url>
+		
