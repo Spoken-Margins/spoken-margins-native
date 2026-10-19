@@ -238,6 +238,37 @@ final class EpisodeMapPreparerTests: XCTestCase {
         )
     }
 
+    /// Audit on #2093: a pause and the listener's stop can both land before the transcriber unwinds. The listener's
+    /// stop must win in either order, or a map they removed comes back as a live job.
+    func testTheListenersCancelWinsOverAPauseInEitherOrder() async throws {
+        for pauseFirst in [true, false] {
+            let fixture = try makeFixture(hangFirstTranscription: true)
+            let model = fixture.model, store = fixture.store, itemId = fixture.itemId
+
+            model.prepareEpisodeMap(itemId: itemId)
+            let task = try XCTUnwrap(model.episodeMapPreparationTask)
+            try await waitUntil("the run reaches the transcriber") { model.episodeMapPreparationStatus == "Transcribing on device" }
+            if pauseFirst {
+                model.episodeMapPreparer.pause(.heat(.serious))
+                model.episodeMapPreparer.cancel(itemId: itemId)
+            } else {
+                model.episodeMapPreparer.cancel(itemId: itemId)
+                model.episodeMapPreparer.pause(.heat(.serious))
+            }
+            await task.value
+
+            let order = pauseFirst ? "pause then cancel" : "cancel then pause"
+            let job = try XCTUnwrap(store.loadEpisodeMapPreparationJobs().first { $0.itemId == itemId }, order)
+            XCTAssertTrue(job.isCancelled, order)
+            XCTAssertEqual(job.lastFailureCode, "cancelled", order)
+            XCTAssertEqual(model.episodeMapPreparationStatus, "Cancelled", order)
+            XCTAssertEqual(
+                BackgroundPreparationPlanner.eligibleEpisodeJobs([job], episodePolicy: .off, hasLocalAudio: { _ in true }),
+                [], "\(order): a cancelled job is never picked up again"
+            )
+        }
+    }
+
     func testARunThatEndedWithoutRecordingIsNamedOnTheNextRequest() async throws {
         let fixture = try makeFixture()
         let model = fixture.model, store = fixture.store, itemId = fixture.itemId

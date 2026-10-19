@@ -79,16 +79,19 @@ final class EpisodeMapPreparer {
         self.host = host
     }
 
-    /// Cancels the running preparation when it is for `itemId`.
+    /// Cancels the running preparation when it is for `itemId`. The listener's stop always wins over a pause that
+    /// is still unwinding, so the run ends with the job cancelled and a removed map is not brought back (#2092).
     func cancel(itemId: String) {
         if self.itemId == itemId {
+            stopReason = .cancelled
             task?.cancel()
         }
     }
 
-    /// Stops the running preparation but keeps its job for a later pass (#2092).
+    /// Stops the running preparation but keeps its job for a later pass (#2092). A run that was already cancelled,
+    /// by the listener or an earlier pause, is left as it is.
     func pause(_ reason: EpisodeMapRunStop) {
-        guard let task, reason.keepsJob else { return }
+        guard let task, !task.isCancelled, reason.keepsJob else { return }
         stopReason = stopReason ?? reason
         task.cancel()
     }
