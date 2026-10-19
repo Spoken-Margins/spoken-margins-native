@@ -85,6 +85,13 @@ jobs:
           npm ci
       - name: Portable fast plan
         run: .venv/bin/python scripts/verify-tests.py --plan fast-portable
+      # The step logs stay on the VPS; a red run shows which tests failed here.
+      - name: Show what failed
+        if: failure()
+        run: |
+          for log in artifacts/test-runs/*-fast-portable/*.log; do
+            grep -E '^(FAIL|ERROR):|^[A-Za-z]*Error:|^FAILED|^Ran ' "$log" | head -60 | sed "s|^|$(basename "$log"): |"
+          done
       - name: Record what was tested, for the lane runner
         run: |
           parents=$(git cat-file -p HEAD | awk '/^parent /{print $2}' | tr '\n' ' ')
