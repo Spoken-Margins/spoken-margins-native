@@ -1796,6 +1796,15 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     public var playbackStallTraceHandler: (@Sendable ([String: String]) -> Void)?
     private var stallDetector = PlaybackStallDetector()
     private var stallWatchdog: Timer?
+    /// Overrules a frozen clock with the decoded audio's own media time (#2094).
+    private var clockGuard = DecodedAudioClockGuard()
+    /// The decoded audio's position when the listener paused during a clock freeze, kept until the next seek.
+    private var pausedTrustedMediaTimeMs: Int?
+    private var lastClockRecoveryUptimeMs: Int?
+    /// One re-seek per this long at most, so a clock that freezes again can't make the audio stutter.
+    static let clockRecoveryIntervalMs = 60_000
+    /// Tests only: hold AVPlayer's raw clock at this time, as on the phone in #2094, until the next seek.
+    var frozenPlayerClockForTesting: Int?
     private var mediaSeekStartedUptime: TimeInterval?
     /// Tests only: drop AVPlayer's seek completions, as happened on a stream in #166.
     var withholdsSeekCompletionsForTesting = false
@@ -1997,6 +2006,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         playbackComplete = false
         completedTargetId = nil
         paused = false
+        pausedTrustedMediaTimeMs = nil
         if !continuesNavigationSeek {
             let seekGeneration = beginMediaSeek(
                 targetId: targetId,
@@ -2202,17 +2212,45 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     public func currentMediaTimeMs() -> Int? {
+        let reported = reportedMediaTimeMs()
+        if paused { return pausedTrustedMediaTimeMs ?? reported }
+        return decodedAudioMediaTimeMs(overruling: reported) ?? reported
+    }
+
+    /// The pending seek's target, else the player's own clock: what AVPlayer claims, before any evidence check.
+    private func reportedMediaTimeMs() -> Int {
         if let pendingMediaSeek = mediaSeekLifecycle.pending,
            pendingMediaSeek.targetId == activeTargetId {
             return pendingMediaSeek.mediaTimeMs
         }
         #if canImport(AVFoundation)
-        guard let player else { return lastRequestedMediaTimeMs }
-        let seconds = player.currentTime().seconds
-        guard seconds.isFinite else { return lastRequestedMediaTimeMs }
-        return max(0, Int((seconds * 1000).rounded()))
+        guard player != nil else { return lastRequestedMediaTimeMs }
+        return observedPlayerMediaTimeMs() ?? lastRequestedMediaTimeMs
         #else
         return lastRequestedMediaTimeMs
+        #endif
+    }
+
+    /// The media time the decoded audio shows the listener at, when the reported time has frozen behind it
+    /// while playing (#2094). Anything that reads the position (a new Margin's anchor, its rejoin, the saved
+    /// resume position, Now Playing) then follows the audio rather than a stale clock.
+    private func decodedAudioMediaTimeMs(overruling reported: Int) -> Int? {
+        guard player != nil, !paused else { return nil }
+        return clockGuard.observe(
+            reportedMediaTimeMs: reported,
+            rawClockMediaTimeMs: observedPlayerMediaTimeMs(),
+            decoded: latestDecodedAudioSample(),
+            uptimeMs: DecodedAudioClockGuard.uptimeMs()
+        )
+    }
+
+    private func latestDecodedAudioSample() -> DecodedAudioClockGuard.DecodedSample? {
+        #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
+        guard let context = postResumeEvidenceTapContext,
+              postResumeEvidenceItem != nil, postResumeEvidenceItem === player?.currentItem else { return nil }
+        return context.latestDecodedSample
+        #else
+        return nil
         #endif
     }
 
@@ -2303,6 +2341,11 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     public func pause() throws {
         #if canImport(AVFoundation)
         cancelAutomaticInterruptionResume()
+        if !paused {
+            // Pausing during a clock freeze keeps where the audio was, not the frozen time, for the resume (#2094).
+            pausedTrustedMediaTimeMs = decodedAudioMediaTimeMs(overruling: reportedMediaTimeMs())
+        }
+        clockGuard.notePaused()
         paused = true
         player?.pause()
         stopStallWatchdog()
@@ -2330,6 +2373,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         playbackComplete = false
         mediaSeekFailure = nil
         paused = true
+        pausedTrustedMediaTimeMs = nil
+        clockGuard = DecodedAudioClockGuard()
         clearNowPlaying()
         #if os(iOS)
         if mixesWithOtherAudio, lowersBackgroundAudio { try? PlaybackAudioSessionPolicy.releaseDucking() }
@@ -2352,6 +2397,9 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             )
         }
         mediaSeekFailure = nil
+        frozenPlayerClockForTesting = nil
+        pausedTrustedMediaTimeMs = nil
+        clockGuard.noteSeek(uptimeMs: DecodedAudioClockGuard.uptimeMs())
         let uptime = ProcessInfo.processInfo.systemUptime
         mediaSeekStartedUptime = uptime
         return mediaSeekLifecycle.begin(
@@ -2402,6 +2450,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private func checkForStall() {
         let uptime = ProcessInfo.processInfo.systemUptime
         abandonOverrunMediaSeek(uptime: uptime)
+        // Also keeps the guard's view of the clock current when nothing else reads the position.
+        let decodedMediaTimeMs = decodedAudioMediaTimeMs(overruling: reportedMediaTimeMs())
         guard let event = stallDetector.observe(
             uptimeMs: Int(uptime * 1_000),
             mediaTimeMs: observedPlayerMediaTimeMs(),
@@ -2411,6 +2461,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         switch event {
         case .stalled(let atMediaTimeMs, let forMs):
             fields = ["event": "stalled", "atMs": String(atMediaTimeMs), "forMs": String(forMs)]
+            if let decodedMediaTimeMs {
+                fields["decodedMs"] = String(decodedMediaTimeMs)
+                fields["decodeLeadMs"] = String(clockGuard.decodeLeadMs)
+            }
         case .ended(let fromMediaTimeMs, let toMediaTimeMs, let stalledForMs):
             fields = [
                 "event": "ended", "fromMs": String(fromMediaTimeMs),
@@ -2419,6 +2473,41 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         }
         fields.merge(playerStateFields(uptime: uptime)) { current, _ in current }
         playbackStallTraceHandler?(fields)
+        if case .stalled(let atMediaTimeMs, _) = event, let decodedMediaTimeMs {
+            recoverFrozenClock(at: decodedMediaTimeMs, frozenAtMs: atMediaTimeMs, uptime: uptime)
+        }
+    }
+
+    /// The audio played on while AVPlayer's clock stood still (#2094). Seek to where the audio is, so the
+    /// player's own timeline, the scrubber and Now Playing follow it again; the position is already reported
+    /// from the decoded audio until then.
+    private func recoverFrozenClock(at mediaTimeMs: Int, frozenAtMs: Int, uptime: TimeInterval) {
+        #if canImport(AVFoundation)
+        let uptimeMs = DecodedAudioClockGuard.uptimeMs()
+        if let last = lastClockRecoveryUptimeMs, uptimeMs - last < Self.clockRecoveryIntervalMs { return }
+        guard let player, let activeTargetId else { return }
+        lastClockRecoveryUptimeMs = uptimeMs
+        let superseded = mediaSeekLifecycle.pending
+        let generation = beginMediaSeek(targetId: activeTargetId, mediaTimeMs: mediaTimeMs, purpose: .playbackStart)
+        if let superseded, superseded.purpose == .navigation {
+            // The audio is past that seek's target, so it landed; its completion just never said so.
+            storeNavigationSeekResolution(.accepted(mediaTimeMs: mediaTimeMs), for: superseded.requestId)
+        }
+        lastRequestedMediaTimeMs = mediaTimeMs
+        let tolerance = CMTime(seconds: 0.25, preferredTimescale: 600)
+        player.seek(
+            to: CMTime(seconds: Double(mediaTimeMs) / 1_000, preferredTimescale: 600),
+            toleranceBefore: tolerance, toleranceAfter: tolerance
+        ) { [weak self] finished in
+            DispatchQueue.main.async { [weak self] in
+                self?.finishMediaSeek(generation: generation, targetId: activeTargetId, finished: finished)
+            }
+        }
+        var fields = ["event": "clock_recovered", "fromMs": String(frozenAtMs), "toMs": String(mediaTimeMs),
+                      "decodeLeadMs": String(clockGuard.decodeLeadMs)]
+        fields.merge(playerStateFields(uptime: uptime)) { current, _ in current }
+        playbackStallTraceHandler?(fields)
+        #endif
     }
 
     /// AVPlayer's own state right now, in the fields the stall trace carries, plus `uptimeMs` (#835). Unlike
@@ -2535,6 +2624,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     private func observedPlayerMediaTimeMs() -> Int? {
         #if canImport(AVFoundation)
+        if let frozenPlayerClockForTesting, player != nil { return frozenPlayerClockForTesting }
         guard let seconds = player?.currentTime().seconds, seconds.isFinite else { return nil }
         return max(0, Int((seconds * 1_000).rounded()))
         #else
