@@ -19,7 +19,7 @@ final class SystemTextAudioMainThreadTests: XCTestCase {
 
     @MainActor
     func testRenderWorkAwaitedFromTheMainActorRunsOffTheMainThread() async throws {
-        XCTAssertTrue(Thread.isMainThread, "the caller starts on the main actor")
+        MainActor.assertIsolated("the caller starts on the main actor")
 
         let workRanOnMain = try await SystemTextAudioPreparationClient.runOffMainThread { Thread.isMainThread }
         XCTAssertFalse(workRanOnMain)
