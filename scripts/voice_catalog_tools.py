@@ -248,6 +248,26 @@ def _fixture_voice() -> dict:
     }
 
 
+def _fixture_archive_voice() -> dict:
+    """A voice whose model the publisher ships only inside an archive (#2086), plus a notice the catalog carries."""
+    archive = b"fixture archive bytes\n"
+    member = b"fixture int8 graph\n"
+    notice = "Notice of modification: the graph was renamed on the device.\n".encode()
+    voice = _fixture_voice()
+    voice.update({
+        "id": "fixture-archive-voice",
+        "files": [
+            {"path": "onnx/model.onnx", "byteCount": len(member), "sha256": sha256_hex(member),
+             "archiveMember": {"archive": "int8", "member": "fixture-int8-1.0/model.int8.onnx"}, "licenseId": "fixture-rail"},
+            {"path": "onnx/MODIFIED.txt", "byteCount": len(notice), "sha256": sha256_hex(notice), "content": notice.decode()},
+            _tiny_file("styles/a.json", b'{"style":"a"}\n', "styles/a.json"),
+        ],
+        "archives": [{"id": "int8", "format": "tar.bz2", "byteCount": len(archive), "sha256": sha256_hex(archive),
+                      "sources": ["https://github.example.com/releases/download/models/fixture-int8-1.0.tar.bz2"]}],
+    })
+    return voice
+
+
 def _fixture_bundled_voice() -> dict:
     return {
         "id": "fixture-bundled",
@@ -297,6 +317,7 @@ def fixture_catalogs() -> dict[str, dict]:
         # Properly signed, but 1 is lower than the 3 the tests say was accepted before.
         "rollback": _catalog(1, [_fixture_voice()]),
         "unknown-key": _catalog(3, valid_voices),
+        "archive": _catalog(5, valid_voices + [_fixture_archive_voice()]),
     }
 
 
@@ -352,6 +373,15 @@ def write_fixtures() -> None:
     (invalid / "envelope-missing-signature.json").write_bytes(pretty(no_signature))
     (invalid / "envelope-wrong-algorithm.json").write_bytes(pretty({**good, "algorithm": "rsa"}))
     (invalid / "envelope-short-signature.json").write_bytes(pretty({**good, "signature": good["signature"][:-4]}))
+    # Invalid catalogs: a file must name exactly one place its bytes come from (#2086).
+    payloads = ROOT / "Contracts/fixtures/invalid/voice-model-catalog-payload"
+    payloads.mkdir(parents=True, exist_ok=True)
+    two_places = json.loads(json.dumps(catalogs["archive"]))
+    two_places["voices"][2]["files"][0]["sources"] = ["https://models.example.org/fixture-voice/1.0/model.onnx"]
+    (payloads / "catalog-file-with-two-places.json").write_bytes(pretty(two_places))
+    no_place = json.loads(json.dumps(catalogs["valid"]))
+    del no_place["voices"][1]["files"][0]["sources"]
+    (payloads / "catalog-file-with-no-place.json").write_bytes(pretty(no_place))
 
 
 def main(argv: list[str]) -> int:

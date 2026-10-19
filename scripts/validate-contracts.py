@@ -65,6 +65,7 @@ NEGATIVE_PATH_SCHEMA_RULES = [
     ("fixtures/invalid/source-catalog/*.json", "source-catalog.schema.json"),
     ("fixtures/invalid/source-resolution/*.json", "source-resolution.schema.json"),
     ("fixtures/invalid/voice-model-catalog/*.json", "voice-model-catalog-envelope.schema.json"),
+    ("fixtures/invalid/voice-model-catalog-payload/*.json", "voice-model-catalog.schema.json"),
     ("fixtures/invalid/listening-signals/*.json", "i4-engagement.schema.json"),
 ]
 
