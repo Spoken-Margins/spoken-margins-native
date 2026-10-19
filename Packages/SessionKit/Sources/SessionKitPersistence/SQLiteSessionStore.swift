@@ -1349,7 +1349,11 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try query("SELECT kind, id, payload FROM records WHERE kind = ? AND item_id = ? ORDER BY updated_at, id;", [kind, itemId])
     }
 
+    /// Rows are copied out while the connection lock is held and decoded after it is released, so a small read or write
+    /// on another thread (the main thread's, usually) never waits for a big background read to finish decoding (#2103).
+    /// A caller that already holds the lock keeps holding it; the gain is for callers that don't.
     private func query<T: Decodable>(_ sql: String, _ values: [String]) throws -> [T] {
+        var rows: [(kind: String, id: String, payload: String)] = []
         try withConnectionLock {
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -1359,33 +1363,42 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
             for (index, value) in values.enumerated() {
                 bind(statement, index: Int32(index + 1), value: value)
             }
-            var decoded: [T] = []
-            var corrupt: [(kind: String, id: String, payload: String, error: String)] = []
             while sqlite3_step(statement) == SQLITE_ROW {
                 guard let rawKind = sqlite3_column_text(statement, 0),
                       let rawID = sqlite3_column_text(statement, 1),
                       let raw = sqlite3_column_text(statement, 2) else { continue }
-                let kind = String(cString: rawKind)
-                let id = String(cString: rawID)
-                let payload = String(cString: raw)
-                guard let data = payload.data(using: .utf8) else { continue }
-                do {
-                    decoded.append(try decoder.decode(T.self, from: data))
-                } catch {
-                    corrupt.append((kind: kind, id: id, payload: payload, error: String(describing: error)))
-                }
+                rows.append((kind: String(cString: rawKind), id: String(cString: rawID), payload: String(cString: raw)))
             }
             sqlite3_finalize(statement)
             statement = nil
-            if !corrupt.isEmpty {
-                try withTransaction {
-                    for record in corrupt {
-                        try quarantine(kind: record.kind, id: record.id, payload: record.payload, error: record.error)
-                    }
+        }
+        var decoded: [T] = []
+        var corrupt: [(kind: String, id: String, payload: String, error: String)] = []
+        for row in rows {
+            guard let data = row.payload.data(using: .utf8) else { continue }
+            do {
+                decoded.append(try decoder.decode(T.self, from: data))
+            } catch {
+                corrupt.append((kind: row.kind, id: row.id, payload: row.payload, error: String(describing: error)))
+            }
+        }
+        if !corrupt.isEmpty {
+            try withTransaction {
+                for record in corrupt {
+                    // The lock was released while decoding, so the row may have been rewritten since it was read.
+                    // Only a row that still holds the bytes that failed is set aside.
+                    guard try storedPayload(kind: record.kind, id: record.id) == record.payload else { continue }
+                    try quarantine(kind: record.kind, id: record.id, payload: record.payload, error: record.error)
                 }
             }
-            return decoded
         }
+        return decoded
+    }
+
+    private func storedPayload(kind: String, id: String) throws -> String? {
+        var payload: String?
+        try readTexts("SELECT payload FROM records WHERE kind = ? AND id = ?;", [kind, id], name: "stored_payload") { payload = $0 }
+        return payload
     }
 
     private static func isNewerSession(_ lhs: Session, _ rhs: Session) -> Bool {
