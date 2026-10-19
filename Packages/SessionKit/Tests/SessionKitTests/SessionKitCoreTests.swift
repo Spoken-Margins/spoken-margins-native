@@ -150,10 +150,10 @@ final class SessionKitCoreTests: XCTestCase {
     /// long article with emoji and links reaches the voice, its last sentence is in the final
     /// utterance, and playback completes only when that utterance finishes.
     func testLongEmojiArticleQueuesEveryWordAndCompletesOnlyAfterItsLastSentence() throws {
-        let paragraph = "Expression keeps evolving 💪🏿 as people find new ways to say what they mean, "
-            + "and [the guide](https://example.com/emoji-guide) explains why. Color meets contrast ⛲ "
+        let paragraph = "Meaning keeps shifting 💪🏿 as people find new ways to say what they mean, "
+            + "and [the guide](https://example.com/emoji-guide) explains why. Tone meets range ⛲ "
             + "when the artwork has to read at every size on every screen. "
-        let lastSentence = "Language only truly lives when people use it."
+        let lastSentence = "Symbols only stay alive when people use them."
         let source = Array(repeating: paragraph, count: 24).joined(separator: "\n\n") + "\n\n" + lastSentence
         let client = SystemSpeechPlaybackClient(voiceIdentifier: nil, speechRate: AVSpeechUtteranceDefaultSpeechRate)
         var queued: [(synthesizer: AVSpeechSynthesizer, utterance: AVSpeechUtterance)] = []

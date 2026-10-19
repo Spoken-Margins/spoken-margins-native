@@ -1,37 +1,37 @@
-The way we use emoji has changed. In the early days, we were literal: You sent a nail polish emoji (💅) because you were, in fact, getting your nails polished.
+The way we send small pictures keeps changing. Years ago, most were literal: a painted hand meant nails(💅) and little else, at best, for nearly everyone.
 
-Today we lean on emoji to break down the barrier of our screens and inject a shrug, a wink or that highly specific “it’s fine but it’s actually not fine” subtext. They’re the language within the language that keeps a blunt message from accidentally killing the vibe.
+Today a single picture can carry a joke, a mood, a reply and a wink at once, and our studio keeps a running file we call “what’s it mean now’s list of odd cases” anyway. It’s where we write down every surprising use that readers send us during the year, so nothing gets lost.
 
-On World Emoji Day, here's a closer look at the evolution of our emoji (all 3,977 characters) and how they can add physical and emotional depth to how we communicate in the modern era.
+Over the past decade, we've added hundreds of new shapes to the Tidepool set (about 3,977 total) and each one passes through sketches, reviews and tests with readers in many countries before it ships.
 
-Expression keeps evolving
+Meaning keeps shifting
 
-We don't just "laugh" anymore. We collapse, or internally scream. Modern internet culture has steadily moved from mild expressions to drama, hyperbole and overwhelm.
+Think of today's "melting" face. At first, it meant heat. Over time readers began using it for embarrassment and quiet dread as well, depending on context.
 
-For years, "face with tears of joy" (😂) was the undisputed emoji king, according to Gboard Federated Analytics. But following a multi-year decline, it slipped down the charts by 2025.
+For years, "the face with happy tears" (😂) topped every chart we kept, without much contest. Then the long-running favorite slipped, and by early spring it lost ground in 2025.
 
-Why? Because 😭 is a masterclass in modern vocabulary: It’s hilarious, it’s devastating and it captures absolute overwhelm. When we do laugh, our inclination for hyperbole demands it be unhinged, pushing “rolling on the floor laughing” (🤣) to the top of the chart. Even our expressions for heartbreak are shifting; data show a poetic migration in popularity from the broken heart (💔) toward the wilted flower (🥀).
+Why? Crying😭 took the top spot instead, for a simple reason: it’s louder, it’s more dramatic and a little more absurd than laughing. Other faces rose too, and the rolling laugh moved up the list, while a “laughing so hard I fell over” (🤣) face held steady all year long. Some shapes changed meaning entirely; the broken heart now often stands for mild disappointment rather than real grief(💔) and so does the wilted flower(🥀).
 
-Art informs innovation
+Craft guides the tools
 
-This update brings our favorite emoji into a 3D future rather than leaving them behind. The brain processes emoji faster than text, so you can’t just slap on a design and call it a day. Touching something that billions of people use trillions of times a day requires more nuance.
+Last year our studio began testing a new style built in 3 dimensions for every shape. It started as a small experiment, but it’s grown into a full program that now covers most of the set. Every drawing still begins as a flat sketch on paper before anyone builds a model on screen.
 
-Our emoji have always favored expression over hyper-realism and in this new 3D world it means our designs can have dimension without being photorealistic. They need a pulse and a soul — not the cold precision of industrial CAD models. Have you looked closely at a real kangaroo? They’re terrifying 🙀. We don’t need anatomical perfection. With the power of illustration, we can capture the true, playful vibe of a kangaroo.
+We wanted the new shapes to feel hand-made, even when rendered in 3 dimensions with soft light and the small flaws that a person would leave. Getting there took many rounds of drafts— some of them good, most of them strange. Would a cat with wide eyes still read as surprised? Here’s ours🙀. That’s where testing helps most. We asked readers in cafes, we asked readers on trains, we asked readers at home.
 
-We also ran large-scale user studies to evaluate how changing emoji could potentially mess with human connection. The research unmasked universal truths: Users overwhelmingly prefer full-body animals over floating heads; adding props hurts comprehension; and tiny tweaks (like swapping the direction of a wink) can turn mild confusion into accidental outrage.
+Each shape is pixel-checked at every size the app can show, on small screens and on large ones. Three rules guided us: keep line-weights even across the set; keep shadows soft and low; avoid fine detail(that vanishes at the smallest size we ship) and test with real readers often.
 
-While our design process still begins with 2D drawings, it no longer ends there. In an industry first, Noto Emoji 3D is entirely available as true 3D models.
+The flat set still ships at size 2 and up, alongside the new models. For now, the 3 dimensional style covers chat while 3 core faces stay flat.
 
-Moving from flat pixels to a three-dimensional world forced us to resolve architectural questions we’d never considered. What does the back of a smiley face look like? Is it a concave mask, a solid bouncy ball or a flat piece of paper?
+We also studied how motion changes meaning in long-running threads where a picture’s tone can drift. Does a waving hand feel warmer if it actually moves on screen? And if so, how much motion is too much before it starts to distract a reader?
 
-<video aria-label="A static thumbs up emoji, next to two spinning thumbs ups on the right. The middle thumbs up is in a 3-D grid style." title="Emoji Blog Inline" controls=""><source type="video/mp4" src="> Sorry, your browser doesn't support embedded videos, but don't worry, you can <a href=">download it</a> and watch it with your favorite video player!</video>
+<video aria-label="A flat waving hand pictogram, next to two animated waving hands on the right. The middle hand is drawn in a 3-D clay style." title="Pictogram Studio Inline" controls=""><source type="video/mp4" src="> Sorry, your browser doesn't support embedded videos, but don't worry, you can <a href=">download it</a> and watch it with your favorite video player!</video>
 
-Because language is meant to be shared, our entire Noto portfolio is completely open source. We’re handing over files to the community so they can use them to build immersive VR worlds, indie apps or weird memes.
+The answer surprised us at first, then made sense. Motion helps a symbol land when the moment is warm. It’s also why we added a setting that turns animation off for anyone who finds it distracting or tiring, on any device.
 
-Color meets contrast
+Tone meets range
 
-Emoji with the darkest skin tones can be difficult to see in dark mode — a problem for anyone who sends or receives them. That’s why we built an AI-powered contrast tool that analyzes each emoji at the pixel level, flags when the contrast ratio is too low and suggests high-contrast solutions that are implemented by designers 💪💪🏻💪🏼💪🏽💪🏾💪🏿.
+Range matters as much as style, so we reworked how skin tones look across every hand and person shape we draw— not just the default yellow ones. We’ve also rebuilt the tone-picker so it remembers what each reader chose last time, and it now offers the same five-tone set on every gesture, from the waving hand to the flexed arm💪💪🏻💪🏼💪🏽💪🏾💪🏿.
 
-Language is for the people
+Symbols belong to everyone
 
-Now, Noto 3D emoji are yours. Remix them, break them and stretch them into shapes we never could have anticipated. Language only truly lives when we find new ways to use it. ⛲
+Finally, version 3 rolls out this week. In short, our symbols only stay alive when people bend them to their own ends in chats and notes. We will keep watching, keep listening and keep drawing for whatever readers invent next. ⛲
