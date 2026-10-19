@@ -630,7 +630,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 || (fallbackIsActive && currentTargetId == targetId)
         }
         if usesStoppedGeneration {
-            try fallback.play(targetId: targetId, from: charOffset)
+            try playFallbackVoice(targetId: targetId, from: charOffset)
             let spokenOffset = spokenOffset(forSourceOffset: charOffset)
             lock.withLock {
                 fallbackIsActive = true
@@ -833,7 +833,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// It switches at a play (resume, seek, next item), never mid-sentence.
     private func restoreOnDeviceRenderingIfConditionCleared(targetId: String) {
         let restoresVoice = onDeviceRenderingAllowed() && lock.withLock { resourceFallbackTargetIds.contains(targetId) }
-        if restoresVoice { try? fallback.pause() }
+        if restoresVoice { try? pauseFallbackVoice() }
         let restartsHeldQueue = lock.withLock { () -> Bool in
             if restoresVoice {
                 resourceFallbackTargetIds.remove(targetId)
@@ -1035,7 +1035,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             return (fallbackIsActive, player)
         }
         if snapshot.0 {
-            try fallback.pause()
+            try pauseFallbackVoice()
         } else {
             snapshot.1?.pause()
             try releaseBackgroundAudio()
@@ -1115,7 +1115,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         stopped.renderControl?.cancel()
         for url in stopped.urls { discardAudio(url) }
         try releaseBackgroundAudio()
-        try fallback.stop()
+        try stopFallbackVoice()
         reportGenerationState(.inactive)
     }
 
@@ -1189,9 +1189,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         stopped.renderControl?.cancel()
         for url in stopped.urls { discardAudio(url) }
 
-        try fallback.play(targetId: targetId, from: offset)
+        try playFallbackVoice(targetId: targetId, from: offset)
         if state.1 == .paused {
-            try fallback.pause()
+            try pauseFallbackVoice()
         }
         lock.withLock {
             systemVoicePlayback += 1
@@ -1210,7 +1210,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         guard let target = lock.withLock({ currentTargetId }) else { return false }
         let offset = currentCharOffset() ?? 0
         let wasPaused = lock.withLock { transportIntent == .paused }
-        try fallback.stop()
+        try stopFallbackVoice()
         lock.withLock {
             generationDisabledReasons.removeValue(forKey: target)
             resourceFallbackTargetIds.remove(target)
@@ -1953,11 +1953,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private func startSystemVoiceAheadOfHandOver(targetId: String, sourceOffset: Int) -> Bool {
         do {
             _ = try fallback.prepareSpeechText(lock.withLock { preparedSourceText })
-            try fallback.play(targetId: targetId, from: sourceOffset)
+            try playFallbackVoice(targetId: targetId, from: sourceOffset)
             if case .failed = fallback.playbackStartStatus(targetId: targetId) { throw HandOverStartFailed() }
             return true
         } catch {
-            try? fallback.stop()
+            try? stopFallbackVoice()
             return false
         }
     }
@@ -2039,7 +2039,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             stopped.renderControl?.cancel()
             cancelledRenderQueue = true
             for url in stopped.urls { discardAudio(url) }
-            if !voiceAlreadyStarted { try fallback.play(targetId: targetId, from: sourceOffset) }
+            if !voiceAlreadyStarted { try playFallbackVoice(targetId: targetId, from: sourceOffset) }
             let startStatus = fallback.playbackStartStatus(targetId: targetId)
             if keepsChunk, case .failed = startStatus { throw HandOverStartFailed() }
             let spokenOffset = spokenOffset(forSourceOffset: sourceOffset)
@@ -2074,7 +2074,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 kept: stopped.kept
             )
         } catch {
-            if keepsChunk { try? fallback.stop() }
+            if keepsChunk { try? stopFallbackVoice() }
             lock.withLock {
                 fallbackIsActive = false
                 playbackFailure = "supertonic_and_system_fallback_failed"
@@ -2159,7 +2159,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         do {
             // Keep the session continuous between ready chunks so opted-in
             // background audio does not swell at each sentence boundary.
-            if lock.withLock({ fallbackIsActive }) { try fallback.stop() }
+            if lock.withLock({ fallbackIsActive }) { try stopFallbackVoice() }
             let level = lock.withLock { playbackVolume }
             let item = AVPlayerItem(url: audioURL)
             item.audioTimePitchAlgorithm = .timeDomain
@@ -2494,7 +2494,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 return true
             }
             guard paused else { return }
-            try? fallback.pause()
+            try? pauseFallbackVoice()
             try? releaseBackgroundAudio()
             interruptionHandler?(.began)
             return
@@ -2512,8 +2512,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         guard let targetId = lock.withLock({ fallbackIsActive && transportIntent == .playing ? currentTargetId : nil }),
               let offset = fallback.currentCharOffset() else { return }
         try? activateAudioSession()
-        try? fallback.pause()
-        try? fallback.play(targetId: targetId, from: offset)
+        try? pauseFallbackVoice()
+        try? playFallbackVoice(targetId: targetId, from: offset)
     }
 
     /// Re-activates the session and plays the same chunk from the same point in a new player.
@@ -2657,7 +2657,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         case .gaveUp:
             // The iOS voice never began: it is stopped, the chosen voice has its place and chunk back, and the
             // stall pauses for a tap as it did before the hand-over.
-            try? fallback.stop()
+            try? stopFallbackVoice()
             var fields = awaiting.stallFields
             fields["recovery"] = "hand_over_failed"
             onStall?("supertonic.stall_handover_failed", fields)
@@ -2689,7 +2689,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// play starts it in a new player that is watched for its end, rather than the player the hand-over left
     /// without one (#540 audit). The app isn't told of a pause: the listener's own pause or play ended the wait.
     private func returnToChosenVoice(releasesAudioSession: Bool) {
-        try? fallback.stop()
+        try? stopFallbackVoice()
         markMediaServicesReset(announcesPause: false)
         if releasesAudioSession { try? releaseBackgroundAudio() }
         releaseHandOverBackgroundTimeIfHeld()
@@ -3515,7 +3515,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         let key = lock.withLock {
             ActivatedSessionKey(mixes: mixesWithOtherAudio, lowersBackground: lowersBackgroundAudio && forPlayback)
         }
-        if lock.withLock({ activatedSessionKey == key }), activatedSessionStillConfigured() { return }
+        if lock.withLock({ activatedSessionKey == key }), activatedSessionStillConfigured(for: key) { return }
         let started = ContinuousClock.now
         defer { reportSessionActivation(since: started) }
         if let audioSessionActivator {
@@ -3531,15 +3531,33 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         lock.withLock { activatedSessionKey = key }
     }
 
-    /// Another component (a spoken Margin, a recording) may have changed the category since our activation.
-    private func activatedSessionStillConfigured() -> Bool {
+    /// Another component (a spoken Margin ducking others, a recording) may have changed the category, mode or
+    /// options since our activation.
+    private func activatedSessionStillConfigured(for key: ActivatedSessionKey) -> Bool {
         #if os(iOS)
         guard audioSessionActivator == nil else { return true }
         let session = AVAudioSession.sharedInstance()
         return session.category == .playback && session.mode == .spokenAudio
+            && session.categoryOptions == PlaybackAudioSessionPolicy.options(mixes: key.mixes, lowersBackground: key.lowersBackground)
         #else
         return true
         #endif
+    }
+
+    /// The iOS voice sets up and releases the shared session itself, so each call to it ends our activation (#2101).
+    private func playFallbackVoice(targetId: String, from offset: Int) throws {
+        forgetActivatedSession()
+        try fallback.play(targetId: targetId, from: offset)
+    }
+
+    private func pauseFallbackVoice() throws {
+        forgetActivatedSession()
+        try fallback.pause()
+    }
+
+    private func stopFallbackVoice() throws {
+        forgetActivatedSession()
+        try fallback.stop()
     }
 
     /// The next activation must run: an interruption, a lost route, a media services reset, a pause or a stop
@@ -3625,7 +3643,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         if state.didPause || cause != .routeLost { recordSystemPause(cause, acted: state.didPause) }
         guard state.didPause else { return }
         if state.usesFallback {
-            try? fallback.pause()
+            try? pauseFallbackVoice()
         } else {
             state.activePlayer?.pause()
             try? releaseBackgroundAudio()
@@ -3771,7 +3789,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             return (didPause, value)
         }
         if endedWaitingHandOver {
-            try? fallback.stop()
+            try? stopFallbackVoice()
             releaseHandOverBackgroundTimeIfHeld()
             restartRenderQueueBehindKeptChunk()
         }
