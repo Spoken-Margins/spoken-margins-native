@@ -132,19 +132,8 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertNil(fields["playerRate"], "the player's own fields still join the record only while playing")
     }
 
-    /// #1109 (Codex audit): with the iOS voice chosen, the client says what it intends in the same words, so
-    /// a pause record from system-voice narration carries the client's state too.
-    func testSystemVoiceClientReportsItsIntentForPlaybackRecords() throws {
-        let client = SystemSpeechPlaybackClient(voiceIdentifier: nil, speechRate: 0.5)
-        XCTAssertEqual(client.diagnosticIntent, "stopped")
-        _ = try client.prepareSpeechText(String(repeating: "The iOS voice reads this long enough to pause. ", count: 20))
-        try client.play(targetId: "system-intent", from: 0)
-        XCTAssertEqual(client.diagnosticIntent, "playing")
-        try client.pause()
-        XCTAssertEqual(client.diagnosticIntent, "paused")
-        try client.stop()
-        XCTAssertEqual(client.diagnosticIntent, "stopped")
-    }
+    // testSystemVoiceClientReportsItsIntentForPlaybackRecords (#1109) runs on the host, in SessionKitCoreTests:
+    // here it drove the real iOS synthesizer and hung past the 2-minute allowance in 2 of 31 lane runs.
 
     /// A slow render would likely be slow again, so that fallback waits for Retry.
     func testSlowRenderFallbackWaitsForRetryInsteadOfReturningAtTheNextPlay() async throws {
@@ -4716,11 +4705,12 @@ final class SupertonicSpeechTests: XCTestCase {
     }
 
     // APA-15 (#1042): the only test that runs the real model inside the app. Since #1820 the model is a download,
-    // not in the app, so it comes through the supertonicModel input (SupertonicTestAssets.realModel) and the test
-    // skips, naming it, when it isn't fetched. A peak of 0.000001 also accepted near-silence; 0.01 is quiet speech.
+    // not in the app, so it comes through the supertonicModel input (SupertonicTestAssets.realModel). The adapters
+    // plan fetches it before the run (scripts/verify-tests.py), so on the lane it runs; elsewhere it skips, naming
+    // the input. A peak of 0.000001 also accepted near-silence; 0.01 is quiet speech.
     // Whether each voice loads its own style is checked on the host, by pitch (SupertonicVoiceSelectionTests):
     // renders start from random noise, so samples can't be compared.
-    func testBundledRendererSynthesizesJamesAndLilyAndReusesSessions() async throws {  // the name the test plans list; the model is downloaded now
+    func testDownloadedRendererSynthesizesJamesAndLilyAndReusesSessions() async throws {
         let model = try SupertonicTestAssets.realModel()
         let output = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-integration-\(UUID().uuidString)", directoryHint: .isDirectory)

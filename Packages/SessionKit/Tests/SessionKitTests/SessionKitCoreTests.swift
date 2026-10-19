@@ -144,6 +144,25 @@ final class SessionKitCoreTests: XCTestCase {
         try client.stop()
     }
 
+    /// #1109 (Codex audit): with the iOS voice chosen, the client says what it intends in the same words the
+    /// on-device voice uses, so a pause record from system-voice narration carries the client's state too. It
+    /// ran in the app against the real synthesizer and hung past the 2-minute allowance in 2 of 31 lane runs
+    /// (pr1804, pr2067); the intent is the client's own bookkeeping, so nothing is spoken here.
+    func testSystemVoiceClientReportsItsIntentForPlaybackRecords() throws {
+        let client = SystemSpeechPlaybackClient(voiceIdentifier: nil, speechRate: 0.5)
+        var queued: [AVSpeechUtterance] = []
+        client.speakNarration = { queued.append($1) }
+        XCTAssertEqual(client.diagnosticIntent, "stopped")
+        _ = try client.prepareSpeechText(String(repeating: "The iOS voice reads this long enough to pause. ", count: 20))
+        try client.play(targetId: "system-intent", from: 0)
+        XCTAssertFalse(queued.isEmpty, "playing hands the passage to the synthesizer")
+        XCTAssertEqual(client.diagnosticIntent, "playing")
+        try client.pause()
+        XCTAssertEqual(client.diagnosticIntent, "paused")
+        try client.stop()
+        XCTAssertEqual(client.diagnosticIntent, "stopped")
+    }
+
     /// #1291 APO-14: the emoji-article soak (`EmojiArticlePlaybackUITests`, retired SpeechCanary
     /// plan) accepted a run that returned Home at 90 percent, so a voice queue missing the
     /// article's tail could pass. This holds the same claim where it runs: every spoken word of a

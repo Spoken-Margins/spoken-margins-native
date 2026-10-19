@@ -883,7 +883,7 @@ class ScopeClassTests(unittest.TestCase):
         # Review of #370: SupertonicSpeechTests is in AppBehavior except one method, which only AudioAdapters
         # runs. Naming that method on a branch touching the class dropped it into the class, and the class
         # went to the app plan alone, so the named test never ran and the run could still pass.
-        method = 'SupertonicSpeechTests/testBundledRendererSynthesizesJamesAndLilyAndReusesSessions'
+        method = 'SupertonicSpeechTests/testDownloadedRendererSynthesizesJamesAndLilyAndReusesSessions'
         (_, _, _, details, _, _), grouped = self.run_t3([method], ['SupertonicSpeechTests'])
         self.assertEqual(grouped, {'app': ['SpokenMarginsAppTests/SupertonicSpeechTests'],
                                    'adapters': ['SpokenMarginsAppTests/SupertonicSpeechTests']})

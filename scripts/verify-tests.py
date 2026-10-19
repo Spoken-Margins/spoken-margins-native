@@ -564,6 +564,18 @@ SUPERTONIC_MODEL_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
 ))
 
 
+# The one app-hosted test that runs Supertonic's real model, in the adapters plan. The model is a download since #1820,
+# so the run fetches it (pinned by sha256 in Contracts/voice-models/sources.json) into a cache outside the checkout,
+# once per Mac, and hands it to the app's tests; a fetch that fails fails the run instead of letting the test skip.
+SUPERTONIC_APP_MODEL_TEST = 'SupertonicSpeechTests/testDownloadedRendererSynthesizesJamesAndLilyAndReusesSessions'
+SUPERTONIC_MODEL_VOICE = 'supertonic-3-int8'
+
+
+def supertonic_model_cache():
+    """Where the lane keeps the fetched model: SM_VOICE_CACHE, else the user's Caches folder (about 150 MB)."""
+    return Path(os.environ.get('SM_VOICE_CACHE') or Path.home() / 'Library/Caches/SpokenMargins/voice-catalog')
+
+
 def in_codex_sandbox():
     return bool(os.environ.get('CODEX_SANDBOX'))
 
@@ -1320,6 +1332,19 @@ class Run:
                      str(derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')])
         return derived, identity
 
+    def provide_supertonic_model(self):
+        """Fetch Supertonic's model before the simulator boots, and give its folder to the app's tests, which read
+        SESSIONKIT_SUPERTONIC_DIR (xcodebuild passes TEST_RUNNER_-prefixed variables on without the prefix)."""
+        folder = os.environ.get('SESSIONKIT_SUPERTONIC_DIR')
+        if not folder:
+            cache = supertonic_model_cache()
+            self.command('supertonic-model', [sys.executable, str(ROOT / 'scripts/voice-catalog'), '--state-dir', str(cache),
+                                              'fetch', SUPERTONIC_MODEL_VOICE], timeout=1200)
+            folder = str(cache / 'files' / SUPERTONIC_MODEL_VOICE)
+        os.environ['TEST_RUNNER_SESSIONKIT_SUPERTONIC_DIR'] = folder
+        self.manifest['supertonic_model'] = folder
+        self.save()
+
     def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None, simulator_slot_fd=None,
               require_build=False):
         if input_identity() != self.manifest['input_sha256']:
@@ -1336,6 +1361,9 @@ class Run:
                                      {f'{APP_TEST_TARGET}/{test}' for test in target_tests(ROOT, APP_TEST_TARGET)})
         if selectors:
             self.manifest['only_testing'] = selectors
+        if any(test.endswith(SUPERTONIC_APP_MODEL_TEST)
+               for test in planned if not selectors or any(selected(test, s) for s in selectors)):
+            self.provide_supertonic_model()
         chosen, created = self.simulator(device, ios)
         refuse_unsafe(chosen, lane_sim.unsafe_devices())
         self.manifest['destination'] = chosen

@@ -168,6 +168,26 @@ class SupertonicModelSkips(unittest.TestCase):
         self.assertEqual(readers, set(verification.SUPERTONIC_MODEL_TESTS))
 
 
+class SupertonicAppModelTest(unittest.TestCase):
+    """#1820: the adapters plan fetches the model for the one app test that runs it, so that test can't skip there."""
+
+    def test_the_fetched_model_is_for_a_test_the_adapters_plan_runs_and_the_app_plan_skips(self):
+        from test_inventory import plan_tests
+        test = f'SpokenMarginsAppTests/{verification.SUPERTONIC_APP_MODEL_TEST}'
+        self.assertIn(test, plan_tests(ROOT, 'AudioAdapters'))
+        self.assertNotIn(test, plan_tests(ROOT, 'AppBehavior'))
+        source = (ROOT / 'App/SpokenMarginsAppTests/SupertonicSpeechTests.swift').read_text()
+        method = verification.SUPERTONIC_APP_MODEL_TEST.split('/')[1]
+        body = source[source.index(f'func {method}('):]
+        self.assertIn('SupertonicTestAssets.realModel()', body[:body.index('\n    }\n')])
+
+    def test_the_voice_fetched_is_a_downloadable_voice_in_the_catalog(self):
+        sources = json.loads((ROOT / 'Contracts/voice-models/sources.json').read_text())
+        voice = next(v for v in sources['voices'] if v['id'] == verification.SUPERTONIC_MODEL_VOICE)
+        self.assertFalse(voice.get('bundled'))
+        self.assertTrue(voice['files'])
+
+
 class LfsPointerCheck(unittest.TestCase):
     OID = 'ab' * 32
 
