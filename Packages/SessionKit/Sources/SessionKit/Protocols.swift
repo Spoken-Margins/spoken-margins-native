@@ -131,6 +131,9 @@ public protocol EpisodeMapRepository {
     func loadTranscriptPhraseSketch(itemId: String) throws -> TranscriptPhraseSketchArtifact?
     func savePortableListeningMapProposal(_ proposal: PortableListeningMapProposalArtifact, itemId: String) throws
     func loadPortableListeningMapProposals(itemId: String) throws -> [PortableListeningMapProposalArtifact]
+    /// Removes every stored proposal of the item and the projection that points at one, so a map that replaces
+    /// another is the only one left and nothing is left pointing at a proposal that is gone (#1471).
+    func removePortableListeningMapProposals(itemId: String) throws
     func saveResolvedListeningMapProjection(_ projection: ResolvedListeningMapProjection) throws
     func loadResolvedListeningMapProjection(itemId: String) throws -> ResolvedListeningMapProjection?
     /// Removes a community map's proposal and projection (#553), found by their ids; nothing else.

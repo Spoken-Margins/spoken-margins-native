@@ -906,6 +906,13 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try save(kind: "portable_listening_map_proposal", id: proposal.id, sessionId: nil, itemId: itemId, value: proposal)
     }
 
+    public func removePortableListeningMapProposals(itemId: String) throws {
+        try withTransaction {
+            try deleteRecords(kind: "portable_listening_map_proposal", itemId: itemId)
+            try deleteRecords(kind: "resolved_listening_map_projection", itemId: itemId)
+        }
+    }
+
     public func loadPortableListeningMapProposals(itemId: String) throws -> [PortableListeningMapProposalArtifact] {
         try loadByItem(kind: "portable_listening_map_proposal", itemId: itemId)
     }
