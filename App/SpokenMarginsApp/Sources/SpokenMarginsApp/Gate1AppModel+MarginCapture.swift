@@ -338,7 +338,7 @@ extension Gate1AppModel {
             capture: capture,
             text: "",
             itemTitle: (try? store.loadItem(id: capture.itemId).title) ?? "Current item",
-            targetDescription: capture.targetType == .item ? "Source" : (capture.targetType == .assistantTurn ? "Assistant response" : "Interjection summary"),
+            targetDescription: capture.targetType == .item ? "Source" : (capture.targetType == .assistantTurn ? "Assistant response" : "Margin summary"),
             progressPercent: capture.roughPercent,
             reply: reply
         )

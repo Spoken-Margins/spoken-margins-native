@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/QCD6036500916" rel="self" type="application/rss+xml"/>
+    <title>Philosophize This!</title>
+    <link>http://www.philosophizethis.org</link>
+    <language>en</language>
+    <copyright>2024</copyright>
+    <description>Beginner friendly if listened to in order! For anyone interested in an educational podcast about philosophy where you don't need to be a graduate-level philosopher to understand it. In chronological order, the thinkers and ideas that forged the world we live in are broken down and explained.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/24779146-88be-11ee-95a6-7b19628c6840/image/e231c2472d3da5c7bb06ad6651cdf3ea.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>Philosophize This!</title>
+      <link>http://www.philosophizethis.org</link>
+    </image>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle></itunes:subtitle>
+    <itunes:author>Stephen West</itunes:author>
+    <itunes:summary>Beginner friendly if listened to in order! For anyone interested in an educational podcast about philosophy where you don't need to be a graduate-level philosopher to understand it. In chronological order, the thinkers and ideas that forged the world we live in are broken down and explained.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>Beginner friendly if listened to in order! For anyone interested in an educational podcast about philosophy where you don't need to be a graduate-level philosopher to understand it. In chronological order, the thinkers and ideas that forged the world we live in are broken down and explained.</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Stephen West</itunes:name>
+      <itunes:email>podcasts@qcodemedia.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/24779146-88be-11ee-95a6-7b19628c6840/image/e231c2472d3da5c7bb06ad6651cdf3ea.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Society &amp; Culture">
+      <itunes:category text="Philosophy"/>
+    </itunes:category>
+    <itunes:category text="Education">
+    </itunes:category>
+    

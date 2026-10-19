@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:atom="http://www.w3.org/2005/Atom" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:sy="http://purl.org/rss/1.0/modules/syndication/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">
+  <channel>
+    <title>Song Exploder</title>
+    <link>http://www.songexploder.net</link>
+    <pubDate>Wed, 14 Oct 2026 19:00:00 -0000</pubDate>
+    <lastBuildDate>Wed, 14 Oct 2026 20:55:36 -0000</lastBuildDate>
+    <ttl>60</ttl>
+    <language>en</language>
+    <copyright>© Translucence</copyright>
+    <webMaster>help@prx.org (PRX)</webMaster>
+    <description>
+      <![CDATA[<p>Song Exploder is a podcast where musicians take apart their songs, and piece by piece, tell the story of how they were made. Each episode features an artist discussing a song of theirs, breaking down the sounds and ideas that went into the writing and recording. Hosted and produced by Hrishikesh Hirway.</p>]]>
+    </description>
+    <managingEditor>contact@songexploder.net (contact@songexploder.net)</managingEditor>
+    <generator>PRX Feeder v1.0.0</generator>
+    <docs>http://blogs.law.harvard.edu/tech/rss</docs>
+    <image>
+      <url>https://f.prxu.org/song-exploder/images/e1ac7426-23de-4fe6-9b38-c816ec398391/songexploder-logo-2025-with-title.jpg</url>
+      <title>Song Exploder</title>
+      <link>http://www.songexploder.net</link>
+      <width>3000</width>
+      <height>3000</height>
+      <description>Song Exploder</description>
+    </image>
+    <atom:link href="http://feed.songexploder.net/SongExploder" rel="self" type="application/rss+xml"/>
+    <itunes:new-feed-url>http://feed.songexploder.net/SongExploder</itunes:new-feed-url>
+    <itunes:author>Hrishikesh Hirway</itunes:author>
+    <itunes:type>episodic</itunes:type>
+    <itunes:category text="Music"/>
+    <itunes:image href="https://f.prxu.org/song-exploder/images/3b97a9c5-fef1-4c84-8038-3c6efa808016/songexploder-logo-2025-with-title.jpg"/>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:owner>
+      <itunes:email>Maggie.Gourville@prx.org</itunes:email>
+      <itunes:name>Hrishikesh Hirway</itunes:name>
+    </itunes:owner>
+    <itunes:subtitle>Song Exploder</itunes:subtitle>
+    <itunes:summary>
+      <![CDATA[Song Exploder is a podcast where musicians take apart their songs, and piece by piece, tell the story of how they were made. Each episode features an artist discussing a song of theirs, breaking down the sounds and ideas that went into the writing and recording. Hosted and produced by Hrishikesh Hirway.]]>
+    </itunes:summary>
+    <media:copyright>© Translucence</media:copyright>
+    <media:thumbnail url="https://f.prxu.org/song-exploder/images/e1ac7426-23de-4fe6-9b38-c816ec398391/songexploder-logo-2025-with-title.jpg"/>
+    <media:category scheme="http://www.itunes.com/dtds/podcast-1.0.dtd">Music</media:category>
+    <podcast:value type="webmonetization" method="ILP">
+      <podcast:valueRecipient name="Hrishikesh Hirway" type="paymentpointer" address="$ilp.uphold.com/NweH9z4DHgKM" split="100"/>
+    </podcast:value>
+    <podcast:guid>c7877f00-73e6-5b54-8621-1f8d02534760</podcast:guid>
+    <podcast:podping usesPodping="true"/>
+    <podcast:locked>yes</podcast:locked>
+    

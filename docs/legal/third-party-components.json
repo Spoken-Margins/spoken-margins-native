@@ -1,0 +1,353 @@
+{
+  "schemaVersion": 1,
+  "about": "Every third-party component this repository ships, downloads, builds with or carries as data. scripts/third_party_notices.py turns this file into THIRD_PARTY_NOTICES.md and fails when a dependency, bundled model or resource folder has no entry here. distribution is one of: bundled (ships in the app), downloaded (the app fetches it; it is not distributed here), tool (used to build or test; not shipped), content (data or text captured from elsewhere). Model and font files are checked by file type; artwork, audio and images are not, so the owner confirms those in the source audit (#1383).",
+  "projectAuthored": [
+    "App/SharedSources",
+    "App/SpokenMarginsAppUITests",
+    "App/SpokenMarginsBrowserTextExtension/Resources",
+    "App/SpokenMarginsApp/Resources/Legal",
+    "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Assets.xcassets"
+  ],
+  "components": [
+    {
+      "id": "onnxruntime",
+      "name": "ONNX Runtime, through onnxruntime-swift-package-manager",
+      "version": "1.24.2",
+      "license": "MIT",
+      "distribution": "bundled",
+      "by": "Microsoft Corporation",
+      "source": "https://github.com/microsoft/onnxruntime-swift-package-manager",
+      "paths": [
+        "Packages/SessionKit/Package.swift"
+      ],
+      "licenseFiles": [
+        "App/SpokenMarginsApp/Resources/Supertonic/licenses/ONNXRUNTIME_MIT.txt",
+        "App/SpokenMarginsApp/Resources/Supertonic/licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt"
+      ],
+      "note": "Runs the voice models on the phone. ONNX Runtime's own third-party components (MIT, BSD, Apache-2.0, zlib, Boost, ISC, public domain and MPL-2.0 for Eigen) are listed in the second file.",
+      "tracks": {
+        "swiftPackage": "onnxruntime-swift-package-manager"
+      }
+    },
+    {
+      "id": "zipfoundation",
+      "name": "ZIPFoundation",
+      "version": "0.9.20",
+      "license": "MIT",
+      "distribution": "bundled",
+      "by": "Thomas Zoechling",
+      "source": "https://github.com/weichsel/ZIPFoundation",
+      "paths": [],
+      "licenseFiles": [
+        "App/SpokenMarginsApp/Resources/Legal/ZIPFoundation-LICENSE.txt"
+      ],
+      "note": "Reads and writes .spokenmargins packets.",
+      "tracks": {
+        "swiftPackage": "zipfoundation"
+      }
+    },
+    {
+      "id": "swift-crypto",
+      "name": "swift-crypto",
+      "version": "3.15.1",
+      "license": "Apache-2.0",
+      "distribution": "tool",
+      "by": "Apple Inc. and the SwiftCrypto project authors",
+      "source": "https://github.com/apple/swift-crypto",
+      "paths": [],
+      "licenseUrl": "https://github.com/apple/swift-crypto/blob/main/LICENSE.txt",
+      "note": "Replaces CryptoKit when SessionKit's tests build on Linux. Never part of the app. SwiftPM may also fetch swift-crypto's own dependencies there (for example swift-asn1, Apache-2.0); they are build-time only.",
+      "tracks": {
+        "swiftPackage": "swift-crypto"
+      }
+    },
+    {
+      "id": "defuddle",
+      "name": "Defuddle",
+      "version": "0.19.1",
+      "license": "MIT",
+      "distribution": "bundled",
+      "by": "Steph Ango",
+      "source": "https://github.com/kepano/defuddle",
+      "paths": [
+        "App/SharedResources/browserTextCapture.js",
+        "App/SharedResources/Defuddle-LICENSE.txt",
+        "App/SharedResources/BundledJavaScript-NOTICES.txt",
+        "App/SpokenMarginsShareExtension/Resources"
+      ],
+      "licenseFiles": [
+        "App/SharedResources/Defuddle-LICENSE.txt"
+      ],
+      "note": "Reads web pages. Compiled into browserTextCapture.js and SourceLinkPreprocessor.js for the app, the Safari extension and the Share extension. The Share extension carries identical copies of the two notice files (checked).",
+      "tracks": {
+        "npm": "defuddle",
+        "bundledJs": "defuddle"
+      }
+    },
+    {
+      "id": "turndown",
+      "name": "turndown",
+      "version": "7.2.4",
+      "license": "MIT",
+      "distribution": "bundled",
+      "by": "Dom Christie",
+      "source": "https://github.com/mixmark-io/turndown",
+      "paths": [],
+      "licenseFiles": [
+        "App/SharedResources/BundledJavaScript-NOTICES.txt"
+      ],
+      "note": "Compiled into Defuddle's bundle.",
+      "tracks": {
+        "bundledJs": "turndown"
+      }
+    },
+    {
+      "id": "temml",
+      "name": "temml",
+      "version": "0.13.3",
+      "license": "MIT",
+      "distribution": "bundled",
+      "by": "Ron Kok",
+      "source": "https://github.com/ronkok/Temml",
+      "paths": [],
+      "licenseFiles": [
+        "App/SharedResources/BundledJavaScript-NOTICES.txt"
+      ],
+      "note": "Compiled into Defuddle's bundle.",
+      "tracks": {
+        "bundledJs": "temml"
+      }
+    },
+    {
+      "id": "mathml-to-latex",
+      "name": "mathml-to-latex",
+      "version": "1.8.0",
+      "license": "MIT",
+      "distribution": "bundled",
+      "by": "Alexandre Nunes",
+      "source": "https://github.com/asnunes/mathml-to-latex",
+      "paths": [],
+      "licenseFiles": [
+        "App/SharedResources/BundledJavaScript-NOTICES.txt"
+      ],
+      "note": "Compiled into Defuddle's bundle.",
+      "tracks": {
+        "bundledJs": "mathml-to-latex"
+      }
+    },
+    {
+      "id": "xmldom",
+      "name": "@xmldom/xmldom",
+      "version": "0.9.10",
+      "license": "MIT",
+      "distribution": "bundled",
+      "by": "Christopher J. Brody and contributors",
+      "source": "https://github.com/xmldom/xmldom",
+      "paths": [],
+      "licenseFiles": [
+        "App/SharedResources/BundledJavaScript-NOTICES.txt"
+      ],
+      "note": "Compiled into Defuddle's bundle.",
+      "tracks": {
+        "bundledJs": "@xmldom/xmldom"
+      }
+    },
+    {
+      "id": "esbuild",
+      "name": "esbuild",
+      "version": "0.28.1",
+      "license": "MIT",
+      "distribution": "tool",
+      "by": "Evan Wallace",
+      "source": "https://github.com/evanw/esbuild",
+      "paths": [
+        "Tools/BrowserExtraction"
+      ],
+      "licenseUrl": "https://github.com/evanw/esbuild/blob/main/LICENSE.md",
+      "note": "Builds the page-reading scripts. Not shipped.",
+      "tracks": {
+        "npm": "esbuild"
+      }
+    },
+    {
+      "id": "linkedom",
+      "name": "linkedom",
+      "version": "0.18.13",
+      "license": "ISC",
+      "distribution": "tool",
+      "by": "Andrea Giammarchi",
+      "source": "https://github.com/WebReflection/linkedom",
+      "paths": [
+        "Tools/BrowserExtraction"
+      ],
+      "licenseUrl": "https://github.com/WebReflection/linkedom/blob/main/LICENSE",
+      "note": "Stands in for a browser page in the page-reading tests. Not shipped.",
+      "tracks": {
+        "npm": "linkedom"
+      }
+    },
+    {
+      "id": "jsonschema",
+      "name": "jsonschema (Python)",
+      "version": "4.26.0",
+      "license": "MIT",
+      "distribution": "tool",
+      "by": "Julian Berman",
+      "source": "https://github.com/python-jsonschema/jsonschema",
+      "paths": [
+        "scripts"
+      ],
+      "licenseUrl": "https://github.com/python-jsonschema/jsonschema/blob/main/COPYING",
+      "note": "Checks the repository's JSON contracts. Installed from requirements-dev.txt with its format-nongpl extra, which pulls in further small validator packages (for example idna, webcolors, jsonpointer, referencing); all are build-time only and none ships.",
+      "tracks": {
+        "pip": "jsonschema"
+      }
+    },
+    {
+      "id": "kitten",
+      "name": "Kitten fallback voice (KittenTTS nano model and the Jasper voice style)",
+      "version": "0.8 (fp32)",
+      "license": "Apache-2.0",
+      "distribution": "bundled",
+      "by": "KittenML",
+      "source": "https://huggingface.co/KittenML/kitten-tts-nano-0.8-fp32",
+      "paths": [
+        "App/SpokenMarginsApp/Resources/Kitten"
+      ],
+      "licenseFiles": [
+        "App/SpokenMarginsApp/Resources/Kitten/NOTICES.txt"
+      ],
+      "note": "The voice that stays in the app. About 62 MB with the inputs below. The same folder holds the misaki 0.9.4 pronunciation lexicon (hexgrad, Apache-2.0), the g2p_en 2.1.0 letter-to-sound weights (Kyubyong Park and Jongseok Kim, Apache-2.0) and the CMU Pronouncing Dictionary (Carnegie Mellon University, BSD-style, CMUdict-LICENSE.txt). No GPL code or data; espeak-ng is not used.",
+      "tracks": {}
+    },
+    {
+      "id": "cmudict",
+      "name": "CMU Pronouncing Dictionary",
+      "license": "BSD-style (Carnegie Mellon University)",
+      "distribution": "bundled",
+      "by": "Carnegie Mellon University",
+      "source": "http://www.speech.cs.cmu.edu/cgi-bin/cmudict",
+      "paths": [],
+      "licenseFiles": [
+        "App/SpokenMarginsApp/Resources/Kitten/CMUdict-LICENSE.txt"
+      ],
+      "note": "Part of the Kitten voice's pronunciations.",
+      "tracks": {}
+    },
+    {
+      "id": "supertonic-model",
+      "name": "Supertonic 3 model and preset voice styles (INT8)",
+      "license": "BigScience Open RAIL-M",
+      "distribution": "bundled",
+      "by": "Supertone Inc.; INT8 conversion by the k2-fsa sherpa-onnx project",
+      "source": "https://huggingface.co/Supertone/supertonic-3",
+      "paths": [
+        "App/SpokenMarginsApp/Resources/Supertonic"
+      ],
+      "licenseFiles": [
+        "App/SpokenMarginsApp/Resources/Supertonic/licenses/SUPERTONIC_MODEL_OPENRAIL-M.txt",
+        "App/SpokenMarginsApp/Resources/Supertonic/licenses/SHERPA_ONNX_APACHE-2.0.txt",
+        "App/SpokenMarginsApp/Resources/Supertonic/licenses/THIRD_PARTY_NOTICES.txt"
+      ],
+      "note": "Ships in the app today and its model files sit in this repository's Git LFS storage. It moves to a download with #1820; this entry then changes to \"downloaded\". The graphs are modified, quantized derivatives of Supertone's model; the sherpa-onnx conversion is Apache-2.0. The licence's use restrictions are part of the app's Terms of Use.",
+      "tracks": {}
+    },
+    {
+      "id": "supertonic-code",
+      "name": "Supertonic Swift inference code",
+      "license": "MIT",
+      "distribution": "bundled",
+      "by": "Supertone Inc.",
+      "source": "https://github.com/supertone-inc/supertonic",
+      "paths": [
+        "Packages/SessionKit/Sources/SessionKitSupertonic/SupertonicRuntime.swift"
+      ],
+      "licenseFiles": [
+        "App/SpokenMarginsApp/Resources/Supertonic/licenses/SUPERTONIC_CODE_MIT.txt"
+      ],
+      "note": "SupertonicRuntime.swift is adapted from Supertone's Swift example; its header says so.",
+      "tracks": {}
+    },
+    {
+      "id": "pocket-tts",
+      "name": "Kyutai Pocket TTS voice",
+      "license": "CC-BY-4.0 (weights, ONNX export and the alba voice); MIT (Kyutai's code)",
+      "distribution": "downloaded",
+      "by": "Kyutai",
+      "source": "https://huggingface.co/kyutai/pocket-tts",
+      "paths": [
+        "Packages/SessionKit/Sources/SessionKitPocket"
+      ],
+      "licenseUrl": "https://huggingface.co/kyutai/pocket-tts",
+      "note": "Downloaded, not distributed here. No Pocket TTS model or voice file is in this repository or the app, and the app doesn't link its runtime yet. The repository holds only our own runtime code and a tokenizer test fixture. The research harness fetches the int8 ONNX export (KevinAHM/pocket-tts-onnx) and alba's voice state (kyutai/pocket-tts-without-voice-cloning), both CC BY 4.0, so the voice needs an attribution line where it is offered. The voice catalog (#1818) will carry the current download address and licence text. The MIT code licence is recorded in research/C2/README.md; the licence texts are on the model page. Details: research/C2/pocket/README.md.",
+      "tracks": {}
+    },
+    {
+      "id": "starter-catalog",
+      "name": "Starter podcast catalog and recorded feed heads",
+      "license": "Not licensed by this project: each publisher's rights apply",
+      "distribution": "content",
+      "by": "Show names, descriptions and artwork belong to their publishers",
+      "source": "Each show's own podcast feed, listed in research/B1/shows.json",
+      "paths": [
+        "Site/onboarding/catalog",
+        "research/B1/recorded"
+      ],
+      "note": "A hand-picked list of shows. Each show's title, author, description, website and artwork link are read from that show's own feed (#1732), and no artwork link points at Apple's servers. research/B1/recorded holds the feed heads (the text before the first episode) that research/B1/build_catalog.py read, so the list can be rebuilt offline.",
+      "tracks": {}
+    },
+    {
+      "id": "captured-fixtures",
+      "name": "Test fixtures and traces saved from public feeds and pages",
+      "license": "Not licensed by this project: copyright stays with each publisher",
+      "distribution": "content",
+      "by": "Podcast and website publishers",
+      "paths": [
+        "Contracts/fixtures",
+        "Contracts/traces",
+        "fixtures",
+        "traces",
+        "App/TestFixtures",
+        "Packages/SessionKit/Tests/SessionKitTests/Fixtures"
+      ],
+      "note": "Some of these are saved copies of feeds, pages, OPML and search responses, kept so tests can replay them; the rest are written for the tests. Contracts/fixtures and Contracts/traces are also bundled in the app today for its test hooks. The public-source audit (#1383) prunes or confirms them.",
+      "tracks": {}
+    },
+    {
+      "id": "design-prototypes",
+      "name": "Design prototypes' npm packages",
+      "license": "Each package's own licence, installed by npm",
+      "distribution": "tool",
+      "by": "Their authors",
+      "paths": [
+        "Design"
+      ],
+      "note": "Design/SpokenMarginsOverhaul and Design/UXProposal20260909 are web prototypes. Their packages are listed in each package.json and installed on request; none are copied into this repository or the app.",
+      "tracks": {
+        "manifests": [
+          "Design/SpokenMarginsOverhaul/package.json",
+          "Design/UXProposal20260909/package.json"
+        ]
+      }
+    },
+    {
+      "id": "research-harness",
+      "name": "Research harness dependencies (Python, Swift, Go)",
+      "license": "Each package's own licence, installed by the developer",
+      "distribution": "tool",
+      "by": "Their authors",
+      "paths": [
+        "research"
+      ],
+      "note": "The voice and PDF experiments under research/ install packages such as onnxruntime, pocket-tts, kokoro-onnx, piper-tts, pymupdf and pdfminer.six from public registries when run. Nothing is copied here and nothing ships in the app. The Go bridge server in research/B4/server has no outside module. If one is added, this entry must name it.",
+      "tracks": {
+        "manifests": [
+          "research/C1/requirements.txt",
+          "research/C2/requirements.txt",
+          "research/C1/mac/Package.swift",
+          "research/B4/server/go.mod"
+        ]
+      }
+    }
+  ]
+}

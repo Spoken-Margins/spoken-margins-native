@@ -6,10 +6,12 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+import zipfile
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -115,12 +117,59 @@ class CliTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+        self.tip = None          # origin/next as last fetched
+        self.hosted = {}         # sha -> app marker the hosted run has an artifact for
+        self.fetched = []
+
+    def fake_fetch(self, folder, sha=None, *, free_bytes):
+        self.fetched.append(sha)
+        pick = next((k for k in self.hosted if k.startswith(sha)), None) if sha else max(self.hosted, default=None)
+        if not pick:
+            return {'stored': False, 'why': 'no hosted build'}
+        kept = sim_builds.store(fake_app(Path(self.tmp.name) / 'hosted', self.hosted[pick]), pick, 'next', folder,
+                                free_bytes=free_bytes, now=9, built_by='hosted integration')
+        return dict(kept, artifact=sim_builds.ARTIFACT_PREFIX + pick)
+
     def run_cli(self, *args):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), \
-                patch.object(self.cli, 'behind', return_value=3):
+                patch.object(self.cli, 'behind', return_value=3), patch.object(self.cli, 'tip', lambda *a: self.tip), \
+                patch.object(self.cli, 'free_bytes', return_value=50 * GB), \
+                patch.object(self.cli.sim_builds, 'fetch', self.fake_fetch):
             code = self.cli.main(list(args))
         return code, out.getvalue(), err.getvalue()
+
+    def test_a_commit_with_no_local_build_is_downloaded_from_the_hosted_run(self):
+        self.hosted = {B: 'hostedB'}
+        code, out, err = self.run_cli('--for', B[:7])
+        self.assertEqual((code, out.splitlines()[1]), (0, B))
+        self.assertIn('Downloaded sim-app-' + B, err)
+        self.assertEqual(sim_builds.find(self.root, B)['built_by'], 'hosted integration')
+        code, _, _ = self.run_cli('--for', B[:7])  # now local: no second download
+        self.assertEqual((code, self.fetched), (0, [B[:7]]))
+
+    def test_no_download_only_reads_this_mac(self):
+        self.hosted = {B: 'hostedB'}
+        self.tip = B
+        self.assertEqual(self.run_cli('--for', B, '--no-download')[0], 1)
+        self.assertEqual(self.run_cli('--no-download')[0], 1)
+        self.assertEqual(self.fetched, [])
+
+    def test_the_tip_is_downloaded_only_when_the_local_build_is_not_it(self):
+        sim_builds.store(fake_app(Path(self.tmp.name), 'one'), A, 'next', self.root, free_bytes=50 * GB, now=1)
+        rows = [(A, {}, A, []),              # local is the tip: nothing fetched
+                (B, {B: 'hostedB'}, B, [B]),  # local is behind and the tip was built hosted: fetch it
+                (C, {}, B, [C])]             # the tip has no hosted build: the newest kept build stands
+        for tip, hosted, want, fetched in rows:
+            with self.subTest(tip=tip[:1]):
+                self.tip, self.hosted, self.fetched = tip, hosted, []
+                code, out, _ = self.run_cli()
+                self.assertEqual((code, out.splitlines()[1], self.fetched), (0, want, fetched))
+
+    def test_with_nothing_local_the_newest_hosted_build_is_used(self):
+        self.hosted, self.tip = {A: 'hostedA'}, C
+        code, out, _ = self.run_cli()
+        self.assertEqual((code, out.splitlines()[1], self.fetched), (0, A, [C, None]))
 
     def test_prints_the_newest_app_then_its_sha(self):
         sim_builds.store(fake_app(Path(self.tmp.name), 'one'), A, 'next', self.root, free_bytes=50 * GB, now=1)
@@ -149,6 +198,97 @@ class CliTests(unittest.TestCase):
 
     def test_behind_counts_from_this_checkout_and_is_none_when_git_cannot_say(self):
         self.assertIsNone(self.cli.behind(C, 'no-such-branch-here', Path(self.tmp.name)))
+
+
+def artifact(folder: Path, sha: str, marker: str = 'h') -> Path:
+    """The zip GitHub serves for a sim-app artifact: pack()'s two files, as upload-artifact zips them."""
+    out = folder / 'packed'
+    packed = sim_builds.pack(fake_app(folder / 'src', marker), sha, 'next', out, built_by='hosted integration', now=5)
+    assert packed['packed'], packed
+    path = folder / f'{sha[:7]}-artifact.zip'
+    with zipfile.ZipFile(path, 'w') as z:
+        for name in ('build.json', sim_builds.PACKED_APP):
+            z.write(out / name, name)
+    return path
+
+
+class HostedArtifactTests(unittest.TestCase):
+    """The hosted integration run's `sim-app-<sha>` artifact: packed on the hosted Mac, fetched by desks (#1389)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        self.root = self.dir / 'sim-builds'
+
+    def test_a_packed_app_unpacks_as_built_with_its_symlinks(self):
+        kept = sim_builds.unpack(artifact(self.dir, A), self.root, free_bytes=50 * GB)
+        self.assertTrue(kept['stored'], kept)
+        build = sim_builds.find(self.root, A)
+        self.assertEqual((build['built_at'], build['built_by']), (5, 'hosted integration'))
+        app = Path(build['app'])
+        self.assertTrue((app / 'Frameworks' / 'X.framework' / 'X').is_symlink())
+        self.assertEqual((app / 'Info.plist').read_text(), '<plist>h</plist>')
+
+    def test_pack_refuses_a_short_sha_or_a_missing_app(self):
+        out = self.dir / 'out'
+        self.assertFalse(sim_builds.pack(self.dir / 'none.app', A, 'next', out, built_by='x')['packed'])
+        self.assertFalse(sim_builds.pack(fake_app(self.dir, 'x'), A[:7], 'next', out, built_by='x')['packed'])
+        self.assertFalse(out.exists())
+
+    def test_an_artifact_without_the_packed_app_stores_nothing(self):
+        bad = self.dir / 'bad.zip'
+        with zipfile.ZipFile(bad, 'w') as z:
+            z.writestr('build.json', json.dumps({'sha': A}))
+            z.writestr('../evil', 'x')
+        kept = sim_builds.unpack(bad, self.root, free_bytes=50 * GB)
+        self.assertFalse(kept['stored'])
+        self.assertIsNone(sim_builds.latest(self.root))
+
+    def test_pick_takes_the_newest_unexpired_build_of_the_commit_asked_for(self):
+        listed = [{'id': 1, 'name': 'sim-app-' + A, 'created_at': '2026-10-18T01:00:00Z', 'expired': False},
+                  {'id': 2, 'name': 'sim-app-' + B, 'created_at': '2026-10-18T03:00:00Z', 'expired': True},
+                  {'id': 3, 'name': 'sim-app-' + C, 'created_at': '2026-10-18T02:00:00Z', 'expired': False},
+                  {'id': 4, 'name': 'hosted-integration-' + B, 'created_at': '2026-10-18T04:00:00Z'},
+                  {'id': 5, 'name': 'sim-app-abc1234', 'created_at': '2026-10-18T05:00:00Z'}]
+        rows = [(None, 3), (A, 1), (A[:7].upper(), 1), (B, None), ('abc1234', None), ('main', None), ('', None)]
+        for sha, want in rows:
+            with self.subTest(sha=sha):
+                found = sim_builds.pick_artifact(listed, sha)
+                self.assertEqual(found and found['id'], want)
+
+    def fake_gh(self, listed, zips, calls, list_code=0):
+        def run(cmd, **kw):
+            calls.append(cmd[2])
+            if cmd[2].endswith('/zip'):
+                kw['stdout'].write(zips[int(cmd[2].split('/')[-2])].read_bytes())
+                return subprocess.CompletedProcess(cmd, 0)
+            return subprocess.CompletedProcess(cmd, list_code, stdout=json.dumps({'artifacts': listed}), stderr='HTTP 401')
+        return run
+
+    def test_fetch_downloads_stores_and_leaves_no_download_behind(self):
+        listed = [{'id': 7, 'name': 'sim-app-' + A, 'created_at': '2026-10-18T01:00:00Z'}]
+        calls = []
+        got = sim_builds.fetch(self.root, A, free_bytes=50 * GB, repo='o/r',
+                               run=self.fake_gh(listed, {7: artifact(self.dir, A)}, calls))
+        self.assertTrue(got['stored'], got)
+        self.assertEqual(calls, [f'repos/o/r/actions/artifacts?per_page=100&name=sim-app-{A}',
+                                 'repos/o/r/actions/artifacts/7/zip'])
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ['aaaaaaa', 'latest'])
+        calls.clear()  # the same build again: listed, not downloaded
+        again = sim_builds.fetch(self.root, None, free_bytes=50 * GB, repo='o/r', run=self.fake_gh(listed, {}, calls))
+        self.assertTrue(again['already'])
+        self.assertEqual(calls, ['repos/o/r/actions/artifacts?per_page=100'])
+
+    def test_fetch_says_why_when_it_stores_nothing(self):
+        rows = [('gh could not list', dict(list_code=1), 50 * GB),
+                ('no hosted build of commit ' + B, {}, 50 * GB),
+                ('under the 10 GB floor', {}, 9 * GB)]
+        for why, kw, free in rows:
+            with self.subTest(why=why):
+                got = sim_builds.fetch(self.root, B, free_bytes=free, repo='o/r', run=self.fake_gh([], {}, [], **kw))
+                self.assertFalse(got['stored'])
+                self.assertIn(why, got['why'])
 
 
 if __name__ == '__main__':

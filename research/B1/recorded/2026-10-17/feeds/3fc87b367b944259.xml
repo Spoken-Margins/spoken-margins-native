@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:atom="http://www.w3.org/2005/Atom" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:sy="http://purl.org/rss/1.0/modules/syndication/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">
+  <channel>
+    <title>Twenty Thousand Hertz</title>
+    <link>https://www.20k.org</link>
+    <pubDate>Mon, 12 Oct 2026 10:00:00 -0000</pubDate>
+    <lastBuildDate>Tue, 13 Oct 2026 22:16:33 -0000</lastBuildDate>
+    <ttl>60</ttl>
+    <language>en</language>
+    <webMaster>help@prx.org (PRX)</webMaster>
+    <description>
+      <![CDATA[<p>The stories behind the world's most recognizable and interesting sounds. Whether you're a professional audio engineer with decades of experience, a fourth grader who loves sound and music, or anyone in between, Twenty Thousand Hertz will help unlock your sonic world… from the sound design secrets of hit movies, to the sonic craft of jingles and device sounds, to the forgotten backstories of classic theme songs, to linguistic mysteries, psychoacoustics, video game music, animal communication, and beyond. With moving human stories, immersive sound design, and the guiding voice of host Dallas Taylor, Twenty Thousand Hertz has grown into the world’s leading podcast about sound.</p><p>New to the show? Start here:</p><p>• I'm Lovin' It: How “Ba da ba ba ba” took over the world</p><p>• The Art of Foley: Bringing Slimer &amp; Batman to life</p><p>• Tudum! The story behind the iconic Netflix sound</p><p>• Super Mario Bros: Koji Kondo's 8-Bit Masterpiece</p><p>• Inside Hans Zimmer’s Remote Control Studios</p><p>• A sonic journey through the Solar System</p><p>• Mind the Gap: NYC &amp; London’s iconic transit voices</p>]]>
+    </description>
+    <generator>PRX Feeder v1.0.0</generator>
+    <docs>http://blogs.law.harvard.edu/tech/rss</docs>
+    <image>
+      <url>https://f.prxu.org/18144/images/d955114e-9ad6-48f5-ba7d-19829542a6ed/170e41a42496782f20e8f69d0c5bda0f.jpg</url>
+      <title>Twenty Thousand Hertz</title>
+      <link>https://www.20k.org</link>
+      <width>256</width>
+      <height>256</height>
+      <description>The stories behind the world’s most recognizable and interesting sounds.</description>
+    </image>
+    <atom:link href="https://feed.20k.org" rel="self" type="application/rss+xml"/>
+    <itunes:new-feed-url>https://feed.20k.org</itunes:new-feed-url>
+    <itunes:author>Dallas Taylor</itunes:author>
+    <itunes:type>episodic</itunes:type>
+    <itunes:category text="Arts">
+      <itunes:category text="Design"/>
+    </itunes:category>
+    <itunes:image href="https://f.prxu.org/18144/images/24983ab6-e43f-4b49-8c21-f3b4d461c758/Twenty_Thousand_Hertz_-_Key_Icon_-_3000x3000.jpeg"/>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:owner>
+      <itunes:email>web@20k.org</itunes:email>
+      <itunes:name>Dallas Taylor</itunes:name>
+    </itunes:owner>
+    <itunes:subtitle>The stories behind the world’s most recognizable and interesting sounds.</itunes:subtitle>
+    <itunes:summary>
+      <![CDATA[The stories behind the world's most recognizable and interesting sounds. Whether you're a professional audio engineer with decades of experience, a fourth grader who loves sound and music, or anyone in between, Twenty Thousand Hertz will help unlock your sonic world… from the sound design secrets of hit movies, to the sonic craft of jingles and device sounds, to the forgotten backstories of classic theme songs, to linguistic mysteries, psychoacoustics, video game music, animal communication, and beyond. With moving human stories, immersive sound design, and the guiding voice of host Dallas Taylor, Twenty Thousand Hertz has grown into the world’s leading podcast about sound.
+
+New to the show? Start here:
+
+• I'm Lovin' It: How “Ba da ba ba ba” took over the world
+
+• The Art of Foley: Bringing Slimer &amp; Batman to life
+
+• Tudum! The story behind the iconic Netflix sound
+
+• Super Mario Bros: Koji Kondo's 8-Bit Masterpiece
+
+• Inside Hans Zimmer’s Remote Control Studios
+
+• A sonic journey through the Solar System
+
+• Mind the Gap: NYC &amp; London’s iconic transit voices]]>
+    </itunes:summary>
+    <media:thumbnail url="https://f.prxu.org/18144/images/d955114e-9ad6-48f5-ba7d-19829542a6ed/170e41a42496782f20e8f69d0c5bda0f.jpg"/>
+    <media:category scheme="http://www.itunes.com/dtds/podcast-1.0.dtd">Arts</media:category>
+    <podcast:guid>19ec1522-babf-5a2f-9f1c-f9a36dab96a9</podcast:guid>
+    <podcast:podping usesPodping="true"/>
+    <podcast:locked>yes</podcast:locked>
+    

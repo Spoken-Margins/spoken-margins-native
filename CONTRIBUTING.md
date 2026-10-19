@@ -21,7 +21,7 @@ Every commit you contribute must carry a `Signed-off-by:` line (`git commit -s`)
 
 You keep the copyright in your contribution.
 
-Don't submit code you copied from elsewhere unless its licence is compatible and you say where it came from. Third-party components are listed in `NOTICE`.
+Don't submit code you copied from elsewhere unless its licence is compatible and you say where it came from. Third-party components are listed in `THIRD_PARTY_NOTICES.md`.
 
 ## Not legal advice
 

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <atom:link href="https://feeds.simplecast.com/sw7PGWfw" rel="self" title="MP3 Audio" type="application/atom+xml"/>
+    <atom:link href="https://simplecast.superfeedr.com" rel="hub" xmlns="http://www.w3.org/2005/Atom"/>
+    <generator>https://simplecast.com</generator>
+    <title>Fantasy Footballers - Fantasy Football Podcast</title>
+    <description>Fantasy Football at its very best. Say goodbye to the talking heads of the Fantasy Football world and hello to The Fantasy Footballers. The expert trio of Andy Holloway, Jason Moore, and Mike &quot;The Fantasy Hitman&quot; Wright break down the world of Fantasy Football with astute analysis, strong opinions, and matchup-winning advice you can&apos;t get anywhere else. A high-quality and entertaining show that will win you your league -- in style. The ONE Fantasy Football Podcast you can&apos;t leave off your roster.</description>
+    <copyright>2014-2025 Engaging Media LLC, The Fantasy Footballers</copyright>
+    <language>en</language>
+    <pubDate>Fri, 16 Oct 2026 17:30:28 +0000</pubDate>
+    <lastBuildDate>Fri, 16 Oct 2026 17:31:09 +0000</lastBuildDate>
+    <image>
+      <link>https://www.thefantasyfootballers.com</link>
+      <title>Fantasy Footballers - Fantasy Football Podcast</title>
+      <url>https://image.simplecastcdn.com/images/7a686b61-de53-45dc-85c8-4b598a0af518/72d8e1f3-4a82-4082-ad95-47be0fafb1bf/3000x3000/tffb-main-podcast-logo-3000px.png?aid=rss_feed</url>
+    </image>
+    <link>https://www.thefantasyfootballers.com</link>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>Fantasy Football at its very best. Say goodbye to the talking heads of the Fantasy Football world and hello to The Fantasy Footballers. The expert trio of Andy Holloway, Jason Moore, and Mike &quot;The Fantasy Hitman&quot; Wright break down the world of Fantasy Football with astute analysis, strong opinions, and matchup-winning advice you can&apos;t get anywhere else. A high-quality and entertaining show that will win you your league -- in style. The ONE Fantasy Football Podcast you can&apos;t leave off your roster.</itunes:summary>
+    <itunes:author>Fantasy Football</itunes:author>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:image href="https://image.simplecastcdn.com/images/7a686b61-de53-45dc-85c8-4b598a0af518/72d8e1f3-4a82-4082-ad95-47be0fafb1bf/3000x3000/tffb-main-podcast-logo-3000px.png?aid=rss_feed"/>
+    <itunes:new-feed-url>https://feeds.simplecast.com/sw7PGWfw</itunes:new-feed-url>
+    <itunes:keywords>fantasy football, fantasy footballers</itunes:keywords>
+    <itunes:owner>
+      <itunes:name>The Fantasy Footballers</itunes:name>
+      <itunes:email>contact@fantasyfootballers.com</itunes:email>
+    </itunes:owner>
+    <itunes:category text="Sports">
+      <itunes:category text="Fantasy Sports"/>
+    </itunes:category>
+    <itunes:category text="Sports">
+      <itunes:category text="Football"/>
+    </itunes:category>
+    <itunes:category text="Sports"/>
+    

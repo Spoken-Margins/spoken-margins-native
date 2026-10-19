@@ -2,15 +2,51 @@
 
 This repository contains the native iPhone implementation of Spoken Margins.
 
-## Current Purpose
+## What it is
 
-Ship a dependable personal listening environment: import an article or podcast, listen with native media or an installed iOS voice, interrupt with a contextual note, optionally summarize notes with Apple's on-device model when available, navigate with a Listening Map, and export the session to another chatbot. Responses created in another chatbot can be pasted back into Spoken Margins for playback and further interjection.
+Spoken Margins is a native listening app for iPhone and iPad (iOS/iPadOS 26 or later). You listen to articles, PDFs and podcasts. When you have something to say, you record a spoken or written **Margin** anchored to the exact place in the source. A Margin can be shared as a `.spokenmargins` packet, and another listener can import it and hear it at the right place in their own copy.
+
+The app is in private testing on TestFlight. There is no public App Store release yet.
+
+## What works today
+
+- **Getting things in:** web articles (share sheet, Safari extension, pasted links), text-based PDFs, EPUB, plain text and Markdown (including Obsidian clips), podcast links, and followed podcast feeds and sites. Readwise Reader and Raindrop.io can be connected to bring saved items in.
+- **Listening:** installed iOS voices, plus voices that run on the phone. Kitten, the fallback voice, is bundled. Supertonic (the James and Lily voices) is bundled today and is moving to an optional download (#1820). Podcasts play from the publisher's audio. Lock Screen controls and a Live Activity work while listening. Podcast chapters and deterministic Listening Maps built on the phone help you move around.
+- **Margins:** record or type a Margin while listening, find it again from a timeline, and, where the phone supports it, summarize notes with Apple's on-device model.
+- **Sharing:** export a session or share Margins as packets (files) with another listener.
+
+## What it doesn't do yet
+
+- No Android, Mac or Windows app. The Watch app is not part of the current release.
+- No public App Store release.
+- Share links (a web link that opens a shared Margin) are not turned on. The phone can seal and open them with end-to-end encryption, but creating and hosting them for the public waits for a legal review.
+- Community Listening Maps are off by default and not open to the public yet. When a listener opts in, the app sends an episode's transcript to the owner's server, which has it summarized by a third-party AI service (Anthropic's API) to make the map. The same legal review applies.
+- No third-party AI service is used from the phone. The app ships with its OpenAI provider code switched off. (The server-side maps above are the one place an outside AI service is involved.)
+- Cloud voices and any payment are not built.
+
+## What needs the owner's server
+
+The app talks to one small server that the owner runs. The server is needed only for:
+
+- the introductory tour (fetched at launch until you delete it) and updates to the starter podcast list (a first list is bundled in the app and works offline);
+- the optional community Listening Maps lookup and contribution, which are off until you switch them on in Settings;
+- share links, once they ship.
+
+Everything else the app fetches comes from the sources you choose (feeds, article sites, audio hosts), from the services you connect (Readwise Reader, Raindrop.io), from Apple (for example the on-device speech model, and podcast name search), and from Spotify when you paste a Spotify link (to find the episode's title). The full list is in the [privacy policy draft](docs/legal/privacy-policy-draft.md); it is a working draft, and the live policy is published on the project's site.
+
+## What works offline
+
+With the item already in your Library, listening with Kitten, Supertonic or an installed voice, recording and replaying Margins, speech recognition (it runs on the phone), and importing or exporting packet files all work without a connection. Adding a new source, refreshing a feed, streaming an episode that isn't downloaded, and anything in the previous section need a connection.
+
+_Checked against `next` on 2026-10-17. When this list and the app disagree, the app is right; please open an issue._
+
+## Technical boundary
 
 The active recovery boundary is:
 
 - iPhone/iPad on iOS/iPadOS 26+
 - article, podcast, Safari/share-sheet, plain-text/Markdown, Obsidian, and text-based PDF intake
-- installed system voices through `AVSpeechSynthesizer`, plus the bundled James and Lily on-device voices after terms acceptance
+- installed system voices through `AVSpeechSynthesizer`, plus the Supertonic voices after terms acceptance and the bundled Kitten fallback voice
 - native lock-screen transport through Now Playing for podcasts, prepared audio, and immediate live speech
 - a Live Activity control surface while listening, including live-fallback speech
 - Apple Foundation Models for scoped on-device interjection summaries when supported by the device
@@ -63,7 +99,8 @@ Copyright (C) 2026 Cole Miller.
 
 Spoken Margins is licensed under the [GNU Affero General Public License, version 3 only](LICENSE) (`AGPL-3.0-only`), with an [additional permission for Apple App Store distribution](COPYING.iOS). The permission's wording is adapted from the [Nextcloud iOS app's App Store exception](https://github.com/nextcloud/ios/blob/master/COPYING.iOS).
 
-- Source files don't carry per-file licence headers. [NOTICE](NOTICE) is the single statement that covers them, and it lists where the third-party licence notices live (the Kitten voice, Supertonic, ONNX Runtime, ZIPFoundation and the bundled JavaScript packages).
+- Source files don't carry per-file licence headers. [NOTICE](NOTICE) is the single statement that covers them. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists every third-party component, model and data set with its licence, and says which ones are downloaded and not distributed here.
+- To report a security problem privately, follow [SECURITY.md](SECURITY.md).
 - For now, only collaborators open pull requests. Contributions are accepted only under the terms in [CONTRIBUTING.md](CONTRIBUTING.md), which keep a later move to the Mozilla Public License 2.0 possible.
 
 _Apple and the Apple logo are trademarks of Apple Inc., registered in the U.S. and other countries. App Store is a service mark of Apple Inc., registered in the U.S. and other countries._

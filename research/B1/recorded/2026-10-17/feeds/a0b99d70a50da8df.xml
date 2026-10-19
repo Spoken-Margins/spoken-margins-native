@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:psc="http://podlove.org/simple-chapters" xmlns:omny="https://omny.fm/rss-extensions" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:acast="https://schema.acast.com/1.0/" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">
+  <channel>
+    <omny:organizationId>e73c998e-6e60-432f-8610-ae210140c5b1</omny:organizationId>
+    <omny:networkId>de2d5a4d-9a01-4513-bc1d-ae3e01435926</omny:networkId>
+    <omny:programId>afbd76b8-eff2-442a-b938-b28e0126edad</omny:programId>
+    <omny:playlistId>d08826cd-f888-4cd3-b700-b28e0126edbb</omny:playlistId>
+    <language>en</language>
+    <atom:link rel="self" type="application/rss+xml" href="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/afbd76b8-eff2-442a-b938-b28e0126edad/d08826cd-f888-4cd3-b700-b28e0126edbb/podcast.rss" />
+    <atom:link rel="first" type="application/rss+xml" href="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/afbd76b8-eff2-442a-b938-b28e0126edad/d08826cd-f888-4cd3-b700-b28e0126edbb/podcast.rss?page=1" />
+    <atom:link rel="last" type="application/rss+xml" href="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/afbd76b8-eff2-442a-b938-b28e0126edad/d08826cd-f888-4cd3-b700-b28e0126edbb/podcast.rss?page=1" />
+    <itunes:new-feed-url>https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/afbd76b8-eff2-442a-b938-b28e0126edad/d08826cd-f888-4cd3-b700-b28e0126edbb/podcast.rss</itunes:new-feed-url>
+    <title>Heavyweight</title>
+    <itunes:subtitle>A podcast about journeying back to the moment when everything went wrong.  Hosted by Jonathan Goldstein.  From Spotify Studios.</itunes:subtitle>
+    <link>https://www.pushkin.fm/podcasts</link>
+    <description><![CDATA[<p>Maybe you&rsquo;ve laid awake and imagined how it could have been, how it might yet be, but the moment to act was never right. Well, the moment is here and the podcast making it happen is Heavyweight. Join Jonathan Goldstein for road trips, thorny reunions, and difficult conversations as he backpedals his way into the past like a therapist with a time machine.&nbsp;</p>]]></description>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>Maybe you’ve laid awake and imagined how it could have been, how it might yet be, but the moment to act was never right. Well, the moment is here and the podcast making it happen is Heavyweight. Join Jonathan Goldstein for road trips, thorny reunions, and difficult conversations as he backpedals his way into the past like a therapist with a time machine. </itunes:summary>
+    <itunes:owner>
+      <itunes:name>Pushkin Industries</itunes:name>
+      <itunes:email>feeds@pushkin.fm</itunes:email>
+    </itunes:owner>
+    <itunes:author>Pushkin Industries</itunes:author>
+    <copyright>2026 2025 Pushkin Industries</copyright>
+    <itunes:explicit>yes</itunes:explicit>
+    <itunes:category text="Society &amp; Culture">
+      <itunes:category text="Personal Journals" />
+      <itunes:category text="Relationships" />
+    </itunes:category>
+    <itunes:category text="Comedy"></itunes:category>
+    <itunes:image href="https://www.omnycontent.com/d/programs/e73c998e-6e60-432f-8610-ae210140c5b1/afbd76b8-eff2-442a-b938-b28e0126edad/image.jpg?t=1753291848&amp;size=Large" />
+    <image>
+      <url>https://www.omnycontent.com/d/programs/e73c998e-6e60-432f-8610-ae210140c5b1/afbd76b8-eff2-442a-b938-b28e0126edad/image.jpg?t=1753291848&amp;size=Large</url>
+      <title>Heavyweight</title>
+      <link>https://www.pushkin.fm/podcasts</link>
+    </image>
+    

@@ -30,7 +30,7 @@ func queueEpisodes(t *testing.T, svc *Service, n int) []string {
 // cost can't be recorded, the worker makes no more calls and takes no more
 // uploads, though the month's total is nowhere near the cap.
 func TestUnwritableLedgerStopsAllFurtherCalls(t *testing.T) {
-	api := newFakeAPI(t, goodAnswer)
+	api := newFakeAPI(t)
 	svc, _, logs := newService(t, api, 10)
 	svc.Ledger.path = filepath.Join(t.TempDir(), "no-such-directory", "ledger.json")
 	keys := queueEpisodes(t, svc, 3)
@@ -62,25 +62,26 @@ func TestUnwritableLedgerStopsAllFurtherCalls(t *testing.T) {
 // "Cache writes and reads count at the full input price: the ledger may
 // overstate, never understate."
 func TestCacheTokensAreBilledAtTheFullInputPrice(t *testing.T) {
-	api := newFakeAPI(t, goodAnswer)
+	api := newFakeAPI(t)
 	api.cacheWrite, api.cacheRead = 1000, 4000
 	svc, _, _ := newService(t, api, 10)
 	svc.Submit(testTranscript())
 	svc.ProcessWaiting(context.Background())
 
-	// (13000 + 1000 + 4000) input at $1/MTok + 2000 output at $5/MTok.
-	if spent := svc.Ledger.Spent(svc.Now()); spent != 18000+10000 {
-		t.Fatalf("ledger = %d, want 28000 (cache tokens at the input price)", spent)
+	// Per call, (13000 + 1000 + 4000) input at $1/MTok + 2000 output at $5/MTok.
+	if spent := svc.Ledger.Spent(svc.Now()); spent != goodCalls*(18000+10000) {
+		t.Fatalf("ledger = %d, want %d (cache tokens at the input price)", spent, goodCalls*28000)
 	}
 }
 
 // An answer that stopped for any reason but finishing (out of tokens, a
-// refusal) is billed and then dropped, even when what it says would pass the
-// checks: it may be a partial map.
+// refusal) is billed and then not used, even when what it says would pass
+// the checks: it may be partial. A pick falls back to code's breaks; each
+// scene gets its retry, and with every scene failing there is no map.
 func TestAnswerThatDidNotFinishIsBilledButNeverMadeIntoAMap(t *testing.T) {
 	for _, reason := range []string{"max_tokens", "refusal"} {
 		t.Run(reason, func(t *testing.T) {
-			api := newFakeAPI(t, goodAnswer) // a complete, valid answer, except for how it stopped
+			api := newFakeAPI(t) // complete, valid answers, except for how they stopped
 			api.stopReason = reason
 			svc, _, logs := newService(t, api, 10)
 			svc.Submit(testTranscript())
@@ -89,20 +90,21 @@ func TestAnswerThatDidNotFinishIsBilledButNeverMadeIntoAMap(t *testing.T) {
 			if svc.Store.HasMap(testKey) {
 				t.Fatalf("a map was made from an answer that stopped with %q", reason)
 			}
-			if api.callCount() != attemptsPerEpisode {
-				t.Fatalf("calls = %d, want %d", api.callCount(), attemptsPerEpisode)
+			calls := 1 + 4*attemptsPerScene
+			if api.callCount() != calls {
+				t.Fatalf("calls = %d, want %d", api.callCount(), calls)
 			}
-			if spent := svc.Ledger.Spent(svc.Now()); spent != int64(attemptsPerEpisode)*23000 {
-				t.Fatalf("ledger = %d, want both attempts billed", spent)
+			if spent := svc.Ledger.Spent(svc.Now()); spent != int64(calls)*23000 {
+				t.Fatalf("ledger = %d, want every attempt billed", spent)
 			}
-			if !containsAny(*logs, "answer cut off or declined") {
+			if !containsAny(*logs, "break pick unusable (cut off or declined)") || !containsAny(*logs, "scene 1 attempt 2: cut off") {
 				t.Fatalf("log doesn't say why: %v", *logs)
 			}
 		})
 	}
 
 	// The same answer finishing normally does become a map.
-	api := newFakeAPI(t, goodAnswer)
+	api := newFakeAPI(t)
 	svc, _, _ := newService(t, api, 10)
 	svc.Submit(testTranscript())
 	svc.ProcessWaiting(context.Background())
