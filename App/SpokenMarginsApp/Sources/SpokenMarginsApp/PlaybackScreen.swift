@@ -57,10 +57,12 @@ struct PlaybackScreen: View {
 
     private enum OptionsDestination { case item, timeline, export, margins, paste, sourceText }
     @State private var timelinePullTriggered = false
+    @State private var playbackTick = 0 // bumped by each progress tick, so this screen follows the clock (#2074)
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var followUpFocused: Bool
 
     var body: some View {
+        let _ = playbackTick
         NavigationStack {
             ScrollViewReader { proxy in
                 ZStack {
@@ -233,6 +235,7 @@ struct PlaybackScreen: View {
                 .presentationDetents([.medium, .large])
             }
         }
+        .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
     }
 
     /// Spacing only is tightened (owner, 2026-10-13): the rows, their order and their controls stay as approved, so

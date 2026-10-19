@@ -257,7 +257,7 @@ struct ExperienceItemDetailScreen: View {
 
     @ViewBuilder
     private var secondaryActions: some View {
-        if model.selectedItemPreferredContinuationSession != nil || !itemMargins.isEmpty {
+        if model.selectedItemPreferredContinuationSession != nil || hasItemMargins {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) { secondaryActionButtons }
                 VStack(alignment: .leading, spacing: 8) { secondaryActionButtons }
@@ -329,7 +329,7 @@ struct ExperienceItemDetailScreen: View {
             .accessibilityIdentifier("item.startNew.button")
         }
 
-        if !itemMargins.isEmpty {
+        if hasItemMargins {
             Button {
                 model.marginCollectionQuery = MarginCollectionQuery(itemID: model.selectedItem.id)
                 model.openMargins()
@@ -652,6 +652,11 @@ struct ExperienceItemDetailScreen: View {
         .padding(16)
         .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay { RoundedRectangle(cornerRadius: 18).stroke(AppColors.border) }
+    }
+
+    /// `!itemMargins.isEmpty` without building and sorting the rows, for the checks `body` makes on every render.
+    private var hasItemMargins: Bool {
+        model.selectedItem.interjections.contains { $0.status == "active" }
     }
 
     private var itemMargins: [MarginRow] {

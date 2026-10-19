@@ -76,6 +76,7 @@ struct MiniPlayerBar: View {
     static let controlSpacing: CGFloat = 12
 
     @EnvironmentObject private var model: Gate1AppModel
+    @State private var playbackTick = 0 // bumped by each progress tick: the chapter line can follow the playhead (#2074)
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -86,6 +87,7 @@ struct MiniPlayerBar: View {
     }
 
     var body: some View {
+        let _ = playbackTick
         layout {
             Button(action: model.openPlayback) {
                 HStack(spacing: 11) {
@@ -195,5 +197,6 @@ struct MiniPlayerBar: View {
         .shadow(color: .black.opacity(0.14), radius: 18, y: 7)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("miniPlayer.bar")
+        .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
     }
 }
