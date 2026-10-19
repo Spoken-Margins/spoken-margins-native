@@ -128,6 +128,7 @@ extension Gate1AppModel {
             statusMessage = "Review the Terms of Use to enable an on-device voice."
             return
         }
+        stopSpeechPreviews() // a preview rendering in the old voice must not play under the new name (#2125)
         sanitizeTTSMode()
         settingsValueChanged()
         saveSpeechSettings()
@@ -179,6 +180,7 @@ extension Gate1AppModel {
         isRenderingSupertonicPreview = true
         statusMessage = "Preparing \(ttsVoiceSelection.displayName)…"
         let speed = Float(speechRate / 0.5)
+        let request = supertonicPreviewRequest.begin(voice: voice)
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -189,7 +191,13 @@ extension Gate1AppModel {
                     speed: speed,
                     synthesisSteps: 8
                 )
-                try Task.checkCancellation()
+                // Rendering takes seconds: play only if the listener hasn't moved on meanwhile (#2125).
+                guard self.supertonicPreviewRequest.mayPlay(request, selectedVoice: self.ttsVoiceSelection.supertonicVoice, otherAudioActive: self.isOtherAudioActiveForPreview) else {
+                    self.diagnostics["supertonicPreview"] = "dropped_stale"
+                    await renderer.discardGeneratedAudio(at: result.audioURL)
+                    self.isRenderingSupertonicPreview = false
+                    return
+                }
                 try self.playSupertonicPreview(url: result.audioURL)
                 self.diagnostics["supertonicPreviewRenderSeconds"] = String(format: "%.3f", result.renderDuration)
                 self.diagnostics["supertonicPreviewDurationSeconds"] = String(format: "%.3f", result.duration)
@@ -200,6 +208,13 @@ extension Gate1AppModel {
             }
             self.isRenderingSupertonicPreview = false
         }
+    }
+
+    /// Narration, a Margin's voice, a recording or a microphone request: a voice preview must not play over any of them (#2125).
+    var isOtherAudioActiveForPreview: Bool {
+        snapshot.status.isPlaybackActive || snapshot.isRecording || isRequestingRecordingPermission
+            || (marginVoicePlayer.ownMarginID != nil && !marginVoicePlayer.ownIsPaused)
+            || (marginVoicePlayer.sharedMargin != nil && !marginVoicePlayer.sharedIsPaused)
     }
 
     func verifyCurrentTermsForOnDeviceVoice() throws {

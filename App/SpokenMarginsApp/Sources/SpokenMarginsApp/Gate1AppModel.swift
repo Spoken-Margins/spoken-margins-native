@@ -434,6 +434,8 @@ final class Gate1AppModel: ObservableObject {
     ) ?? .james
     @Published var ttsMode = UserDefaults.standard.string(forKey: "ttsMode") ?? "supertonic"
     @Published var isRenderingSupertonicPreview = false
+    /// The Supertonic preview still rendering; playback, a Margin or a voice change makes it stale (#2125).
+    var supertonicPreviewRequest = VoicePreviewRequest<SupertonicVoiceID>()
     @Published var providerAPIKey = KeychainStore.load(service: "SpokenMargins", account: "OpenAICompatibleAPIKey") ?? ""
     @Published var providerProbeStatus = "Not checked"
     @Published var aiDataSharingConsent = AIDataSharingConsent(
@@ -2922,6 +2924,7 @@ final class Gate1AppModel: ObservableObject {
 
     #if canImport(AVFoundation)
     func stopSpeechPreviews() {
+        supertonicPreviewRequest.cancel() // a preview still rendering must not start later (#2125)
         if speechPreviewSynthesizer.isSpeaking {
             speechPreviewSynthesizer.stopSpeaking(at: .immediate)
         }
@@ -2946,7 +2949,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     #else
-    func stopSpeechPreviews() {}
+    func stopSpeechPreviews() { supertonicPreviewRequest.cancel() }
     #endif
 
     func applicationSupportDirectory() throws -> URL {
