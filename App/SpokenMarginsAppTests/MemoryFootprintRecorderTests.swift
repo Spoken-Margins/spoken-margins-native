@@ -2,6 +2,7 @@ import XCTest
 @testable import SessionKit
 @testable import SpokenMarginsApp
 
+/// (probe for #2074: does this class pass on plain next?)
 /// #122: the app was killed for memory twice and nothing recorded how much it used.
 @MainActor
 final class MemoryFootprintRecorderTests: XCTestCase {
