@@ -416,6 +416,10 @@ public enum SpokenMarginsPackageImporter {
         guard let commentary = contents.commentaryLayers.first else {
             throw SpokenMarginsPackageArchiveError.invalidManifest("required commentary layer is absent")
         }
+        // A map-only packet has no Margins to layer; its map is placed by `TextListeningMapPlacer` instead (#1471).
+        guard !ListeningMapPacket.isMapPacket(manifest) else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("a listening map packet has no Margins to import")
+        }
         let itemResolution = localItem.map {
             ImportedItemResolver.resolve(
                 item: manifest.item,

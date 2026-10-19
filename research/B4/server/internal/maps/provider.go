@@ -14,7 +14,7 @@ import (
 )
 
 // DefaultModel is the model the server asks unless the owner sets another.
-const DefaultModel = "claude-haiku-4-5"
+const DefaultModel = "claude-haiku-5-5"
 
 // Request is one map-making call: instructions, the transcript as text, and
 // the JSON shape the answer must take.

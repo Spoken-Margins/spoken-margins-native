@@ -862,7 +862,7 @@ final class Gate1FlowUITests: XCTestCase {
         copy.press(forDuration: 0.05)
         captureScreen(named: "margin-detail-after-quick-tap")
         XCTAssertTrue(element("app.feedback.banner").waitForExistence(timeout: 3), "Copy confirmation must be visible inside the Margin sheet")
-        XCTAssertTrue(app.staticTexts["Copied Margin with its anchors."].exists)
+        XCTAssertTrue(app.staticTexts["Copied Margin with its context."].exists)
         app.buttons["marginDetail.star.button"].tap()
         XCTAssertEqual(app.buttons["marginDetail.star.button"].label, "Unstar Margin")
         captureScreen(named: "second-edition-written-margin-detail")

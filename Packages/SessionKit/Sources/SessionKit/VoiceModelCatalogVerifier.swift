@@ -49,10 +49,11 @@ public struct VoiceCatalogTrustedKey: Equatable, Sendable {
 }
 
 public enum VoiceCatalogTrust {
-    /// The keys compiled into this build. Empty until the owner generates the production signing key
-    /// (a secret that stays on their machine); while it is empty every catalog fails with `unknownKey`
-    /// and the app offers no downloads, which is the safe state.
-    public static let production: [VoiceCatalogTrustedKey] = []
+    /// The keys compiled into this build. The private half of each stays in the owner's login Keychain
+    /// (`scripts/voice-catalog keygen`, 2026-10-18); only catalogs signed by one of these are accepted.
+    public static let production: [VoiceCatalogTrustedKey] = [
+        VoiceCatalogTrustedKey(keyId: "sm-voices-1", publicKey: Data(base64Encoded: "QEyZWJt0nRrIhEOKVX0vUVQWPG/rQ+IG2wjHPliQ3IA=")!),
+    ]
 }
 
 public enum VoiceCatalogError: Error, Equatable, Sendable {

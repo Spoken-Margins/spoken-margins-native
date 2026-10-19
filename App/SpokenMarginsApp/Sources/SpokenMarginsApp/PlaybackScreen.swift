@@ -163,7 +163,7 @@ struct PlaybackScreen: View {
                 }
                 .onCompatibleChange(of: model.guidedOnboardingStage) { stage in
                     if stage == .reviewTimeline {
-                        withAnimation {
+                        withMotion {
                             proxy.scrollTo("playback.timeline", anchor: .top)
                         }
                     }
@@ -664,7 +664,7 @@ struct PlaybackScreen: View {
                     Label("\(model.marginMomentTitle) in \(countdown)", systemImage: "text.bubble")
                         .font(.headline)
                         .foregroundStyle(.white)
-                        .contentTransition(.numericText())
+                        .numericTextTransition()
                         .accessibilityIdentifier("marginMoment.countdown")
                     if model.marginMomentPositionIsApproximate {
                         Text("Approximate position: ads can differ between copies.")
@@ -1708,7 +1708,7 @@ private struct GuidedOnboardingPlaybackCard: View {
             Text("Practice making a Margin")
                 .font(.title3.bold())
                 .screenTitle()
-            Text("Let the welcome source play until an idea occurs to you, then record a short note. Spoken Margins will anchor it to this listening session.")
+            Text("Let the welcome source play until an idea occurs to you, then record a short note. Spoken Margins will keep it with this listening session.")
                 .foregroundStyle(AppColors.secondaryText)
             if model.snapshot.isRecording {
                 Button("Done Recording", action: model.finishInterjection)

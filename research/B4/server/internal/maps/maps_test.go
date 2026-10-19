@@ -62,6 +62,16 @@ func TestParseTranscriptRefusals(t *testing.T) {
 	if _, err := ParseTranscript(encode(t, big)); err == nil {
 		t.Error("over 2 MB: accepted")
 	}
+	long := testTranscript()
+	long.Segments[0].Text = strings.Repeat("a", MaxPromptBytes)
+	if _, err := ParseTranscript(encode(t, long)); err == nil {
+		t.Error("over the prompt limit: accepted")
+	}
+	fits := testTranscript()
+	fits.Segments[0].Text = strings.Repeat("a", MaxPromptBytes-4000)
+	if _, err := ParseTranscript(encode(t, fits)); err != nil {
+		t.Errorf("under the prompt limit: refused: %v", err)
+	}
 	if _, err := ParseTranscript([]byte(`{"schema":`)); err == nil {
 		t.Error("broken JSON: accepted")
 	}
@@ -86,15 +96,18 @@ func TestCheckAnswer(t *testing.T) {
 
 	quote := strings.Join(words(tr.Segments[7].Text)[2:12], " ") // ten words in a row
 	bad := map[string]string{
-		"malformed":    `{"scenes": [`,
-		"two scenes":   answerJSON([3]string{"s0", "A", "B"}, [3]string{"s5", "C", "D"}),
-		"unknown id":   answerJSON([3]string{"s0", "A", "B"}, [3]string{"s99", "C", "D"}, [3]string{"s15", "E", "F"}),
-		"out of order": answerJSON([3]string{"s0", "A", "B"}, [3]string{"s14", "C", "D"}, [3]string{"s7", "E", "F"}),
-		"same start":   answerJSON([3]string{"s0", "A", "B"}, [3]string{"s7", "C", "D"}, [3]string{"s7", "E", "F"}),
-		"long title":   answerJSON([3]string{"s0", strings.Repeat("t", 81), "B"}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-		"long summary": answerJSON([3]string{"s0", "A", strings.Repeat("s", 301)}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-		"empty title":  answerJSON([3]string{"s0", " ", "B"}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-		"quotes":       answerJSON([3]string{"s0", "A", "B"}, [3]string{"s7", "C", "As they put it: " + strings.ToUpper(quote) + "!"}, [3]string{"s14", "E", "F"}),
+		"malformed":                 `{"scenes": [`,
+		"two scenes":                answerJSON([3]string{"s0", "A", "B"}, [3]string{"s5", "C", "D"}),
+		"unknown id":                answerJSON([3]string{"s0", "A", "B"}, [3]string{"s99", "C", "D"}, [3]string{"s15", "E", "F"}),
+		"out of order":              answerJSON([3]string{"s0", "A", "B"}, [3]string{"s14", "C", "D"}, [3]string{"s7", "E", "F"}),
+		"same start":                answerJSON([3]string{"s0", "A", "B"}, [3]string{"s7", "C", "D"}, [3]string{"s7", "E", "F"}),
+		"long title":                answerJSON([3]string{"s0", strings.Repeat("t", 81), "B"}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
+		"long summary":              answerJSON([3]string{"s0", "A", strings.Repeat("s", 301)}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
+		"nine-word title":           answerJSON([3]string{"s0", "one two three four five six seven eight nine", "B"}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
+		"29-word summary":           answerJSON([3]string{"s0", "A", strings.Repeat("word ", 29)}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
+		"name in title and summary": answerJSON([3]string{"s0", "Meet Thatcher", "The host thanks Margaret Thatcher for the tip."}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
+		"empty title":               answerJSON([3]string{"s0", " ", "B"}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
+		"quotes":                    answerJSON([3]string{"s0", "A", "B"}, [3]string{"s7", "C", "As they put it: " + strings.ToUpper(quote) + "!"}, [3]string{"s14", "E", "F"}),
 		// A run that crosses from one segment into the next still counts.
 		"quotes across segments": answerJSON([3]string{"s0", "A", strings.Join(append(words(tr.Segments[0].Text)[14:], words(tr.Segments[1].Text)[:5]...), " ")},
 			[3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
@@ -590,5 +603,204 @@ func TestSubmitSpendingRacesPayOnce(t *testing.T) {
 	wg.Wait()
 	if n, _ := svc.Store.CountTranscripts(); n != 3 {
 		t.Fatalf("%d transcripts waiting, want MaxWaiting 3", n)
+	}
+}
+
+func TestNameGrounding(t *testing.T) {
+	source := "Grace Hopper joined the navy. Hopper's compiler changed things in Boston."
+	cases := []struct {
+		summary string
+		want    string
+	}{
+		{"The story of Grace Hopper in Boston.", ""},
+		{"Hopper's compiler comes up.", ""},
+		{"Dr. Hopper is introduced.", ""},                // abbreviation, not a sentence end
+		{"Compilers matter. Lovelace is mentioned.", ""}, // sentence start is skipped
+		{"A talk about Ada Lovelace.", "Ada"},
+		{"The host visits Paris.", "Paris"},
+		{"A short plain summary with no names.", ""},
+	}
+	for _, c := range cases {
+		if got := ungroundedName(c.summary, source); got != c.want {
+			t.Errorf("%q: got %q, want %q", c.summary, got, c.want)
+		}
+	}
+
+	// Acronyms: a dotted form, initials of words in a row, and plurals.
+	source = "Today we ask what A.I. means for the U.S. and why large language models hallucinate. The NFL weighs in."
+	cases = []struct {
+		summary string
+		want    string
+	}{
+		{"How AI changes work.", ""},
+		{"What the US makes of it.", ""},
+		{"Why LLMs make things up.", ""},
+		{"Why LLM answers drift.", ""},
+		{"How the NFLs view it.", ""},
+		{"The NBA weighs in.", "NBA"},     // no such initials or word
+		{"Talk of Ng and friends.", "Ng"}, // not all capitals, so no initials
+	}
+	for _, c := range cases {
+		if got := ungroundedName(c.summary, source); got != c.want {
+			t.Errorf("%q: got %q, want %q", c.summary, got, c.want)
+		}
+	}
+}
+
+func TestTooManyScenesMergeShortestFirst(t *testing.T) {
+	// 41 one-minute segments, except segment 10, which lasts ten minutes.
+	tr := Transcript{Schema: TranscriptSchema, EpisodeKey: testKey, Language: "en"}
+	var at int64
+	for i := 0; i <= MaxScenes; i++ {
+		d := int64(60000)
+		if i == 10 {
+			d = 600000
+		}
+		tr.Segments = append(tr.Segments, Segment{ID: fmt.Sprintf("s%d", i), StartMs: at, EndMs: at + d,
+			Text: fmt.Sprintf("Segment %d is only here so there are enough places for scenes to start.", i)})
+		at += d
+	}
+	tr.DurationMs = at
+	var scenes [][3]string
+	for i := 0; i <= MaxScenes; i++ {
+		scenes = append(scenes, [3]string{fmt.Sprintf("s%d", i), fmt.Sprintf("Scene %d", i), fmt.Sprintf("What happens in part %d.", i)})
+	}
+	got, fixed, err := checkAnswer(tr, answerJSON(scenes...))
+	if err != nil || len(got) != MaxScenes || fixed.Merged != 1 {
+		t.Fatalf("%d scenes, %+v, %v; want %d with one merge", len(got), fixed, err, MaxScenes)
+	}
+	// Every pair spans two minutes except those touching segment 10, so the
+	// earliest pair (scenes 0 and 1) merges: it starts at 0, ends where
+	// scene 2 starts, and keeps scene 0's text (a tie keeps the earlier).
+	if got[0].StartMs != 0 || got[0].EndMs != 120000 || got[0].Title != "Scene 0" {
+		t.Fatalf("merged scene = %+v", got[0])
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i].StartMs != got[i-1].EndMs || got[i].Title != fmt.Sprintf("Scene %d", i+1) {
+			t.Fatalf("scene %d = %+v after %+v", i, got[i], got[i-1])
+		}
+	}
+	if got[len(got)-1].EndMs != tr.DurationMs {
+		t.Fatalf("last scene ends at %d, want %d", got[len(got)-1].EndMs, tr.DurationMs)
+	}
+
+	// A merge keeps the text of the part that ran longest.
+	runs, n := mergeRuns([]run{
+		{first: 0, startMs: 0, endMs: 60000, scene: 0, ownMs: 60000},
+		{first: 1, startMs: 60000, endMs: 660000, scene: 1, ownMs: 600000},
+		{first: 2, startMs: 660000, endMs: 1500000, scene: 2, ownMs: 840000},
+	}, 2)
+	if n != 1 || len(runs) != 2 || runs[0].startMs != 0 || runs[0].endMs != 660000 || runs[0].scene != 1 || runs[0].first != 0 {
+		t.Fatalf("runs %+v, %d merges", runs, n)
+	}
+}
+
+func TestNameFromANeighbouringScenePasses(t *testing.T) {
+	tr := testTranscript()
+	tr.Segments[6].Text = "Next up, Grace Hopper describes her first bug."
+	// The summary of the scene starting at s7 names Hopper, who speaks in s6:
+	// the scene before. s0 and s14 are not neighbours of each other's names.
+	text := answerJSON(
+		[3]string{"s0", "Opening", "The host sets out why old coastal stations matter."},
+		[3]string{"s7", "Bugs", "Grace Hopper recalls the first bug."},
+		[3]string{"s14", "Storm logs", "Records of severe weather and what they reveal."},
+	)
+	got, fixed, err := checkAnswer(tr, text)
+	if err != nil || fixed != (Repairs{}) || got[1].Summary != "Grace Hopper recalls the first bug." {
+		t.Fatalf("%+v, %+v, %v", got, fixed, err)
+	}
+	// Two scenes away is not a neighbour.
+	tr.Segments[6].Text = tr.Segments[5].Text
+	tr.Segments[0].Text = "Grace Hopper is mentioned only here."
+	text = answerJSON(
+		[3]string{"s0", "Opening", "The host sets out why old coastal stations matter."},
+		[3]string{"s7", "Keepers", "Who tended the lights and what daily duty looked like."},
+		[3]string{"s10", "More keepers", "Who tended the lights after that."},
+		[3]string{"s14", "Bugs", "Grace Hopper recalls the first bug."},
+	)
+	if got, fixed, err := checkAnswer(tr, text); err != nil || fixed.Summaries != 1 || got[3].Summary != "Bugs" {
+		t.Fatalf("%+v, %+v, %v", got, fixed, err)
+	}
+}
+
+func TestInventedNameRepairsOnlyThatScene(t *testing.T) {
+	tr := testTranscript()
+	text := answerJSON(
+		[3]string{"s0", "Opening", "The host sets out why old coastal stations matter."},
+		[3]string{"s7", "Keepers", "Margaret Thatcher tended the lights, says the host."},
+		[3]string{"s14", "Storm logs", "Records of severe weather and what they reveal."},
+	)
+	got, fixed, err := checkAnswer(tr, text)
+	if err != nil || fixed != (Repairs{Summaries: 1}) {
+		t.Fatalf("%+v, %v", fixed, err)
+	}
+	want := []string{"The host sets out why old coastal stations matter.", "Keepers", "Records of severe weather and what they reveal."}
+	for i, w := range want {
+		if got[i].Summary != w {
+			t.Fatalf("scene %d summary %q, want %q", i, got[i].Summary, w)
+		}
+	}
+
+	// The worker stores the repaired map and logs the repair without the name.
+	api := newFakeAPI(t, text)
+	svc, _, logs := newService(t, api, 10)
+	svc.Submit(tr)
+	svc.ProcessWaiting(context.Background())
+	if api.callCount() != 1 || !svc.Store.HasMap(testKey) {
+		t.Fatalf("calls %d, map %v", api.callCount(), svc.Store.HasMap(testKey))
+	}
+	if !containsAny(*logs, "replaced 1 summaries") || containsAny(*logs, "Thatcher") || containsAny(*logs, "Margaret") {
+		t.Fatalf("logs %v", *logs)
+	}
+}
+
+func TestRetryPromptCarriesTheReason(t *testing.T) {
+	tr := testTranscript()
+	two := answerJSON([3]string{"s0", "Opening", "Thatcher Lovelace Hopper says hello."}, [3]string{"s7", "Keepers", "Who tended them."})
+	api := newFakeAPI(t, two, goodAnswer)
+	svc, _, logs := newService(t, api, 10)
+	svc.Submit(tr)
+	svc.ProcessWaiting(context.Background())
+	if api.callCount() != 2 || !svc.Store.HasMap(testKey) {
+		t.Fatalf("calls %d, map %v", api.callCount(), svc.Store.HasMap(testKey))
+	}
+	prompt := func(i int) string {
+		msgs := api.bodies[i]["messages"].([]any)
+		return msgs[0].(map[string]any)["content"].(string)
+	}
+	first, second := prompt(0), prompt(1)
+	want := "Your previous answer could not be used. The previous answer had 2 scenes; give at least 3."
+	if strings.Contains(first, "previous answer") || !strings.Contains(second, want) {
+		t.Fatalf("retry note missing or early:\nfirst ends %q\nsecond ends %q", first[len(first)-120:], second[len(second)-120:])
+	}
+	if !strings.HasPrefix(second, first) {
+		t.Fatal("the retry changed the transcript part of the prompt")
+	}
+	// The note never echoes the answer, and the log never names it.
+	for _, s := range append([]string{second[len(first):]}, *logs...) {
+		if strings.Contains(s, "Thatcher") || strings.Contains(s, "Keepers") {
+			t.Fatalf("answer text leaked: %q", s)
+		}
+	}
+}
+
+func TestEveryRefusalHasARetryHint(t *testing.T) {
+	tr := testTranscript()
+	quote := strings.Join(words(tr.Segments[7].Text)[0:12], " ")
+	for name, text := range map[string]string{
+		"malformed": `{"scenes": [`,
+		"two":       answerJSON([3]string{"s0", "A", "B"}, [3]string{"s5", "C", "D"}),
+		"unknown":   answerJSON([3]string{"s0", "A", "B"}, [3]string{"s99", "C", "D"}, [3]string{"s15", "E", "F"}),
+		"order":     answerJSON([3]string{"s0", "A", "B"}, [3]string{"s14", "C", "D"}, [3]string{"s7", "E", "F"}),
+		"title":     answerJSON([3]string{"s0", strings.Repeat("t", 81), "B"}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
+		"summary":   answerJSON([3]string{"s0", "A", strings.Repeat("s", 301)}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
+		"name":      answerJSON([3]string{"s0", "Meet Thatcher", "Hello to Thatcher."}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
+		"copy":      answerJSON([3]string{"s0", "A", "B"}, [3]string{"s7", "C", quote}, [3]string{"s14", "E", "F"}),
+	} {
+		_, err := CheckAnswer(tr, text)
+		var aerr *AnswerError
+		if !errors.As(err, &aerr) || aerr.Hint == "" {
+			t.Errorf("%s: %v, want an AnswerError with a hint", name, err)
+		}
 	}
 }

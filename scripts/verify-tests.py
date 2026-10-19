@@ -23,6 +23,7 @@ import host_audio
 import lane_sim
 import sessionkit_pass
 import lane_sim_pool
+import third_party_notices
 from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
                         state_dir, SIMULATOR_SLOTS)
 
@@ -408,10 +409,14 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_lane_runner.OnlyTestingTests', 'test_lane_runner.ScopeClassTests',
                        'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
                        'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved',
-                       'test_building_md', 'test_starter_catalog')
+                       'test_building_md', 'test_third_party_notices',
+                       'test_starter_catalog')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
                       'docs/sharing-test-kit/', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
-                      'Site/onboarding/')
+                      # test_third_party_notices reads the dependency manifests and its own list (#1823).
+                      'docs/legal/', 'THIRD_PARTY_NOTICES.md', 'requirements-dev.txt', 'Site/', 'Tools/',
+                      'Config/', 'fixtures/', 'traces/', 'schemas/', 'Design/SpokenMarginsOverhaul/package.json',
+                      'Design/UXProposal20260909/package.json')
 # The ops tests read their own folder and scripts/lane-runner.py (the audit's test), test-scope and the release
 # files, so they follow the ops tools and anything the runner tests follow, plus the build inputs. The Codex
 # audit's tests also check that AGENTS.md is at the repository root. Re-measured 2026-10-09 the same way as
@@ -487,6 +492,13 @@ def touches(changed, prefixes):
     return any(path == prefix or path.startswith(prefix) for path in changed for prefix in prefixes)
 
 
+def adds_licence_surface(path):
+    """True for a dependency manifest, model or font file anywhere in the tree: the notices check reads the whole
+    repository, so the PR that adds one must be the PR that runs it (#1823)."""
+    p = Path(path)
+    return bool(third_party_notices.MANIFEST_NAMES.match(p.name)) or p.suffix.lower() in third_party_notices.MODEL_SUFFIXES
+
+
 def runner_test_scope(changed):
     """('all'|'readers'|'none', reason) for the runner tests. changed=None means no diff information: all."""
     if not changed:
@@ -496,6 +508,9 @@ def runner_test_scope(changed):
     if touches(changed, RUNNER_TEST_INPUTS):
         return 'readers', 'diff touches no lane path; only the tests that read ' + ', '.join(
             p for p in RUNNER_TEST_INPUTS if touches(changed, (p,))) + ' run'
+    surface = [path for path in changed if adds_licence_surface(path)]
+    if surface:
+        return 'readers', 'diff touches no lane path; only the tests that read ' + ', '.join(surface[:3]) + ' run'
     return 'none', 'diff touches nothing under scripts/, .github/ or the files the runner tests read'
 
 
