@@ -114,6 +114,39 @@ class TheStepInThePlan(unittest.TestCase):
         self.assertNotIn('shipped-compat', skipped)
         self.assertTrue(any(PERSISTENCE in note for note in notes), notes)
 
+    def test_the_plain_fast_plan_runs_it_too(self):
+        # `--plan fast` is the plan the runner uses while the hosted fast checks are off.
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary:
+            tree = Path(temporary)
+            (tree / verification.SHIPPED_COMPAT_WORKFLOW).parent.mkdir(parents=True)
+            shutil.copy(WORKFLOW, tree / verification.SHIPPED_COMPAT_WORKFLOW)
+            run = verification.Run(tree / 'run', 'fast', [PERSISTENCE])
+            with mock.patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append(name)), \
+                    mock.patch.object(run, 'ops_steps'), \
+                    mock.patch.object(run, 'package_steps'), \
+                    mock.patch.object(verification, 'ROOT', tree), \
+                    mock.patch.object(verification, 'swift_tests', return_value={'T/test'}), \
+                    mock.patch.object(verification, 'in_codex_sandbox', return_value=False), \
+                    mock.patch.object(verification.sessionkit_pass, 'toolchain', return_value=None), \
+                    mock.patch.object(verification.sessionkit_pass, 'find', return_value=None), \
+                    mock.patch.object(verification, 'host_test_slot', return_value=contextlib.nullcontext({})), \
+                    mock.patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                (tree / 'node_modules').mkdir()
+                run.fast()
+        self.assertIn('shipped-compat', calls)
+
+    def test_a_paths_entry_the_reader_would_drop_stops_the_run(self):
+        for entry in ('"Packages/X/**"', 'Packages/X/**', "'!Packages/X/**'x"):
+            with self.subTest(entry), tempfile.TemporaryDirectory() as temporary:
+                workflow = Path(temporary) / verification.SHIPPED_COMPAT_WORKFLOW
+                workflow.parent.mkdir(parents=True)
+                workflow.write_text("on:\n  pull_request:\n    paths:\n      - 'a/**'\n      - " + entry
+                                    + "\n\npermissions:\n  contents: read\n")
+                with self.assertRaises(RuntimeError):
+                    verification.shipped_compat_paths(temporary)
+
     def test_a_diff_that_does_not_reach_it_names_the_step_as_skipped(self):
         calls, skipped, _ = self.run_mac_rest(['App/SpokenMarginsApp/Gate1AppModel.swift'])
         self.assertNotIn('shipped-compat', [call[0] for call in calls])

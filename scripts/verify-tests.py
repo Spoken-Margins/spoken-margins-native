@@ -509,7 +509,10 @@ def shipped_compat_paths(root):
     if '    paths:\n' not in text:
         raise RuntimeError(f'{SHIPPED_COMPAT_WORKFLOW} has no `paths:` list; shipped_compat_paths cannot read it')
     block = text.split('    paths:\n', 1)[1].split('\npermissions:', 1)[0]
-    paths = [m.group(1) for m in re.finditer(r"^\s*-\s*'([^']+)'", block, re.M)]
+    paths = [m.group(1) for m in re.finditer(r"^\s*-\s*'([^'!][^']*)'\s*(?:#.*)?$", block, re.M)]
+    entries = [line for line in block.splitlines() if line.strip().startswith('-')]
+    if len(entries) != len(paths):  # a double-quoted, unquoted or `!negated` entry would be dropped, not matched
+        raise RuntimeError(f'{SHIPPED_COMPAT_WORKFLOW} has a `paths:` entry that is not a plain single-quoted glob')
     if not paths:
         raise RuntimeError(f'{SHIPPED_COMPAT_WORKFLOW} lists no paths; shipped_compat_paths cannot read it')
     return paths
