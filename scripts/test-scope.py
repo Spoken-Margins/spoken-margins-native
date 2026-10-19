@@ -323,7 +323,7 @@ def runner_routing(pr, file_pages, runner_pages, root=ROOT, offmac=True):
     count: priority work queues there, but an absent/offline runner must not strand a job.
     Overflow (#1327): an automerge job that isn't priority work goes to the priority runner when it
     is idle and no build runner is, instead of queueing behind them while the Mac has a runner free.
-    Never slower (#2147): when every online priority runner also takes build jobs, a priority automerge job uses the
+    Never slower (#2147), a guard: if every online priority runner also takes build jobs, a priority automerge job uses the
     build queue, because GitHub gives waiting self-hosted jobs no order and the narrower label only means fewer
     runners. Priority does not jump the queue; real ordering is #1057.
     """
