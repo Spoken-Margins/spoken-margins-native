@@ -2511,7 +2511,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private func restartStalledSystemVoice() {
         guard let targetId = lock.withLock({ fallbackIsActive && transportIntent == .playing ? currentTargetId : nil }),
               let offset = fallback.currentCharOffset() else { return }
-        try? activateAudioSession()
+        try? reactivateAudioSession()
         try? pauseFallbackVoice()
         try? playFallbackVoice(targetId: targetId, from: offset)
     }
@@ -2535,7 +2535,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             return (url, activeAudioDuration, request, time)
         }
         guard let (url, duration, request, _) = snapshot else { return }
-        try? activateAudioSession()
+        try? reactivateAudioSession()
         playRenderedAudio(url, duration: duration, request: request)
     }
 
@@ -3560,6 +3560,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         try fallback.stop()
     }
 
+    /// Recovery from a stall or a refused start exists to put the session back, so it activates for real: the
+    /// session can have gone inactive without telling us, and nothing public can say so (#2101 audit).
+    private func reactivateAudioSession() throws {
+        forgetActivatedSession()
+        try activateAudioSession()
+    }
+
     /// The next activation must run: an interruption, a lost route, a media services reset, a pause or a stop
     /// may have ended or changed the session.
     private func forgetActivatedSession() {
@@ -3612,8 +3619,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             object: AVAudioSession.sharedInstance(),
             queue: .main
         ) { [weak self] notification in
-            self?.forgetActivatedSession()
-            guard let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+            // Our own setCategory posts a category change; forgetting then would undo the activation just made.
+            let reasonRaw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+            if reasonRaw.flatMap(AVAudioSession.RouteChangeReason.init(rawValue:)) != .categoryChange {
+                self?.forgetActivatedSession()
+            }
+            guard let reasonValue = reasonRaw,
                   AVAudioSession.RouteChangeReason(rawValue: reasonValue) == .oldDeviceUnavailable else { return }
             self?.pauseForSystemInterruption(allowsAutomaticResume: false, cause: .routeLost)
         })

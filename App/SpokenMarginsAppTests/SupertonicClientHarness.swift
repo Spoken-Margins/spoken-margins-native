@@ -86,7 +86,8 @@ final class SupertonicClientHarness {
             observesPlayerLifecycle: true,
             fallbackClient: systemVoice,
             onFallback: { reason, _, _ in fallbackReasons.add(reason) },
-            onStall: { kind, _ in stallEvents.add(kind) },
+            // The activation timing is a diagnostic, not a stall; a slow simulator must not add it to the lists tests compare.
+            onStall: { kind, _ in if kind != "supertonic.session_activate" { stallEvents.add(kind) } },
             stallRecoveryCooldown: stallRecoveryCooldown,
             applicationIsActive: applicationIsActive,
             applicationIsInBackground: applicationIsInBackground

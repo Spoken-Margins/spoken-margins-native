@@ -57,4 +57,21 @@ final class SupertonicSessionActivationTests: XCTestCase {
         XCTAssertTrue(next, "the next chunk started")
         XCTAssertGreaterThan(harness.sessionActivations.values.count, beforeRouteChange, "a route change ends the activation")
     }
+
+    // A refused start is re-seated to put the session back; the remembered activation must not turn that into a no-op.
+    func testReseatingARefusedStartActivatesTheSessionForReal() async throws {
+        let harness = try SupertonicClientHarness(
+            applicationIsActive: { false }, applicationIsInBackground: { true }
+        )
+        defer { harness.tearDown() }
+        try await harness.start()
+        let starts = harness.playerStarts
+        let beforeRefusal = harness.sessionActivations.values.count
+
+        harness.refuseTheNewestPlayersStart()
+
+        let reseated = await harness.waitForPlayerStarts(starts + 1)
+        XCTAssertTrue(reseated, "the refused player was re-seated")
+        XCTAssertGreaterThan(harness.sessionActivations.values.count, beforeRefusal, "the re-seat activated the session again")
+    }
 }
