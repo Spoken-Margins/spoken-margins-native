@@ -410,6 +410,90 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         )
     }
 
+    // MARK: The file a packet came from (#2123)
+
+    func testTheSourceFileIsReleasedWhenTheReviewIsImportedNotWhenItOpens() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
+        var released = 0
+        assertStaged(h.coordinator.stage(from: packet.url, releaseSource: { released += 1 }))
+        XCTAssertEqual(released, 0, "opening the review keeps the source, so a killed app finds it again")
+
+        await h.confirmCurrentReview()
+
+        XCTAssertEqual(released, 1)
+    }
+
+    func testTheSourceFileIsReleasedOnCancelAndKeptThroughAFailedImport() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
+        var released = 0
+        assertStaged(h.coordinator.stage(from: packet.url, releaseSource: { released += 1 }))
+        h.showImportedItemFailure = StubFailure()
+
+        await h.confirmCurrentReview()
+        XCTAssertEqual(released, 0, "a failed import keeps the source for a retry")
+
+        h.coordinator.cancel()
+        XCTAssertEqual(released, 1)
+        h.coordinator.cancel()
+        XCTAssertEqual(released, 1, "released once")
+    }
+
+    func testAPacketAlreadyInTheLibraryReleasesItsSourceStraightAway() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
+        assertStaged(h.coordinator.stage(from: packet.url))
+        await h.confirmCurrentReview()
+        var released = 0
+
+        assertStaged(h.coordinator.stage(from: packet.url, releaseSource: { released += 1 }))
+
+        XCTAssertNil(h.coordinator.review)
+        XCTAssertEqual(released, 1, "nothing is left to review, so nothing should reopen at the next launch")
+    }
+
+    func testARejectedPacketLeavesItsSourceToTheCaller() throws {
+        let h = try makeHarness()
+        let junk = h.root.appendingPathComponent("junk.spokenmargins")
+        try Data("not a zip".utf8).write(to: junk)
+        var released = 0
+
+        guard case .rejected = h.coordinator.stage(from: junk, releaseSource: { released += 1 }) else { return XCTFail() }
+
+        XCTAssertEqual(released, 0)
+    }
+
+    func testAWaitingPacketKeepsItsSourceUntilItsOwnReviewEnds() async throws {
+        let h = try makeHarness()
+        let a = try h.writePacket(named: "alpha", text: Self.alphaText)
+        let b = try h.writePacket(named: "beta", text: Self.betaText)
+        var releasedA = 0
+        var releasedB = 0
+        assertStaged(h.coordinator.stage(from: a.url, releaseSource: { releasedA += 1 }))
+        assertStaged(h.coordinator.stage(from: b.url, releaseSource: { releasedB += 1 }))
+
+        await h.confirmCurrentReview()
+        XCTAssertEqual([releasedA, releasedB], [1, 0])
+
+        h.coordinator.cancel()
+        XCTAssertEqual([releasedA, releasedB], [1, 1])
+    }
+
+    func testReMatchingAfterAddingASourceKeepsTheSourceToRelease() throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "gamma", text: Self.alphaText, recipientSupplied: true)
+        var released = 0
+        assertStaged(h.coordinator.stage(from: packet.url, releaseSource: { released += 1 }))
+        let before = try XCTUnwrap(h.coordinator.review)
+
+        h.coordinator.refreshAfterAddingSource()
+        XCTAssertNotEqual(h.coordinator.review?.id, before.id)
+        h.coordinator.cancel()
+
+        XCTAssertEqual(released, 1, "the rebuilt review still releases the file the packet came from")
+    }
+
     // MARK: State shared with the views
 
     func testWritesFromTheViewsAreAdoptedWithoutBeingPublishedBackOrCleanedUp() throws {
