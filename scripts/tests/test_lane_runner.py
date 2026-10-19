@@ -1157,6 +1157,7 @@ class MergeTests_Runner(unittest.TestCase):
     def run_auto(self, github, verdicts=('PASS',), pushes=(True,), scope=None, comments=(), moved=False,
                  automerge=None, inherited=lambda comments: []):
         events = []
+        self.dispatched = []
         pushes = list(pushes)
 
         def build(tree, base, head, pr, title):
@@ -1184,6 +1185,8 @@ class MergeTests_Runner(unittest.TestCase):
                 mock.patch.object(lane, 'push_merge', side_effect=push), \
                 mock.patch.object(lane, 'fetch_base', side_effect=lambda tree, base: NEWER), \
                 mock.patch.object(lane, 'sweep_merge_audit', side_effect=lambda tree, base: events.append('sweep')), \
+                mock.patch.object(lane, 'dispatch_hosted_integration',
+                                  side_effect=lambda base: self.dispatched.append(base) or 'started'), \
                 mock.patch.object(lane, 'host_build_folders', return_value='build folders: in the workspace (test)'), \
                 mock.patch.object(lane, 'inherited_check', return_value=inherited), \
                 mock.patch.object(lane, 'diff_scope', return_value=scope or self.SCOPE), \
@@ -1472,6 +1475,16 @@ class MergeTests_Runner(unittest.TestCase):
         (_, _, _, details), events = self.run_auto(github)
         self.assertEqual((events, github.posted), (['build'], []))
         self.assertIn('was closed while it was tested', details[-1])
+
+    def test_each_merge_the_runner_pushes_starts_hosted_integration_once(self):
+        # #2127: a push with the workflow token starts no workflow, so hosted-integration's push trigger never saw
+        # the runner's merges. Only a pushed merge dispatches; a refused push, then the re-merge, dispatches once.
+        cases = [('pushed', {}, ['next']), ('refused, then pushed', {'verdicts': ('PASS', 'PASS'), 'pushes': (False, True)}, ['next']),
+                 ('refused for good', {'verdicts': ('PASS',) * 3, 'pushes': (False,) * 3}, [])]
+        for name, kw, expected in cases:
+            with self.subTest(name):
+                self.run_auto(FakeGitHub(labels=('automerge',)), **kw)
+                self.assertEqual(self.dispatched, expected)
 
     def test_a_refused_push_means_next_moved_so_it_tests_again_on_the_newest_next(self):
         github = FakeGitHub(labels=('automerge',))
@@ -1862,6 +1875,48 @@ class BuildRunnerRoomTests(unittest.TestCase):
         result, _ = self.wait([1], [2], [10**9], max_wait=60)  # beside a simulator job: the trial's terms
         for reason in ('a simulator job is running and memory pressure is above normal', 'less than 30 GiB'):
             self.assertIn(reason, result)
+
+
+class HostedIntegrationDispatchTests(unittest.TestCase):
+    """#2127: after the runner pushes next, it asks GitHub to start hosted-integration.yml, since the push
+    itself (the workflow token's) starts nothing. Never raises: a merge has already landed."""
+
+    IN_JOB = {'GITHUB_ACTIONS': 'true', 'GH_TOKEN': 't', 'GH_REPO': 'o/r'}
+
+    def dispatch(self, base='next', env=IN_JOB, result=None, error=None):
+        with mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch.object(lane.subprocess, 'run', side_effect=error,
+                                  return_value=result or subprocess.CompletedProcess([], 0, '', '')) as run:
+            said = lane.dispatch_hosted_integration(base)
+        return said, run
+
+    def test_it_dispatches_the_workflow_on_next(self):
+        said, run = self.dispatch()
+        self.assertEqual(run.call_args.args[0], ['gh', 'api', '-X', 'POST',
+                                                 'repos/o/r/actions/workflows/hosted-integration.yml/dispatches',
+                                                 '-f', 'ref=next'])
+        self.assertTrue(said.startswith('hosted integration started on next'), said)
+
+    def test_outside_a_lane_job_or_off_next_it_sends_nothing(self):
+        cases = [('no Actions', {'GH_TOKEN': 't', 'GH_REPO': 'o/r'}, 'next'),
+                 ('no token (the PR code environment)', {'GITHUB_ACTIONS': 'true', 'GH_REPO': 'o/r'}, 'next'),
+                 ('no repository', {'GITHUB_ACTIONS': 'true', 'GH_TOKEN': 't'}, 'next'),
+                 ('another base', self.IN_JOB, 'main')]
+        for name, env, base in cases:
+            with self.subTest(name):
+                said, run = self.dispatch(base, env)
+                run.assert_not_called()
+                self.assertTrue(said.startswith('hosted integration not started'), said)
+
+    def test_a_refusal_or_an_error_is_reported_not_raised(self):
+        # Until the workflow file is on main, GitHub answers 404 (workflow_dispatch needs the default branch).
+        refused = subprocess.CompletedProcess([], 1, '', 'gh: Not Found (HTTP 404)')
+        for name, kw in [('refused', {'result': refused}), ('gh missing', {'error': FileNotFoundError('gh')}),
+                         ('timed out', {'error': subprocess.TimeoutExpired('gh', 60)})]:
+            with self.subTest(name):
+                said, _ = self.dispatch(**kw)
+                self.assertTrue(said.startswith('hosted integration not started'), said)
+        self.assertIn('HTTP 404', self.dispatch(result=refused)[0])
 
 
 class PushTests(unittest.TestCase):
@@ -2922,7 +2977,9 @@ class AutoRevertTests(unittest.TestCase):
 
     def test_two_runner_faults_after_a_lane_merge_revert_it_once(self):
         repo = FakeRepo([self.fault('2026-10-01T13:00:00Z', 1), self.fault('2026-10-01T13:30:00Z', 2)])
-        did = self.revert(repo)
+        with mock.patch.object(lane, 'dispatch_hosted_integration', return_value='started') as dispatch:
+            did = self.revert(repo)
+        dispatch.assert_called_once_with('next')  # the pushed revert is a new tip too (#2127)
         self.assertTrue(did.startswith('reverted #7 as '), did)
         self.assertEqual(self.origin_file('scripts/lane-runner.py'), 'v1\n')  # the lane change is undone
         self.assertEqual(self.origin_file('app.txt'), 'app 2\n')  # the later ordinary merge stays
