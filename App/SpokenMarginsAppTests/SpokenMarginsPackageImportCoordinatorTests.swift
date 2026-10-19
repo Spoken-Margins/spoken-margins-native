@@ -307,7 +307,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(h.coordinator.review?.id, captured.id, "A's review stays up while A imports")
         XCTAssertTrue(h.coordinator.isImporting)
         XCTAssertEqual(h.diagnostics["lastSpokenMarginsPackageImport"], "queued:\(b.digest)")
-        XCTAssertEqual(h.confirmations.last, "Another shared packet is waiting. It opens after you finish this one.", "the listener is told B waits")
+        XCTAssertEqual(h.confirmations.last, SpokenMarginsPackageImportCoordinator.waitingMessage, "the listener is told B waits")
 
         await h.coordinator.confirm(captured)
 
