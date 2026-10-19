@@ -70,6 +70,7 @@ final class VoiceCatalogCoordinatorTests: XCTestCase {
 
     private func coordinator(
         fetcher: FixedFetcher = FixedFetcher(nil),
+        catalogURL: URL? = URL(string: "https://voices.example/voices/v1/catalog.json")!,
         snapshot: [VoiceModelEntry]? = nil,
         memory: Int = 8_192,
         availableBytes: Int64? = nil
@@ -78,7 +79,7 @@ final class VoiceCatalogCoordinatorTests: XCTestCase {
         return VoiceCatalogCoordinator(
             supportDirectory: root,
             configuration: .init(
-                catalogURL: URL(string: "https://voices.example/voices/v1/catalog.json")!,
+                catalogURL: catalogURL,
                 trustedKeys: [VoiceCatalogTrustedKey(keyId: "test", publicKey: key.publicKey.rawRepresentation)],
                 playableVoiceIds: ["neural-1"],
                 physicalMemoryMegabytes: memory,
@@ -120,6 +121,17 @@ final class VoiceCatalogCoordinatorTests: XCTestCase {
         XCTAssertEqual(rows.map(\.entry.minimumMemoryMegabytes), [2_048])
         let offlineSource = await offline.catalogSource
         XCTAssertEqual(offlineSource, .verified(catalogVersion: 3))
+    }
+
+    func testWithNoCatalogURLRefreshFetchesNothingAndTheSnapshotStays() async throws {
+        // The app has no catalog home off the owner's server yet (#2055 audit 2), so it never asks one.
+        let fetcher = FixedFetcher(try envelope(version: 3, voices: [entry(memory: 2_048)]))
+        let voices = try coordinator(fetcher: fetcher, catalogURL: nil, snapshot: [entry(), kitten])
+        let failure = await voices.refresh()
+        XCTAssertNil(failure)
+        XCTAssertEqual(fetcher.calls, 0)
+        let source = await voices.catalogSource
+        XCTAssertEqual(source, .bundledSnapshot)
     }
 
     func testABadOrOlderCatalogLeavesTheLastGoodOneInPlace() async throws {

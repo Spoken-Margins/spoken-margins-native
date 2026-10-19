@@ -98,7 +98,9 @@ public enum VoiceCatalogCoordinatorError: Error, Equatable, LocalizedError {
 
 public actor VoiceCatalogCoordinator {
     public struct Configuration: Sendable {
-        public var catalogURL: URL
+        /// Where the signed catalog is fetched from. Nil: no fetch, and the bundled snapshot (or a catalog
+        /// already kept) is all there is.
+        public var catalogURL: URL?
         public var trustedKeys: [VoiceCatalogTrustedKey]
         /// Voice ids this build has an engine for. Anything else in the catalog isn't shown.
         public var playableVoiceIds: Set<String>
@@ -108,7 +110,7 @@ public actor VoiceCatalogCoordinator {
         public var bundledSnapshot: Data?
 
         public init(
-            catalogURL: URL,
+            catalogURL: URL?,
             trustedKeys: [VoiceCatalogTrustedKey] = VoiceCatalogTrust.production,
             playableVoiceIds: Set<String>,
             physicalMemoryMegabytes: Int = Int(ProcessInfo.processInfo.physicalMemory / 1_048_576),
@@ -213,9 +215,10 @@ public actor VoiceCatalogCoordinator {
     @discardableResult
     public func refresh() async -> VoiceCatalogError? {
         loadIfNeeded()
+        guard let catalogURL = configuration.catalogURL else { return nil }
         let data: Data
         do {
-            data = try await fetcher.fetchEnvelope(from: configuration.catalogURL)
+            data = try await fetcher.fetchEnvelope(from: catalogURL)
         } catch let error as VoiceCatalogError {
             return error
         } catch {

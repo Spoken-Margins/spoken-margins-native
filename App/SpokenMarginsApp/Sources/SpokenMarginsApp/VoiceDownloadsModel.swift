@@ -15,7 +15,10 @@ final class VoiceDownloadsModel: ObservableObject {
 
     /// Voices this build can play once downloaded. Pocket TTS is in the catalog but has no player here yet.
     static let playableVoiceIds: Set<String> = [SupertonicAssetResolver.catalogVoiceId]
-    static let catalogURL = URL(string: "https://spokenmargins.proximitytoprogress.com/voices/v1/catalog.json")!
+    /// No signed catalog is fetched yet: downloads come straight from the publishers on Hugging Face, and the
+    /// owner's server is never asked (owner, 2026-10-19; #2055 audit 2). The snapshot bundled with the app is the
+    /// catalog until the signed one has a home off that server.
+    static let catalogURL: URL? = nil
 
     @Published private(set) var rows: [VoiceCatalogRow] = []
     @Published private(set) var activity: [String: Activity] = [:]

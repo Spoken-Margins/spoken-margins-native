@@ -56,6 +56,8 @@ KEYCHAIN_SERVICE = "SpokenMargins voice catalog signing key"
 KEY_ID = "sm-voices-1"
 USER_AGENT = "SpokenMargins-VoiceCatalogCheck/1"
 SOURCES_VERSION = "voice-catalog-sources.v1"
+# The most text a catalog file entry may carry itself (VoiceModelCatalogRules.maximumContentBytes).
+CONTENT_LIMIT = 4_096
 MAX_CHECK_AGE_HOURS = 24
 REVERIFY_DAYS = 30
 LICENCE_TEXT_LIMIT = 2 * 1024 * 1024
@@ -159,7 +161,24 @@ def validate_sources(sources: dict, base_dir: Path = SOURCES_PATH.parent, allow_
                 errors.append(f"{label}: byteCount must be a positive integer")
             if not SHA256_RE.fullmatch(str(file.get("sha256", ""))):
                 errors.append(f"{label}: sha256 must be 64 lowercase hex characters")
-            if "upstream" not in file and not file.get("mirrored"):
+            if "contentFile" in file:
+                # Short text no publisher serves (our notice of modification): the catalog carries it itself.
+                if "upstream" in file or file.get("mirrored"):
+                    errors.append(f"{label}: contentFile is the file's only source, so no upstream and not mirrored")
+                content = base_dir / str(file["contentFile"])
+                if not content.is_file():
+                    errors.append(f"{label}: contentFile {file['contentFile']} does not exist")
+                else:
+                    data = content.read_bytes()
+                    if len(data) > CONTENT_LIMIT:
+                        errors.append(f"{label}: contentFile is over {CONTENT_LIMIT} bytes, too long for the catalog to carry")
+                    if len(data) != file.get("byteCount") or sha256_hex(data) != file.get("sha256"):
+                        errors.append(f"{label}: contentFile {file['contentFile']} does not match byteCount and sha256")
+                    try:
+                        data.decode("utf-8")
+                    except UnicodeDecodeError:
+                        errors.append(f"{label}: contentFile is not UTF-8 text")
+            elif "upstream" not in file and not file.get("mirrored"):
                 errors.append(f"{label}: no upstream and not mirrored, so nothing to download from")
             if "upstream" in file and not url_ok(file["upstream"]):
                 errors.append(f"{label}: upstream must be an https URL")
@@ -207,14 +226,18 @@ def file_source_urls(sources: dict, voice: dict, file: dict) -> list[str]:
     return urls
 
 
-def voice_entry(sources: dict, voice: dict) -> dict:
+def voice_entry(sources: dict, voice: dict, base_dir: Path = SOURCES_PATH.parent) -> dict:
     entry = {key: voice[key] for key in ("id", "displayName", "publisher", "version", "runtime", "minimumIOSVersion", "minimumMemoryMegabytes", "status")}
     if "supersededBy" in voice:
         entry["supersededBy"] = voice["supersededBy"]
     entry["bundled"] = voice["bundled"]
     files = []
     for file in voice["files"]:
-        item = {"path": file["path"], "byteCount": file["byteCount"], "sha256": file["sha256"], "sources": file_source_urls(sources, voice, file)}
+        item = {"path": file["path"], "byteCount": file["byteCount"], "sha256": file["sha256"]}
+        if "contentFile" in file:
+            item["content"] = (base_dir / file["contentFile"]).read_text(encoding="utf-8")
+        else:
+            item["sources"] = file_source_urls(sources, voice, file)
         for key in ("licenseId", "origin"):
             if key in file:
                 item[key] = file[key]
