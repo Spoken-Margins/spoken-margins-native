@@ -470,7 +470,7 @@ final class Gate1AppModel: ObservableObject {
     let streamingSpeechQueue = StreamingSpeechQueue(speech: SystemSpeechPlaybackClient())
     var speechPlaybackClient: AudioPlaybackClient?
     var sessionAudioPlaybackClient: AudioPlaybackClient?
-    var supertonicRenderer: SupertonicNarrationRenderer?
+    let supertonicModel = SupertonicModelFollower<SupertonicNarrationRenderer>(locate: { SupertonicAssetResolver.location() }, retire: { old in Task { await old.unload(removingGeneratedAudio: false) } }) // a download (#1820)
     var kittenRenderer: KittenNarrationRenderer? // bundled fallback voice, built on first use (#849)
     var preparedAudioCoordinator: PreparedAudioCoordinator?
     var currentSupertonicRenderSignature: TTSRenderSignature? { // older prepared chunks go first when space is needed (#281)
@@ -2747,16 +2747,14 @@ final class Gate1AppModel: ObservableObject {
         frontierPublicationKey = key
         guard let itemID = snapshot.itemId, let voice = ttsVoiceSelection.supertonicVoice,
               [TargetType.itemTextTTS.rawValue, TargetType.transcriptBackedMedia.rawValue].contains(snapshot.targetType ?? ""),
-              let store, let assets = SupertonicAssetResolver.location() else { return }
+              let store else { return }
         do {
             let signature: TTSRenderSignature
             if let cached = frontierSignatures[voice.rawValue] { signature = cached }
             else {
-                let existing = currentSupertonicRenderSignature
+                // Saved audio shows before the model is downloaded too (#1820).
                 signature = try await Task.detached(priority: .utility) {
-                    if let existing,
-                       existing.voiceStyleHash == SupertonicRenderIdentity.sha256(try Data(contentsOf: assets.voiceStyleURL(for: voice))) { return existing }
-                    return try SupertonicRenderIdentity.make(assets: assets, voice: voice)
+                    try SupertonicRenderIdentity.current(voice: voice)
                 }.value
                 frontierSignatures[voice.rawValue] = signature
             }

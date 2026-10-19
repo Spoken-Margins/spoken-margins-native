@@ -84,6 +84,18 @@ struct SupertonicDownloadNoticeCard: View {
     let openVoices: () -> Void
     let notNow: () -> Void
 
+    /// "141 MB", from the catalog snapshot the app ships, so a listener on cellular data knows before they tap.
+    static let downloadSize: String? = Bundle.main
+        .url(forResource: "catalog-snapshot", withExtension: "json", subdirectory: "VoiceCatalog")
+        .flatMap { try? Data(contentsOf: $0) }
+        .flatMap { SupertonicDownloadNoticePolicy.downloadByteCount(catalogSnapshot: $0, voiceId: SupertonicAssetResolver.catalogVoiceId) }
+        .map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .decimal) }
+
+    static var downloadSentence: String {
+        let size = downloadSize.map { " (\($0))" } ?? ""
+        return "James and Lily use the Supertonic voice, which no longer comes inside the app. Download it once\(size) in Settings › Voices, ideally on Wi‑Fi."
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Label {
@@ -95,7 +107,7 @@ struct SupertonicDownloadNoticeCard: View {
                     .foregroundStyle(AppColors.accent)
             }
             .accessibilityAddTraits(.isHeader)
-            Text("James and Lily use the Supertonic voice, which no longer comes inside the app. Download it once in Settings › Voices, ideally on Wi‑Fi.")
+            Text(Self.downloadSentence)
                 .foregroundStyle(AppColors.text)
             Text("Until then, the app’s backup voice reads your articles. Your choice of voice stays, and audio already made with Supertonic is kept.")
                 .font(.callout)

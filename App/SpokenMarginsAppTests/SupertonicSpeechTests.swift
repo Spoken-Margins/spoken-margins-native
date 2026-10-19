@@ -4669,17 +4669,15 @@ final class SupertonicSpeechTests: XCTestCase {
         try secondClient.stop()
     }
 
-    // #1820: Supertonic's model is a download. With James chosen and nothing downloaded, the app builds this player
-    // around SupertonicModelNotDownloaded: Kitten reads the passage, Supertonic is never asked, and the iOS voice
-    // doesn't take over. A render that reached the stand-in would fail and hand the passage to the iOS voice.
+    // #1820: Supertonic's model is a download. With James chosen and nothing downloaded, the app's player asks the
+    // model follower whether Supertonic may render, and it says no while no model is on the phone: Kitten reads the
+    // passage, Supertonic is never asked, and the iOS voice doesn't take over.
     func testWithoutTheDownloadedModelKittenReadsAndSupertonicIsNeverAsked() async throws {
-        do {
-            _ = try await SupertonicModelNotDownloaded().render(text: "x", voice: .m2, language: "en", speed: 1, synthesisSteps: 8)
-            XCTFail("the stand-in never renders")
-        } catch {
+        let follower = SupertonicModelFollower<SupertonicNarrationRenderer>(locate: { nil })
+        XCTAssertFalse(follower.renderingAllowed(when: { true })())
+        XCTAssertThrowsError(try follower.renderer { _ in throw CancellationError() }) { error in
             XCTAssertEqual(error as? SupertonicNarrationError, .missingAsset("Supertonic"))
         }
-        XCTAssertFalse(SupertonicModelNotDownloaded.renderingAllowed())
 
         let template = try makeTestWAV(duration: 1)
         defer { try? FileManager.default.removeItem(at: template) }
@@ -4688,10 +4686,10 @@ final class SupertonicSpeechTests: XCTestCase {
         let started = expectation(description: "Kitten's audio starts")
         started.assertForOverFulfill = false
         let client = SupertonicSpeechPlaybackClient(
-            renderer: SupertonicModelNotDownloaded(), voice: .m2, speed: 1,
+            renderer: FailingSupertonicRenderer(), voice: .m2, speed: 1,
             fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             audioSessionActivator: {}, audioPlayerStarter: { _, _ in started.fulfill() },
-            observesPlayerLifecycle: false, onDeviceRenderingAllowed: SupertonicModelNotDownloaded.renderingAllowed,
+            observesPlayerLifecycle: false, onDeviceRenderingAllowed: follower.renderingAllowed(when: { true }),
             pressureRenderer: kitten,
             fallbackClient: fallback
         )

@@ -30,4 +30,12 @@ public enum SupertonicDownloadNoticePolicy {
         guard savedVoiceIsSupertonic, !anotherSheetShowing else { return .wait }
         return .show
     }
+
+    /// What the card says the download costs (Done when 2), from the catalog snapshot the app ships: the same number
+    /// Settings › Voices shows on its Download button. nil when the snapshot has no such voice.
+    public static func downloadByteCount(catalogSnapshot: Data, voiceId: String) -> Int? {
+        guard let catalog = try? JSONDecoder().decode(VoiceModelCatalog.self, from: catalogSnapshot),
+              let entry = catalog.voices.first(where: { $0.id == voiceId }) else { return nil }
+        return entry.downloadByteCount
+    }
 }

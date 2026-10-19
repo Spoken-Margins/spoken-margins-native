@@ -34,6 +34,9 @@ READS = (
     # Contracts/voice-models/sources.json, which Contracts/ above covers (#1820).
     # The Kitten fallback voice's tests read the bundled model (the voiceAssets input) and the front end's test vectors (#849).
     'App/SpokenMarginsApp/Resources/Kitten/',
+    # Supertonic's pinned hashes (asset-manifest.json) and the catalog snapshot the download card reads (#1820).
+    'App/SpokenMarginsApp/Resources/Supertonic/',
+    'App/SpokenMarginsApp/Resources/VoiceCatalog/',
     'research/C2/frontend/',
     'research/B2/',
     'research/B4/',

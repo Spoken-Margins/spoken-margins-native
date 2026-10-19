@@ -29,6 +29,10 @@ public enum TestInputs {
         case appSources = "App/SpokenMarginsApp/Sources/SpokenMarginsApp"
         /// The app's test sources, for the shipped-reader gate's scan.
         case appTests = "App/SpokenMarginsAppTests"
+        /// Supertonic's licences and `asset-manifest.json`, which pins the model's hashes (#1820); not the model.
+        case supertonicResources = "App/SpokenMarginsApp/Resources/Supertonic"
+        /// The voice catalog snapshot the app ships, which Settings › Voices and the download card read.
+        case voiceCatalogSnapshot = "App/SpokenMarginsApp/Resources/VoiceCatalog"
         /// The bundled Kitten voice: its model, pronunciation lexicon and g2p weights (the voice that stays in the app).
         case voiceAssets = "App/SpokenMarginsApp/Resources/Kitten"
         /// Supertonic's model: the four ONNX graphs, `tts.json`, `unicode_indexer.json` and the voice styles. Neither

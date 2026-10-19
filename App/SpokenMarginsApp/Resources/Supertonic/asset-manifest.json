@@ -3,6 +3,8 @@
   "note": "Since #1820 the files marked downloaded are a download from Settings › Voices, in neither the app nor the repository. Their sizes and SHA-256 stay here: the catalog and scripts/voice-catalog fetch are held to them, so the downloaded copy is byte-identical to the one the app used to bundle.",
   "model": "Supertonic 3 INT8",
   "modelRevision": "3cadd1ee6394adea1bd021217a0e650ede09a323",
+  "onnxTreeHash": "db8c3f7d3998676e221ff12c059d8bf4767c320583aa83b0c38c68979cf4b24d",
+  "onnxTreeHashNote": "The tree hash of onnx/ (each file in name order: name, a zero byte, bytes, a zero byte), as the shipped app computed it from its bundled copy. Saved Supertonic audio is filed under it, so it still plays before the download (#1820).",
   "quantizedArchive": {
     "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2",
     "sha256": "82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427"

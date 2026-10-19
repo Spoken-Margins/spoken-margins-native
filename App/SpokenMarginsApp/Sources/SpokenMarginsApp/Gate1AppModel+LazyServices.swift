@@ -15,7 +15,8 @@ extension Gate1AppModel {
     }
 
     /// Settings › Voices (#1819), created on first use and kept, so a download outlives the screen. An
-    /// installed or removed voice refreshes Storage and the screens that list voices.
+    /// installed or removed voice refreshes Storage and the screens that list voices. The player follows the files
+    /// itself (#1820): a removed Supertonic's renderer is unloaded here, and the next play uses what is there.
     func requireVoiceDownloads() -> VoiceDownloadsModel {
         if let voiceDownloadsModel { return voiceDownloadsModel }
         let support = (try? applicationSupportDirectory()) ?? FileManager.default.temporaryDirectory
@@ -23,6 +24,8 @@ extension Gate1AppModel {
         model.onInstalledVoicesChanged = { [weak self] in
             guard let self else { return }
             self.tryRefreshOfflineStorageUsage()
+            self.supertonicModel.retireIfReplaced()
+            self.refreshSupertonicSessionDiagnostics()
             self.objectWillChange.send()
         }
         voiceDownloadsModel = model
