@@ -223,9 +223,11 @@ def inputs_changed_message(prefix, before, limit=5):
     shown = ', '.join(paths[:limit]) + (f' and {len(paths) - limit} more' if len(paths) > limit else '')
     message = f'{prefix}: {shown}'
     if 'Packages/SessionKit/Package.resolved' in paths:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from trunk import trunk_ref  # #1492: the branch the fix restores from
         message += ('. SwiftPM rewrote Package.resolved during the build, so the copy committed on this branch does not '
                     'match Package.swift on the Mac (a Linux `swift test` rewrites it). Restore it with '
-                    '`git checkout origin/next -- Packages/SessionKit/Package.resolved` and push; if this branch '
+                    f'`git checkout {trunk_ref()} -- Packages/SessionKit/Package.resolved` and push; if this branch '
                     'changes dependencies on purpose, run `swift package resolve` on a Mac instead')
     return message
 

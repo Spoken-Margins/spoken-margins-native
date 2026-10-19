@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Map a diff to its minimum test tier (docs/workstreams/test-lane.md) and suggest what to run.
 
-  scripts/test-scope.py                 changes since the merge base with origin/next, uncommitted included
+  scripts/test-scope.py                 changes since the merge base with origin/<trunk> (next), uncommitted included
   scripts/test-scope.py --base main     compare against another ref
   scripts/test-scope.py --files A B     classify these paths (no public-API check)
   scripts/test-scope.py --json          machine-readable output
@@ -48,7 +48,7 @@ BUILD_FILES = ('project.yml', 'SpokenMarginsNative.xcodeproj/', 'Config/')
 LANE_PREFIXES = ('.github/workflows/', 'scripts/lane')
 LANE_FILES = {'scripts/xcodebuild-lane', 'scripts/host-test-lane', 'scripts/install-lane-guard.py',
               'scripts/test-scope.py', 'scripts/hot_file_ratchet.py', 'scripts/merge_audit.py',
-              'scripts/verify-tests.py', 'TestPlans/AppBehavior.xctestplan', 'TestPlans/AudioAdapters.xctestplan'}
+              'scripts/verify-tests.py', 'scripts/trunk.py', 'TestPlans/AppBehavior.xctestplan', 'TestPlans/AudioAdapters.xctestplan'}
 LANE_NOTE = ('Lane change: the runner merges it only after a Codex or Claude audit of the head that says "No blocking '
              'findings". The audit runs by itself once the automerge run passes. A change to scripts/lane-runner.py or '
              '.github/ also needs the owner\'s merge tap: the runner never merges it.')
@@ -422,7 +422,7 @@ def render(result):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--base', default='origin/next')
+    parser.add_argument('--base', help='the base ref (default: origin/<trunk>)')
     parser.add_argument('--files', nargs='+')
     parser.add_argument('--json', action='store_true')
     parser.add_argument('--runner-routing', nargs=3, metavar=('EVENT', 'FILES', 'RUNNERS'),
@@ -436,6 +436,9 @@ def main(argv=None):
             result = runner_routing({}, [], [])
         print(json.dumps(hosted_app_routing(result)))
         return 0
+    if not args.files and args.base is None:  # #1492: the trunk (scripts/trunk.py)
+        from trunk import trunk_ref
+        args.base = trunk_ref()
     paths, diffs = (args.files, {}) if args.files else changed_paths(args.base)
     result = classify(paths, diffs)
     print(json.dumps(result, indent=2) if args.json else render(result))
