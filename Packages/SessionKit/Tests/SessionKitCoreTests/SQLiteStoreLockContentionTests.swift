@@ -34,7 +34,8 @@ final class SQLiteStoreLockContentionTests: XCTestCase {
     /// decode, so it took about as long as the big read.
     func testASmallReadDoesNotWaitForABackgroundReadToDecode() throws {
         let (store, _) = try makeStore()
-        let article = String(repeating: "word ", count: 400_000)
+        // Escaped quotes, newlines and non-ASCII make the JSON slower to decode than to copy, as real articles do.
+        let article = String(repeating: "w\u{00F6}rd \"quoted\"\n", count: 150_000)
         for index in 0..<40 { try store.saveItem(item("big-\(index)", text: article)) }
         try store.saveItem(item("small", text: "Hi"))
         _ = try store.listItems()
