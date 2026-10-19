@@ -2,6 +2,17 @@ import Foundation
 import SessionKit
 import SQLite3
 
+/// What the Item screen needs from a source transcript timeline without its segments (#2073).
+public struct TranscriptTimelineSummary: Equatable, Sendable {
+    public var chapters: [MediaTimelineChapter]
+    public var durationMs: Int?
+
+    public init(chapters: [MediaTimelineChapter], durationMs: Int?) {
+        self.chapters = chapters
+        self.durationMs = durationMs
+    }
+}
+
 public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked Sendable {
     /// Schema 5 adds record kinds and optional payload fields to the generic
     /// records table; it does not change the SQLite table layout. Sharing builds
@@ -13,8 +24,8 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     private let connectionLock = NSRecursiveLock()
     /// How many `withTransaction` calls are open on this connection. Guarded by `connectionLock`.
     private var transactionDepth = 0
-    /// `loadTranscriptTimelineChapters` answers by item, with the stamp of the record they were read from. Guarded by `connectionLock`.
-    private var transcriptChaptersByItem: [String: (stamp: String, chapters: [MediaTimelineChapter])] = [:]
+    /// `loadTranscriptTimelineSummary` answers by item, with the stamp of the record they were read from. Guarded by `connectionLock`.
+    private var transcriptSummaryByItem: [String: (stamp: String, summary: TranscriptTimelineSummary)] = [:]
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     /// How often each item was written or deleted through this connection, for `itemRevision(id:)`.
@@ -737,9 +748,16 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try loadOptional(kind: "source_transcript_timeline", id: id)
     }
 
+    /// The newest saved timeline of the item. Only that record is read: a mapped episode's timeline is several MB of
+    /// JSON, and decoding every saved version just to keep the last one froze the Item screen (#2073). A record this
+    /// build can't decode is quarantined by `query` and leaves the table, so the next pass reads the version before it.
     public func loadTranscriptTimeline(itemId: String) throws -> SourceTranscriptTimeline? {
-        let transcripts: [SourceTranscriptTimeline] = try loadByItem(kind: "source_transcript_timeline", itemId: itemId)
-        return transcripts.last
+        while let stamp = try transcriptTimelineStamp(itemId: itemId) {
+            let newest: [SourceTranscriptTimeline] = try query("SELECT kind, id, payload \(Self.newestTranscriptTimelineRecord)", [itemId])
+            if let found = newest.first { return found }
+            guard try transcriptTimelineStamp(itemId: itemId) != stamp else { return nil }
+        }
+        return nil
     }
 
     private static let newestTranscriptTimelineRecord =
@@ -756,26 +774,45 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return stamp
     }
 
-    /// Only the chapters of an item's source transcript timeline (#777). A two-hour episode's timeline holds thousands
-    /// of segments and several megabytes of JSON, so the Margins tab reads just this slice: SQLite cuts it out and only
-    /// the small list is decoded. Even the cut has to parse the whole payload, so the answer is kept per timeline
-    /// record and only re-read when the record changes (its id, `updated_at` or length), not on every refresh.
-    /// Empty when the item has no timeline or the chapters can't be read.
-    public func loadTranscriptTimelineChapters(itemId: String) throws -> [MediaTimelineChapter] {
+    /// Only the chapters and duration of an item's source transcript timeline (#777, #2073). A two-hour episode's
+    /// timeline holds thousands of segments and several megabytes of JSON, so the Item screen and the Margins tab read
+    /// just this slice: SQLite cuts it out and only the small list is decoded. Even the cut has to parse the whole
+    /// payload, so the answer is kept per timeline record and only re-read when the record changes (its id,
+    /// `updated_at` or length), not on every refresh. nil when the item has no timeline. A payload that isn't valid JSON
+    /// is read the full way, which quarantines it (or throws when it can't), as before.
+    public func loadTranscriptTimelineSummary(itemId: String) throws -> TranscriptTimelineSummary? {
         let newest = Self.newestTranscriptTimelineRecord
         let stamp = try transcriptTimelineStamp(itemId: itemId)
         guard let stamp else {
-            withConnectionLock { _ = transcriptChaptersByItem.removeValue(forKey: itemId) }
-            return []
+            withConnectionLock { _ = transcriptSummaryByItem.removeValue(forKey: itemId) }
+            return nil
         }
-        if let cached = withConnectionLock({ transcriptChaptersByItem[itemId] }), cached.stamp == stamp { return cached.chapters }
-        var chaptersJSON: String?
+        if let cached = withConnectionLock({ transcriptSummaryByItem[itemId] }), cached.stamp == stamp { return cached.summary }
+        var summaryJSON: String?
         try readTexts(
-            "SELECT json_extract(payload, '$.timeline.chapters') \(newest)", [itemId], name: "transcript_timeline_chapters"
-        ) { chaptersJSON = $0 }
-        let chapters = chaptersJSON?.data(using: .utf8).flatMap { try? decoder.decode([MediaTimelineChapter].self, from: $0) } ?? []
-        withConnectionLock { transcriptChaptersByItem[itemId] = (stamp: stamp, chapters: chapters) }
-        return chapters
+            """
+            SELECT CASE WHEN json_valid(payload) THEN json_object(
+                'chapters', CASE WHEN json_type(payload, '$.timeline.chapters') = 'array'
+                    THEN json(json_extract(payload, '$.timeline.chapters')) ELSE json('[]') END,
+                'durationMs', CASE WHEN json_type(payload, '$.timeline.durationMs') = 'integer'
+                    THEN json_extract(payload, '$.timeline.durationMs') END) END \(newest)
+            """, [itemId], name: "transcript_timeline_summary"
+        ) { summaryJSON = $0 }
+        guard let summaryJSON else {
+            // Not valid JSON: the full read quarantines it and answers from the version before it, if any.
+            guard let timeline = try loadTranscriptTimeline(itemId: itemId)?.timeline else { return nil }
+            return TranscriptTimelineSummary(chapters: timeline.chapters, durationMs: timeline.durationMs)
+        }
+        struct Slice: Decodable { var chapters: [MediaTimelineChapter]?; var durationMs: Int? }
+        let slice = summaryJSON.data(using: .utf8).flatMap { try? decoder.decode(Slice.self, from: $0) }
+        let summary = TranscriptTimelineSummary(chapters: slice?.chapters ?? [], durationMs: slice?.durationMs)
+        withConnectionLock { transcriptSummaryByItem[itemId] = (stamp: stamp, summary: summary) }
+        return summary
+    }
+
+    /// Only the chapters of an item's source transcript timeline (#777). Empty when there is no timeline.
+    public func loadTranscriptTimelineChapters(itemId: String) throws -> [MediaTimelineChapter] {
+        try loadTranscriptTimelineSummary(itemId: itemId)?.chapters ?? []
     }
 
     public func saveAudioAsset(_ asset: AudioAsset) throws {
