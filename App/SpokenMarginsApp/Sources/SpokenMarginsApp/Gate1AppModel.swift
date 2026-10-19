@@ -2691,7 +2691,7 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         do {
-            snapshot = try engine.updateStreamingTurnPosition(turnId: turnId, charOffset: presentationOffset)
+            let next = try engine.updateStreamingTurnPosition(turnId: turnId, charOffset: presentationOffset); if next != snapshot { snapshot = next } // an equal write publishes to every screen
             diagnostics["streamingInterjectionTurnId"] = turnId
             diagnostics["streamingPresentationOffset"] = "\(presentationOffset)"
             diagnostics["streamingRecoveryOffset"] = "\(streamingSpeechQueue.currentRecoveryOffset ?? presentationOffset)"
@@ -2710,10 +2710,8 @@ final class Gate1AppModel: ObservableObject {
                     charOffset: observation.charOffset
                 )
             case .progressed:
-                snapshot = try engine.updateStreamingTurnPosition(
-                    turnId: observation.turnId,
-                    charOffset: observation.charOffset
-                )
+                let next = try engine.updateStreamingTurnPosition(turnId: observation.turnId, charOffset: observation.charOffset)
+                if next != snapshot { snapshot = next } // an equal write publishes to every screen
             case .failed:
                 diagnostics["streamingSpeechFailure:\(observation.turnId)"] = "offset:\(observation.charOffset)"
             }
