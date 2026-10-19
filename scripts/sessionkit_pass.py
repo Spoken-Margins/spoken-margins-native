@@ -43,6 +43,8 @@ READS = (
     'research/C2/results/darwin/',
     # The published source catalog the catalog tests decode.
     'Site/onboarding/catalog/',
+    # The guided tour manifest test decodes the manifest and checks the clip it names (#2051).
+    'Site/onboarding/v1/',
     # The trace tests find the repository root by its README.md and traces/ folder.
     'README.md',
     'traces/',
