@@ -1,9 +1,10 @@
 """Audio windows in app test runs (#1790): start ops/audio-loopback/window.py beside a run that includes an
-AudioLoopback test, hand the test its folder, and turn its verdicts into lines for the lane report.
+AudioLoopback test by name, hand the test its folder, and turn its verdicts into lines for the lane report.
 
 The run's tests see the folder as SM_AUDIO_WINDOW: xcodebuild passes TEST_RUNNER_<NAME> variables to the test
-runner without the prefix. Runs without an AudioLoopback test start nothing, so the Mac's audio is touched
-only when a request names one (or a full AudioAdapters run includes it).
+runner without the prefix. Runs that don't name an AudioLoopback test start nothing, so the Mac's audio is
+touched only when a request names one. In a whole-plan run (Release, a full AudioAdapters) the test finds no
+window and skips, and `unasked` lets that skip pass: nobody asked that run to listen.
 """
 import contextlib
 import json
@@ -25,9 +26,16 @@ def wants_audio(tests):
     return any(MARKER in test for test in tests or ())
 
 
+def unasked(expected, selectors):
+    """The AudioLoopback tests that may skip: all of them unless the run's selectors name one, since then the
+    skip means the lane couldn't listen and the run must not pass."""
+    return set() if wants_audio(selectors) else {test for test in expected or () if MARKER in test}
+
+
 @contextlib.contextmanager
 def serve(output, tests, out=sys.stdout, server=SERVER, python=sys.executable):
-    """Yields the window folder while the server runs, or None when no test wants one or it can't start."""
+    """Yields the window folder while the server runs, or None when `tests` (the run's -only-testing selectors)
+    name no AudioLoopback test."""
     if not wants_audio(tests) or not Path(server).exists():
         yield None
         return

@@ -1308,14 +1308,17 @@ class Run:
             if startup is not None:
                 self.manifest['settle_before_tests'] = settle_before_tests(chosen['udid'])
                 self.save()
-            # An AudioLoopback test asks the Mac to record what it plays (#1790); only then does a server start.
-            with lane_audio_window.serve(self.output, expected if scheme == 'SpokenMarginsAppBehavior' else ()) as audio:
+            # An AudioLoopback test asks the Mac to record what it plays (#1790). A server starts only when the
+            # request names one; in a whole-plan run (Release, a full AudioAdapters) it skips, and that's expected.
+            asked = selectors if scheme == 'SpokenMarginsAppBehavior' else ()
+            with lane_audio_window.serve(self.output, asked) as audio:
                 try:
                     self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
                                  'test-without-building', '-parallel-testing-enabled', 'NO',
                                  '-collect-test-diagnostics', 'never',
                                  '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
-                                 timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup)
+                                 timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup,
+                                 allowed_skips=lane_audio_window.unasked(expected, asked))
                 finally:  # a failed or skipped test raises here, and its verdict is what the report needs most
                     if audio:
                         step = self.manifest['steps'][-1]

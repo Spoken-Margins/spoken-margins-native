@@ -1,5 +1,6 @@
 """The audio window beside an app test run (#1790): started only when a test wants it, stopped after, and its
 verdicts reach the lane report."""
+import importlib.util
 import io
 import json
 import os
@@ -14,6 +15,10 @@ import lane_audio_window
 import lane_xcresult_attachments
 
 AUDIO_TEST = 'SpokenMarginsAppTests/AudioLoopbackPlaybackTests/testIOSVoiceSpeaksThePassageOnceWithoutGaps'
+SCRIPTS = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location('verification_for_audio', SCRIPTS / 'verify-tests.py')
+verification = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(verification)
 
 # Stands in for window.py: says it is ready, then waits to be stopped, and notes how it ended.
 FAKE_SERVER = textwrap.dedent('''
@@ -57,6 +62,35 @@ class ServeTests(unittest.TestCase):
         with lane_audio_window.serve(self.output, [AUDIO_TEST], server=broken, out=out) as folder:
             self.assertIsNotNone(folder, 'the test still runs, and skips: the lane reports INCONCLUSIVE')
         self.assertIn('did not start', out.getvalue())
+
+
+class WholePlanTests(unittest.TestCase):
+    """Audit on b3dc4be: a Release or full AudioAdapters run names no test, so no window opens, the audio test
+    skips, and that skip failed the run ('Unexpected skip') on every Mac."""
+
+    def setUp(self):
+        self.output = Path(tempfile.mkdtemp())
+        self.server = self.output / 'fake_window.py'
+        self.server.write_text(FAKE_SERVER)
+        self.expected = {AUDIO_TEST, 'SpokenMarginsAppTests/OtherTests/testA'}
+        self.records = {AUDIO_TEST: {'status': 'skipped'}, 'SpokenMarginsAppTests/OtherTests/testA': {'status': 'passed'}}
+
+    def test_a_whole_plan_run_opens_no_window_and_its_audio_skip_passes(self):
+        with lane_audio_window.serve(self.output, [], server=self.server) as folder:
+            self.assertIsNone(folder, 'the Mac\'s output is not switched for a run that never asked')
+        allowed = lane_audio_window.unasked(self.expected, [])
+        self.assertEqual(verification.reconcile(self.expected, self.records, allowed), [])
+
+    def test_a_request_that_names_the_audio_test_still_fails_on_its_skip(self):
+        selectors = ['SpokenMarginsAppTests/AudioLoopbackPlaybackTests']
+        allowed = lane_audio_window.unasked(self.expected, selectors)
+        self.assertEqual(allowed, set())
+        self.assertEqual(verification.reconcile(self.expected, self.records, allowed), [f'Unexpected skip: {AUDIO_TEST}'],
+                         'the lane could not listen, so the T3 must not pass')
+
+    def test_the_server_starts_on_the_selectors_not_the_plan(self):
+        with lane_audio_window.serve(self.output, ['SpokenMarginsAppTests/OtherTests'], server=self.server) as folder:
+            self.assertIsNone(folder)
 
 
 class ReportTests(unittest.TestCase):
