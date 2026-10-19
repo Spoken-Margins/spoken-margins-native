@@ -126,6 +126,28 @@ final class ItemDetailLoaderTests: XCTestCase {
         }
     }
 
+    /// #2073: opening an item that has a Listening Map and a full transcript decoded every saved transcript segment
+    /// (several MB of JSON) on the main thread, only to read the chapter list. The record here has intact chapters
+    /// but segments the full decoder rejects: if the loader decodes them the record is quarantined and the chapters
+    /// are lost, so this fails before the fix and passes once the loader reads only the chapters and duration.
+    func testItemDetailReadsTheChaptersWithoutDecodingTheTranscriptSegments() throws {
+        try withFixture { fixture, store, database in
+            try store.saveItem(item("A"))
+            try executeSQL([
+                """
+                INSERT INTO records(kind,id,item_id,payload,updated_at) VALUES('source_transcript_timeline','t','A',
+                '{"id":"t","itemId":"A","createdAt":0,"timeline":{"segments":"not a list","durationMs":3600000,"chapters":[{"id":"ch-0","title":"Intro","description":"","startMs":0,"transcriptSegmentId":"seg-0"},{"id":"ch-1","title":"Interview","description":"","startMs":600000,"transcriptSegmentId":"seg-0"}]}}',
+                '2026-01-01 00:00:00')
+                """
+            ], database: database)
+
+            let detail = try fixture.load("A", store)
+            XCTAssertEqual(detail.mediaChapters.map(\.title), ["Intro", "Interview"])
+            XCTAssertEqual(detail.mediaDurationMs, 3_600_000)
+            XCTAssertEqual(try store.quarantinedRecordCount(), 0)
+        }
+    }
+
     func testOptionalTurnReadFailureReturnsNoTurnsAfterAHealthyControl() throws {
         try withFixture { fixture, store, database in
             try seedSessions(store)

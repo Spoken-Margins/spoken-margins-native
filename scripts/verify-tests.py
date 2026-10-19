@@ -1190,6 +1190,11 @@ class Run:
         # 150 s of a 230 s run with the Mac's load average at 40 to 180 (2026-10-05).
         self.command('package-build', [*PACKAGE_RUNNER, '--build-only'], timeout=PACKAGE_BUILD_TIMEOUT)
         audio = self.manifest['audio_output'] = host_audio.audio_output()
+        # #1956: an output that never starts hangs the real-player tests until the step's limit. Say so now.
+        if audio.get('stuck') and not in_codex_sandbox():
+            self.manifest['lane_fault'] = f'no audio output: {audio["why"]}'
+            self.save()
+            raise RuntimeError(f'lane fault, not the PR: {self.manifest["lane_fault"]}')
         # Inside Codex's sandbox the audio tests are tolerated and the runner stays as it was: one serial step.
         core = {test for test in expected if test.startswith('SessionKitCoreTests/')}
         split = (bool(core) and not in_codex_sandbox()) or core_elsewhere
