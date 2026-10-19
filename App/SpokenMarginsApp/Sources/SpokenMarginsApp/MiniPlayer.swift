@@ -150,7 +150,7 @@ struct MiniPlayerBar: View {
                     if model.snapshot.phase == .finished {
                         model.startNewSession(id: model.snapshot.itemId ?? model.selectedItem.id)
                     } else {
-                        model.playPause()
+                        model.playPauseTapped()
                     }
                 } label: {
                     Group {

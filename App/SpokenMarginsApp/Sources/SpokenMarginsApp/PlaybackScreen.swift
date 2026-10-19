@@ -863,7 +863,7 @@ struct PlaybackScreen: View {
                 .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Back \(model.mediaSkipBackSeconds) seconds" : "Previous \(model.skipUnit)")
                 .accessibilityIdentifier("playback.back.button")
 
-                Button(action: model.playPause) {
+                Button(action: model.playPauseTapped) {
                     Group {
                         if model.snapshot.status == .starting {
                             ProgressView()
