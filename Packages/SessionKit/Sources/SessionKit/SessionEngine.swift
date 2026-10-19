@@ -367,7 +367,7 @@ public final class SessionEngine {
         guard session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia,
               !isPartialGeneratedTextPlayback(session),
               let mediaTimeMs = session.position.mediaTimeMs, mediaTimeMs > 0,
-              let durationMs = mediaDurationMs(for: session), durationMs > 0 else { return false }
+              let durationMs = durableMediaDurationMs(for: session), durationMs > 0 else { return false }
         return durationMs - mediaTimeMs <= Self.endOfMediaStartToleranceMs
     }
 
