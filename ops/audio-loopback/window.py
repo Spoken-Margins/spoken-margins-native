@@ -8,8 +8,9 @@ through files in that folder (the Simulator writes straight to the Mac's disk):
 1. The server writes `ready.json` when it is listening.
 2. The test writes `<id>.request.json`: how long to record, the text it expects, and the limits.
 3. The server takes the Mac-wide audio lock (one window at a time, like the simulator slot), makes BlackHole
-   the default output through `loopback route` (which always puts the old one back), starts recording, and
-   plays a short pilot tone straight to BlackHole. When the recorder runs it writes `<id>.recording`.
+   the default output through `loopback route` (which always puts the old one back), starts recording, listens
+   to a second of pre-roll, and plays a short pilot tone straight to BlackHole. When the recorder runs it
+   writes `<id>.recording`.
    The recorder, and the transcriber, run as SpokenMarginsLaneRecorder.app, started through LaunchServices, so
    macOS charges Microphone and Speech Recognition to that app, which the owner allowed once, and not to the
    runner's node, which it refuses without asking (README, The recorder app).
@@ -21,6 +22,11 @@ The verdict is PASS, FAIL (the audio broke an expectation: the app's fault) or U
 listen: no BlackHole, the lock stayed busy, the recorder heard digital silence, so not even the pilot tone, or
 the words couldn't be transcribed, or the recorder app isn't installed or allowed). A test skips on
 UNAVAILABLE, which the lane reports as INCONCLUSIVE.
+
+The lock keeps two windows apart, but not other sound: while BlackHole is the default output, a second
+simulator job or the Mac's own player lands in the same recording. That would be a FAIL blamed on the app, so
+the window answers UNAVAILABLE instead when another simulator job holds a lane slot at its start or end, or
+when the pre-roll, before the pilot and before the test plays, already holds sound.
 """
 import argparse
 import contextlib
@@ -45,6 +51,8 @@ READY = 'ready.json'
 DEVICE = 'BlackHole 2ch'
 PILOT_SECONDS = 0.3      # a 1 kHz tone, played straight to BlackHole, proves the recorder can hear
 PILOT_GUARD = 0.4        # cut this much after the pilot's end, so its tail isn't counted as the app's
+PREROLL_SECONDS = 1.0    # recorded before the pilot; sound here is not the app's, so the window can't judge it
+SOUND_LEVEL = 0.01       # a sample above this (-40 dBFS) is sound; BlackHole with nothing playing is all zeros
 START_TIMEOUT = 30       # the recorder must report that it runs within this (s)
 MAX_SECONDS = 300
 POLL = 0.2
@@ -184,14 +192,32 @@ def play_pilot(path, device=DEVICE, binary=None):
                    capture_output=True, timeout=15)
 
 
-def trim(wav, offset, out):
-    """The recording from `offset` seconds on, and whether the part before it (the pilot) held sound."""
+def trim(wav, offset, out, preroll=0.0):
+    """Writes the recording from `offset` seconds on to `out`. Returns (heard the pilot, heard sound in the
+    pre-roll). The recording starts no later than the clock that timed the pre-roll, so its first `preroll`
+    seconds always come before the pilot and before the test plays."""
     rate, samples = loopback.read_wav(wav)
     cut = int(offset * rate)
     head = samples[:cut]
-    heard_pilot = bool(head) and max(abs(s) for s in head) > 0.01
+    heard_pilot = bool(head) and max(abs(s) for s in head) > SOUND_LEVEL
+    before = samples[:min(int(preroll * rate), cut)]
+    heard_before = bool(before) and max(abs(s) for s in before) > SOUND_LEVEL
     loopback.write_wav(out, rate, samples[cut:])
-    return heard_pilot
+    return heard_pilot, heard_before
+
+
+def other_simulator_jobs():
+    """How many lane simulator slots are held beyond the one this run's own job holds (scripts/lane_slots.py)."""
+    scripts = Path(__file__).resolve().parents[2] / 'scripts'
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    import lane_slots
+    return max(0, lane_slots.simulator_jobs_running() - 1)
+
+
+def another_job(count):
+    return (f'another simulator job is running ({count} more lane simulator slot{"s" if count != 1 else ""} held), '
+            'and its sound would land in the same recording')
 
 
 def summary_line(result):
@@ -218,7 +244,8 @@ def unavailable(reason, **extra):
 
 
 def run_window(folder, request_id, raw, recorder_factory=Recorder, pilot=play_pilot, check=loopback.check_recording,
-               lock=audio_lock, device_present=None, clock=time.monotonic, recorder_app=loopback.installed_app):
+               lock=audio_lock, device_present=None, clock=time.monotonic, recorder_app=loopback.installed_app,
+               sleep=time.sleep, other_jobs=other_simulator_jobs):
     """One window, start to verdict. Never raises for a bad request or a missing device: it answers instead."""
     folder = Path(folder)
     try:
@@ -233,7 +260,7 @@ def run_window(folder, request_id, raw, recorder_factory=Recorder, pilot=play_pi
         return unavailable(f'the recorder app is not installed at {loopback.app_path()}: the owner runs '
                            'ops/audio-loopback/setup-recorder-app.sh once at the Mac (README, The recorder app)')
     result = listen(folder, request_id, seconds, expected, lock_wait, options, app, recorder_factory, pilot, check,
-                    lock, clock)
+                    lock, clock, sleep, other_jobs)
     if result['verdict'] == 'UNAVAILABLE' and loopback.app_is_stale(app):
         result['reason'] += ('. The installed recorder app was built from an older loopback.swift: '
                              'rerun ops/audio-loopback/setup-recorder-app.sh')
@@ -241,18 +268,23 @@ def run_window(folder, request_id, raw, recorder_factory=Recorder, pilot=play_pi
 
 
 def listen(folder, request_id, seconds, expected, lock_wait, options, app, recorder_factory, pilot, check, lock,
-           clock):
+           clock, sleep, other_jobs):
     wav, app_wav, tone = (folder / f'{request_id}.wav', folder / f'{request_id}.app.wav', folder / 'pilot.wav')
     pilot_tone(tone)
     try:
         with lock(f'audio window {request_id} (pid {os.getpid()})', max_wait=lock_wait):
-            # Pilot plus the test's window, plus a margin for the request and the result to cross.
-            recorder = recorder_factory(wav, seconds + PILOT_SECONDS + PILOT_GUARD + 1.0, app).start()
+            busy = other_jobs()
+            if busy:
+                return unavailable(another_job(busy))
+            # Pre-roll, pilot and the test's window, plus a margin for the request and the result to cross.
+            recorder = recorder_factory(wav, seconds + PREROLL_SECONDS + PILOT_SECONDS + PILOT_GUARD + 1.0,
+                                        app).start()
             try:
                 if not recorder.started.wait(START_TIMEOUT):
                     recorder.stop()
                     return unavailable('the recorder did not start: ' + ' / '.join(recorder.lines[-3:]))
                 began = clock()
+                sleep(PREROLL_SECONDS)
                 pilot(tone)
                 offset = clock() - began + PILOT_GUARD
                 write_json(folder / f'{request_id}.recording', {'pilot_seconds': round(offset, 3)})
@@ -263,14 +295,22 @@ def listen(folder, request_id, seconds, expected, lock_wait, options, app, recor
                 return unavailable('the recorder ran past its window and was stopped')
             if status:
                 return unavailable(f'the recorder exited {status}: ' + ' / '.join(recorder.lines[-3:]))
+            # A job that took a slot during the window still holds it now (a job lasts minutes, a window seconds).
+            joined = other_jobs()
     except TimeoutError as error:
         return unavailable(str(error))
     if not wav.exists():
         return unavailable('the recorder app reported success but wrote no recording')
-    if not trim(wav, offset, app_wav):
+    heard_pilot, heard_before = trim(wav, offset, app_wav, PREROLL_SECONDS)
+    if not heard_pilot:
         return unavailable('the recorder heard digital silence, not even the pilot tone played straight to '
                            f'{DEVICE}: the recorder app may lack Microphone access (README, The recorder app)',
                            wav=str(wav))
+    if heard_before:
+        return unavailable(f'something else was already playing to {DEVICE} in the {PREROLL_SECONDS:g} s before '
+                           'the pilot tone, so the recording is not only the app\'s', wav=str(wav))
+    if joined:
+        return unavailable(another_job(joined), wav=str(wav))
     # The words are transcribed by the recorder app too: it holds the Speech Recognition permission.
     report = check(app_wav, expected, run=functools.partial(loopback.transcribe_file, app=app), **options)
     result = {'verdict': report['verdict'], 'report': report, 'wav': str(app_wav)}

@@ -2,6 +2,7 @@
 import json
 import math
 import os
+import sys
 import tempfile
 import threading
 import unittest
@@ -16,11 +17,16 @@ TONE = [0.5 * math.sin(2 * math.pi * 1000 * i / RATE) for i in range(int(0.3 * R
 FAKE_APP = Path('/nonexistent/SpokenMarginsLaneRecorder.app')
 
 
-class FakeRecorder:
-    """Writes `samples` to the wav when started, like `loopback record` would after its window."""
+PREROLL = [0.0] * int(window.PREROLL_SECONDS * RATE)
 
-    def __init__(self, samples, status=0, starts=True):
-        self.samples, self.status, self.starts = samples, status, starts
+
+class FakeRecorder:
+    """Writes `before` (a quiet pre-roll unless given) and then `samples` to the wav when started, like
+    `loopback record` would after its window."""
+
+    def __init__(self, samples, status=0, starts=True, before=None):
+        self.samples = None if samples is None else (PREROLL if before is None else before) + samples
+        self.status, self.starts = status, starts
         self.lines, self.stopped = ['loopback: recording BlackHole 2ch'], False
         self.started = threading.Event()
 
@@ -41,6 +47,22 @@ class FakeRecorder:
         self.stopped = True
 
 
+class FakeTime:
+    """A clock that the pre-roll's sleep and the pilot move on, as real time would."""
+
+    def __init__(self):
+        self.now = 100.0
+
+    def clock(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+    def pilot(self, tone):
+        self.now += window.PILOT_SECONDS
+
+
 def no_lock(owner, max_wait=0):
     import contextlib
     return contextlib.nullcontext()
@@ -56,8 +78,9 @@ class WindowTests(unittest.TestCase):
 
     def run_window(self, samples, raw=None, check=None, **kwargs):
         recorder = kwargs.pop('recorder', FakeRecorder(samples))
-        options = dict(recorder_factory=recorder, pilot=lambda tone: None, lock=no_lock,
-                       device_present=lambda: True, clock=lambda: 100.0, recorder_app=lambda: FAKE_APP)
+        time = FakeTime()
+        options = dict(recorder_factory=recorder, pilot=time.pilot, lock=no_lock, device_present=lambda: True,
+                       clock=time.clock, sleep=time.sleep, recorder_app=lambda: FAKE_APP, other_jobs=lambda: 0)
         if check:
             options['check'] = check
         options.update(kwargs)
@@ -68,7 +91,8 @@ class WindowTests(unittest.TestCase):
         result, recorder = self.run_window(TONE + [0.0] * int(0.5 * RATE) + speech(1, 4.0) + [0.0] * RATE)
         self.assertEqual(result['verdict'], 'PASS', result)
         self.assertTrue((self.folder / 'w1.recording').exists(), 'the test was told the recorder runs')
-        self.assertGreater(result['report']['first_sound'], 0.3, 'the app recording starts after the pilot')
+        # Speech starts 0.5 s after the pilot, and the cut is 0.4 s after it: the pilot's tone is gone.
+        self.assertAlmostEqual(result['report']['first_sound'], 0.1, delta=0.05)
         self.assertTrue(recorder.stopped)
         self.assertIn('PASS: ', window.summary_line(result))
 
@@ -103,6 +127,38 @@ class WindowTests(unittest.TestCase):
                                     {'seconds': 5, 'expected': 'the quick brown fox'}, check=check)
         self.assertEqual(result['verdict'], 'FAIL')
         self.assertIn('word error rate', ' '.join(result['report']['problems']))
+
+    def test_sound_before_the_pilot_is_unavailable_not_a_fail(self):
+        # Audit on b3dc4be: another simulator or the Mac's player sends sound to BlackHole too. A second voice
+        # under the app's pushes the word error rate up; the pre-roll hears it before the test plays anything.
+        other = speech(8, 30.0)
+        app = TONE + [0.0] * int(0.5 * RATE) + speech(9, 4.0)
+        mixed = [a + b for a, b in zip(app, other[len(PREROLL):])]
+        result, _ = self.run_window(mixed, {'seconds': 5, 'expected': 'the quick brown fox'},
+                                    recorder=FakeRecorder(mixed, before=other[:len(PREROLL)]))
+        self.assertEqual(result['verdict'], 'UNAVAILABLE', result.get('report', {}).get('problems'))
+        self.assertIn('something else was already playing', result['reason'])
+
+    def test_another_simulator_job_at_the_start_is_unavailable_and_records_nothing(self):
+        recorder = FakeRecorder(TONE + speech(10, 2.0))
+        result, _ = self.run_window(None, recorder=recorder, other_jobs=lambda: 1)
+        self.assertEqual(result['verdict'], 'UNAVAILABLE')
+        self.assertIn('another simulator job is running', result['reason'])
+        self.assertFalse(hasattr(recorder, 'wav'), 'no recorder started, so the output was never switched')
+
+    def test_another_simulator_job_that_joined_during_the_window_is_unavailable(self):
+        counts = iter([0, 1])
+        result, _ = self.run_window(TONE + [0.0] * int(0.5 * RATE) + speech(11, 3.0),
+                                    other_jobs=lambda: next(counts))
+        self.assertEqual(result['verdict'], 'UNAVAILABLE')
+        self.assertIn('another simulator job is running (1 more lane simulator slot held)', result['reason'])
+
+    def test_other_simulator_jobs_does_not_count_this_runs_own_slot(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+        import lane_slots
+        for held, others in ((0, 0), (1, 0), (2, 1)):
+            with mock.patch.object(lane_slots, 'simulator_jobs_running', return_value=held):
+                self.assertEqual(window.other_simulator_jobs(), others, held)
 
     def test_a_recorder_that_never_starts_is_unavailable(self):
         recorder = FakeRecorder([0.0] * RATE, starts=False)
@@ -154,7 +210,8 @@ class LockTests(unittest.TestCase):
         with window.audio_lock('another lane test'):
             result = window.run_window(folder, 'w', {'seconds': 5, 'lock_wait': 0},
                                        recorder_factory=FakeRecorder(TONE), pilot=lambda tone: None,
-                                       device_present=lambda: True, recorder_app=lambda: FAKE_APP)
+                                       device_present=lambda: True, recorder_app=lambda: FAKE_APP,
+                                       other_jobs=lambda: 0)
         self.assertEqual(result['verdict'], 'UNAVAILABLE')
         self.assertIn('another audio window', result['reason'])
 
