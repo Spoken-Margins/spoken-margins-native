@@ -252,6 +252,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var playbackRate: Float
     private var mixesWithOtherAudio = false
     private var lowersBackgroundAudio = false
+    /// What this client last activated the audio session with, kept until the run ends, the system takes the
+    /// session or another component changes it. A chunk seam finds it set and skips the IPC (#2101).
+    private var activatedSessionKey: ActivatedSessionKey?
     private var playbackVolume: Float = 1
     private var preparedSourceText = ""
     private var preparedSpeechProjection = NormalizedSpeechText(
@@ -616,6 +619,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         applyQueuedAdvance(finished: nil)
         settleHandOverBeforePlay()
         interruptionWaitEnded(.listenerActed)
+        // A play is the listener's own act, and other audio (a spoken Margin) may have released the session since the
+        // last one; the seams that follow reuse this activation.
+        forgetActivatedSession()
         try activateAudioSession(forPlayback: false)
         restoreOnDeviceRenderingIfConditionCleared(targetId: targetId)
         let usesStoppedGeneration = lock.withLock {
@@ -1021,6 +1027,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     func pause() throws {
         interruptionWaitEnded(.listenerActed)
+        forgetActivatedSession()
         let snapshot = lock.withLock { () -> (Bool, AVPlayer?) in
             transportIntent = .paused
             shouldResumeAfterInterruption = false
@@ -1062,6 +1069,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     func stop() throws {
         interruptionWaitEnded(.listenerActed)
+        forgetActivatedSession()
         removePlaybackEndObserver()
         defer { releaseHandOverBackgroundTimeIfHeld() }
         let stopped = lock.withLock { () -> (urls: [URL], renderControl: RenderTaskControl?) in
@@ -1957,6 +1965,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// `voiceAlreadyStarted`: the iOS voice is speaking from `sourceOffset` already (`startSystemVoiceAheadOfHandOver`);
     /// this takes the article over without starting it again.
     private func activateSystemFallback(targetId: String, sourceOffset: Int, reason: String, voiceAlreadyStarted: Bool = false) {
+        // The iOS voice sets up and releases the session itself.
+        forgetActivatedSession()
         // A stalled player's chunk is kept until the iOS voice is really speaking. If it can't start, the
         // pause for a tap replays that chunk (#302) instead of rendering it again.
         let keepsChunk = reason == Self.stalledPlayerReason
@@ -3492,24 +3502,63 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         )
     }
 
+    /// The part of the session setup that changes with the listener's settings.
+    private struct ActivatedSessionKey: Equatable {
+        let mixes: Bool
+        let lowersBackground: Bool
+    }
+
+    /// The activation is a synchronous IPC to the audio server that can take hundreds of ms, and it ran on
+    /// the main thread at every chunk seam and twice per tap (#2101). It runs again only when the setup
+    /// changed, or after anything that can undo it calls `forgetActivatedSession`.
     private func activateAudioSession(forPlayback: Bool = true) throws {
+        let key = lock.withLock {
+            ActivatedSessionKey(mixes: mixesWithOtherAudio, lowersBackground: lowersBackgroundAudio && forPlayback)
+        }
+        if lock.withLock({ activatedSessionKey == key }), activatedSessionStillConfigured() { return }
+        let started = ContinuousClock.now
+        defer { reportSessionActivation(since: started) }
         if let audioSessionActivator {
             try audioSessionActivator()
+            lock.withLock { activatedSessionKey = key }
             return
         }
         #if os(iOS)
-        let options: AVAudioSession.CategoryOptions = lock.withLock {
-            PlaybackAudioSessionPolicy.options(mixes: mixesWithOtherAudio, lowersBackground: lowersBackgroundAudio && forPlayback)
-        }
+        let options = PlaybackAudioSessionPolicy.options(mixes: key.mixes, lowersBackground: key.lowersBackground)
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: options)
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
+        lock.withLock { activatedSessionKey = key }
+    }
+
+    /// Another component (a spoken Margin, a recording) may have changed the category since our activation.
+    private func activatedSessionStillConfigured() -> Bool {
+        #if os(iOS)
+        guard audioSessionActivator == nil else { return true }
+        let session = AVAudioSession.sharedInstance()
+        return session.category == .playback && session.mode == .spokenAudio
+        #else
+        return true
+        #endif
+    }
+
+    /// The next activation must run: an interruption, a lost route, a media services reset, a pause or a stop
+    /// may have ended or changed the session.
+    private func forgetActivatedSession() {
+        lock.withLock { activatedSessionKey = nil }
+    }
+
+    private func reportSessionActivation(since started: ContinuousClock.Instant) {
+        let elapsed = started.duration(to: .now)
+        guard elapsed > .milliseconds(20) else { return }
+        onStall?("supertonic.session_activate", ["ms": "\(Int(elapsed / .milliseconds(1)))"])
     }
 
     private func releaseBackgroundAudio() throws {
         #if DEBUG
         lock.withLock { debugBackgroundAudioReleaseCount += 1 }
         #endif
+        forgetActivatedSession()
         guard audioSessionActivator == nil,
               lock.withLock({ mixesWithOtherAudio && lowersBackgroundAudio }) else { return }
         #if os(iOS)
@@ -3545,6 +3594,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             object: AVAudioSession.sharedInstance(),
             queue: .main
         ) { [weak self] notification in
+            self?.forgetActivatedSession()
             guard let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
                   AVAudioSession.RouteChangeReason(rawValue: reasonValue) == .oldDeviceUnavailable else { return }
             self?.pauseForSystemInterruption(allowsAutomaticResume: false, cause: .routeLost)
@@ -3563,6 +3613,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     private func pauseForSystemInterruption(allowsAutomaticResume: Bool, cause: SpeechSystemPause) {
+        forgetActivatedSession()
         let state = lock.withLock { () -> (didPause: Bool, usesFallback: Bool, activePlayer: AVPlayer?) in
             guard transportIntent == .playing else { return (false, false, nil) }
             transportIntent = .paused
@@ -3670,6 +3721,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// `announcesPause` is false when the caller is the listener's own pause or play, which the app already knows.
     private func markMediaServicesReset(announcesPause: Bool = true) {
+        forgetActivatedSession()
         // Bring the place and the kept chunk up to a queue that has already moved on, before the queued chunk is
         // forgotten below (#538 audit).
         applyQueuedAdvance(finished: nil)
