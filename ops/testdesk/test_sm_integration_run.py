@@ -832,12 +832,20 @@ def hosted_report(sha7, verdict, failing=()):
 class HostedOps(CulpritOps):
     """CulpritOps with the hosted switch, the checkout's HEAD and a record of every way to the Keychain or Claude."""
 
-    def __init__(self, tmp, plans, hosted=True, **kw):
+    def __init__(self, tmp, plans, hosted=True, runs=({'status': 'in_progress', 'conclusion': None},),
+                 tip_age=3600, **kw):
         super().__init__(tmp, plans, **kw)
-        self.hosted = hosted
+        self.hosted, self.runs, self.tip_age = hosted, runs if runs is None else list(runs), tip_age
 
     def hosted_on(self):
         return self.hosted
+
+    def hosted_runs(self, sha):
+        self.calls.append(['hosted_runs', sha])
+        return self.runs
+
+    def commit_time(self, sha):
+        return run.time.time() - self.tip_age
 
     def test_plan(self, wt, output, plan, fds, only=()):
         output.mkdir(parents=True, exist_ok=True)
@@ -994,6 +1002,46 @@ class MacDefersToHostedTests(unittest.TestCase):
         self.assertEqual(verdict, 'deferred')
         self.assertEqual((ops.posted, ops.comments, ops.reverts), ([], [], []))
         self.assertFalse(any(c[:3] == ['git', 'worktree', 'add'] for c in ops.calls))
+
+    def test_a_tip_with_no_hosted_run_is_tested_here_as_when_off(self):
+        # #2127: the lane runner's merges are pushed with the workflow token, which starts no workflows. A tip
+        # with no hosted run, or one whose run ended without a report, would otherwise go untested.
+        cases = [('no run', []), ('a run that ended without a report', [{'status': 'completed', 'conclusion': 'failure'}]),
+                 ('runs unreadable', None)]
+        for name, runs in cases:
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                ops = HostedOps(tmp, [manifest({TEST: 'passed'})], runs=runs,
+                                bodies=[report_comment(OLD[:7], 'PASS', by=run.HOSTED_RUN_BY)])
+                ops, verdict, state = self.tick(tmp, [], [], ops=ops)
+                self.assertEqual(verdict, 'PASS')
+                self.assertEqual(len(ops.posted), 1)
+                self.assertIn(f'run by: {run.RUN_BY}', ops.posted[0])
+                self.assertIn('the Mac tests it', (ops.home / 'log.txt').read_text())
+
+    def test_a_tip_the_hosted_run_has_or_may_soon_have_is_left_to_it(self):
+        cases = [('queued', {'runs': [{'status': 'queued', 'conclusion': None}]}),
+                 ('in progress', {'runs': [{'status': 'in_progress', 'conclusion': None}]}),
+                 ('just landed, no run listed yet', {'runs': [], 'tip_age': 60})]
+        for name, kw in cases:
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                ops = HostedOps(tmp, [], bodies=[report_comment(OLD[:7], 'PASS', by=run.HOSTED_RUN_BY)], **kw)
+                ops, verdict, _ = self.tick(tmp, [], [], ops=ops)
+                self.assertEqual(verdict, 'deferred')
+                self.assertEqual(ops.posted, [])
+                self.assertFalse(any(c[:3] == ['git', 'worktree', 'add'] for c in ops.calls))
+                self.assertIn(['hosted_runs', SHA], ops.calls)
+
+    def test_the_hosted_run_list_asks_github_for_this_commit_and_trouble_is_none(self):
+        cases = [(run.Result(0, '[{"status":"queued","conclusion":null}]'), [{'status': 'queued', 'conclusion': None}]),
+                 (run.Result(0, '[]'), []), (run.Result(1, '', 'HTTP 502'), None), (run.Result(0, 'not json'), None)]
+        for result, expected in cases:
+            with self.subTest(result=result.stdout or result.stderr), tempfile.TemporaryDirectory() as tmp:
+                calls = []
+                ops = run.Ops(home=Path(tmp), repo_root=Path(tmp), echo=False,
+                              run=lambda cmd, **kw: calls.append(cmd) or result)
+                self.assertEqual(ops.hosted_runs(SHA), expected)
+                self.assertEqual(calls[0][:3], ['gh', 'api',
+                                 f'repos/{run.REPO}/actions/workflows/hosted-integration.yml/runs?head_sha={SHA}&per_page=20'])
 
     def test_an_unhandled_hosted_fail_is_confirmed_here_then_searched_and_reverted_once(self):
         bodies = [report_comment(OLD[:7], 'PASS'), hosted_report(SHA[:7], 'FAIL', [TEST])]
