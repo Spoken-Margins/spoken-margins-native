@@ -20,6 +20,7 @@ from lane_xcresult_attachments import export_failed_attachments
 
 from check_posterboard_repair import crash_snapshot, new_crash
 import host_audio
+import lane_conditions
 import lane_sim
 import sessionkit_pass
 import lane_sim_pool
@@ -906,6 +907,14 @@ class Run:
             log_size = 0
             attempt = 1
             watching = startup is not None
+            # #2176: the host's conditions as each launch starts, when its tests start and when it stalls.
+            conditions = startup.get('conditions') if startup else None
+
+            def note_conditions(at, **extra):
+                if conditions:
+                    entry.setdefault('launch_conditions', []).append({'attempt': attempt, 'at': at, **extra,
+                                                                      **conditions()})
+            note_conditions('start')
             scan_from = 0  # each launch is judged by its own part of the shared log
             # #2053: an xcodebuild test run that has printed its summary and then goes quiet is finished, not hung.
             finish = xcodebuild_finish.FinishWatch() if tests and args[0] == 'xcodebuild' else None
@@ -946,15 +955,19 @@ class Run:
                     text = (self.output / f'{name}.log').read_text(errors='replace')[scan_from:]
                     if TESTS_STARTED.search(text):
                         watching = False
+                        note_conditions('tests_started', seconds=round(time.monotonic() - attempt_start, 1))
                     elif time.monotonic() - attempt_start >= startup['seconds']:
                         lines = [line for line in text.splitlines() if line.strip()]
                         stall = {'attempt': attempt, 'after_seconds': round(time.monotonic() - attempt_start, 1),
                                  'last_log_line': lines[-1][:200] if lines else None}
+                        if conditions:
+                            stall['conditions'] = conditions()
                         stall.update(startup['diagnose'](self.output / f'{name}-stall-{attempt}'))
                         # The diagnosis takes seconds; a launch that began its tests meanwhile is slow, not stalled.
                         if TESTS_STARTED.search((self.output / f'{name}.log').read_text(errors='replace')[scan_from:]):
                             entry.setdefault('slow_starts', []).append(stall)
                             watching = False
+                            note_conditions('tests_started', seconds=round(time.monotonic() - attempt_start, 1))
                             continue
                         entry.setdefault('startup_stalls', []).append(stall)
                         print(f'warning: {name} printed no test output {stall["after_seconds"]}s after launch '
@@ -976,6 +989,7 @@ class Run:
                         log.flush()
                         scan_from = len((self.output / f'{name}.log').read_text(errors='replace'))
                         attempt_start = time.monotonic()
+                        note_conditions('start')
                         if finish is not None:
                             finish = xcodebuild_finish.FinishWatch()
                         process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
@@ -1499,8 +1513,12 @@ class Run:
             # Only the app-hosted unit tests (app, adapters): the UI plans launch a separate runner app.
             startup = {'seconds': STARTUP_STALL_SECONDS, 'retries': STARTUP_RETRIES,
                        'diagnose': lambda folder: stall_evidence(chosen['udid'], folder, result_bundle=result_bundle),
-                       'reset': relaunch} if scheme == 'SpokenMarginsAppBehavior' else None
+                       'reset': relaunch, 'conditions': lane_conditions.snapshot} \
+                if scheme == 'SpokenMarginsAppBehavior' else None
             if startup is not None:
+                # What each launch installs (#2176): #2067 takes Supertonic's model out, about 144 MB.
+                self.manifest['app_bundle_mb'] = lane_conditions.folder_mb(
+                    derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')
                 self.manifest['settle_before_tests'] = settle_before_tests(chosen['udid'])
                 self.save()
             self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
