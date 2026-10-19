@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <atom:link href="https://feeds.simplecast.com/HpGMoS4g" rel="self" title="MP3 Audio" type="application/atom+xml"/>
+    <atom:link href="https://simplecast.superfeedr.com" rel="hub" xmlns="http://www.w3.org/2005/Atom"/>
+    <generator>https://simplecast.com</generator>
+    <title>The Interview</title>
+    <description>Conversations with the world’s most fascinating people. Each week, hosts David Marchese and Lulu Garcia-Navarro talk to compelling, influential figures in culture, politics, business, sports and beyond — illuminating who they are, why they do what they do and how they impact the rest of us. New episodes every Saturday.</description>
+    <copyright>2024 The New York Times</copyright>
+    <language>en</language>
+    <pubDate>Sat, 17 Oct 2026 09:00:00 +0000</pubDate>
+    <lastBuildDate>Sat, 17 Oct 2026 09:00:14 +0000</lastBuildDate>
+    <image>
+      <link>https://www.nytimes.com/column/the-interview</link>
+      <title>The Interview</title>
+      <url>https://image.simplecastcdn.com/images/4105a47a-42e5-4ccc-887a-832af7989986/0bc389cf-b421-4727-8fda-e8c1fd983aba/3000x3000/nyt-theinterview-3000px.jpg?aid=rss_feed</url>
+    </image>
+    <link>https://www.nytimes.com/column/the-interview</link>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>Conversations with the world’s most fascinating people. Each week, hosts David Marchese and Lulu Garcia-Navarro talk to compelling, influential figures in culture, politics, business, sports and beyond — illuminating who they are, why they do what they do and how they impact the rest of us. New episodes every Saturday.</itunes:summary>
+    <itunes:author>The New York Times</itunes:author>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:image href="https://image.simplecastcdn.com/images/4105a47a-42e5-4ccc-887a-832af7989986/0bc389cf-b421-4727-8fda-e8c1fd983aba/3000x3000/nyt-theinterview-3000px.jpg?aid=rss_feed"/>
+    <itunes:new-feed-url>https://feeds.simplecast.com/HpGMoS4g</itunes:new-feed-url>
+    <itunes:owner>
+      <itunes:name>The New York Times</itunes:name>
+      <itunes:email>podcasts@nytimes.com</itunes:email>
+    </itunes:owner>
+    <itunes:category text="Society &amp; Culture"/>
+    <itunes:category text="News"/>
+    

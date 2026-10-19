@@ -63,6 +63,12 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   head merged onto the next they tested, and next's commits since can't matter (untested_moves), the automerge
   run takes them for the portable steps and SessionKitCoreTests and runs only --plan fast-mac-rest on the Mac.
   Anything short of that, and with the variable unset, it runs the whole --plan fast as before.
+- Hosted T2 and T3 (#1389 phase 2), only with the LANE_HOSTED_APP repository variable `on` (the same kind of rollout
+  guard): test-scope.py routes the lane job to a GitHub-hosted Mac, and lane.yml sets SM_LANE_GITHUB_HOSTED=1 there,
+  with the lane state and evidence folders in the job's own temporary folder. This script runs as on the Mac: the
+  slots, the template and the claims are the job's alone, so they never wait. Only these differ: the report says the
+  evidence is the run's `lane-evidence` artifact, the lane auto-revert check stays with the Mac jobs, and a T3 PASS
+  that must re-run host tests hands them to the Mac's release job as the simulator runner does (#1209).
   When those checks have to run (none passed, or next has since moved in ways that matter), the lane job on the
   simulator runner doesn't run them itself (#1209): it dispatches lane.yml's release job (workflow_dispatch, which
   unlike a label starts a run from the workflow's token), posts a note, and moves on to the next T3. The release
@@ -304,10 +310,17 @@ def duration(seconds: float) -> str:
     return f'{minutes}m{seconds:02d}s' if minutes else f'{seconds}s'
 
 
+def github_hosted() -> bool:
+    """This job runs on a GitHub-hosted Mac (lane.yml sets it there, #1389 phase 2)."""
+    return os.environ.get('SM_LANE_GITHUB_HOSTED') == '1'
+
+
 def report(request_id: str, verdict: str, head: str, base: str, tier: str, where: str, seconds: float,
            ran: str, details: list[str], crashes: str, evidence: str, not_verified: str, wanted: dict,
            cc: str = '', base_name: str = 'next', hosted: bool = False) -> str:
-    location = 'on the VPS runner' if hosted else 'on the Mac'
+    location = ('on the VPS runner' if hosted else
+                'on a GitHub-hosted Mac; the run\'s `lane-evidence` artifact keeps it for 7 days' if github_hosted()
+                else 'on the Mac')
     lines = [f'Lane report {request_id} — {verdict}',
              f'commit {head[:7]} (tested merged with {base_name} at {base[:7]}) · tier {tier} · {where} · {duration(seconds)}',
              f'ran: {ran}', *details, f'crashes: {crashes}', f'evidence: {evidence} ({location})',
@@ -2764,7 +2777,7 @@ def main(argv=None) -> int:
     if args.cleanup:
         return cleanup(github, run_url, args.mode, hosted=args.hosted)
     STEP_RUNS.clear()
-    if args.base == 'next' and not args.hosted:  # Mac jobs own the lane auto-revert check
+    if args.base == 'next' and not args.hosted and not github_hosted():  # Mac jobs own the lane auto-revert check
         try:
             print(f'Lane auto-revert check: {auto_revert(ROOT, args.base, Repo(repo))}')
         except Exception as error:  # noqa: BLE001 - the check must never stop the job it runs in

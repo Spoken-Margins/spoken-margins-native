@@ -45,7 +45,7 @@ struct ExperienceLibraryScreen: View {
             .background(AppColors.bone)
             .scrollContentBackground(.hidden)
             .listStyle(.plain)
-            .animation(.smooth(duration: 0.24), value: listEntries.map(\.id))
+            .motionAnimation(.smooth(duration: 0.24), value: listEntries.map(\.id))
             .accessibilityIdentifier("home.screen")
             .navigationTitle("Library")
             .navigationBarTitleDisplayMode(.inline)
@@ -405,7 +405,7 @@ struct ExperienceLibraryScreen: View {
     }
 
     private func displayName(_ rawValue: String) -> String {
-        rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+        LibraryQueryEngine.displayName(rawValue)
     }
 }
 

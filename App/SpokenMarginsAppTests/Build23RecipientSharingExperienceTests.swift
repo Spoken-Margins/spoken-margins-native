@@ -45,6 +45,25 @@ final class Build23RecipientSharingExperienceTests: XCTestCase {
         )
     }
 
+    func testAMapPacketSaysMapNotMarginsAndAsksBeforeReplacing() {
+        var snapshot = recipientSnapshot(requiresRecipientSource: false, canImport: true)
+        XCTAssertEqual(Build23RecipientPresentation.heading(for: snapshot), "Shared Margins")
+        XCTAssertEqual(Build23RecipientPresentation.confirmTitle(for: snapshot), "Import")
+        XCTAssertEqual(Build23RecipientPresentation.notice(for: snapshot), Build23RecipientPresentation.importNotice)
+
+        snapshot.mapChapterCount = 7
+        XCTAssertEqual(Build23RecipientPresentation.heading(for: snapshot), "Shared Listening Map")
+        XCTAssertEqual(Build23RecipientPresentation.confirmTitle(for: snapshot), "Add Map")
+        XCTAssertEqual(Build23RecipientPresentation.progressTitle(for: snapshot), "Adding…")
+        XCTAssertFalse(Build23RecipientPresentation.notice(for: snapshot).contains("replaces"))
+
+        snapshot.replacesExistingMap = true
+        XCTAssertEqual(Build23RecipientPresentation.confirmTitle(for: snapshot), "Replace Map")
+        XCTAssertTrue(Build23RecipientPresentation.notice(for: snapshot).contains("replaces it"))
+        XCTAssertTrue(Build23RecipientPresentation.notice(for: snapshot).contains("never starts playback"))
+        XCTAssertTrue(Build23RecipientPresentation.canConfirmImport(snapshot))
+    }
+
     func testCompanionIsTheDisplayedDefaultProjection() {
         let layer = importedLayer(revealMode: .companion)
 

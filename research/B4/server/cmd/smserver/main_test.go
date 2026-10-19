@@ -114,8 +114,13 @@ func TestServeNeverPrintsTheAPIKey(t *testing.T) {
 		t.Fatalf("server didn't start: %v\n%s", err, out.String())
 	}
 	body, _ := json.Marshal(map[string]any{
-		"schema": maps.TranscriptSchema, "episodeKey": strings.Repeat("ab", 32), "durationMs": 60000, "language": "en",
-		"segments": []map[string]any{{"id": "a", "startMs": 0, "endMs": 60000, "text": "hello"}},
+		"schema": maps.TranscriptSchema, "episodeKey": strings.Repeat("ab", 32), "durationMs": 180000, "language": "en",
+		// Three minutes: long enough for three scenes, so the worker calls.
+		"segments": []map[string]any{
+			{"id": "a", "startMs": 0, "endMs": 60000, "text": "hello"},
+			{"id": "b", "startMs": 60000, "endMs": 120000, "text": "middle"},
+			{"id": "c", "startMs": 120000, "endMs": 180000, "text": "goodbye"},
+		},
 	})
 	resp, err = http.Post("http://"+addr+"/api/v1/maps/transcripts", "application/json", bytes.NewReader(body))
 	if err != nil || resp.StatusCode != 202 {

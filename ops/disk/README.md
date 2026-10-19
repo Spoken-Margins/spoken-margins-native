@@ -25,7 +25,7 @@
 
 ## Ready-made simulator builds (not in the order)
 
-`~/SpokenMarginsOps/sim-builds` holds the integration run's last two simulator apps of `next`'s tip, about 310 MB each (0.6 GB in all), for desks to install instead of building (`scripts/sim_builds.py`). It sits outside the relief order on purpose: it caps itself at two builds, copies nothing below 10 GB free, and deleting it only makes the next desk build for 5 to 10 minutes. Relief never touches it. By hand it is the first thing safe to delete, before step 1; the next integration run refills it.
+`~/SpokenMarginsOps/sim-builds` holds the integration run's last two simulator apps of `next`'s tip, about 690 MB each on 2026-10-18 (1.4 GB in all), for desks to install instead of building (`scripts/sim_builds.py`). It sits outside the relief order on purpose: it caps itself at two builds, copies nothing below 10 GB free, and deleting it only makes the next desk build for 5 to 10 minutes. Relief never touches it. By hand it is the first thing safe to delete, before step 1; the next integration run refills it.
 
 ## The lane folder (every run)
 

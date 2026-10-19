@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<rss version="2.0"
+  xmlns:atom="http://www.w3.org/2005/Atom"
+  xmlns:cc="http://web.resource.org/cc/"
+  xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+  xmlns:media="http://search.yahoo.com/mrss/"
+  xmlns:content="http://purl.org/rss/1.0/modules/content/"
+  xmlns:podcast="https://podcastindex.org/namespace/1.0"
+  xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0"
+  xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+  xmlns:libsyn="https://rss.libsyn.com/ns.xml">
+
+  <channel>
+    <atom:link href="https://rss.libsyn.com/shows/604590/destinations/5264190.xml" rel="self" type="application/rss+xml"/>
+    <title>Sean Carroll&apos;s Mindscape: Science, Society, Philosophy, Culture, Arts, and Ideas</title>
+    <pubDate>Wed, 14 Oct 2026 21:12:37 +0000</pubDate>
+    <lastBuildDate>Wed, 14 Oct 2026 21:12:37 +0000</lastBuildDate>
+    <generator>Libsyn RSSgen 1.0</generator>
+    <libsyn:show-id>604590</libsyn:show-id>
+    
+    <libsyn:last-updated>2026-07-31T22:45:13Z</libsyn:last-updated>
+    
+    <link>https://www.preposterousuniverse.com/podcast/</link>
+    <language>en</language>
+    <copyright><![CDATA[© Sean Carroll 2026]]></copyright>
+    <docs>https://www.preposterousuniverse.com/podcast/</docs>
+    <itunes:summary><![CDATA[Ever wanted to know how music affects your brain, what quantum mechanics really is, or how black holes work? Do you wonder why you get emotional each time you see a certain movie, or how on earth video games are designed? Then you've come to the right place. Each week, Sean Carroll will host conversations with some of the most interesting thinkers in the world. From neuroscientists and engineers to authors and television producers, Sean and his guests talk about the biggest ideas in science, philosophy, culture and much more.]]></itunes:summary>
+    <image>
+      <url>https://static.libsyn.com/p/assets/b/0/6/d/b06d098337897af116c3140a3186d450/21d641ef836c48dff270cbede4360d187bdd6c56cb126be7d6f51078db34d4675527fa72e13c86bb573ec42c5d4fc493e18e7d95fec734ec77168fc379baefcf.jpeg</url>
+      <title>Sean Carroll&apos;s Mindscape: Science, Society, Philosophy, Culture, Arts, and Ideas</title>
+      <link><![CDATA[https://www.preposterousuniverse.com/podcast/]]></link>
+    </image>
+    <itunes:author>Sean Carroll</itunes:author>
+		<itunes:category text="Science" />
+<itunes:category text="Science">
+  <itunes:category text="Physics" />
+</itunes:category>
+    <itunes:image href="https://static.libsyn.com/p/assets/b/0/6/d/b06d098337897af116c3140a3186d450/21d641ef836c48dff270cbede4360d187bdd6c56cb126be7d6f51078db34d4675527fa72e13c86bb573ec42c5d4fc493e18e7d95fec734ec77168fc379baefcf.jpeg" />
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:owner>
+      <itunes:name>Sean Carroll</itunes:name>
+      <itunes:email>podcast@preposterousuniverse.com</itunes:email>
+    </itunes:owner>
+    <description><![CDATA[Ever wanted to know how music affects your brain, what quantum mechanics really is, or how black holes work? Do you wonder why you get emotional each time you see a certain movie, or how on earth video games are designed? Then you've come to the right place. Each week, Sean Carroll will host conversations with some of the most interesting thinkers in the world. From neuroscientists and engineers to authors and television producers, Sean and his guests talk about the biggest ideas in science, philosophy, culture and much more.]]></description>
+    
+    <itunes:type>episodic</itunes:type>
+    
+
+    <itunes:keywords />
+
+    
+
+    
+    <podcast:locked owner="podcast@preposterousuniverse.com">no</podcast:locked>
+    
+    
+    
+    
+    
+    

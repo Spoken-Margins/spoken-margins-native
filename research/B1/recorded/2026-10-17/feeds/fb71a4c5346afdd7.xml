@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xml:base="https://www.thisamericanlife.org/podcast/rss.xml"  xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/">
+<channel>
+ <title>This American Life</title>
+ <link>https://www.thisamericanlife.org/podcast/rss.xml</link>
+ <description>Each week we choose a theme. Then anything can happen. This American Life is true stories that unfold like little movies for radio. Personal stories with funny moments, big feelings, and surprising plot twists. Newsy stories that try to capture what it’s like to be alive right now. It’s the most popular weekly podcast in the world, and winner of the first ever Pulitzer Prize for a radio show or podcast. Hosted by Ira Glass and produced in collaboration with WBEZ Chicago.</description>
+ <language>en</language>
+ <itunes:new-feed-url>https://www.thisamericanlife.org/podcast/rss.xml</itunes:new-feed-url>
+ <atom:link href="https://www.thisamericanlife.org/podcast/rss.xml" rel="self" type="application/rss+xml" />
+ <copyright>Copyright 1995-2026 This American Life</copyright>
+ <itunes:author>This American Life</itunes:author>
+ <itunes:subtitle>Each week we choose a theme. Then anything can happen. This American Life is true stories that unfold like little movies for radio. Personal stories with funny moments, big feelings, and surprising plot twists. Newsy stories that try to capture what it’s like to be alive right now. It’s the most popular weekly podcast in the world, and winner of the first ever Pulitzer Prize for a radio show or podcast. Hosted by Ira Glass and produced in collaboration with WBEZ Chicago.</itunes:subtitle>
+ <itunes:explicit>false</itunes:explicit>
+ <itunes:owner> <itunes:email>web@thislife.org</itunes:email>
+</itunes:owner>
+ <itunes:category text="Society &amp; Culture" />
+ <itunes:category text="Arts" />
+ <itunes:category text="News" />
+ <itunes:image href="https://thisamericanlife.org/sites/all/themes/thislife/img/tal-logo-3000x3000.png" />

@@ -63,6 +63,148 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertTrue(h.events.isEmpty)
     }
 
+    // MARK: Listening Map packets (#1471)
+
+    func testAMapPacketForAnArticleInTheLibraryIsMatchedAndAddsChaptersWithoutMargins() async throws {
+        let h = try makeHarness()
+        let item = try h.seedArticle(id: "mine", reference: "https://example.com/harbour")
+        let packet = try h.writeMapPacket(named: "map-a")
+
+        assertStaged(h.coordinator.stage(from: packet.url))
+
+        let review = try XCTUnwrap(h.coordinator.review)
+        XCTAssertTrue(review.isListeningMap)
+        XCTAssertEqual(review.mapChapterCount, 5)
+        XCTAssertEqual(review.matchingItemId, item.id)
+        XCTAssertFalse(review.replacesExistingMap)
+        XCTAssertFalse(review.requiresRecipientItem)
+
+        await h.confirmCurrentReview()
+
+        XCTAssertEqual(try h.store.loadListeningMap(itemId: item.id)?.chapters.count, 5)
+        XCTAssertEqual(try h.store.loadPortableListeningMapProposals(itemId: item.id).first?.id, "map-a")
+        XCTAssertEqual(try h.store.loadImportedCommentaryLayers(itemId: item.id).count, 0, "a map makes no Margin layer")
+        XCTAssertEqual(h.shownItems, [item.id])
+        XCTAssertEqual(h.confirmations.last, "Added the Listening Map: 5 chapters. Playback has not started.")
+        XCTAssertNil(h.coordinator.review)
+        XCTAssertFalse(h.coordinator.isImporting)
+        XCTAssertTrue(h.packetImports.isEmpty)
+    }
+
+    func testAddingTheSameMapAgainSaysItIsAlreadyThereAndDuplicatesNothing() async throws {
+        let h = try makeHarness()
+        let item = try h.seedArticle(id: "mine", reference: "https://example.com/harbour")
+        let packet = try h.writeMapPacket(named: "map-a")
+        assertStaged(h.coordinator.stage(from: packet.url))
+        await h.confirmCurrentReview()
+        assertStaged(h.coordinator.stage(from: packet.url))
+
+        await h.confirmCurrentReview()
+
+        XCTAssertEqual(h.confirmations.last, "This Listening Map is already on your copy (5 chapters). Playback has not started.")
+        XCTAssertEqual(try h.store.loadPortableListeningMapProposals(itemId: item.id).count, 1)
+    }
+
+    func testAnotherMapIsOfferedAsAReplacementAndReplacesTheFirst() async throws {
+        let h = try makeHarness()
+        let item = try h.seedArticle(id: "mine", reference: "https://example.com/harbour")
+        assertStaged(h.coordinator.stage(from: try h.writeMapPacket(named: "map-a").url))
+        await h.confirmCurrentReview()
+
+        assertStaged(h.coordinator.stage(from: try h.writeMapPacket(named: "map-b").url))
+
+        XCTAssertEqual(h.coordinator.review?.replacesExistingMap, true, "the sheet says Replace Map before anything changes")
+        XCTAssertEqual(try h.store.loadPortableListeningMapProposals(itemId: item.id).map(\.id), ["map-a"])
+        await h.confirmCurrentReview()
+        XCTAssertEqual(try h.store.loadPortableListeningMapProposals(itemId: item.id).map(\.id), ["map-b"], "the new map is the only one left")
+        XCTAssertEqual(h.confirmations.last, "Added the Listening Map: 5 chapters. Playback has not started.")
+    }
+
+    func testAMapForAnArticleNotInTheLibraryFetchesItFirst() async throws {
+        let h = try makeHarness()
+        let fetched = Item(id: "fetched", title: "The Harbour Town", mediaType: "text", text: Self.harbourText,
+                           externalReference: "https://example.com/harbour", status: "ready", externalReferenceType: "url")
+        var fetchedFor: [String?] = []
+        h.acquireArticleHook = { identity in
+            fetchedFor.append(identity.canonicalURL)
+            try h.store.seed(item: fetched)
+            return fetched.id
+        }
+        assertStaged(h.coordinator.stage(from: try h.writeMapPacket(named: "map-a").url))
+        XCTAssertNil(h.coordinator.review?.matchingItemId)
+        XCTAssertEqual(h.coordinator.review?.requiresRecipientItem, false, "an article with a link is fetched, not asked for")
+
+        await h.confirmCurrentReview()
+
+        XCTAssertEqual(fetchedFor, ["https://example.com/harbour"])
+        XCTAssertEqual(try h.store.loadListeningMap(itemId: "fetched")?.chapters.count, 5)
+    }
+
+    func testAMapForAPDFTheListenerLacksAsksThemToAddIt() throws {
+        let h = try makeHarness()
+        let packet = try h.writeMapPacket(named: "map-pdf", itemType: .pdf, link: "https://example.com/harbour.pdf")
+
+        assertStaged(h.coordinator.stage(from: packet.url))
+
+        let review = try XCTUnwrap(h.coordinator.review)
+        XCTAssertNil(review.matchingItemId)
+        XCTAssertTrue(review.requiresRecipientItem, "a PDF can't be fetched from a link, so the listener picks their copy")
+        XCTAssertNil(h.coordinator.beginConfirmation())
+    }
+
+    func testAPickedPDFWithDifferentTextIsMatchedByWhereTheChaptersLand() throws {
+        let h = try makeHarness()
+        let pdf = try h.seedArticle(id: "pdf", reference: "harbour.pdf", mediaType: "pdf", text: Self.harbourText.replacingOccurrences(of: "harbour", with: "harbor"))
+        let packet = try h.writeMapPacket(named: "map-pdf", itemType: .pdf, link: nil)
+
+        assertStaged(h.coordinator.stage(from: packet.url))
+
+        XCTAssertEqual(h.coordinator.review?.matchingItemId, pdf.id)
+        XCTAssertEqual(h.coordinator.review?.requiresRecipientItem, false)
+    }
+
+    func testAMapThatDoesNotFitTheListenersCopySavesNothingAndSaysWhy() async throws {
+        let h = try makeHarness()
+        let item = try h.seedArticle(id: "mine", reference: "https://example.com/harbour",
+                                     text: "A different edition with entirely other words about gardens and tea.")
+        assertStaged(h.coordinator.stage(from: try h.writeMapPacket(named: "map-a").url))
+        XCTAssertEqual(h.coordinator.review?.matchingItemId, item.id, "matched by link")
+
+        await h.confirmCurrentReview()
+
+        XCTAssertNil(try h.store.loadListeningMap(itemId: item.id))
+        XCTAssertEqual(try h.store.loadPortableListeningMapProposals(itemId: item.id).count, 0)
+        XCTAssertEqual(h.coordinator.importError, SharedMarginsImportMessage.userFacing(SessionKitError.persistenceFailed("shared_map_not_found_in_item")))
+        XCTAssertFalse(h.coordinator.isImporting)
+        XCTAssertNotNil(h.coordinator.review, "the sheet stays so the listener can cancel")
+    }
+
+    func testTheAppGetsToSaveTheMapSoARunningSessionHearsAboutIt() async throws {
+        let h = try makeHarness()
+        let item = try h.seedArticle(id: "mine", reference: "https://example.com/harbour")
+        assertStaged(h.coordinator.stage(from: try h.writeMapPacket(named: "map-a").url))
+
+        await h.confirmCurrentReview()
+
+        XCTAssertEqual(h.attachedMaps.map(\.itemId), [item.id])
+        XCTAssertEqual(h.attachedMaps.first?.chapters.count, 5)
+    }
+
+    func testARefusalFromThePlayingItemLeavesNoMapBehindAndCanBeTriedAgain() async throws {
+        let h = try makeHarness()
+        let item = try h.seedArticle(id: "mine", reference: "https://example.com/harbour")
+        h.attachFailure = SessionKitError.persistenceFailed("shared_map_item_is_playing")
+        assertStaged(h.coordinator.stage(from: try h.writeMapPacket(named: "map-a").url))
+        await h.confirmCurrentReview()
+
+        XCTAssertEqual(h.coordinator.importError, SharedMarginsImportMessage.userFacing(SessionKitError.persistenceFailed("shared_map_item_is_playing")))
+        XCTAssertEqual(try h.store.loadPortableListeningMapProposals(itemId: item.id).count, 0)
+
+        h.attachFailure = nil
+        await h.confirmCurrentReview()
+        XCTAssertEqual(h.confirmations.last, "Added the Listening Map: 5 chapters. Playback has not started.")
+    }
+
     // MARK: Cancel
 
     func testCancelClearsTheReviewAndRemovesItsFolder() throws {
@@ -293,6 +435,15 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
     // MARK: Fixtures
 
     private static let alphaText = "Alpha is a short essay about listening slowly. The exact phrase to remember is quiet mornings help."
+    private static let harbourParagraphs = [
+        "The harbour town woke slowly that morning, with the fishing boats rocking against their ropes and the gulls arguing over scraps on the quay.",
+        "Marta carried her father's ledger down to the customs shed, where a clerk with ink on his cuffs promised to read every line before noon.",
+        "By midday the wind had turned, and the captains began to say that the barometer was falling faster than anyone had seen since the great storm.",
+        "Nobody believed the old signalman until the lamps along the breakwater began to swing, and then the whole street went quiet at once.",
+        "Evening brought the first rain, a thin grey curtain that blurred the lights of the ferry and sent the children running for the arcade."
+    ]
+    fileprivate static let harbourText = harbourParagraphs.joined(separator: "\n\n")
+
     private static let betaText = "Beta is another short essay, about margins. The exact phrase to remember is notes become conversations."
 
     private func makeHarness() throws -> ImportHarness {
@@ -341,6 +492,9 @@ private final class ImportHarness {
     var events: [String] = []
     var showImportedItemFailure: Error?
     var forceSourceMiss = false
+    var acquireArticleHook: ((SharedItemIdentity) throws -> String)?
+    var attachedMaps: [ListeningMap] = []
+    var attachFailure: Error?
 
     var incomingDirectory: URL {
         supportDirectory.appending(path: "SpokenMargins/IncomingPackages", directoryHint: .isDirectory)
@@ -353,6 +507,35 @@ private final class ImportHarness {
         try FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
         store = try SQLiteSessionStore(path: root.appendingPathComponent("recipient.sqlite").path)
         coordinator = SpokenMarginsPackageImportCoordinator(environment: makeEnvironment())
+    }
+
+    @discardableResult
+    func seedArticle(id: String, reference: String, mediaType: String = "text", text: String = SpokenMarginsPackageImportCoordinatorTests.harbourText) throws -> Item {
+        let item = Item(id: id, title: "The Harbour Town", mediaType: mediaType, text: text,
+                        externalReference: reference, status: "ready", externalReferenceType: "url")
+        try store.seed(item: item)
+        return item
+    }
+
+    /// A map-only packet for the harbour story: five chapters, no Margins.
+    func writeMapPacket(named name: String, itemType: SharedItemType = .text, link: String? = "https://example.com/harbour") throws -> WrittenPacket {
+        let text = SpokenMarginsPackageImportCoordinatorTests.harbourText
+        let blocks = ListeningEdition.blocks(in: text)
+        let proposal = try ListeningMapPacketBuilder.proposal(
+            id: name, generator: "test", languageCode: "en", createdAt: Date(timeIntervalSince1970: 1_777_000_000),
+            scenes: blocks.enumerated().map { index, block in
+                .init(title: "Part \(index + 1)", summary: "Summary \(index + 1) of the harbour story.", startChar: block.startChar, endChar: block.endChar)
+            },
+            text: text
+        )
+        let prepared = try ListeningMapPacketBuilder.prepare(
+            packageId: "package-\(name)", createdAt: Date(timeIntervalSince1970: 1_777_000_000),
+            item: ListeningMapPacketBuilder.identity(itemType: itemType, title: "The Harbour Town", canonicalURL: link, text: text),
+            proposal: proposal, senderDisplayLabel: "Cole"
+        )
+        let url = root.appendingPathComponent("\(name).spokenmargins")
+        let manifest = try SpokenMarginsPackageArchive.write(prepared, to: url)
+        return WrittenPacket(url: url, digest: try XCTUnwrap(manifest.contentDigest))
     }
 
     func incomingFolderNames() -> [String] {
@@ -433,7 +616,10 @@ private final class ImportHarness {
             registerRemoteDownload: { _, _ in },
             resolvePodcastCommentary: { _, _ in },
             acquirePodcast: { _ in throw StubFailure() },
-            acquireArticle: { _ in throw StubFailure() },
+            acquireArticle: { [unowned self] identity in
+                guard let hook = self.acquireArticleHook else { throw StubFailure() }
+                return try hook(identity)
+            },
             offlineLedger: { store, rootDirectory in
                 OfflineStorageLedger(repository: store, rootDirectory: rootDirectory)
             },
@@ -447,7 +633,12 @@ private final class ImportHarness {
             },
             publishReview: { [unowned self] review in self.events.append("review:" + (review?.id.uuidString ?? "nil")) },
             publishIsImporting: { [unowned self] value in self.events.append("importing:\(value)") },
-            publishError: { [unowned self] message in self.events.append("error:" + (message ?? "nil")) }
+            publishError: { [unowned self] message in self.events.append("error:" + (message ?? "nil")) },
+            attachListeningMap: { [unowned self] map in
+                if let failure = self.attachFailure { throw failure }
+                self.attachedMaps.append(map)
+                try self.store.saveListeningMap(map)
+            }
         )
     }
 }

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<rss version="2.0"
+  xmlns:atom="http://www.w3.org/2005/Atom"
+  xmlns:cc="http://web.resource.org/cc/"
+  xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+  xmlns:media="http://search.yahoo.com/mrss/"
+  xmlns:content="http://purl.org/rss/1.0/modules/content/"
+  xmlns:podcast="https://podcastindex.org/namespace/1.0"
+  xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0"
+  xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+  xmlns:libsyn="https://rss.libsyn.com/ns.xml">
+
+  <channel>
+    <atom:link href="https://rss.libsyn.com/shows/474285/destinations/4022211.xml" rel="self" type="application/rss+xml"/>
+    <title>Very Bad Wizards</title>
+    <pubDate>Thu, 08 Oct 2026 13:52:24 +0000</pubDate>
+    <lastBuildDate>Thu, 08 Oct 2026 13:52:24 +0000</lastBuildDate>
+    <generator>Libsyn RSSgen 1.0</generator>
+    <libsyn:show-id>474285</libsyn:show-id>
+    
+    <libsyn:last-updated>2026-03-11T18:17:13Z</libsyn:last-updated>
+    
+    <link>http://sites.libsyn.com/474285/site</link>
+    <language>en</language>
+    <copyright><![CDATA[© 2025 Tamler Sommers and David Pizarro]]></copyright>
+    <docs>http://sites.libsyn.com/474285/site</docs>
+    <itunes:summary><![CDATA[Very Bad Wizards is a podcast featuring a philosopher (Tamler Sommers) and a psychologist (David Pizarro), who share a love for ethics, pop culture, and cognitive science, and who have a marked inability to distinguish sacred from profane. Each podcast includes discussions of moral philosophy, recent work on moral psychology and neuroscience, and the overlap between the two.]]></itunes:summary>
+    <image>
+      <url>https://static.libsyn.com/p/assets/5/2/6/a/526ac0bca875678727a2322813b393ee/VBW_logo2.jpg</url>
+      <title>Very Bad Wizards</title>
+      <link><![CDATA[http://sites.libsyn.com/474285/site]]></link>
+    </image>
+    <itunes:author>Tamler Sommers &amp; David Pizarro</itunes:author>
+		<itunes:category text="Society &amp; Culture">
+  <itunes:category text="Philosophy" />
+</itunes:category>
+<itunes:category text="Society &amp; Culture" />
+    <itunes:image href="https://static.libsyn.com/p/assets/5/2/6/a/526ac0bca875678727a2322813b393ee/VBW_logo2.jpg" />
+    <itunes:explicit>true</itunes:explicit>
+    <itunes:owner>
+      <itunes:name>Tamler Sommers &amp; David Pizarro</itunes:name>
+      <itunes:email>verybadwizards@gmail.com</itunes:email>
+    </itunes:owner>
+    <description><![CDATA[Very Bad Wizards is a podcast featuring a philosopher (Tamler Sommers) and a psychologist (David Pizarro), who share a love for ethics, pop culture, and cognitive science, and who have a marked inability to distinguish sacred from profane. Each podcast includes discussions of moral philosophy, recent work on moral psychology and neuroscience, and the overlap between the two.]]></description>
+    
+    <itunes:type>episodic</itunes:type>
+    
+
+    <itunes:keywords />
+
+    
+
+    
+    <podcast:locked owner="verybadwizards@gmail.com">no</podcast:locked>
+    
+    
+    
+    
+    
+    

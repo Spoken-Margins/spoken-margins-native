@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<rss version="2.0"
+  xmlns:atom="http://www.w3.org/2005/Atom"
+  xmlns:cc="http://web.resource.org/cc/"
+  xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+  xmlns:media="http://search.yahoo.com/mrss/"
+  xmlns:content="http://purl.org/rss/1.0/modules/content/"
+  xmlns:podcast="https://podcastindex.org/namespace/1.0"
+  xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0"
+  xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+  xmlns:libsyn="https://rss.libsyn.com/ns.xml">
+
+  <channel>
+    <atom:link href="https://rss.libsyn.com/shows/551312/destinations/4758622.xml" rel="self" type="application/rss+xml"/>
+    <title>Extend Podcast with Darshan Shah, MD</title>
+    <pubDate>Thu, 15 Oct 2026 09:08:26 +0000</pubDate>
+    <lastBuildDate>Thu, 15 Oct 2026 09:08:26 +0000</lastBuildDate>
+    <generator>Libsyn RSSgen 1.0</generator>
+    <libsyn:show-id>551312</libsyn:show-id>
+    
+    <libsyn:last-updated>2026-10-01T00:55:17Z</libsyn:last-updated>
+    
+    <link>https://drshah.com/</link>
+    <language>en</language>
+    <copyright><![CDATA[2024]]></copyright>
+    <docs>https://drshah.com/</docs>
+    <itunes:summary><![CDATA[Extend with Darshan Shah, MD is a podcast dedicated to cutting-edge science, research, tools, and protocols designed to help you extend your healthspan.
+
+Starting my medical journey at 16 and becoming one of the youngest doctors in the country, studying and training at the Mayo Clinic, Harvard Business School, Singularity University and other prestigious institutions, becoming a board certified surgeon and accumulating over two decades of practice, I have discovered that a mere 20% of health knowledge yields 80% of the results.
+
+That's why this podcast is all about cutting through the noise on how to turn back the aging clock.
+I interview world-renowned medical practitioners, doctors, experts, and thought leaders, offering you a step-by-step guide and actionable advice to proactively avoid disease and optimize your health. 
+
+Plus, I share weekly solo episodes giving you quick, digestible protocols for successfully extending your healthspan.]]></itunes:summary>
+    <image>
+      <url>https://static.libsyn.com/p/assets/d/5/1/7/d5176cf64b959ae8e55e3c100dce7605/DARSHAN_SHAH_MD.-3.png</url>
+      <title>Extend Podcast with Darshan Shah, MD</title>
+      <link><![CDATA[https://drshah.com/]]></link>
+    </image>
+    <itunes:author>Darshan Shah, MD</itunes:author>
+		<itunes:category text="Health &amp; Fitness">
+  <itunes:category text="Medicine" />
+</itunes:category>
+<itunes:category text="Health &amp; Fitness">
+  <itunes:category text="Nutrition" />
+</itunes:category>
+    <itunes:image href="https://static.libsyn.com/p/assets/d/5/1/7/d5176cf64b959ae8e55e3c100dce7605/DARSHAN_SHAH_MD.-3.png" />
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:owner>
+      <itunes:name>Darshan Shah, MD</itunes:name>
+      <itunes:email>podcast@drshah.com</itunes:email>
+    </itunes:owner>
+    <description><![CDATA[Extend with Darshan Shah, MD is a podcast dedicated to cutting-edge science, research, tools, and protocols designed to help you extend your healthspan.
+
+Starting my medical journey at 16 and becoming one of the youngest doctors in the country, studying and training at the Mayo Clinic, Harvard Business School, Singularity University and other prestigious institutions, becoming a board certified surgeon and accumulating over two decades of practice, I have discovered that a mere 20% of health knowledge yields 80% of the results.
+
+That's why this podcast is all about cutting through the noise on how to turn back the aging clock.
+I interview world-renowned medical practitioners, doctors, experts, and thought leaders, offering you a step-by-step guide and actionable advice to proactively avoid disease and optimize your health. 
+
+Plus, I share weekly solo episodes giving you quick, digestible protocols for successfully extending your healthspan.]]></description>
+    
+    <itunes:type>episodic</itunes:type>
+    
+
+    <itunes:keywords />
+
+    
+
+    
+    <podcast:locked owner="podcast@drshah.com">no</podcast:locked>
+    
+    
+    
+    
+    
+    

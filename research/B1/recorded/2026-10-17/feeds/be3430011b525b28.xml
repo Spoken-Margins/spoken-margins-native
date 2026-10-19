@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/SBP4591212513" rel="self" type="application/rss+xml"/>
+    <title>Welcome to Night Vale</title>
+    <link>http://welcometonightvale.com</link>
+    <language>en</language>
+    <copyright>2016, Night Vale Presents</copyright>
+    <description>Twice-monthly community updates for the small desert town of Night Vale, where every conspiracy theory is true. Turn on your radio and hide. Never listened before? It's an ongoing radio show. Start with the current episode, and you'll catch on in no time. Or, go right to Episode 1 if you wanna binge-listen.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/83c028bc-3b63-11f0-86bb-17a55ed91a19/image/d6f0573de211e3ccc3403f81c80687d3.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>Welcome to Night Vale</title>
+      <link>http://welcometonightvale.com</link>
+    </image>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle>Twice-monthly community updates for the small desert town of Night Vale, where every conspiracy theory is true.</itunes:subtitle>
+    <itunes:author>Night Vale Presents</itunes:author>
+    <itunes:summary>Twice-monthly community updates for the small desert town of Night Vale, where every conspiracy theory is true. Turn on your radio and hide. Never listened before? It's an ongoing radio show. Start with the current episode, and you'll catch on in no time. Or, go right to Episode 1 if you wanna binge-listen.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>Twice-monthly community updates for the small desert town of Night Vale, where every conspiracy theory is true. Turn on your radio and hide. Never listened before? It's an ongoing radio show. Start with the current episode, and you'll catch on in no time. Or, go right to Episode 1 if you wanna binge-listen.</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Welcome to Night Vale</itunes:name>
+      <itunes:email>info@welcometonightvale.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/83c028bc-3b63-11f0-86bb-17a55ed91a19/image/d6f0573de211e3ccc3403f81c80687d3.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Fiction">
+      <itunes:category text="Science Fiction"/>
+    </itunes:category>
+    

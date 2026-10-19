@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <atom:link href="https://feeds.simplecast.com/WfThhbae" rel="self" title="MP3 Audio" type="application/atom+xml"/>
+    <atom:link href="https://simplecast.superfeedr.com" rel="hub" xmlns="http://www.w3.org/2005/Atom"/>
+    <generator>https://simplecast.com</generator>
+    <title>Big Ideas Lab</title>
+    <description>Your exploration inside Lawrence Livermore National Laboratory. Hear untold stories, meet boundary-pushing pioneers and get unparalleled access to groundbreaking science and technology. From national security challenges to computing revolutions, discover the innovations that are shaping tomorrow, today.</description>
+    <copyright>2024 Mission.org</copyright>
+    <language>en</language>
+    <pubDate>Tue, 13 Oct 2026 11:00:00 +0000</pubDate>
+    <lastBuildDate>Tue, 13 Oct 2026 11:00:15 +0000</lastBuildDate>
+    <image>
+      <link>https://big-ideas-lab-528f0970.simplecast.com</link>
+      <title>Big Ideas Lab</title>
+      <url>https://image.simplecastcdn.com/images/021681d1-f709-484c-bcbd-724e31176de5/5314856b-ca03-41b3-b1d4-007ee78cd8cd/3000x3000/big-20ideas-20lab-podcast-20nov2024-20update.jpg?aid=rss_feed</url>
+    </image>
+    <link>https://big-ideas-lab-528f0970.simplecast.com</link>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>Your exploration inside Lawrence Livermore National Laboratory. Hear untold stories, meet boundary-pushing pioneers and get unparalleled access to groundbreaking science and technology. From national security challenges to computing revolutions, discover the innovations that are shaping tomorrow, today.</itunes:summary>
+    <itunes:author>Mission.org</itunes:author>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:image href="https://image.simplecastcdn.com/images/021681d1-f709-484c-bcbd-724e31176de5/5314856b-ca03-41b3-b1d4-007ee78cd8cd/3000x3000/big-20ideas-20lab-podcast-20nov2024-20update.jpg?aid=rss_feed"/>
+    <itunes:new-feed-url>https://feeds.simplecast.com/WfThhbae</itunes:new-feed-url>
+    <itunes:keywords>astronomy, astrophsyics, bioengineering, bioscience, defense, department of defense, energy, engineering, government, life science, llnl, military, national labs, national security, nuclear deterrence, nuclear engineering, nnsa, physics, science, technology, weapons</itunes:keywords>
+    <itunes:owner>
+      <itunes:name>Mission.org</itunes:name>
+      <itunes:email>info@mission.org</itunes:email>
+    </itunes:owner>
+    <itunes:category text="Science">
+      <itunes:category text="Physics"/>
+    </itunes:category>
+    <itunes:category text="History"/>
+    <itunes:category text="Government"/>
+    

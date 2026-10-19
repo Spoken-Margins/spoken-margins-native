@@ -29,6 +29,7 @@ HISTORY_ONLY_PATHS = {
     r'(?:^|/)Packages/SessionKit/Tests/SessionKitTests/OPMLTests\.swift$',
     r'(?:^|/)Packages/SessionKit/Tests/SessionKitTests/SourceResolutionTests\.swift$',
     r'(?:^|/)artifacts/.+\.(?:ips|txt)$',
+    r'(?:^|/)research/B1/recorded/2026-09-28/lookup-02\.json$',
 }
 
 

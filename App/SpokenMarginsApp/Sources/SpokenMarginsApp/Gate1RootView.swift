@@ -34,7 +34,7 @@ struct Gate1RootView: View {
                     PlaybackScreen()
                 case .timeline:
                     ExperienceTimelineRailScreen().announcesScreenChange()
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .motionTransition(.move(edge: .bottom).combined(with: .opacity))
                 case .settings:
                     SettingsScreen().announcesScreenChange()
                 case .offlineStorage:
@@ -187,7 +187,7 @@ private struct AIDataSharingConsentView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     Label("Send this content to OpenAI?", systemImage: "hand.raised.fill")
                         .font(.title2.bold())
-                    Text("A live AI request can include the source text needed for the task, your Margin transcripts, the current follow-up, nearby anchors, and recent conversation turns.")
+                    Text("A live AI request can include the source text needed for the task, your Margin transcripts, the current follow-up, nearby words, and recent conversation turns.")
                     Text("Spoken Margins does not send recorded audio, local file paths, or internal database identifiers. Requests disable OpenAI response storage. You can revoke permission or delete your API key in Settings.")
                         .foregroundStyle(AppColors.secondaryText)
                     Link("Read the Privacy Policy", destination: AppLinks.privacy)
@@ -368,7 +368,7 @@ struct InterjectionDetailView: View {
                             copied = false
                         }
                     } label: {
-                        Label(copied ? "Copied" : "Copy Transcript and Anchors", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        Label(copied ? "Copied" : "Copy with Context", systemImage: copied ? "checkmark" : "doc.on.doc")
                     }
                     .accessibilityIdentifier("interjection.detail.copy")
                     if current.captureKind != .written {
@@ -376,9 +376,9 @@ struct InterjectionDetailView: View {
                         model.retryInterjectionTranscription(current)
                     } label: {
                         if model.isRetryingInterjectionTranscription(current) {
-                            Label("Retranscribing Saved Audio", systemImage: "waveform.badge.magnifyingglass")
+                            Label("Transcribing again", systemImage: "waveform.badge.magnifyingglass")
                         } else {
-                            Label("Retranscribe Saved Audio", systemImage: "waveform")
+                            Label("Transcribe again", systemImage: "waveform")
                         }
                     }
                     .disabled(current.audioPath == nil || model.isRetryingInterjectionTranscription(current))
@@ -401,7 +401,7 @@ struct InterjectionDetailView: View {
                         )
                     )
                     .accessibilityIdentifier("interjection.detail.shareStar")
-                    TextField("Private note for sender review", text: $privateSharingNoteDraft, axis: .vertical)
+                    TextField("Private note for yourself", text: $privateSharingNoteDraft, axis: .vertical)
                         .lineLimit(2...5)
                         .onCompatibleChange(of: privateSharingNoteDraft) { value in
                             if value.count > Gate1AppModel.privateSharingNoteCharacterLimit {
@@ -424,8 +424,8 @@ struct InterjectionDetailView: View {
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                 }
-                Section("Anchors") {
-                    LabeledContent("Context status", value: anchorContextStatusLabel(current))
+                Section("Where in the source") {
+                    LabeledContent("Nearby words", value: anchorContextStatusLabel(current))
                     Text("Before")
                         .font(.headline)
                     Text(anchorContextText(current.anchor.anchorBefore, status: current.captureKind == .written ? .unavailable : current.anchorContextStatus))
@@ -445,7 +445,7 @@ struct InterjectionDetailView: View {
                     Button(role: .destructive) {
                         pendingDeletion = .interjection
                     } label: {
-                        Label("Delete Interjection", systemImage: "trash")
+                        Label("Delete Margin", systemImage: "trash")
                     }
                     .accessibilityIdentifier("interjection.detail.delete")
                 }
@@ -468,7 +468,7 @@ struct InterjectionDetailView: View {
                 }
             }
             .confirmationDialog(
-                pendingDeletion == .transcript ? "Delete this transcript?" : "Delete this interjection?",
+                pendingDeletion == .transcript ? "Delete this transcript?" : "Delete this Margin?",
                 isPresented: Binding(
                     get: { pendingDeletion != nil },
                     set: { if !$0 { pendingDeletion = nil } }
@@ -482,14 +482,14 @@ struct InterjectionDetailView: View {
                         dismiss()
                     }
                 } else {
-                    Button("Delete Interjection", role: .destructive) {
+                    Button("Delete Margin", role: .destructive) {
                         model.deleteInterjection(current)
                         pendingDeletion = nil
                         dismiss()
                     }
                 }
                 Button("Cancel", role: .cancel) { pendingDeletion = nil }
-            }
+            } message: { Text(pendingDeletion == .transcript ? "The transcript will be removed." : (current.captureKind == .written ? "Its words will be removed." : "Its voice recording and words will be removed.")) }
         }
     }
 }
@@ -606,7 +606,7 @@ private func interjectionTargetLabel(_ interjection: Interjection) -> String {
     switch interjection.targetType {
     case .item: return "Source"
     case .assistantTurn: return "AI response"
-    case .summaryTurn: return "Interjection summary"
+    case .summaryTurn: return "Margin summary"
     }
 }
 

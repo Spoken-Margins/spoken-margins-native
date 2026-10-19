@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <atom:link href="https://feeds.simplecast.com/dloY8UYJ" rel="self" title="MP3 Audio" type="application/atom+xml"/>
+    <atom:link href="https://simplecast.superfeedr.com" rel="hub" xmlns="http://www.w3.org/2005/Atom"/>
+    <generator>https://simplecast.com</generator>
+    <title>MrBallen Podcast: Strange, Dark &amp; Mysterious Stories</title>
+    <description>MrBallen Podcast: Strange, Dark and Mysterious Stories is a true crime and mystery podcast that presents strange, dark and mysterious content delivered in story format. The program is hosted by John Allen a.k.a. MrBallen.
+
+Subscribe to SiriusXM Podcasts+ to listen to new episodes 7-days early and ad-free. Start a free trial now on Apple Podcasts or by visiting siriusxm.com/podcastsplus.</description>
+    <copyright>© Ballen Studios</copyright>
+    <language>en</language>
+    <pubDate>Fri, 16 Oct 2026 07:00:00 +0000</pubDate>
+    <lastBuildDate>Fri, 16 Oct 2026 07:00:33 +0000</lastBuildDate>
+    <image>
+      <link>https://ballenstudios.com/</link>
+      <title>MrBallen Podcast: Strange, Dark &amp; Mysterious Stories</title>
+      <url>https://image.simplecastcdn.com/images/3c9c3c2a-a53f-40bd-9d24-bdb387b03fb1/eae76d2b-6d10-4d80-b309-a724ac0340f0/3000x3000/large-sxm-cover-mr-ballen-3000x3000-final.jpg?aid=rss_feed</url>
+    </image>
+    <link>https://ballenstudios.com/</link>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>MrBallen Podcast: Strange, Dark and Mysterious Stories is a true crime and mystery podcast that presents strange, dark and mysterious content delivered in story format. The program is hosted by John Allen a.k.a. MrBallen.
+
+Subscribe to SiriusXM Podcasts+ to listen to new episodes 7-days early and ad-free. Start a free trial now on Apple Podcasts or by visiting siriusxm.com/podcastsplus.</itunes:summary>
+    <itunes:author>Ballen Studios</itunes:author>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:image href="https://image.simplecastcdn.com/images/3c9c3c2a-a53f-40bd-9d24-bdb387b03fb1/eae76d2b-6d10-4d80-b309-a724ac0340f0/3000x3000/large-sxm-cover-mr-ballen-3000x3000-final.jpg?aid=rss_feed"/>
+    <itunes:new-feed-url>https://feeds.simplecast.com/dloY8UYJ</itunes:new-feed-url>
+    <itunes:keywords>True Story, storytelling, mrballen, mysterious, strange, dark</itunes:keywords>
+    <itunes:owner>
+      <itunes:name>MrBallen</itunes:name>
+      <itunes:email>cole@mrballenpodcast.com</itunes:email>
+    </itunes:owner>
+    <itunes:category text="True Crime"/>
+    

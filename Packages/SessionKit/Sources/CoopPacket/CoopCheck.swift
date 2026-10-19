@@ -49,6 +49,13 @@ enum CoopCheck {
                 }
                 continue
             }
+            if ListeningMapPacket.isMapPacket(packet.contents.manifest) {
+                // A map-only packet has no Margins to merge. It must read here and be refused, in the usual
+                // words, by every earlier build (#1471).
+                checkMapPacket(packet, url: url, report: &report)
+                try? FileManager.default.removeItem(at: packet.assetFolder)
+                continue
+            }
             packets.append(packet)
             let expected = packet.margins.map { ($0.packageScopedId, $0.defaultRepresentation?.approvedTranscript ?? "") }
             do {
@@ -101,6 +108,22 @@ enum CoopCheck {
             noteResentMargins(group, report: &report)
         }
         return report
+    }
+
+    private static func checkMapPacket(_ packet: OpenedPacket, url: URL, report: inout Report) {
+        let name = url.lastPathComponent
+        let scenes = ListeningMapPacket.proposal(in: packet.contents)?.scenes.count ?? 0
+        report.pass("\(name): current reader reads a map of \(scenes) chapter(s) and no Margins")
+        do {
+            let shipped = try ShippedPacketReader.importedMargins(at: url)
+            report.fail("\(name): Build 29 imported it (\(shipped.count) Margin(s)); it should refuse a map-only packet")
+        } catch {
+            if "\(error)".contains("unsupportedRequiredCapability") {
+                report.pass("\(name): Build 29 refuses it as needing a newer version, as intended")
+            } else {
+                report.fail("\(name): Build 29 refused it for another reason: \(error)")
+            }
+        }
     }
 
     /// A sender who shares again after adding Margins sends the earlier ones in a new packet. The
