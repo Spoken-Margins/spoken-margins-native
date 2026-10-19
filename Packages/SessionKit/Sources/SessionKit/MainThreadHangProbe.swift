@@ -55,7 +55,8 @@ public final class MainThreadOperationLabels: @unchecked Sendable {
 /// report when there is a hang.
 ///
 /// A phone that suspends the app freezes the probe's timer too. The probe notices a long gap between its own
-/// ticks and drops the block in flight, so a suspension is never reported as a hang.
+/// ticks (when it ticks next, or when the late block finally runs) and drops the block in flight, so a
+/// suspension is never reported as a hang.
 public final class MainThreadHangProbe: @unchecked Sendable {
     public struct Hang: Sendable, Equatable {
         /// How long the main thread took to answer, in milliseconds.
@@ -74,7 +75,8 @@ public final class MainThreadHangProbe: @unchecked Sendable {
     private let watched: DispatchQueue
     private let labels: MainThreadOperationLabels
     private let onHang: @Sendable (Hang) -> Void
-    private let probeQueue = DispatchQueue(label: "spoken-margins.hang-probe", qos: .utility)
+    // Above the work it watches for, so a busy phone does not hold the probe back with it.
+    private let probeQueue = DispatchQueue(label: "spoken-margins.hang-probe", qos: .userInitiated)
 
     private let lock = NSLock()
     private var timer: DispatchSourceTimer?
@@ -141,11 +143,14 @@ public final class MainThreadHangProbe: @unchecked Sendable {
 
     private static func now() -> TimeInterval { ProcessInfo.processInfo.systemUptime }
 
+    /// A gap between the probe's own ticks longer than this means the process was frozen, not just the main thread.
+    private var frozenGapMs: Double { Double(max(intervalMs * 4, thresholdMs * 4)) }
+
     private func tick() {
         let now = Self.now()
         lock.lock()
         guard timer != nil else { lock.unlock(); return }
-        if let last = lastTick, (now - last) * 1000 > Double(max(intervalMs * 4, thresholdMs * 2)) {
+        if let last = lastTick, (now - last) * 1000 > frozenGapMs {
             // The whole process was frozen, not just the main thread. The block in flight is stale.
             epoch &+= 1
             pendingSince = nil
@@ -170,6 +175,13 @@ public final class MainThreadHangProbe: @unchecked Sendable {
         lock.lock()
         guard sentEpoch == epoch else { lock.unlock(); return }
         pendingSince = nil
+        // The probe's thread keeps ticking through a real hang. If it has not ticked lately, the app was
+        // suspended with this block in flight, and the wait is the suspension.
+        if let last = lastTick, (now - last) * 1000 > frozenGapMs {
+            stalledOperation = ""
+            lock.unlock()
+            return
+        }
         var operation = stalledOperation
         stalledOperation = ""
         lock.unlock()

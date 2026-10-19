@@ -15,12 +15,16 @@ final class HangTelemetry {
     /// The names of the work the main thread is in; the probe reads them while the thread is stuck.
     nonisolated let labels = MainThreadOperationLabels.shared
 
-    /// Hangs written in one run. The always-on event log keeps 300 events, so a long run of stalls must not push
-    /// the transport history out of it; past this, later hangs are not written (the last record says so with `lastOfRun`).
-    static let maxHangRecordsPerRun = 50
+    /// At most this many hangs are written in any `hangWindowSeconds`. The always-on event log keeps 300 events,
+    /// so a long run of stalls must not push the transport history out of it. Hangs left out are counted in the
+    /// next record's `skipped` field.
+    static let maxHangRecordsPerWindow = 20
+    static let hangWindowSeconds: TimeInterval = 600
 
     private var probe: MainThreadHangProbe?
     private var hangRecords = 0
+    private var hangWindowStart: TimeInterval = 0
+    private var hangsSkipped = 0
     private var taps = TapToStateTracker()
     private var lastTapCommand = "none"
     private var lastTapAt: TimeInterval?
@@ -34,22 +38,33 @@ final class HangTelemetry {
         context: @escaping @MainActor () -> [String: String]
     ) {
         guard probe == nil else { return }
-        let probe = MainThreadHangProbe { [weak self] hang in
+        let newProbe = MainThreadHangProbe { [weak self] hang in
             // The probe watches the main queue, so this runs on the main thread, after the hang is over.
             MainActor.assumeIsolated {
                 guard let self else { return }
-                guard self.hangRecords < Self.maxHangRecordsPerRun else { return }
+                let now = Self.now()
+                if now - self.hangWindowStart > Self.hangWindowSeconds {
+                    self.hangWindowStart = now
+                    self.hangRecords = 0
+                }
+                guard self.hangRecords < Self.maxHangRecordsPerWindow else {
+                    self.hangsSkipped += 1
+                    return
+                }
                 self.hangRecords += 1
                 var fields = context()
-                if self.hangRecords == Self.maxHangRecordsPerRun { fields["lastOfRun"] = "true" }
+                if self.hangsSkipped > 0 {
+                    fields["skipped"] = String(self.hangsSkipped)
+                    self.hangsSkipped = 0
+                }
                 fields["durationMs"] = String(hang.durationMs)
                 fields["operation"] = hang.operation.isEmpty ? "none" : hang.operation
                 fields.merge(self.lastTapFields()) { current, _ in current }
                 record("main.hang", fields)
             }
         }
-        self.probe = probe
-        probe.start(intervalMs: Self.foregroundIntervalMs)
+        probe = newProbe
+        newProbe.start(intervalMs: Self.foregroundIntervalMs)
     }
 
     func setForeground(_ foreground: Bool) {

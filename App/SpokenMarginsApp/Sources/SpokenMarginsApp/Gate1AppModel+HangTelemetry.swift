@@ -28,6 +28,16 @@ extension Gate1AppModel {
         hangTelemetry.labels.scoped("playPauseTapped") { playPause() }
     }
 
+    /// The pill's play button on a finished item, which starts the item again.
+    func finishedPlayTapped(id: String) {
+        recordDeveloperDiagnostic("transport.request", [
+            "command": "restartFinished", "origin": "app_ui",
+            "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1), "requestedMediaTimeMs": "-1"
+        ])
+        hangTelemetry.noteTap(command: "restartFinished", status: snapshot.status.rawValue)
+        startNewSession(id: id)
+    }
+
     /// Called when the playback status changes: closes the wait of a tap that caused it.
     func recordTapAnswer(previous: SessionSnapshot) {
         guard previous.status != snapshot.status,

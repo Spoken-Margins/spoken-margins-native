@@ -238,6 +238,10 @@ final class PreviousRunExitTests: XCTestCase {
         XCTAssertEqual(exit.fields["hangFramesBinary"], "AAAA0000-0000-0000-0000-000000000001")
         XCTAssertEqual(exit.fields["hangDuration"], "26 sec")
         XCTAssertNil(exit.fields["cpuFrames"])
+        let everything = exit.fields.keys.joined(separator: " ") + " " + exit.fields.values.joined(separator: " ")
+        for leak in ["callStack", "UIKitCore", "libsystem", "dyld", "KKKK"] {
+            XCTAssertFalse(everything.contains(leak), "other binaries and the stack's own keys stay out: \(leak)")
+        }
     }
 
     func testFramesAreCappedAtEightAndOnlyTheAppsOwnBinaryCounts() {
