@@ -157,6 +157,17 @@ final class VoiceCatalogCoordinatorTests: XCTestCase {
         XCTAssertEqual(rows.map(\.id), ["kitten"])
     }
 
+    func testAFourGigabyteIPhoneIsOfferedAVoiceThatNeedsFourGigabytes() async throws {
+        // An iPhone 12 or 13 has 4 GB on the box but iOS reports about 3,700 MB (#2055 audit 3).
+        for (reported, offered) in [(3_662, true), (3_750, true), (4_096, true), (2_867, false), (3_000, false), (5_700, true)] {
+            let voices = try coordinator(snapshot: [entry(memory: 4_096), kitten], memory: reported)
+            let rows = await voices.rows()
+            XCTAssertEqual(rows.contains { $0.id == "neural-1" }, offered, "a phone reporting \(reported) MB")
+        }
+        XCTAssertEqual(VoiceCatalogCoordinator.nominalMemoryMegabytes(reported: 7_400), 7_168)
+        XCTAssertEqual(VoiceCatalogCoordinator.nominalMemoryMegabytes(reported: 0), 0)
+    }
+
     // MARK: Agreement
 
     func testARestrictedLicenceMustBeAgreedBeforeAnyByteDownloads() async throws {
