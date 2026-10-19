@@ -3403,6 +3403,122 @@ class BootStallRetryTests(unittest.TestCase):
 
 
 
+def stalled_out_manifest():
+    """A verify-tests.py manifest whose xcode-tests step stalled at both launches (no test ran)."""
+    return {'status': 'failed_or_incomplete', 'error': 'xcode-tests: Test runner printed no test output in 2 launch(es)',
+            'steps': [{'name': 'xcode-tests', 'exit_code': 124, 'tests': {}, 'startup_attempts': 2,
+                       'errors': ['Test runner printed no test output in 2 launch(es) of 90s'],
+                       'startup_stalls': [{'attempt': n, 'after_seconds': 90.1, 'diagnosis': 'no host app process'}
+                                          for n in (1, 2)]}]}
+
+
+def passing_manifest(test='T/A'):
+    return {'status': 'verified', 'steps': [{'name': 'xcode-tests', 'exit_code': 0, 'errors': [],
+                                              'tests': {test: {'status': 'passed'}}}]}
+
+
+class FreshCloneRerunTests(unittest.TestCase):
+    """#2176: a plan that ends on its second startup stall runs once more on a fresh clone in the same job, instead of
+    reporting INCONCLUSIVE and going back to the queue (12 of 32 T3 runs stalled on 2026-10-19)."""
+
+    def run_t3(self, manifests, boots_fail=(), grouped=None):
+        import lane_sim
+        clones, released, commands = iter(['U1', 'U2', 'U3']), [], []
+        manifests = iter(manifests)
+
+        def boot(udid, label, **kw):
+            kw['info'].update(pressure='normal', pressure_waited=0, boot_window=(0.0, 1.0))
+            if udid in boots_fail:
+                raise lane_sim.BootError(f'simctl boot {udid} failed', stall=False)
+            return 40.0
+
+        def run_bounded(command, log, timeout):
+            commands.append(command)
+            output = Path(command[command.index('--output') + 1])
+            output.mkdir(parents=True)
+            (output / 'manifest.json').write_text(json.dumps(next(manifests)))
+            return 0
+
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        evidence = Path(temporary.name)
+        with mock.patch.object(lane_sim, 'clone_temporary', side_effect=lambda *a, **k: next(clones)), \
+                mock.patch.object(lane_sim, 'boot', side_effect=boot), \
+                mock.patch.object(lane_sim, 'start_watcher'), \
+                mock.patch.object(lane_sim, 'release', side_effect=lambda udid, *a, **k: released.append(udid)), \
+                mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
+                mock.patch.object(lane_sim, 'is_available', return_value=True), \
+                mock.patch.object(lane_sim, 'post_stall'), \
+                mock.patch.object(lane, 'run_bounded', side_effect=run_bounded):
+            result = lane._t3_on_claimed_device(grouped or {'app': ['T/A']}, 'r9', evidence,
+                                                'com.apple.CoreSimulator.SimRuntime.iOS-26-5')
+        devices = [command[command.index('--device') + 1] for command in commands]
+        outputs = [Path(command[command.index('--output') + 1]).name for command in commands]
+        return result, released, devices, outputs, evidence
+
+    def test_two_stalls_then_a_clean_run_on_a_fresh_clone_is_a_pass_in_the_same_job(self):
+        (verdict, _, ran, details, _, _), released, devices, outputs, evidence = self.run_t3(
+            [stalled_out_manifest(), passing_manifest()])
+        self.assertEqual(verdict, 'PASS')
+        self.assertEqual((devices, outputs), (['U1', 'U2'], ['verify-app', 'verify-app-fresh']))
+        self.assertEqual(released, ['U1', 'U2'])  # the stalled clone first, the fresh one after the run
+        line = next(line for line in details if 'two startup stalls on clone U1' in line)
+        self.assertIn('fresh clone (U2) in the same job', line)
+        self.assertIn('no host app process', line)
+        self.assertIn('1 passed', ran)
+        saved = json.loads((evidence / lane.FRESH_RERUNS).read_text())
+        self.assertEqual([(r['plan'], r['stalled'], r['fresh'], r['status']) for r in saved],
+                         [('app', 'U1', 'U2', 'verified')])
+
+    def test_a_rerun_that_stalls_too_stays_inconclusive_and_is_not_rerun_again(self):
+        (verdict, *_), released, devices, _, _ = self.run_t3([stalled_out_manifest(), stalled_out_manifest()])
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertEqual((devices, released), (['U1', 'U2'], ['U1', 'U2']))
+
+    def test_only_one_rerun_per_job(self):
+        # A Mac that stalls every launch costs one more plan, not one per plan.
+        (verdict, *_), _, devices, outputs, _ = self.run_t3(
+            [stalled_out_manifest(), passing_manifest(), stalled_out_manifest()],
+            grouped={'app': ['T/A'], 'adapters': ['T/B']})
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertEqual(outputs, ['verify-app', 'verify-app-fresh', 'verify-adapters'])
+        self.assertEqual(devices, ['U1', 'U2', 'U2'])
+
+    def test_a_failing_test_after_the_stalls_is_the_prs_fail_and_is_not_rerun(self):
+        manifest = stalled_out_manifest()
+        manifest['steps'][0]['tests'] = {'T/A': {'status': 'failed'}}
+        (verdict, *_), _, devices, _, _ = self.run_t3([manifest])
+        self.assertEqual((verdict, devices), ('FAIL', ['U1']))
+        self.assertFalse(lane.startup_stalled_out(manifest))
+
+    def test_one_recovered_stall_is_already_a_pass_and_is_not_rerun(self):
+        manifest = passing_manifest()
+        manifest['steps'][0].update(startup_recovered=True, startup_stalls=[{'attempt': 1}])
+        (verdict, *_), _, devices, _, _ = self.run_t3([manifest])
+        self.assertEqual((verdict, devices), ('PASS', ['U1']))
+
+    def test_a_fresh_clone_that_does_not_boot_keeps_the_inconclusive_and_runs_nothing_more(self):
+        (verdict, _, _, details, _, _), released, devices, _, evidence = self.run_t3(
+            [stalled_out_manifest()], boots_fail={'U2'}, grouped={'app': ['T/A'], 'adapters': ['T/B']})
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertEqual(devices, ['U1'])  # neither the rerun nor the adapters plan ran on a device that isn't up
+        self.assertEqual(released, ['U1', 'U2'])
+        self.assertTrue(any('could not start' in line and 'simctl boot U2 failed' in line for line in details))
+        self.assertTrue(any('not run: adapters' in line for line in details))
+        self.assertIn('simctl boot U2 failed', json.loads((evidence / lane.FRESH_RERUNS).read_text())[0]['boot'])
+
+    def test_each_rerun_is_logged_on_the_stall_issue(self):
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / lane.FRESH_RERUNS).write_text(json.dumps([{
+                'plan': 'app', 'stalled': 'U1', 'fresh': 'U2', 'status': 'verified', 'first': '/e/verify-app',
+                'output': '/e/verify-app-fresh',
+                'stalls': [{'attempt': 1, 'after_seconds': 90.1, 'diagnosis': 'no host app process'}]}]))
+            posted = []
+            self.assertEqual(lane.log_recovered_stalls(Path(folder), 5, HEAD, 'https://example.test/r', posted.append), 1)
+        self.assertIn('the `app` plan of the T3 run for PR #5 at `aaaaaaa` (https://example.test/r)', posted[0])
+        self.assertIn('Launch 1 on clone `U1`: no test output 90.1s after launch; no host app process', posted[0])
+        self.assertIn('ended `verified` (clone `U2`)', posted[0])
+
 class TrustedCommentTests(unittest.TestCase):
     """Once the repository is public, only the owner, collaborators and the project's bot steer the lane (#1719)."""
 
