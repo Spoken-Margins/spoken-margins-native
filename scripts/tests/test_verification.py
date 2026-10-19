@@ -513,6 +513,17 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
         self.assertEqual(verification.runner_test_scope(['ops/x/notes.txt', 'docs/a.png'])[0], 'none')
 
+    def test_an_app_only_diff_runs_the_accessibility_source_scans(self):
+        # The scans read App/ Swift files, so a PR that touches only App/ must run them before the merge (#2041).
+        scans = ('test_screen_change_cue', 'test_selected_trait', 'test_screen_title_heading',
+                 'test_row_accessibility_actions', 'test_voiceover_label_nits', 'test_increase_contrast_wiring',
+                 'test_reduce_motion', 'test_tap_target_styles')
+        scope, _ = verification.runner_test_scope(['App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift'])
+        self.assertEqual(scope, 'readers')
+        for name in scans:
+            with self.subTest(name=name):
+                self.assertIn(name, verification.RUNNER_TEST_READERS)
+
     def test_no_diff_information_runs_every_step(self):
         for changed in (None, []):
             with self.subTest(changed=changed):
