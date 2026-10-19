@@ -3,7 +3,8 @@
 Over the three days to 2026-10-18 the lane spent about 76 Mac-hours on 322 host-only automerge runs (14 minutes
 each), most of it on steps a GitHub-hosted runner can run once the repo is public. What these tests guard: the
 runner never takes a hosted result for a commit it didn't test (another head, another tree, a next that moved in
-ways that matter, a check that didn't pass), and with the switch off nothing changes.
+ways that matter, a check that didn't pass), and with the switch off nothing changes. Until the repo is public the
+same rule takes the two VPS checks in linux-t1.yml (#2160), with no switch.
 """
 import contextlib
 import io
@@ -37,15 +38,16 @@ class FakeChecks:
         self.calls.append(path)
         if '/annotations' in path:
             return json.dumps(self.annotations[int(path.split('/')[-2])])
-        name = next(name for name in lane.HOSTED_FAST_CHECKS
+        name = next(name for name in {**lane.HOSTED_FAST_CHECKS, **lane.VPS_FAST_CHECKS}
                     if 'check_name=' + lane.urllib.parse.quote(name, safe='') + '&' in path)
         return json.dumps({'check_runs': self.runs.get(name, [])})
 
 
-def passing(head, base='d' * 40, tree='e' * 40, **changes):
-    """FakeChecks where both hosted checks passed on <head>, each with its notice; changes override a run's fields."""
+def passing(head, base='d' * 40, tree='e' * 40, checks=None, **changes):
+    """FakeChecks where both hosted checks (or <checks>) passed on <head>, each with its notice; changes override a run's
+    fields."""
     runs, annotations = {}, {}
-    for index, (name, plan) in enumerate(lane.HOSTED_FAST_CHECKS.items(), start=1):
+    for index, (name, plan) in enumerate((checks or lane.HOSTED_FAST_CHECKS).items(), start=1):
         run = {'id': index, 'status': 'completed', 'conclusion': 'success', 'app': {'slug': 'github-actions'},
                'started_at': '2026-10-18T10:00:00Z', 'html_url': f'https://example.test/run/{index}'}
         run.update(changes.get(name, {}))
@@ -74,6 +76,23 @@ class HostedTestedTests(unittest.TestCase):
 
 class HostedRecordsTests(unittest.TestCase):
     HEAD = 'a' * 40
+
+    def test_the_vps_pair_is_read_by_its_own_check_names_and_plans(self):
+        found, why = lane.hosted_fast_records(passing(self.HEAD, checks=lane.VPS_FAST_CHECKS), self.HEAD,
+                                              lane.VPS_FAST_CHECKS)
+        self.assertEqual(why, '')
+        self.assertEqual({name: record['plan'] for name, record in found.items()}, lane.VPS_FAST_CHECKS)
+
+    def test_the_vps_pair_does_not_stand_on_the_hosted_checks_alone(self):
+        found, why = lane.hosted_fast_records(passing(self.HEAD), self.HEAD, lane.VPS_FAST_CHECKS)
+        self.assertIsNone(found)
+        self.assertIn('no "vps fast: portable" check ran', why)
+
+    def test_one_vps_check_failing_means_the_whole_plan(self):
+        checks = passing(self.HEAD, checks=lane.VPS_FAST_CHECKS, **{'sessionkit-core': {'conclusion': 'failure'}})
+        found, why = lane.hosted_fast_records(checks, self.HEAD, lane.VPS_FAST_CHECKS)
+        self.assertIsNone(found)
+        self.assertIn('"sessionkit-core" ended failure', why)
 
     def test_both_checks_passed_and_said_what_they_tested(self):
         found, why = lane.hosted_fast_records(passing(self.HEAD), self.HEAD)
@@ -134,22 +153,54 @@ class HostedChecksStandTests(unittest.TestCase):
         return head, tested, lane.merged_tree(self.tree, tested, head)
 
     def stands(self, head, base_sha, records, env=ON):
-        return lane.hosted_fast_checks(None, self.tree, 'next', head, base_sha, env=env,
-                                       records=lambda github, h: records)
+        return lane.hosted_fast_checks(None, self.tree, 'next', head, base_sha, env=env, records=records)
 
-    def records(self, head, base, tree):
-        return {name: {'plan': plan, 'tree': tree, 'base': base, 'head': head, 'url': 'u'}
-                for name, plan in lane.HOSTED_FAST_CHECKS.items()}, ''
+    def records(self, head, base, tree, only=None):
+        """A records reader whose checks all passed and recorded <tree>; with <only>, just that set of checks."""
+        def read(github, h, checks):
+            if only is not None and checks is not only:
+                return None, f'no "{next(iter(checks))}" check ran on {h[:7]}'
+            return {name: {'plan': plan, 'tree': tree, 'base': base, 'head': head, 'url': 'u'}
+                    for name, plan in checks.items()}, ''
+        return read
 
-    def test_off_means_the_old_path_and_no_reads(self):
+    def test_off_reads_only_the_vps_checks(self):
         head, tested, tree = self.pr()
-        reads = []
         for env in ({}, {'LANE_HOSTED_FAST': ''}, {'LANE_HOSTED_FAST': 'off'}, {'LANE_HOSTED_FAST': 'yes'}):
             with self.subTest(env):
-                found, why = lane.hosted_fast_checks(None, self.tree, 'next', head, tested, env=env,
-                                                     records=lambda github, h: reads.append(h))
-                self.assertEqual((found, why), (None, ''))
-        self.assertEqual(reads, [])
+                reads = []
+
+                def missing(github, h, checks):
+                    reads.append(checks)
+                    return None, 'no "vps fast: portable" check ran'
+                found, why = lane.hosted_fast_checks(None, self.tree, 'next', head, tested, env=env, records=missing)
+                self.assertEqual((found, why), (None, 'no "vps fast: portable" check ran'))
+                self.assertEqual(reads, [lane.VPS_FAST_CHECKS])
+
+    def test_with_the_switch_off_the_vps_pair_stands_and_says_it_ran_on_linux(self):
+        head, tested, tree = self.pr()
+        found, why = self.stands(head, tested, self.records(head, tested, tree), env={})
+        self.assertEqual(why, '')
+        self.assertEqual(set(found), set(lane.VPS_FAST_CHECKS))
+        self.assertEqual({record['runner'] for record in found.values()}, {'VPS'})
+        self.assertIn('VPS: --plan fast-portable and SessionKitCoreTests on Linux', lane.hosted_fast_ran(found))
+        self.assertTrue(all(line.startswith('VPS check "') for line in lane.hosted_fast_lines(found)))
+
+    def test_with_the_switch_on_the_hosted_pair_wins_and_the_vps_pair_is_the_fallback(self):
+        head, tested, tree = self.pr()
+        found, _ = self.stands(head, tested, self.records(head, tested, tree))
+        self.assertEqual(set(found), set(lane.HOSTED_FAST_CHECKS))
+        self.assertEqual({record['runner'] for record in found.values()}, {'GitHub-hosted'})
+        found, why = self.stands(head, tested, self.records(head, tested, tree, only=lane.VPS_FAST_CHECKS))
+        self.assertEqual(why, '')
+        self.assertEqual(set(found), set(lane.VPS_FAST_CHECKS))
+
+    def test_neither_pair_standing_names_both_reasons(self):
+        head, tested, tree = self.pr()
+        found, why = self.stands(head, tested, self.records(head, tested, '0' * 40))
+        self.assertIsNone(found)
+        self.assertIn('"hosted fast: portable" tested a tree that is not', why)
+        self.assertIn('"vps fast: portable" tested a tree that is not', why)
 
     def test_the_same_merge_stands(self):
         head, tested, tree = self.pr()
@@ -195,11 +246,11 @@ class HostedChecksStandTests(unittest.TestCase):
     def test_a_read_error_falls_back(self):
         head, tested, _ = self.pr()
 
-        def broken(github, h):
+        def broken(github, h, checks):
             raise subprocess.CalledProcessError(1, ['gh', 'api'])
         found, why = lane.hosted_fast_checks(None, self.tree, 'next', head, tested, env=ON, records=broken)
         self.assertIsNone(found)
-        self.assertIn('could not read the hosted fast checks', why)
+        self.assertIn('could not read the fast checks off the Mac', why)
 
 
 class RunAutomergeTests(unittest.TestCase):
@@ -231,7 +282,7 @@ class RunAutomergeTests(unittest.TestCase):
         self.assertEqual(verdict, 'PASS')
         self.assertIn('Mac: --plan fast-mac-rest', ran)
         self.assertIn('next at ddddddd', ran)
-        self.assertTrue(any(line.startswith('hosted check "hosted fast: portable": PASS') for line in details))
+        self.assertTrue(any(line.startswith('GitHub-hosted check "hosted fast: portable": PASS') for line in details))
 
     def test_a_mac_rest_failure_fails_the_run(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -354,6 +405,21 @@ class WorkflowTests(unittest.TestCase):
                  f"vars.{lane.HOSTED_FAST_SWITCH} == 'on')")
         self.assertEqual(self.hosted.count(guard), len(lane.HOSTED_FAST_CHECKS))
         self.assertNotIn('pull_request_target:', self.hosted)
+
+    def test_the_vps_jobs_have_the_names_the_runner_reads_record_their_plans_and_run_on_the_pr_code_runner(self):
+        linux = (ROOT / '.github/workflows/linux-t1.yml').read_text()
+        jobs = '\n' + linux.split('\njobs:\n', 1)[1]
+        for name, plan in lane.VPS_FAST_CHECKS.items():
+            with self.subTest(name):
+                # A job with no `name:` shows as its id; the portable job names itself.
+                self.assertTrue(f"name: '{name}'" in jobs or f'\n  {name}:\n' in jobs)
+                self.assertIn(f'::notice title={lane.HOSTED_TESTED_TITLE}::plan={plan} tree=', jobs)
+        self.assertIn('--plan fast-portable', jobs)
+        for job in jobs.split('\n  owner-tap-alert:\n')[0].split('\n  portable:\n'):
+            # PR code only on sm-vps-t1, never the routing runner, and never a fork's.
+            self.assertIn('    runs-on: [sm-vps-t1]\n', job)
+            self.assertIn('    if: github.event.pull_request.head.repo.full_name == github.repository\n', job)
+        self.assertNotIn('pull_request_target:', linux)
 
     def test_the_lane_hands_the_switch_to_the_automerge_and_release_runs_and_may_read_checks(self):
         self.assertEqual(self.lane_yml.count(f'{lane.HOSTED_FAST_SWITCH}: ${{{{ vars.{lane.HOSTED_FAST_SWITCH} }}}}'), 2)

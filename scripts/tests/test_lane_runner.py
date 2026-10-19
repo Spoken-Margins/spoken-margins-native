@@ -134,6 +134,12 @@ class FakeGitHub:
         self._comments.append(comment(body, login='github-actions[bot]', url=f'https://example.test/{len(self.posted)}'))
         return self._comments[-1]['html_url']
 
+    repo = 'o/r'
+
+    def api(self, path):
+        # No check runs on any head: the fast checks off the Mac (#2160) never stand, so the whole --plan fast runs.
+        return json.dumps({'check_runs': []})
+
     def relabel(self, remove, add):
         self.label_changes.append((remove, add))
         self.labels.discard(remove)

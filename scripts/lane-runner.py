@@ -63,6 +63,8 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   head merged onto the next they tested, and next's commits since can't matter (untested_moves), the automerge
   run takes them for the portable steps and SessionKitCoreTests and runs only --plan fast-mac-rest on the Mac.
   Anything short of that, and with the variable unset, it runs the whole --plan fast as before.
+  Until the repo is public (#2160), the same rule takes the two VPS checks in linux-t1.yml instead: `vps fast:
+  portable` (--plan fast-portable) and `sessionkit-core` (SessionKitCoreTests on Linux), with no switch.
 - Hosted T2 and T3 (#1389 phase 2), only with the LANE_HOSTED_APP repository variable `on` (the same kind of rollout
   guard): test-scope.py routes the lane job to a GitHub-hosted Mac, and lane.yml sets SM_LANE_GITHUB_HOSTED=1 there,
   with the lane state and evidence folders in the job's own temporary folder. This script runs as on the Mac: the
@@ -840,6 +842,11 @@ HOSTED_FAST_SWITCH = 'LANE_HOSTED_FAST'
 # check run name (the job's `name:` in hosted-portable.yml) -> the verify-tests.py plan it ran
 HOSTED_FAST_CHECKS = {'hosted fast: portable': 'fast-portable',
                       'hosted fast: SessionKit core': 'fast-hosted-sessionkit'}
+# The bridge until then (#2160): the same two halves on the owner's VPS runner sm-vps-t1 (linux-t1.yml), on the same
+# merge commit, with no switch. Its SessionKitCoreTests run on Linux, which leaves out the few Darwin-only core tests
+# (3,281 there against about 3,290 on the Mac on 2026-10-19); every whole --plan fast on the Mac (a fallback, a T3
+# release) still runs them. Missing, failed or for another tree, the Mac runs the whole --plan fast as before.
+VPS_FAST_CHECKS = {'vps fast: portable': 'fast-portable', 'sessionkit-core': 'linux-sessionkit-core'}
 HOSTED_TESTED_TITLE = 'lane-hosted-tested'
 HOSTED_TESTED = re.compile(r'^plan=(\S+) tree=([0-9a-f]{40}) parents=([0-9a-f]{40}) ([0-9a-f]{40})\s*$')
 
@@ -859,11 +866,11 @@ def hosted_tested(annotations: list[dict]) -> dict | None:
     return {'plan': plan, 'tree': tree, 'base': base, 'head': head}
 
 
-def hosted_fast_records(github, head: str) -> tuple[dict | None, str]:
-    """({check name: what it tested}, '') when every required hosted fast check has a successful newest run on the PR's
-    <head> that says what it tested; else (None, why not)."""
+def hosted_fast_records(github, head: str, checks: dict = HOSTED_FAST_CHECKS) -> tuple[dict | None, str]:
+    """({check name: what it tested}, '') when every check in <checks> (name -> plan) has a successful newest run on
+    the PR's <head> that says what it tested; else (None, why not)."""
     found = {}
-    for name, plan in HOSTED_FAST_CHECKS.items():
+    for name, plan in checks.items():
         runs = json.loads(github.api(f'repos/{github.repo}/commits/{head}/check-runs?check_name='
                                      f'{urllib.parse.quote(name, safe="")}&filter=latest&per_page=50'))
         # Only GitHub Actions' own runs: another app could post a check run with the same name.
@@ -891,16 +898,27 @@ def merged_tree(tree: Path, base: str, head: str) -> str | None:
 
 def hosted_fast_checks(github, tree: Path, base: str, head: str, base_sha: str, env=None,
                        records=hosted_fast_records) -> tuple[dict | None, str]:
-    """(the hosted fast checks that stand for <head> merged onto <base> at <base_sha>, '') or (None, why the Mac runs
-    the whole --plan fast). '' as the reason while the switch is off.
+    """(the fast checks off the Mac that stand for <head> merged onto <base> at <base_sha>, '') or (None, why the Mac
+    runs the whole --plan fast). The GitHub-hosted pair (with the switch on), else the VPS pair (#2160); each record
+    says which ('runner').
 
-    A hosted run stands when it tested exactly <head> merged onto some next (its merge tree matches the one this
+    A run stands when it tested exactly <head> merged onto some next (its merge tree matches the one this
     runner computes for that next), and that next is <base_sha> or next's commits since can't change what it showed:
     the rule a held PASS meets after next moves (untested_moves)."""
-    if not hosted_fast_on(env):
-        return None, ''
+    sources = ([('GitHub-hosted', HOSTED_FAST_CHECKS)] if hosted_fast_on(env) else []) + [('VPS', VPS_FAST_CHECKS)]
+    reasons = []
+    for runner, checks in sources:
+        found, why = _fast_checks_stand(github, tree, base, head, base_sha, records, checks)
+        if found is not None:
+            return {name: {**record, 'runner': runner} for name, record in found.items()}, ''
+        reasons.append(why)
+    return None, '; '.join(reasons)
+
+
+def _fast_checks_stand(github, tree: Path, base: str, head: str, base_sha: str, records,
+                       checks: dict) -> tuple[dict | None, str]:
     try:
-        found, why = records(github, head)
+        found, why = records(github, head, checks)
         if found is None:
             return None, why
         for name, record in found.items():
@@ -913,13 +931,15 @@ def hosted_fast_checks(github, tree: Path, base: str, head: str, base_sha: str, 
                     return None, f'"{name}" tested it on {base} at {record["base"][:7]}, and {base} since: {why}'
                 record['moved'] = skipped
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as error:
-        return None, f'the runner could not read the hosted fast checks ({error!r})'
+        return None, f'the runner could not read the fast checks off the Mac ({error!r})'
     return found, ''
 
 
 def hosted_fast_ran(found: dict) -> str:
     bases = sorted({record['base'][:7] for record in found.values()})
-    return (f'host tests (hosted: --plan fast-portable and SessionKitCoreTests with next at {", ".join(bases)}; '
+    where = sorted({record.get('runner', 'GitHub-hosted') for record in found.values()})
+    core = 'SessionKitCoreTests on Linux' if where == ['VPS'] else 'SessionKitCoreTests'
+    return (f'host tests ({" and ".join(where)}: --plan fast-portable and {core} with next at {", ".join(bases)}; '
             'Mac: --plan fast-mac-rest)')
 
 
@@ -929,7 +949,7 @@ def hosted_fast_lines(found: dict) -> list[str]:
         moved = record.get('moved')
         since = (f'; next\'s {len(moved)} commit{"s" if len(moved) != 1 else ""} since touch none of this PR\'s files '
                  'and no build inputs its checks read' if moved else '')
-        lines.append(f'hosted check "{name}": PASS on this head merged with next at {record["base"][:7]} '
+        lines.append(f'{record.get("runner", "GitHub-hosted")} check "{name}": PASS on this head merged with next at {record["base"][:7]} '
                      f'(tree {record["tree"][:7]}){since}. {record.get("url", "")}'.rstrip())
     return lines
 
