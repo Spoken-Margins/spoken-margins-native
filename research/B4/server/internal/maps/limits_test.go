@@ -67,34 +67,15 @@ func TestTranscriptBoundsAreExact(t *testing.T) {
 	refuse("an empty segment id", func(tr *Transcript) { tr.Segments[3].ID = "" })
 }
 
-func TestAnswerSceneCountIsBounded(t *testing.T) {
-	// 60 segments, each with text no summary will copy.
-	tr := Transcript{Schema: TranscriptSchema, EpisodeKey: testKey, DurationMs: 60 * 60000, Language: "en"}
-	for i := 0; i < 60; i++ {
-		tr.Segments = append(tr.Segments, Segment{
-			ID: fmt.Sprintf("s%d", i), StartMs: int64(i) * 60000, EndMs: int64(i+1) * 60000,
-			Text: fmt.Sprintf("Segment %d is only here so there are enough places for scenes to start.", i),
-		})
-	}
-	answerWith := func(n int) string {
-		var scenes [][3]string
-		for i := 0; i < n; i++ {
-			scenes = append(scenes, [3]string{fmt.Sprintf("s%d", i), fmt.Sprintf("Scene %d", i), "What happens here."})
+func TestSceneCountIsBounded(t *testing.T) {
+	for _, c := range []struct {
+		minutes float64
+		want    int
+	}{
+		{1, MinScenes}, {17, MinScenes}, {17.5, 4}, {20, 4}, {60, 12}, {197, 39}, {198, MaxScenes}, {48 * 60, MaxScenes},
+	} {
+		if got := sceneCount(int64(c.minutes * 60000)); got != c.want {
+			t.Errorf("%v minutes: %d scenes, want %d", c.minutes, got, c.want)
 		}
-		return answerJSON(scenes...)
-	}
-	for _, n := range []int{MinScenes, MaxScenes} {
-		if scenes, err := CheckAnswer(tr, answerWith(n)); err != nil || len(scenes) != n {
-			t.Errorf("%d scenes: %d scenes, %v; want accepted", n, len(scenes), err)
-		}
-	}
-	// Too many scenes are merged down to MaxScenes rather than refused.
-	for _, n := range []int{MaxScenes + 1, 59} {
-		if scenes, err := CheckAnswer(tr, answerWith(n)); err != nil || len(scenes) != MaxScenes {
-			t.Errorf("%d scenes: %d scenes, %v; want merged to %d", n, len(scenes), err, MaxScenes)
-		}
-	}
-	if _, err := CheckAnswer(tr, answerWith(MinScenes-1)); err == nil {
-		t.Errorf("%d scenes: accepted", MinScenes-1)
 	}
 }

@@ -77,72 +77,8 @@ func TestParseTranscriptRefusals(t *testing.T) {
 	}
 }
 
-func TestCheckAnswer(t *testing.T) {
-	tr := testTranscript()
-	scenes, err := CheckAnswer(tr, goodAnswer)
-	if err != nil {
-		t.Fatalf("good answer refused: %v", err)
-	}
-	want := []Scene{
-		{StartMs: 0, EndMs: 7 * 60000},
-		{StartMs: 7 * 60000, EndMs: 14 * 60000},
-		{StartMs: 14 * 60000, EndMs: 20 * 60000},
-	}
-	for i, w := range want {
-		if scenes[i].StartMs != w.StartMs || scenes[i].EndMs != w.EndMs || scenes[i].Title == "" {
-			t.Fatalf("scene %d = %+v, want times %d-%d", i, scenes[i], w.StartMs, w.EndMs)
-		}
-	}
-
-	quote := strings.Join(words(tr.Segments[7].Text)[2:12], " ") // ten words in a row
-	bad := map[string]string{
-		"malformed":                 `{"scenes": [`,
-		"two scenes":                answerJSON([3]string{"s0", "A", "B"}, [3]string{"s5", "C", "D"}),
-		"unknown id":                answerJSON([3]string{"s0", "A", "B"}, [3]string{"s99", "C", "D"}, [3]string{"s15", "E", "F"}),
-		"out of order":              answerJSON([3]string{"s0", "A", "B"}, [3]string{"s14", "C", "D"}, [3]string{"s7", "E", "F"}),
-		"same start":                answerJSON([3]string{"s0", "A", "B"}, [3]string{"s7", "C", "D"}, [3]string{"s7", "E", "F"}),
-		"long title":                answerJSON([3]string{"s0", strings.Repeat("t", 81), "B"}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-		"long summary":              answerJSON([3]string{"s0", "A", strings.Repeat("s", 301)}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-		"nine-word title":           answerJSON([3]string{"s0", "one two three four five six seven eight nine", "B"}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-		"29-word summary":           answerJSON([3]string{"s0", "A", strings.Repeat("word ", 29)}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-		"name in title and summary": answerJSON([3]string{"s0", "Meet Thatcher", "The host thanks Margaret Thatcher for the tip."}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-		"empty title":               answerJSON([3]string{"s0", " ", "B"}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-		"quotes":                    answerJSON([3]string{"s0", "A", "B"}, [3]string{"s7", "C", "As they put it: " + strings.ToUpper(quote) + "!"}, [3]string{"s14", "E", "F"}),
-		// A run that crosses from one segment into the next still counts.
-		"quotes across segments": answerJSON([3]string{"s0", "A", strings.Join(append(words(tr.Segments[0].Text)[14:], words(tr.Segments[1].Text)[:5]...), " ")},
-			[3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-	}
-	for name, text := range bad {
-		if _, err := CheckAnswer(tr, text); err == nil {
-			t.Errorf("%s: accepted", name)
-		}
-	}
-	// Eight words in a row is refused in a summary or a title; seven is allowed.
-	for name, scene := range map[string]func(string) [3]string{
-		"summary": func(run string) [3]string { return [3]string{"s7", "C", run} },
-		"title":   func(run string) [3]string { return [3]string{"s7", run, "D"} },
-	} {
-		eight := strings.Join(words(tr.Segments[7].Text)[2:10], " ")
-		if _, err := CheckAnswer(tr, answerJSON([3]string{"s0", "A", "B"}, scene(eight), [3]string{"s14", "E", "F"})); err == nil {
-			t.Errorf("%s: eight copied words accepted", name)
-		}
-		seven := strings.Join(words(tr.Segments[7].Text)[2:9], " ")
-		if _, err := CheckAnswer(tr, answerJSON([3]string{"s0", "A", "B"}, scene(seven), [3]string{"s14", "E", "F"})); err != nil {
-			t.Errorf("%s: seven copied words refused: %v", name, err)
-		}
-	}
-	// A description is at most 25 words: a line, not a retelling.
-	line := func(n int) string { return strings.TrimSpace(strings.Repeat("word ", n)) }
-	if _, err := CheckAnswer(tr, answerJSON([3]string{"s0", "A", line(25)}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"})); err != nil {
-		t.Errorf("25 words refused: %v", err)
-	}
-	if _, err := CheckAnswer(tr, answerJSON([3]string{"s0", "A", line(26)}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"})); err == nil {
-		t.Error("26 words accepted")
-	}
-}
-
 func TestWorkerMakesMapAndDeletesTranscript(t *testing.T) {
-	api := newFakeAPI(t, goodAnswer)
+	api := newFakeAPI(t)
 	svc, _, logs := newService(t, api, 10)
 	if out, err := svc.Submit(testTranscript()); err != nil || out != Accepted {
 		t.Fatalf("submit = %v, %v", out, err)
@@ -152,8 +88,8 @@ func TestWorkerMakesMapAndDeletesTranscript(t *testing.T) {
 	}
 	svc.ProcessWaiting(context.Background())
 
-	if api.callCount() != 1 {
-		t.Fatalf("calls = %d, want 1", api.callCount())
+	if api.callCount() != goodCalls {
+		t.Fatalf("calls = %d, want %d", api.callCount(), goodCalls)
 	}
 	if svc.Store.HasTranscript(testKey) {
 		t.Fatal("transcript kept after its map was made")
@@ -165,23 +101,27 @@ func TestWorkerMakesMapAndDeletesTranscript(t *testing.T) {
 	var m Map
 	json.Unmarshal(data, &m)
 	if m.Schema != MapSchema || m.EpisodeKey != testKey || m.Generator != "anthropic/"+DefaultModel ||
-		m.CreatedAt != "2026-10-01T14:00:00Z" || len(m.Scenes) != 3 || m.DurationMs != 20*60000 {
+		m.CreatedAt != "2026-10-01T14:00:00Z" || len(m.Scenes) != 4 || m.DurationMs != 20*60000 {
 		t.Fatalf("map = %s", data)
 	}
 	if strings.Contains(string(data), "lighthouse keeper number") {
 		t.Fatal("map carries transcript text")
 	}
-	// The request named the model, asked for the scene schema, and sent the key.
-	body := api.bodies[0]
+	// The first call is the pick; every call named the model, asked for a
+	// schema, and sent the key.
+	if strings.Join(api.kinds, ",") != "pick,scene,scene,scene,scene" {
+		t.Fatalf("calls %v", api.kinds)
+	}
+	body := api.bodies[1]
 	if body["model"] != DefaultModel || api.keys[0] != "sk-test-secret-key" {
 		t.Fatalf("request model %v key %q", body["model"], api.keys[0])
 	}
 	if _, ok := body["output_config"].(map[string]any)["format"]; !ok {
 		t.Fatalf("request has no output format: %v", body["output_config"])
 	}
-	// Cost: 13,000 in at $1/M plus 2,000 out at $5/M = $0.023.
-	if spent := svc.Ledger.Spent(svc.Now()); spent != 23000 {
-		t.Fatalf("ledger = %d micro-dollars, want 23000", spent)
+	// Cost: per call, 13,000 in at $1/M plus 2,000 out at $5/M = $0.023.
+	if spent := svc.Ledger.Spent(svc.Now()); spent != goodSpend {
+		t.Fatalf("ledger = %d micro-dollars, want %d", spent, goodSpend)
 	}
 	// A second upload of the same episode makes no new work.
 	if out, _ := svc.Submit(testTranscript()); out != AlreadyMapped || svc.Store.HasTranscript(testKey) {
@@ -192,45 +132,8 @@ func TestWorkerMakesMapAndDeletesTranscript(t *testing.T) {
 	}
 }
 
-func TestWorkerRetriesOnceThenDrops(t *testing.T) {
-	tr := testTranscript()
-	quote := strings.Join(words(tr.Segments[7].Text)[0:12], " ")
-	bad := map[string]string{
-		"malformed":    `not json`,
-		"out of order": answerJSON([3]string{"s0", "A", "B"}, [3]string{"s14", "C", "D"}, [3]string{"s7", "E", "F"}),
-		"quotes":       answerJSON([3]string{"s0", "A", "B"}, [3]string{"s7", "C", quote}, [3]string{"s14", "E", "F"}),
-	}
-	for name, answer := range bad {
-		t.Run(name+" then good", func(t *testing.T) {
-			api := newFakeAPI(t, answer, goodAnswer)
-			svc, _, _ := newService(t, api, 10)
-			svc.Submit(tr)
-			svc.ProcessWaiting(context.Background())
-			if api.callCount() != 2 || !svc.Store.HasMap(testKey) || svc.Store.HasTranscript(testKey) {
-				t.Fatalf("calls %d, map %v, transcript %v", api.callCount(), svc.Store.HasMap(testKey), svc.Store.HasTranscript(testKey))
-			}
-		})
-		t.Run(name+" twice", func(t *testing.T) {
-			api := newFakeAPI(t, answer)
-			svc, _, logs := newService(t, api, 10)
-			svc.Submit(tr)
-			svc.ProcessWaiting(context.Background())
-			if api.callCount() != 2 || svc.Store.HasMap(testKey) || svc.Store.HasTranscript(testKey) {
-				t.Fatalf("calls %d, map %v, transcript %v", api.callCount(), svc.Store.HasMap(testKey), svc.Store.HasTranscript(testKey))
-			}
-			if !containsAny(*logs, "dropped a transcript") {
-				t.Fatalf("logs %v", *logs)
-			}
-			// Both failed answers were billed.
-			if spent := svc.Ledger.Spent(svc.Now()); spent != 46000 {
-				t.Fatalf("ledger = %d", spent)
-			}
-		})
-	}
-}
-
 func TestCapStopsCallsAndUploads(t *testing.T) {
-	api := newFakeAPI(t, goodAnswer)
+	api := newFakeAPI(t)
 	svc, clock, _ := newService(t, api, 10)
 	if err := svc.Ledger.Add(clock.Now(), USDToMicro(10)); err != nil {
 		t.Fatal(err)
@@ -265,7 +168,7 @@ func TestCapStopsCallsAndUploads(t *testing.T) {
 		t.Fatalf("submit in a new month = %v", out)
 	}
 	svc.ProcessWaiting(context.Background())
-	if api.callCount() != 1 || !svc.Store.HasMap(testKey) {
+	if api.callCount() != goodCalls || !svc.Store.HasMap(testKey) {
 		t.Fatalf("calls %d in the new month", api.callCount())
 	}
 }
@@ -330,7 +233,7 @@ func TestSweepDropsOldTranscripts(t *testing.T) {
 }
 
 func TestTakedownKeepsMapDown(t *testing.T) {
-	api := newFakeAPI(t, goodAnswer)
+	api := newFakeAPI(t)
 	svc, _, _ := newService(t, api, 10)
 	svc.Submit(testTranscript())
 	svc.ProcessWaiting(context.Background())
@@ -343,7 +246,7 @@ func TestTakedownKeepsMapDown(t *testing.T) {
 	if out, _ := svc.Submit(testTranscript()); out != Withdrawn {
 		t.Fatalf("upload after takedown = %v", out)
 	}
-	if svc.Store.HasTranscript(testKey) || api.callCount() != 1 {
+	if svc.Store.HasTranscript(testKey) || api.callCount() != goodCalls {
 		t.Fatal("upload after takedown made new work")
 	}
 	if _, err := svc.Store.Takedown("not-a-key"); err == nil {
@@ -352,7 +255,7 @@ func TestTakedownKeepsMapDown(t *testing.T) {
 }
 
 func TestProviderErrorsNeverCarryTheKey(t *testing.T) {
-	api := newFakeAPI(t, goodAnswer)
+	api := newFakeAPI(t)
 	api.status = 401 // the fake echoes the key in its error body
 	svc, _, logs := newService(t, api, 10)
 	svc.Submit(testTranscript())
@@ -375,23 +278,23 @@ func TestProviderErrorsNeverCarryTheKey(t *testing.T) {
 }
 
 func TestProviderRetriesOverloadThenAnswers(t *testing.T) {
-	api := newFakeAPI(t, goodAnswer)
+	api := newFakeAPI(t)
 	api.fail = []int{529, 500}
 	svc, _, _ := newService(t, api, 10)
 	svc.Provider.(*Anthropic).Backoff = []time.Duration{0, 0}
 	svc.Submit(testTranscript())
 	svc.ProcessWaiting(context.Background())
-	if api.callCount() != 3 || !svc.Store.HasMap(testKey) {
+	if api.callCount() != goodCalls+2 || !svc.Store.HasMap(testKey) {
 		t.Fatalf("calls %d, map %v", api.callCount(), svc.Store.HasMap(testKey))
 	}
-	// Overloaded answers bill nothing; only the good one is in the ledger.
-	if spent := svc.Ledger.Spent(svc.Now()); spent != 23000 {
+	// Overloaded answers bill nothing; only the good ones are in the ledger.
+	if spent := svc.Ledger.Spent(svc.Now()); spent != goodSpend {
 		t.Fatalf("ledger = %d", spent)
 	}
 }
 
 func TestSwitchedOffWorkerMakesNoCalls(t *testing.T) {
-	api := newFakeAPI(t, goodAnswer)
+	api := newFakeAPI(t)
 	svc, _, _ := newService(t, api, 10)
 	svc.Submit(testTranscript())
 	svc.Enabled = func() bool { return false }
@@ -411,11 +314,11 @@ func (c *cancelling) Generator() string { return "stub" }
 func (c *cancelling) Generate(ctx context.Context, req Request) (Response, error) {
 	c.calls++
 	c.cancel()
-	return Response{Text: goodAnswer, InputTokens: 13000, OutputTokens: 2000, Complete: true}, nil
+	return Response{Text: goodScene, InputTokens: 13000, OutputTokens: 2000, Complete: true}, nil
 }
 
 func TestShutdownMidCallStillRecordsTheCost(t *testing.T) {
-	api := newFakeAPI(t, goodAnswer)
+	api := newFakeAPI(t)
 	svc, _, _ := newService(t, api, 10)
 	ctx, cancel := context.WithCancel(context.Background())
 	stub := &cancelling{cancel: cancel}
@@ -432,7 +335,7 @@ func TestShutdownMidCallStillRecordsTheCost(t *testing.T) {
 
 func TestLostAnswerIsCountedAndNotRetried(t *testing.T) {
 	block := make(chan struct{})
-	slow := newFakeAPI(t, goodAnswer)
+	slow := newFakeAPI(t)
 	slow.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		slow.mu.Lock()
 		slow.calls++
@@ -445,12 +348,13 @@ func TestLostAnswerIsCountedAndNotRetried(t *testing.T) {
 	svc.Provider.(*Anthropic).Backoff = []time.Duration{0, 0}
 	svc.Submit(testTranscript())
 	svc.ProcessWaiting(context.Background())
-	// Two attempts, one HTTP call each: a lost answer is never retried by
-	// the provider, and each is counted at the estimate.
-	if slow.callCount() != 2 {
-		t.Fatalf("calls = %d, want 2", slow.callCount())
+	// One HTTP call: a lost answer is never retried, by the provider or the
+	// worker, and it is counted at the estimate.
+	if slow.callCount() != 1 {
+		t.Fatalf("calls = %d, want 1", slow.callCount())
 	}
-	want := 2 * svc.estimate(buildRequest(testTranscript()))
+	tr := testTranscript()
+	want := svc.estimate(buildPickRequest(tr, planBreaks(tr)))
 	if spent := svc.Ledger.Spent(svc.Now()); spent != want || want == 0 {
 		t.Fatalf("ledger = %d, want %d", spent, want)
 	}
@@ -491,7 +395,7 @@ func TestWaitingKeysOldestFirst(t *testing.T) {
 // Nothing of a transcript is ever written to disk (#1730): not on upload, not
 // while it waits, not while it is mapped, and not after.
 func TestNoTranscriptTextIsEverWrittenToDisk(t *testing.T) {
-	api := newFakeAPI(t, goodAnswer)
+	api := newFakeAPI(t)
 	svc, _, _ := newService(t, api, 10)
 	dir := svc.Store.dir
 	tr := testTranscript()
@@ -554,7 +458,7 @@ func TestOpenStoreRemovesTranscriptsLeftOnDisk(t *testing.T) {
 // A spend runs only when the transcript is about to be queued, and a failed
 // spend queues nothing (#743).
 func TestSubmitSpendingChargesOnlyQueuedWork(t *testing.T) {
-	svc, _, _ := newService(t, newFakeAPI(t, goodAnswer), 10)
+	svc, _, _ := newService(t, newFakeAPI(t), 10)
 	spent := 0
 	spend := func() error { spent++; return nil }
 
@@ -575,7 +479,7 @@ func TestSubmitSpendingChargesOnlyQueuedWork(t *testing.T) {
 // Uploads of one episode racing with different tokens pay once between
 // them, and racing uploads can't overfill the queue.
 func TestSubmitSpendingRacesPayOnce(t *testing.T) {
-	svc, _, _ := newService(t, newFakeAPI(t, goodAnswer), 10)
+	svc, _, _ := newService(t, newFakeAPI(t), 10)
 	var spends atomic.Int32
 	var wg sync.WaitGroup
 	for i := 0; i < 16; i++ {
@@ -621,7 +525,7 @@ func TestNameGrounding(t *testing.T) {
 		{"A short plain summary with no names.", ""},
 	}
 	for _, c := range cases {
-		if got := ungroundedName(c.summary, source); got != c.want {
+		if got := ungroundedName(c.summary, source, "en"); got != c.want {
 			t.Errorf("%q: got %q, want %q", c.summary, got, c.want)
 		}
 	}
@@ -641,166 +545,8 @@ func TestNameGrounding(t *testing.T) {
 		{"Talk of Ng and friends.", "Ng"}, // not all capitals, so no initials
 	}
 	for _, c := range cases {
-		if got := ungroundedName(c.summary, source); got != c.want {
+		if got := ungroundedName(c.summary, source, "en"); got != c.want {
 			t.Errorf("%q: got %q, want %q", c.summary, got, c.want)
-		}
-	}
-}
-
-func TestTooManyScenesMergeShortestFirst(t *testing.T) {
-	// 41 one-minute segments, except segment 10, which lasts ten minutes.
-	tr := Transcript{Schema: TranscriptSchema, EpisodeKey: testKey, Language: "en"}
-	var at int64
-	for i := 0; i <= MaxScenes; i++ {
-		d := int64(60000)
-		if i == 10 {
-			d = 600000
-		}
-		tr.Segments = append(tr.Segments, Segment{ID: fmt.Sprintf("s%d", i), StartMs: at, EndMs: at + d,
-			Text: fmt.Sprintf("Segment %d is only here so there are enough places for scenes to start.", i)})
-		at += d
-	}
-	tr.DurationMs = at
-	var scenes [][3]string
-	for i := 0; i <= MaxScenes; i++ {
-		scenes = append(scenes, [3]string{fmt.Sprintf("s%d", i), fmt.Sprintf("Scene %d", i), fmt.Sprintf("What happens in part %d.", i)})
-	}
-	got, fixed, err := checkAnswer(tr, answerJSON(scenes...))
-	if err != nil || len(got) != MaxScenes || fixed.Merged != 1 {
-		t.Fatalf("%d scenes, %+v, %v; want %d with one merge", len(got), fixed, err, MaxScenes)
-	}
-	// Every pair spans two minutes except those touching segment 10, so the
-	// earliest pair (scenes 0 and 1) merges: it starts at 0, ends where
-	// scene 2 starts, and keeps scene 0's text (a tie keeps the earlier).
-	if got[0].StartMs != 0 || got[0].EndMs != 120000 || got[0].Title != "Scene 0" {
-		t.Fatalf("merged scene = %+v", got[0])
-	}
-	for i := 1; i < len(got); i++ {
-		if got[i].StartMs != got[i-1].EndMs || got[i].Title != fmt.Sprintf("Scene %d", i+1) {
-			t.Fatalf("scene %d = %+v after %+v", i, got[i], got[i-1])
-		}
-	}
-	if got[len(got)-1].EndMs != tr.DurationMs {
-		t.Fatalf("last scene ends at %d, want %d", got[len(got)-1].EndMs, tr.DurationMs)
-	}
-
-	// A merge keeps the text of the part that ran longest.
-	runs, n := mergeRuns([]run{
-		{first: 0, startMs: 0, endMs: 60000, scene: 0, ownMs: 60000},
-		{first: 1, startMs: 60000, endMs: 660000, scene: 1, ownMs: 600000},
-		{first: 2, startMs: 660000, endMs: 1500000, scene: 2, ownMs: 840000},
-	}, 2)
-	if n != 1 || len(runs) != 2 || runs[0].startMs != 0 || runs[0].endMs != 660000 || runs[0].scene != 1 || runs[0].first != 0 {
-		t.Fatalf("runs %+v, %d merges", runs, n)
-	}
-}
-
-func TestNameFromANeighbouringScenePasses(t *testing.T) {
-	tr := testTranscript()
-	tr.Segments[6].Text = "Next up, Grace Hopper describes her first bug."
-	// The summary of the scene starting at s7 names Hopper, who speaks in s6:
-	// the scene before. s0 and s14 are not neighbours of each other's names.
-	text := answerJSON(
-		[3]string{"s0", "Opening", "The host sets out why old coastal stations matter."},
-		[3]string{"s7", "Bugs", "Grace Hopper recalls the first bug."},
-		[3]string{"s14", "Storm logs", "Records of severe weather and what they reveal."},
-	)
-	got, fixed, err := checkAnswer(tr, text)
-	if err != nil || fixed != (Repairs{}) || got[1].Summary != "Grace Hopper recalls the first bug." {
-		t.Fatalf("%+v, %+v, %v", got, fixed, err)
-	}
-	// Two scenes away is not a neighbour.
-	tr.Segments[6].Text = tr.Segments[5].Text
-	tr.Segments[0].Text = "Grace Hopper is mentioned only here."
-	text = answerJSON(
-		[3]string{"s0", "Opening", "The host sets out why old coastal stations matter."},
-		[3]string{"s7", "Keepers", "Who tended the lights and what daily duty looked like."},
-		[3]string{"s10", "More keepers", "Who tended the lights after that."},
-		[3]string{"s14", "Bugs", "Grace Hopper recalls the first bug."},
-	)
-	if got, fixed, err := checkAnswer(tr, text); err != nil || fixed.Summaries != 1 || got[3].Summary != "Bugs" {
-		t.Fatalf("%+v, %+v, %v", got, fixed, err)
-	}
-}
-
-func TestInventedNameRepairsOnlyThatScene(t *testing.T) {
-	tr := testTranscript()
-	text := answerJSON(
-		[3]string{"s0", "Opening", "The host sets out why old coastal stations matter."},
-		[3]string{"s7", "Keepers", "Margaret Thatcher tended the lights, says the host."},
-		[3]string{"s14", "Storm logs", "Records of severe weather and what they reveal."},
-	)
-	got, fixed, err := checkAnswer(tr, text)
-	if err != nil || fixed != (Repairs{Summaries: 1}) {
-		t.Fatalf("%+v, %v", fixed, err)
-	}
-	want := []string{"The host sets out why old coastal stations matter.", "Keepers", "Records of severe weather and what they reveal."}
-	for i, w := range want {
-		if got[i].Summary != w {
-			t.Fatalf("scene %d summary %q, want %q", i, got[i].Summary, w)
-		}
-	}
-
-	// The worker stores the repaired map and logs the repair without the name.
-	api := newFakeAPI(t, text)
-	svc, _, logs := newService(t, api, 10)
-	svc.Submit(tr)
-	svc.ProcessWaiting(context.Background())
-	if api.callCount() != 1 || !svc.Store.HasMap(testKey) {
-		t.Fatalf("calls %d, map %v", api.callCount(), svc.Store.HasMap(testKey))
-	}
-	if !containsAny(*logs, "replaced 1 summaries") || containsAny(*logs, "Thatcher") || containsAny(*logs, "Margaret") {
-		t.Fatalf("logs %v", *logs)
-	}
-}
-
-func TestRetryPromptCarriesTheReason(t *testing.T) {
-	tr := testTranscript()
-	two := answerJSON([3]string{"s0", "Opening", "Thatcher Lovelace Hopper says hello."}, [3]string{"s7", "Keepers", "Who tended them."})
-	api := newFakeAPI(t, two, goodAnswer)
-	svc, _, logs := newService(t, api, 10)
-	svc.Submit(tr)
-	svc.ProcessWaiting(context.Background())
-	if api.callCount() != 2 || !svc.Store.HasMap(testKey) {
-		t.Fatalf("calls %d, map %v", api.callCount(), svc.Store.HasMap(testKey))
-	}
-	prompt := func(i int) string {
-		msgs := api.bodies[i]["messages"].([]any)
-		return msgs[0].(map[string]any)["content"].(string)
-	}
-	first, second := prompt(0), prompt(1)
-	want := "Your previous answer could not be used. The previous answer had 2 scenes; give at least 3."
-	if strings.Contains(first, "previous answer") || !strings.Contains(second, want) {
-		t.Fatalf("retry note missing or early:\nfirst ends %q\nsecond ends %q", first[len(first)-120:], second[len(second)-120:])
-	}
-	if !strings.HasPrefix(second, first) {
-		t.Fatal("the retry changed the transcript part of the prompt")
-	}
-	// The note never echoes the answer, and the log never names it.
-	for _, s := range append([]string{second[len(first):]}, *logs...) {
-		if strings.Contains(s, "Thatcher") || strings.Contains(s, "Keepers") {
-			t.Fatalf("answer text leaked: %q", s)
-		}
-	}
-}
-
-func TestEveryRefusalHasARetryHint(t *testing.T) {
-	tr := testTranscript()
-	quote := strings.Join(words(tr.Segments[7].Text)[0:12], " ")
-	for name, text := range map[string]string{
-		"malformed": `{"scenes": [`,
-		"two":       answerJSON([3]string{"s0", "A", "B"}, [3]string{"s5", "C", "D"}),
-		"unknown":   answerJSON([3]string{"s0", "A", "B"}, [3]string{"s99", "C", "D"}, [3]string{"s15", "E", "F"}),
-		"order":     answerJSON([3]string{"s0", "A", "B"}, [3]string{"s14", "C", "D"}, [3]string{"s7", "E", "F"}),
-		"title":     answerJSON([3]string{"s0", strings.Repeat("t", 81), "B"}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-		"summary":   answerJSON([3]string{"s0", "A", strings.Repeat("s", 301)}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-		"name":      answerJSON([3]string{"s0", "Meet Thatcher", "Hello to Thatcher."}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-		"copy":      answerJSON([3]string{"s0", "A", "B"}, [3]string{"s7", "C", quote}, [3]string{"s14", "E", "F"}),
-	} {
-		_, err := CheckAnswer(tr, text)
-		var aerr *AnswerError
-		if !errors.As(err, &aerr) || aerr.Hint == "" {
-			t.Errorf("%s: %v, want an AnswerError with a hint", name, err)
 		}
 	}
 }
