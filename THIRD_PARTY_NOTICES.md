@@ -189,14 +189,14 @@ The voice and PDF experiments under research/ install packages such as onnxrunti
 
 Data and text captured from other people's work. This project does not license it; the rights stay with their owners.
 
-### Starter podcast catalog and recorded chart data
+### Starter podcast catalog and recorded feed heads
 
-- Licence: Not licensed by this project: Apple's feed terms and each publisher's rights apply
-- From: Apple Inc. charts; show names and artwork belong to their publishers
-- Source: <https://itunes.apple.com/us/rss/toppodcasts/>
+- Licence: Not licensed by this project: each publisher's rights apply
+- From: Show names, descriptions and artwork belong to their publishers
+- Source: <Each show's own podcast feed, listed in research/B1/shows.json>
 - Where: `Site/onboarding/catalog`, `research/B1/recorded`
 
-Built from Apple's Top Charts RSS feeds and linking to Apple-hosted artwork. Whether it can be published or bundled is the open question in #632; the public-source audit (#1383) decides what leaves the repository.
+A hand-picked list of shows. Each show's title, author, description, website and artwork link are read from that show's own feed (#1732), and no artwork link points at Apple's servers. research/B1/recorded holds the feed heads (the text before the first episode) that research/B1/build_catalog.py read, so the list can be rebuilt offline.
 
 ### Test fixtures and traces saved from public feeds and pages
 
