@@ -1356,6 +1356,27 @@ class VerificationTests(unittest.TestCase):
             self.assertLess(step['seconds'], 30)  # not the 60 s the stalled launch would have slept
             self.assertEqual(step['errors'], [])
 
+    def test_each_launch_records_the_host_conditions_at_its_start_its_tests_and_its_stall(self):
+        # #2176: stalls went from 0 of 15 T3 runs on 10-17 to 12 of 32 on 10-19, and only the load average was on
+        # record. Each attempt now notes the host's conditions as it starts and as its tests start, and each stall
+        # as it is seen, so scripts/lane_stall_report.py can count stalls against them.
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'adapters')
+            calls, startup = self.watch()
+            readings = iter(range(100))
+            startup['conditions'] = lambda: {'reading': next(readings)}
+            # A real run's tests last seconds after their first line; the watch polls every 0.25 s.
+            script = self.STALLS_THEN_RUNS.replace(
+                'print("Test Case', 'time.sleep(1)\nprint("Test Case', 1)
+            run.command('xcode-tests', [sys.executable, '-c', script, str(Path(temporary) / 'seen')],
+                        timeout=60, expected={'SpokenMarginsAppTests/SpeechTests/testBundled'}, tests=True,
+                        startup=startup)
+            step = run.manifest['steps'][-1]
+            self.assertEqual([(n['attempt'], n['at'], n['reading']) for n in step['launch_conditions']],
+                             [(1, 'start', 0), (2, 'start', 2), (2, 'tests_started', 3)])
+            self.assertEqual(step['startup_stalls'][0]['conditions'], {'reading': 1})
+            self.assertLess(step['launch_conditions'][-1]['seconds'], 30)
+
     def test_recovered_stall_still_fails_when_a_requested_test_did_not_pass(self):
         # The PASS is for a retry that passes every requested test; a missing test is still an error.
         with tempfile.TemporaryDirectory() as temporary:
