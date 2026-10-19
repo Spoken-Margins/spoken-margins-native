@@ -66,10 +66,11 @@ It compares your branch (uncommitted files included) with `origin/next`, prints 
 
 A PR is done when it's armed (`AGENTS.md`). Never stop before that:
 
-1. Merge `origin/next` into your branch and push. GitHub builds the run from the PR's merge ref, which it doesn't refresh when `next` moves, so a branch last pushed before the lane workflow reached `next` (#221), or one that conflicts with `next`, gets no run.
-2. If the diff needs T3, post the `/lane T3` request and add `lane:queued` (section 3). Adding a label that's already on the PR triggers nothing, so if `lane:queued` was already there (a T4 waiting), remove it and add it again. The PR must target `next` from a branch in this repository.
-3. Add `automerge` once the issue's "Done when" holds, after the T3 request if there is one. The runner then runs the host tests and builds the diff needs, and runs again on every push while the label stays ([test-lane.md](../../../docs/workstreams/test-lane.md), Request format).
-4. Post a short summary on the PR. Then take the next `ready` issue, or, above about 250,000 tokens of context, post a short note on the issue and stop (`AGENTS.md`).
+1. Run `.venv/bin/python scripts/verify-tests.py --plan fast` (or just `scripts/hot_file_ratchet.py`, 5 seconds) after `git fetch origin next`. Its first step is the lane's hot-file ratchet: if it says "Move N lines out of it, or ask the desk for the hot-file-ok label", move the lines out of `Gate1AppModel.swift` or `Gate1RootView.swift` into a focused type before you push. A lane FAIL on the ratchet costs a queue trip of hours (#2175). With `hot-file-ok` granted, set `SM_HOT_FILE_OK=1`.
+2. Merge `origin/next` into your branch and push. GitHub builds the run from the PR's merge ref, which it doesn't refresh when `next` moves, so a branch last pushed before the lane workflow reached `next` (#221), or one that conflicts with `next`, gets no run.
+3. If the diff needs T3, post the `/lane T3` request and add `lane:queued` (section 3). Adding a label that's already on the PR triggers nothing, so if `lane:queued` was already there (a T4 waiting), remove it and add it again. The PR must target `next` from a branch in this repository.
+4. Add `automerge` once the issue's "Done when" holds, after the T3 request if there is one. The runner then runs the host tests and builds the diff needs, and runs again on every push while the label stays ([test-lane.md](../../../docs/workstreams/test-lane.md), Request format).
+5. Post a short summary on the PR. Then take the next `ready` issue, or, above about 250,000 tokens of context, post a short note on the issue and stop (`AGENTS.md`).
 
 **Don't retry or wait.** Once armed, don't watch for the run to start, don't re-check after a few minutes, and don't set timers, reminders or check-ins on your own PRs. The runner merges on PASS. What happens otherwise is the project's hourly dispatcher's job:
 - **FAIL on the PR's own code**, or a conflict with `next`: the dispatcher gives the fix to whoever is free.
