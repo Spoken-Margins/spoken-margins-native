@@ -1,6 +1,7 @@
 import CryptoKit
 import SessionKit
 import SessionKitPersistence
+import SessionKitSupertonic
 import XCTest
 @testable import SpokenMarginsApp
 
@@ -77,6 +78,63 @@ final class VoiceDownloadsTests: XCTestCase {
         XCTAssertNotNil(VoiceLicenseView.bundledText(sha256: restricted.textSHA256), "the Open RAIL-M text opens offline")
         XCTAssertEqual(voices.rows.first { $0.entry.bundled }?.state, .bundled)
         XCTAssertFalse(voices.rows.contains { $0.id.hasPrefix("pocket") }, "no player for Pocket TTS in this build")
+    }
+
+    // MARK: What a remove leaves behind (#2055 audit)
+
+    /// Audit 1: Remove deleted the downloaded files, but the cached renderer kept reading them, and every chunk
+    /// failed until relaunch. Now the change hook drops a renderer whose files are gone.
+    func testRemovingTheDownloadedVoiceDropsTheRendererThatReadsIt() throws {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: root.appendingPathComponent("library.sqlite")
+        )
+        let downloaded = try makeSupertonicFolder(at: root.appendingPathComponent("Voices/supertonic-3-int8/1", isDirectory: true))
+        let renderer = try SupertonicNarrationRenderer(assets: downloaded, outputDirectory: root.appendingPathComponent("out"), governor: .app)
+        model.supertonicRenderer = renderer
+
+        model.installedVoicesChanged()
+        XCTAssertTrue(model.supertonicRenderer === renderer, "an install beside it leaves a renderer whose files are there")
+
+        try FileManager.default.removeItem(at: downloaded.rootURL)
+        model.installedVoicesChanged()
+        XCTAssertNil(model.supertonicRenderer, "the next chunk asks the resolver again instead of reading deleted files")
+        XCTAssertEqual(model.diagnostics["supertonicRendererDropped"], "model_files_gone")
+    }
+
+    /// Audit 4: a downloaded copy had its ~141 MB of model files hashed again on every preparation turn. Now its
+    /// hash is kept until a voice is installed or removed, as the bundle's always was.
+    func testADownloadedVoiceIsHashedOncePerInstallNotOncePerTurn() throws {
+        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let folder = VoiceCatalogCoordinator.voicesRoot(supportDirectory: support)
+            .appendingPathComponent("hash-test-\(UUID().uuidString)/1", isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
+        let assets = try makeSupertonicFolder(at: folder)
+        let first = try SupertonicRenderIdentity.make(assets: assets, voice: .m2)
+
+        // Same size, different bytes: only a rehash would see it.
+        try Data([9]).write(to: assets.onnxDirectoryURL.appendingPathComponent("vocoder.onnx"))
+        XCTAssertEqual(try SupertonicRenderIdentity.make(assets: assets, voice: .m2).assetManifestHash, first.assetManifestHash,
+                       "a second preparation turn reuses the hash")
+
+        SupertonicRenderIdentity.forgetInstalledVoices()
+        XCTAssertNotEqual(try SupertonicRenderIdentity.make(assets: assets, voice: .m2).assetManifestHash, first.assetManifestHash,
+                          "an install or remove makes the next turn hash the files again")
+    }
+
+    /// A Supertonic folder that passes `validate()`: every file the renderer asks for, one byte each.
+    private func makeSupertonicFolder(at folder: URL) throws -> SupertonicAssetLocation {
+        let assets = SupertonicAssetLocation(rootURL: folder)
+        try FileManager.default.createDirectory(at: assets.onnxDirectoryURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: assets.voiceStylesDirectoryURL, withIntermediateDirectories: true)
+        for name in ["duration_predictor.onnx", "text_encoder.onnx", "vector_estimator.onnx", "vocoder.onnx", "tts.json", "unicode_indexer.json"] {
+            try Data([1]).write(to: assets.onnxDirectoryURL.appendingPathComponent(name))
+        }
+        for voice in SupertonicVoiceID.allCases {
+            try Data([2]).write(to: assets.voiceStyleURL(for: voice))
+        }
+        XCTAssertTrue(assets.isIntact)
+        return assets
     }
 
     private func waitUntil(timeout: TimeInterval = 10, _ condition: () -> Bool) async throws {

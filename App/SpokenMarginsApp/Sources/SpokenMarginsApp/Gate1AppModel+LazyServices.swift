@@ -15,13 +15,15 @@ extension Gate1AppModel {
     }
 
     /// Settings › Voices (#1819), created on first use and kept, so a download outlives the screen. An
-    /// installed or removed voice refreshes Storage and the screens that list voices.
+    /// installed or removed voice refreshes Storage and the screens that list voices, and lets go of
+    /// anything still pointing at the old files (#2055 audit 1).
     func requireVoiceDownloads() -> VoiceDownloadsModel {
         if let voiceDownloadsModel { return voiceDownloadsModel }
         let support = (try? applicationSupportDirectory()) ?? FileManager.default.temporaryDirectory
         let model = VoiceDownloadsModel.make(supportDirectory: support, repository: try? requireStore())
         model.onInstalledVoicesChanged = { [weak self] in
             guard let self else { return }
+            self.installedVoicesChanged()
             self.tryRefreshOfflineStorageUsage()
             self.objectWillChange.send()
         }

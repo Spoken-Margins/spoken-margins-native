@@ -50,29 +50,20 @@ final class PreparedChunkPlanCache: @unchecked Sendable {
     }
 }
 
-private final class BundledModelHashCache: @unchecked Sendable {
-    private let lock = NSLock()
-    private var hashes: [URL: String] = [:]
-
-    func value(at url: URL, compute: () throws -> String) rethrows -> String {
-        // Only installed bundle resources are immutable for this process.
-        // Imported/test assets must be rehashed, including same-size edits.
-        let root = Bundle.main.bundleURL.standardizedFileURL.path + "/"
-        guard url.standardizedFileURL.path.hasPrefix(root) else { return try compute() }
-        lock.lock()
-        let cached = hashes[url]
-        lock.unlock()
-        if let cached { return cached }
-        let result = try compute()
-        lock.lock()
-        hashes[url] = result
-        lock.unlock()
-        return result
-    }
-}
-
 enum SupertonicRenderIdentity {
-    private static let bundledHashes = BundledModelHashCache()
+    /// The model files' hash, once per install (#2055 audit 4): the app bundle's copy, or a downloaded copy
+    /// under `Voices/`, whose files were held to their SHA-256 when it was installed. `forgetInstalledVoices()`
+    /// runs on every install and remove. Anything else (imports, test fixtures) is rehashed every time.
+    static let modelHashes = StableFolderHashCache(stableRoots: [Bundle.main.bundleURL] + [installedVoicesRoot].compactMap { $0 })
+    private static var installedVoicesRoot: URL? {
+        (try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false))
+            .map { VoiceCatalogCoordinator.voicesRoot(supportDirectory: $0) }
+    }
+
+    static func forgetInstalledVoices() {
+        if let installedVoicesRoot { modelHashes.forget(under: installedVoicesRoot) }
+    }
+
     static let modelRevision = "supertonic-3-int8"
     static let normalizationVersion = "speech-normalizer.v3"
     static let chunkingVersion = NarrationChunkPlanner.version
@@ -85,7 +76,7 @@ enum SupertonicRenderIdentity {
         speed: Float = 1,
         fileManager: FileManager = .default
     ) throws -> TTSRenderSignature {
-        let assetHash = try bundledHashes.value(at: assets.onnxDirectoryURL) {
+        let assetHash = try modelHashes.value(at: assets.onnxDirectoryURL) {
             try treeHash(at: assets.onnxDirectoryURL, fileManager: fileManager)
         }
         let voiceHash = try fileHash(at: assets.voiceStyleURL(for: voice), fileManager: fileManager)

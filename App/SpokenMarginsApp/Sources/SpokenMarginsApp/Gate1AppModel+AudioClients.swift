@@ -190,7 +190,10 @@ extension Gate1AppModel {
 
     func makeSupertonicRenderer() throws -> SupertonicNarrationRenderer {
         try verifyCurrentTermsForOnDeviceVoice()
-        if let supertonicRenderer { return supertonicRenderer }
+        if let supertonicRenderer {
+            if supertonicRenderer.assets.isIntact { return supertonicRenderer }
+            dropSupertonicRenderer()
+        }
         guard let assets = SupertonicAssetResolver.location() else {
             throw SupertonicNarrationError.missingAsset("Supertonic")
         }
@@ -207,6 +210,24 @@ extension Gate1AppModel {
         )
         supertonicRenderer = renderer
         return renderer
+    }
+
+    /// A voice was installed or removed in Settings › Voices (#2055 audit 1). Model hashes kept for downloaded
+    /// voices are forgotten. A Supertonic renderer whose files were just deleted is dropped, and so is the
+    /// playback client holding it, so the next chunk renders from whatever copy the resolver finds now instead
+    /// of failing until relaunch. A renderer whose files are still there (an install beside it) keeps playing.
+    func installedVoicesChanged() {
+        SupertonicRenderIdentity.forgetInstalledVoices()
+        guard let renderer = supertonicRenderer, !renderer.assets.isIntact else { return }
+        dropSupertonicRenderer()
+        if ttsVoiceSelection.supertonicVoice != nil { _ = rebuildEngineForCurrentSettings() }
+    }
+
+    private func dropSupertonicRenderer() {
+        guard let renderer = supertonicRenderer else { return }
+        supertonicRenderer = nil
+        diagnostics["supertonicRendererDropped"] = "model_files_gone"
+        Task { await renderer.unload() }
     }
 
     /// Unloads both narration voices' sessions: Supertonic and the bundled Kitten fallback (#849).
