@@ -24,6 +24,7 @@ import lane_sim
 import sessionkit_pass
 import lane_sim_pool
 import third_party_notices
+import xcodebuild_finish
 from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
                         state_dir, SIMULATOR_SLOTS)
 
@@ -433,6 +434,7 @@ PORTABLE_LEFT_OUT = {
     'package-core': 'needs the Swift toolchain on macOS (SessionKitCoreTests also run in hosted-sessionkit-linux.yml)',
     'package-core-serial': 'needs the Swift toolchain on macOS',
     'package': 'needs the Swift toolchain, AVFoundation and a sound output; only the Mac lane runs the whole package',
+    'shipped-compat': 'builds SessionKit and Build 29\'s persistence code with Swift on macOS; only the Mac lane runs it',
 }
 # Inside runner-tests and ops, the tests that drive an Apple tool. Each is matched as a test id prefix (module,
 # class or test) in scripts/tests, or as a folder under ops/.
@@ -450,6 +452,9 @@ PORTABLE_RUNNER_TESTS_LEFT_OUT = {
     'test_phone_build.PhoneBuildTests.test_release_cache_and_source_survive_and_are_reused_for_the_next_tip': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_untested_commit_runs_host_checks_first': PHONE_BUILD_NEEDS_MAC,
     'test_lane_slots.VerifyTestsSlotTests.test_runner_xcodebuild_steps_take_a_slot_and_record_it': 'runs xcodebuild',
+    'test_sim_builds.': 'packs and unpacks app builds with macOS ditto',
+    # The runner (lane-runner.py) runs only on the Mac; Ubuntu 22.04's git 2.34 on the VPS runner is too old (#2160).
+    'test_lane_hosted_fast.HostedChecksStandTests.': 'needs git merge-tree --write-tree (git 2.38 or later)',
 }
 PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snapshots and the Mac-only caches'}
 # --plan fast-hosted-sessionkit and --plan fast-mac-rest (#1389): the fast plan split three ways once the repo is
@@ -461,7 +466,7 @@ PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snaps
 # Between them the three plans run every fast-plan step (test_fast_split.py checks it).
 FAST_SPLIT_PLANS = ('fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest')
 HOSTED_SESSIONKIT_STEPS = ('package-build', 'package-core', 'package-core-serial')
-MAC_REST_STEPS = ('runner-tests', 'ops', 'package-build', 'package')
+MAC_REST_STEPS = ('runner-tests', 'ops', 'package-build', 'package', 'shipped-compat')
 # runner-tests without the tests above: discover scripts/tests as the plain step does, then drop the listed ids.
 PORTABLE_RUNNER_LOADER = '''
 import sys, unittest
@@ -486,6 +491,55 @@ kept = unittest.TestSuite(t for t in tests(unittest.defaultTestLoader.discover("
                           if t.id().startswith(only))
 sys.exit(not unittest.TextTestRunner().run(kept).wasSuccessful())
 '''
+
+
+# The last shipped build's compatibility checks (#1899): the frozen packet reader still matches the tag, and a
+# database this tree writes opens in that build's own persistence code. .github/workflows/shipped-build-compat.yml
+# runs them too, but the runner pushes a merge commit it built itself, so no required check can stand on it and a
+# red workflow never stopped a PR landing. They run here instead, in the plan the runner merges on, for a diff that
+# touches a file that workflow's `paths` names. They need the Mac (the writer builds SessionKit's test target),
+# so they are a Mac step in the split plans.
+SHIPPED_COMPAT_WORKFLOW = '.github/workflows/shipped-build-compat.yml'
+SHIPPED_COMPAT_COMMAND = 'scripts/freeze-shipped-reader.sh --check && scripts/check-build29-database.sh'
+SHIPPED_COMPAT_TIMEOUT = 2400  # the workflow's own 40-minute budget
+
+
+def shipped_compat_paths(root):
+    """The `paths` globs of the compatibility workflow in <root>, or None when the tree has no such workflow."""
+    workflow = Path(root) / SHIPPED_COMPAT_WORKFLOW
+    if not workflow.is_file():
+        return None
+    text = workflow.read_text()
+    if '    paths:\n' not in text:
+        raise RuntimeError(f'{SHIPPED_COMPAT_WORKFLOW} has no `paths:` list; shipped_compat_paths cannot read it')
+    block = text.split('    paths:\n', 1)[1].split('\npermissions:', 1)[0]
+    paths = [m.group(1) for m in re.finditer(r"^\s*-\s*'([^'!][^']*)'\s*(?:#.*)?$", block, re.M)]
+    entries = [line for line in block.splitlines() if line.strip().startswith('-')]
+    if len(entries) != len(paths):  # a double-quoted, unquoted or `!negated` entry would be dropped, not matched
+        raise RuntimeError(f'{SHIPPED_COMPAT_WORKFLOW} has a `paths:` entry that is not a plain single-quoted glob')
+    if not paths:
+        raise RuntimeError(f'{SHIPPED_COMPAT_WORKFLOW} lists no paths; shipped_compat_paths cannot read it')
+    return paths
+
+
+def github_glob_matches(pattern, path):
+    """GitHub's path glob: `*` stays inside a folder, `**` crosses folders."""
+    regex = re.escape(pattern).replace(r'\*\*', '\0').replace(r'\*', '[^/]*').replace('\0', '.*')
+    return re.fullmatch(regex, path) is not None
+
+
+def shipped_compat_needed(changed, root=None):
+    """(run, reason) for the compatibility checks. changed=None means no diff information: run, as every other
+    step does, so the Test Desk's run on next's tip and an author's own --plan fast keep them."""
+    if not changed:
+        return True, 'no list of changed paths, so every step runs'
+    patterns = shipped_compat_paths(root or ROOT)
+    if patterns is None:
+        return False, f'this tree has no {SHIPPED_COMPAT_WORKFLOW} to take the watched paths from'
+    hit = [path for path in changed if any(github_glob_matches(pattern, path) for pattern in patterns)]
+    if hit:
+        return True, 'the diff touches ' + ', '.join(hit[:3]) + (f' and {len(hit) - 3} more' if len(hit) > 3 else '')
+    return False, 'the diff touches none of the files shipped-build-compat.yml watches'
 
 
 def touches(changed, prefixes):
@@ -600,6 +654,17 @@ def stop_process_group(process, grace=10):
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(process.pid, signal.SIGKILL)
     process.wait()
+
+
+def feed_new_lines(path, offset, watch):
+    """Feed the complete lines written to `path` since byte `offset` to `watch`; returns the new offset."""
+    with path.open('rb') as handle:
+        handle.seek(offset)
+        data = handle.read()
+    end = data.rfind(b'\n') + 1
+    for line in data[:end].splitlines():
+        watch.feed(line.decode(errors='replace'))
+    return offset + end
 
 
 PACKAGE_BUILD_TIMEOUT = 900  # SessionKit build with tests; cold, under load
@@ -842,6 +907,9 @@ class Run:
             attempt = 1
             watching = startup is not None
             scan_from = 0  # each launch is judged by its own part of the shared log
+            # #2053: an xcodebuild test run that has printed its summary and then goes quiet is finished, not hung.
+            finish = xcodebuild_finish.FinishWatch() if tests and args[0] == 'xcodebuild' else None
+            finish_offset = 0
             process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
                                        start_new_session=True)
             try:
@@ -864,6 +932,15 @@ class Run:
                         break
                     except subprocess.TimeoutExpired:
                         pass
+                    if finish is not None:
+                        finish_offset = feed_new_lines(self.output / f'{name}.log', finish_offset, finish)
+                        if (quiet := finish.overdue()) is not None:
+                            entry['forced_after_summary'] = {'quiet_seconds': round(quiet, 1),
+                                                             'stopped_by': signal.Signals(
+                                                                 xcodebuild_finish.stop_group(process)).name}
+                            result = finish.result()
+                            print(f'warning: {name}: {finish.note(quiet)}', flush=True)
+                            break
                     if not watching:
                         continue
                     text = (self.output / f'{name}.log').read_text(errors='replace')[scan_from:]
@@ -899,6 +976,8 @@ class Run:
                         log.flush()
                         scan_from = len((self.output / f'{name}.log').read_text(errors='replace'))
                         attempt_start = time.monotonic()
+                        if finish is not None:
+                            finish = xcodebuild_finish.FinishWatch()
                         process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
                                                    start_new_session=True)
             except (subprocess.TimeoutExpired, KeyboardInterrupt, InterruptedError, StartupStall) as stopped:
@@ -1031,6 +1110,16 @@ class Run:
             else:
                 self.host_steps()
 
+    def shipped_compat(self):
+        """The shipped build's packet reader and database checks (#1899), when the diff reaches what they watch.
+        After the SessionKit steps, so the writer's `swift test` finds that build already done."""
+        needed, why = shipped_compat_needed(self.changed)
+        if needed:
+            self.manifest.setdefault('notes', []).append('shipped-build compatibility checks ran: ' + why)
+            self.command('shipped-compat', ['sh', '-c', SHIPPED_COMPAT_COMMAND], timeout=SHIPPED_COMPAT_TIMEOUT)
+        else:
+            self.skip('shipped-compat', why)
+
     def hosted_sessionkit(self):
         """SessionKit's build and SessionKitCoreTests on a GitHub-hosted Mac (#1389), for hosted-portable.yml. No
         sound output there, so SessionKitTests and SessionKitTraceTests are left to the lane Mac (fast-mac-rest)."""
@@ -1077,6 +1166,7 @@ class Run:
             self.skip('package', why)
         else:
             self.package_steps(expected, core_elsewhere=True)
+        self.shipped_compat()
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError(inputs_changed_message('Inputs changed during Mac-only verification', self.input_files))
 
@@ -1153,6 +1243,7 @@ class Run:
             self.package_steps(expected)
             if pass_key and sessionkit_pass.key(ROOT, identity) == pass_key:
                 sessionkit_pass.record(state_dir(), pass_key, head=self.manifest['head'], tests=len(expected))
+        self.shipped_compat()
 
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError(inputs_changed_message('Inputs changed during fast verification', self.input_files))
@@ -1165,6 +1256,11 @@ class Run:
         # 150 s of a 230 s run with the Mac's load average at 40 to 180 (2026-10-05).
         self.command('package-build', [*PACKAGE_RUNNER, '--build-only'], timeout=PACKAGE_BUILD_TIMEOUT)
         audio = self.manifest['audio_output'] = host_audio.audio_output()
+        # #1956: an output that never starts hangs the real-player tests until the step's limit. Say so now.
+        if audio.get('stuck') and not in_codex_sandbox():
+            self.manifest['lane_fault'] = f'no audio output: {audio["why"]}'
+            self.save()
+            raise RuntimeError(f'lane fault, not the PR: {self.manifest["lane_fault"]}')
         # Inside Codex's sandbox the audio tests are tolerated and the runner stays as it was: one serial step.
         core = {test for test in expected if test.startswith('SessionKitCoreTests/')}
         split = (bool(core) and not in_codex_sandbox()) or core_elsewhere

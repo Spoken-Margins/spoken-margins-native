@@ -204,4 +204,4 @@ A hand-picked list of shows. Each show's title, author, description, website and
 - From: Podcast and website publishers
 - Where: `Contracts/fixtures`, `Contracts/traces`, `fixtures`, `traces`, `App/TestFixtures`, `Packages/SessionKit/Tests/SessionKitTests/Fixtures`
 
-Some of these are saved copies of feeds, pages, OPML and search responses, kept so tests can replay them; the rest are written for the tests. Contracts/fixtures and Contracts/traces are also bundled in the app today for its test hooks. The public-source audit (#1383) prunes or confirms them.
+Some of these are saved copies of feeds, pages, OPML and search responses, kept so tests can replay them; the rest are written for the tests. The saved copies keep feed metadata (show and post titles, authors, links) but no third-party article body: every article body, transcript and page body in them is placeholder text written for the tests, shaped like the original (#1994). Contracts/fixtures and Contracts/traces are also bundled in the app today for its test hooks. The public-source audit (#1383) prunes or confirms them.

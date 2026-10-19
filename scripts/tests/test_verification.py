@@ -403,6 +403,26 @@ class VerificationTests(unittest.TestCase):
         self.assertTrue(message.startswith('lane fault, not the PR: no audio output'), message)
         self.assertEqual(manifest['audio_output'], {'usable': False, 'why': 'lid closed'})
 
+    def test_an_output_that_never_starts_is_a_lane_fault_before_the_package_tests_run(self):
+        # #1956, 2026-10-17: BlackHole 2ch was the default output and never started, so the real-player tests
+        # hung the package step for 17 minutes on every PR, and the reports blamed the PRs.
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+            verification.os.environ.pop('CODEX_SANDBOX', None)
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            stuck = {'usable': False, 'stuck': True, 'why': 'the default output (BlackHole 2ch) does not start'}
+            with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append(name)), \
+                    patch.object(run, 'ops_steps'), \
+                    patch.object(verification.host_audio, 'audio_output', return_value=stuck), \
+                    patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                with self.assertRaises(RuntimeError) as raised:
+                    run.host_steps()
+        self.assertEqual(run.manifest['lane_fault'], 'no audio output: the default output (BlackHole 2ch) does not start')
+        self.assertTrue(str(raised.exception).startswith('lane fault, not the PR: no audio output'), raised.exception)
+        self.assertNotIn('package', calls)
+        self.assertNotIn('package-core', calls)
+
     def test_other_failures_stay_the_prs_even_with_no_sound_output_or_with_it(self):
         player = 'SessionKitTests/RealPlayerMarginMomentTests/testMarginPlays'
         for name, step in (('a later test crashed, so tests are missing', {'errors': [
@@ -439,7 +459,9 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(status, 'verified')
 
     def skipped_steps(self, manifest):
-        return {step['name']: step['skipped'] for step in manifest['steps'] if step.get('skipped')}
+        # shipped-compat follows its own path filter (test_shipped_compat_step.py), not the runner and ops test scopes.
+        return {step['name']: step['skipped'] for step in manifest['steps']
+                if step.get('skipped') and step['name'] != 'shipped-compat'}
 
     def test_a_lane_run_for_an_app_only_diff_runs_just_the_tests_that_read_the_app(self):
         # #862: runner-tests are about 2 minutes of a 10-minute run, and the ones that read App/ are seconds.
@@ -532,6 +554,7 @@ class VerificationTests(unittest.TestCase):
             run = verification.Run(Path(temporary) / 'run', 'fast', ['App/X.swift'])
             with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, args))), \
                     patch.object(run, 'ops_steps'), patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
                     patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
                 run.host_steps()
         args = dict(calls)['runner-tests']
@@ -735,6 +758,7 @@ class VerificationTests(unittest.TestCase):
             with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
                     patch.object(run, 'ops_steps'), \
                     patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
                     patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
                 run.host_steps()
         timeout = dict(calls)['runner-tests'].get('timeout', default)

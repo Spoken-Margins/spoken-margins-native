@@ -187,7 +187,7 @@ extension ListeningEdition {
         guard zip(starts, starts.dropFirst()).allSatisfy({ $0 < $1 }), (starts.last ?? 0) < duration else {
             throw EditionError.invalid("Two scenes share the same audio segment. Combine those scenes before using Skim.")
         }
-        let proposalID = "edition-map-" + revision
+        let proposalID = ListeningEditionMap.proposalIDPrefix + revision
         let records = scenes.enumerated().map { index, scene in
             PortableListeningMapScene(id: chapters[index].id, order: index, title: scene.title,
                 summaryText: scene.summary, summaryProvenance: .senderAuthored, eligibility: .eligible,
@@ -202,5 +202,15 @@ extension ListeningEdition {
                     points: boundaries.enumerated().map { index, time in
                         ResolvedListeningMapPoint(id: "boundary-\(index)", sourceMediaTimeMs: time, recipientMediaTimeMs: time, confidence: .exactEdition, evidenceIds: [])
                     }, intervals: []))
+    }
+}
+
+/// The ids a Listening Edition gives its map proposals: one per revision (#2118).
+public enum ListeningEditionMap {
+    public static let proposalIDPrefix = "edition-map-"
+
+    /// Whether saving `newID` replaces the item's stored `storedID`: both are edition maps, and not the same one.
+    public static func supersedes(_ newID: String, _ storedID: String) -> Bool {
+        newID != storedID && newID.hasPrefix(proposalIDPrefix) && storedID.hasPrefix(proposalIDPrefix)
     }
 }

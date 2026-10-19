@@ -36,6 +36,8 @@ REPORT_ISSUE = 184
 RUN_BY = 'integration script'
 HOSTED_RUN_BY = 'hosted integration'   # hosted-integration.yml on a GitHub-hosted Mac (#1389)
 HOSTED_VARIABLE = 'LANE_HOSTED_APP'    # the repository variable that switches hosted app tests on
+HOSTED_WORKFLOW = 'hosted-integration.yml'
+HOSTED_GRACE_SECONDS = 5 * 60        # how long a new tip waits for its hosted run to appear before the Mac tests it
 LANE_YIELD_SECONDS = 3 * 60 * 60     # lane app tests go first, unless next has gone this long untested
 MIN_FREE_GB = 10
 PER_BUILD_GB = 4
@@ -113,6 +115,27 @@ def hosted_fail_to_handle(comments: list[dict], handled: dict) -> Optional[dict]
     if verdict != 'FAIL' or sha7 in handled or not failed:
         return None
     return {'sha7': sha7, 'failed': failed, 'report': newest.get('html_url') or f'#{REPORT_ISSUE}'}
+
+
+def hosted_cover(sha: str, reports_by_hosted: list[str], runs: Optional[list[dict]], tip_age: float) -> tuple[bool, str]:
+    """Whether the hosted run has this tip, and why (#2127). Pushes made with the workflow token (the lane
+    runner's merges) start no workflows, so a tip can have no hosted run at all; the Mac must not take its
+    silence for a pass. Covered: a hosted report for the tip, or a run for it not yet finished. A run that
+    finished without a report, no run at all, or an unreadable run list leaves the tip to the Mac, after a
+    short grace for a run GitHub hasn't listed yet."""
+    if sha[:7] in reports_by_hosted:
+        return True, f'the hosted run reported {sha[:7]}'
+    if runs is None:
+        return False, f'the {HOSTED_WORKFLOW} runs could not be read'
+    live = [r for r in runs if r.get('status') != 'completed']
+    if live:
+        return True, f"a {HOSTED_WORKFLOW} run for {sha[:7]} is {live[0].get('status')}"
+    if runs:
+        return False, (f'the {HOSTED_WORKFLOW} run for {sha[:7]} finished '
+                       f"({runs[0].get('conclusion')}) without a report")
+    if tip_age < HOSTED_GRACE_SECONDS:
+        return True, f'{sha[:7]} landed {tip_age / 60:.0f} min ago; waiting for its {HOSTED_WORKFLOW} run'
+    return False, f'{sha[:7]} has no {HOSTED_WORKFLOW} run (a push by the workflow token starts none)'
 
 
 def failing_tests(body: str) -> list[str]:
@@ -523,6 +546,22 @@ class Ops:
         res = self.run(['gh', 'api', f'repos/{REPO}/actions/variables/{HOSTED_VARIABLE}', '--jq', '.value'], timeout=60)
         return res.returncode == 0 and res.stdout.strip() == 'on'
 
+    def hosted_runs(self, sha: str) -> Optional[list[dict]]:
+        """hosted-integration runs for this commit, newest first, as {'status', 'conclusion'}; None when GitHub
+        can't be read, which leaves the tip to the Mac."""
+        res = self.run(['gh', 'api', f'repos/{REPO}/actions/workflows/{HOSTED_WORKFLOW}/runs?head_sha={sha}&per_page=20',
+                        '--jq', '[.workflow_runs[] | {status, conclusion}]'], timeout=60)
+        if res.returncode:
+            self.log('hosted runs unreadable: ' + (res.stderr or res.stdout)[-200:])
+            return None
+        try:
+            return json.loads(res.stdout or '[]')
+        except ValueError:
+            return None
+
+    def commit_time(self, sha: str) -> float:
+        return float(self.must(['git', 'log', '-1', '--format=%ct', sha]).stdout.strip())
+
     def lane_waiting(self) -> list[int]:
         """PRs whose waiting /lane request needs the simulator. A GitHub error counts as none
         waiting: the simulator slot itself is still taken exclusively, so the lane can't be hurt."""
@@ -893,7 +932,9 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
     comments = ops.report_comments()
     reports = reported([c['body'] for c in comments])
     if ops.hosted_on():
-        return defer_to_hosted(ops, state, path, comments, reports, now, dry_run)
+        outcome = defer_to_hosted(ops, state, path, comments, reports, now, dry_run, sha)
+        if outcome:
+            return outcome
     tested = [t for t in (report_time(comments), state.get('last_started')) if t is not None]
     why = hold_reason(sha, state, reports, now, lane_slots.memory_pressure_level(), ops.free_bytes(),
                       ops.builds_running(), lane_slots.simulator_job_running(),
@@ -1003,17 +1044,28 @@ def hosted_not_reproduced(sha: str, report: str, failed: list[str], confirm: str
 
 
 def defer_to_hosted(ops: Ops, state: dict, path: Path, comments: list[dict], reports: list[tuple[str, str]],
-                    now: float, dry_run: bool = False) -> str:
-    """While hosted integration is on, the Mac tests no new tip. It acts only on the newest hosted report when
-    that is a confirmed FAIL it hasn't handled: it re-runs the failing tests at that tip, and only when they fail
-    here too runs today's culprit search, revert, diagnosis and issues (#1389). Each FAIL is handled once."""
+                    now: float, dry_run: bool = False, tip: str = '') -> Optional[str]:
+    """While hosted integration is on, the Mac tests no tip the hosted run has. It acts on the newest hosted
+    report when that is a confirmed FAIL it hasn't handled: it re-runs the failing tests at that tip, and only
+    when they fail here too runs today's culprit search, revert, diagnosis and issues (#1389). Each FAIL is
+    handled once. None when the hosted run doesn't have the tip (#2127): the caller tests it as when off."""
     say = print if dry_run else ops.log
     handled = state.setdefault('hosted_handled', {})
     target = hosted_fail_to_handle(comments, handled)
     if not target:
         if not dry_run:
             save_state(path, state)  # keeps a handling run that was cut off closed, never repeated
-        say(f'hold: hosted integration is on ({HOSTED_VARIABLE}); the Mac tests no new tips')
+        by_hosted = [s7 for s7, _ in reported([c['body'] for c in comments if re.search(
+            rf'^run by: {re.escape(HOSTED_RUN_BY)}\s*$', c['body'] or '', re.M)])]
+        try:
+            age = now - ops.commit_time(tip)
+        except (RuntimeError, ValueError):
+            age = HOSTED_GRACE_SECONDS
+        covered, why = hosted_cover(tip, by_hosted, ops.hosted_runs(tip), age)
+        if not covered:
+            say(f'hosted integration is on ({HOSTED_VARIABLE}) but {why}; the Mac tests it')
+            return None
+        say(f'hold: hosted integration is on ({HOSTED_VARIABLE}); {why}')
         return 'deferred'
     # A confirmed failure on next goes ahead of waiting lane requests ("revert first", #1180).
     why = room_reason(now, lane_slots.memory_pressure_level(), ops.free_bytes(), ops.builds_running(),
