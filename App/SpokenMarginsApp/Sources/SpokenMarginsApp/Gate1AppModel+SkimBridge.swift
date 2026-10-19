@@ -117,7 +117,8 @@ extension Gate1AppModel: SkimBridgeHost {
     }
 
     func skimEngineCallFailedWhileCancelling() {
-        snapshot = snapshot
+        let current = snapshot
+        snapshot = current // re-publish; a stored property rejects a bare self-assignment
     }
 
     func skimDestinationsWillChange() {
