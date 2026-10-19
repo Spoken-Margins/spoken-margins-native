@@ -10,17 +10,23 @@ Usage: scripts/xcodebuild-lane <xcodebuild arguments>
 - Adds `ARCHS=arm64` to a generic iOS Simulator build on Apple silicon, unless the arguments set
   ARCHS or -arch. A generic destination builds every architecture: each Swift file, packages
   included, was compiled for x86_64 too, a simulator no Mac here runs (#1326).
+- A `test` or `test-without-building` run that has printed its test summary and then stays silent for
+  scripts/xcodebuild_finish.py's grace period is stopped, says so, and returns the result its summary shows (#2053).
+  That is a pass only when the summary covers the whole run (one bundle selected, or xcodebuild's own banner).
 - Information-only calls (-version, -list, -showBuildSettings, -exportArchive, ...) skip all three.
 """
+import contextlib
 import os
 from pathlib import Path
 import platform
 import signal
 import subprocess
 import sys
+import threading
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lane_slots import build_slot  # noqa: E402
+import xcodebuild_finish  # noqa: E402
 
 NO_BUILD_FLAGS = {'-version', '-list', '-showsdks', '-showBuildSettings', '-showdestinations',
                   '-showTestPlans', '-help', '-h', '-usage', '-license', '-checkFirstLaunchStatus',
@@ -59,16 +65,91 @@ def main(argv):
     label = f'xcodebuild {action}'
     with build_slot(label):
         print(f'[lane] DerivedData: {derived}', file=sys.stderr, flush=True)
-        process = subprocess.Popen([xcodebuild, *args])
+        if action in {'test', 'test-without-building'}:
+            result = run_tests([xcodebuild, *args])
+        else:
+            process = subprocess.Popen([xcodebuild, *args])
 
-        def forward(signum, _frame):
-            process.send_signal(signum)
+            def forward(signum, _frame):
+                process.send_signal(signum)
 
-        for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-            signal.signal(signum, forward)
-        result = process.wait()
+            for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+                signal.signal(signum, forward)
+            result = process.wait()
     return 128 - result if result < 0 else result
 
+
+def drop_output(stream):
+    """Point a stream whose reader has gone at /dev/null, so later writes and this wrapper's exit flush succeed."""
+    with contextlib.suppress(OSError):
+        os.dup2(os.open(os.devnull, os.O_WRONLY), stream.fileno())
+
+
+def lane_note(text):
+    """The wrapper's own stderr note. A closed stderr (`2>&1 | head`) must not stop it before it stops xcodebuild."""
+    try:
+        print(f'[lane] {text}', file=sys.stderr, flush=True)
+    except OSError:
+        drop_output(sys.stderr)
+
+
+def run_tests(command, grace=None, drain_seconds=5):
+    """Run a test action with its output passed through and watched, so a run that hangs after its summary ends (#2053).
+    xcodebuild runs in its own process group, which every signal sent to this wrapper is forwarded to."""
+    watch = xcodebuild_finish.FinishWatch(grace)
+    lock = threading.Lock()
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+
+    def forward(signum, _frame):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(process.pid, signum)
+
+    for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(signum, forward)
+
+    def pump(source, sink):
+        for raw in iter(source.readline, b''):
+            try:
+                sink.write(raw)
+                sink.flush()
+            except OSError:
+                # The reader went away (`... | head`). Keep draining and watching with the output dropped: a reader
+                # that stopped here would leave xcodebuild blocked on a full pipe and the build slot held for good.
+                drop_output(sink)
+            with lock:
+                watch.feed(raw.decode(errors='replace'))
+
+    # Daemon readers: a descendant that outlives xcodebuild can hold the pipes open, and must not hold this exit.
+    readers = [threading.Thread(target=pump, args=(stream, sink), daemon=True)
+               for stream, sink in ((process.stdout, sys.stdout.buffer), (process.stderr, sys.stderr.buffer))]
+    for reader in readers:
+        reader.start()
+    while True:
+        try:
+            result = process.wait(timeout=0.5)
+            break
+        except subprocess.TimeoutExpired:
+            pass
+        with lock:
+            quiet = watch.overdue()
+        if quiet is not None:
+            with lock:
+                note = watch.note(quiet)
+            lane_note(note)
+            xcodebuild_finish.stop_group(process)
+            with lock:
+                result, why = watch.forced_result(command[1:])
+            # One bundle's summary isn't the run's when the scheme has more bundles to go: never a pass for those.
+            lane_note(f'{why or "returning the summary result"}: exit {result}')
+            break
+    for reader in readers:
+        reader.join(timeout=drain_seconds)
+    if any(reader.is_alive() for reader in readers):
+        # xcodebuild exited but something it started still holds its output open: end that too.
+        lane_note('a process xcodebuild started still held its output after it exited; stopping it (#2053)')
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(process.pid, signal.SIGKILL)
+    return result
 
 if __name__ == '__main__':
     raise SystemExit(main(sys.argv[1:]))
