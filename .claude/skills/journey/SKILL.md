@@ -20,7 +20,7 @@ The Test Desk takes **T4 and T5** requests. T2 and T3 go to the self-hosted runn
 
 1. **Worktree at the requested commit.** Never test in a stream's worktree or the owner's checkout:
    `git worktree add --detach .claude/worktrees/lane-<id> <sha>`
-2. **Install a ready-made build when there is one; build only when there isn't.** The integration run keeps a Debug simulator build of each tip it tests, so most desk starts need no build:
+2. **Install a ready-made build when there is one; build only when there isn't.** The integration run keeps a Debug simulator build of each tip it tests, so most desk starts need no build. When it runs on a GitHub-hosted Mac (`LANE_HOSTED_APP`), `scripts/sim-build-latest` downloads that run's build with `gh` (about 290 MB, a minute or two) the first time and says so on stderr; `--no-download` skips that:
    - **A request pinned to a commit** (a PR head, a named SHA): `scripts/sim-build-latest --for <sha>`. It prints the app path, then the SHA, and exits 1 when there is no build of exactly that commit; then build.
    - **A check of the base branch's tip** (no commit named, or "test next"): `scripts/sim-build-latest`. It also says on stderr how many commits it is behind `origin/next` as last fetched, so `git fetch origin` first. Behind 0: use it. Behind more: run `git diff --stat <its sha> origin/next -- App Packages project.yml Contracts`; if nothing the request checks changed, use it. Either way, name the SHA you installed in the report.
    - **Otherwise, build** in the worktree with the wrapper. It queues for a Mac-wide build slot and uses `.build/dd` there:

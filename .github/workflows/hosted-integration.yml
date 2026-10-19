@@ -7,8 +7,10 @@
 # What it never does here: search for the culprit, revert, file issues or ask Claude. A PR opened with the job's
 # token starts no workflows, so a revert PR would never merge, and there is no Claude token here. While this is
 # on, the Mac's job tests no new tip; it acts only on a confirmed hosted FAIL it hasn't handled (it re-runs the
-# failing tests there first, then does today's culprit search, revert, diagnosis and issues). It keeps no
-# simulator build for desks (sim_builds.py) and counts no journey streaks or catch-ledger rows.
+# failing tests there first, then does today's culprit search, revert, diagnosis and issues). It counts no journey
+# streaks or catch-ledger rows. Desks get the tip's simulator app from this run instead of the Mac's
+# ~/SpokenMarginsOps/sim-builds: the artifact `sim-app-<sha>`, uploaded only when the build of exactly this SHA
+# passed bundle-contracts, which scripts/sim-build-latest downloads with gh when no local build matches.
 #
 # Skipped, and free, until the repository variable LANE_HOSTED_APP is `on`: the same switch as hosted /lane T2
 # and T3. Hosted macOS minutes cost money while the repo is private; once it is public they are free.
@@ -105,6 +107,20 @@ jobs:
           path: artifacts/integration-run/
           if-no-files-found: ignore
           retention-days: 14
+
+      # The tip's simulator app for desks (scripts/sim_builds.py). ditto already zipped it, keeping the bundle's
+      # symlinks and modes, so no second compression. About 290 MB on 2026-10-18 at 1-2 tips a day. 2 days: a desk
+      # wants today's tip, and storage counts against the account's quota while the repo is private.
+      # Absent when the build failed or wasn't this SHA's.
+      - name: Keep the simulator app for desks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sim-app-${{ github.sha }}
+          path: artifacts/sim-app/
+          if-no-files-found: ignore
+          retention-days: 2
+          compression-level: 0
 
       - name: Report time
         if: always()

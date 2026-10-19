@@ -934,6 +934,42 @@ class HostedRunTests(unittest.TestCase):
         with open(os.devnull, 'w') as quiet, self.assertRaises(SystemExit), contextlib.redirect_stderr(quiet):
             run.main(['--hosted', '--sha', SHA[:7]])
 
+    class BuildingHostedOps(HostedOps):
+        """A hosted run whose app plan leaves a built app, of `head`, that passed bundle-contracts or not."""
+
+        def __init__(self, tmp, plans, head=SHA, built=True, **kw):
+            super().__init__(tmp, plans, **kw)
+            self.head, self.built = head, built
+
+        def test_plan(self, wt, output, plan, fds, only=()):
+            result = super().test_plan(wt, output, plan, fds, only)
+            app = (wt / '.build/verification/SpokenMarginsAppBehavior/Build/Products/Debug-iphonesimulator'
+                   / 'SpokenMarginsApp.app')
+            app.mkdir(parents=True, exist_ok=True)
+            (app / 'Info.plist').write_text('<plist/>')
+            steps = [{'name': 'bundle-contracts', 'exit_code': 0 if self.built else 1}]
+            (output / 'manifest.json').write_text(json.dumps(dict(result, head=self.head,
+                                                                  steps=steps + result['steps'])))
+            return result
+
+    def test_the_tip_s_own_good_build_is_packed_for_the_sim_app_artifact(self):
+        """Desks download it (scripts/sim-build-latest); only exactly this SHA's build that passed bundle-contracts."""
+        rows = [(SHA, True, 'packed'), (SHA, False, 'not packed: no good simulator build'),
+                (OLD, True, f'not packed: the app plan built {OLD[:7]}')]
+        for head, built, said in rows:
+            with self.subTest(said=said), tempfile.TemporaryDirectory() as tmp:
+                ops = self.BuildingHostedOps(tmp, [manifest({TEST: 'failed'})] * 3, head=head, built=built,
+                                             bodies=[report_comment(OLD[:7], 'PASS')])
+                with recording_slot(ops.events), patch.object(run.lane_ledger, 'record_tip'):
+                    self.assertEqual(run.hosted_run(ops, SHA), 'FAIL')  # failing tips are packed too
+                packed = ops.repo_root / 'artifacts' / 'sim-app'
+                self.assertIn('simulator build ' + said, (ops.home / 'log.txt').read_text())
+                self.assertEqual(packed.is_dir(), said == 'packed')
+                if said == 'packed':
+                    self.assertEqual(json.loads((packed / 'build.json').read_text())['sha'], SHA)
+                    self.assertTrue((packed / run.sim_builds.PACKED_APP).is_file())
+                self.assertIsNone(run.sim_builds.latest(Path(os.environ['SM_SIM_BUILDS'])))  # nothing kept on disk
+
 
 class MacDefersToHostedTests(unittest.TestCase):
     def tick(self, tmp, plans, bodies, ops=None):

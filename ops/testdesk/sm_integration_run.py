@@ -758,22 +758,42 @@ def drop_bundles(evidence: Path) -> None:
         shutil.rmtree(bundle, ignore_errors=True)
 
 
+def tip_sim_app(wt: Path, manifest_path: Path, sha: str) -> tuple[Optional[Path], str]:
+    """The simulator app the app plan built, when it is exactly `sha`'s and passed bundle-contracts; else why not."""
+    manifest = json.loads(manifest_path.read_text())
+    if manifest.get('head') != sha:
+        return None, f'the app plan built {str(manifest.get("head"))[:7]}, not {sha[:7]}'
+    if not any(s.get('name') == 'bundle-contracts' and s.get('exit_code') == 0 for s in manifest.get('steps', [])):
+        return None, 'no good simulator build'
+    apps = sorted((wt / '.build' / 'verification').glob(f'*/Build/Products/Debug-iphonesimulator/{sim_builds.APP_NAME}'),
+                  key=lambda p: p.stat().st_mtime)
+    return (apps[-1], '') if apps else (None, 'the build left no app')
+
+
+def pack_sim_build(wt: Path, manifest_path: Path, sha: str) -> str:
+    """On a hosted Mac: zip the tip's simulator app into artifacts/sim-app/ for hosted-integration.yml to upload
+    as `sim-app-<sha>`, which scripts/sim-build-latest downloads. The same rule as keep_sim_build. Never raises."""
+    try:
+        app, why = tip_sim_app(wt, manifest_path, sha)
+        if not app:
+            return 'not packed: ' + why
+        packed = sim_builds.pack(app, sha, BASE_BRANCH, wt / 'artifacts' / 'sim-app', built_by=HOSTED_RUN_BY)
+        if not packed['packed']:
+            return 'not packed: ' + packed['why']
+        return f"packed {packed['size_bytes'] / 1024 ** 2:.0f} MB into a {packed['zip_bytes'] / 1024 ** 2:.0f} MB zip"
+    except Exception as error:  # noqa: BLE001 - the report must still go out
+        return 'not packed: ' + str(error)[:300]
+
+
 def keep_sim_build(ops: Ops, wt: Path, manifest_path: Path, sha: str) -> str:
     """Copy the tip's simulator app for desks to install (scripts/sim-build-latest). Never raises.
 
     Only a build of exactly `sha` that passed bundle-contracts is kept, whatever the tests said: desks
     test the tip, failing or not."""
     try:
-        manifest = json.loads(manifest_path.read_text())
-        if manifest.get('head') != sha:
-            return f'not kept: the app plan built {str(manifest.get("head"))[:7]}, not {sha[:7]}'
-        if not any(s.get('name') == 'bundle-contracts' and s.get('exit_code') == 0 for s in manifest.get('steps', [])):
-            return 'not kept: no good simulator build'
-        apps = sorted((wt / '.build' / 'verification').glob(f'*/Build/Products/Debug-iphonesimulator/{sim_builds.APP_NAME}'),
-                      key=lambda p: p.stat().st_mtime)
-        if not apps:
-            return 'not kept: the build left no app'
-        app = apps[-1]
+        app, why = tip_sim_app(wt, manifest_path, sha)
+        if not app:
+            return 'not kept: ' + why
         kept = sim_builds.store(app, sha, BASE_BRANCH, sim_builds.root(), free_bytes=ops.free_bytes())
         if not kept['stored']:
             return 'not kept: ' + kept['why']
@@ -1077,8 +1097,8 @@ def hosted_run(ops: Ops, sha: str) -> str:
 
     The same tests and report as a Mac tick, with less around it: no culprit search, revert, issues or Claude
     (a PR opened with the job's token starts no workflows, and there is no Claude token here; the Mac handles a
-    confirmed FAIL, defer_to_hosted), no kept simulator build, no state, and no .xcresult bundles in the
-    evidence the workflow uploads."""
+    confirmed FAIL, defer_to_hosted), no state, and no .xcresult bundles in the evidence the workflow uploads.
+    The tip's simulator app is zipped for the workflow's `sim-app-<sha>` artifact instead of kept on disk."""
     now = ops.now()
     head = ops.must(['git', 'rev-parse', 'HEAD']).stdout.strip()
     if head != sha:
@@ -1098,6 +1118,7 @@ def hosted_run(ops: Ops, sha: str) -> str:
             result = run_tests(ops, ops.repo_root, evidence, fds)
     except Exception as error:  # noqa: BLE001
         result = dict(summarize({'error': str(error)}), flaky=[])
+    ops.log('simulator build ' + pack_sim_build(ops.repo_root, evidence / 'app' / 'manifest.json', sha))
     suspects = ops.suspects(sha, green) if result['verdict'] == 'FAIL' else []
     drop_bundles(evidence)
     run_url = ''
