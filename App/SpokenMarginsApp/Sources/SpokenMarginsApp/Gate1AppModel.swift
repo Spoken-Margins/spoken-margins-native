@@ -2779,11 +2779,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func openReadyListeningEdition() {
-        guard !snapshot.isRecording, let id = ListeningReadyNotifications.pendingItemID else { return }
-        ListeningReadyNotifications.pendingItemID = nil
-        openItem(id: id)
-    }
     func activateListeningEditionAudio(itemId: String, timeline: TranscriptTimeline) {
         guard let edition = try? ListeningEditionStore.application().load(itemID: itemId), let store else { return }
         do {

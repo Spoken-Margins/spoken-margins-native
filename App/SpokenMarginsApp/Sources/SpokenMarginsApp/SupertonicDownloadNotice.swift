@@ -50,6 +50,36 @@ final class SupertonicDownloadNotice: ObservableObject {
     }
 }
 
+/// The root's half of the card (#1820): offer it once the root has appeared, and show it as a sheet. `.task` runs
+/// after the root's own `onAppear`, so the welcome drawer has already decided whether it is showing.
+struct SupertonicDownloadNoticePresentation: ViewModifier {
+    @EnvironmentObject private var model: Gate1AppModel
+    @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
+    @ObservedObject var notice: SupertonicDownloadNotice
+
+    func body(content: Content) -> some View {
+        content
+            .task {
+                // Scripted UI routes drive their own screens; the card would sit over them.
+                guard !UITestingHooks.isActive else { return }
+                notice.presentIfNeeded(
+                    savedVoiceIsSupertonic: model.ttsVoiceSelection.supertonicVoice != nil,
+                    anotherSheetShowing: catalogDrawer.isPresented || model.isTermsOfUsePresented
+                        || model.isAIDataSharingConsentPresented || model.spokenMarginsPackageImportReview != nil
+                )
+            }
+            .sheet(isPresented: $notice.isPresented) {
+                SupertonicDownloadNoticeCard(
+                    openVoices: {
+                        notice.openVoices()
+                        model.openSettings()
+                    },
+                    notNow: { notice.isPresented = false }
+                )
+            }
+    }
+}
+
 struct SupertonicDownloadNoticeCard: View {
     let openVoices: () -> Void
     let notNow: () -> Void

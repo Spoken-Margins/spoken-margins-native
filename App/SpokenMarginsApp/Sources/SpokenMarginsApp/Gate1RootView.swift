@@ -56,28 +56,13 @@ struct Gate1RootView: View {
                 libraryWasEmptyAtLaunch: model.libraryWasEmptyAtLaunch,
                 followedSourceCount: model.feedSubscriptions.count
             )
-            // Scripted UI routes drive their own screens; the card would sit over them (#1820).
-            if !UITestingHooks.isActive {
-                supertonicNotice.presentIfNeeded(
-                    savedVoiceIsSupertonic: model.ttsVoiceSelection.supertonicVoice != nil,
-                    anotherSheetShowing: catalogDrawer.isPresented || model.isTermsOfUsePresented
-                        || model.isAIDataSharingConsentPresented || model.spokenMarginsPackageImportReview != nil
-                )
-            }
         }
         .onChange(of: model.requestedExperienceRoot) { _, root in
             guard let root else { return }
             navigation.select(root, recordingIsLocked: model.recordingNavigationIsLocked)
             model.requestedExperienceRoot = nil
         }
-        #if canImport(UIKit)
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-            keyboardIsPresented = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            keyboardIsPresented = false
-        }
-        #endif
+        .tracksKeyboard($keyboardIsPresented)
         .sheet(isPresented: $model.isAIDataSharingConsentPresented) {
             AIDataSharingConsentView()
                 .environmentObject(model)
@@ -97,15 +82,7 @@ struct Gate1RootView: View {
             CatalogDrawerView()
                 .environmentObject(catalogDrawer)
         }
-        .sheet(isPresented: $supertonicNotice.isPresented) {
-            SupertonicDownloadNoticeCard(
-                openVoices: {
-                    supertonicNotice.openVoices()
-                    model.openSettings()
-                },
-                notNow: { supertonicNotice.isPresented = false }
-            )
-        }
+        .modifier(SupertonicDownloadNoticePresentation(notice: supertonicNotice))
         .sheet(isPresented: $model.isHelpPresented) {
             HelpScreen()
                 .environmentObject(model)
