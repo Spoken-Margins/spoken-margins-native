@@ -64,6 +64,9 @@ struct PlaybackNowView: View {
                 }
             }
         }
+        // The player paints its own dark green whatever the system appearance,
+        // so text that sets no style must default to white here, not `.primary`.
+        .foregroundStyle(.white)
         .accessibilityIdentifier("playback.now.margins")
         .sheet(item: $selectedMargin) { row in
             ExperienceMarginDetailView(row: row).environmentObject(model)

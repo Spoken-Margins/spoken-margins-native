@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<?xml-stylesheet href="https://rss.buzzsprout.com/styles.xsl" type="text/xsl"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:podcast="https://podcastindex.org/namespace/1.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:psc="http://podlove.org/simple-chapters" xmlns:atom="http://www.w3.org/2005/Atom">
+<channel>
+  <atom:link href="https://rss.buzzsprout.com/2566974.rss" rel="self" type="application/rss+xml" />
+  <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" xmlns="http://www.w3.org/2005/Atom" />
+  <title>Plaintext with Rich</title>
+
+  <lastBuildDate>Fri, 16 Oct 2026 05:00:04 -0400</lastBuildDate>
+  <link>http://www.sith2.com/podcast</link>
+  <language>en-us</language>
+  <copyright>© 2026 Plaintext with Rich</copyright>
+  <podcast:locked>yes</podcast:locked>
+    <podcast:guid>01078cc1-355d-5151-8188-6e76a82c414c</podcast:guid>
+  <itunes:author>Rich Greene</itunes:author>
+  <itunes:type>episodic</itunes:type>
+  <itunes:explicit>false</itunes:explicit>
+  <description><![CDATA[<p>Cybersecurity is an everyone problem. So why does it always sound like it’s only for IT people?</p><p><br>Each week, Rich takes one topic, from phishing to ransomware to how your phone actually tracks you, and explains it in plain language in under ten minutes or less. No buzzwords. No condescension. Just the stuff you need to know to stay safer online, explained like you’re a smart person who never had anyone break it down properly. Because you are!</p>]]></description>
+  <generator>Buzzsprout (https://www.buzzsprout.com)</generator>
+  <itunes:keywords>cybersecurity, security awareness, hacking explained, cyber education, ransomware, phishing, encryption, digital privacy, online safety, tech for beginners, cybersecurity basics, internet security</itunes:keywords>
+  <itunes:owner>
+    <itunes:name>Rich Greene</itunes:name>
+  </itunes:owner>
+  <image>
+     <url>https://storage.buzzsprout.com/28zfba3r8ueize9dez6ocf0uuuqi?.jpg</url>
+     <title>Plaintext with Rich</title>
+     <link>http://www.sith2.com/podcast</link>
+  </image>
+  <itunes:image href="https://storage.buzzsprout.com/28zfba3r8ueize9dez6ocf0uuuqi?.jpg" />
+  <itunes:category text="Technology" />
+  

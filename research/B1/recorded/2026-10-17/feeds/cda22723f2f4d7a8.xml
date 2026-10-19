@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:atom="http://www.w3.org/2005/Atom" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:sy="http://purl.org/rss/1.0/modules/syndication/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">
+  <channel>
+    <title>Snap Judgment</title>
+    <link>http://snapjudgment.org/</link>
+    <pubDate>Thu, 15 Oct 2026 13:00:00 -0000</pubDate>
+    <lastBuildDate>Thu, 15 Oct 2026 01:57:50 -0000</lastBuildDate>
+    <ttl>60</ttl>
+    <language>en-us</language>
+    <copyright>Snap Judgment. </copyright>
+    <webMaster>help@prx.org (PRX)</webMaster>
+    <description>
+      <![CDATA[<p>Snap Judgment mixes real stories with beats to produce cinematic, dramatic audio. Snap’s raw, musical brand of storytelling dares listeners to see the world through the eyes of another. It's storytelling... with a BEAT.</p>]]>
+    </description>
+    <category>Arts/Performing Arts</category>
+    <category>Society &amp; Culture/Documentary</category>
+    <category>Society &amp; Culture/Personal Journals</category>
+    <category>snap</category>
+    <category>music</category>
+    <category>storytelling</category>
+    <category>personal journals</category>
+    <category>performing arts</category>
+    <generator>PRX Feeder v1.0.0</generator>
+    <docs>http://blogs.law.harvard.edu/tech/rss</docs>
+    <atom:link href="https://snap.feed.snapjudgment.org" rel="self" type="application/rss+xml"/>
+    <itunes:new-feed-url>https://snap.feed.snapjudgment.org</itunes:new-feed-url>
+    <itunes:applepodcastsverify>678333</itunes:applepodcastsverify>
+    <itunes:author>Snap Judgment and PRX</itunes:author>
+    <itunes:type>episodic</itunes:type>
+    <itunes:category text="Arts">
+      <itunes:category text="Performing Arts"/>
+    </itunes:category>
+    <itunes:image href="https://f.prxu.org/320/images/bbb82df0-2f3d-4f53-83d9-bc88e39e3cdb/SnapIconKQEDPRX-Orange-Smooth-3000x3000.png"/>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:owner>
+      <itunes:email>paloma.orozco@prx.org</itunes:email>
+      <itunes:name>Snap Judgment and PRX</itunes:name>
+    </itunes:owner>
+    <itunes:subtitle>Snap Judgment mixes real stories with killer beats to produce cinematic, dramatic radio. Snap’s raw, musical brand of storytelling dares listeners to see the world through the eyes of another. It's storytelling... with a BEAT.</itunes:subtitle>
+    <itunes:summary>
+      <![CDATA[Snap Judgment mixes real stories with beats to produce cinematic, dramatic audio. Snap’s raw, musical brand of storytelling dares listeners to see the world through the eyes of another. It's storytelling... with a BEAT.]]>
+    </itunes:summary>
+    <media:copyright>Snap Judgment. </media:copyright>
+    <media:category scheme="http://www.itunes.com/dtds/podcast-1.0.dtd">Arts</media:category>
+    <podcast:guid>e07bddb8-0b7c-53da-a443-163a2ba67efb</podcast:guid>
+    <podcast:podping usesPodping="true"/>
+    <podcast:locked>yes</podcast:locked>
+    

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:art19="https://art19.com/xmlns/rss-extensions/1.0" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0/" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">
+  <channel>
+    <title>New Heights with Jason &amp; Travis Kelce</title>
+    <description>
+      <![CDATA[<p>Football’s funniest family duo — Jason Kelce of the Philadelphia Eagles and Travis Kelce of the Kansas City Chiefs — team up to provide next-level access to life in the league as it unfolds. The two brothers and Super Bowl champions drop weekly insights about the weekly slate of games and share their INSIDE perspectives on trending NFL news and sports headlines. They also endlessly rag on each other as brothers do, chat the latest in pop culture and welcome some very popular and well-known friends to chat with them.</p><p><br></p><p>Check out new episodes every Wednesday. Follow New Heights on YouTube or wherever you get your podcasts. </p>]]>
+    </description>
+    <managingEditor>NewHeightshow@gmail.com (Wondery)</managingEditor>
+    <generator>ART19</generator>
+    <atom:link href="https://rss.art19.com/new-heights" rel="self" type="application/rss+xml"/>
+    <link>https://t.co/bCqxf9lxeF</link>
+    <itunes:owner>
+      <itunes:name>Wondery</itunes:name>
+      <itunes:email>NewHeightshow@gmail.com</itunes:email>
+    </itunes:owner>
+    <itunes:author>Wondery </itunes:author>
+    <itunes:summary>
+      <![CDATA[<p>Football’s funniest family duo — Jason Kelce of the Philadelphia Eagles and Travis Kelce of the Kansas City Chiefs — team up to provide next-level access to life in the league as it unfolds. The two brothers and Super Bowl champions drop weekly insights about the weekly slate of games and share their INSIDE perspectives on trending NFL news and sports headlines. They also endlessly rag on each other as brothers do, chat the latest in pop culture and welcome some very popular and well-known friends to chat with them.</p><p><br></p><p>Check out new episodes every Wednesday. Follow New Heights on YouTube or wherever you get your podcasts. </p>]]>
+    </itunes:summary>
+    <language>en</language>
+    <itunes:explicit>yes</itunes:explicit>
+    <itunes:category text="Sports"/>
+    <itunes:category text="Comedy"/>
+    <itunes:type>episodic</itunes:type>
+    <itunes:image href="https://content.production.cdn.art19.com/images/6e/d6/06/35/6ed60635-c302-40b2-bc44-4dba56b10203/a1632c567236a82411be7fe7f3b31a692a684cbf22bc3c12b4ed8d9e458a23d2b1a467ea2fba901a52e2333df8b66eddf9b9585b03b4203d6105536b307337ba.jpeg"/>
+    <image>
+      <url>https://content.production.cdn.art19.com/images/6e/d6/06/35/6ed60635-c302-40b2-bc44-4dba56b10203/a1632c567236a82411be7fe7f3b31a692a684cbf22bc3c12b4ed8d9e458a23d2b1a467ea2fba901a52e2333df8b66eddf9b9585b03b4203d6105536b307337ba.jpeg</url>
+      <link>https://t.co/bCqxf9lxeF</link>
+      <title>New Heights with Jason &amp; Travis Kelce</title>
+    </image>
+    

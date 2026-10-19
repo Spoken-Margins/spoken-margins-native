@@ -90,4 +90,17 @@ extension Gate1AppModel {
             activateListeningEditionAudio(itemId: edition.itemID, timeline: timeline)
         }
     }
+
+    /// Saves a shared Listening Map for a text item (#1471). A running session reads its map from memory, so it is
+    /// told too; the item that is playing is left alone until the listener pauses, as for an edition above.
+    func attachSharedTextListeningMap(_ map: ListeningMap) throws {
+        if snapshot.itemId == map.itemId, snapshot.status.isPlaybackActive {
+            throw SessionKitError.persistenceFailed("shared_map_item_is_playing")
+        }
+        if let engine {
+            snapshot = try engine.attachListeningMap(map)
+        } else {
+            try requireStore().saveListeningMap(map)
+        }
+    }
 }

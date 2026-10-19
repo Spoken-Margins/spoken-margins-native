@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/YMH1796246858" rel="self" type="application/rss+xml"/>
+    <title>DOUBLE COVERAGE PODCAST</title>
+    <link>https://www.buzzsprout.com/2531860</link>
+    <language>en-us</language>
+    <copyright>© 2025 DOUBL3 COVERAGE PODCAST</copyright>
+    <description>Double Coverage Podcast</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/f97a0396-a456-11f0-8c65-03c1ab5f9b55/image/01089e3bcfc50a9f7f85bc1ee4d8fe33.png?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>DOUBLE COVERAGE PODCAST</title>
+      <link>https://www.buzzsprout.com/2531860</link>
+    </image>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle></itunes:subtitle>
+    <itunes:author>Mystic Zach</itunes:author>
+    <itunes:summary>Double Coverage Podcast</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>Double Coverage Podcast </p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Mystic Zach</itunes:name>
+      <itunes:email>zachpickswins@gmail.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/f97a0396-a456-11f0-8c65-03c1ab5f9b55/image/01089e3bcfc50a9f7f85bc1ee4d8fe33.png?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Sports">
+      <itunes:category text="Football"/>
+    </itunes:category>
+    

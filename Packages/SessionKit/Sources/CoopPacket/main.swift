@@ -10,6 +10,7 @@ import Foundation
 ///     swift run --package-path Packages/SessionKit coop-packet inspect <packet>...
 ///     swift run --package-path Packages/SessionKit coop-packet build <plan.json> [--out <dir>]
 ///     swift run --package-path Packages/SessionKit coop-packet check <packet>...
+///     swift run --package-path Packages/SessionKit coop-packet map <edition.json> [--type text|pdf|epub] [--url <link>|--no-url]
 ///
 /// The plan format is in `Packages/SessionKit/Sources/CoopPacket/README.md`.
 
@@ -18,6 +19,8 @@ usage:
   coop-packet inspect <packet>...            print each packet as JSON (item, sender, Margins, reply links)
   coop-packet build <plan.json> [--out dir]  write a packet from a plan, then check it
   coop-packet check <packet>...              read every packet in both readers, then merge them in every order
+  coop-packet map <edition.json> [--type text|pdf|epub] [--url link | --no-url] [--sender label] [--name file] [--out dir]
+                                             write a map-only packet (a Listening Map, no Margins) from a Listening Edition
 """
 
 func fail(_ message: String) -> Never {
@@ -48,6 +51,27 @@ do {
         print("wrote \(built.url.path)")
         print("  digest \(built.digest)")
         print("  \(built.marginCount) Margins, \(built.replyCount) replies, \(built.byteCount / 1024) KB")
+        let report = try CoopCheck.run([built.url])
+        print(report.text)
+        if !report.passed { exit(2) }
+    case "map":
+        guard let editionPath = rest.first, !editionPath.hasPrefix("--") else { fail(usage) }
+        func value(of flag: String) -> String? {
+            guard let index = rest.firstIndex(of: flag) else { return nil }
+            guard rest.indices.contains(index + 1) else { fail("\(flag) needs a value") }
+            return rest[index + 1]
+        }
+        let built = try MapPacketBuilder.build(
+            editionURL: fileURL(editionPath),
+            itemType: value(of: "--type") ?? "text",
+            canonicalURL: rest.contains("--no-url") ? "" : value(of: "--url"),
+            sender: value(of: "--sender") ?? "A friend (synthetic)",
+            fileName: value(of: "--name"),
+            outDirectory: value(of: "--out").map(fileURL)
+        )
+        print("wrote \(built.url.path)")
+        print("  digest \(built.digest)")
+        print("  \(built.sceneCount) chapters, \(built.byteCount / 1024) KB")
         let report = try CoopCheck.run([built.url])
         print(report.text)
         if !report.passed { exit(2) }

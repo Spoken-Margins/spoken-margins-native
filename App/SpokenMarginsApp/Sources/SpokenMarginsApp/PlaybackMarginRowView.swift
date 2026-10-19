@@ -29,7 +29,7 @@ struct PlaybackMarginRowView: View {
                         Text(countdown)
                             .font(.caption.monospacedDigit().weight(.semibold))
                             .foregroundStyle(AppColors.listeningAccent)
-                            .contentTransition(.numericText())
+                            .numericTextTransition()
                             .accessibilityIdentifier("\(identifier).countdown")
                     }
                 }

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/on-purpose" rel="self" type="application/rss+xml"/>
+    <title>On Purpose with Jay Shetty</title>
+    <language>en-US</language>
+    <copyright></copyright>
+    <description>Jay Shetty hosts some of culture’s most influential voices in wellness and personal growth, helping you feel healthier, happier and more healed.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/0cb56516-756e-11f1-942d-1f48449dfbbc/image/c621e53ad8ba502502befb29ac9a0752.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>On Purpose with Jay Shetty</title>
+    </image>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle></itunes:subtitle>
+    <itunes:author>Perfect Strangers</itunes:author>
+    <itunes:summary>Jay Shetty hosts some of culture’s most influential voices in wellness and personal growth, helping you feel healthier, happier and more healed.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>Jay Shetty hosts some of culture’s most influential voices in wellness and personal growth, helping you feel healthier, happier and more healed.</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Perfect Strangers</itunes:name>
+      <itunes:email>applepodcast@howstuffworks.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/0cb56516-756e-11f1-942d-1f48449dfbbc/image/c621e53ad8ba502502befb29ac9a0752.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Health &amp; Fitness">
+      <itunes:category text="Mental Health"/>
+    </itunes:category>
+    <itunes:category text="Business">
+    </itunes:category>
+    

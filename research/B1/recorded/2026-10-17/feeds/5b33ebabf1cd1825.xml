@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:psc="http://podlove.org/simple-chapters" xmlns:omny="https://omny.fm/rss-extensions" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:acast="https://schema.acast.com/1.0/" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">
+  <channel>
+    <omny:organizationId>e73c998e-6e60-432f-8610-ae210140c5b1</omny:organizationId>
+    <omny:networkId>644a77f9-0ec4-4fd9-bfaf-ae3e0143c95a</omny:networkId>
+    <omny:programId>1508ddb2-0c9a-42f6-aafe-ae3300346aa9</omny:programId>
+    <omny:playlistId>bf391792-153e-41b3-9d3d-ae3300346ad8</omny:playlistId>
+    <language>en-US</language>
+    <atom:link rel="self" type="application/rss+xml" href="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/1508ddb2-0c9a-42f6-aafe-ae3300346aa9/bf391792-153e-41b3-9d3d-ae3300346ad8/podcast.rss" />
+    <atom:link rel="first" type="application/rss+xml" href="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/1508ddb2-0c9a-42f6-aafe-ae3300346aa9/bf391792-153e-41b3-9d3d-ae3300346ad8/podcast.rss?page=1" />
+    <atom:link rel="last" type="application/rss+xml" href="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/1508ddb2-0c9a-42f6-aafe-ae3300346aa9/bf391792-153e-41b3-9d3d-ae3300346ad8/podcast.rss?page=1" />
+    <itunes:new-feed-url>https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/1508ddb2-0c9a-42f6-aafe-ae3300346aa9/bf391792-153e-41b3-9d3d-ae3300346ad8/podcast.rss</itunes:new-feed-url>
+    <title>The Herd with Colin Cowherd</title>
+    <link>https://www.iheart.com/podcast/the-herd-w-colin-cowherd-27332740/</link>
+    <description><![CDATA[The Herd with Colin Cowherd is a thought-provoking, opinionated, and topic-driven journey through the top sports stories of the day.]]></description>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>The Herd with Colin Cowherd is a thought-provoking, opinionated, and topic-driven journey through the top sports stories of the day.</itunes:summary>
+    <itunes:owner>
+      <itunes:name>iHeartPodcasts and The Volume</itunes:name>
+      <itunes:email>Applepodcast@howstuffworks.com</itunes:email>
+    </itunes:owner>
+    <itunes:author>iHeartPodcasts and The Volume</itunes:author>
+    <copyright>2026 iHeartMedia, Inc. © Any use of this intellectual property for text and data mining or computational analysis including as training material for artificial intelligence systems is strictly prohibited without express written consent from iHeartMedia</copyright>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:category text="Sports">
+      <itunes:category text="Football" />
+      <itunes:category text="Basketball" />
+    </itunes:category>
+    <itunes:category text="News">
+      <itunes:category text="Sports News" />
+    </itunes:category>
+    <itunes:image href="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/1508ddb2-0c9a-42f6-aafe-ae3300346aa9/bf391792-153e-41b3-9d3d-ae3300346ad8/image.jpg?t=1788379017&amp;size=Large" />
+    <image>
+      <url>https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/1508ddb2-0c9a-42f6-aafe-ae3300346aa9/bf391792-153e-41b3-9d3d-ae3300346ad8/image.jpg?t=1788379017&amp;size=Large</url>
+      <title>The Herd with Colin Cowherd</title>
+      <link>https://www.iheart.com/podcast/the-herd-w-colin-cowherd-27332740/</link>
+    </image>
+    
