@@ -3057,7 +3057,9 @@ public final class SessionEngine {
                 bibliography: options.includeReference ? item.documentStructure?.bibliography : nil
             ),
             session: ExportSession(id: session.id, status: session.status, completionPercent: session.completionPercent),
-            listeningMap: options.includeListeningMap ? try repository.loadListeningMap(itemId: item.id) : nil,
+            listeningMap: options.includeListeningMap
+                ? try ListeningMapExportResolver.resolve(item: item, repository: repository, durationMs: sourceTimeline?.durationMs)
+                : nil,
             turns: turns,
             timeline: exportTimeline(interjections: interjections, turns: turns),
             interjections: interjections.map { interjection in
