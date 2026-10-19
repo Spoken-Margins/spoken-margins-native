@@ -126,7 +126,7 @@ public final class MainThreadHangProbe: @unchecked Sendable {
         lastAnsweredSent = nil
         self.intervalMs = interval
         let source = DispatchSource.makeTimerSource(queue: probeQueue)
-        source.schedule(deadline: .now() + .milliseconds(interval), repeating: .milliseconds(interval), leeway: .milliseconds(interval / 2))
+        source.schedule(deadline: .now() + .milliseconds(interval), repeating: .milliseconds(interval), leeway: .milliseconds(Self.leewayMs(forInterval: interval)))
         source.setEventHandler { [weak self] in self?.tick() }
         timer = source
         source.resume()
@@ -145,6 +145,11 @@ public final class MainThreadHangProbe: @unchecked Sendable {
     }
 
     private static func now() -> TimeInterval { ProcessInfo.processInfo.systemUptime }
+
+    /// How late the system may fire a check. The duration estimate (`estimateMs`) is right to within half the
+    /// gap between checks, and leeway widens that gap, so it stays small: a tenth of the interval. A wider
+    /// leeway let a 400 ms freeze read 314 ms at the app's pace (audit of #2111, 4f8387b).
+    static func leewayMs(forInterval interval: Int) -> Int { max(1, interval / 10) }
 
     /// A gap between the probe's own ticks longer than this means the process was frozen, not just the main thread.
     private var frozenGapMs: Double { Double(max(intervalMs * 4, thresholdMs * 4)) }

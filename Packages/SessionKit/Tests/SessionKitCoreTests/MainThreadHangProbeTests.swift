@@ -129,4 +129,15 @@ final class MainThreadHangProbeTests: XCTestCase {
         stack.pop(inner)
         XCTAssertEqual(stack.current, "")
     }
+
+    /// Timer leeway is how far the system may postpone a check, and a late check widens the unknown stretch
+    /// before a freeze. The Linux host never postpones, so the bound is asserted directly.
+    func testTheTimersLeewayIsAtMostATenthOfItsInterval() {
+        for interval in [10, 100, 250, 1000] {
+            let leeway = MainThreadHangProbe.leewayMs(forInterval: interval)
+            XCTAssertGreaterThanOrEqual(leeway, 1)
+            XCTAssertLessThanOrEqual(leeway, max(1, interval / 10), "interval \(interval)")
+        }
+        XCTAssertEqual(MainThreadHangProbe.leewayMs(forInterval: 100), 10, "the app's pace")
+    }
 }
