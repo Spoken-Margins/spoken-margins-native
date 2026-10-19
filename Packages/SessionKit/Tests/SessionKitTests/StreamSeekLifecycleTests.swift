@@ -226,6 +226,8 @@ final class StreamSeekLifecycleTests: XCTestCase {
         try client.play(targetId: "episode-target", fromMediaTimeMs: 0)
         XCTAssertTrue(spin(until: 8) { (client.currentMediaTimeMs() ?? 0) >= 5_000 }, "the episode plays")
         XCTAssertTrue(client.hasPodcastEvidenceTapOnCurrentItem, "precondition: the decoded-audio tap is attached")
+        XCTAssertEqual(client.currentItemProvidesPreciseTimingForTesting, true,
+                       "a downloaded episode seeks precisely, so a VBR MP3's audio lands where the clock says")
 
         // The Margin's rejoin: back 3 s, then the clock freezes where the seek landed.
         let rejoinMs = (client.currentMediaTimeMs() ?? 0) - 3_000

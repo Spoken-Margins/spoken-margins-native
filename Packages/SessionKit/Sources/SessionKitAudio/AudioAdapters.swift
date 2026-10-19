@@ -1971,7 +1971,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             removePlayerStateObserver()
             removeCompletionObserver()
             removeTimeObserver()
-            let item = AVPlayerItem(url: url)
+            let item = AVPlayerItem(asset: Self.playbackAsset(for: url))
             player = AVPlayer(playerItem: item)
             player?.volume = playbackVolume
             player?.automaticallyWaitsToMinimizeStalling = true
@@ -2037,6 +2037,21 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     public func seek(toMediaTimeMs mediaTimeMs: Int) throws {
         _ = try requestMediaSeek(toMediaTimeMs: mediaTimeMs)
     }
+
+    #if canImport(AVFoundation)
+    /// A downloaded episode asks for precise timing (#2094). Without it, a seek in a VBR MP3 played audio up to
+    /// about five minutes from where the clock said, on macOS with real decoding, while the clock read the
+    /// requested time; with it every seek landed within 13 ms. The cost on a local file is a frame scan only when
+    /// the MP3 has no Xing header (about 1.2 s for an hour). Streams keep the default until it is measured how
+    /// much of the file precise timing makes AVFoundation fetch before playing.
+    static func playbackAsset(for url: URL) -> AVURLAsset {
+        AVURLAsset(url: url, options: url.isFileURL ? [AVURLAssetPreferPreciseDurationAndTimingKey: true] : nil)
+    }
+
+    var currentItemProvidesPreciseTimingForTesting: Bool? {
+        (player?.currentItem?.asset as? AVURLAsset)?.providesPreciseDurationAndTiming
+    }
+    #endif
 
     public func requestMediaSeek(toMediaTimeMs mediaTimeMs: Int) throws -> MediaSeekRequest {
         #if canImport(AVFoundation)
