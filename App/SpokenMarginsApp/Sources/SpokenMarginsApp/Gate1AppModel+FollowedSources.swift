@@ -327,6 +327,7 @@ extension Gate1AppModel {
                 self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
             } catch {
+                await self.recordFollowFailure(error)
                 self.reportFailure(error, context: "Follow suggestion failed")
             }
         }

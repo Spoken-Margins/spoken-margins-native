@@ -5585,6 +5585,41 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNil(try store.loadSourceSuggestionDecision(sourceId: source.id))
     }
 
+    /// #1961: a failed Follow from a suggestion card left `followSourceFailure` empty, while the
+    /// Follow button and the candidate list already recorded theirs (#244).
+    func testAFailedFollowFromASuggestionRecordsTheFollowFailure() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try model.libraryStoreForTesting()
+        addTeardownBlock { [weak model, weak store] in
+            // Never unlink an open SQLite/WAL file; see testFollowDiscoveryRechecksSubscriptionsBeforePublishing.
+            if model == nil, store == nil {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        model.followCandidateDiscoveryHandler = { _, _ in [] }
+        try store.saveItem(Item(id: "article", title: "Article", mediaType: "text", text: "Source text.", externalReference: "https://example.com/article", status: "ready"))
+        model.openHome()
+        model.openItem(id: "article")
+        // An empty feed link is not a URL, so following it throws before any request is made.
+        let source = SourceIdentity(id: "source", kind: .articleFeed, canonicalURL: "", host: "example.com")
+        let candidate = SourceCandidateEvidence(id: "candidate", source: source, evidenceURL: "https://example.com/article", relation: "html_alternate", confidence: 1)
+        model.sourceFollowSuggestionItemId = "article"
+        model.storedSourceFollowSuggestionCandidates = [candidate]
+        XCTAssertEqual(model.sourceFollowSuggestionCandidates.map(\.id), ["candidate"])
+        XCTAssertNil(model.diagnostics["followSourceFailure"])
+
+        model.acceptSourceFollowSuggestion(candidate)
+
+        try await waitFor("follow failure recorded") { model.diagnostics["followSourceFailure"] != nil }
+        XCTAssertEqual(model.diagnostics["followSourceFailure"]?.hasPrefix("invalid_url host="), true)
+        XCTAssertTrue(model.feedSubscriptions.isEmpty)
+        XCTAssertNil(try store.loadSourceSuggestionDecision(sourceId: source.id), "a failed follow records no decision")
+    }
+
     /// #539: diagnostics showed a Follow failure for Noahpinion, which the owner follows. Its
     /// article on www.noahpinion.blog wasn't matched to the followed www.noahpinion.blog/feed, so
     /// opening it ran discovery again and recorded an error.
