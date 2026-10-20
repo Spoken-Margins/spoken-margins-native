@@ -738,7 +738,9 @@ class VerificationTests(unittest.TestCase):
                                         'print(os.environ.get("SM_LANE_HOST_SLOT", "none"))'], timeout=2)
                 seen['child'] = (run.output / 'package.log').read_text().strip()
 
-            with patch.object(verification, 'host_test_slot', slow_slot), patch.object(run, 'host_steps', steps):
+            # The hot-file ratchet is its own step with its own tests; here it would run on this checkout (#2180 audit).
+            with patch.object(verification, 'host_test_slot', slow_slot), patch.object(run, 'host_steps', steps), \
+                    patch.object(run, 'hot_file_ratchet'):
                 run.fast()
             step = run.manifest['steps'][-1]
         self.assertEqual(step['exit_code'], 0)

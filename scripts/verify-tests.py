@@ -1124,9 +1124,11 @@ class Run:
 
         On 2026-10-19 #2159, #2155 and #2067 each failed only this check, hours into the lane queue. It compares the
         committed branch with the local `base` (fetch first for an up-to-date verdict) and fails with the lane's words.
-        A lane run (one given the PR's changed paths) leaves it to the runner, which judges next's copy with the PR's
+        A lane run (one given the PR's changed paths, or any CI job) leaves it to the runner, which judges next's copy with the PR's
         labels. With the hot-file-ok label granted, set SM_HOT_FILE_OK=1."""
-        if self.changed is not None:
+        if self.changed is not None or os.environ.get('GITHUB_ACTIONS') == 'true':
+            # A CI job is a lane job even without --changed-files (the lane drops it for a path it can't pass), and
+            # the lane's runner-tests step runs inside it too.
             return self.skip('hot-file-ratchet', 'the lane runner checks next\'s ratchet, with the PR\'s labels, before any build')
         if os.environ.get('SM_HOT_FILE_OK') == '1':
             return self.skip('hot-file-ratchet', 'SM_HOT_FILE_OK=1: the PR carries the hot-file-ok label')

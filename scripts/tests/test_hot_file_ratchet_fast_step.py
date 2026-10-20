@@ -50,8 +50,9 @@ class FastPlanOrderTests(unittest.TestCase):
                                       side_effect=lambda *a, **k: calls.append(('slot', None)) or contextlib.nullcontext({})), \
                     mock.patch.dict(os.environ, env or {}), \
                     contextlib.redirect_stdout(io.StringIO()):
-                if not env:
-                    os.environ.pop('SM_HOT_FILE_OK', None)
+                for key in ('SM_HOT_FILE_OK', 'GITHUB_ACTIONS'):  # these tests may themselves run in the lane
+                    if key not in (env or {}):
+                        os.environ.pop(key, None)
                 run.fast()
             skipped = {step['name']: step['skipped'] for step in run.manifest['steps'] if 'skipped' in step}
         return calls, skipped
@@ -64,6 +65,14 @@ class FastPlanOrderTests(unittest.TestCase):
     def test_a_lane_run_leaves_the_ratchet_to_the_runner(self):
         # The runner judges next's copy with the PR's labels; a hot-file-ok PR must not fail here.
         calls, skipped = self.run_fast(['App/SpokenMarginsApp/X.swift'])
+        self.assertNotIn('hot-file-ratchet', [name for name, _ in calls])
+        self.assertIn('lane runner', skipped['hot-file-ratchet'])
+
+    def test_a_ci_job_without_changed_paths_leaves_the_ratchet_to_the_runner(self):
+        # The lane drops --changed-files when a path can't be passed (a name with a newline or edge whitespace),
+        # and its runner-tests step runs these tests inside the lane job too. Either way the runner has already
+        # judged the ratchet with the PR's labels, so a hot-file-ok PR must not fail here (#2180 audit).
+        calls, skipped = self.run_fast(None, env={'GITHUB_ACTIONS': 'true'})
         self.assertNotIn('hot-file-ratchet', [name for name, _ in calls])
         self.assertIn('lane runner', skipped['hot-file-ratchet'])
 
