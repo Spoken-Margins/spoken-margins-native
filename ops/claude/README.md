@@ -9,7 +9,7 @@ Nothing here is installed by default. Loading the job and the first real run nee
 launchd runs `sm_claude_worker.py` every 10 minutes (a tick). A tick reads, and starts at most one detached child:
 
 1. **The Dial** (#589), through `ops/dial/dial_gate.py`'s own parser, so there is one reading of it. Mode Off, or no Threads box ticked, holds.
-2. **The usage breaker and usage** from the Mac tick on #337. `HALT (usage breaker: Claude)` holds in every mode. Paced also holds at the Stop line minus 3, ahead of the trend line by more than 5 points, or with no usage report under 3 hours old. These are the Dial gate's own rules.
+2. **The usage breaker and usage** from the Mac tick on #337. `HALT (usage breaker: Claude)` holds in every mode. Paced also holds at the Stop line minus 3, ahead of the trend line by more than 10 points, or with no usage report under 3 hours old. These are the Dial gate's own rules.
 3. **Free disk** (holds under 20 GiB, the Mac finisher's pause line) and **memory pressure** (holds unless normal).
 4. **Claude slots.** The Dial's Threads box is Claude's slot count. The worker counts every active Claude thread from the claim and stop notes (project threads and its own), using the Dial gate's `parse_threads`. Its notes use the title `Claude Mac worker N`, which the gate counts as Claude (only `Codex worker N` is Codex, #1587). So a worker run takes one of the Dial's slots, and the worker never starts when the project already fills them. A child that has started but not yet posted its claim note counts too. The worker also keeps its own cap, `SM_CLAUDE_WORKER_MAX` (default 1: the Mac has two build slots and one simulator).
 

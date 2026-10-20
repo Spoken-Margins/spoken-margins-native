@@ -81,7 +81,7 @@ class BuildingMdTests(unittest.TestCase):
     def test_the_lfs_files_it_warns_about_are_tracked_by_lfs(self):
         attributes = (ROOT / '.gitattributes').read_text()
         self.assertIn('git lfs pull', BUILDING)
-        for folder in ('App/SpokenMarginsApp/Resources/Supertonic/onnx/', 'App/SpokenMarginsApp/Resources/Kitten/'):
+        for folder in ('App/SpokenMarginsApp/Resources/Kitten/',):  # Supertonic's model is a download (#1820)
             with self.subTest(folder=folder):
                 self.assertIn(folder, BUILDING)
                 self.assertIn(folder, attributes)

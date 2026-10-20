@@ -153,6 +153,11 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     private var tapFormat: AVAudioFormat?
     private var pendingFrames = 0
     private var droppedWhilePending = false
+    private var latestDecoded: DecodedAudioClockGuard.DecodedSample?
+
+    /// Where the latest decoded buffer ends in the source, and when the tap saw it: evidence of the audio
+    /// actually being rendered, independent of the player's clock (#2094).
+    var latestDecodedSample: DecodedAudioClockGuard.DecodedSample? { tapLock.withLock { latestDecoded } }
 
     var retainsContinuousCollection: Bool { continuousCollection }
 
@@ -294,7 +299,12 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     ) {
         guard frameCount > 0 else { return }
         let frames = Int(frameCount)
+        let decodedEndMs = Self.decodedEndMs(timeRange: timeRange)
+        let decodedAtMs = DecodedAudioClockGuard.uptimeMs()
         let admitted = tapLock.withLock { () -> Admission? in
+            if let decodedEndMs {
+                latestDecoded = DecodedAudioClockGuard.DecodedSample(endMediaTimeMs: decodedEndMs, uptimeMs: decodedAtMs)
+            }
             guard let tapFormat else { return nil }
             if Double(pendingFrames + frames) > tapFormat.sampleRate * Self.maxPendingSeconds {
                 droppedWhilePending = true
@@ -634,6 +644,14 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
             destinationBuffers[index].mDataByteSize = UInt32(count)
         }
         return destination
+    }
+
+    private static func decodedEndMs(timeRange: CMTimeRange) -> Int? {
+        guard timeRange.start.isValid, timeRange.start.isNumeric else { return nil }
+        if timeRange.duration.isValid, timeRange.duration.isNumeric {
+            return mediaTimeMs(CMTimeRangeGetEnd(timeRange))
+        }
+        return mediaTimeMs(timeRange.start)
     }
 
     private static func mediaTimeMs(_ time: CMTime) -> Int? {

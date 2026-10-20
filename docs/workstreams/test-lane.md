@@ -293,7 +293,10 @@ Simulators:
 - At most two simulator jobs on this 16 GB Mac, and the second only while memory pressure is
   normal (two plus builds filled swap before the owner freed memory, #184). The helper holds a
   Mac-wide simulator slot from boot until its watcher stops (the stop flag above, or --done). The runner's T3 takes the other slot or waits.
-  `scripts/lane-sim-boot --second-slot status` says whether a second job may start. A journey
+  `scripts/lane-sim-boot --second-slot status` says whether a second job may start. When the
+  lane switches the second slot off by itself, it comes back on after a cooldown (4 h, doubling
+  for each repeat trip that week, at most 24 h) once pressure is normal; `off` by hand stays off
+  until `on` (#2157). A journey
   that needs two devices (J5) still runs them one after the other, so the runner keeps its slot.
 - Never touch any other simulator, other projects' simulators, the owner's iPhone,
   their Library, or main.

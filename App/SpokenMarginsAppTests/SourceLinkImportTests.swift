@@ -190,6 +190,41 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.snapshot.itemId, row.id, "the entry that was imported is the one playing")
     }
 
+    /// #2124: Play now on a followed post waits on a slow page fetch. If the listener starts another item
+    /// meanwhile, the late fetch still adds the post but must not stop what they started.
+    func testPlayNowOnAFollowedPostDoesNotTakeOverPlaybackStartedDuringItsFetch() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        temporaryDirectories.append(root)
+        let database = root.appendingPathComponent("late-play-now.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: database)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: database.path)
+        let subscription = FeedSubscription(id: "s", source: SourceIdentity(id: "publication", kind: .articleFeed,
+            canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Publisher"), lastRefreshAt: Date())
+        let entry = FeedEntry(id: "slow-entry", subscriptionId: subscription.id,
+            canonicalURL: "https://publisher.example/slow-post", title: "A slow post")
+        try store.saveFeedSubscription(subscription)
+        try store.saveFeedEntry(entry)
+        let extractor = GatedFeedArticleExtractor(capture: BrowserTextHandoff(captureMode: .readablePage,
+            source: BrowserTextSource(url: entry.canonicalURL, title: entry.title),
+            text: "The slow post's body arrives after the listener has moved on."))
+        model.readablePageExtractor = extractor
+
+        model.importFollowedSourceEntry(entry, playWhenFinished: true)
+        try await waitFor("the post's fetch to start") { extractor.callCount > 0 }
+        model.startItem(id: "item-pill") // the listener starts something else while the fetch is out
+        let started = try XCTUnwrap(model.snapshot.sessionId)
+
+        extractor.open()
+        try await waitFor("the late fetch to finish") { !model.importingFollowedSourceEntryIds.contains(entry.id) }
+        XCTAssertTrue(model.libraryItems.contains { $0.title == entry.title }, "the post is still added to the Library")
+        XCTAssertEqual(model.snapshot.sessionId, started, "the late Play now must not stop what the listener started")
+        XCTAssertEqual(model.snapshot.itemId, "item-pill")
+        XCTAssertEqual(model.selectedItem.id, "item-pill")
+        model.endSession()
+    }
+
     func testRedirectedFollowedArticleAddAndOpenKeepTheirSignalEntry() async throws {
         for openWhenFinished in [false, true] {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -2917,6 +2952,42 @@ private final class RedirectedFeedArticleExtractor: ReadablePageExtracting {
     var lastExtractor: String? { "redirected-test-capture" }
     var contactedHosts: [String] { ["publisher.example", "destination.example"] }
     func extract(url: URL) async throws -> BrowserTextHandoff { capture }
+}
+
+/// Holds every page fetch until the test opens it, so a Play now can still be waiting when the listener
+/// starts something else (#2124).
+private final class GatedFeedArticleExtractor: ReadablePageExtracting, @unchecked Sendable {
+    let capture: BrowserTextHandoff
+    private let lock = NSLock()
+    private var isOpen = false
+    private var calls = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    init(capture: BrowserTextHandoff) { self.capture = capture }
+    var lastExtractor: String? { "gated-test-capture" }
+    var contactedHosts: [String] { ["publisher.example"] }
+    var callCount: Int { lock.withLock { calls } }
+
+    func open() {
+        let waiting = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            isOpen = true
+            defer { waiters.removeAll() }
+            return waiters
+        }
+        waiting.forEach { $0.resume() }
+    }
+
+    func extract(url: URL) async throws -> BrowserTextHandoff {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let resumeNow = lock.withLock { () -> Bool in
+                calls += 1
+                if isOpen { return true }
+                waiters.append(continuation)
+                return false
+            }
+            if resumeNow { continuation.resume() }
+        }
+        return capture
+    }
 }
 
 private final class AliasedFeedURLProtocol: URLProtocol, @unchecked Sendable {
