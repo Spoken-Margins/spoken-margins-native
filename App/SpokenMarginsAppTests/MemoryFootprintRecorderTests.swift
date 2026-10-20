@@ -155,6 +155,96 @@ final class MemoryFootprintRecorderTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["memoryExits"], "foreground 1 · background 0 · background system pressure 0")
     }
 
+    // PROBE (#2074, not for merge). Named testZ... so XCTest runs them AFTER testRefreshDiagnosticsDoesNotDropTheMemoryLines,
+    // in whatever state that failing test sees. Each test names one fact; the lane report lists the failing names.
+    private func zSetup() -> (Gate1AppModel, PinnedDiagnostics, MemoryFootprintRecorder) {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let pinned = PinnedDiagnostics(diagnostics: model.runtimeDiagnostics)
+        let recorder = MemoryFootprintRecorder(
+            diagnostics: pinned, fileURL: nil,
+            read: { .init(footprintBytes: 300 * 1_048_576, availableBytes: nil) },
+            now: { [unowned self] in self.clock }
+        )
+        recorder.record(.launch, mediaType: nil)
+        pinned.set("memoryExits", "foreground 1 · background 0 · background system pressure 0")
+        return (model, pinned, recorder)
+    }
+
+    private func zHops(_ n: Int) {
+        let done = expectation(description: "hops")
+        func go(_ left: Int) { DispatchQueue.main.async { left == 0 ? done.fulfill() : go(left - 1) } }
+        go(n)
+        wait(for: [done], timeout: 10)
+    }
+
+    private let footprintLine = "09-21 14:13:20Z launch none 300MB"
+
+    func testZ1AfterRefreshAndOneHop() {
+        let (m, p, r) = zSetup(); m.refreshDiagnostics(); zHops(0)
+        XCTAssertEqual(m.diagnostics["memoryFootprint"], footprintLine); withExtendedLifetime((p, r)) {}
+    }
+    func testZ2AfterRefreshAndTwoHops() {
+        let (m, p, r) = zSetup(); m.refreshDiagnostics(); zHops(1)
+        XCTAssertEqual(m.diagnostics["memoryFootprint"], footprintLine); withExtendedLifetime((p, r)) {}
+    }
+    func testZ3AfterRefreshAndFiveHops() {
+        let (m, p, r) = zSetup(); m.refreshDiagnostics(); zHops(4)
+        XCTAssertEqual(m.diagnostics["memoryFootprint"], footprintLine); withExtendedLifetime((p, r)) {}
+    }
+    func testZ4AfterRefreshAndFiftyHops() {
+        let (m, p, r) = zSetup(); m.refreshDiagnostics(); zHops(49)
+        XCTAssertEqual(m.diagnostics["memoryFootprint"], footprintLine); withExtendedLifetime((p, r)) {}
+    }
+    func testZ5ExitsLineAfterRefreshAndFiftyHops() {
+        let (m, p, r) = zSetup(); m.refreshDiagnostics(); zHops(49)
+        XCTAssertEqual(m.diagnostics["memoryExits"], "foreground 1 · background 0 · background system pressure 0"); withExtendedLifetime((p, r)) {}
+    }
+    func testZ6RefreshReplacedTheDictionary() {
+        let (m, p, r) = zSetup()
+        XCTAssertNil(m.diagnostics["sessionId"], "before the refresh")
+        m.refreshDiagnostics()
+        XCTAssertNotNil(m.diagnostics["sessionId"], "after the refresh"); withExtendedLifetime((p, r)) {}
+    }
+    func testZ7DirectReplacementIsRestoredAfterTwoHops() {
+        let (m, p, r) = zSetup(); m.diagnostics = ["x": "y"]; zHops(1)
+        XCTAssertEqual(m.diagnostics["memoryFootprint"], footprintLine); withExtendedLifetime((p, r)) {}
+    }
+    func testZ8WithoutKeepingThePinnedObjectsAliveTwoHops() {
+        // The original test's shape: nothing holds `pinned` or `recorder` after their last use.
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let pinned = PinnedDiagnostics(diagnostics: model.runtimeDiagnostics)
+        let recorder = MemoryFootprintRecorder(
+            diagnostics: pinned, fileURL: nil,
+            read: { .init(footprintBytes: 300 * 1_048_576, availableBytes: nil) },
+            now: { [unowned self] in self.clock }
+        )
+        recorder.record(.launch, mediaType: nil)
+        pinned.set("memoryExits", "foreground 1 · background 0 · background system pressure 0")
+        model.refreshDiagnostics()
+        zHops(1)
+        XCTAssertEqual(model.diagnostics["memoryFootprint"], footprintLine)
+    }
+    func testZ9TheOriginalShapeRepeatedWithTheOriginalHopHelper() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let pinned = PinnedDiagnostics(diagnostics: model.runtimeDiagnostics)
+        let recorder = MemoryFootprintRecorder(
+            diagnostics: pinned, fileURL: nil,
+            read: { .init(footprintBytes: 300 * 1_048_576, availableBytes: nil) },
+            now: { [unowned self] in self.clock }
+        )
+        recorder.record(.launch, mediaType: nil)
+        pinned.set("memoryExits", "foreground 1 · background 0 · background system pressure 0")
+        model.refreshDiagnostics()
+        let restored = expectation(description: "pinned lines put back on the next main-queue turn")
+        DispatchQueue.main.async { DispatchQueue.main.async { restored.fulfill() } }
+        wait(for: [restored], timeout: 2)
+        XCTAssertEqual(model.diagnostics["memoryFootprint"], footprintLine)
+        XCTAssertEqual(model.diagnostics["memoryExits"], "foreground 1 · background 0 · background system pressure 0")
+    }
+
     func testMemoryExitsLineComesFromTheNewestReportWithExitData() {
         let older = Data(#"{"applicationExitMetrics":{"foregroundExitData":{"cumulativeMemoryResourceLimitExitCount":2}}}"#.utf8)
         let newer = Data(#"{"applicationExitMetrics":{"foregroundExitData":{"cumulativeMemoryResourceLimitExitCount":0},"backgroundExitData":{"cumulativeMemoryResourceLimitExitCount":1,"cumulativeMemoryPressureExitCount":0}}}"#.utf8)
