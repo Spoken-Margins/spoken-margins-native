@@ -25,8 +25,19 @@ public struct ShareLinkURL: Equatable, Sendable {
     }
 
     /// True for any https URL on the share host, whether or not it is a link the app can open.
+    ///
+    /// Links people send always name the real host, so a Debug build pointed elsewhere (``ProductServer``)
+    /// still recognises them; their packet is then fetched from the host in use, and fails like a down server.
     public static func isOnShareHost(_ url: URL) -> Bool {
-        BridgeManifestPolicy.production.isTrusted(url)
+        isOnShareHost(url, hosts: [ProductServer.productionHost, ProductServer.host])
+    }
+
+    static func isOnShareHost(_ url: URL, hosts: [String]) -> Bool {
+        hosts.contains { host in
+            var policy = BridgeManifestPolicy.production
+            policy.trustedHost = host
+            return policy.isTrusted(url)
+        }
     }
 
     /// Where the sealed packet is downloaded from.
