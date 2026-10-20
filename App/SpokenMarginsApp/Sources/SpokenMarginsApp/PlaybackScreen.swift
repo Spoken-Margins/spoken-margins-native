@@ -641,7 +641,9 @@ struct PlaybackScreen: View {
     /// "Play this moment" (#159): the lead-in countdown with a way to skip it, then the Margin playing inline.
     @ViewBuilder
     private var marginMomentControl: some View {
-        if let moment = model.marginMoment {
+        if let moment = model.marginMoment, moment.isReview {
+            ReviewNewMarginsCard(moment: moment)
+        } else if let moment = model.marginMoment {
             VStack(alignment: .leading, spacing: 10) {
                 // A shared Margin still being placed says so for the whole moment (#872); it plays from its
                 // approximate time meanwhile.

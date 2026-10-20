@@ -9,6 +9,9 @@ import SessionKit
 /// Another listener's Margins (`chimedMarginIds`) get the shared-Margin chime first, so their voice never
 /// starts unannounced (#932).
 ///
+/// A review of new shared Margins (#474) runs through here too: when a voice ends, the sequence says whether the
+/// source hops to the next lead-in, plays the next Margin straight away, or goes back to where the listener left off.
+///
 /// The app owns the source transport and supplies it as closures; this type owns only the Margin voice.
 @MainActor
 public final class MarginMomentConductor {
@@ -146,6 +149,15 @@ public final class MarginMomentConductor {
         onChange = nil
     }
 
+    /// The listener stopped a review: the voice stops and the source goes back to where they left off, paused.
+    public func stopReview() {
+        guard let review = sequence.review else { return cancel() }
+        stopVoice()
+        source.pause()
+        if let returnTo = review.returnToMediaTimeMs { moveSource(to: returnTo) }
+        onChange = nil
+    }
+
     private func playVoice(for margin: MarginMomentAnchor) {
         onChange?()
         guard let url = voiceURL(margin.marginId), FileManager.default.fileExists(atPath: url.path) else {
@@ -237,9 +249,26 @@ public final class MarginMomentConductor {
 
     private func finishVoice() {
         stopVoice()
-        sequence.marginFinished()
+        let advance = sequence.marginFinished(sourceAtMediaTimeMs: lastObservedMs)
         onChange?()
-        source.resume()
+        switch advance {
+        case .continueSource:
+            source.resume()
+        case .seek(let mediaTimeMs):
+            moveSource(to: mediaTimeMs)
+            source.resume()
+        case .playNow(let margin):
+            playVoice(for: margin)
+        case .reviewDone(let returnTo, let resumes):
+            if let returnTo { moveSource(to: returnTo) }
+            if resumes { source.resume() }
+        }
+    }
+
+    /// Moves the source, and the place the next progress tick is measured from, so the jump isn't read as playback.
+    private func moveSource(to mediaTimeMs: Int) {
+        lastObservedMs = mediaTimeMs
+        source.seek(mediaTimeMs)
     }
 
     private func stopVoice() {

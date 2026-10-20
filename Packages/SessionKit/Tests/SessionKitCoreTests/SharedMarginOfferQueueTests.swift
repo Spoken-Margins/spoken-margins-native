@@ -107,6 +107,17 @@ final class SharedMarginOfferQueueTests: XCTestCase {
         XCTAssertEqual(queue.announcedIDs, ["b"], "playing it from the list does not announce it")
     }
 
+    func testAMarginAReviewGaveBackIsOfferedWhenTheSourceCrossesIt() {
+        let all = prompts(["a": 100, "b": 110])
+        var queue = SharedMarginOfferQueue()
+        queue.markAnnounced("a")
+        queue.markAnnounced("b")
+        XCTAssertNil(tick(&queue, all, from: 90, to: 200), "a review announced both")
+        queue.markUnannounced(["b", "missing"])
+        XCTAssertEqual(queue.announcedIDs, ["a"])
+        XCTAssertEqual(tick(&queue, all, from: 90, to: 200)?.id, "b")
+    }
+
     func testStartingASessionClearsAnnouncedAndWaiting() {
         let all = prompts(["a": 100, "b": 110])
         var queue = SharedMarginOfferQueue()

@@ -531,6 +531,7 @@ final class Gate1AppModel: ObservableObject {
     var preparingLocalAudioMapItems = Set<String>()
     #endif
     var sharedMarginOffers = SharedMarginOfferQueue()
+    var reviewPlaces = ReviewReturnPlaces() // the place a "Review new Margins" owes the listener, kept across launches (#474)
     var sharedMarginReturn = SharedMarginReturnClaim() // who owes the source back after a shared Margin (#997)
     var importedCommentaryAutoPlayTask: Task<Void, Never>?
     var bulkSharePreparationTask: Task<Void, Never>?
@@ -1327,9 +1328,7 @@ final class Gate1AppModel: ObservableObject {
         sharedMarginOffers.markAnnounced(row.interjection.id)
         let targetID = "shared::\(row.layer.id)::\(row.interjection.id)"
         startMarginMoment(
-            itemId: itemID,
-            target: MarginMomentAnchor(marginId: targetID, mediaTimeMs: position.mediaTimeMs),
-            otherMargins: [],
+            sequence: MarginMomentSequence(itemId: itemID, target: MarginMomentAnchor(marginId: targetID, mediaTimeMs: position.mediaTimeMs), otherMargins: []),
             voiceURLs: [targetID: voiceURL],
             title: "\(row.collectionLabel)'s Margin",
             isApproximate: position.isApproximate
@@ -1342,24 +1341,16 @@ final class Gate1AppModel: ObservableObject {
         screen = .playback
     }
 
-    /// `resumingAtMediaTimeMs` starts the moment already listening (#1538): no lead-in, no seek, `target` is the
-    /// Margin just heard and only Margins after that position play.
+    /// Runs `sequence` through the conductor: a Margin moment (#159) or a review of new Margins (#474). `listening`
+    /// starts it already listening (#1538): no lead-in, no seek, only Margins after the current position play.
     func startMarginMoment(
-        itemId: String,
-        target: MarginMomentAnchor,
-        otherMargins: [MarginMomentAnchor],
+        sequence: MarginMomentSequence,
         voiceURLs: [String: URL],
         title: String,
         isApproximate: Bool,
-        resumingAtMediaTimeMs: Int? = nil,
+        listening: Bool = false,
         clock: MarginMomentClock = .media
     ) {
-        let sequence: MarginMomentSequence
-        if let position = resumingAtMediaTimeMs {
-            sequence = MarginMomentSequence(itemId: itemId, resumingAtMediaTimeMs: position, playedMargin: target, otherMargins: otherMargins, tickAdvanceLimitMs: clock.tickAdvanceLimitMs)
-        } else {
-            sequence = MarginMomentSequence(itemId: itemId, target: target, otherMargins: otherMargins, tickAdvanceLimitMs: clock.tickAdvanceLimitMs)
-        }
         marginMomentClock = clock
         let conductor = MarginMomentConductor(
             sequence: sequence,
@@ -1368,7 +1359,7 @@ final class Gate1AppModel: ObservableObject {
                 resume: { [weak self] in self?.resumePlayback() },
                 seek: { [weak self] in self?.seekMarginMomentSource(toPosition: $0) }
             ),
-            voiceURL: leveledVoiceURL(voiceURLs, itemId: itemId, margins: [target] + otherMargins)
+            voiceURL: leveledVoiceURL(voiceURLs, itemId: sequence.itemId, margins: [sequence.target] + sequence.unplayed)
         )
         conductor.voiceRate = Float(recordMarginVoiceRate("moment"))
         conductor.prepareAudioSession = { [weak self] in try self?.prepareMarginMomentVoice() }
@@ -1387,13 +1378,13 @@ final class Gate1AppModel: ObservableObject {
         marginMomentConductor = conductor
         marginMomentTitle = title
         marginMomentPositionIsApproximate = isApproximate
-        startMarginMomentLeadIn(conductor, target: target, itemId: itemId, resuming: resumingAtMediaTimeMs != nil)
+        startMarginMomentLeadIn(conductor, target: sequence.target, itemId: sequence.itemId, resuming: listening)
         diagnostics["marginMoment.chime"] = nil
-        if resumingAtMediaTimeMs != nil {
+        if listening {
             diagnostics["marginMoment"] = "started:listening;later=\(sequence.unplayed.count)"
             return
         }
-        diagnostics["marginMoment"] = "started:lead_in_ms=\(target.mediaTimeMs - sequence.startMediaTimeMs);others=\(sequence.unplayed.count - 1);approximate=\(isApproximate);clock=\(clock.isNarratedText ? "narrated_text" : "media")"
+        diagnostics["marginMoment"] = "started:lead_in_ms=\(sequence.target.mediaTimeMs - sequence.startMediaTimeMs);others=\(sequence.unplayed.count - 1);approximate=\(isApproximate);clock=\(clock.isNarratedText ? "narrated_text" : "media")"
     }
 
     /// "Play it now" on the coming-up cue.
@@ -1408,6 +1399,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Stops playing Margins inline. The item keeps its current play state.
     func endMarginMoment() {
+        giveBackUnfinishedReview()
         recordMarginMomentVoiceEnded()
         marginMomentConductor?.cancel()
         marginMomentConductor = nil
@@ -1991,6 +1983,7 @@ final class Gate1AppModel: ObservableObject {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_new_session") else { return }
         // Before ending what's playing: a blocked start must not stop a downloaded episode.
         guard !blockOfflineEpisodeStart(itemId: id) else { return }
+        endUnfinishedReview()
         followedPlayIntent.cancel() // the listener moved on: a pending Play now must not take over (#2124)
         resetMixWithOtherAudioForNewSession()
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
@@ -2009,6 +2002,7 @@ final class Gate1AppModel: ObservableObject {
 
     func openSession(_ session: Session) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_session") else { return }
+        endUnfinishedReview()
         followedPlayIntent.cancel() // the listener moved on: a pending Play now must not take over (#2124)
         resetMixWithOtherAudioForNewSession()
         sharedMarginOffers.removeAll()
@@ -2039,6 +2033,7 @@ final class Gate1AppModel: ObservableObject {
     func resumeSession(_ session: Session) {
         guard !rejectNavigationOrSessionMutationWhileRecording("resume_session") else { return }
         guard !blockOfflineEpisodeStart(itemId: session.itemId) else { return }
+        endUnfinishedReview()
         followedPlayIntent.cancel() // the listener moved on: a pending Play now must not take over (#2124)
         resetMixWithOtherAudioForNewSession()
         cancelSleepTimer()
