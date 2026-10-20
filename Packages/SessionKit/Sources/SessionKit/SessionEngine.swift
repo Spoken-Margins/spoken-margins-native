@@ -1953,6 +1953,7 @@ public final class SessionEngine {
             // both its durable target and adapter setup succeed. Restore its
             // stored position before returning to the prior source.
             try? repository.saveSession(storedForm(of: plan.originalSession))
+            lastSavedMediaTimeMs[plan.originalSession.id] = nil // the next write compares with the restored row
             currentSession = previousSession
             currentItem = previousItem
             currentMap = previousMap
@@ -3375,6 +3376,7 @@ public final class SessionEngine {
             "pendingAiJobs": "\(try currentSession.map { try repository.loadAIJobs(sessionId: $0.id).filter { $0.status != "complete" }.count } ?? 0)",
             "recentFailure": snapshot.lastFailure ?? "none",
             "lastMarginRejoin": lastMarginRejoin ?? "none",
+            "lastBackwardPositionWrite": lastBackwardPositionWrite ?? "none",
             "sessionId": sessionId
         ]
     }
@@ -5971,7 +5973,42 @@ public final class SessionEngine {
         sentenceUnits(in: text, includeTrailingFragment: false)
     }
 
-    private func persistSession(_ session: Session) throws {
+    /// A saved media position that moves back by more than this is logged with the command that wrote it (#2186).
+    static let backwardPositionLogThresholdMs = 60_000
+
+    /// Receives the fields of a `position.backward` event. The app records them in Diagnostics.
+    public var positionDiagnosticHandler: (([String: String]) -> Void)?
+    /// The last backward write, for `diagnostics()`.
+    private var lastBackwardPositionWrite: String?
+    /// The media position last saved for each session, so a write can be compared with what the previous one left.
+    private var lastSavedMediaTimeMs: [String: Int] = [:]
+
+    /// Logs a media position write that goes back by more than a minute. Every legitimate move back (a seek,
+    /// a skip back, Play from the beginning) enters through a command, whose name is `source`; one that
+    /// arrives from `syncPlaybackProgress` or a pause is a player sample that rewound the listener (#2186).
+    private func noteMediaPositionWrite(_ session: Session, source: String) {
+        guard session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia,
+              let newMs = session.position.mediaTimeMs else { return }
+        let previousMs = lastSavedMediaTimeMs[session.id]
+            ?? (try? repository.loadSession(id: session.id))?.position.mediaTimeMs
+        guard let previousMs, previousMs - newMs > Self.backwardPositionLogThresholdMs else { return }
+        let fields = [
+            "event": "position_backward",
+            "source": source,
+            "sessionId": session.id,
+            "itemId": session.itemId,
+            "fromMs": "\(previousMs)",
+            "toMs": "\(newMs)",
+            "playerMs": audio.currentMediaTimeMs().map(String.init) ?? "none",
+            "status": snapshot.status.rawValue,
+            "positionPending": hasPendingPlaybackPosition(for: session) ? "yes" : "no"
+        ]
+        lastBackwardPositionWrite = fields.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
+        positionDiagnosticHandler?(fields)
+    }
+
+    private func persistSession(_ session: Session, source: String = #function) throws {
+        noteMediaPositionWrite(session, source: source)
         var stamped = session
         let timestamp = now()
         if stamped.createdAt == nil {
@@ -5982,6 +6019,7 @@ public final class SessionEngine {
             stamped.completedAt = timestamp
         }
         try repository.saveSession(storedForm(of: stamped))
+        lastSavedMediaTimeMs[stamped.id] = stamped.position.mediaTimeMs
         if stamped.completionPercent > 98,
            completionPercentIsMeasured(stamped),
            var item = try? repository.loadItem(id: stamped.itemId),
