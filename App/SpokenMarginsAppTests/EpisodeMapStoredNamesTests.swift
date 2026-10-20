@@ -71,15 +71,17 @@ final class EpisodeMapStoredNamesTests: XCTestCase {
             "SpokenMargins/EpisodeMaps/p19-extensionless-996/SummaryBridges/summary-bridge-p19-extensionless-996-p19-map-996-p19-scene-1-system-com.apple.voice.test-en_US-natural-rate-v2.caf")
     }
 
-    func testJamesSummarySavesVoiceRawValueAndEmptySystemIdentifier() async throws {
-        // Summary preparation has no Supertonic injection seam. The lane renders this short text
-        // with the bundled voice; the supplied system identifier must not appear in James's ID.
+    func testJamesSummaryWithoutSupertonicDownloadSavesKittenKeyAndEmptySystemIdentifier() async throws {
+        // Supertonic's model is a download (#1820), so on the lane James has none and the bundled Kitten voice speaks
+        // the summary. The asset ID names Kitten, not James, and the supplied system identifier must not appear in it.
+        try XCTSkipIf(model.supertonicModel.isModelPresent,
+            "a Supertonic download is present, so James would render the summary himself")
         let asset = try await importSummary(itemID: "p19-james-996",
             safeItemDirectory: "p19-james-996", voice: .james)
         XCTAssertEqual(asset.id,
-            "summary-bridge-p19-james-996-p19-map-996-p19-scene-1-supertonic-M2--natural-rate-v2")
+            "summary-bridge-p19-james-996-p19-map-996-p19-scene-1-kitten--natural-rate-v2")
         XCTAssertEqual(asset.relativePath,
-            "SpokenMargins/EpisodeMaps/p19-james-996/SummaryBridges/summary-bridge-p19-james-996-p19-map-996-p19-scene-1-supertonic-M2--natural-rate-v2.wav")
+            "SpokenMargins/EpisodeMaps/p19-james-996/SummaryBridges/summary-bridge-p19-james-996-p19-map-996-p19-scene-1-kitten--natural-rate-v2.wav")
     }
 
     func testSuppliedAuthorSummarySavesSuppliedKeyAndM4AImportPath() async throws {
@@ -187,7 +189,7 @@ final class EpisodeMapStoredNamesTests: XCTestCase {
         }
         XCTAssertFalse(model.isImportingSpokenMarginsPackage)
         XCTAssertNil(model.spokenMarginsPackageImportError)
-        // The injected renderer is immediate; James also has to load its bundled model on a busy lane.
+        // The injected renderer is immediate; James's summary is rendered by Kitten, which loads its bundled model on a busy lane.
         let bridgePolls = voice == .james ? 3_000 : 500
         for _ in 0..<bridgePolls where model.diagnostics["localAudioSkim:\(itemID)"] != "ready"
             && model.diagnostics["localAudioSkim:\(itemID)"]?.hasPrefix("failed:") != true {

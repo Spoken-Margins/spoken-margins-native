@@ -45,7 +45,17 @@ extension Gate1AppModel {
             .appending(path: safePodcastEvidenceComponent(itemId), directoryHint: .isDirectory)
     }
 
+    /// James or Lily is chosen but Supertonic isn't downloaded (#1820): the bundled Kitten voice speaks the summary,
+    /// as it does the narration. The asset ID names the voice that rendered it, so once the listener downloads
+    /// Supertonic the summary is prepared again in their chosen voice instead of reusing Kitten's.
+    private var summaryBridgeUsesKitten: Bool {
+        ttsVoiceSelection.supertonicVoice != nil && !supertonicModel.isModelPresent
+    }
+
     private func currentSummaryBridgeVoiceKey() -> String {
+        if summaryBridgeUsesKitten {
+            return safePodcastEvidenceComponent("\(KittenNarrationRenderer.engine)--\(SummaryBridgeRatePolicy.cacheVersion)")
+        }
         let systemIdentifier = ttsVoiceSelection == .system ? speechVoiceIdentifier : ""
         return safePodcastEvidenceComponent("\(ttsVoiceSelection.rawValue)-\(systemIdentifier)-\(SummaryBridgeRatePolicy.cacheVersion)")
     }
@@ -80,7 +90,11 @@ extension Gate1AppModel {
         )
         do {
             let sourceURL: URL
-            if let voice = ttsVoiceSelection.supertonicVoice {
+            if summaryBridgeUsesKitten {
+                // The lookup above and the asset ID both used the Kitten key, so this is the voice that gets saved.
+                guard let kitten = makeKittenRenderer() else { throw SupertonicNarrationError.missingAsset("Supertonic") }
+                sourceURL = try await kitten.render(text: summary).audioURL
+            } else if let voice = ttsVoiceSelection.supertonicVoice {
                 let renderer = try makeSupertonicRenderer()
                 let result = try await renderer.render(
                     text: summary,
