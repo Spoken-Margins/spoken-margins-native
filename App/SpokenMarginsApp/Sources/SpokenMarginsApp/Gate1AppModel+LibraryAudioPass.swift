@@ -54,12 +54,14 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 episodeTaskIsRunning: episodeMapPreparationTask != nil
             )
         ) {
-            prepareEpisodeMap(itemId: job.itemId, policy: job.policy)
+            prepareEpisodeMap(itemId: job.itemId, policy: job.policy, trigger: .backgroundPass)
             if let task = episodeMapPreparationTask {
+                let preparer = episodeMapPreparer
                 await withTaskCancellationHandler {
                     await task.value
                 } onCancel: {
-                    task.cancel()
+                    // iOS ending background time pauses the job; a plain cancel dropped it for good (#2092).
+                    Task { @MainActor in preparer.pause(.backgroundTimeExpired) }
                 }
             }
             backgroundPreparationPlanner.afterEpisodePass()

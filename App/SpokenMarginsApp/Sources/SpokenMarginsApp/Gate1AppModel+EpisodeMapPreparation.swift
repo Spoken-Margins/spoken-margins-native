@@ -31,8 +31,12 @@ extension Gate1AppModel {
         set { episodeMapPreparer.pendingRequestItemId = newValue }
     }
 
-    func prepareEpisodeMap(itemId: String? = nil, policy: PreparationJobPolicy = .explicit) {
-        episodeMapPreparer.prepare(itemId: itemId ?? activeItemId, policy: policy)
+    func prepareEpisodeMap(
+        itemId: String? = nil,
+        policy: PreparationJobPolicy = .explicit,
+        trigger: EpisodeMapPreparationTrigger = .listenerRequest
+    ) {
+        episodeMapPreparer.prepare(itemId: itemId ?? activeItemId, policy: policy, trigger: trigger)
     }
 
     func episodeMapDirectory(itemId: String) throws -> URL {
@@ -187,6 +191,10 @@ extension Gate1AppModel: EpisodeMapPreparerHost {
 
     func recordEpisodeMapDiagnostic(_ key: String, _ value: String) {
         diagnostics[key] = value
+    }
+
+    func episodeMapDeviceConditions() -> SpeechEngineConditions {
+        preparationSeams.deviceConditions()
     }
 
     func episodeMapTranscribed(itemId: String, timeline: TranscriptTimeline, store: SQLiteSessionStore) {
