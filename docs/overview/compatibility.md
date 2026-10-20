@@ -14,7 +14,7 @@ Two kinds of file outlive any one build of the app: the **Library** (a SQLite da
 
 - A packet is a zip file (extension `.spokenmargins`) with a manifest, the shared Margins and, when the sender includes it, the item's text or audio. It is written and read by `Packages/SessionKit/Sources/SessionKitSharing/InterjectionPackageArchive.swift`. The reader checks the manifest's schema version, its size and compression limits, a content digest, and each required capability against the list it supports.
 - The schema is `Contracts/schemas/spoken-margins-package.schema.json`; example packets are in `Contracts/fixtures/interjection-packages/`.
-- `Packages/SessionKit/Tests/ShippedReader/` is a frozen copy of the packet reader from a released build (`scripts/freeze-shipped-reader.sh` makes it). Tests import freshly written packets through it, so a change that the released reader would refuse fails a test before it ships. The Mac tool `coop-packet` (`Packages/SessionKit/Sources/CoopPacket/`) builds sample packets and runs the same check.
+- `Packages/SessionKit/Tests/ShippedReader/` is a frozen copy of the packet reader from a released build (`scripts/freeze-shipped-reader.sh` makes it). Tests import freshly written packets through it, so a change that the released reader would refuse fails a test before it ships. The Mac tool `coop-packet` (`Packages/SessionKitTools/Sources/CoopPacket/`) builds sample packets and runs the same check.
 
 ## The Library
 

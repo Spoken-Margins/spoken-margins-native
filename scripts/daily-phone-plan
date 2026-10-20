@@ -212,9 +212,20 @@ def add_omitted(proposal, items):
                 {'issue': item['number'], 'reason': item['blocked'] or OMITTED})
 
 
+# phone-plan is built in its own package (#1873). A checkout that built it before then has only the old binary,
+# which reads plans the same way; it is used until the new one is built (docs/workstreams/daily-phone-plan.md).
+VALIDATORS = ('Packages/SessionKitTools/.build/release/phone-plan', 'Packages/SessionKit/.build/release/phone-plan')
+
+
+def validator_command():
+    if 'SM_DAILY_VALIDATOR' in os.environ:
+        return shlex.split(os.environ['SM_DAILY_VALIDATOR'])
+    paths = [phone.PUBLIC / path for path in VALIDATORS]
+    return [str(next((path for path in paths if path.exists()), paths[0]))]
+
+
 def validate(request, plan_id):
-    command = shlex.split(os.environ.get('SM_DAILY_VALIDATOR', str(
-        phone.PUBLIC / 'Packages/SessionKit/.build/release/phone-plan')))
+    command = validator_command()
     result = subprocess.run([*command, plan_id], input=json.dumps(request), text=True,
                             capture_output=True, timeout=30)
     if result.returncode:

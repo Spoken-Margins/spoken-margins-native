@@ -12,7 +12,7 @@ procedure (about twenty minutes, ten on its short path) is docs/sharing-test-kit
     sharing_kit.py lint-packets FILE... read built packets without Swift: manifest keys Build 29 accepts, hashes, kit.json, capability rule
     sharing_kit.py stage [--work DIR]   copy checked packets into docs/sharing-test-kit/packets/
 
-Packets are written by `coop-packet` (Packages/SessionKit/Sources/CoopPacket), the same SessionKit code the app uses.
+Packets are written by `coop-packet` (Packages/SessionKitTools/Sources/CoopPacket), the same SessionKit code the app uses.
 That tool needs macOS: `say` speaks the voices and ShazamKit signs the episode audio. Everything else here runs anywhere.
 """
 import argparse
@@ -36,7 +36,7 @@ SCHEMAS = ROOT / 'Contracts' / 'schemas'
 DEFAULT_WORK = ROOT / 'artifacts' / 'sharing-kit'
 sys.path.insert(0, str(ROOT / 'Contracts' / 'tools'))
 import spoken_margins_format as _format  # noqa: E402
-COOP_PACKET = ROOT / 'Packages' / 'SessionKit'
+COOP_PACKET = ROOT / 'Packages' / 'SessionKitTools'  # the package that builds coop-packet (#1873)
 
 # The limits below come from the code that reads and writes packets.
 MAX_MARGINS = 50                      # InterjectionPackageArchive.maximumInterjections

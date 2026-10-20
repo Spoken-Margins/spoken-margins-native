@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import sharing_kit as kit_tool  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
-PACKET_PLAN_SWIFT = ROOT / 'Packages/SessionKit/Sources/CoopPacket/PacketBuilder.swift'
+PACKET_PLAN_SWIFT = ROOT / 'Packages/SessionKitTools/Sources/CoopPacket/PacketBuilder.swift'
 SHARING_MODELS_SWIFT = ROOT / 'Packages/SessionKit/Sources/SessionKit/SharingModels.swift'
 
 

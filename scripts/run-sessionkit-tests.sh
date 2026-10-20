@@ -21,6 +21,9 @@ cd "$PACKAGE"
 # targets serially (--rest), because they hold real-time AVFoundation tests that need the machine to themselves.
 # --core-serial is the fallback when the parallel run fails. --skip-build alone runs every test serially.
 # A filter is a regex on "Module.Class/test", so each group is anchored on its module names.
+#
+# --tools builds and tests Packages/SessionKitTools, the developer tools built on SessionKit (#1873). Its build goes
+# inside SessionKit's .build, which worktrees and the lane link to a warm cache that disk relief can clear.
 SANDBOX=()
 if [[ -n "${CODEX_SANDBOX:-}" ]]; then
   SANDBOX=(--disable-sandbox)
@@ -35,7 +38,8 @@ case "${1:-}" in
   --core-serial) exec "$ROOT/scripts/host-test-lane" swift test --skip-build --filter "$CORE" ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
   --rest) exec "$ROOT/scripts/host-test-lane" swift test --skip-build --filter "$REST" ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
   --build-only) exec "$ROOT/scripts/host-test-lane" swift build --build-tests ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
+  --tools) exec "$ROOT/scripts/host-test-lane" swift test --package-path "$ROOT/Packages/SessionKitTools" --scratch-path "$PACKAGE/.build/tools" ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
   --skip-build) exec "$ROOT/scripts/host-test-lane" swift test --skip-build ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
   "") exec "$ROOT/scripts/host-test-lane" swift test ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
-  *) echo "usage: $0 [--build-only | --skip-build | --core-parallel <xunit file> | --core-serial | --rest]" >&2; exit 2 ;;
+  *) echo "usage: $0 [--build-only | --skip-build | --core-parallel <xunit file> | --core-serial | --rest | --tools]" >&2; exit 2 ;;
 esac

@@ -12,7 +12,7 @@ import Foundation
 ///     swift run --package-path Packages/SessionKit coop-packet check <packet>...
 ///     swift run --package-path Packages/SessionKit coop-packet map <edition.json> [--type text|pdf|epub] [--url <link>|--no-url]
 ///
-/// The plan format is in `Packages/SessionKit/Sources/CoopPacket/README.md`.
+/// The plan format is in `Packages/SessionKitTools/Sources/CoopPacket/README.md`.
 
 let usage = """
 usage:

@@ -17,7 +17,7 @@ SessionKit is the domain logic of Spoken Margins: listening sessions, Margins, s
 | `SessionKitSupertonic`, `SessionKitPocket` | neural voice runtimes on onnxruntime | iOS, macOS |
 | `ShippedPacketReader` | the last shipped build's packet reader, frozen for compatibility tests | iOS, macOS |
 
-The executables (`coop-packet`, `speech-bench`, `phone-plan`) are Mac developer tools. The app never links them.
+The executables (`speech-bench`, `tour-render`, `substack-canary`) are developer tools. The app never links them. `coop-packet` and `phone-plan` are in their own package, [`Packages/SessionKitTools`](../SessionKitTools/Package.swift), which depends on this one by path, so a project depending on SessionKit doesn't resolve them (#1873).
 
 Outside dependencies are pinned exactly in `Package.swift`: ZIPFoundation 0.9.20 and onnxruntime 1.24.2 (on Linux, swift-crypto 3.15.1 stands in for CryptoKit). `Package.resolved` is committed.
 
