@@ -237,6 +237,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let audioSessionNotificationCenter: NotificationCenter
     private let audioSessionActivator: (@Sendable () throws -> Void)?
     private let audioPlayerStarter: (@Sendable (AVPlayer, Float) -> Void)?
+    /// Reads a player's clock in seconds. Nil reads `currentTime()`; a test supplies one that blocks, as
+    /// AVFoundation can when the media server is slow (#2119).
+    private let playerClock: (@Sendable (AVPlayer) -> TimeInterval)?
     private let observesPlayerLifecycle: Bool
     private let onDeviceRenderingAllowed: @Sendable () -> Bool
     /// The bundled Kitten voice (#849): renders a chunk when `onDeviceRenderingAllowed` refuses Supertonic, so a
@@ -465,6 +468,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         audioSessionNotificationCenter: NotificationCenter = .default,
         audioSessionActivator: (@Sendable () throws -> Void)? = nil,
         audioPlayerStarter: (@Sendable (AVPlayer, Float) -> Void)? = nil,
+        playerClock: (@Sendable (AVPlayer) -> TimeInterval)? = nil,
         observesPlayerLifecycle: Bool = true,
         voiceChangeCue: (@Sendable () -> Void)? = nil,
         onDeviceRenderingAllowed: @escaping @Sendable () -> Bool = { OnDeviceVoiceGovernor.app.supertonicRenderingBlock() == nil },
@@ -522,6 +526,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.audioSessionNotificationCenter = audioSessionNotificationCenter
         self.audioSessionActivator = audioSessionActivator
         self.audioPlayerStarter = audioPlayerStarter
+        self.playerClock = playerClock
         self.observesPlayerLifecycle = observesPlayerLifecycle
         self.voiceChangeCue = voiceChangeCue
         self.onDeviceRenderingAllowed = onDeviceRenderingAllowed
@@ -2330,6 +2335,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     let armed = systemVoiceIsArmed
                     // A queue that moved on by itself has a new chunk's time against the old chunk's start (#538).
                     self.applyQueuedAdvance(finished: nil)
+                    // The clock is read outside `lock`: if AVFoundation blocks, only this sample waits, not
+                    // every caller of the client (#2119). A player swapped since then reads as a fresh one at zero.
+                    let sampledPlayer = self.lock.withLock { self.fallbackIsActive ? nil : self.player }
+                    let sampledSeconds = self.playerTime(sampledPlayer)
                     let sample = self.lock.withLock { () -> (active: Bool, intends: Bool, clock: Int?, watched: WatchedPlayback) in
                         if self.fallbackIsActive {
                             let voice = WatchedPlayback(systemVoicePlayback: self.systemVoicePlayback)
@@ -2341,7 +2350,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                             return (self.transportIntent == .playing, self.transportIntent == .playing, place * 1_000, voice)
                         }
                         let intends = self.transportIntent == .playing && self.player != nil
-                        let time = self.playerTime(self.player)
+                        let time = self.player === sampledPlayer ? sampledSeconds : 0
                         return (self.transportIntent == .playing, intends, self.currentStartOffset * 1_000_000 + Int(time * 1_000),
                                 WatchedPlayback(player: self.player.map(ObjectIdentifier.init)))
                     }
@@ -2519,9 +2528,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// Re-activates the session and plays the same chunk from the same point in a new player.
     private func reseatStalledPlayer() {
         applyQueuedAdvance(finished: nil)
+        // The clock is read outside `lock` (#2119); a player replaced since then needs no re-seat.
+        let sampledPlayer = lock.withLock { player }
+        let time = playerTime(sampledPlayer)
         let snapshot = lock.withLock { () -> (URL, TimeInterval, RenderRequest, TimeInterval)? in
-            guard transportIntent == .playing, let request = activeRequest, let url = activeAudioURL else { return nil }
-            let time = playerTime(player)
+            guard transportIntent == .playing, player === sampledPlayer,
+                  let request = activeRequest, let url = activeAudioURL else { return nil }
             player?.pause()
             Self.empty(player)
             player = nil
@@ -2833,13 +2845,17 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// True once the chunk after a hand-over is heard moving, or nothing is waiting to play any more:
     /// playback paused or stopped, or the iOS voice took over.
     private func handOverIsOver() -> Bool {
-        lock.withLock {
-            guard transportIntent == .playing else { return true }
-            if handOverAwaitingStart != nil { return false }
-            guard !fallbackIsActive else { return true }
-            guard let current = player else { return false }
-            return current.rate > 0 && playerTime(current) >= 0.1
+        let (decided, current) = lock.withLock { () -> (Bool?, AVPlayer?) in
+            guard transportIntent == .playing else { return (true, nil) }
+            if handOverAwaitingStart != nil { return (false, nil) }
+            guard !fallbackIsActive else { return (true, nil) }
+            guard let live = player else { return (false, nil) }
+            return (nil, live)
         }
+        if let decided { return decided }
+        // The player's rate and clock are read outside `lock` (#2119).
+        guard let current else { return false }
+        return current.rate > 0 && playerTime(current) >= 0.1
     }
 
     private func assemblePreparedAudioIfComplete(generation expectedGeneration: UUID) {
@@ -3117,8 +3133,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// About two seconds of speech: how far a sampled position can trail the live one.
     static let livePositionTolerance = 30
 
+    /// Reads the player's clock. AVFoundation can block here when the media server is slow, so callers read it
+    /// outside `lock`: take the player under the lock, release it, then call this (#2119).
     private func playerTime(_ player: AVPlayer?) -> TimeInterval {
-        guard let seconds = player?.currentTime().seconds, seconds.isFinite else { return 0 }
+        guard let player else { return 0 }
+        let seconds = playerClock?(player) ?? player.currentTime().seconds
+        guard seconds.isFinite else { return 0 }
         return max(0, seconds)
     }
 
