@@ -247,7 +247,7 @@ public struct PreviousRunExit: Sendable, Equatable {
     /// plain characters. Anything else reads `other`, so free text never reaches the log.
     ///
     /// With `keepingCodes`, text that isn't plain still gives up the parts that name why the system ended the
-    /// process (#2184): a `Namespace NAME`, and a `code:` or `domain:` number or hex value, such as the watchdog's
+    /// process (#2184): an upper-case `Namespace NAME`, and a `code:` or `domain:` number or hex value, such as the watchdog's
     /// `code:0x8BADF00D` inside a `<RBSTerminateContext| ...>` description. Everything else in it, which can carry
     /// an app or file name, is dropped, and a text with no such part reads `other`.
     private static func label(_ value: Any?, keepingCodes: Bool = false) -> String? {
@@ -268,8 +268,10 @@ public struct PreviousRunExit: Sendable, Equatable {
         return trimmed
     }
 
+    /// The system's own shapes only: an upper-case namespace (`Namespace SIGNAL`, alone or with its `, Code 0x...`), and a
+    /// `code:` or `domain:` with a colon. Free text such as "Namespace Smith" or "Domain 2 notes" matches none of them.
     private static let terminationCodePattern = try? NSRegularExpression(
-        pattern: #"(?i)\bnamespace [a-z_]{2,24}\b|\b(?:code|domain)[: ]\s*(?:0x[0-9a-f]{1,16}|[0-9]{1,6})\b"#)
+        pattern: #"\bNamespace [A-Z_]{2,24}, Code 0x[0-9a-fA-F]{1,16}\b|\bNamespace [A-Z_]{2,24}\b|\b(?:code|domain):\s*(?:0x[0-9a-fA-F]{1,16}|[0-9]{1,6})\b"#)
 
     /// The kept parts of a termination reason, in order and joined by ", ", or nil when it has none.
     private static func terminationCodes(in text: String) -> String? {
