@@ -763,6 +763,22 @@ def settle_before_tests(udid, sleep=time.sleep):
     return {'seconds_quiet': None if quiet_for is None else round(quiet_for, 1), 'waited_seconds': round(wait, 1)}
 
 
+# #2176: of the host-app launches the lane recorded on 2026-10-20, those that began while the Mac reported memory
+# pressure "warn" stalled about 3 times in 4 (10 of 12 from 11:27 to 12:41), against about 1 in 5 at "normal". The
+# boot already waits for normal pressure; the launch did not. Wait here too, bounded and never failing: the launch
+# goes ahead when the wait ends, so a Mac that stays pressured costs at most this long per launch, and the run is
+# still judged by the stall rule below.
+LAUNCH_PRESSURE_WAIT_SECONDS = 90
+
+
+def hold_for_launch(wait=lane_sim.wait_for_normal_pressure, limit=None):
+    """Wait (bounded) for normal memory pressure before a host-app launch; returns what it saw and the wait."""
+    level, waited = wait(LAUNCH_PRESSURE_WAIT_SECONDS if limit is None else limit)
+    if waited >= 1:
+        print(f'held the host-app launch {waited:.0f}s for memory pressure (now {level})', flush=True)
+    return {'memory_pressure': level, 'waited_seconds': round(waited, 1)}
+
+
 # #705: on intermittent runs the AudioAdapters step launched the app (AcquiredPID) and then sat until its 5m00s
 # budget with no test-runner handshake: no "Test Suite" line, 0 tests, exit 124, an unreadable xcresult. Runs that
 # start normally print their first Test Suite line about 7 s after launch and finish in 8-30 s. A step that has
@@ -943,12 +959,21 @@ class Run:
         with (self.output / f'{name}.log').open('w') as log, slot as held:
             if held:
                 entry['build_slot'] = held
+            attempt = 1
+
+            def hold_launch():
+                # The wait is the host's, not the step's: it does not use up the step's own time.
+                if not (startup and startup.get('hold')):
+                    return 0.0
+                held = startup['hold']()
+                entry.setdefault('launch_holds', []).append({'attempt': attempt, **held})
+                return held['waited_seconds']
+            hold_launch()
             start = attempt_start = last_output = time.monotonic()
             if ceiling and self.manifest['plan'] in ('fast', 'fast-mac-rest'):
                 ceiling = max(timeout, min(ceiling, FAST_PLAN_SECONDS - (start - self.started)))
                 entry['ceiling_seconds'] = round(ceiling)
             log_size = 0
-            attempt = 1
             watching = startup is not None
             # #2176: the host's conditions as each launch starts, when its tests start and when it stalls.
             conditions = startup.get('conditions') if startup else None
@@ -1031,6 +1056,7 @@ class Run:
                         log.write(f'\n--- {name}: no test output after {stall["after_seconds"]}s; launching attempt {attempt} ---\n')
                         log.flush()
                         scan_from = len((self.output / f'{name}.log').read_text(errors='replace'))
+                        start += hold_launch()
                         attempt_start = time.monotonic()
                         note_conditions('start')
                         if finish is not None:
@@ -1572,7 +1598,7 @@ class Run:
             # Only the app-hosted unit tests (app, adapters): the UI plans launch a separate runner app.
             startup = {'seconds': STARTUP_STALL_SECONDS, 'retries': STARTUP_RETRIES,
                        'diagnose': lambda folder: stall_evidence(chosen['udid'], folder, result_bundle=result_bundle),
-                       'reset': relaunch, 'conditions': lane_conditions.snapshot} \
+                       'reset': relaunch, 'conditions': lane_conditions.snapshot, 'hold': hold_for_launch} \
                 if scheme == 'SpokenMarginsAppBehavior' else None
             if startup is not None:
                 # What each launch installs (#2176): #2067 takes Supertonic's model out, about 144 MB.

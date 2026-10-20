@@ -1311,6 +1311,8 @@ class VerificationTests(unittest.TestCase):
             # #705: the app-hosted plans watch for a run that never starts its tests.
             self.assertEqual((startup['seconds'], startup['retries']),
                              (verification.STARTUP_STALL_SECONDS, verification.STARTUP_RETRIES))
+            # #2176: every launch first waits, bounded, for normal memory pressure.
+            self.assertIs(startup['hold'], verification.hold_for_launch)
             # The relaunch hook ends the stalled app and frees the result-bundle path for the second launch.
             app = root / '.build/verification/SpokenMarginsAppBehavior/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app'
             app.mkdir(parents=True)
@@ -1411,6 +1413,39 @@ class VerificationTests(unittest.TestCase):
                              [(1, 'start', 0), (2, 'start', 2), (2, 'tests_started', 3)])
             self.assertEqual(step['startup_stalls'][0]['conditions'], {'reading': 1})
             self.assertLess(step['launch_conditions'][-1]['seconds'], 30)
+
+    def test_hold_for_launch_waits_a_bounded_time_for_normal_pressure_and_reports_it(self):
+        # #2176: launches that began under memory pressure "warn" stalled 10 times in 12 on 2026-10-20.
+        asked = []
+        held = verification.hold_for_launch(wait=lambda limit: asked.append(limit) or ('warn', 90.04))
+        self.assertEqual(asked, [verification.LAUNCH_PRESSURE_WAIT_SECONDS])
+        self.assertEqual(held, {'memory_pressure': 'warn', 'waited_seconds': 90.0})
+        self.assertEqual(verification.hold_for_launch(wait=lambda limit: ('normal', 0.0)),
+                         {'memory_pressure': 'normal', 'waited_seconds': 0.0})
+        # The real wait never runs past its limit and never fails, whatever the Mac reports.
+        ticks = iter(range(0, 1000, 10))
+        level, waited = verification.lane_sim.wait_for_normal_pressure(
+            30, poll=10, level=lambda: 2, clock=lambda: next(ticks), sleep=lambda seconds: None)
+        self.assertEqual(level, 'warn')
+        self.assertTrue(30 <= waited <= 40, waited)
+
+    def test_every_launch_is_held_for_pressure_first_and_the_hold_is_recorded(self):
+        # The first launch and the retry each wait before they start, so the conditions noted at each start are
+        # the ones the launch really began under; the wait is not charged to the step's time.
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'adapters')
+            calls, startup = self.watch()
+            order = []
+            startup['hold'] = lambda: order.append('hold') or {'memory_pressure': 'normal', 'waited_seconds': 0.0}
+            startup['conditions'] = lambda: order.append('conditions') or {}
+            run.command('xcode-tests', [sys.executable, '-c', self.STALLS_THEN_RUNS, str(Path(temporary) / 'seen')],
+                        timeout=60, expected={'SpokenMarginsAppTests/SpeechTests/testBundled'}, tests=True,
+                        startup=startup)
+            step = run.manifest['steps'][-1]
+            self.assertEqual([h['attempt'] for h in step['launch_holds']], [1, 2])
+            self.assertEqual(order[:2], ['hold', 'conditions'])
+            self.assertEqual(order.count('hold'), 2)
+            self.assertEqual(step['exit_code'], 0)
 
     def test_recovered_stall_still_fails_when_a_requested_test_did_not_pass(self):
         # The PASS is for a retry that passes every requested test; a missing test is still an error.
