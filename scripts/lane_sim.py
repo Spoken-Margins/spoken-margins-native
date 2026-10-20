@@ -48,7 +48,9 @@ import time
 from lane_slots import (build_slot_file, disable_second_slot, memory_pressure_level, simulator_boot_lock,
                         simulator_jobs_running, state_dir, PRESSURE_NAMES, SLOTS)
 
-IOS_MAJOR = 26  # iOS 27's Apple Intelligence services crash-flood on this Mac (#184)
+# iOS 27's Apple Intelligence services crash-flood on this Mac (#184). A GitHub-hosted Mac (lane.yml, #1389) sets
+# SM_LANE_IOS_MAJOR to the iOS its image ships when it has no iOS 26 runtime; the report names the runtime it used.
+IOS_MAJOR = int(os.environ.get('SM_LANE_IOS_MAJOR') or 26)
 DEVICE_TYPE = 'com.apple.CoreSimulator.SimDeviceType.iPhone-17'
 FIRST_BOOT_TIMEOUT = 900
 LOCK_WAIT = 1800

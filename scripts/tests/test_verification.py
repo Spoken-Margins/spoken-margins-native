@@ -403,6 +403,26 @@ class VerificationTests(unittest.TestCase):
         self.assertTrue(message.startswith('lane fault, not the PR: no audio output'), message)
         self.assertEqual(manifest['audio_output'], {'usable': False, 'why': 'lid closed'})
 
+    def test_an_output_that_never_starts_is_a_lane_fault_before_the_package_tests_run(self):
+        # #1956, 2026-10-17: BlackHole 2ch was the default output and never started, so the real-player tests
+        # hung the package step for 17 minutes on every PR, and the reports blamed the PRs.
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+            verification.os.environ.pop('CODEX_SANDBOX', None)
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            stuck = {'usable': False, 'stuck': True, 'why': 'the default output (BlackHole 2ch) does not start'}
+            with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append(name)), \
+                    patch.object(run, 'ops_steps'), \
+                    patch.object(verification.host_audio, 'audio_output', return_value=stuck), \
+                    patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                with self.assertRaises(RuntimeError) as raised:
+                    run.host_steps()
+        self.assertEqual(run.manifest['lane_fault'], 'no audio output: the default output (BlackHole 2ch) does not start')
+        self.assertTrue(str(raised.exception).startswith('lane fault, not the PR: no audio output'), raised.exception)
+        self.assertNotIn('package', calls)
+        self.assertNotIn('package-core', calls)
+
     def test_other_failures_stay_the_prs_even_with_no_sound_output_or_with_it(self):
         player = 'SessionKitTests/RealPlayerMarginMomentTests/testMarginPlays'
         for name, step in (('a later test crashed, so tests are missing', {'errors': [
@@ -439,7 +459,9 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(status, 'verified')
 
     def skipped_steps(self, manifest):
-        return {step['name']: step['skipped'] for step in manifest['steps'] if step.get('skipped')}
+        # shipped-compat follows its own path filter (test_shipped_compat_step.py), not the runner and ops test scopes.
+        return {step['name']: step['skipped'] for step in manifest['steps']
+                if step.get('skipped') and step['name'] != 'shipped-compat'}
 
     def test_a_lane_run_for_an_app_only_diff_runs_just_the_tests_that_read_the_app(self):
         # #862: runner-tests are about 2 minutes of a 10-minute run, and the ones that read App/ are seconds.
@@ -500,7 +522,18 @@ class VerificationTests(unittest.TestCase):
         self.assertIn('test_sharing_kit', verification.RUNNER_TEST_READERS)
         for path in ('docs/sharing-test-kit/kit.json', 'Packages/SessionKit/Sources/CoopPacket/PacketBuilder.swift'):
             self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
+        # The third-party notices test (#1823) reads the dependency manifests and the generated list.
+        self.assertIn('test_third_party_notices', verification.RUNNER_TEST_READERS)
+        for path in ('package.json', 'requirements-dev.txt', 'docs/legal/third-party-components.json',
+                     'THIRD_PARTY_NOTICES.md', 'Design/SpokenMarginsOverhaul/package.json'):
+            self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
         self.assertEqual(verification.runner_test_scope(['docs/a.md'])[0], 'none')
+        # A manifest, model or font file added anywhere must run the check in the PR that adds it, not in the
+        # next PR that touches scripts/.
+        for path in ('ops/x/requirements.txt', 'Design/New/fonts/a.ttf', 'docs/y/package.json', 'ops/m/voice.onnx',
+                     'Design/NewPrototype/package.json', 'Tools/z/Package.swift'):
+            self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
+        self.assertEqual(verification.runner_test_scope(['ops/x/notes.txt', 'docs/a.png'])[0], 'none')
 
     def test_no_diff_information_runs_every_step(self):
         for changed in (None, []):
@@ -521,6 +554,7 @@ class VerificationTests(unittest.TestCase):
             run = verification.Run(Path(temporary) / 'run', 'fast', ['App/X.swift'])
             with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, args))), \
                     patch.object(run, 'ops_steps'), patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
                     patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
                 run.host_steps()
         args = dict(calls)['runner-tests']
@@ -724,6 +758,7 @@ class VerificationTests(unittest.TestCase):
             with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
                     patch.object(run, 'ops_steps'), \
                     patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
                     patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
                 run.host_steps()
         timeout = dict(calls)['runner-tests'].get('timeout', default)
@@ -1320,6 +1355,27 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual((calls['diagnose'], calls['reset']), (['xcode-tests-stall-1'], [1]))
             self.assertLess(step['seconds'], 30)  # not the 60 s the stalled launch would have slept
             self.assertEqual(step['errors'], [])
+
+    def test_each_launch_records_the_host_conditions_at_its_start_its_tests_and_its_stall(self):
+        # #2176: stalls went from 0 of 15 T3 runs on 10-17 to 12 of 32 on 10-19, and only the load average was on
+        # record. Each attempt now notes the host's conditions as it starts and as its tests start, and each stall
+        # as it is seen, so scripts/lane_stall_report.py can count stalls against them.
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'adapters')
+            calls, startup = self.watch()
+            readings = iter(range(100))
+            startup['conditions'] = lambda: {'reading': next(readings)}
+            # A real run's tests last seconds after their first line; the watch polls every 0.25 s.
+            script = self.STALLS_THEN_RUNS.replace(
+                'print("Test Case', 'time.sleep(1)\nprint("Test Case', 1)
+            run.command('xcode-tests', [sys.executable, '-c', script, str(Path(temporary) / 'seen')],
+                        timeout=60, expected={'SpokenMarginsAppTests/SpeechTests/testBundled'}, tests=True,
+                        startup=startup)
+            step = run.manifest['steps'][-1]
+            self.assertEqual([(n['attempt'], n['at'], n['reading']) for n in step['launch_conditions']],
+                             [(1, 'start', 0), (2, 'start', 2), (2, 'tests_started', 3)])
+            self.assertEqual(step['startup_stalls'][0]['conditions'], {'reading': 1})
+            self.assertLess(step['launch_conditions'][-1]['seconds'], 30)
 
     def test_recovered_stall_still_fails_when_a_requested_test_did_not_pass(self):
         # The PASS is for a retry that passes every requested test; a missing test is still an error.

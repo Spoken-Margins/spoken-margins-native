@@ -1,5 +1,6 @@
 import contextlib
 import os
+import shutil
 import importlib.machinery
 import importlib.util
 import json
@@ -12,6 +13,9 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sm_integration_run as run
+
+# sim_builds copies and zips apps with ditto, which only macOS has; the lane runs these tests on the Linux VPS.
+needs_ditto = unittest.skipUnless(shutil.which('ditto'), 'ditto is macOS-only')
 
 SHA = 'a' * 40
 OLD = 'b' * 40
@@ -46,6 +50,7 @@ def load_phone_build():
 
 _STATE = tempfile.TemporaryDirectory()
 os.environ['SM_LANE_STATE_DIR'] = _STATE.name  # the catch ledger (#1789) must not write to the real lane state
+os.environ['SM_SIM_BUILDS'] = str(Path(_STATE.name) / 'sim-builds')  # nor the kept simulator builds
 
 
 class ReportsTests(unittest.TestCase):
@@ -752,3 +757,345 @@ class StrangerTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SimBuildTests(unittest.TestCase):
+    """The tip's simulator app is kept for desks (scripts/sim-build-latest), only when it is the tip's own good build."""
+
+    class BuildingOps(FakeOps):
+        def __init__(self, tmp, plans, head=SHA, built=True, **kw):
+            super().__init__(tmp, plans, **kw)
+            self.head, self.built = head, built
+
+        def test_plan(self, wt, output, plan, fds, only=()):
+            result = super().test_plan(wt, output, plan, fds, only)
+            app = (wt / '.build/verification/SpokenMarginsAppBehavior/Build/Products/Debug-iphonesimulator'
+                   / 'SpokenMarginsApp.app')
+            app.mkdir(parents=True, exist_ok=True)
+            (app / 'Info.plist').write_text('<plist/>')
+            steps = [{'name': 'build-for-testing', 'exit_code': 0 if self.built else 65}]
+            if self.built:
+                steps.append({'name': 'bundle-contracts', 'exit_code': 0})
+            output.mkdir(parents=True, exist_ok=True)
+            (output / 'manifest.json').write_text(json.dumps(dict(result, head=self.head,
+                                                                  steps=steps + result['steps'])))
+            return result
+
+    def setUp(self):
+        self.root = Path(os.environ['SM_SIM_BUILDS'])
+        run.shutil.rmtree(self.root, ignore_errors=True)
+
+    @needs_ditto
+    def test_a_tested_tip_leaves_its_app_and_latest_points_at_it(self):
+        with tempfile.TemporaryDirectory() as tmp, mac_with_room():
+            ops = self.BuildingOps(tmp, [manifest({TEST: 'passed'})], bodies=[report_comment(OLD[:7], 'PASS')])
+            self.assertEqual(run.tick(ops), 'PASS')
+            log = (ops.home / 'log.txt').read_text()
+        self.assertEqual(run.sim_builds.latest(self.root)['sha'], SHA)
+        self.assertIn('simulator build kept', log)
+
+    @needs_ditto
+    def test_a_failing_tip_is_still_kept_for_desks(self):
+        plans = [manifest({TEST: 'failed'})] * 3
+        with tempfile.TemporaryDirectory() as tmp, mac_with_room():
+            ops = self.BuildingOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')])
+            self.assertEqual(run.tick(ops), 'FAIL')
+        self.assertEqual(run.sim_builds.latest(self.root)['sha'], SHA)
+
+    def test_a_broken_build_or_another_commit_s_build_is_not_kept(self):
+        for head, built, why in ((SHA, False, 'no good simulator build'), (OLD, True, 'not ' + SHA[:7])):
+            with self.subTest(why=why), tempfile.TemporaryDirectory() as tmp, mac_with_room():
+                ops = self.BuildingOps(tmp, [manifest({TEST: 'passed'})], head=head, built=built,
+                                       bodies=[report_comment(OLD[:7], 'PASS')])
+                run.tick(ops)
+                self.assertIn(why, (ops.home / 'log.txt').read_text())
+                self.assertIsNone(run.sim_builds.latest(self.root))
+
+    def test_no_copy_when_the_build_left_the_mac_under_ten_gigabytes(self):
+        with tempfile.TemporaryDirectory() as tmp, mac_with_room():
+            ops = self.BuildingOps(tmp, [manifest({TEST: 'passed'})], bodies=[report_comment(OLD[:7], 'PASS')])
+            room = iter([50 * GB, 9 * 1024 ** 3])  # room to start; the build itself ate the rest
+            with patch.object(ops, 'free_bytes', side_effect=lambda: next(room)):
+                self.assertEqual(run.tick(ops), 'PASS')
+            self.assertIn('under the 10 GB floor', (ops.home / 'log.txt').read_text())
+        self.assertIsNone(run.sim_builds.latest(self.root))
+
+
+def hosted_report(sha7, verdict, failing=()):
+    """A report as hosted_run posts it: the bot's comment, `run by: hosted integration`, its failing line."""
+    lines = [f'Lane report integration-{sha7} — {verdict}', f'commit {sha7}', f'run by: {run.HOSTED_RUN_BY}']
+    if failing:
+        lines.append('failing: ' + ', '.join(failing))
+    return '```text\n' + '\n'.join(lines) + '\n```\n'
+
+
+class HostedOps(CulpritOps):
+    """CulpritOps with the hosted switch, the checkout's HEAD and a record of every way to the Keychain or Claude."""
+
+    def __init__(self, tmp, plans, hosted=True, runs=({'status': 'in_progress', 'conclusion': None},),
+                 tip_age=3600, **kw):
+        super().__init__(tmp, plans, **kw)
+        self.hosted, self.runs, self.tip_age = hosted, runs if runs is None else list(runs), tip_age
+
+    def hosted_on(self):
+        return self.hosted
+
+    def hosted_runs(self, sha):
+        self.calls.append(['hosted_runs', sha])
+        return self.runs
+
+    def commit_time(self, sha):
+        return run.time.time() - self.tip_age
+
+    def test_plan(self, wt, output, plan, fds, only=()):
+        output.mkdir(parents=True, exist_ok=True)
+        (output / 'tests.xcresult').mkdir()  # bundles must not reach the hosted run's artifact
+        return super().test_plan(wt, output, plan, fds, only)
+
+
+class HostedSwitchTests(unittest.TestCase):
+    def test_the_switch_reads_on_only_from_the_variable_and_any_trouble_is_off(self):
+        cases = [(run.Result(0, 'on\n'), True), (run.Result(0, 'off\n'), False), (run.Result(0, ''), False),
+                 (run.Result(1, '', 'HTTP 404: Not Found'), False), (run.Result(0, 'On\n'), False)]
+        for result, expected in cases:
+            with self.subTest(result=result.stdout or result.stderr), tempfile.TemporaryDirectory() as tmp:
+                calls = []
+                ops = run.Ops(home=Path(tmp), repo_root=Path(tmp), echo=False,
+                              run=lambda cmd, **kw: calls.append(cmd) or result)
+                self.assertIs(ops.hosted_on(), expected)
+                self.assertEqual(calls[0][:3], ['gh', 'api', f'repos/{run.REPO}/actions/variables/LANE_HOSTED_APP'])
+
+    def test_switched_off_the_mac_tests_the_new_tip_as_before_whatever_hosted_reported(self):
+        # A hosted FAIL on an older tip is someone else's history: with the switch off the Mac neither chases it
+        # nor holds back, and tests the new tip once as today.
+        bodies = [report_comment(OLD[:7], 'PASS'), hosted_report('c' * 7, 'FAIL', [TEST])]
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = HostedOps(tmp, [manifest({TEST: 'passed'})], hosted=False, bodies=bodies)
+            with recording_slot(ops.events):
+                self.assertEqual(run.tick(ops), 'PASS')
+            state = json.loads((ops.home / 'state.json').read_text())
+        self.assertEqual(len(ops.posted), 1)
+        self.assertIn(f'run by: {run.RUN_BY}', ops.posted[0])
+        self.assertNotIn('hosted_handled', state)
+        self.assertEqual((ops.reverts, ops.comments), ([], []))
+
+
+class HostedRunTests(unittest.TestCase):
+    def hosted_run(self, tmp, plans, bodies=(report_comment(OLD[:7], 'PASS'),)):
+        ops = HostedOps(tmp, plans, bodies=list(bodies))
+        with recording_slot(ops.events), \
+                patch.object(run, 'keep_sim_build', side_effect=AssertionError('no sim build when hosted')), \
+                patch.object(run.lane_ledger, 'record_tip', side_effect=AssertionError('no ledger when hosted')), \
+                patch.dict(os.environ, {'GITHUB_RUN_ID': '42', 'GITHUB_REPOSITORY': 'uncomposed/spoken-margins-native'}):
+            verdict = run.hosted_run(ops, SHA)
+        return ops, verdict
+
+    def test_a_confirmed_fail_is_reported_and_nothing_else(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, verdict = self.hosted_run(tmp, FAILING)
+            bundles = list((ops.repo_root / 'artifacts').rglob('*.xcresult'))
+            state_written = (ops.home / 'state.json').exists()
+        self.assertEqual(verdict, 'FAIL')
+        self.assertEqual(len(ops.posted), 1)
+        self.assertEqual(run.reported(ops.posted), [(SHA[:7], 'FAIL')])  # the same first line phone-build reads
+        self.assertIn(f'run by: {run.HOSTED_RUN_BY}', ops.posted[0])
+        self.assertIn(f'failing: {TEST}', ops.posted[0])
+        self.assertIn('actions/runs/42', ops.posted[0])
+        self.assertIn(['test_plan', 'rerun-1', TEST], ops.calls)
+        self.assertIn(['test_plan', 'rerun-2', TEST], ops.calls)
+        # No culprit search, revert, issue, Claude or Keychain, and no state or bundles left behind.
+        self.assertEqual((ops.diagnosed, ops.filed, ops.reverts, ops.comments), ([], [], [], []))
+        self.assertFalse(any(e[0] in ('commits_since', 'check') for e in ops.events))
+        self.assertFalse(any('security' in c[0] or 'claude' in c[0] for c in ops.calls))
+        self.assertFalse(any(c[:2] in (['gh', 'pr'], ['gh', 'issue']) or c[:3] == ['git', 'worktree', 'add']
+                             for c in ops.calls))
+        self.assertEqual(bundles, [])
+        self.assertFalse(state_written)
+
+    def test_a_pass_names_the_hosted_runner_and_the_candidate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, verdict = self.hosted_run(tmp, [manifest({TEST: 'passed'})])
+        self.assertEqual(verdict, 'PASS')
+        self.assertIn('hosted-integration.yml on a GitHub-hosted Mac', ops.posted[0])
+        self.assertIn(f'{SHA[:7]} is the current phone candidate', ops.posted[0])
+
+    def test_a_tip_already_reported_is_not_tested_again(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, verdict = self.hosted_run(tmp, [], bodies=[report_comment(SHA[:7], 'PASS')])
+        self.assertEqual((verdict, ops.posted), ('held', []))
+
+    def test_a_checkout_at_another_commit_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = HostedOps(tmp, [])
+            ops.sha = OLD
+            with self.assertRaises(ValueError):
+                run.hosted_run(ops, SHA)
+        self.assertEqual(ops.posted, [])
+
+    def test_trouble_before_the_tests_is_reported_inconclusive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = HostedOps(tmp, [], bodies=[report_comment(OLD[:7], 'PASS')])
+
+            @contextlib.contextmanager
+            def busy():
+                raise TimeoutError('simulator slot decision is busy')
+                yield
+            with patch.object(run, 'exclusive_slot', busy):
+                self.assertEqual(run.hosted_run(ops, SHA), 'INCONCLUSIVE')
+        self.assertIn('why inconclusive: simulator slot decision is busy', ops.posted[0])
+
+    def test_main_needs_a_full_sha(self):
+        with open(os.devnull, 'w') as quiet, self.assertRaises(SystemExit), contextlib.redirect_stderr(quiet):
+            run.main(['--hosted', '--sha', SHA[:7]])
+
+    class BuildingHostedOps(HostedOps):
+        """A hosted run whose app plan leaves a built app, of `head`, that passed bundle-contracts or not."""
+
+        def __init__(self, tmp, plans, head=SHA, built=True, **kw):
+            super().__init__(tmp, plans, **kw)
+            self.head, self.built = head, built
+
+        def test_plan(self, wt, output, plan, fds, only=()):
+            result = super().test_plan(wt, output, plan, fds, only)
+            app = (wt / '.build/verification/SpokenMarginsAppBehavior/Build/Products/Debug-iphonesimulator'
+                   / 'SpokenMarginsApp.app')
+            app.mkdir(parents=True, exist_ok=True)
+            (app / 'Info.plist').write_text('<plist/>')
+            steps = [{'name': 'bundle-contracts', 'exit_code': 0 if self.built else 1}]
+            (output / 'manifest.json').write_text(json.dumps(dict(result, head=self.head,
+                                                                  steps=steps + result['steps'])))
+            return result
+
+    def test_the_tip_s_own_good_build_is_packed_for_the_sim_app_artifact(self):
+        """Desks download it (scripts/sim-build-latest); only exactly this SHA's build that passed bundle-contracts."""
+        rows = [(SHA, True, 'packed'), (SHA, False, 'not packed: no good simulator build'),
+                (OLD, True, f'not packed: the app plan built {OLD[:7]}')]
+        for head, built, said in rows:
+            with self.subTest(said=said), tempfile.TemporaryDirectory() as tmp:
+                if said == 'packed' and not shutil.which('ditto'):
+                    self.skipTest('ditto is macOS-only')
+                ops = self.BuildingHostedOps(tmp, [manifest({TEST: 'failed'})] * 3, head=head, built=built,
+                                             bodies=[report_comment(OLD[:7], 'PASS')])
+                with recording_slot(ops.events), patch.object(run.lane_ledger, 'record_tip'):
+                    self.assertEqual(run.hosted_run(ops, SHA), 'FAIL')  # failing tips are packed too
+                packed = ops.repo_root / 'artifacts' / 'sim-app'
+                self.assertIn('simulator build ' + said, (ops.home / 'log.txt').read_text())
+                self.assertEqual(packed.is_dir(), said == 'packed')
+                if said == 'packed':
+                    self.assertEqual(json.loads((packed / 'build.json').read_text())['sha'], SHA)
+                    self.assertTrue((packed / run.sim_builds.PACKED_APP).is_file())
+                self.assertIsNone(run.sim_builds.latest(Path(os.environ['SM_SIM_BUILDS'])))  # nothing kept on disk
+
+
+class MacDefersToHostedTests(unittest.TestCase):
+    def tick(self, tmp, plans, bodies, ops=None):
+        ops = ops or HostedOps(tmp, plans, bodies=bodies)
+        with recording_slot(ops.events), patch.object(run.revert, 'load_test_scope', return_value=real_scope()):
+            verdict = run.tick(ops)
+        path = ops.home / 'state.json'
+        return ops, verdict, json.loads(path.read_text()) if path.exists() else {}
+
+    def test_while_on_the_mac_tests_no_new_tip(self):
+        bodies = [report_comment(OLD[:7], 'PASS', by=run.HOSTED_RUN_BY)]
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, verdict, state = self.tick(tmp, [], bodies)
+        self.assertEqual(verdict, 'deferred')
+        self.assertEqual((ops.posted, ops.comments, ops.reverts), ([], [], []))
+        self.assertFalse(any(c[:3] == ['git', 'worktree', 'add'] for c in ops.calls))
+
+    def test_a_tip_with_no_hosted_run_is_tested_here_as_when_off(self):
+        # #2127: the lane runner's merges are pushed with the workflow token, which starts no workflows. A tip
+        # with no hosted run, or one whose run ended without a report, would otherwise go untested.
+        cases = [('no run', []), ('a run that ended without a report', [{'status': 'completed', 'conclusion': 'failure'}]),
+                 ('runs unreadable', None)]
+        for name, runs in cases:
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                ops = HostedOps(tmp, [manifest({TEST: 'passed'})], runs=runs,
+                                bodies=[report_comment(OLD[:7], 'PASS', by=run.HOSTED_RUN_BY)])
+                ops, verdict, state = self.tick(tmp, [], [], ops=ops)
+                self.assertEqual(verdict, 'PASS')
+                self.assertEqual(len(ops.posted), 1)
+                self.assertIn(f'run by: {run.RUN_BY}', ops.posted[0])
+                self.assertIn('the Mac tests it', (ops.home / 'log.txt').read_text())
+
+    def test_a_tip_the_hosted_run_has_or_may_soon_have_is_left_to_it(self):
+        cases = [('queued', {'runs': [{'status': 'queued', 'conclusion': None}]}),
+                 ('in progress', {'runs': [{'status': 'in_progress', 'conclusion': None}]}),
+                 ('just landed, no run listed yet', {'runs': [], 'tip_age': 60})]
+        for name, kw in cases:
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                ops = HostedOps(tmp, [], bodies=[report_comment(OLD[:7], 'PASS', by=run.HOSTED_RUN_BY)], **kw)
+                ops, verdict, _ = self.tick(tmp, [], [], ops=ops)
+                self.assertEqual(verdict, 'deferred')
+                self.assertEqual(ops.posted, [])
+                self.assertFalse(any(c[:3] == ['git', 'worktree', 'add'] for c in ops.calls))
+                self.assertIn(['hosted_runs', SHA], ops.calls)
+
+    def test_the_hosted_run_list_asks_github_for_this_commit_and_trouble_is_none(self):
+        cases = [(run.Result(0, '[{"status":"queued","conclusion":null}]'), [{'status': 'queued', 'conclusion': None}]),
+                 (run.Result(0, '[]'), []), (run.Result(1, '', 'HTTP 502'), None), (run.Result(0, 'not json'), None)]
+        for result, expected in cases:
+            with self.subTest(result=result.stdout or result.stderr), tempfile.TemporaryDirectory() as tmp:
+                calls = []
+                ops = run.Ops(home=Path(tmp), repo_root=Path(tmp), echo=False,
+                              run=lambda cmd, **kw: calls.append(cmd) or result)
+                self.assertEqual(ops.hosted_runs(SHA), expected)
+                self.assertEqual(calls[0][:3], ['gh', 'api',
+                                 f'repos/{run.REPO}/actions/workflows/hosted-integration.yml/runs?head_sha={SHA}&per_page=20'])
+
+    def test_an_unhandled_hosted_fail_is_confirmed_here_then_searched_and_reverted_once(self):
+        bodies = [report_comment(OLD[:7], 'PASS'), hosted_report(SHA[:7], 'FAIL', [TEST])]
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, verdict, state = self.tick(tmp, [manifest({TEST: 'failed'})], bodies)
+            again = self.tick(tmp, [], bodies, ops=ops)[1]
+        self.assertEqual((verdict, again), ('handled', 'deferred'))
+        self.assertIn(['test_plan', 'confirm', TEST], ops.calls)
+        self.assertEqual([e for e in ops.events if e[0] == 'check'], [('check', 12), ('check', 13)])
+        self.assertLess(ops.events.index(('check', 13)), ops.events.index(('slot', 'released')))
+        self.assertEqual(ops.reverts[0][0], 13)
+        self.assertEqual(ops.diagnosed, [([TEST], ['#1170'])])
+        self.assertEqual(ops.posted, [])  # the hosted report stands; the Mac posts no second one
+        record = state['hosted_handled'][SHA[:7]]
+        self.assertEqual((record['confirm'], record['revert']), ('fail', 'https://github.com/x/y/pull/9001'))
+        log = next(c for c in ops.calls if c[:2] == ['git', 'log'])
+        self.assertEqual(log[-1], f'{OLD[:7]}..{SHA}')
+
+    def test_a_hosted_fail_that_passes_here_reverts_and_files_nothing(self):
+        # find_culprit takes the tip as failing: without the check here it would blame the newest merge.
+        bodies = [report_comment(OLD[:7], 'PASS'), hosted_report(SHA[:7], 'FAIL', [TEST])]
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, verdict, state = self.tick(tmp, [manifest({TEST: 'passed'})], bodies)
+        self.assertEqual(verdict, 'handled')
+        self.assertEqual((ops.reverts, ops.filed, ops.diagnosed), ([], [], []))
+        self.assertFalse(any(e[0] in ('commits_since', 'check') for e in ops.events))
+        self.assertEqual([n for n, _ in ops.comments], [run.REPORT_ISSUE])
+        self.assertIn('not confirmed on the Mac', ops.comments[0][1])
+        self.assertEqual(state['hosted_handled'][SHA[:7]]['confirm'], 'pass')
+
+    def test_only_the_newest_hosted_report_counts(self):
+        cases = [
+            ('a newer hosted PASS', [hosted_report(SHA[:7], 'FAIL', [TEST]), hosted_report('c' * 7, 'PASS')]),
+            ('already handled', [hosted_report('d' * 7, 'FAIL', [TEST])]),
+            ('a FAIL naming no test', [hosted_report(SHA[:7], 'FAIL')]),
+            ('an INCONCLUSIVE', [hosted_report(SHA[:7], 'INCONCLUSIVE')]),
+            ("the Mac's own FAIL", [report_comment(SHA[:7], 'FAIL') + f'failing: {TEST}\n']),
+        ]
+        for name, bodies in cases:
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                ops = HostedOps(tmp, [], bodies=bodies)
+                ops.home.mkdir()
+                (ops.home / 'state.json').write_text(json.dumps({'results': {}, 'hosted_handled': {'d' * 7: {}}}))
+                ops, verdict, _ = self.tick(tmp, [], bodies, ops=ops)
+                self.assertEqual(verdict, 'deferred')
+                self.assertFalse(any(c[:1] == ['test_plan'] for c in ops.calls))
+
+    def test_a_handling_run_cut_off_part_way_is_not_repeated(self):
+        bodies = [hosted_report(SHA[:7], 'FAIL', [TEST])]
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = HostedOps(tmp, [], bodies=bodies)
+            ops.home.mkdir()
+            (ops.home / 'state.json').write_text(json.dumps(
+                {'results': {}, 'hosted_handled': {SHA[:7]: {'started': 0, 'in_progress': True}}}))
+            ops, verdict, state = self.tick(tmp, [], bodies, ops=ops)
+        self.assertEqual(verdict, 'deferred')
+        self.assertEqual(state['hosted_handled'][SHA[:7]]['confirm'], 'stopped before completion')

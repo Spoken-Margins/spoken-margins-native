@@ -114,8 +114,13 @@ func TestServeNeverPrintsTheAPIKey(t *testing.T) {
 		t.Fatalf("server didn't start: %v\n%s", err, out.String())
 	}
 	body, _ := json.Marshal(map[string]any{
-		"schema": maps.TranscriptSchema, "episodeKey": strings.Repeat("ab", 32), "durationMs": 60000, "language": "en",
-		"segments": []map[string]any{{"id": "a", "startMs": 0, "endMs": 60000, "text": "hello"}},
+		"schema": maps.TranscriptSchema, "episodeKey": strings.Repeat("ab", 32), "durationMs": 180000, "language": "en",
+		// Three minutes: long enough for three scenes, so the worker calls.
+		"segments": []map[string]any{
+			{"id": "a", "startMs": 0, "endMs": 60000, "text": "hello"},
+			{"id": "b", "startMs": 60000, "endMs": 120000, "text": "middle"},
+			{"id": "c", "startMs": 120000, "endMs": 180000, "text": "goodbye"},
+		},
 	})
 	resp, err = http.Post("http://"+addr+"/api/v1/maps/transcripts", "application/json", bytes.NewReader(body))
 	if err != nil || resp.StatusCode != 202 {
@@ -134,7 +139,7 @@ func TestServeNeverPrintsTheAPIKey(t *testing.T) {
 	if !sawKey {
 		t.Fatalf("the provider never received the key\n%s", logs)
 	}
-	if !strings.Contains(logs, "maps: making maps with anthropic/claude-haiku-4-5, capped at $10.00 a month") ||
+	if !strings.Contains(logs, "maps: making maps with anthropic/claude-haiku-5-5, capped at $10.00 a month") ||
 		!strings.Contains(logs, "HTTP 401") || !strings.Contains(logs, "dropped a transcript") {
 		t.Fatalf("expected startup and failure lines missing:\n%s", logs)
 	}

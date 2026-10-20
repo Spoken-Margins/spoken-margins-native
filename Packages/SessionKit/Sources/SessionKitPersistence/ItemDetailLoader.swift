@@ -19,8 +19,9 @@ public struct ItemDetailLoader {
             try store.saveListeningMap(derivedMap)
             map = derivedMap
         }
-        let mediaTimeline = try store.loadTranscriptTimeline(itemId: id)?.timeline
-        let mediaChapters = mediaTimeline?.chapters ?? []
+        // Chapters and duration only: the full timeline is thousands of segments, several MB of JSON (#2073).
+        let timelineSummary = try store.loadTranscriptTimelineSummary(itemId: id)
+        let mediaChapters = timelineSummary?.chapters ?? []
         let projection = try store.loadResolvedListeningMapProjection(itemId: id)
         let proposal = SharedListeningMapPlacement.proposal(
             for: projection, committed: try store.loadPortableListeningMapProposals(itemId: id),
@@ -39,6 +40,11 @@ public struct ItemDetailLoader {
             try? store.loadInterjections(sessionId: $0).filter { $0.status == "active" }
         } ?? []
         let isNativeAudio = item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream
+        // Only a Margin that is placed by media time needs the segments to name its surrounding words.
+        let needsSegments = isNativeAudio && storedInterjections.contains {
+            $0.targetType == .item && $0.anchor.mediaTimeMs != nil
+        }
+        let mediaTimeline = try needsSegments ? store.loadTranscriptTimeline(itemId: id)?.timeline : nil
         let interjections = storedInterjections.map { interjection -> Interjection in
             guard isNativeAudio,
                   interjection.targetType == .item,
@@ -107,7 +113,7 @@ public struct ItemDetailLoader {
             mediaChapters: mediaChapters,
             listeningMapScenes: listeningMapScenes,
             listeningMapSummarySpans: sceneStarts.summarySpans,
-            mediaDurationMs: item.media?.durationMs ?? mediaTimeline?.durationMs,
+            mediaDurationMs: item.media?.durationMs ?? timelineSummary?.durationMs,
             isNativeAudio: isNativeAudio,
             documentStructure: item.documentStructure,
             sessions: sessions,

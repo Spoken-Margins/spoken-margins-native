@@ -112,7 +112,7 @@ struct BatchExportScreen: View {
         if model.visibleBatchExportRows.isEmpty {
             ProductPanel {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(model.batchExportFilter == .withInterjections ? "No sessions with interjections" : "No sessions yet")
+                    Text(model.batchExportFilter == .withInterjections ? "No sessions with Margins" : "No sessions yet")
                         .font(.headline)
                     if model.batchExportFilter == .withInterjections, !model.batchExportRows.isEmpty {
                         Text("Choose All Sessions to include listening sessions without Margins.")
@@ -173,7 +173,7 @@ struct BatchExportScreen: View {
                     }
                     Picker("Scope", selection: $model.exportScope) {
                         Text("Original").tag("original")
-                        Text("Source Notes").tag("source_interjections")
+                        Text("Margins").tag("source_interjections")
                         Text("Full Session").tag("full_session")
                     }
                     .pickerStyle(.segmented)
@@ -189,7 +189,7 @@ struct BatchExportScreen: View {
                     Toggle("Listening Map", isOn: $model.exportIncludesListeningMap)
                         .accessibilityIdentifier("batchExport.includeListeningMap.toggle")
                         .onCompatibleChange(of: model.exportIncludesListeningMap) { _ in model.exportOptionsChanged() }
-                    Toggle("Interjections", isOn: $model.exportIncludesInterjections)
+                    Toggle("Margins", isOn: $model.exportIncludesInterjections)
                         .accessibilityIdentifier("batchExport.includeInterjections.toggle")
                         .onCompatibleChange(of: model.exportIncludesInterjections) { _ in model.exportOptionsChanged() }
                     Toggle("AI Turns", isOn: $model.exportIncludesTurns)

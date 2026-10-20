@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/WWO9761275037" rel="self" type="application/rss+xml"/>
+    <title>Something You Should Know</title>
+    <link>http://www.somethingyoushouldknow.net</link>
+    <language>en</language>
+    <copyright>© 2026 Omnicast Media, LLC</copyright>
+    <description>Sometimes all it takes is one little fact or one little piece of wisdom to change your life forever. That's the purpose and the hope of "Something You Should Know." In each episode, host Mike Carruthers interviews top experts in their field to bring you fascinating information and advice to help you save time and money, advance in your career, become wealthy, improve your relationships and help you simply get more out of life. In addition, Mike uncovers and shares short, engaging pieces of "intel" you can use to make your life better - today. Right now.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/c24d0a5a-b25b-11ea-bef6-ef68671ea875/image/88a8b82e5fae6701e778c1709b714e7a.png?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>Something You Should Know</title>
+      <link>http://www.somethingyoushouldknow.net</link>
+    </image>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle></itunes:subtitle>
+    <itunes:author>Mike Carruthers | OmniCast Media</itunes:author>
+    <itunes:summary>Sometimes all it takes is one little fact or one little piece of wisdom to change your life forever. That's the purpose and the hope of "Something You Should Know." In each episode, host Mike Carruthers interviews top experts in their field to bring you fascinating information and advice to help you save time and money, advance in your career, become wealthy, improve your relationships and help you simply get more out of life. In addition, Mike uncovers and shares short, engaging pieces of "intel" you can use to make your life better - today. Right now.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>Sometimes all it takes is one little fact or one little piece of wisdom to change your life forever. That's the purpose and the hope of "Something You Should Know." In each episode, host Mike Carruthers interviews top experts in their field to bring you fascinating information and advice to help you save time and money, advance in your career, become wealthy, improve your relationships and help you simply get more out of life. In addition, Mike uncovers and shares short, engaging pieces of "intel" you can use to make your life better - today. Right now.</p>
+<p><br></p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Mike Carruthers | OmniCastMedia</itunes:name>
+      <itunes:email>kwilliams@omnicastmedia.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/c24d0a5a-b25b-11ea-bef6-ef68671ea875/image/88a8b82e5fae6701e778c1709b714e7a.png?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Science">
+      <itunes:category text="Social Sciences"/>
+    </itunes:category>
+    <itunes:category text="Education">
+      <itunes:category text="Self-Improvement"/>
+    </itunes:category>
+    <itunes:category text="Health &amp; Fitness">
+    </itunes:category>
+    

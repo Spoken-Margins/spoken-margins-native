@@ -128,10 +128,12 @@ final class VoiceModelCatalogTests: XCTestCase {
         try assertVerifyThrows(.badSignature, JSONEncoder().encode(envelope))
     }
 
-    func testEmptyProductionKeyListFailsClosed() throws {
+    func testProductionKeyListDoesNotTrustTheTestKey() throws {
         XCTAssertThrowsError(try VoiceModelCatalogVerifier.verify(envelopeData: fixture("envelope-valid.json"), trustedKeys: VoiceCatalogTrust.production)) {
             XCTAssertEqual($0 as? VoiceCatalogError, .unknownKey("sm-test-1"))
         }
+        XCTAssertEqual(VoiceCatalogTrust.production.map(\.keyId), ["sm-voices-1"])
+        XCTAssertTrue(VoiceCatalogTrust.production.allSatisfy { $0.publicKey.count == 32 })
     }
 
     func testOlderCatalogThanTheLastAcceptedIsARollback() throws {
@@ -271,6 +273,71 @@ final class VoiceModelCatalogTests: XCTestCase {
             let screened = try VoiceModelCatalogVerifier.screen(catalog)
             XCTAssertEqual(screened.voices.map(\.id), ["fixture-bundled"], label)
             XCTAssertEqual(screened.rejected, [RejectedVoiceEntry(id: broken.id, reason: expected)], label)
+        }
+    }
+
+    // MARK: Archives and carried content (#2086)
+
+    func testVoiceWithAnArchiveMemberAndCarriedContentVerifies() throws {
+        let catalog = try verify("envelope-archive.json")
+        XCTAssertEqual(catalog.rejected, [])
+        let voice = try XCTUnwrap(catalog.voice(id: "fixture-archive-voice"))
+        XCTAssertEqual(voice.archives.map(\.id), ["int8"])
+        let graph = try XCTUnwrap(voice.files.first { $0.path == "onnx/model.onnx" })
+        XCTAssertEqual(graph.archiveMember, VoiceModelArchiveMember(archive: "int8", member: "fixture-int8-1.0/model.int8.onnx"))
+        XCTAssertEqual(graph.sources, [])
+        let notice = try XCTUnwrap(voice.files.first { $0.path == "onnx/MODIFIED.txt" })
+        XCTAssertEqual(notice.content.map { Data($0.utf8).count }, notice.byteCount)
+        // What downloads is the archive and the style file; the member and the notice come from them.
+        let style = try XCTUnwrap(voice.files.first { $0.path == "styles/a.json" })
+        XCTAssertEqual(voice.downloadByteCount, voice.archives[0].byteCount + style.byteCount)
+        XCTAssertEqual(voice.installedByteCount, voice.files.map(\.byteCount).reduce(0, +))
+        // The installer gets one archive and each file from its one place.
+        XCTAssertEqual(voice.installArchives.map(\.id), ["int8"])
+        XCTAssertEqual(voice.installFiles.map { $0.archiveMember != nil }, [true, false, false])
+        XCTAssertEqual(voice.installFiles[1].content, Data(try XCTUnwrap(notice.content).utf8))
+    }
+
+    func testCatalogsWithoutArchivesStillReadTheSameAndRoundTrip() throws {
+        let valid = try VoiceModelCatalog.decode(fixture("catalog-valid.json"))
+        let voice = try XCTUnwrap(valid.voices.first { $0.id == "fixture-voice" })
+        XCTAssertEqual(voice.archives, [])
+        XCTAssertEqual(voice.downloadByteCount, voice.installedByteCount)
+        // Encoding writes no archive or member fields the older shape lacks.
+        let encoded = try JSONEncoder().encode(voice)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertNil(object["archives"])
+        let files = try XCTUnwrap(object["files"] as? [[String: Any]])
+        XCTAssertTrue(files.allSatisfy { $0["sources"] != nil && $0["archiveMember"] == nil && $0["content"] == nil })
+        XCTAssertEqual(try JSONDecoder().decode(VoiceModelEntry.self, from: encoded), voice)
+        let archiveVoice = try XCTUnwrap(try VoiceModelCatalog.decode(fixture("catalog-archive.json")).voices.last)
+        XCTAssertEqual(try JSONDecoder().decode(VoiceModelEntry.self, from: JSONEncoder().encode(archiveVoice)), archiveVoice)
+    }
+
+    func testEachArchiveRuleLeavesOutOnlyTheEntryThatBreaksIt() throws {
+        let catalog = try VoiceModelCatalog.decode(fixture("catalog-archive.json"))
+        let voice = try XCTUnwrap(catalog.voices.first { $0.id == "fixture-archive-voice" })
+        XCTAssertNil(VoiceModelCatalogVerifier.rejection(for: voice))
+        let cases: [(String, (inout VoiceModelEntry) -> Void, VoiceEntryRejection)] = [
+            ("member of an archive the voice lacks", { $0.files[0].archiveMember?.archive = "fp32" }, .unknownArchive("fp32")),
+            ("archive in a format this build can't open", { $0.archives[0].format = "tar.zst" }, .unsupportedArchiveFormat("tar.zst")),
+            ("member with sources too", { $0.files[0].sources = ["https://models.example.org/model.onnx"] }, .ambiguousFileSource(path: "onnx/model.onnx")),
+            ("content with sources too", { $0.files[1].sources = ["https://models.example.org/MODIFIED.txt"] }, .ambiguousFileSource(path: "onnx/MODIFIED.txt")),
+            ("member and content", { $0.files[0].content = "x" }, .ambiguousFileSource(path: "onnx/model.onnx")),
+            ("content whose hash is wrong", { $0.files[1].content = String(repeating: "x", count: $0.files[1].byteCount) }, .invalidHash(path: "onnx/MODIFIED.txt")),
+            ("content whose size is wrong", { $0.files[1].byteCount += 1 }, .invalidField("files.onnx/MODIFIED.txt.content")),
+            ("member path climbs out", { $0.files[0].archiveMember?.member = "../model.onnx" }, .invalidField("files.onnx/model.onnx.archiveMember.member")),
+            ("one member for two files", { $0.files.append(VoiceModelFile(path: "onnx/copy.onnx", byteCount: $0.files[0].byteCount, sha256: $0.files[0].sha256, sources: [], archiveMember: $0.files[0].archiveMember)) }, .invalidField("files.onnx/copy.onnx.archiveMember")),
+            ("archive over http", { $0.archives[0].sources = ["http://github.example.com/a.tar.bz2"] }, .insecureSource(path: "archives.int8")),
+            ("archive with no sources", { $0.archives[0].sources = [] }, .emptySources(path: "archives.int8")),
+            ("archive hash malformed", { $0.archives[0].sha256 = "abc" }, .invalidHash(path: "archives.int8")),
+            ("archive of zero bytes", { $0.archives[0].byteCount = 0 }, .invalidField("archives.int8.byteCount")),
+            ("two archives with one id", { $0.archives.append($0.archives[0]) }, .invalidField("archives.id")),
+        ]
+        for (label, edit, expected) in cases {
+            var broken = voice
+            edit(&broken)
+            XCTAssertEqual(VoiceModelCatalogVerifier.rejection(for: broken), expected, label)
         }
     }
 

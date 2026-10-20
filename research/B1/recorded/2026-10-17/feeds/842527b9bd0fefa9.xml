@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <atom:link href="https://feeds.simplecast.com/EmVW7VGp" rel="self" title="MP3 Audio" type="application/atom+xml"/>
+    <atom:link href="https://simplecast.superfeedr.com" rel="hub" xmlns="http://www.w3.org/2005/Atom"/>
+    <generator>https://simplecast.com</generator>
+    <title>Radiolab</title>
+    <description>Radiolab is on a curiosity bender. We ask deep questions and use investigative journalism to get the answers. A given episode might whirl you through science, legal history, and into the home of someone halfway across the world. The show is known for innovative sound design, smashing information into music. It is hosted by Lulu Miller and Latif Nasser.</description>
+    <copyright>© WNYC Studios</copyright>
+    <language>en-us</language>
+    <pubDate>Fri, 16 Oct 2026 14:00:00 +0000</pubDate>
+    <lastBuildDate>Fri, 16 Oct 2026 14:00:23 +0000</lastBuildDate>
+    <image>
+      <link>https://www.radiolab.org</link>
+      <title>Radiolab</title>
+      <url>https://image.simplecastcdn.com/images/2c9187d6-9dff-4257-bc55-469cf13afd48/60a2cfed-b8ca-460b-abb8-8ab0afb3fa8c/3000x3000/radiolab-showsquare-3000x3000.jpg?aid=rss_feed</url>
+    </image>
+    <link>https://www.radiolab.org</link>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>Radiolab is on a curiosity bender. We ask deep questions and use investigative journalism to get the answers. A given episode might whirl you through science, legal history, and into the home of someone halfway across the world. The show is known for innovative sound design, smashing information into music. It is hosted by Lulu Miller and Latif Nasser.</itunes:summary>
+    <itunes:author>WNYC Studios</itunes:author>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:image href="https://image.simplecastcdn.com/images/2c9187d6-9dff-4257-bc55-469cf13afd48/60a2cfed-b8ca-460b-abb8-8ab0afb3fa8c/3000x3000/radiolab-showsquare-3000x3000.jpg?aid=rss_feed"/>
+    <itunes:new-feed-url>https://feeds.simplecast.com/EmVW7VGp</itunes:new-feed-url>
+    <itunes:owner>
+      <itunes:name>WNYC Studios</itunes:name>
+      <itunes:email>wnycdigital@gmail.com</itunes:email>
+    </itunes:owner>
+    <itunes:category text="Science">
+      <itunes:category text="Natural Sciences"/>
+    </itunes:category>
+    <itunes:category text="Society &amp; Culture">
+      <itunes:category text="Documentary"/>
+    </itunes:category>
+    <itunes:category text="History"/>
+    

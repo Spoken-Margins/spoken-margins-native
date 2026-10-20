@@ -1,0 +1,12 @@
+#!/bin/zsh
+# Print one line per labelled accessibility element on a simulator's screen: "x,y Role Label = Value #identifier".
+# x,y is the element's centre in points, ready for `axe tap -x <x> -y <y>`. Needs AXe (axe-cli.com) and jq.
+# The full `axe describe-ui` JSON is about 500k characters a screen; this is about 4k.
+# Usage: scripts/ax-look <udid>
+set -euo pipefail
+axe describe-ui --udid "$1" | jq -r '
+  .. | objects | select(has("frame")) | select(.role != "AXApplication")
+  | select((.AXLabel // "") != "" or (.AXValue // "") != "")
+  | "\(.frame.x + .frame.width/2 | floor),\(.frame.y + .frame.height/2 | floor) \(.role | sub("^AX"; "")) \(.AXLabel // "")"
+    + (if (.AXValue // "") != "" then " = " + (.AXValue | tostring) else "" end)
+    + (if .AXUniqueId then " #" + .AXUniqueId else "" end)' | awk '!seen[$0]++'

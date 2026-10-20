@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:art19="https://art19.com/xmlns/rss-extensions/1.0" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0/" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">
+  <channel>
+    <title>The Allusionist</title>
+    <description>
+      <![CDATA[Adventures in language with Helen Zaltzman. TheAllusionist.org]]>
+    </description>
+    <managingEditor>allusionistshow@gmail.com (Helen Zaltzman)</managingEditor>
+    <copyright>© 2025 Helen Zaltzman</copyright>
+    <generator>ART19</generator>
+    <atom:link href="https://rss.art19.com/the-allusionist" rel="self" type="application/rss+xml"/>
+    <link>https://art19.com/shows/the-allusionist</link>
+    <itunes:owner>
+      <itunes:name>Helen Zaltzman</itunes:name>
+      <itunes:email>allusionistshow@gmail.com</itunes:email>
+    </itunes:owner>
+    <itunes:author>Helen Zaltzman</itunes:author>
+    <itunes:summary>
+      <![CDATA[Adventures in language with Helen Zaltzman. TheAllusionist.org]]>
+    </itunes:summary>
+    <language>en</language>
+    <itunes:category text="Arts"/>
+    <itunes:category text="Education"/>
+    <itunes:category text="History"/>
+    <itunes:keywords>history,Helen Zaltzman,linguistics,entertainment,etymology,words</itunes:keywords>
+    <itunes:type>episodic</itunes:type>
+    <itunes:image href="https://content.production.cdn.art19.com/images/95/2b/ce/09/952bce09-f5fb-4954-8127-d58dd577b159/914c323ae4d70fdd670d8be52e1ed316bef8f6caa7506259dc2b0f099a94bf5da6542c959e00f9e75928e0f18d7fa029934f4c88e312f8c33caf1f6bba694dd7.jpeg"/>
+    <image>
+      <url>https://content.production.cdn.art19.com/images/95/2b/ce/09/952bce09-f5fb-4954-8127-d58dd577b159/914c323ae4d70fdd670d8be52e1ed316bef8f6caa7506259dc2b0f099a94bf5da6542c959e00f9e75928e0f18d7fa029934f4c88e312f8c33caf1f6bba694dd7.jpeg</url>
+      <link>https://art19.com/shows/the-allusionist</link>
+      <title>The Allusionist</title>
+    </image>
+    

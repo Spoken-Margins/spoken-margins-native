@@ -438,7 +438,7 @@ final class MarginOutputCoordinator: ObservableObject {
         do {
             let folder = try resolveFolder(of: destination)
             let summary = try await currentWriter().deliver(
-                [.init(id: "sample-margin", markdown: "# Spoken Margins test\n\nYour thoughts will arrive here as Markdown, with source context and anchors.\n")],
+                [.init(id: "sample-margin", markdown: "# Spoken Margins test\n\nYour thoughts will arrive here as Markdown, with the source around each one.\n")],
                 to: folder, destinationID: destination.id
             )
             let file = "Margin-\(ListeningEdition.digest("sample-margin")).md"

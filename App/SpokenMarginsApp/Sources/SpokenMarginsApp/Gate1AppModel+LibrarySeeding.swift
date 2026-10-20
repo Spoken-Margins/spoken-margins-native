@@ -88,6 +88,7 @@ extension Gate1AppModel {
             libraryItems = rows
             recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
             let availableItemIDs = Set(rows.map(\.id))
+            var writtenMarginNotice: String?
             if let restoredSession = try store.loadSessions().first(where: {
                 Self.isResumableSession($0) && availableItemIDs.contains($0.itemId)
             }), let engine {
@@ -103,11 +104,15 @@ extension Gate1AppModel {
             } else {
                 selectedItem = ItemDetailState()
             }
+            writtenMarginNotice = restoreUnfinishedWrittenMargin(store: store, availableItemIDs: availableItemIDs)
             refreshMarginRows()
             tryRefreshOfflineStorageUsage()
             diagnostics["libraryBootstrap"] = "loaded:\(rows.count)"
             reportSuccess(rows.isEmpty ? "Add a source to begin." : "Library ready.")
-            if let recordingDraftNotice { reportWarning(recordingDraftNotice) }
+            // One status line holds one message, so a spoken-draft notice (#951) and this one share it.
+            if let notice = [recordingDraftNotice, writtenMarginNotice].compactMap({ $0 }).joined(separator: " ").nilIfEmpty {
+                reportWarning(notice)
+            }
             try refreshAudioPreparationPresentation(store: store, announceNewCompletions: true)
             scheduleAutomaticAudioPreparationIfNeeded()
             // Recover missing opening windows as well as durable jobs. Yield

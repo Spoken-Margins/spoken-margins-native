@@ -1,11 +1,13 @@
 {
   "schemaVersion": "guided-onboarding.v1",
   "itemId": "guided-onboarding",
-  "contentVersion": 1,
+  "contentVersion": 2,
   "title": "A Guided Tour of Spoken Margins",
   "description": "Learn how to add reading and listening sources, prepare text for offline playback, organize your library, and use the sleep timer.",
-  "audioURL": "https://spokenmargins.proximitytoprogress.com/onboarding/v1/guided-tour-v1.m4a",
-  "audioChecksumSHA256": "048434ce7dfc068eda73e9f42fcde4ebdf08f6dc0f388177bf9af7772f2fed4e",
+  "audioURL": "https://spokenmargins.proximitytoprogress.com/onboarding/v1/guided-tour-v2.m4a",
+  "audioChecksumSHA256": "32388afb073cc816690cfdd8a557845fdec9718edfae93595567e45fd28335b9",
+  "audioDurationSeconds": 25.06,
+  "voice": "Kitten (bundled, Apache-2.0); rendered by scripts/render-guided-tour.sh from guided-tour.txt",
   "actions": [
     {
       "id": "add-pdf",

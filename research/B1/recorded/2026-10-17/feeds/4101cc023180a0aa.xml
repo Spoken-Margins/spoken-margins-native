@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:art19="https://art19.com/xmlns/rss-extensions/1.0" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0/" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">
+  <channel>
+    <title>American Scandal</title>
+    <description>
+      <![CDATA[<p>Every scandal begins with a lie. But the truth will come out. And then comes the fallout and the outrage.</p><p>Scandals have shaped America since its founding. From business and politics to sports and society, we look on aghast as corruption, deceit and ambition bring down heroes and celebrities, politicians and moguls.&nbsp;And when the dust finally settles, we’re left to wonder: how did this happen? Where did they trip up, and who is to blame? From the creators of American History Tellers, Business Wars and Tides of History comes American Scandal, where we take you deep into the heart of America’s dark side to look at what drives someone to break the rules and what happens when they’re caught.&nbsp;Hosted by Lindsay Graham.</p><p>Audible subscribers can listen to all episodes of American Scandal ad-free right now. Join Audible today by downloading the Audible app.</p>]]>
+    </description>
+    <managingEditor>iwonder@wondery.com (Audible)</managingEditor>
+    <copyright>© 2018 Wondery, Inc.</copyright>
+    <generator>ART19</generator>
+    <atom:link href="https://rss.art19.com/american-scandal" rel="self" type="application/rss+xml"/>
+    <link>https://wondery.com/shows/American-Scandal/</link>
+    <itunes:owner>
+      <itunes:name>Audible</itunes:name>
+      <itunes:email>iwonder@wondery.com</itunes:email>
+    </itunes:owner>
+    <itunes:author>Audible</itunes:author>
+    <itunes:summary>
+      <![CDATA[<p>Every scandal begins with a lie. But the truth will come out. And then comes the fallout and the outrage.</p><p>Scandals have shaped America since its founding. From business and politics to sports and society, we look on aghast as corruption, deceit and ambition bring down heroes and celebrities, politicians and moguls.&nbsp;And when the dust finally settles, we’re left to wonder: how did this happen? Where did they trip up, and who is to blame? From the creators of American History Tellers, Business Wars and Tides of History comes American Scandal, where we take you deep into the heart of America’s dark side to look at what drives someone to break the rules and what happens when they’re caught.&nbsp;Hosted by Lindsay Graham.</p><p>Audible subscribers can listen to all episodes of American Scandal ad-free right now. Join Audible today by downloading the Audible app.</p>]]>
+    </itunes:summary>
+    <language>en</language>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:category text="History"/>
+    <itunes:category text="Society &amp; Culture">
+      <itunes:category text="Documentary"/>
+    </itunes:category>
+    <itunes:keywords>Exhibit C,true crime,american history tellers,lindsay graham,history daily,history</itunes:keywords>
+    <itunes:type>serial</itunes:type>
+    <itunes:image href="https://content.production.cdn.art19.com/images/0f/36/84/f4/0f3684f4-c745-4e9d-8cd3-aebfaf45bd50/144ac88caee66a21f306ecdbfb2837323de4291443f6aba3ff68b48bb9810c737eca6074ef1baa652bcb9298dd2d9389f5e526dd7d24e163dcc395d21ab3058b.jpeg"/>
+    <image>
+      <url>https://content.production.cdn.art19.com/images/0f/36/84/f4/0f3684f4-c745-4e9d-8cd3-aebfaf45bd50/144ac88caee66a21f306ecdbfb2837323de4291443f6aba3ff68b48bb9810c737eca6074ef1baa652bcb9298dd2d9389f5e526dd7d24e163dcc395d21ab3058b.jpeg</url>
+      <link>https://wondery.com/shows/American-Scandal/</link>
+      <title>American Scandal</title>
+    </image>
+    

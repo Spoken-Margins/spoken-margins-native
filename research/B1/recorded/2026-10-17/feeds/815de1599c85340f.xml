@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/VMP7924981569" rel="self" type="application/rss+xml"/>
+    <title>Criminal</title>
+    <link>http://thisiscriminal.com/</link>
+    <language>en</language>
+    <copyright>Copyright 2021, Criminal Productions </copyright>
+    <description>Criminal is&amp;nbsp;the&amp;nbsp;first&amp;nbsp;of&amp;nbsp;its&amp;nbsp;kind.&amp;nbsp;A show about people who’ve done wrong, been wronged, or gotten caught somewhere in the middle. Hosted by Phoebe Judge. Named a Best Podcast of 2023 by the New York Times. Part of the Vox Media Podcast Network.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/f547b046-5de4-11ec-acc5-733706bb297f/image/9ed2d59bc3ab179245d05a3c10636f99.png?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>Criminal</title>
+      <link>http://thisiscriminal.com/</link>
+    </image>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle>Criminal is the first of its kind. A show about people who’ve done wrong, been wronged, or gotten caught somewhere in the middle. </itunes:subtitle>
+    <itunes:author>Vox Media Podcast Network</itunes:author>
+    <itunes:summary>Criminal is&amp;nbsp;the&amp;nbsp;first&amp;nbsp;of&amp;nbsp;its&amp;nbsp;kind.&amp;nbsp;A show about people who’ve done wrong, been wronged, or gotten caught somewhere in the middle. Hosted by Phoebe Judge. Named a Best Podcast of 2023 by the New York Times. Part of the Vox Media Podcast Network.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>Criminal is&nbsp;the&nbsp;first&nbsp;of&nbsp;its&nbsp;kind.&nbsp;A show about people who’ve done wrong, been wronged, or gotten caught somewhere in the middle. Hosted by Phoebe Judge. Named a Best Podcast of 2023 by the New York Times. Part of the Vox Media Podcast Network.</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Vox Media Podcast Network</itunes:name>
+      <itunes:email>hello@thisiscriminal.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/f547b046-5de4-11ec-acc5-733706bb297f/image/9ed2d59bc3ab179245d05a3c10636f99.png?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="True Crime">
+    </itunes:category>
+    <itunes:category text="Society &amp; Culture">
+    </itunes:category>
+    

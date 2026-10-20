@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <atom:link href="https://feeds.simplecast.com/wgl4xEgL" rel="self" title="MP3 Audio" type="application/atom+xml"/>
+    <atom:link href="https://simplecast.superfeedr.com" rel="hub" xmlns="http://www.w3.org/2005/Atom"/>
+    <generator>https://simplecast.com</generator>
+    <title>EconTalk</title>
+    <description>EconTalk: Conversations for the Curious is an award-winning weekly podcast hosted by Russ Roberts of Shalem College in Jerusalem and Stanford&apos;s Hoover Institution. The eclectic guest list includes authors, doctors, psychologists, historians, philosophers, economists, and more. Learn how the health care system really works, the serenity that comes from humility, the challenge of interpreting data, how potato chips are made, what it&apos;s like to run an upscale Manhattan restaurant, what caused the 2008 financial crisis, the nature of consciousness, the conflicts and history of the Middle East, and more. EconTalk has been taking the Monday out of Mondays since 2006.  All 1000+ episodes are available in the archive. Go to EconTalk.org for transcripts, related resources, and comments.</description>
+    <copyright>Copyright 2006-2026</copyright>
+    <language>en-us</language>
+    <pubDate>Mon, 12 Oct 2026 10:30:00 +0000</pubDate>
+    <lastBuildDate>Mon, 12 Oct 2026 10:30:20 +0000</lastBuildDate>
+    <image>
+      <link>https://simplecast.econtalk.org</link>
+      <title>EconTalk</title>
+      <url>https://image.simplecastcdn.com/images/4ca709a1-1918-43a4-9035-1176b5aa9f2b/b8c673f8-58e7-4d4a-ab02-f83c2fd463c4/3000x3000/econtalknewbluecover1400.jpg?aid=rss_feed</url>
+    </image>
+    <link>https://simplecast.econtalk.org</link>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>EconTalk: Conversations for the Curious is an award-winning weekly podcast hosted by Russ Roberts of Shalem College in Jerusalem and Stanford&apos;s Hoover Institution. The eclectic guest list includes authors, doctors, psychologists, historians, philosophers, economists, and more. Learn how the health care system really works, the serenity that comes from humility, the challenge of interpreting data, how potato chips are made, what it&apos;s like to run an upscale Manhattan restaurant, what caused the 2008 financial crisis, the nature of consciousness, the conflicts and history of the Middle East, and more. EconTalk has been taking the Monday out of Mondays since 2006.  All 1000+ episodes are available in the archive. Go to EconTalk.org for transcripts, related resources, and comments.</itunes:summary>
+    <itunes:author>Russ Roberts</itunes:author>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:image href="https://image.simplecastcdn.com/images/4ca709a1-1918-43a4-9035-1176b5aa9f2b/b8c673f8-58e7-4d4a-ab02-f83c2fd463c4/3000x3000/econtalknewbluecover1400.jpg?aid=rss_feed"/>
+    <itunes:new-feed-url>https://feeds.simplecast.com/wgl4xEgL</itunes:new-feed-url>
+    <itunes:keywords>economics, business, books, interviews, history, ethics</itunes:keywords>
+    <itunes:owner>
+      <itunes:name>Library of Economics and Liberty</itunes:name>
+      <itunes:email>webmaster@econlib.org</itunes:email>
+    </itunes:owner>
+    <itunes:category text="Education">
+      <itunes:category text="Courses"/>
+    </itunes:category>
+    <itunes:category text="Science">
+      <itunes:category text="Social Sciences"/>
+    </itunes:category>
+    <itunes:category text="Society &amp; Culture">
+      <itunes:category text="Philosophy"/>
+    </itunes:category>
+    

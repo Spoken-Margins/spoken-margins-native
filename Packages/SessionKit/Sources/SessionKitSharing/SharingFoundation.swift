@@ -84,6 +84,9 @@ public enum ReviewedItemTransportSelection: Sendable {
 }
 
 public enum SpokenMarginsPackageBuilder {
+    /// Longer than any real page address. A longer identity link is left out rather than fill the manifest (#2118).
+    public static let maximumLinkCharacters = 2_000
+
     /// `localSourceTexts` are the item's own text on this device and an episode's transcript when it
     /// has one. They are never written into the packet, so map proposals are checked against the whole
     /// of each (except the embedded text, which is checked as the packet carries it): a scene summary,
@@ -110,6 +113,14 @@ public enum SpokenMarginsPackageBuilder {
             let repaired = FingerprintSpineExportRepair.repaired(spine, item: item, signatureAssetIDs: unusedSignatureAssetIDs)
             unusedSignatureAssetIDs.subtract(repaired?.landmarks.map(\.signatureAssetId) ?? [])
             return repaired
+        }
+        // The manifest lists one descriptor per signature, so pack only those a Margin or a kept landmark names, once
+        // each: a long-heard episode's spine is spread to 500 landmarks, but every stored one's signature was packed (#2118).
+        let namedSignatureIDs = Set(selections.flatMap { $0.anchor.machineEvidenceAssetIds })
+            .union(fingerprintSpines.flatMap { $0.landmarks.map(\.signatureAssetId) })
+        var packedSignatureIDs = Set<String>()
+        let machineEvidence = machineEvidence.filter {
+            namedSignatureIDs.contains($0.id) && packedSignatureIDs.insert($0.id).inserted
         }
         let scopedIds = selections.map(\.packageScopedId)
         if let duplicate = Dictionary(grouping: scopedIds, by: { $0 }).first(where: { $0.value.count > 1 })?.key {
@@ -355,23 +366,27 @@ public enum SpokenMarginsPackageBuilder {
     private static func removingPrivateLinks(from item: SharedItemIdentity) -> SharedItemIdentity {
         SharedItemIdentity(
             itemType: item.itemType,
-            canonicalURL: ShareableLinkPolicy.shareableLink(item.canonicalURL),
-            originalURL: ShareableLinkPolicy.shareableLink(item.originalURL),
+            canonicalURL: shareableLink(item.canonicalURL),
+            originalURL: shareableLink(item.originalURL),
             title: item.title,
             author: item.author,
             publisher: item.publisher,
             showTitle: item.showTitle,
             episodeGUID: ShareableLinkPolicy.shareableEpisodeGUID(item.episodeGUID),
-            enclosureURL: ShareableLinkPolicy.shareableLink(item.enclosureURL),
+            enclosureURL: shareableLink(item.enclosureURL),
             publishedAt: item.publishedAt,
             durationMs: item.durationMs,
             normalizedContentSHA256: item.normalizedContentSHA256,
             exactEditionSHA256: item.exactEditionSHA256,
             languageCode: item.languageCode,
             source: item.source.flatMap { source in
-                ShareableLinkPolicy.shareableLink(source.canonicalURL) == nil ? nil : source
+                shareableLink(source.canonicalURL) == nil ? nil : source
             }
         )
+    }
+
+    private static func shareableLink(_ link: String?) -> String? {
+        ShareableLinkPolicy.shareableLink(link).flatMap { $0.count <= maximumLinkCharacters ? $0 : nil }
     }
 
     private static func removingPrivateLinks(from spine: EditionFingerprintSpineArtifact) -> EditionFingerprintSpineArtifact {
@@ -379,7 +394,7 @@ public enum SpokenMarginsPackageBuilder {
             id: spine.id,
             schemaVersion: spine.schemaVersion,
             itemId: spine.itemId,
-            canonicalURL: ShareableLinkPolicy.shareableLink(spine.canonicalURL),
+            canonicalURL: shareableLink(spine.canonicalURL),
             episodeGUID: ShareableLinkPolicy.shareableEpisodeGUID(spine.episodeGUID),
             producingEditionDurationMs: spine.producingEditionDurationMs,
             producingEditionSHA256: spine.producingEditionSHA256,
@@ -415,6 +430,10 @@ public enum SpokenMarginsPackageImporter {
         }
         guard let commentary = contents.commentaryLayers.first else {
             throw SpokenMarginsPackageArchiveError.invalidManifest("required commentary layer is absent")
+        }
+        // A map-only packet has no Margins to layer; its map is placed by `TextListeningMapPlacer` instead (#1471).
+        guard !ListeningMapPacket.isMapPacket(manifest) else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("a listening map packet has no Margins to import")
         }
         let itemResolution = localItem.map {
             ImportedItemResolver.resolve(

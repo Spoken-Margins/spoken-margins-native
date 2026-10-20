@@ -1,13 +1,13 @@
 import Foundation
 
 enum EmojiArticleRegressionFixture {
-    static let title = "Designing emoji for the way we communicate today"
-    static let sourceURL = "https://blog.google/products-and-platforms/platforms/android/world-emoji-day-noto-3d/"
+    static let title = "Drawing pictograms for the way people talk now"
+    static let sourceURL = "https://example.com/studio/pictogram-day-tidepool-3d/"
     static let sectionHeadings = [
-        "Expression keeps evolving",
-        "Art informs innovation",
-        "Color meets contrast",
-        "Language is for the people"
+        "Meaning keeps shifting",
+        "Craft guides the tools",
+        "Tone meets range",
+        "Symbols belong to everyone"
     ]
 
     static func text() throws -> String {

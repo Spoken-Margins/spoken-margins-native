@@ -117,13 +117,13 @@ final class Gate1AppModel: ObservableObject {
     private let developerRecording = DeveloperDiagnosticRecording(fileURL:
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
             .appendingPathComponent("DeveloperDiagnostics/latest.json"))
-
     let playbackEventRecording = DeveloperDiagnosticRecording(
         limit: 300,
         fileURL: Gate1AppModel.isRunningUnitTests ? nil : FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
             .appendingPathComponent("DeveloperDiagnostics/playback-events.json"),
         automatic: true
     )
+    let hangTelemetry = HangTelemetry() // #2099
     var lastPlaybackEventCheckpoint: TimeInterval = 0
     var speechInterruptionResumeWatch = SpeechInterruptionResumeWatch()
 
@@ -1091,7 +1091,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleAppBecameInactiveOrBackground(entersBackground: Bool = false) {
-        if entersBackground { narrationStartupProtection.appEnteredBackground() }; reconcileNarrationOwnership(trigger: entersBackground ? "background" : "inactive")
+        if entersBackground { narrationStartupProtection.appEnteredBackground(); hangTelemetry.setForeground(false) }; reconcileNarrationOwnership(trigger: entersBackground ? "background" : "inactive")
         marginOutput.finishBeforeBackground(); readwiseHighlightSync.stop()
         OnDeviceVoiceGovernor.app.setAppBackgrounded(true) // every on-device voice is paced while away (#1679)
         syncPlaybackProgressForLifecycle()
@@ -1114,7 +1114,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleAppBecameActive() {
-        narrationStartupProtection.appEnteredForeground(); reconcileNarrationOwnership(trigger: "foreground")
+        startHangTelemetry(); narrationStartupProtection.appEnteredForeground(); reconcileNarrationOwnership(trigger: "foreground")
         openReadyListeningEdition()
         marginOutput.start(); readwiseHighlightSync.start { [weak self] in self?.store }
         if let store { CommunityMapUploadService.shared.retryFailed(store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
@@ -1892,7 +1892,7 @@ final class Gate1AppModel: ObservableObject {
     /// The listener's own map or the publisher's chapters, which a friend's map never replaces.
     static func listenerHasListeningMap(itemId: String, store: SQLiteSessionStore) throws -> Bool {
         try store.loadPortableListeningMapProposals(itemId: itemId).contains { !CommunityMapConverter.isCommunityProposal(id: $0.id) } // a community map never blocks a friend's (#553)
-            || store.loadTranscriptTimeline(itemId: itemId)?.timeline.chapters.isEmpty == false
+            || store.loadTranscriptTimelineChapters(itemId: itemId).isEmpty == false // chapters only: this runs from the Item screen's body (#2073)
     }
 
     lazy var skimBridge = SkimBridgeController(host: self) // the Skim bridge's player, poll, resources and destinations (#954)
@@ -2869,7 +2869,7 @@ final class Gate1AppModel: ObservableObject {
         }
         guard let engine else { return false }
         do {
-            try operation(engine)
+            try hangTelemetry.labels.scoped("engine.run") { try operation(engine) }
             return true
         } catch {
             reportFailure(error)
@@ -3254,7 +3254,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func refreshLibraryRows(store: SQLiteSessionStore) throws {
-        libraryItems = try loadLibraryRows(store: store)
+        libraryItems = try hangTelemetry.labels.scoped("loadLibraryRows") { try loadLibraryRows(store: store) }
         recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
         try refreshAudioPreparationPresentation(store: store)
     }
@@ -3628,7 +3628,7 @@ final class Gate1AppModel: ObservableObject {
 
     func refreshSelectedItem() {
         guard let store, !activeItemId.isEmpty else { return }
-        if let detail = try? loadItemDetail(id: activeItemId, store: store) {
+        if let detail = try? hangTelemetry.labels.scoped("loadItemDetail", { try loadItemDetail(id: activeItemId, store: store) }) {
             selectedItem = detail
             selectedListeningEdition = try? ListeningEditionStore.application().load(itemID: activeItemId)
             offerFollowSuggestionIfEligible(itemId: activeItemId, store: store)

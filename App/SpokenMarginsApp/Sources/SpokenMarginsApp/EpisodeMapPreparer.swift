@@ -34,6 +34,8 @@ protocol EpisodeMapPreparerHost: AnyObject {
     /// The status is about to change. The model publishes it to its observers, as its `@Published` copy did.
     func episodeMapPreparationStatusWillChange()
     func recordEpisodeMapDiagnostic(_ key: String, _ value: String)
+    /// Heat and Low Power Mode, read before a run and every `heatCheckInterval` while it works (#2092).
+    func episodeMapDeviceConditions() -> SpeechEngineConditions
     /// The phone transcribed the episode for its map: the opt-in community upload hook sees the transcript here.
     func episodeMapTranscribed(itemId: String, timeline: TranscriptTimeline, store: SQLiteSessionStore)
 
@@ -51,8 +53,9 @@ protocol EpisodeMapPreparerHost: AnyObject {
 /// request, moved out of the central model. The stages, the order they are saved in, every id, path and string
 /// are the ones the model saved before the move; the pure steps are `EpisodeMapAssembly`.
 ///
-/// Cancellation is cooperative and unchanged: checks sit where they sat, a cancelled run records
-/// `isCancelled` and the next request starts a new job at landmark zero.
+/// Cancellation is cooperative: checks sit where they sat, a cancelled run records `isCancelled` and the next
+/// request starts a new job at landmark zero. A pause (heat, Low Power Mode, iOS ending background time) cancels
+/// the task the same way but keeps the job, so the background pass resumes it at its saved stage (#2092).
 @MainActor
 final class EpisodeMapPreparer {
     /// What the item screen shows. Every assignment tells the host first, as `@Published` did.
@@ -64,6 +67,11 @@ final class EpisodeMapPreparer {
     /// The one item whose map was asked for and is waiting on something else: its download, or a transcript
     /// the model is making. The model sets and clears it through `pendingMapGenerationItemId`.
     var pendingRequestItemId: String?
+    /// How often a run reads the phone's heat while it works. Tests shorten it.
+    var heatCheckInterval: Duration = .seconds(10)
+    /// Why the running task was cancelled, when it was a pause rather than the listener (#2092).
+    private var stopReason: EpisodeMapRunStop?
+    private var heatWatch: Task<Void, Never>?
 
     private weak var host: (any EpisodeMapPreparerHost)?
 
@@ -71,15 +79,29 @@ final class EpisodeMapPreparer {
         self.host = host
     }
 
-    /// Cancels the running preparation when it is for `itemId`.
+    /// Cancels the running preparation when it is for `itemId`. The listener's stop always wins over a pause that
+    /// is still unwinding, so the run ends with the job cancelled and a removed map is not brought back (#2092).
     func cancel(itemId: String) {
         if self.itemId == itemId {
+            stopReason = .cancelled
             task?.cancel()
         }
     }
 
+    /// Stops the running preparation but keeps its job for a later pass (#2092). A run that was already cancelled,
+    /// by the listener or an earlier pause, is left as it is.
+    func pause(_ reason: EpisodeMapRunStop) {
+        guard let task, !task.isCancelled, reason.keepsJob else { return }
+        stopReason = stopReason ?? reason
+        task.cancel()
+    }
+
     /// Starts preparing the private map for `itemId`, or waits for its download.
-    func prepare(itemId requestedItemId: String, policy: PreparationJobPolicy = .explicit) {
+    func prepare(
+        itemId requestedItemId: String,
+        policy: PreparationJobPolicy = .explicit,
+        trigger: EpisodeMapPreparationTrigger = .listenerRequest
+    ) {
         guard let host else { return }
         guard task == nil else {
             host.episodeMapWarn("An episode map is already being prepared.")
@@ -93,6 +115,9 @@ final class EpisodeMapPreparer {
             }
             let existingJob = (try store.loadEpisodeMapPreparationJobs()).first {
                 $0.itemId == requestedItemId && !$0.isCancelled
+            }
+            if let interrupted = EpisodeMapRunGuard.interruptedRunDiagnostic(previous: existingJob) {
+                host.recordEpisodeMapDiagnostic("episodeMapPreparationInterrupted:\(requestedItemId)", interrupted)
             }
             var job = existingJob ?? EpisodeMapPreparationJob(
                 id: "episode-map-job-\(host.safePodcastEvidenceComponent(requestedItemId))",
@@ -111,7 +136,10 @@ final class EpisodeMapPreparer {
                 ?? item.media?.url.flatMap(URL.init(string:)).flatMap({ $0.isFileURL ? $0 : nil }) else {
                 pendingRequestItemId = requestedItemId
                 status = "Waiting for download"
-                host.recordEpisodeMapDiagnostic("episodeMapPreparation:\(requestedItemId)", "waiting_for_local_audio")
+                host.recordEpisodeMapDiagnostic(
+                    "episodeMapPreparation:\(requestedItemId)",
+                    EpisodeMapRunGuard.waitingDiagnostic(trigger: trigger, at: Date())
+                )
                 if host.podcastDownloadCoordinator?.downloadNow(itemId: requestedItemId) != true,
                    let remote = item.media?.url.flatMap(URL.init(string:)) {
                     host.podcastDownloadCoordinator?.register(
@@ -125,7 +153,7 @@ final class EpisodeMapPreparer {
                 }
                 return
             }
-            run(item: item, localURL: localURL, job: job)
+            run(item: item, localURL: localURL, job: job, trigger: trigger)
         } catch {
             status = "Failed"
             host.episodeMapFailedToStart(error)
@@ -135,23 +163,39 @@ final class EpisodeMapPreparer {
     private func run(
         item: Item,
         localURL: URL,
-        job initialJob: EpisodeMapPreparationJob
+        job initialJob: EpisodeMapPreparationJob,
+        trigger: EpisodeMapPreparationTrigger
     ) {
+        guard let host else { return }
         status = "Preparing"
-        host?.recordEpisodeMapDiagnostic("episodeMapPreparation:\(item.id)", "started")
+        host.recordEpisodeMapDiagnostic(
+            "episodeMapPreparation:\(item.id)",
+            EpisodeMapRunGuard.startedDiagnostic(
+                trigger: trigger,
+                job: initialJob,
+                thermal: host.episodeMapDeviceConditions().thermal,
+                at: Date()
+            )
+        )
         itemId = item.id
+        stopReason = nil
         // The task holds the preparer weakly, then the model strongly for the whole run, as it did when the model
         // owned the task. It is not cancelled when the model goes away.
         task = Task { [weak self] in
             guard let self, let host = self.host else { return }
             var job = initialJob
             defer {
+                self.heatWatch?.cancel()
+                self.heatWatch = nil
+                self.stopReason = nil
                 self.task = nil
                 self.itemId = nil
             }
             do {
                 let store = try host.requireStore()
                 job.stage = .generateFingerprintSpine
+                // Saved while the run is in flight, so a run iOS kills is named on the next request.
+                job.lastFailureCode = EpisodeMapRunGuard.runningCode
                 try store.saveEpisodeMapPreparationJob(job)
                 let mapDirectory = try host.episodeMapDirectory(itemId: item.id)
                 try FileManager.default.createDirectory(at: mapDirectory, withIntermediateDirectories: true)
@@ -225,8 +269,13 @@ final class EpisodeMapPreparer {
                     job.nextUnitIndex = gridIndex
                     try store.saveEpisodeMapPreparationJob(job)
                     if job.policy == .whileCharging {
+                        job.lastFailureCode = nil
+                        try store.saveEpisodeMapPreparationJob(job)
                         self.status = "Fingerprinting paused at landmark \(gridIndex)"
-                        host.recordEpisodeMapDiagnostic("episodeMapPreparation:\(item.id)", "checkpoint:fingerprint_landmark=\(gridIndex)")
+                        host.recordEpisodeMapDiagnostic(
+                            "episodeMapPreparation:\(item.id)",
+                            EpisodeMapRunGuard.checkpointDiagnostic(landmark: gridIndex, at: Date())
+                        )
                         return
                     }
                 }
@@ -374,19 +423,53 @@ final class EpisodeMapPreparer {
                     sceneCount: scenes.count
                 ))
                 host.episodeMapPreparationDidComplete(itemId: item.id, status: self.status)
-            } catch is CancellationError {
-                job.isCancelled = true
-                job.lastFailureCode = "cancelled"
+            } catch where self.stopReason != nil || error is CancellationError {
+                // A pause can surface as the transcriber's own error rather than CancellationError.
+                let stop = self.stopReason ?? .cancelled
+                let diagnostic = EpisodeMapRunGuard.stop(stop, job: &job, at: Date())
                 try? host.store?.saveEpisodeMapPreparationJob(job)
-                try? host.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
-                self.status = "Cancelled"
+                if stop.keepsJob {
+                    // The saved transcript stays, so the next pass skips transcription; only scratch audio goes.
+                    try? host.purgeSourceTranscriptionAudioCaches(itemId: item.id)
+                } else {
+                    try? host.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
+                }
+                self.status = EpisodeMapRunGuard.pausedStatus(stop)
+                host.recordEpisodeMapDiagnostic("episodeMapPreparation:\(item.id)", diagnostic)
             } catch {
                 job.lastFailureCode = String(describing: error)
                 try? host.store?.saveEpisodeMapPreparationJob(job)
                 self.status = "Failed"
-                host.recordEpisodeMapDiagnostic("episodeMapPreparation:\(item.id)", "failed:\(error.localizedDescription)")
+                host.recordEpisodeMapDiagnostic(
+                    "episodeMapPreparation:\(item.id)",
+                    EpisodeMapRunGuard.failedDiagnostic(error.localizedDescription, stage: job.stage, at: Date())
+                )
                 host.episodeMapPreparationDidFail(itemId: item.id, error: error)
             }
         }
+        watchHeat(policy: initialJob.policy)
+    }
+
+    /// Reads the phone's heat while the run works, and pauses it at serious heat (#2092). Before this, heat was
+    /// read only when a run started, and a 60-minute episode kept transcribing for 21 minutes at serious heat.
+    private func watchHeat(policy: PreparationJobPolicy) {
+        heatWatch?.cancel()
+        let interval = heatCheckInterval
+        heatWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                guard self?.pauseIfDeviceAsks(policy: policy) == false else { return }
+                try? await Task.sleep(for: interval)
+            }
+        }
+    }
+
+    /// True when the run is gone or was just paused.
+    private func pauseIfDeviceAsks(policy: PreparationJobPolicy) -> Bool {
+        guard task != nil, let host else { return true }
+        guard let reason = EpisodeMapRunGuard.yieldReason(conditions: host.episodeMapDeviceConditions(), policy: policy) else {
+            return false
+        }
+        pause(reason)
+        return true
     }
 }

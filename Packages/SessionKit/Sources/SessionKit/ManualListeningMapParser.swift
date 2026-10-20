@@ -104,27 +104,77 @@ public enum ManualListeningMapParser {
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Turns the quotes that open and close strings into straight ones.
+    ///
+    /// A string opened by a straight quote closes at the next unescaped straight quote, as in plain JSON.
+    /// A string opened by a curly quote (“like this”) closes at a straight quote when one that is followed,
+    /// after whitespace, by `:`, `,`, `}`, `]` or the end of the text comes before the next string starts (the
+    /// older repair, which leaves curly quotes inside as text). Otherwise it closes at the first curly or
+    /// straight quote with that same follower. Any other quote inside is text: curly ones stay, a straight one
+    /// is escaped. A curly quote inside the text that is itself followed by one of those characters
+    /// (“she said “hi”, then left”) ends the string early, and the paste then fails to parse.
     private static func normalizingJSONDelimitersOutsideStrings(in text: String) -> String {
+        let scalars = Array(text.unicodeScalars)
         var output = ""
         var inString = false
+        var closesWithStraightQuote = true
         var escaped = false
 
-        for scalar in text.unicodeScalars {
+        func isCurly(_ scalar: Unicode.Scalar) -> Bool { scalar == "“" || scalar == "”" }
+        func endsAString(after index: Int) -> Bool {
+            var next = index + 1
+            while next < scalars.count, scalars[next].properties.isWhitespace { next += 1 }
+            guard next < scalars.count else { return true }
+            return [":", ",", "}", "]"].contains(scalars[next])
+        }
+        /// A curly quote that follows `{`, `[`, `,` or `:` starts a string rather than ending one.
+        func startsAString(at index: Int) -> Bool {
+            var before = index - 1
+            while before >= 0, scalars[before].properties.isWhitespace { before -= 1 }
+            return before < 0 || ["{", "[", ",", ":"].contains(scalars[before])
+        }
+        /// Whether the string a curly quote at `opener` starts ends at a straight quote.
+        func closesAtStraightQuote(openedAt opener: Int) -> Bool {
+            var index = opener + 1
+            while index < scalars.count {
+                let scalar = scalars[index]
+                if scalar == "\\" {
+                    index += 2
+                    continue
+                }
+                if scalar == "\"", endsAString(after: index) { return true }
+                if isCurly(scalar), startsAString(at: index) { return false }
+                index += 1
+            }
+            return false
+        }
+
+        for (index, scalar) in scalars.enumerated() {
             if inString {
-                output.unicodeScalars.append(scalar)
                 if escaped {
+                    output.unicodeScalars.append(scalar)
                     escaped = false
                 } else if scalar == "\\" {
+                    output.unicodeScalars.append(scalar)
                     escaped = true
-                } else if scalar == "\"" {
+                } else if closesWithStraightQuote {
+                    output.unicodeScalars.append(scalar)
+                    if scalar == "\"" { inString = false }
+                } else if (scalar == "\"" || isCurly(scalar)), endsAString(after: index) {
+                    output += "\""
                     inString = false
+                } else if scalar == "\"" {
+                    output += "\\\""
+                } else {
+                    output.unicodeScalars.append(scalar)
                 }
                 continue
             }
 
-            if scalar == "\"" || scalar == "“" || scalar == "”" {
+            if scalar == "\"" || isCurly(scalar) {
                 output += "\""
                 inString = true
+                closesWithStraightQuote = scalar == "\"" || closesAtStraightQuote(openedAt: index)
             } else {
                 output.unicodeScalars.append(scalar)
             }

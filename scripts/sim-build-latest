@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Print the newest ready-made simulator build of the base branch: its .app path, then its full SHA.
+
+    scripts/sim-build-latest              newest kept build; also says on stderr how far behind origin it is
+    scripts/sim-build-latest --for SHA    the kept build of exactly that commit, else exit 1 (build it yourself)
+    scripts/sim-build-latest --json       the same, as one JSON object with `behind` (commits, or null)
+    scripts/sim-build-latest --no-download   only builds already on this Mac
+
+Exit 1 when there is no matching build. The builds come from the integration run (scripts/sim_builds.py).
+While it runs on a GitHub-hosted Mac (LANE_HOSTED_APP), nothing lands here by itself: with no local build of
+the commit asked for (or, with no --for, none of origin/next's tip as last fetched), this downloads the hosted
+run's `sim-app-<sha>` artifact with gh (about 290 MB zipped, 690 MB installed on 2026-10-18; kept 2 days) and keeps it like a local one.
+Install one with: xcrun simctl install <udid> "$(scripts/sim-build-latest | head -1)"
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+from pathlib import Path
+import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import sim_builds  # noqa: E402
+
+
+def behind(sha: str, branch: str, cwd: Path) -> int | None:
+    """Commits on origin/<branch> after `sha`, from what this checkout last fetched; None when unknown."""
+    res = subprocess.run(['git', 'rev-list', '--count', f'{sha}..origin/{branch}'], cwd=cwd,
+                         capture_output=True, text=True, timeout=30)
+    return int(res.stdout.strip()) if res.returncode == 0 and res.stdout.strip().isdigit() else None
+
+
+def tip(branch: str, cwd: Path) -> str | None:
+    res = subprocess.run(['git', 'rev-parse', f'origin/{branch}'], cwd=cwd, capture_output=True, text=True, timeout=30)
+    return res.stdout.strip() if res.returncode == 0 and sim_builds.SHA_RE.fullmatch(res.stdout.strip()) else None
+
+
+def free_bytes(folder: Path) -> int:
+    probe = folder
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    return shutil.disk_usage(probe).free
+
+
+def download(folder: Path, sha: str | None) -> dict | None:
+    """The hosted build of `sha` (else the newest hosted one), stored here; None when there is none."""
+    got = sim_builds.fetch(folder, sha, free_bytes=free_bytes(folder))
+    if not got.get('stored'):
+        print(f"No hosted build downloaded: {got.get('why')}", file=sys.stderr)
+        return None
+    verb = 'Already had' if got.get('already') else 'Downloaded'
+    print(f"{verb} {got['artifact']} from the hosted integration run.", file=sys.stderr)
+    return sim_builds.find(folder, got['sha'])
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('--for', dest='sha', help='only the build of this commit (full SHA or a prefix of 7+)')
+    ap.add_argument('--json', action='store_true')
+    ap.add_argument('--no-download', action='store_true', help="don't fetch the hosted run's build")
+    args = ap.parse_args(argv)
+    folder = sim_builds.root()
+    build = sim_builds.find(folder, args.sha) if args.sha else sim_builds.latest(folder)
+    if not args.no_download:
+        if args.sha and not build:
+            build = download(folder, args.sha)
+        elif not args.sha:
+            head = tip('next', Path.cwd())
+            if head and not (build and build['sha'] == head):
+                build = download(folder, head) or build or download(folder, None)
+    if not build:
+        what = f'commit {args.sha}' if args.sha else 'any commit'
+        print(f'No ready-made simulator build of {what} in {folder}; build it yourself.', file=sys.stderr)
+        return 1
+    lag = behind(build['sha'], build.get('branch', 'next'), Path.cwd())
+    if args.json:
+        print(json.dumps({'app': build['app'], 'sha': build['sha'], 'branch': build.get('branch'),
+                          'built_at': build.get('built_at'), 'size_bytes': build.get('size_bytes'),
+                          'behind': lag}))
+        return 0
+    print(build['app'])
+    print(build['sha'])
+    if lag is not None:
+        print(f"{lag} commit(s) behind origin/{build.get('branch', 'next')} as last fetched here", file=sys.stderr)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

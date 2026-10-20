@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/ESP2298543312" rel="self" type="application/rss+xml"/>
+    <title>The Dan Le Batard Show</title>
+    <link>https://lebatardaf.com/</link>
+    <language>en</language>
+    <copyright>2024</copyright>
+    <description>Live from the Elser Hotel in Downtown Miami, Dan Le Batard and company share their unique perspectives on all things sports, pop culture, and more. This is the place for original content from Le Batard's daily 3-hour live show, including the daily “Local Hour,” generally focusing on the South Florida scene and a few more surprises along the way.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/353b02e2-4f64-11eb-938f-27ae6b16a7ea/image/dfafed6e502111909da5caedf08ce224.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>The Dan Le Batard Show</title>
+      <link>https://lebatardaf.com/</link>
+    </image>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle>This is the place for the hourly podcasts for The Dan LeBatard Show, plus original content produced before and after the show, including the “Local Hour,” the podcast-only hour, and a few surprises along the way.</itunes:subtitle>
+    <itunes:author>Dan Le Batard</itunes:author>
+    <itunes:summary>Live from the Elser Hotel in Downtown Miami, Dan Le Batard and company share their unique perspectives on all things sports, pop culture, and more. This is the place for original content from Le Batard's daily 3-hour live show, including the daily “Local Hour,” generally focusing on the South Florida scene and a few more surprises along the way.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>Live from the Elser Hotel in Downtown Miami, Dan Le Batard and company share their unique perspectives on all things sports, pop culture, and more. This is the place for original content from Le Batard's daily 3-hour live show, including the daily “Local Hour,” generally focusing on the South Florida scene and a few more surprises along the way.</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Meadowlark Media</itunes:name>
+      <itunes:email>lebatardpodcasts@gmail.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/353b02e2-4f64-11eb-938f-27ae6b16a7ea/image/dfafed6e502111909da5caedf08ce224.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Sports">
+    </itunes:category>
+    <itunes:new-feed-url>https://feeds.megaphone.fm/ESP2298543312</itunes:new-feed-url>
+    

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:psc="http://podlove.org/simple-chapters" xmlns:omny="https://omny.fm/rss-extensions" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:acast="https://schema.acast.com/1.0/" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">
+  <channel>
+    <omny:organizationId>e73c998e-6e60-432f-8610-ae210140c5b1</omny:organizationId>
+    <omny:networkId>f777f7c9-232e-490c-a62b-ae3e01426094</omny:networkId>
+    <omny:programId>63aba8bc-2dc8-4f89-807a-ae280065a7cd</omny:programId>
+    <omny:playlistId>3892b9a1-a960-4f9e-bee7-ae280065a7db</omny:playlistId>
+    <language>en-US</language>
+    <atom:link rel="self" type="application/rss+xml" href="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/63aba8bc-2dc8-4f89-807a-ae280065a7cd/3892b9a1-a960-4f9e-bee7-ae280065a7db/podcast.rss" />
+    <atom:link rel="first" type="application/rss+xml" href="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/63aba8bc-2dc8-4f89-807a-ae280065a7cd/3892b9a1-a960-4f9e-bee7-ae280065a7db/podcast.rss?page=1" />
+    <atom:link rel="last" type="application/rss+xml" href="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/63aba8bc-2dc8-4f89-807a-ae280065a7cd/3892b9a1-a960-4f9e-bee7-ae280065a7db/podcast.rss?page=1" />
+    <itunes:new-feed-url>https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/63aba8bc-2dc8-4f89-807a-ae280065a7cd/3892b9a1-a960-4f9e-bee7-ae280065a7db/podcast.rss</itunes:new-feed-url>
+    <title>The MeatEater Podcast</title>
+    <itunes:subtitle>The MeatEater Podcast</itunes:subtitle>
+    <link>https://themeateater.com/listen/meateater</link>
+    <description><![CDATA[Building on the belief that a deeper understanding of the natural world enriches all of our lives, host Steven Rinella brings an in-depth and relevant look at all outdoor topics including hunting, fishing, nature, conservation, and wild foods. Filled with humor, irreverence, and things that will surprise the hell out of you, each episode welcomes a diverse group of guests who add their own expertise to the vast world of the outdoors. Part of The MeatEater Podcast Network.]]></description>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>Building on the belief that a deeper understanding of the natural world enriches all of our lives, host Steven Rinella brings an in-depth and relevant look at all outdoor topics including hunting, fishing, nature, conservation, and wild foods. Filled with humor, irreverence, and things that will surprise the hell out of you, each episode welcomes a diverse group of guests who add their own expertise to the vast world of the outdoors. Part of The MeatEater Podcast Network.</itunes:summary>
+    <itunes:owner>
+      <itunes:name>MeatEater</itunes:name>
+      <itunes:email>applepodcast@howstuffworks.com</itunes:email>
+    </itunes:owner>
+    <itunes:author>MeatEater</itunes:author>
+    <copyright>2026 iHeartMedia, Inc. © Any use of this intellectual property for text and data mining or computational analysis including as training material for artificial intelligence systems is strictly prohibited without express written consent from iHeartMedia</copyright>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:category text="Sports">
+      <itunes:category text="Wilderness" />
+    </itunes:category>
+    <itunes:image href="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/63aba8bc-2dc8-4f89-807a-ae280065a7cd/3892b9a1-a960-4f9e-bee7-ae280065a7db/image.jpg?t=1788302418&amp;size=Large" />
+    <image>
+      <url>https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/63aba8bc-2dc8-4f89-807a-ae280065a7cd/3892b9a1-a960-4f9e-bee7-ae280065a7db/image.jpg?t=1788302418&amp;size=Large</url>
+      <title>The MeatEater Podcast</title>
+      <link>https://themeateater.com/listen/meateater</link>
+    </image>
+    

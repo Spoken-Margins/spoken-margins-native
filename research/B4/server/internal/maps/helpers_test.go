@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -15,7 +16,8 @@ import (
 const testKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 // testTranscript is a 20-segment episode, one minute a segment, whose text
-// is distinct enough for the copy check to bite.
+// is distinct enough for the copy check to bite. At 20 minutes it gets 4
+// scenes: a good map is one pick call and four scene calls.
 func testTranscript() Transcript {
 	t := Transcript{Schema: TranscriptSchema, EpisodeKey: testKey, DurationMs: 20 * 60000, Language: "en"}
 	for i := 0; i < 20; i++ {
@@ -29,47 +31,48 @@ func testTranscript() Transcript {
 	return t
 }
 
-func answerJSON(scenes ...[3]string) string {
-	type sc struct {
-		FirstSegmentID string `json:"firstSegmentId"`
-		Title          string `json:"title"`
-		Summary        string `json:"summary"`
-	}
-	var a struct {
-		Scenes []sc `json:"scenes"`
-	}
-	for _, s := range scenes {
-		a.Scenes = append(a.Scenes, sc{s[0], s[1], s[2]})
-	}
-	data, _ := json.Marshal(a)
+// sceneJSON is a stage-2 answer.
+func sceneJSON(title, summary string) string {
+	data, _ := json.Marshal(map[string]string{"title": title, "summary": summary})
 	return string(data)
 }
 
-var goodAnswer = answerJSON(
-	[3]string{"s0", "Opening", "The host sets out why old coastal stations matter."},
-	[3]string{"s7", "Keepers", "Who tended the lights and what daily duty looked like."},
-	[3]string{"s14", "Storm logs", "Records of severe weather and what they reveal."},
-)
+// goodScene passes every check on testTranscript's scenes.
+var goodScene = sceneJSON("Keepers and storms", "The host describes the work of the old station keepers and the weather they recorded.")
 
-// fakeAPI stands in for Anthropic's Messages API. Each call takes the next
-// answer; the last one repeats.
+// pickFirst picks the first n candidates offered.
+func pickFirst(ids []string, n int) string {
+	data, _ := json.Marshal(map[string][]string{"breaks": ids[:min(n, len(ids))]})
+	return string(data)
+}
+
+var chooseExactly = regexp.MustCompile(`Choose exactly (\d+) candidates`)
+
+// fakeAPI stands in for Anthropic's Messages API. A pick call (its schema
+// asks for "breaks") is answered by pick; each scene call takes the next of
+// scenes, and the last one repeats.
 type fakeAPI struct {
 	*httptest.Server
-	mu      sync.Mutex
-	answers []string
-	calls   int
-	bodies  []map[string]any
-	keys    []string
-	status  int   // when nonzero, every call fails with this status
-	fail    []int // statuses for the first calls, before any answer
+	mu     sync.Mutex
+	pick   func(ids []string, n int) string
+	scenes []string
+	calls  int
+	kinds  []string // "pick" or "scene", per call
+	bodies []map[string]any
+	keys   []string
+	status int   // when nonzero, every call fails with this status
+	fail   []int // statuses for the first calls, before any answer
 	// stopReason overrides "end_turn", the reason of a finished answer.
 	stopReason string
 	// cacheWrite and cacheRead are reported as cache token usage.
 	cacheWrite, cacheRead int
 }
 
-func newFakeAPI(t *testing.T, answers ...string) *fakeAPI {
-	f := &fakeAPI{answers: answers}
+func newFakeAPI(t *testing.T, scenes ...string) *fakeAPI {
+	if len(scenes) == 0 {
+		scenes = []string{goodScene}
+	}
+	f := &fakeAPI{pick: pickFirst, scenes: scenes}
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -83,6 +86,12 @@ func newFakeAPI(t *testing.T, answers ...string) *fakeAPI {
 		var body map[string]any
 		json.Unmarshal(data, &body)
 		f.bodies = append(f.bodies, body)
+		ids, isPick := pickIDs(body)
+		if isPick {
+			f.kinds = append(f.kinds, "pick")
+		} else {
+			f.kinds = append(f.kinds, "scene")
+		}
 		w.Header().Set("Content-Type", "application/json")
 		status := f.status
 		if len(f.fail) > 0 {
@@ -93,9 +102,18 @@ func newFakeAPI(t *testing.T, answers ...string) *fakeAPI {
 			fmt.Fprintf(w, `{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key %s"}}`, r.Header.Get("X-Api-Key"))
 			return
 		}
-		text := f.answers[0]
-		if len(f.answers) > 1 {
-			text, f.answers = f.answers[0], f.answers[1:]
+		var text string
+		if isPick {
+			n := 0
+			if m := chooseExactly.FindStringSubmatch(promptOf(body)); m != nil {
+				fmt.Sscan(m[1], &n)
+			}
+			text = f.pick(ids, n)
+		} else {
+			text = f.scenes[0]
+			if len(f.scenes) > 1 {
+				f.scenes = f.scenes[1:]
+			}
 		}
 		stopReason := "end_turn"
 		if f.stopReason != "" {
@@ -113,6 +131,40 @@ func newFakeAPI(t *testing.T, answers ...string) *fakeAPI {
 	}))
 	t.Cleanup(f.Close)
 	return f
+}
+
+// pickIDs returns the candidate ids a pick request's schema allows, and
+// whether it is a pick request at all.
+func pickIDs(body map[string]any) ([]string, bool) {
+	oc, _ := body["output_config"].(map[string]any)
+	format, _ := oc["format"].(map[string]any)
+	schema, _ := format["schema"].(map[string]any)
+	props, _ := schema["properties"].(map[string]any)
+	breaks, ok := props["breaks"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	items, _ := breaks["items"].(map[string]any)
+	var ids []string
+	for _, id := range items["enum"].([]any) {
+		ids = append(ids, id.(string))
+	}
+	return ids, true
+}
+
+func promptOf(body map[string]any) string {
+	msgs, _ := body["messages"].([]any)
+	if len(msgs) == 0 {
+		return ""
+	}
+	content, _ := msgs[0].(map[string]any)["content"].(string)
+	return content
+}
+
+func (f *fakeAPI) prompt(i int) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return promptOf(f.bodies[i])
 }
 
 func (f *fakeAPI) callCount() int {
@@ -180,3 +232,10 @@ func containsAny(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+// goodCalls is the calls a good map of testTranscript takes, and goodSpend
+// what they bill at the fake's 13,000 in and 2,000 out a call.
+const (
+	goodCalls = 5
+	goodSpend = goodCalls * 23000
+)

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/modernwisdom" rel="self" type="application/rss+xml"/>
+    <title>Modern Wisdom</title>
+    <link>https://chriswillx.com/books/</link>
+    <language>en</language>
+    <copyright>Chris Williamson</copyright>
+    <description>Life is hard. This podcast will help. Lessons from the greatest thinkers on the planet with Chris Williamson. Including guests like David Goggins, Dr Jordan Peterson, Naval Ravikant, Sam Harris, Jocko Willink, Dr Andrew Huberman, Dr Julie Smith, Steven Bartlett, Ryan Holiday, Robert Greene, Matthew McConaughey, Alain de Botton, Alex Hormozi, Tony Robbins, Chris Bumstead, Mark Manson and more.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/a62f84c0-f8b6-11ed-a4fc-fb9e7841d45b/image/76ed638554a4be965517200d1cd5f30d.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>Modern Wisdom</title>
+      <link>https://chriswillx.com/books/</link>
+    </image>
+    <itunes:explicit>yes</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle></itunes:subtitle>
+    <itunes:author>Chris Williamson</itunes:author>
+    <itunes:summary>Life is hard. This podcast will help. Lessons from the greatest thinkers on the planet with Chris Williamson. Including guests like David Goggins, Dr Jordan Peterson, Naval Ravikant, Sam Harris, Jocko Willink, Dr Andrew Huberman, Dr Julie Smith, Steven Bartlett, Ryan Holiday, Robert Greene, Matthew McConaughey, Alain de Botton, Alex Hormozi, Tony Robbins, Chris Bumstead, Mark Manson and more.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>Life is hard. This podcast will help. Lessons from the greatest thinkers on the planet with Chris Williamson. Including guests like David Goggins, Dr Jordan Peterson, Naval Ravikant, Sam Harris, Jocko Willink, Dr Andrew Huberman, Dr Julie Smith, Steven Bartlett, Ryan Holiday, Robert Greene, Matthew McConaughey, Alain de Botton, Alex Hormozi, Tony Robbins, Chris Bumstead, Mark Manson and more.</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Chris Williamson</itunes:name>
+      <itunes:email>chris.williamson88@gmail.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/a62f84c0-f8b6-11ed-a4fc-fb9e7841d45b/image/76ed638554a4be965517200d1cd5f30d.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Society &amp; Culture">
+    </itunes:category>
+    <itunes:category text="Health &amp; Fitness">
+    </itunes:category>
+    

@@ -182,15 +182,21 @@ public enum SessionExportMarkdownRenderer {
             lines.append("Completion: \(export.session.completionPercent)%")
             lines.append("")
         }
-        if let overview = export.listeningMap?.overview.trimmingCharacters(in: .whitespacesAndNewlines), !overview.isEmpty {
-            lines.append("## Listening Map")
-            lines.append("")
-            lines.append(overview)
-            lines.append("")
-            for chapter in export.listeningMap?.chapters ?? [] {
+        // A map with chapters but no overview (every podcast scene map) still lists its chapters (#2121).
+        if let map = export.listeningMap {
+            let overview = map.overview.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !overview.isEmpty || !map.chapters.isEmpty {
+                lines.append("## Listening Map")
+                lines.append("")
+            }
+            if !overview.isEmpty {
+                lines.append(overview)
+                lines.append("")
+            }
+            for chapter in map.chapters {
                 lines.append("- \(chapter.title) (\(chapter.percent)%)")
             }
-            if export.listeningMap?.chapters.isEmpty == false {
+            if !map.chapters.isEmpty {
                 lines.append("")
             }
         }

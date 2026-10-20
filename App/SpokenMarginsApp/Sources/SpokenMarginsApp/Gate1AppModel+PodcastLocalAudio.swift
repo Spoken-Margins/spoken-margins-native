@@ -51,7 +51,7 @@ extension Gate1AppModel {
         }
         pendingMapGenerationItemId = nil
         diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_private_episode_map"
-        prepareEpisodeMap(itemId: itemId, policy: .explicit)
+        prepareEpisodeMap(itemId: itemId, policy: .explicit, trigger: .downloadFinished)
     }
 
     private func scheduleEmbeddedPublisherChapterImport(itemId: String, localURL: URL) {

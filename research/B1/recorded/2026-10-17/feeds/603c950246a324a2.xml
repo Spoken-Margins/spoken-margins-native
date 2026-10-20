@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">
+  <channel>
+    <title>NPR News Now</title>
+    <link>https://www.npr.org/podcasts/500005/npr-news-now</link>
+    <description><![CDATA[The latest news in five minutes. Updated hourly. <br><br><em>Support public media by joining NPR+ at </em><a href="http://plus.npr.org/"target="_blank"   ><em>plus.npr.org</em></a><em>. You’ll get perks for over 25 NPR podcasts, including sponsor-free listening for NPR News Now, UP First, and more.</em>]]></description>
+    <copyright>Copyright 2007-2026 NPR - For Personal Use Only</copyright>
+    <generator>NPR Feed Publish Service v2.4.0</generator>
+    <language>en-us</language>
+    <itunes:author>NPR</itunes:author>
+    <itunes:block>no</itunes:block>
+    <itunes:owner>
+      <itunes:email>podcasts@npr.org</itunes:email>
+      <itunes:name>NPR</itunes:name>
+    </itunes:owner>
+    <itunes:category text="News">
+      <itunes:category text="Daily News"/>
+    </itunes:category>
+    <media:thumbnail url="https://media.npr.org/assets/img/2023/01/24/npr-news-now_tile_wide-cd662e8ee0b78577e2f736b32e9663d4a3ac297b.jpg?s=2858&amp;c=66&amp;f=jpg" height="1608" width="2858"/>
+    <itunes:image href="https://media.npr.org/assets/img/2023/01/24/npr-news-now_tile_sq-2334a5fd44563fa94cdcdb27384b0f05987c2d15.jpg?s=1400&amp;c=66&amp;f=jpg"/>
+    <itunes:type>episodic</itunes:type>
+    <image>
+      <url>https://media.npr.org/assets/img/2023/01/24/npr-news-now_tile_sq-2334a5fd44563fa94cdcdb27384b0f05987c2d15.jpg?s=1400&amp;c=66&amp;f=jpg</url>
+      <title>NPR News Now</title>
+      <link>https://www.npr.org/podcasts/500005/npr-news-now</link>
+    </image>
+    <lastBuildDate>Sat, 17 Oct 2026 11:10:18 +0000</lastBuildDate>
+    <media:restriction type="country" relationship="allow">ad ar at au be bg bo br ca ch cl co cr cy cz de dk do ec ee es fi fr gb gr gt hn hu id ie il is it jp li lt lu lv mc mt mx my ni nl no nz pa pe pl pt py ro se sk sv th us uy za</media:restriction>
+    <podcast:funding url="https://plus.npr.org/?utm_source=podcast_rss_funding_tag">Support NPR by enrolling in NPR+!</podcast:funding>
+    

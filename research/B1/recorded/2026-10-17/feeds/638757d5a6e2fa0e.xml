@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <atom:link href="https://feeds.simplecast.com/qm_9xx0g" rel="self" title="MP3 Audio" type="application/atom+xml"/>
+    <atom:link href="https://simplecast.superfeedr.com" rel="hub" xmlns="http://www.w3.org/2005/Atom"/>
+    <generator>https://simplecast.com</generator>
+    <title>Crime Junkie</title>
+    <description>Does hearing about a true crime case always leave you scouring the internet for the truth behind the story? Dive into your next mystery with Crime Junkie. Every Monday, join your host Ashley Flowers as she unravels all the details of infamous and underreported true crime cases with her best friend Brit Prawat. From cold cases to missing persons and heroes in our community who seek justice, Crime Junkie is your destination for theories and stories you won’t hear anywhere else. 
+
+Whether you&apos;re a seasoned true crime enthusiast or new to the genre, you&apos;ll find yourself on the edge of your seat awaiting a new episode every Monday.
+
+If you can never get enough true crime... Congratulations, you’ve found your people. Follow to join a community of Crime Junkies! 
+
+Crime Junkie is presented by Audiochuck Media Company.</description>
+    <copyright>Audio Chuck LLC</copyright>
+    <language>en</language>
+    <pubDate>Mon, 12 Oct 2026 07:00:00 +0000</pubDate>
+    <lastBuildDate>Mon, 12 Oct 2026 07:00:34 +0000</lastBuildDate>
+    <image>
+      <link>https://audiochuck.com</link>
+      <title>Crime Junkie</title>
+      <url>https://image.simplecastcdn.com/images/a1a87b67-2865-4234-a087-b342aa30c358/ae42d51b-df99-4b19-bb3f-09f25598bcdd/3000x3000/crimejunkie-logo-registered.jpg?aid=rss_feed</url>
+    </image>
+    <link>https://audiochuck.com</link>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>Does hearing about a true crime case always leave you scouring the internet for the truth behind the story? Dive into your next mystery with Crime Junkie. Every Monday, join your host Ashley Flowers as she unravels all the details of infamous and underreported true crime cases with her best friend Brit Prawat. From cold cases to missing persons and heroes in our community who seek justice, Crime Junkie is your destination for theories and stories you won’t hear anywhere else. 
+
+Whether you&apos;re a seasoned true crime enthusiast or new to the genre, you&apos;ll find yourself on the edge of your seat awaiting a new episode every Monday.
+
+If you can never get enough true crime... Congratulations, you’ve found your people. Follow to join a community of Crime Junkies! 
+
+Crime Junkie is presented by Audiochuck Media Company.</itunes:summary>
+    <itunes:author>Audiochuck</itunes:author>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:image href="https://image.simplecastcdn.com/images/a1a87b67-2865-4234-a087-b342aa30c358/ae42d51b-df99-4b19-bb3f-09f25598bcdd/3000x3000/crimejunkie-logo-registered.jpg?aid=rss_feed"/>
+    <itunes:new-feed-url>https://feeds.simplecast.com/qm_9xx0g</itunes:new-feed-url>
+    <itunes:owner>
+      <itunes:name>Audiochuck</itunes:name>
+      <itunes:email>content@audiochuck.com</itunes:email>
+    </itunes:owner>
+    <itunes:category text="True Crime"/>
+    

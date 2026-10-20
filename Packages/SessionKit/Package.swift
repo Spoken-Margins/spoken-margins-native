@@ -22,6 +22,8 @@ let package = Package(
         // Mac tool for co-op test packets (#856). The app never links it.
         .executable(name: "coop-packet", targets: ["CoopPacket"]),
         .executable(name: "speech-bench", targets: ["SpeechBench"]),
+        // Renders the guided tour clip with the bundled Kitten voice (#2051). The app never links it.
+        .executable(name: "tour-render", targets: ["TourRender"]),
         .executable(name: "phone-plan", targets: ["PhonePlan"]),
         // The daily Substack format canary (#2027), run by .github/workflows/substack-canary.yml. The app never links it.
         .executable(name: "substack-canary", targets: ["SubstackCanary"]),
@@ -40,7 +42,14 @@ let package = Package(
         )
     ],
     targets: [
-        .target(name: "SessionKit"),
+        // libbz2 from the Apple SDKs, for the tar.bz2 archives some voices are published in (#2086). A C target
+        // rather than a system library, which Xcode can't resolve as a package dependency. Apple platforms only:
+        // Linux builds SessionKit without it, and BZip2ArchiveDecompressor says so.
+        .target(name: "CBZip2", linkerSettings: [.linkedLibrary("bz2")]),
+        .target(
+            name: "SessionKit",
+            dependencies: [.target(name: "CBZip2")]
+        ),
         .executableTarget(name: "PhonePlan", dependencies: ["SessionKit"]),
         .target(
             name: "SessionKitPersistence",
@@ -126,6 +135,10 @@ let package = Package(
             dependencies: ["SessionKit", "SessionKitSupertonic"]
         ),
         .executableTarget(
+            name: "TourRender",
+            dependencies: ["SessionKit", "SessionKitSupertonic"]
+        ),
+        .executableTarget(
             name: "CoopPacket",
             dependencies: ["SessionKit", "SessionKitAudio", "SessionKitPersistence", "SessionKitSharing", "ShippedPacketReader"],
             exclude: ["README.md"]
@@ -197,6 +210,13 @@ package.dependencies = [
 package.targets.append(.systemLibrary(name: "SQLite3", path: "Linux/SQLite3", providers: [.apt(["libsqlite3-dev"])]))
 for target in package.targets where target.name == "SessionKit" || target.name == "SessionKitFeeds" || target.name == "SessionKitCoreTests" {
     target.dependencies.append(.product(name: "Crypto", package: "swift-crypto"))
+}
+for target in package.targets where target.name == "SessionKit" {
+    // CBZip2 is Apple-only (left out above); its dependency goes with it.
+    target.dependencies.removeAll {
+        if case .targetItem(name: "CBZip2", _) = $0 { return true }
+        return false
+    }
 }
 for target in package.targets where target.name == "SessionKitPersistence" {
     target.dependencies.append("SQLite3")

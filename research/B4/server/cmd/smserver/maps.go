@@ -25,8 +25,8 @@ type mapsFlags struct {
 func (m *mapsFlags) register(fs *flag.FlagSet) {
 	fs.Float64Var(&m.capUSD, "maps-cap-usd", 10, "hard monthly cap on map-making spend, in US dollars")
 	fs.StringVar(&m.model, "maps-model", maps.DefaultModel, "model that makes listening maps")
-	fs.Float64Var(&m.inputPerMTok, "maps-input-usd-per-mtok", 1, "the model's input price, US dollars per million tokens")
-	fs.Float64Var(&m.outputPerMTok, "maps-output-usd-per-mtok", 5, "the model's output price, US dollars per million tokens")
+	fs.Float64Var(&m.inputPerMTok, "maps-input-usd-per-mtok", 0.10, "the model's input price, US dollars per million tokens")
+	fs.Float64Var(&m.outputPerMTok, "maps-output-usd-per-mtok", 0.50, "the model's output price, US dollars per million tokens")
 	fs.StringVar(&m.apiBase, "maps-api-base", "", "provider base URL (local testing only)")
 }
 

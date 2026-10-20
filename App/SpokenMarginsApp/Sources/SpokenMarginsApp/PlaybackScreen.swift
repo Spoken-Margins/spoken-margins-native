@@ -163,7 +163,7 @@ struct PlaybackScreen: View {
                 }
                 .onCompatibleChange(of: model.guidedOnboardingStage) { stage in
                     if stage == .reviewTimeline {
-                        withAnimation {
+                        withMotion {
                             proxy.scrollTo("playback.timeline", anchor: .top)
                         }
                     }
@@ -313,6 +313,7 @@ struct PlaybackScreen: View {
         .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.18)).frame(height: 1) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("playback.controls")
+        .boundedScrollDock(dynamicTypeSize.isAccessibilitySize)
     }
 
     /// Add a Margin (spoken) with the pencil (written) beside it.
@@ -663,7 +664,7 @@ struct PlaybackScreen: View {
                     Label("\(model.marginMomentTitle) in \(countdown)", systemImage: "text.bubble")
                         .font(.headline)
                         .foregroundStyle(.white)
-                        .contentTransition(.numericText())
+                        .numericTextTransition()
                         .accessibilityIdentifier("marginMoment.countdown")
                     if model.marginMomentPositionIsApproximate {
                         Text("Approximate position: ads can differ between copies.")
@@ -862,7 +863,7 @@ struct PlaybackScreen: View {
                 .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Back \(model.mediaSkipBackSeconds) seconds" : "Previous \(model.skipUnit)")
                 .accessibilityIdentifier("playback.back.button")
 
-                Button(action: model.playPause) {
+                Button(action: model.playPauseTapped) {
                     Group {
                         if model.snapshot.status == .starting {
                             ProgressView()
@@ -1707,7 +1708,7 @@ private struct GuidedOnboardingPlaybackCard: View {
             Text("Practice making a Margin")
                 .font(.title3.bold())
                 .screenTitle()
-            Text("Let the welcome source play until an idea occurs to you, then record a short note. Spoken Margins will anchor it to this listening session.")
+            Text("Let the welcome source play until an idea occurs to you, then record a short note. Spoken Margins will keep it with this listening session.")
                 .foregroundStyle(AppColors.secondaryText)
             if model.snapshot.isRecording {
                 Button("Done Recording", action: model.finishInterjection)
@@ -1922,7 +1923,7 @@ private struct TimelineRow: View {
                         if isCurrent {
                             Text("NOW")
                                 .font(.caption2.weight(.bold))
-                                .foregroundStyle(AppColors.primaryAction)
+                                .foregroundStyle(AppColors.text)
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 3)
                                 .background(AppColors.accentSoft)

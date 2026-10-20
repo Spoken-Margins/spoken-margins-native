@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitSharing
 
 /// Turns a shared-Margins import failure into a sentence for the import sheet. Internal codes stay in diagnostics.
 enum SharedMarginsImportMessage {
@@ -7,6 +8,9 @@ enum SharedMarginsImportMessage {
         if error is DecodingError {
             // For example a packet from the parked co-op build, which used a Margin type this build doesn't know.
             return unreadablePackageMessage
+        }
+        if let archiveError = error as? SpokenMarginsPackageArchiveError {
+            return archiveError.listenerMessage
         }
         if let urlError = error as? URLError {
             return Gate1AppModel.userFacingMessage(for: urlError)
@@ -25,6 +29,14 @@ enum SharedMarginsImportMessage {
                 return "These Margins belong to an item that isn’t in your Library. Add it, then open the Margins again."
             case "shared_embedded_item_is_unavailable", "shared_package_repair_item_is_unavailable":
                 return "The item these Margins belong to isn’t available. Add it to your Library, then open the Margins again."
+            case "shared_map_not_found_in_item":
+                return "This Listening Map doesn’t fit your copy of the item, so it wasn’t added. If your copy is a different edition, ask for a map made on it."
+            case "shared_map_article_unreadable":
+                return "Couldn’t read the article this Listening Map belongs to. Open it in Safari and share it to Spoken Margins, then open the map again."
+            case "shared_map_item_is_playing":
+                return "Pause playback first. This Listening Map is for the item that’s playing."
+            case "shared_map_is_unavailable":
+                return "This file has no Listening Map that this version can read."
             case "shared_package_repair_source_did_not_match":
                 return "That source doesn’t match the item these Margins were made on. Add the same item, or cancel the import."
             default:

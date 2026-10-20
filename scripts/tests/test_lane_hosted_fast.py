@@ -1,0 +1,430 @@
+"""The automerge run takes the hosted fast checks' PASS and runs only --plan fast-mac-rest on the Mac (#1389).
+
+Over the three days to 2026-10-18 the lane spent about 76 Mac-hours on 322 host-only automerge runs (14 minutes
+each), most of it on steps a GitHub-hosted runner can run once the repo is public. What these tests guard: the
+runner never takes a hosted result for a commit it didn't test (another head, another tree, a next that moved in
+ways that matter, a check that didn't pass), and with the switch off nothing changes. Until the repo is public the
+same rule takes the two VPS checks in linux-t1.yml (#2160), with no switch.
+"""
+import contextlib
+import io
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import test_lane_runner  # noqa: E402
+from test_lane_runner import lane, verification  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[2]
+ON = {'LANE_HOSTED_FAST': 'on'}
+
+
+def notice(plan, tree, base, head, title='lane-hosted-tested', level='notice'):
+    return {'title': title, 'annotation_level': level, 'message': f'plan={plan} tree={tree} parents={base} {head}'}
+
+
+class FakeChecks:
+    """The two GitHub API reads hosted_fast_records makes: check runs on a head, and one run's annotations."""
+
+    def __init__(self, runs, annotations):
+        self.repo, self.runs, self.annotations, self.calls = 'o/r', runs, annotations, []
+
+    def api(self, path):
+        self.calls.append(path)
+        if '/annotations' in path:
+            return json.dumps(self.annotations[int(path.split('/')[-2])])
+        name = next(name for name in {**lane.HOSTED_FAST_CHECKS, **lane.VPS_FAST_CHECKS}
+                    if 'check_name=' + lane.urllib.parse.quote(name, safe='') + '&' in path)
+        return json.dumps({'check_runs': self.runs.get(name, [])})
+
+
+def passing(head, base='d' * 40, tree='e' * 40, checks=None, **changes):
+    """FakeChecks where both hosted checks (or <checks>) passed on <head>, each with its notice; changes override a run's
+    fields."""
+    runs, annotations = {}, {}
+    for index, (name, plan) in enumerate((checks or lane.HOSTED_FAST_CHECKS).items(), start=1):
+        run = {'id': index, 'status': 'completed', 'conclusion': 'success', 'app': {'slug': 'github-actions'},
+               'started_at': '2026-10-18T10:00:00Z', 'html_url': f'https://example.test/run/{index}'}
+        run.update(changes.get(name, {}))
+        runs[name] = [run]
+        annotations[index] = [notice(plan, tree, base, head)]
+    return FakeChecks(runs, annotations)
+
+
+class HostedTestedTests(unittest.TestCase):
+    def test_reads_the_one_notice_and_ignores_anything_else(self):
+        record = lane.hosted_tested([{'title': 'other', 'annotation_level': 'notice', 'message': 'x'},
+                                     notice('fast-portable', 'e' * 40, 'd' * 40, 'a' * 40)])
+        self.assertEqual(record, {'plan': 'fast-portable', 'tree': 'e' * 40, 'base': 'd' * 40, 'head': 'a' * 40})
+
+    def test_no_record_from_a_warning_two_notices_or_a_malformed_one(self):
+        good = notice('fast-portable', 'e' * 40, 'd' * 40, 'a' * 40)
+        for name, annotations in (
+                ('none', []),
+                ('a warning, not a notice', [{**good, 'annotation_level': 'warning'}]),
+                ('two notices', [good, good]),
+                ('a short sha', [notice('fast-portable', 'e' * 7, 'd' * 40, 'a' * 40)]),
+                ('one parent', [{**good, 'message': f'plan=fast-portable tree={"e" * 40} parents={"d" * 40}'}])):
+            with self.subTest(name):
+                self.assertIsNone(lane.hosted_tested(annotations))
+
+
+class HostedRecordsTests(unittest.TestCase):
+    HEAD = 'a' * 40
+
+    def test_the_vps_pair_is_read_by_its_own_check_names_and_plans(self):
+        found, why = lane.hosted_fast_records(passing(self.HEAD, checks=lane.VPS_FAST_CHECKS), self.HEAD,
+                                              lane.VPS_FAST_CHECKS)
+        self.assertEqual(why, '')
+        self.assertEqual({name: record['plan'] for name, record in found.items()}, lane.VPS_FAST_CHECKS)
+
+    def test_the_vps_pair_does_not_stand_on_the_hosted_checks_alone(self):
+        found, why = lane.hosted_fast_records(passing(self.HEAD), self.HEAD, lane.VPS_FAST_CHECKS)
+        self.assertIsNone(found)
+        self.assertIn('no "vps fast: portable" check ran', why)
+
+    def test_one_vps_check_failing_means_the_whole_plan(self):
+        checks = passing(self.HEAD, checks=lane.VPS_FAST_CHECKS, **{'sessionkit-core': {'conclusion': 'failure'}})
+        found, why = lane.hosted_fast_records(checks, self.HEAD, lane.VPS_FAST_CHECKS)
+        self.assertIsNone(found)
+        self.assertIn('"sessionkit-core" ended failure', why)
+
+    def test_both_checks_passed_and_said_what_they_tested(self):
+        found, why = lane.hosted_fast_records(passing(self.HEAD), self.HEAD)
+        self.assertEqual(why, '')
+        self.assertEqual(set(found), set(lane.HOSTED_FAST_CHECKS))
+        self.assertEqual({record['plan'] for record in found.values()}, set(lane.HOSTED_FAST_CHECKS.values()))
+
+    def test_any_missing_unfinished_failed_or_foreign_check_means_no(self):
+        portable = 'hosted fast: portable'
+        for name, changes, expected in (
+                ('not finished', {'status': 'in_progress', 'conclusion': None}, 'had not finished'),
+                ('failed', {'conclusion': 'failure'}, 'ended failure'),
+                ('skipped (switch off on GitHub)', {'conclusion': 'skipped'}, 'ended skipped'),
+                ('another app', {'app': {'slug': 'someone-else'}}, 'no "hosted fast: portable" check')):
+            with self.subTest(name):
+                found, why = lane.hosted_fast_records(passing(self.HEAD, **{portable: changes}), self.HEAD)
+                self.assertIsNone(found)
+                self.assertIn(expected, why)
+
+    def test_the_newest_run_decides(self):
+        checks = passing(self.HEAD)
+        name = 'hosted fast: portable'
+        checks.runs[name].append({**checks.runs[name][0], 'id': 9, 'conclusion': 'failure',
+                                  'started_at': '2026-10-18T11:00:00Z'})
+        checks.annotations[9] = []
+        found, why = lane.hosted_fast_records(checks, self.HEAD)
+        self.assertIsNone(found)
+        self.assertIn('ended failure', why)
+
+    def test_a_record_for_another_plan_or_head_is_not_this_run(self):
+        for name, annotation in (('another plan', notice('fast', 'e' * 40, 'd' * 40, self.HEAD)),
+                                 ('another head', notice('fast-portable', 'e' * 40, 'd' * 40, 'f' * 40))):
+            with self.subTest(name):
+                checks = passing(self.HEAD)
+                checks.annotations[1] = [annotation]
+                found, why = lane.hosted_fast_records(checks, self.HEAD)
+                self.assertIsNone(found)
+                self.assertIn('did not record', why)
+
+
+class HostedChecksStandTests(unittest.TestCase):
+    """hosted_fast_checks with real git: the tree must match, and next's moves since must not matter."""
+    setUp = test_lane_runner.PushTests.setUp
+    commit = test_lane_runner.PushTests.commit
+    rev = test_lane_runner.PushTests.rev
+
+    def move_next(self, name, text='someone else merged\n'):
+        path = self.other / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.commit(self.other, name, text)
+        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', 'origin', 'HEAD:next'], check=True)
+        return lane.fetch_base(self.tree, 'next')
+
+    def pr(self):
+        self.commit(self.tree, 'pr.txt', 'pr\n')
+        head = self.rev(self.tree, 'HEAD')
+        tested = lane.fetch_base(self.tree, 'next')
+        return head, tested, lane.merged_tree(self.tree, tested, head)
+
+    def stands(self, head, base_sha, records, env=ON):
+        return lane.hosted_fast_checks(None, self.tree, 'next', head, base_sha, env=env, records=records)
+
+    def records(self, head, base, tree, only=None):
+        """A records reader whose checks all passed and recorded <tree>; with <only>, just that set of checks."""
+        def read(github, h, checks):
+            if only is not None and checks is not only:
+                return None, f'no "{next(iter(checks))}" check ran on {h[:7]}'
+            return {name: {'plan': plan, 'tree': tree, 'base': base, 'head': head, 'url': 'u'}
+                    for name, plan in checks.items()}, ''
+        return read
+
+    def test_off_reads_only_the_vps_checks(self):
+        head, tested, tree = self.pr()
+        for env in ({}, {'LANE_HOSTED_FAST': ''}, {'LANE_HOSTED_FAST': 'off'}, {'LANE_HOSTED_FAST': 'yes'}):
+            with self.subTest(env):
+                reads = []
+
+                def missing(github, h, checks):
+                    reads.append(checks)
+                    return None, 'no "vps fast: portable" check ran'
+                found, why = lane.hosted_fast_checks(None, self.tree, 'next', head, tested, env=env, records=missing)
+                self.assertEqual((found, why), (None, 'no "vps fast: portable" check ran'))
+                self.assertEqual(reads, [lane.VPS_FAST_CHECKS])
+
+    def test_with_the_switch_off_the_vps_pair_stands_and_says_it_ran_on_linux(self):
+        head, tested, tree = self.pr()
+        found, why = self.stands(head, tested, self.records(head, tested, tree), env={})
+        self.assertEqual(why, '')
+        self.assertEqual(set(found), set(lane.VPS_FAST_CHECKS))
+        self.assertEqual({record['runner'] for record in found.values()}, {'VPS'})
+        self.assertIn('VPS: --plan fast-portable and SessionKitCoreTests on Linux', lane.hosted_fast_ran(found))
+        self.assertTrue(all(line.startswith('VPS check "') for line in lane.hosted_fast_lines(found)))
+
+    def test_with_the_switch_on_the_hosted_pair_wins_and_the_vps_pair_is_the_fallback(self):
+        head, tested, tree = self.pr()
+        found, _ = self.stands(head, tested, self.records(head, tested, tree))
+        self.assertEqual(set(found), set(lane.HOSTED_FAST_CHECKS))
+        self.assertEqual({record['runner'] for record in found.values()}, {'GitHub-hosted'})
+        found, why = self.stands(head, tested, self.records(head, tested, tree, only=lane.VPS_FAST_CHECKS))
+        self.assertEqual(why, '')
+        self.assertEqual(set(found), set(lane.VPS_FAST_CHECKS))
+
+    def test_neither_pair_standing_names_both_reasons(self):
+        head, tested, tree = self.pr()
+        found, why = self.stands(head, tested, self.records(head, tested, '0' * 40))
+        self.assertIsNone(found)
+        self.assertIn('"hosted fast: portable" tested a tree that is not', why)
+        self.assertIn('"vps fast: portable" tested a tree that is not', why)
+
+    def test_the_same_merge_stands(self):
+        head, tested, tree = self.pr()
+        found, why = self.stands(head, tested, self.records(head, tested, tree))
+        self.assertEqual(why, '')
+        self.assertEqual(set(found), set(lane.HOSTED_FAST_CHECKS))
+        # The tree the runner's own merge commit holds is the one the hosted job reported.
+        sha, _ = lane.build_merge_commit(self.tree, 'next', head, 5, 'A change')
+        self.assertEqual(self.rev(self.tree, sha + '^{tree}'), tree)
+
+    def test_a_tree_that_is_not_this_merge_is_refused(self):
+        head, tested, tree = self.pr()
+        found, why = self.stands(head, tested, self.records(head, tested, '0' * 40))
+        self.assertIsNone(found)
+        self.assertIn('tested a tree that is not', why)
+
+    def test_next_moving_elsewhere_lets_it_stand_and_says_so(self):
+        head, tested, tree = self.pr()
+        newest = self.move_next('docs/notes.md')
+        found, why = self.stands(head, newest, self.records(head, tested, tree))
+        self.assertEqual(why, '')
+        self.assertTrue(all(len(record['moved']) == 1 for record in found.values()))
+        lines = lane.hosted_fast_lines(found)
+        self.assertTrue(all('1 commit since touch none of this PR' in line for line in lines))
+        self.assertIn(tested[:7], lane.hosted_fast_ran(found))
+
+    def test_next_touching_the_prs_files_or_a_build_input_means_the_whole_plan(self):
+        for name, path in (('the PR\'s file', 'pr.txt'), ('a build input', 'scripts/verify-tests.py')):
+            with self.subTest(name):
+                self.setUp()
+                head, tested, tree = self.pr()
+                newest = self.move_next(path)
+                found, why = self.stands(head, newest, self.records(head, tested, tree))
+                self.assertIsNone(found)
+                self.assertIn(f'tested it on next at {tested[:7]}', why)
+
+    def test_a_record_naming_a_next_the_runner_does_not_have_falls_back(self):
+        head, tested, tree = self.pr()
+        found, why = self.stands(head, tested, self.records(head, 'f' * 40, tree))
+        self.assertIsNone(found)
+        self.assertTrue(why)
+
+    def test_a_read_error_falls_back(self):
+        head, tested, _ = self.pr()
+
+        def broken(github, h, checks):
+            raise subprocess.CalledProcessError(1, ['gh', 'api'])
+        found, why = lane.hosted_fast_checks(None, self.tree, 'next', head, tested, env=ON, records=broken)
+        self.assertIsNone(found)
+        self.assertIn('could not read the fast checks off the Mac', why)
+
+
+class RunAutomergeTests(unittest.TestCase):
+    SCOPE = {'tier': 'T2', 'why': ['App/x.swift']}
+    FOUND = {'hosted fast: portable': {'plan': 'fast-portable', 'tree': 'e' * 40, 'base': 'd' * 40, 'head': 'a' * 40}}
+
+    def run_it(self, **kwargs):
+        calls = []
+
+        def fast(evidence, changed=None):
+            calls.append('fast')
+            return 'PASS', []
+
+        def mac_rest(evidence, changed=None):
+            calls.append('mac-rest')
+            return 'PASS', []
+        with tempfile.TemporaryDirectory() as temporary:
+            result = lane.run_automerge(self.SCOPE, Path(temporary), fast=fast, mac_rest=mac_rest, **kwargs)
+        return calls, result
+
+    def test_without_hosted_results_the_whole_fast_plan_runs(self):
+        calls, (verdict, where, ran, _) = self.run_it()
+        self.assertEqual(calls, ['fast'])
+        self.assertEqual((verdict, ran), ('PASS', 'host tests (--plan fast): passed'))
+
+    def test_with_hosted_results_only_the_mac_rest_runs_and_the_report_says_where_each_part_ran(self):
+        calls, (verdict, where, ran, details) = self.run_it(hosted_fast=self.FOUND)
+        self.assertEqual(calls, ['mac-rest'])
+        self.assertEqual(verdict, 'PASS')
+        self.assertIn('Mac: --plan fast-mac-rest', ran)
+        self.assertIn('next at ddddddd', ran)
+        self.assertTrue(any(line.startswith('GitHub-hosted check "hosted fast: portable": PASS') for line in details))
+
+    def test_a_mac_rest_failure_fails_the_run(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            verdict, _, ran, _ = lane.run_automerge(self.SCOPE, Path(temporary), hosted_fast=self.FOUND,
+                                                    mac_rest=lambda evidence, changed=None: ('FAIL', ['x']))
+        self.assertEqual(verdict, 'FAIL')
+        self.assertTrue(ran.endswith('fast-mac-rest): fail'))
+
+    def test_the_mac_rest_plan_is_what_the_runner_asks_verify_tests_for(self):
+        commands = []
+
+        def runner(command, log, timeout):
+            commands.append(command)
+            return None
+        with tempfile.TemporaryDirectory() as temporary:
+            verdict, details = lane.run_mac_rest(Path(temporary), runner=runner)
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertIn('--plan fast-mac-rest', details[0])
+        self.assertEqual(commands[0][commands[0].index('--plan') + 1], 'fast-mac-rest')
+
+
+class SplitPlanTests(unittest.TestCase):
+    """verify-tests.py: the three plans together run every step of --plan fast, each on the machine it needs."""
+
+    def test_the_three_plans_cover_every_fast_step(self):
+        import test_fast_portable
+        covered = (set(verification.PORTABLE_STEPS) | set(verification.HOSTED_SESSIONKIT_STEPS)
+                   | set(verification.MAC_REST_STEPS))
+        self.assertEqual(test_fast_portable.literal_steps() - covered, set())
+        # What the portable plan leaves out, the other two run.
+        self.assertEqual(set(verification.PORTABLE_LEFT_OUT) - covered, set())
+        self.assertIn('package', verification.MAC_REST_STEPS)  # the sound-output step never leaves the Mac
+        self.assertNotIn('package', verification.HOSTED_SESSIONKIT_STEPS)
+
+    def run_plan(self, plan, changed):
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary:
+            (Path(temporary) / 'node_modules').mkdir()
+            run = verification.Run(Path(temporary) / 'run', plan, changed)
+            with mock.patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, args))), \
+                    mock.patch.object(run, 'ops_steps', side_effect=lambda **kw: calls.append(('ops', kw))), \
+                    mock.patch.object(run, 'package_core', side_effect=lambda core: calls.append(('package-core', core))), \
+                    mock.patch.object(run, 'package_steps',
+                                      side_effect=lambda expected, **kw: calls.append(('package-steps', kw))), \
+                    mock.patch.object(verification, 'ROOT', Path(temporary)), \
+                    mock.patch.object(verification, 'swift_tests', return_value={'T/test'}), \
+                    mock.patch.object(verification, 'in_codex_sandbox', return_value=False), \
+                    mock.patch.object(verification.sessionkit_pass, 'toolchain', return_value=None), \
+                    mock.patch.object(verification.sessionkit_pass, 'find', return_value=None), \
+                    mock.patch.object(verification, 'host_test_slot',
+                                      side_effect=lambda *a, **k: calls.append(('slot', None)) or contextlib.nullcontext({})), \
+                    mock.patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                run.fast()
+            skipped = {step['name'] for step in run.manifest['steps'] if 'skipped' in step}
+        return calls, skipped
+
+    def test_hosted_sessionkit_builds_and_runs_the_core_tests_without_a_mac_slot(self):
+        calls, skipped = self.run_plan('fast-hosted-sessionkit', None)
+        self.assertEqual([name for name, _ in calls], ['package-build', 'package-core'])
+        self.assertEqual(calls[1][1], {'SessionKitCoreTests/T/test'})
+        self.assertEqual(skipped, {'package'})
+
+    def test_mac_rest_for_an_app_diff_runs_only_the_sessionkit_rest(self):
+        calls, skipped = self.run_plan('fast-mac-rest', ['App/SpokenMarginsApp/X.swift'])
+        self.assertEqual(calls, [('slot', None), ('package-steps', {'core_elsewhere': True})])
+        self.assertEqual(skipped, {'runner-tests', 'ops', 'shipped-compat'})
+
+    def test_mac_rest_for_a_lane_diff_also_runs_the_apple_tool_tests_and_ops_disk(self):
+        calls, _ = self.run_plan('fast-mac-rest', ['scripts/phone-build'])
+        by_name = dict(calls)
+        self.assertEqual(by_name['runner-tests'][1:3], ['-c', verification.MAC_REST_RUNNER_LOADER])
+        self.assertEqual(by_name['runner-tests'][3:], list(verification.PORTABLE_RUNNER_TESTS_LEFT_OUT))
+        self.assertEqual(by_name['ops'], {'only': verification.PORTABLE_OPS_LEFT_OUT})
+
+    def test_the_mac_rest_loader_runs_only_the_listed_tests(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            tests = Path(temporary) / 'scripts' / 'tests'
+            tests.mkdir(parents=True)
+            (tests / 'test_apple.py').write_text(
+                'import unittest\nclass A(unittest.TestCase):\n    def test_needs_xcode(self): pass\n')
+            (tests / 'test_other.py').write_text(
+                'import unittest\nclass B(unittest.TestCase):\n    def test_elsewhere(self): self.fail("ran")\n')
+            done = subprocess.run([sys.executable, '-c', verification.MAC_REST_RUNNER_LOADER, 'test_apple.'],
+                                  cwd=temporary, capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertIn('Ran 1 test', done.stderr)
+
+    def test_package_steps_with_the_core_elsewhere_runs_only_the_rest(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'fast-mac-rest')
+            with mock.patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, args, kw))), \
+                    mock.patch.object(run, 'package_core', side_effect=lambda core: calls.append(('package-core',))), \
+                    mock.patch.object(verification.host_audio, 'audio_output', return_value={'usable': True}), \
+                    mock.patch.object(verification, 'in_codex_sandbox', return_value=False):
+                run.package_steps({'SessionKitTests/A/test'}, core_elsewhere=True)
+        self.assertEqual([call[0] for call in calls], ['package-build', 'package'])
+        self.assertIn('--rest', calls[1][1])
+        self.assertEqual(calls[1][2]['expected'], {'SessionKitTests/A/test'})
+
+
+class WorkflowTests(unittest.TestCase):
+    """The hosted jobs and the lane agree on names, the switch and what is recorded."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.hosted = (ROOT / '.github/workflows/hosted-portable.yml').read_text()
+        cls.lane_yml = (ROOT / '.github/workflows/lane.yml').read_text()
+
+    def test_each_required_check_is_a_job_name_that_records_its_plan(self):
+        for name, plan in lane.HOSTED_FAST_CHECKS.items():
+            with self.subTest(name):
+                self.assertIn(f"name: '{name}'", self.hosted)
+                self.assertIn(f'::notice title={lane.HOSTED_TESTED_TITLE}::plan={plan} tree=', self.hosted)
+                self.assertIn(f'--plan {plan}', self.hosted)
+
+    def test_both_jobs_run_on_a_pr_only_from_this_repo_and_only_with_the_switch_on(self):
+        guard = ("(github.event.pull_request.head.repo.full_name == github.repository && "
+                 f"vars.{lane.HOSTED_FAST_SWITCH} == 'on')")
+        self.assertEqual(self.hosted.count(guard), len(lane.HOSTED_FAST_CHECKS))
+        self.assertNotIn('pull_request_target:', self.hosted)
+
+    def test_the_vps_jobs_have_the_names_the_runner_reads_record_their_plans_and_run_on_the_pr_code_runner(self):
+        linux = (ROOT / '.github/workflows/linux-t1.yml').read_text()
+        jobs = '\n' + linux.split('\njobs:\n', 1)[1]
+        for name, plan in lane.VPS_FAST_CHECKS.items():
+            with self.subTest(name):
+                # A job with no `name:` shows as its id; the portable job names itself.
+                self.assertTrue(f"name: '{name}'" in jobs or f'\n  {name}:\n' in jobs)
+                self.assertIn(f'::notice title={lane.HOSTED_TESTED_TITLE}::plan={plan} tree=', jobs)
+        self.assertIn('--plan fast-portable', jobs)
+        for job in jobs.split('\n  owner-tap-alert:\n')[0].split('\n  portable:\n'):
+            # PR code only on sm-vps-t1, never the routing runner, and never a fork's.
+            self.assertIn('    runs-on: [sm-vps-t1]\n', job)
+            self.assertIn('    if: github.event.pull_request.head.repo.full_name == github.repository\n', job)
+        self.assertNotIn('pull_request_target:', linux)
+
+    def test_the_lane_hands_the_switch_to_the_automerge_and_release_runs_and_may_read_checks(self):
+        self.assertEqual(self.lane_yml.count(f'{lane.HOSTED_FAST_SWITCH}: ${{{{ vars.{lane.HOSTED_FAST_SWITCH} }}}}'), 2)
+        self.assertIn('  checks: read\n', self.lane_yml)
+
+
+if __name__ == '__main__':
+    unittest.main()

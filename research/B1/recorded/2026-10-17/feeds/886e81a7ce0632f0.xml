@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet href="/stylesheet.xsl" type="text/xsl"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:sy="http://purl.org/rss/1.0/modules/syndication/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <atom:link rel="self" type="application/rss+xml" href="https://feeds.transistor.fm/acquired" title="MP3 Audio"/>
+    <atom:link rel="hub" href="https://pubsubhubbub.appspot.com/"/>
+    <podcast:podping usesPodping="true"/>
+    <title>Acquired</title>
+    <generator>Transistor (https://transistor.fm)</generator>
+    <itunes:new-feed-url>https://feeds.transistor.fm/acquired</itunes:new-feed-url>
+    <description>Every company has a story.
+
+Learn the playbooks that built the world’s greatest companies — and how you can apply them.</description>
+    <copyright>Copyright 2026 ACQ, LLC</copyright>
+    <podcast:guid>fd5c970b-b096-5494-adaf-8b6c3b10c678</podcast:guid>
+    <podcast:locked>yes</podcast:locked>
+    <podcast:person role="Host" img="https://img.transistorcdn.com/A2CCV1t65Tfo-QrifVdRX2CoVLeu2dR1W-vMITRo9Ns/rs:fill:0:0:1/w:800/h:800/q:60/mb:500000/aHR0cHM6Ly9pbWct/dXBsb2FkLXByb2R1/Y3Rpb24udHJhbnNp/c3Rvci5mbS9wZXJz/b24vMGY4YzViNjMt/MGIyOS00YzQzLWJk/YjQtMDQ0MGFlYmIx/M2U4LzE2NzcxMDE2/NDEtaW1hZ2UuanBn.jpg">Ben Gilbert</podcast:person>
+    <podcast:person role="Host" href="http://www.acquired.fm" img="https://img.transistorcdn.com/VHTEmPlPKfVAE0aKRsiJmc13ioUBpK5S9ieW4BRxQ5A/rs:fill:0:0:1/w:800/h:800/q:60/mb:500000/aHR0cHM6Ly9pbWct/dXBsb2FkLXByb2R1/Y3Rpb24udHJhbnNp/c3Rvci5mbS9wZXJz/b24vYmU3MzEyMWUt/ZjY5MS00ZjU4LTgw/ZDktYzVhNzlhMGE3/OGU0LzE2NzcxMDE2/NjUtaW1hZ2UuanBn.jpg">David Rosenthal</podcast:person>
+    <podcast:trailer pubdate="Thu, 01 Oct 2015 10:00:00 -0700" url="https://pscrb.fm/rss/p/media.transistor.fm/860cafa1/4437e77b.mp3" length="2423358" type="audio/mpeg">Trailer: What is Acquired?</podcast:trailer>
+    <language>en</language>
+    <pubDate>Tue, 13 Oct 2026 07:58:47 -0700</pubDate>
+    <lastBuildDate>Tue, 13 Oct 2026 07:59:07 -0700</lastBuildDate>
+    <link>https://acquired.fm</link>
+    <image>
+      <url>https://img.transistorcdn.com/SYy-ia3mZbFnUAhbvsUEVW0EZyOaJlbF1tNaO9_3qEw/rs:fill:0:0:1/w:1400/h:1400/q:60/mb:500000/aHR0cHM6Ly9pbWct/dXBsb2FkLXByb2R1/Y3Rpb24udHJhbnNp/c3Rvci5mbS8zNjQx/ZWZhM2YzZTI3YjA5/MDZhYmE3ZWUzNzU2/ZWYzMy5qcGc.jpg</url>
+      <title>Acquired</title>
+      <link>https://acquired.fm</link>
+    </image>
+    <itunes:category text="Technology"/>
+    <itunes:category text="Business">
+      <itunes:category text="Investing"/>
+    </itunes:category>
+    <itunes:type>episodic</itunes:type>
+    <itunes:author>Ben Gilbert and David Rosenthal</itunes:author>
+    <itunes:image href="https://img.transistorcdn.com/SYy-ia3mZbFnUAhbvsUEVW0EZyOaJlbF1tNaO9_3qEw/rs:fill:0:0:1/w:1400/h:1400/q:60/mb:500000/aHR0cHM6Ly9pbWct/dXBsb2FkLXByb2R1/Y3Rpb24udHJhbnNp/c3Rvci5mbS8zNjQx/ZWZhM2YzZTI3YjA5/MDZhYmE3ZWUzNzU2/ZWYzMy5qcGc.jpg"/>
+    <itunes:summary>Every company has a story.
+
+Learn the playbooks that built the world’s greatest companies — and how you can apply them.</itunes:summary>
+    <itunes:subtitle>Every company has a story.</itunes:subtitle>
+    <itunes:keywords>Business,MA,StartUps,acquisitions,investment,technology,vc,venturecapital</itunes:keywords>
+    <itunes:owner>
+      <itunes:name>Ben Gilbert and David Rosenthal</itunes:name>
+    </itunes:owner>
+    <itunes:complete>No</itunes:complete>
+    <itunes:explicit>No</itunes:explicit>
+    
