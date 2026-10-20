@@ -2156,8 +2156,10 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(starts.count, 1, "the first chunk plays")
 
         // The first chunk ends after a second; the second is still rendering (gated). The bundled voice holds the
-        // item, so the seam waits for its render and never tries the iOS voice (#1786).
-        try await Task.sleep(for: .milliseconds(1500))
+        // item, so the seam waits for its render and never tries the iOS voice (#1786). The seam is awaited, not
+        // assumed: without it the checks below would pass with narration stuck in the first chunk.
+        for _ in 0..<250 where client.debugBackgroundSeamSummary == nil { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(client.debugBackgroundSeamSummary, "next_not_rendered 1", "the first chunk ended at a background seam")
         XCTAssertEqual(fallback.playedOffsets, [], "the seam waits for the bundled voice, not the iOS voice")
         XCTAssertEqual(starts.count, 1, "the second chunk is still rendering")
         openGate.finish()
@@ -2207,7 +2209,8 @@ final class SupertonicSpeechTests: XCTestCase {
 
         allowed.value = true                                   // the phone cooled; the bundled voice keeps the article
 
-        try await Task.sleep(for: .milliseconds(1500))
+        for _ in 0..<250 where client.debugBackgroundSeamSummary == nil { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(client.debugBackgroundSeamSummary, "next_not_rendered 1", "the first chunk ended at a background seam")
         XCTAssertEqual(fallback.playedOffsets, [], "the seam waits for the bundled voice, not the iOS voice (#1786)")
         openGate.finish()
         for _ in 0..<500 where starts.count < 2 { try await Task.sleep(for: .milliseconds(20)) }
