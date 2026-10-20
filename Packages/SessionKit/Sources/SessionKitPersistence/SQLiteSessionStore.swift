@@ -1177,6 +1177,59 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return includeDeleted ? items : items.filter { $0.deletedAt == nil }
     }
 
+    /// How much of an item's text the summary read looks at to tell whether there is any besides whitespace.
+    private static let summaryTextHeadLength = 512
+
+    /// The Library list's read (#2102): every item in `listItems`' order, without its `text` or `documentStructure`.
+    /// SQLite cuts those two out of each payload, so the several MB of an article or book are never copied or decoded.
+    /// The text's length is counted in Unicode scalars, which is how SQLite counts; it differs from Swift's character
+    /// count only for text with combining marks or joined emoji, and only feeds the listening-time estimate. A payload
+    /// that can't be cut or decoded sends the whole read the full way, which sets the broken record aside as before.
+    public func listItemSummaries(includeDeleted: Bool = false) throws -> [LibraryItemSummary] {
+        var rows: [(payload: String, head: String?, length: Int?)] = []
+        var needsFullRead = false
+        try withReadConnection { connection in
+            var statement: OpaquePointer?
+            let sql = """
+                SELECT CASE WHEN json_valid(payload) THEN json_remove(payload, '$.text', '$.documentStructure') END,
+                       substr(CASE WHEN json_valid(payload) THEN json_extract(payload, '$.text') END, 1, \(Self.summaryTextHeadLength)),
+                       CASE WHEN json_valid(payload) THEN length(json_extract(payload, '$.text')) END
+                FROM records WHERE kind = 'item' ORDER BY updated_at DESC, id;
+                """
+            guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_item_summaries")
+            }
+            defer { sqlite3_finalize(statement) }
+            while true {
+                let step = sqlite3_step(statement)
+                if step == SQLITE_DONE { return }
+                guard step == SQLITE_ROW else { throw SessionKitError.persistenceFailed("step_item_summaries") }
+                guard let raw = sqlite3_column_text(statement, 0) else { needsFullRead = true; continue }
+                let head = sqlite3_column_text(statement, 1).map { String(cString: $0) }
+                let length = sqlite3_column_type(statement, 2) == SQLITE_NULL ? nil : Int(sqlite3_column_int64(statement, 2))
+                rows.append((payload: String(cString: raw), head: head, length: length))
+            }
+        }
+        var summaries: [LibraryItemSummary] = []
+        for row in rows {
+            guard !needsFullRead, let data = row.payload.data(using: .utf8),
+                  let item = try? decoder.decode(Item.self, from: data) else { needsFullRead = true; break }
+            var hasText = row.head?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            if !hasText, (row.length ?? 0) > Self.summaryTextHeadLength {
+                // Whitespace for the first stretch, then maybe words: only this rare item is read whole.
+                hasText = (try? loadItem(id: item.id))?.hasListenableText ?? false
+            }
+            summaries.append(LibraryItemSummary(
+                id: item.id, title: item.title, mediaType: item.mediaType, status: item.status,
+                externalReference: item.externalReference, externalReferenceType: item.externalReferenceType,
+                media: item.media, deletedAt: item.deletedAt, author: item.author, sourceTitle: item.sourceTitle,
+                sourceURL: item.sourceURL, createdAt: item.createdAt, sourceCompletedAt: item.sourceCompletedAt,
+                hasListenableText: hasText, textCharacterCount: row.length))
+        }
+        if needsFullRead { return try listItems(includeDeleted: includeDeleted).map(LibraryItemSummary.init) }
+        return includeDeleted ? summaries : summaries.filter { $0.deletedAt == nil }
+    }
+
     public func listDeletedItems() throws -> [Item] {
         try listItems(includeDeleted: true)
             .filter { $0.deletedAt != nil }
