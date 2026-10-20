@@ -243,7 +243,8 @@ def main(argv: List[str]) -> int:
         print(slot_for(tree))
         return 0
     if not applies_to(tree):
-        print(f'build folders stay in the worktree ({tree} is outside {linked_area()}, or linking is off)')
+        print(f'build folders stay in place ({tree} is outside {linked_area()}, is not a linked worktree, '
+              'or linking is off)')
         return 0
     results = ensure_links(tree)
     for link, what in results:
