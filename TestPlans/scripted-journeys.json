@@ -27,6 +27,10 @@
       "journey": "J8"
     },
     {
+      "test": "SpokenMarginsAppUITests/J9HearNewMarginsJourneyUITests",
+      "journey": "J9"
+    },
+    {
       "test": "SpokenMarginsAppUITests/VoiceOverAuditUITests",
       "journey": "VoiceOver audit of J1, J3, J5 and adding an item (#207)"
     }

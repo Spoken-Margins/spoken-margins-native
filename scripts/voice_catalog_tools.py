@@ -164,10 +164,11 @@ def build_supertonic_draft() -> dict:
 
 
 def check_draft_matches_manifest() -> list[str]:
-    """The draft's files are exactly the bundled Supertonic files, by path, size and SHA-256.
+    """The draft's files are exactly the Supertonic files the manifest lists, by path, size and SHA-256.
 
-    scripts/validate-supertonic-assets.py holds the manifest to the bundled bytes, so this holds the
-    draft to them too: audio already rendered with the bundled voice stays valid once it downloads.
+    Those are the files the app bundled until #1820. scripts/validate-supertonic-assets.py holds the kept
+    files to their bytes, and this holds the draft to the manifest: audio already rendered with the bundled
+    voice stays valid once it downloads.
     """
     errors: list[str] = []
     manifest = json.loads((SUPERTONIC / "asset-manifest.json").read_text(encoding="utf-8"))

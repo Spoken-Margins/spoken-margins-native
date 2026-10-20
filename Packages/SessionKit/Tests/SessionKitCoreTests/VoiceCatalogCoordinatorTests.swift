@@ -6,6 +6,7 @@ import Crypto
 import Foundation
 import SessionKit
 import SessionKitPersistence
+import SessionKitTestInputs
 import XCTest
 
 /// Settings › Voices (#1819): the catalog the listener sees, the licence agreement, install and remove,
@@ -275,11 +276,8 @@ final class VoiceCatalogCoordinatorTests: XCTestCase {
     /// text as they are. Only the downloaded bytes are stand-ins (their real size and hash are swapped for
     /// the stand-in's), served at the entry's own pinned addresses. Carried text keeps its real hash.
     func testTheShippedSnapshotsSupertonicEntryInstallsFromItsOwnSources() async throws {
-        let snapshotURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appending(path: "App/SpokenMarginsApp/Resources/VoiceCatalog/catalog-snapshot.json")
-        var catalog = try JSONDecoder().decode(VoiceModelCatalog.self, from: Data(contentsOf: snapshotURL))
+        let snapshot = try TestInputs.data(.voiceCatalogSnapshot, "catalog-snapshot.json")
+        var catalog = try JSONDecoder().decode(VoiceModelCatalog.self, from: snapshot)
         let id = "supertonic-3-int8"
         let index = try XCTUnwrap(catalog.voices.firstIndex { $0.id == id })
         XCTAssertTrue(catalog.voices[index].files.contains { $0.content != nil }, "the snapshot no longer carries any text; this test lost its point")

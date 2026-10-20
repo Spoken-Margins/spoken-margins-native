@@ -21,7 +21,7 @@ access fixes, and `check` proves the result is moves only, so neither the agent 
       --dry-run prints the plan without writing.
   scripts/split_move.py check [--base REF] [--head REF]
       Proves the model file and its Gate1AppModel+*.swift files changed by moves only, from the
-      merge base with REF (default origin/next) to HEAD's working tree (or --head REF). Every removed
+      merge base with REF (default origin/<trunk>, scripts/trunk.py) to HEAD's working tree (or --head REF). Every removed
       line must reappear, in order, in runs that start and end on member boundaries; the only other
       changes allowed are access modifiers, blank lines, imports, `#if`/`#endif`, the extension wrapper
       and comments, which are listed. Exit status 0 means moves only.
@@ -1076,12 +1076,15 @@ def main(argv: list | None = None) -> int:
     move.add_argument('--dry-run', action='store_true')
     move.add_argument('names', nargs='*')
     check = sub.add_parser('check', help='prove the diff is moves only')
-    check.add_argument('--base', default='origin/next')
+    check.add_argument('--base')
     check.add_argument('--head', help='a commit to check instead of the working tree')
     summary = sub.add_parser('summary', help='PR text for a moves-only diff, and a lane request draft')
-    summary.add_argument('--base', default='origin/next')
+    summary.add_argument('--base')
     summary.add_argument('--head', help='a commit to summarize instead of the working tree')
     args = parser.parse_args(argv)
+    if getattr(args, 'base', '') is None:  # #1492: the trunk (scripts/trunk.py)
+        from trunk import trunk_ref
+        args.base = trunk_ref()
     try:
         return {'list': cmd_list, 'move': cmd_move, 'check': cmd_check, 'summary': cmd_summary}[args.command](args)
     except SplitError as error:

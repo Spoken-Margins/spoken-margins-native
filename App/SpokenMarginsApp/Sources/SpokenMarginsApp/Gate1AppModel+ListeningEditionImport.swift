@@ -103,4 +103,11 @@ extension Gate1AppModel {
             try requireStore().saveListeningMap(map)
         }
     }
+
+    /// A tap on a "ready to listen" notification opens that item, unless a Margin is recording.
+    func openReadyListeningEdition() {
+        guard !snapshot.isRecording, let id = ListeningReadyNotifications.pendingItemID else { return }
+        ListeningReadyNotifications.pendingItemID = nil
+        openItem(id: id)
+    }
 }

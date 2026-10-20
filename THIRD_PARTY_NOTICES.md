@@ -92,16 +92,6 @@ The voice that stays in the app. About 62 MB with the inputs below. The same fol
 
 Part of the Kitten voice's pronunciations.
 
-### Supertonic 3 model and preset voice styles (INT8)
-
-- Licence: BigScience Open RAIL-M
-- From: Supertone Inc.; INT8 conversion by the k2-fsa sherpa-onnx project
-- Source: <https://huggingface.co/Supertone/supertonic-3>
-- Where: `App/SpokenMarginsApp/Resources/Supertonic`
-- Licence text: [SUPERTONIC_MODEL_OPENRAIL-M.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/SUPERTONIC_MODEL_OPENRAIL-M.txt), [SHERPA_ONNX_APACHE-2.0.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/SHERPA_ONNX_APACHE-2.0.txt), [THIRD_PARTY_NOTICES.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/THIRD_PARTY_NOTICES.txt), [supertonic-model-openrail-m.txt](Contracts/voice-models/licenses/supertonic-model-openrail-m.txt), [apache-2-0.txt](Contracts/voice-models/licenses/apache-2-0.txt)
-
-Ships in the app today and its model files sit in this repository's Git LFS storage. It moves to a download with #1820; this entry then changes to "downloaded". The graphs are modified, quantized derivatives of Supertone's model; the sherpa-onnx conversion is Apache-2.0. The licence's use restrictions are part of the app's Terms of Use.
-
 ### Supertonic Swift inference code
 
 - Licence: MIT
@@ -115,6 +105,16 @@ SupertonicRuntime.swift is adapted from Supertone's Swift example; its header sa
 ## Downloaded, not distributed here
 
 Fetched on request. They are not in this repository or in the app. Where the voice catalog (#1818) publishes the current address and licence text, it is the reference.
+
+### Supertonic 3 model and preset voice styles (INT8)
+
+- Licence: BigScience Open RAIL-M
+- From: Supertone Inc.; INT8 conversion by the k2-fsa sherpa-onnx project
+- Source: <https://huggingface.co/Supertone/supertonic-3>
+- Where: `App/SpokenMarginsApp/Resources/Supertonic`, `Contracts/voice-models/licenses`
+- Licence text: [SUPERTONIC_MODEL_OPENRAIL-M.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/SUPERTONIC_MODEL_OPENRAIL-M.txt), [SHERPA_ONNX_APACHE-2.0.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/SHERPA_ONNX_APACHE-2.0.txt), [THIRD_PARTY_NOTICES.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/THIRD_PARTY_NOTICES.txt), [supertonic-model-openrail-m.txt](Contracts/voice-models/licenses/supertonic-model-openrail-m.txt), [apache-2-0.txt](Contracts/voice-models/licenses/apache-2-0.txt)
+
+Downloaded, not in the app or this repository since #1820: Settings › Voices fetches it from the voice catalog, each file pinned by sha256 in Contracts/voice-models/sources.json. The app keeps only the licence texts and the modification notice (App/SpokenMarginsApp/Resources/Supertonic) and the catalog's licence copies (Contracts/voice-models/licenses). The graphs are modified, quantized derivatives of Supertone's model; the sherpa-onnx conversion is Apache-2.0. The licence's use restrictions are part of the app's Terms of Use.
 
 ### Kyutai Pocket TTS voice
 

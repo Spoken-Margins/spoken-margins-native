@@ -26,7 +26,7 @@ name: hosted-portable
 on:
   workflow_dispatch:
   pull_request:
-    branches: [next]
+    branches: [next, main]  # either trunk (#1492); the checks read the PR's own base
 
 permissions:
   contents: read

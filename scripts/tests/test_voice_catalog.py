@@ -9,6 +9,7 @@ import copy
 import hashlib
 import http.server
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -878,6 +879,127 @@ class Publishing(unittest.TestCase):
         (self.base / "stage-src" / "model.onnx").write_bytes(b"x" * len(BIG))
         with self.assertRaises(vc.CatalogToolError):
             self.publish(live=None)
+
+
+class Fetching(unittest.TestCase):
+    """#1820: the model files left the repository, so `fetch` (and publish's staging) takes them from the
+    publisher: a pinned file by its URL, an archive member by its hash. Real HTTP server, real tar archive."""
+
+    ARCHIVED = b"quantized graph " * 64
+
+    def setUp(self):
+        import io
+        import tarfile
+
+        self.server = Server()
+        self.addCleanup(self.server.close)
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.base = Path(self.dir.name)
+        self.state = self.base / "state"
+        self.real_root = vc.ROOT
+        vc.ROOT = self.base
+        self.addCleanup(setattr, vc, "ROOT", self.real_root)
+        # The archive names its member differently from the path the app reads, as sherpa-onnx's does.
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:bz2") as tar:
+            for name, data in (("pack/README", b"not wanted"), ("pack/graph.int8.onnx", self.ARCHIVED)):
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        self.archive = buffer.getvalue()
+        self.sources = make_sources(self.server.base, self.base)
+        alpha = self.sources["voices"][0]
+        alpha["upstreamArchives"] = [{"url": self.server.base + "up/pack.tar.bz2", "byteCount": len(self.archive), "sha256": sha(self.archive)}]
+        alpha["files"].append({"path": "onnx/graph.onnx", "byteCount": len(self.ARCHIVED), "sha256": sha(self.ARCHIVED), "mirrored": True,
+                               "origin": {"url": self.server.base + "up/pack.tar.bz2", "note": "member of the archive"}})
+        self.server.files["/up/model.onnx"] = (200, BIG)
+        self.server.files["/up/pack.tar.bz2"] = (200, self.archive)
+        # Only the file we wrote ourselves is in the repository.
+        (self.base / "stage-src" / "styles").mkdir(parents=True)
+        (self.base / "stage-src" / "styles" / "a.json").write_bytes(SMALL)
+
+    def fetch(self):
+        return vc.fetch(self.sources, self.state, http=vc.Http(retry_delay=0), out=lambda _: None)
+
+    def test_each_file_comes_from_its_pinned_source_and_matches_the_review(self):
+        folder = self.fetch()["alpha"]
+        self.assertEqual((folder / "model.onnx").read_bytes(), BIG)
+        self.assertEqual((folder / "styles" / "a.json").read_bytes(), SMALL)
+        self.assertEqual((folder / "onnx" / "graph.onnx").read_bytes(), self.ARCHIVED, "the renamed archive member, found by its hash")
+        self.assertEqual(sorted(p.relative_to(folder).as_posix() for p in folder.rglob("*") if p.is_file()),
+                         ["model.onnx", "onnx/graph.onnx", "styles/a.json"], "nothing else from the archive, no leftovers")
+        self.assertEqual(list((self.state / "tmp").iterdir()), [], "the archive is deleted after use")
+
+    def test_text_the_catalog_carries_is_copied_from_the_repository(self):
+        """#2055: a notice the catalog carries (`contentFile`) has no upstream and no mirror. A cold fetch, as the
+        lane's adapters plan runs, refused the whole voice for it."""
+        notice = "Modified by Spoken Margins.\n".encode()
+        content = self.base / "Contracts/voice-models/content/alpha/NOTICE.txt"
+        content.parent.mkdir(parents=True)
+        content.write_bytes(notice)
+        self.sources["voices"][0]["files"].append({"path": "NOTICE.txt", "byteCount": len(notice), "sha256": sha(notice),
+                                                   "contentFile": "content/alpha/NOTICE.txt"})
+        folder = self.fetch()["alpha"]
+        self.assertEqual((folder / "NOTICE.txt").read_bytes(), notice)
+
+    def test_files_already_fetched_are_not_downloaded_again(self):
+        self.fetch()
+        self.fetch()
+        self.assertEqual(self.server.gets("/up/model.onnx"), 1)
+        self.assertEqual(self.server.gets("/up/pack.tar.bz2"), 1)
+
+    def test_a_file_fetched_with_wrong_bytes_is_fetched_again(self):
+        folder = self.fetch()["alpha"]
+        (folder / "model.onnx").write_bytes(b"x" * len(BIG))
+        self.fetch()
+        self.assertEqual((folder / "model.onnx").read_bytes(), BIG)
+
+    def test_a_publisher_serving_other_bytes_is_refused_and_those_bytes_are_not_kept(self):
+        folder = vc.fetched_dir(self.state, self.sources["voices"][0])
+        for path, body, kept in (("/up/model.onnx", BIG[:-1] + b"!", "model.onnx"),
+                                 ("/up/pack.tar.bz2", self.archive[:-1] + b"!", "onnx/graph.onnx")):
+            with self.subTest(path):
+                shutil.rmtree(self.state, ignore_errors=True)
+                original = self.server.files[path]
+                self.server.files[path] = (200, body)
+                with self.assertRaises(vc.CatalogToolError) as raised:
+                    self.fetch()
+                self.server.files[path] = original
+                self.assertIn("sha256", str(raised.exception))
+                self.assertFalse((folder / kept).exists(), "the wrong bytes are not left where a test or publish would use them")
+                self.assertEqual([p.name for p in folder.rglob("*.part")], [])
+
+    def test_an_archive_without_the_reviewed_member_is_refused(self):
+        self.sources["voices"][0]["files"][-1]["sha256"] = "0" * 64
+        with self.assertRaises(vc.CatalogToolError) as raised:
+            self.fetch()
+        self.assertIn("no member", str(raised.exception))
+
+    def test_a_file_with_no_source_at_all_says_so(self):
+        (self.base / "stage-src" / "styles" / "a.json").unlink()
+        with self.assertRaises(vc.CatalogToolError) as raised:
+            self.fetch()
+        self.assertIn("styles/a.json", str(raised.exception))
+
+    def test_staging_the_mirror_fetches_what_the_repository_does_not_hold(self):
+        stage, count, total = vc.stage_mirror(self.sources, self.state, http=vc.Http(retry_delay=0), out=lambda _: None)
+        self.assertEqual(count, 3)
+        self.assertEqual(total, len(BIG) + len(SMALL) + len(self.ARCHIVED))
+        self.assertEqual((stage / "alpha/1.0/onnx/graph.onnx").read_bytes(), self.ARCHIVED)
+        self.assertEqual((stage / "alpha/1.0/styles/a.json").resolve(), (self.base / "stage-src/styles/a.json").resolve(),
+                         "a file the repository holds is staged from it")
+
+    def test_the_shipped_sources_say_where_every_supertonic_file_comes_from(self):
+        """Every Supertonic file is in the repository, has a pinned upstream, or is a member of a pinned archive."""
+        sources = vc.load_sources()
+        vc.ROOT = self.real_root
+        voice = next(v for v in sources["voices"] if v["id"] == "supertonic-3-int8")
+        archives = {a["url"] for a in voice["upstreamArchives"]}
+        for file in voice["files"]:
+            with self.subTest(file["path"]):
+                self.assertTrue(vc.repository_copy(voice, file) is not None or "upstream" in file
+                                or file.get("origin", {}).get("url") in archives)
 
 
 class StandInNetwork:

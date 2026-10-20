@@ -7,8 +7,7 @@
     "App/SpokenMarginsBrowserTextExtension/Resources",
     "App/SpokenMarginsApp/Resources/Legal",
     "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Assets.xcassets",
-    "App/SpokenMarginsApp/Resources/VoiceCatalog",
-    "Contracts/voice-models/licenses"
+    "App/SpokenMarginsApp/Resources/VoiceCatalog"
   ],
   "components": [
     {
@@ -243,11 +242,12 @@
       "id": "supertonic-model",
       "name": "Supertonic 3 model and preset voice styles (INT8)",
       "license": "BigScience Open RAIL-M",
-      "distribution": "bundled",
+      "distribution": "downloaded",
       "by": "Supertone Inc.; INT8 conversion by the k2-fsa sherpa-onnx project",
       "source": "https://huggingface.co/Supertone/supertonic-3",
       "paths": [
-        "App/SpokenMarginsApp/Resources/Supertonic"
+        "App/SpokenMarginsApp/Resources/Supertonic",
+        "Contracts/voice-models/licenses"
       ],
       "licenseFiles": [
         "App/SpokenMarginsApp/Resources/Supertonic/licenses/SUPERTONIC_MODEL_OPENRAIL-M.txt",
@@ -256,7 +256,7 @@
         "Contracts/voice-models/licenses/supertonic-model-openrail-m.txt",
         "Contracts/voice-models/licenses/apache-2-0.txt"
       ],
-      "note": "Ships in the app today and its model files sit in this repository's Git LFS storage. It moves to a download with #1820; this entry then changes to \"downloaded\". The graphs are modified, quantized derivatives of Supertone's model; the sherpa-onnx conversion is Apache-2.0. The licence's use restrictions are part of the app's Terms of Use.",
+      "note": "Downloaded, not in the app or this repository since #1820: Settings › Voices fetches it from the voice catalog, each file pinned by sha256 in Contracts/voice-models/sources.json. The app keeps only the licence texts and the modification notice (App/SpokenMarginsApp/Resources/Supertonic) and the catalog's licence copies (Contracts/voice-models/licenses). The graphs are modified, quantized derivatives of Supertone's model; the sherpa-onnx conversion is Apache-2.0. The licence's use restrictions are part of the app's Terms of Use.",
       "tracks": {}
     },
     {

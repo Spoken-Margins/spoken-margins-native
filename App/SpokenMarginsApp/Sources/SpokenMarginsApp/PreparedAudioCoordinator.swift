@@ -50,89 +50,69 @@ final class PreparedChunkPlanCache: @unchecked Sendable {
     }
 }
 
+private final class BundledModelHashCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var hashes: [URL: String] = [:]
+
+    /// Folders whose files never change while the app runs: the app bundle, and the downloaded voices (#1820). The
+    /// voice installer verifies each file's hash and moves a whole version folder into place; a new version gets a
+    /// new folder and a removed one is deleted, so a folder's bytes never change in place. Without this, every play
+    /// and preparation pass would hash Supertonic's 145 MB again now that it is a download.
+    private static let immutableRoots: [String] = {
+        var roots = [Bundle.main.bundleURL]
+        if let support = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false) {
+            roots.append(VoiceCatalogCoordinator.voicesRoot(supportDirectory: support))
+        }
+        return roots.map { $0.resolvingSymlinksInPath().standardizedFileURL.path + "/" }
+    }()
+
+    func value(at url: URL, compute: () throws -> String) rethrows -> String {
+        // Imported and test assets elsewhere must be rehashed, including same-size edits.
+        let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+        guard Self.immutableRoots.contains(where: { path.hasPrefix($0) }) else { return try compute() }
+        lock.lock()
+        let cached = hashes[url]
+        lock.unlock()
+        if let cached { return cached }
+        let result = try compute()
+        lock.lock()
+        hashes[url] = result
+        lock.unlock()
+        return result
+    }
+}
+
 enum SupertonicRenderIdentity {
-    /// The model files' hash, once per install (#2055 audit 4): the app bundle's copy, or a downloaded copy
-    /// under `Voices/`, whose files were held to their SHA-256 when it was installed. `forgetInstalledVoices()`
-    /// runs on every install and remove. Anything else (imports, test fixtures) is rehashed every time.
-    static let modelHashes = StableFolderHashCache(stableRoots: [Bundle.main.bundleURL] + [installedVoicesRoot].compactMap { $0 })
-    private static var installedVoicesRoot: URL? {
-        (try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false))
-            .map { VoiceCatalogCoordinator.voicesRoot(supportDirectory: $0) }
-    }
-
-    static func forgetInstalledVoices() {
-        if let installedVoicesRoot { modelHashes.forget(under: installedVoicesRoot) }
-    }
-
-    static let modelRevision = "supertonic-3-int8"
-    static let normalizationVersion = "speech-normalizer.v3"
-    static let chunkingVersion = NarrationChunkPlanner.version
+    private static let bundledHashes = BundledModelHashCache()
+    /// The model's hashes as the app's `asset-manifest.json` pins them, read once.
+    private static let pinned: SupertonicModelHashes? = Bundle.main
+        .url(forResource: "asset-manifest", withExtension: "json", subdirectory: "Supertonic")
+        .flatMap { try? SupertonicModelHashes.load(from: $0) }
 
     static func make(
         assets: SupertonicAssetLocation,
         voice: SupertonicVoiceID,
-        language: String = "en",
-        synthesisSteps: Int = 8,
-        speed: Float = 1,
         fileManager: FileManager = .default
     ) throws -> TTSRenderSignature {
-        let assetHash = try modelHashes.value(at: assets.onnxDirectoryURL) {
-            try treeHash(at: assets.onnxDirectoryURL, fileManager: fileManager)
+        let assetHash = try bundledHashes.value(at: assets.onnxDirectoryURL) {
+            try SupertonicModelHashes.onnxTreeHash(at: assets.onnxDirectoryURL, fileManager: fileManager)
         }
-        let voiceHash = try fileHash(at: assets.voiceStyleURL(for: voice), fileManager: fileManager)
-        let parameters = "language=\(language)\u{1f}steps=\(synthesisSteps)\u{1f}synthesisSpeed=\(speed)"
-        let parametersHash = sha256(Data(parameters.utf8))
-        let canonical = [
-            modelRevision,
-            assetHash,
-            voiceHash,
-            parametersHash,
-            normalizationVersion,
-            chunkingVersion,
-            "prepared-audio-manifest.v2"
-        ].joined(separator: "\u{1f}")
-        return TTSRenderSignature(
-            engine: "supertonic",
-            modelRevision: modelRevision,
-            assetManifestHash: assetHash,
-            voiceStyleHash: voiceHash,
-            synthesisParametersHash: parametersHash,
-            normalizationVersion: normalizationVersion,
-            chunkingVersion: chunkingVersion,
-            digest: sha256(Data(canonical.utf8))
-        )
+        let voiceHash = try SupertonicModelHashes.fileHash(at: assets.voiceStyleURL(for: voice), fileManager: fileManager)
+        return SupertonicRenderSignature.make(onnxTreeHash: assetHash, voiceStyleHash: voiceHash)
     }
 
-    private static func treeHash(at directory: URL, fileManager: FileManager) throws -> String {
-        let urls = try fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ).filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-        var digest = SHA256()
-        for url in urls {
-            digest.update(data: Data(url.lastPathComponent.utf8))
-            digest.update(data: Data([0]))
-            let handle = try FileHandle(forReadingFrom: url)
-            defer { try? handle.close() }
-            while let block = try handle.read(upToCount: 64 * 1_024), !block.isEmpty {
-                digest.update(data: block)
-            }
-            digest.update(data: Data([0]))
+    /// The identity of `voice`'s saved audio whether or not the model is on the phone (#1820): from its files when
+    /// they are there, otherwise from the pinned hashes, which name the same bytes. Throws only when neither is there.
+    static func current(voice: SupertonicVoiceID, assets: SupertonicAssetLocation? = SupertonicAssetResolver.location()) throws -> TTSRenderSignature {
+        if let assets { return try make(assets: assets, voice: voice) }
+        guard let pinned, let signature = SupertonicRenderSignature.make(pinnedBy: pinned, voice: voice) else {
+            throw SupertonicNarrationError.missingAsset("Supertonic")
         }
-        return digest.finalize().map { String(format: "%02x", $0) }.joined()
-    }
-
-    private static func fileHash(at url: URL, fileManager: FileManager) throws -> String {
-        guard fileManager.fileExists(atPath: url.path) else {
-            throw SupertonicNarrationError.missingAsset(url.lastPathComponent)
-        }
-        return sha256(try Data(contentsOf: url, options: [.mappedIfSafe]))
+        return signature
     }
 
     static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        SupertonicModelHashes.sha256(data)
     }
 }
 

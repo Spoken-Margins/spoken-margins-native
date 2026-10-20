@@ -9,7 +9,11 @@
   keygen    make the signing key in the Mac's login Keychain, once, and print its public half.
   sign      sign the built catalog with that key; write Site/voices/v1/catalog.json and manifest.json.
   page      render Site/voices/index.html from the signed catalog.
-  publish   dry run by default; with --apply, upload the mirror files and the site through the deploy script.
+  fetch     download each downloadable voice's files into artifacts/voice-catalog/files/<voice id>/, each checked
+            against sources.json. Supertonic's model files are not in the repository (#1820); this is where publish
+            and the tests that need the real model get them.
+  publish   dry run by default; with --apply, upload the mirror files and the site through the deploy script. It
+            fetches the mirror files first when they aren't fetched yet.
 
 sources.json is the reviewed truth. Nothing in it changes until a person has looked at what changed upstream.
 The private signing key lives only in the Keychain: it is never written to the repository, to artifacts/ or to
@@ -748,8 +752,134 @@ def write_page(sources: dict, site_dir: Path, out=print) -> Path:
 
 # --- publish ---------------------------------------------------------------------------------------------------------
 
-def stage_mirror(sources: dict, state_dir: Path) -> tuple[Path, int, int]:
-    """Link every mirrored file, after checking its bytes, into a folder the deploy script uploads from."""
+def fetched_dir(state_dir: Path, voice: dict) -> Path:
+    """Where `fetch` keeps a voice's files: the same layout as the voice's install folder on the phone."""
+    return state_dir / "files" / voice["id"]
+
+
+def _wrong_bytes(path: Path, file: dict) -> str | None:
+    """None when `path` holds exactly the reviewed bytes, else what is wrong with it."""
+    if not path.is_file():
+        return f"{path} does not exist"
+    if path.stat().st_size != file["byteCount"]:
+        return f"{path} is {path.stat().st_size} bytes, expected {file['byteCount']} (a Git LFS pointer? run `git lfs pull`)"
+    if file_sha256(path) != file["sha256"]:
+        return f"{path} does not hash to the reviewed sha256"
+    return None
+
+
+def repository_copy(voice: dict, file: dict) -> Path | None:
+    """The file in the repository, at the voice's `mirrorFrom`. Only the mirrored files we wrote or reviewed
+    ourselves live there (the licence copies and the modification notice); the model files don't (#1820). Text the
+    catalog carries itself is read from its `contentFile`, beside sources.json (#2055)."""
+    if "contentFile" in file:
+        path = ROOT / "Contracts/voice-models" / file["contentFile"]
+        return path if path.is_file() else None
+    if not voice.get("mirrorFrom"):
+        return None
+    path = ROOT / voice["mirrorFrom"] / file["path"]
+    return path if path.is_file() else None
+
+
+def fetch(sources: dict, state_dir: Path, *, http=None, voice_ids: list[str] | None = None, out=print) -> dict[str, Path]:
+    """Put every file of each downloadable voice into fetched_dir, each checked against its reviewed size and
+    SHA-256. A file the repository holds is copied from it. A file the publisher serves on its own comes from its
+    pinned `upstream` URL. One the publisher ships only inside an archive is taken from the voice's pinned
+    `upstreamArchives` entry by its hash, so a renamed member is still found and nothing else in the archive is
+    written. A file already there with the right bytes is left alone. Returns each voice's folder."""
+    http = http or Http()
+    folders: dict[str, Path] = {}
+    for voice in sources["voices"]:
+        if (voice_ids is not None and voice["id"] not in voice_ids) or voice.get("bundled") or not voice.get("files"):
+            continue
+        folder = fetched_dir(state_dir, voice)
+        problems: list[str] = []
+        from_archive: dict[str, list[dict]] = {}
+        downloaded = 0
+        archive_urls = {archive["url"] for archive in voice.get("upstreamArchives", [])}
+        for file in voice["files"]:
+            target = folder / file["path"]
+            if _wrong_bytes(target, file) is None:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            kept = repository_copy(voice, file)
+            if kept is not None and _wrong_bytes(kept, file) is None:
+                shutil.copyfile(kept, target)
+            elif "upstream" in file:
+                partial = target.with_name(target.name + ".part")
+                status, size, digest = http.download(file["upstream"], partial)
+                if status == 200 and size == file["byteCount"] and digest == file["sha256"]:
+                    os.replace(partial, target)
+                    downloaded += 1
+                else:
+                    partial.unlink(missing_ok=True)
+                    problems.append(f"{file['path']}: {file['upstream']} gave HTTP {status}, {size} bytes, sha256 {digest or 'none'}")
+            elif file.get("origin", {}).get("url") in archive_urls:
+                from_archive.setdefault(file["origin"]["url"], []).append(file)
+            else:
+                problems.append(f"{file['path']}: not in the repository at {voice.get('mirrorFrom')}, and no upstream or archive to fetch it from")
+        for archive in voice.get("upstreamArchives", []):
+            if from_archive.get(archive["url"]):
+                downloaded += _fetch_from_archive(http, archive, from_archive[archive["url"]], folder, state_dir, problems)
+        if problems:
+            raise CatalogToolError(f"cannot fetch {voice['id']}:\n" + "\n".join(problems))
+        out(f"{voice['id']}: {len(voice['files'])} files in {folder} ({downloaded} downloaded)")
+        folders[voice["id"]] = folder
+    return folders
+
+
+def _fetch_from_archive(http, archive: dict, wanted: list[dict], folder: Path, state_dir: Path, problems: list[str]) -> int:
+    """Take each wanted file out of the pinned archive by its SHA-256; returns how many. The archive is deleted
+    afterwards. Members are read through extractfile and written to our own paths, never extracted by their names."""
+    import tarfile
+
+    (state_dir / "tmp").mkdir(parents=True, exist_ok=True)
+    download = state_dir / "tmp" / archive["url"].rsplit("/", 1)[-1]
+    try:
+        status, size, digest = http.download(archive["url"], download)
+        if not (status == 200 and size == archive["byteCount"] and digest == archive["sha256"]):
+            problems.append(f"archive {archive['url']}: HTTP {status}, {size} bytes, sha256 {digest or 'none'}; "
+                            f"reviewed {archive['byteCount']} bytes, sha256 {archive['sha256']}")
+            return 0
+        by_hash = {file["sha256"]: file for file in wanted}
+        found = 0
+        with tarfile.open(download, "r:*") as tar:
+            for member in tar:
+                if not by_hash or not member.isfile() or member.size not in {f["byteCount"] for f in by_hash.values()}:
+                    continue
+                source = tar.extractfile(member)
+                if source is None:
+                    continue
+                staged = folder / ".archive-member.part"
+                hasher = hashlib.sha256()
+                with staged.open("wb") as handle:
+                    for chunk in iter(lambda: source.read(1 << 20), b""):
+                        hasher.update(chunk)
+                        handle.write(chunk)
+                file = by_hash.pop(hasher.hexdigest(), None)
+                if file is None:
+                    staged.unlink(missing_ok=True)
+                    continue
+                target = folder / file["path"]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(staged, target)
+                found += 1
+        for file in by_hash.values():
+            problems.append(f"{file['path']}: no member of {archive['url']} hashes to the reviewed sha256")
+        return found
+    except (OSError, tarfile.TarError, EOFError) as error:
+        problems.append(f"archive {archive['url']}: {error}")
+        return 0
+    finally:
+        download.unlink(missing_ok=True)
+
+
+def stage_mirror(sources: dict, state_dir: Path, *, http=None, out=print) -> tuple[Path, int, int]:
+    """Link every mirrored file, after checking its bytes, into a folder the deploy script uploads from. The files
+    the repository holds come from it; the rest (the model files, which left the app bundle in #1820) from `fetch`,
+    which runs first when one is needed and downloads only what isn't already fetched with the right bytes."""
+    if any(file.get("mirrored") and repository_copy(voice, file) is None for voice in sources["voices"] for file in voice["files"]):
+        fetch(sources, state_dir, http=http, out=out)
     stage = state_dir / "mirror"
     shutil.rmtree(stage, ignore_errors=True)
     problems, count, total = [], 0, 0
@@ -757,14 +887,10 @@ def stage_mirror(sources: dict, state_dir: Path) -> tuple[Path, int, int]:
         for file in voice["files"]:
             if not file.get("mirrored"):
                 continue
-            source = ROOT / voice["mirrorFrom"] / file["path"]
-            label = f"{voice['id']} {file['path']}"
-            if not source.is_file():
-                problems.append(f"{label}: {source} does not exist")
-            elif source.stat().st_size != file["byteCount"]:
-                problems.append(f"{label}: {source} is {source.stat().st_size} bytes, expected {file['byteCount']} (a Git LFS pointer? run `git lfs pull`)")
-            elif file_sha256(source) != file["sha256"]:
-                problems.append(f"{label}: {source} does not hash to the reviewed sha256")
+            source = repository_copy(voice, file) or fetched_dir(state_dir, voice) / file["path"]
+            wrong = _wrong_bytes(source, file)
+            if wrong:
+                problems.append(f"{voice['id']} {file['path']}: {wrong}")
             else:
                 destination = stage / voice["mirrorDir"] / file["path"]
                 destination.parent.mkdir(parents=True, exist_ok=True)
@@ -830,7 +956,7 @@ def publish(sources: dict, state_dir: Path, site_dir: Path, *, apply: bool = Fal
     if live is not None and catalog["catalogVersion"] < live["catalogVersion"]:
         raise CatalogToolError(f"catalogVersion {catalog['catalogVersion']} is lower than the live {live['catalogVersion']}; the app would reject it as a rollback")
     live_version = live["catalogVersion"] if live else None
-    stage, mirror_count, mirror_bytes = stage_mirror(sources, state_dir)
+    stage, mirror_count, mirror_bytes = stage_mirror(sources, state_dir, http=http, out=out)
     out(f"catalog version {catalog['catalogVersion']} ({len(catalog['voices'])} voices); live version: {live_version if live_version is not None else 'none yet'}")
     out(f"mirror: {mirror_count} files, {format_bytes(mirror_bytes)}, staged at {stage}")
     if not apply:
@@ -876,6 +1002,8 @@ def main(argv: list[str]) -> int:
     commands.add_parser("keygen")
     commands.add_parser("sign")
     commands.add_parser("page")
+    fetch_parser = commands.add_parser("fetch", help="download each voice's files, checked, into artifacts/voice-catalog/files/<voice>/")
+    fetch_parser.add_argument("voices", nargs="*", help="voice ids (default: every downloadable voice)")
     publish_parser = commands.add_parser("publish")
     publish_parser.add_argument("--apply", action="store_true")
     arguments = parser.parse_args(argv)
@@ -908,6 +1036,8 @@ def main(argv: list[str]) -> int:
             sign(sources, arguments.state_dir, arguments.site_dir, key)
         elif arguments.command == "app-snapshot":
             write_app_snapshot(sources)
+        elif arguments.command == "fetch":
+            fetch(sources, arguments.state_dir, voice_ids=arguments.voices or None)
         elif arguments.command == "page":
             write_page(sources, arguments.site_dir)
         elif arguments.command == "publish":

@@ -17,7 +17,7 @@ M2's last open item is render speed on the owner's iPhone 17 Pro, measured in Lo
 
 `VoiceBench.xcodeproj` is generated from [`project.yml`](project.yml) (`xcodegen generate` in this folder). It is its own project, and the shipping app's `project.yml` doesn't mention it.
 
-- **Build it:** run `./fetch_models.sh` once. It downloads the two Kitten files into `VoiceBench/Models/` (git-ignored) at pinned Hugging Face revisions and checks their sha256. The build copies them, and `App/SpokenMarginsApp/Resources/Supertonic`, into the app. The phone downloads nothing.
+- **Build it:** run `./fetch_models.sh` once. It downloads the two Kitten files into `VoiceBench/Models/` (git-ignored) at pinned Hugging Face revisions and checks their sha256. The build copies them, and `App/SpokenMarginsApp/Resources/Supertonic`, into the app. The phone downloads nothing. Since #1820 that folder holds only Supertonic's licences: run `scripts/voice-catalog fetch supertonic-3-int8` and point `project.yml` at `artifacts/voice-catalog/files/supertonic-3-int8` (as a folder named `Supertonic`) before measuring Supertonic.
 - **Scheme:** Run uses the Release configuration, so Supertonic's Swift code is optimized as it is in the shipping app.
 - **`VoiceBench/VoiceBenchRunner.swift`: the runners.**
   - Kitten runs on onnxruntime 1.24.2 from pre-tokenized ids and style rows, with no phonemizer on the device. It runs fp32 and int8, each on 1 and 2 threads.

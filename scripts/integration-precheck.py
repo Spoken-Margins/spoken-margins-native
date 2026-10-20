@@ -217,10 +217,12 @@ class Ops:
         return subprocess.check_output(command, cwd=ROOT, text=True, stderr=subprocess.PIPE, timeout=120)
 
     def snapshot(self):
-        self.run(['git', 'fetch', '--quiet', 'origin', 'refs/heads/next:refs/remotes/origin/next'])
-        tip = self.run(['git', 'rev-parse', 'origin/next']).strip()
+        from trunk import trunk_branch  # #1492: the branch the integration run tests
+        branch = trunk_branch()
+        self.run(['git', 'fetch', '--quiet', 'origin', f'refs/heads/{branch}:refs/remotes/origin/{branch}'])
+        tip = self.run(['git', 'rev-parse', f'origin/{branch}']).strip()
         if not re.fullmatch(r'[a-f0-9]{40}', tip):
-            raise ValueError('origin/next is not a full commit SHA')
+            raise ValueError(f'origin/{branch} is not a full commit SHA')
         comments = []
         for number in (184, 337):
             pages = json.loads(self.run(['gh', 'api', '--paginate', '--slurp',

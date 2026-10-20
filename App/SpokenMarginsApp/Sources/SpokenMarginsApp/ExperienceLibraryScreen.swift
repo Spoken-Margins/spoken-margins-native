@@ -8,6 +8,8 @@ struct ExperienceLibraryScreen: View {
 
     @Binding var addSourceRoute: AddSourceRoute?
     @State private var isAudioPreparationQueuePresented = false
+    /// The item whose Continue is waiting on the "hear new Margins first?" question (#474).
+    @State private var newMarginsOfferItemId: String?
     @State private var collectionItem: LibraryItemRow?
 
     private var continueItem: LibraryItemRow? {
@@ -61,6 +63,7 @@ struct ExperienceLibraryScreen: View {
             ItemCollectionSheet(item: item)
                 .environmentObject(model)
         }
+        .newMarginsOffer(itemId: $newMarginsOfferItemId)
     }
 
     @ToolbarContentBuilder
@@ -392,7 +395,7 @@ struct ExperienceLibraryScreen: View {
                     isCurrentItem: entry.isCurrent,
                     playbackSpeed: model.speechPlaybackRateMultiplier,
                     onOpen: { model.openItem(id: row.id) },
-                    onPlay: { model.startItem(id: row.id) },
+                    onPlay: { model.continueListening(itemId: row.id) { newMarginsOfferItemId = $0 } },
                     onComplete: { model.markItemCompleted(id: row.id) },
                     onMarkUnfinished: { model.markItemUnfinished(id: row.id) },
                     onPrepareOffline: { model.prioritizeOfflinePreparation(id: row.id) },

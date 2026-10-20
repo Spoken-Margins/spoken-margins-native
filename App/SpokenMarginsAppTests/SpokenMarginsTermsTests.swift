@@ -1,5 +1,6 @@
 import XCTest
 import SessionKit
+import SessionKitSupertonic
 @testable import SpokenMarginsApp
 
 final class SpokenMarginsTermsStorageTests: XCTestCase {
@@ -79,6 +80,35 @@ final class SupertonicTermsGateTests: XCTestCase {
         XCTAssertEqual(defaults.string(forKey: SpokenMarginsTerms.acceptanceVersionKey), SpokenMarginsTerms.currentVersion)
         XCTAssertEqual(defaults.string(forKey: "ttsVoiceSelection"), AppTTSVoiceSelection.lily.rawValue)
         XCTAssertNoThrow(try model.verifyCurrentTermsForOnDeviceVoice())
+    }
+
+    /// #2125: a Supertonic preview takes seconds to render. If the listener picks another voice or starts an
+    /// item meanwhile, the preview must not play when the render lands.
+    func testAPendingVoicePreviewIsDroppedByAVoiceChangeOrPlaybackStart() throws {
+        let snapshot = StandardDefaultsSnapshot(keys: termsAndVoiceDefaultsKeys)
+        defer { snapshot.restore() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = Gate1AppModel(audioPlaybackClient: TermsNoopAudioPlaybackClient(),
+                                  databaseURLOverride: root.appendingPathComponent("preview.sqlite"))
+        model.resetAndSeed()
+
+        let beforeVoiceChange = model.supertonicPreviewRequest.begin(voice: .m1)
+        model.ttsVoiceSelectionChanged()
+        XCTAssertFalse(model.supertonicPreviewRequest.isPending, "a voice change cancels the preview")
+        XCTAssertFalse(model.supertonicPreviewRequest.mayPlay(beforeVoiceChange, selectedVoice: .m1, otherAudioActive: false))
+
+        let beforePlayback = model.supertonicPreviewRequest.begin(voice: .m1)
+        model.startItem(id: "item-pill")
+        XCTAssertFalse(model.supertonicPreviewRequest.isPending, "starting an item cancels the preview")
+        XCTAssertNotNil(model.snapshot.sessionId)
+        XCTAssertFalse(model.supertonicPreviewRequest.mayPlay(beforePlayback, selectedVoice: .m1, otherAudioActive: false))
+
+        let duringPlayback = model.supertonicPreviewRequest.begin(voice: .m1)
+        XCTAssertFalse(model.supertonicPreviewRequest.mayPlay(duringPlayback, selectedVoice: .m1, otherAudioActive: true),
+                       "a preview never plays over narration")
+        model.endSession()
     }
 
     func testDecliningTermsKeepsSystemVoiceAndDoesNotRecordAcceptance() {

@@ -224,9 +224,11 @@ def inputs_changed_message(prefix, before, limit=5):
     shown = ', '.join(paths[:limit]) + (f' and {len(paths) - limit} more' if len(paths) > limit else '')
     message = f'{prefix}: {shown}'
     if 'Packages/SessionKit/Package.resolved' in paths:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from trunk import trunk_ref  # #1492: the branch the fix restores from
         message += ('. SwiftPM rewrote Package.resolved during the build, so the copy committed on this branch does not '
                     'match Package.swift on the Mac (a Linux `swift test` rewrites it). Restore it with '
-                    '`git checkout origin/next -- Packages/SessionKit/Package.resolved` and push; if this branch '
+                    f'`git checkout {trunk_ref()} -- Packages/SessionKit/Package.resolved` and push; if this branch '
                     'changes dependencies on purpose, run `swift package resolve` on a Mac instead')
     return message
 
@@ -604,6 +606,32 @@ POCKET_WEIGHT_TESTS = frozenset(f'SessionKitTests/PocketRendererTests/{test}' fo
     'testRendersTheThreeC2PassagesFasterThanRealTimeOnOneThread',
     'testProsePassagesAreSpokenWithinTwoPointsOfThePyTorchWordError',
 ))
+
+
+# Supertonic's render tests need its model, which is a download since #1820, in neither the repository nor the app.
+# Without `scripts/voice-catalog fetch supertonic-3-int8` (or SESSIONKIT_SUPERTONIC_DIR) they skip, naming the
+# supertonicModel input; SM_REQUIRE_MODELS makes them fail instead.
+SUPERTONIC_MODEL_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
+    'SupertonicChunkingTests/testNumberHeavyTableSpanRendersNoChunkNearTheBabbleLength',
+    'SupertonicChunkingTests/testSystemVoiceReadsAFlaggedChunkInSupertonicsFormat',
+    'SupertonicDownloadedModelTests/testThePinnedTreeHashIsTheDownloadedModels',
+    'SupertonicNarrationTests/testDiscardDeletesOnlyAudioTheRendererGenerated',
+    'SupertonicNarrationTests/testRealRenderComesBackTrimmedToItsSpeech',
+    'SupertonicNarrationTests/testRealRendersArePacedByWhoAskedNotBySharedState',
+    'SupertonicVoiceSelectionTests/testJamesAndLilyReadTheSameSentenceInTheirOwnAudibleVoices',
+))
+
+
+# The one app-hosted test that runs Supertonic's real model, in the adapters plan. The model is a download since #1820,
+# so the run fetches it (pinned by sha256 in Contracts/voice-models/sources.json) into a cache outside the checkout,
+# once per Mac, and hands it to the app's tests; a fetch that fails fails the run instead of letting the test skip.
+SUPERTONIC_APP_MODEL_TEST = 'SupertonicSpeechTests/testDownloadedRendererSynthesizesJamesAndLilyAndReusesSessions'
+SUPERTONIC_MODEL_VOICE = 'supertonic-3-int8'
+
+
+def supertonic_model_cache():
+    """Where the lane keeps the fetched model: SM_VOICE_CACHE, else the user's Caches folder (about 150 MB)."""
+    return Path(os.environ.get('SM_VOICE_CACHE') or Path.home() / 'Library/Caches/SpokenMargins/voice-catalog')
 
 
 def in_codex_sandbox():
@@ -1285,7 +1313,7 @@ class Run:
                          timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
                          expected=expected - core if split else expected, tests=True,
                          allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus',
-                                        *POCKET_WEIGHT_TESTS},
+                                        *POCKET_WEIGHT_TESTS, *SUPERTONIC_MODEL_TESTS},
                          probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
         except RuntimeError as error:
             step = self.manifest['steps'][-1]
@@ -1417,6 +1445,19 @@ class Run:
                      str(derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')])
         return derived, identity
 
+    def provide_supertonic_model(self):
+        """Fetch Supertonic's model before the simulator boots, and give its folder to the app's tests, which read
+        SESSIONKIT_SUPERTONIC_DIR (xcodebuild passes TEST_RUNNER_-prefixed variables on without the prefix)."""
+        folder = os.environ.get('SESSIONKIT_SUPERTONIC_DIR')
+        if not folder:
+            cache = supertonic_model_cache()
+            self.command('supertonic-model', [sys.executable, str(ROOT / 'scripts/voice-catalog'), '--state-dir', str(cache),
+                                              'fetch', SUPERTONIC_MODEL_VOICE], timeout=1200)
+            folder = str(cache / 'files' / SUPERTONIC_MODEL_VOICE)
+        os.environ['TEST_RUNNER_SESSIONKIT_SUPERTONIC_DIR'] = folder
+        self.manifest['supertonic_model'] = folder
+        self.save()
+
     def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None, simulator_slot_fd=None,
               require_build=False):
         if input_identity() != self.manifest['input_sha256']:
@@ -1433,6 +1474,9 @@ class Run:
                                      {f'{APP_TEST_TARGET}/{test}' for test in target_tests(ROOT, APP_TEST_TARGET)})
         if selectors:
             self.manifest['only_testing'] = selectors
+        if any(test.endswith(SUPERTONIC_APP_MODEL_TEST)
+               for test in planned if not selectors or any(selected(test, s) for s in selectors)):
+            self.provide_supertonic_model()
         chosen, created = self.simulator(device, ios)
         refuse_unsafe(chosen, lane_sim.unsafe_devices())
         self.manifest['destination'] = chosen

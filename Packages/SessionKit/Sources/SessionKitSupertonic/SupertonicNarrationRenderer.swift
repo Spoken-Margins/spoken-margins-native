@@ -26,10 +26,6 @@ public struct SupertonicAssetLocation: Equatable, Sendable {
         self.voiceStylesDirectoryURL = rootURL.appending(path: "voice_styles", directoryHint: .isDirectory)
     }
 
-    /// Whether every file `validate` asks for is still on disk: a few file checks, no hashing. False once the
-    /// listener removes the downloaded voice these files belong to.
-    public var isIntact: Bool { (try? validate()) != nil }
-
     public func voiceStyleURL(for voice: SupertonicVoiceID) -> URL {
         voiceStylesDirectoryURL.appending(path: "\(voice.rawValue).json")
     }
@@ -107,7 +103,7 @@ public enum SupertonicNarrationError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .missingAsset(let name):
-            return "Bundled Supertonic asset is missing: \(name)."
+            return "Supertonic isn’t downloaded (\(name) is missing). Download it in Settings › Voices."
         case .emptyText:
             return "The text to speak is empty."
         case .invalidSynthesisSteps(let steps):
@@ -150,8 +146,7 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
         }
     }
 
-    /// The model files this renderer reads. The app drops the renderer once they are gone (#2055 audit 1).
-    public let assets: SupertonicAssetLocation
+    private let assets: SupertonicAssetLocation
     private let outputDirectory: URL
     private let fileManager: FileManager
     private let renderQueue = DispatchQueue(label: "com.spokenmargins.supertonic.render", qos: .userInitiated)
