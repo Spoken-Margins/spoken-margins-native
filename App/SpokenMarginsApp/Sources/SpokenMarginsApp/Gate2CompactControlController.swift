@@ -430,6 +430,7 @@ final class Gate2CompactControlController {
     }
 
     func reconcileLiveActivities() {
+        NowPlayingInfoOwnership.shared.note("lifecycle_refresh")
         publishCurrentSnapshot(force: true)
     }
 
