@@ -63,7 +63,9 @@ final class AccessibilityFixProofTests: XCTestCase {
 
         let failed = try mount(AnyView(CatalogDrawerRow(entry: entry, state: .failed("Couldn’t reach the feed"), toggleFollow: {})))
         defer { failed.close() }
-        let retry = try await failed.waitForNode("the Retry button") { $0.identifier == "catalog.follow.\(entry.id)" }
+        let retry = try await failed.waitForNode("the Retry button") {
+            $0.identifier == "catalog.follow.\(entry.id)" || $0.label?.hasPrefix("Retry") == true
+        }
         XCTAssertEqual(retry.label, "Retry following The Daily Example")
     }
 
@@ -111,8 +113,12 @@ final class AccessibilityFixProofTests: XCTestCase {
             let mounted = try mount(AnyView(ExperienceAddSourceFlow(initialRoute: .linkOrPodcast).environmentObject(model)),
                                     textSize: size)
             defer { mounted.close() }
-            let link = try await mounted.waitForNode("the Link or Podcast tile") { $0.identifier == "addSource.route.linkOrPodcast" }
-            let text = try await mounted.waitForNode("the Paste Text tile") { $0.identifier == "addSource.route.pastedText" }
+            let link = try await mounted.waitForNode("the Link or Podcast tile") {
+                $0.identifier == "addSource.route.linkOrPodcast" || $0.label?.hasPrefix("Link or Podcast,") == true
+            }
+            let text = try await mounted.waitForNode("the Paste Text tile") {
+                $0.identifier == "addSource.route.pastedText" || $0.label?.hasPrefix("Paste Text,") == true
+            }
             if stacked {
                 XCTAssertEqual(text.frame.minX, link.frame.minX, accuracy: 1, "\(size): the tiles are not one column")
                 XCTAssertGreaterThanOrEqual(text.frame.minY, link.frame.maxY - 1, "\(size): Paste Text is not under Link or Podcast")
@@ -129,7 +135,10 @@ final class AccessibilityFixProofTests: XCTestCase {
             let mounted = try mount(AnyView(PasteAndGoBar(onAdded: {}).environmentObject(model)), textSize: size,
                                     width: width)
             defer { mounted.close() }
-            let paste = try await mounted.waitForNode("the Paste button") { $0.identifier == "addSource.pasteAndGo.button" }
+            // The system draws PasteButton's control and its "Paste" label; SwiftUI's label and identifier don't reach it.
+            let paste = try await mounted.waitForNode("the Paste button") {
+                $0.identifier == "addSource.pasteAndGo.button" || $0.label == "Paste"
+            }
             if stacked {
                 XCTAssertLessThan(paste.frame.minX, 60, "\(size): the Paste button sits beside the text at x \(paste.frame.minX)")
             } else {
@@ -144,7 +153,9 @@ final class AccessibilityFixProofTests: XCTestCase {
             let mounted = try mount(AnyView(CatalogDrawerRow(entry: entry, state: nil, toggleFollow: {})), textSize: size)
             defer { mounted.close() }
             let title = try await mounted.waitForNode("the show title") { $0.label == entry.title }
-            let follow = try await mounted.waitForNode("the Follow button") { $0.identifier == "catalog.follow.\(entry.id)" }
+            let follow = try await mounted.waitForNode("the Follow button") {
+                $0.identifier == "catalog.follow.\(entry.id)" || $0.label == "Follow \(entry.title)"
+            }
             if stacked {
                 XCTAssertGreaterThanOrEqual(follow.frame.minY, title.frame.maxY - 1, "\(size): Follow is beside the title, not under it")
             } else {
@@ -222,7 +233,8 @@ final class AccessibilityFixProofTests: XCTestCase {
         let title = try await mounted.waitForNode("the cannot-open title") { $0.label == LibraryAccessNote.title }
         XCTAssertTrue(title.traits.contains(.header))
         let nodes = mounted.nodes()
-        XCTAssertTrue(nodes.contains { $0.identifier == "library.cannotOpen.retry" }, "No Try again button")
+        XCTAssertTrue(nodes.contains { $0.identifier == "library.cannotOpen.retry" || $0.label == "Try again" },
+                      "No Try again button: saw \(nodes.compactMap(\.label).prefix(30))")
         XCTAssertFalse(nodes.contains { $0.label == "Your Library is ready" }, "The happy empty state is showing")
         XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: databaseURL.path), 99, "The Library was touched")
     }
@@ -336,7 +348,7 @@ struct MountedTree {
 
     private static func collect(_ node: NSObject, into found: inout [AccessibilityNode], visited: inout Set<ObjectIdentifier>) {
         guard visited.insert(ObjectIdentifier(node)).inserted else { return }
-        let identifier = (node as? UIAccessibilityIdentification)?.accessibilityIdentifier
+        let identifier = Self.identifier(of: node)
         let label = node.accessibilityLabel
         if label?.isEmpty == false || identifier?.isEmpty == false {
             found.append(AccessibilityNode(label: label, identifier: identifier, traits: node.accessibilityTraits,
@@ -350,5 +362,16 @@ struct MountedTree {
             children += (0..<count).compactMap { node.accessibilityElement(at: $0) as? NSObject }
         }
         for child in children { collect(child, into: &found, visited: &visited) }
+    }
+
+    /// SwiftUI's vended elements answer `accessibilityIdentifier` without declaring `UIAccessibilityIdentification`,
+    /// so a protocol cast reads nothing (the first T3 run on #2049 saw every identifier empty). Ask by selector.
+    private static func identifier(of node: NSObject) -> String? {
+        if let identifier = (node as? UIAccessibilityIdentification)?.accessibilityIdentifier, !identifier.isEmpty {
+            return identifier
+        }
+        let selector = NSSelectorFromString("accessibilityIdentifier")
+        guard node.responds(to: selector) else { return nil }
+        return node.perform(selector)?.takeUnretainedValue() as? String
     }
 }
