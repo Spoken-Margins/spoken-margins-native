@@ -18,7 +18,8 @@ def _strip(text: str) -> str:
 
 def _row() -> str:
     text = _strip(SCREEN.read_text())
-    return text[text.index("private struct SourceInboxRow"):]
+    # Any access level: #2049 dropped `private` so app-hosted tests can reach the row (#2203).
+    return text[re.search(r"\bstruct SourceInboxRow\b", text).start():]
 
 
 class FollowingRowDynamicTypeTests(unittest.TestCase):
