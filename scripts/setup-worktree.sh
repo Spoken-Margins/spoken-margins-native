@@ -21,4 +21,9 @@ for dir in .venv node_modules; do
     exit 1
   fi
 done
+# The signing team for device builds and archives lives only in the main checkout (#1841).
+if [ -f "$main/Config/Local.xcconfig" ] && [ ! -e "$here/Config/Local.xcconfig" ] && [ ! -L "$here/Config/Local.xcconfig" ]; then
+  ln -s "$main/Config/Local.xcconfig" "$here/Config/Local.xcconfig"
+  echo "Config/Local.xcconfig: linked to $main/Config/Local.xcconfig"
+fi
 python3 "$here/scripts/sm_build_cache.py" link "$here"

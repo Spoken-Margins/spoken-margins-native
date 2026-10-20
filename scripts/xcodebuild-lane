@@ -16,6 +16,8 @@ Usage: scripts/xcodebuild-lane <xcodebuild arguments>
   scripts/xcodebuild_finish.py's grace period is stopped, says so, and returns the result its summary shows (#2053).
   That is a pass only when the summary covers the whole run (one bundle selected, or xcodebuild's own banner).
 - Information-only calls (-version, -list, -showBuildSettings, -exportArchive, ...) skip all three.
+- Every call first links the main checkout's git-ignored Config/Local.xcconfig, the signing team, into a
+  worktree that has none (#1841), so device builds and archives in any worktree sign as the main checkout does.
 """
 import contextlib
 import os
@@ -45,6 +47,28 @@ def worktree_root():
         return Path.cwd()
 
 
+def link_local_config(root, log=None):
+    """Link the main checkout's Config/Local.xcconfig into worktree `root` if it has none; the link, or None."""
+    target = Path(root) / 'Config' / 'Local.xcconfig'
+    if not target.parent.is_dir() or target.exists() or target.is_symlink():
+        return None
+    try:
+        common = subprocess.check_output(['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+                                         cwd=root, text=True, stderr=subprocess.DEVNULL).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    source = Path(common).parent / 'Config' / 'Local.xcconfig'
+    if source.parent.parent.resolve() == Path(root).resolve() or not source.is_file():
+        return None
+    try:
+        target.symlink_to(source)
+    except OSError:  # a parallel call linked it first, or the folder is read-only: build on without it
+        return None
+    if log:
+        log(f'[lane] Config/Local.xcconfig: linked to {source} (the signing team, #1841)')
+    return target
+
+
 def simulator_arch(args, machine=None):
     """['ARCHS=arm64'] for a generic iOS Simulator build on Apple silicon that sets no architecture, else []."""
     destinations = [args[i + 1].replace(' ', '') for i, arg in enumerate(args[:-1]) if arg == '-destination']
@@ -55,6 +79,7 @@ def simulator_arch(args, machine=None):
 
 def main(argv):
     xcodebuild = os.environ.get('SM_LANE_XCODEBUILD', 'xcodebuild')
+    link_local_config(worktree_root(), log=lambda line: print(line, file=sys.stderr, flush=True))
     if any(arg in NO_BUILD_FLAGS for arg in argv):
         os.execvp(xcodebuild, [xcodebuild, *argv])
     args = list(argv)
