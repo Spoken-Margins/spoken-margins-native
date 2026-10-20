@@ -4,6 +4,7 @@ import inspect
 import io
 import json
 import plistlib
+import re
 import os
 import shutil
 import subprocess
@@ -974,6 +975,29 @@ class VerificationTests(unittest.TestCase):
         skipped = {name: {'status': 'skipped', 'seconds': 0}}
         self.assertTrue(verification.reconcile({name}, skipped))
         self.assertEqual(verification.reconcile({name}, skipped, {name}), [])
+
+    def test_the_hang_probe_timing_tests_may_skip_on_a_busy_host_in_both_core_steps(self):
+        # #2210: those tests skip when the host runs a 10 ms sleep 40 ms late. A skip the core steps don't allow turns
+        # the fast plan red just the same, and a name that drifts from the Swift file allows nothing.
+        swift = (Path(__file__).resolve().parents[2] / 'Packages/SessionKit/Tests/SessionKitCoreTests'
+                 / 'MainThreadHangProbeTests.swift').read_text()
+        skipping = {f'SessionKitCoreTests/MainThreadHangProbeTests/{name}' for name in
+                    re.findall(r'func (test\w+)\(\) throws', swift)}
+        self.assertEqual(verification.HANG_PROBE_TIMING_TESTS, skipping)
+        steps = {}
+
+        def command(name, args, **kw):
+            steps[name] = kw.get('allowed_skips', ())
+            run.manifest['steps'].append({'name': name})
+            if name == 'package-core':
+                raise RuntimeError('parallel run failed')
+
+        run = verification.Run(Path(tempfile.mkdtemp()) / 'run', 'fast')
+        with patch.object(run, 'command', side_effect=command):
+            run.package_core({'SessionKitCoreTests/MainThreadHangProbeTests/testAHundredMillisecondBlockRecordsNothing'})
+        self.assertEqual(set(steps), {'package-core', 'package-core-serial'})
+        for allowed in steps.values():
+            self.assertLessEqual(verification.HANG_PROBE_TIMING_TESTS, set(allowed))
 
     def xctest_log(self, *results):
         return '; '.join(f"print(\"Test Case '-[SpokenMarginsAppUITests.{c} {m}]' {status} (1.0 seconds)\")"
