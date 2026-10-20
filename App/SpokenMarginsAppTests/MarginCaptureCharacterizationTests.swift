@@ -131,12 +131,13 @@ final class MarginCaptureCharacterizationTests: XCTestCase {
         model.cancelInterjection()
     }
 
-    /// Today's behaviour, not a requirement: the compact controls have no request ID, so a grant that arrives after
-    /// the listener cancelled in the app still starts a recording. Pinned so the extraction does not change it by
-    /// accident; fencing it is a behaviour change with its own issue and phone check.
-    func testACompactControlGrantAfterTheListenerCancelledStillRecords() async throws {
+    /// #2126: a grant from a compact control (Live Activity, widget, headphones) that arrives after the listener
+    /// cancelled in the app starts nothing. The compact request carries a token through the prompt, as the in-app
+    /// request carries its ID. This was pinned as today's behaviour, with the note that fencing it needed its own issue.
+    func testACompactControlGrantAfterTheListenerCancelledStartsNothing() async throws {
         let gate = QueuedPermissionGate()
-        let model = makeModel(gate: gate, status: .denied)
+        let recorder = CallbackRecordingClient()
+        let model = makeModel(gate: gate, recorder: recorder, status: .denied)
         model.dispatchGate2CompactCommand(.beginInterjection, origin: "live_activity")
         try await waitFor("the compact control to ask") { gate.requests == 1 }
         XCTAssertTrue(model.isRequestingRecordingPermission)
@@ -146,7 +147,23 @@ final class MarginCaptureCharacterizationTests: XCTestCase {
         XCTAssertFalse(model.snapshot.isRecording)
 
         gate.answer(0, granted: true)
-        try await waitFor("the late grant to land") { model.snapshot.isRecording }
+        for _ in 0..<20 { await Task.yield() }
+
+        XCTAssertEqual(recorder.beginCount, 0, "the late grant started no recording")
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertFalse(model.isRequestingRecordingPermission)
+        XCTAssertNil(model.recordingPresentationContext)
+    }
+
+    /// #2126: without a Cancel, the compact control's grant still records.
+    func testACompactControlGrantWithNoCancelStillRecords() async throws {
+        let gate = QueuedPermissionGate()
+        let model = makeModel(gate: gate, status: .denied)
+        model.dispatchGate2CompactCommand(.beginInterjection, origin: "live_activity")
+        try await waitFor("the compact control to ask") { gate.requests == 1 }
+
+        gate.answer(0, granted: true)
+        try await waitFor("the grant to record") { model.snapshot.isRecording }
 
         XCTAssertFalse(model.isRequestingRecordingPermission)
         XCTAssertNotNil(model.recordingPresentationContext)

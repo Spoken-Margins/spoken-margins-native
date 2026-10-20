@@ -346,6 +346,8 @@ final class Gate1AppModel: ObservableObject {
     @Published var feedSubscriptions: [FeedSubscription] = [] { didSet { quickAccess.invalidateCandidates(); listeningSignals.endListening() } }
     @Published var isRefreshingFollowedSources = false
     @Published var importingFollowedSourceEntryIds: Set<String> = []
+    /// The latest Play now or Add and open from Following; any later open or start makes it stale (#2124).
+    var followedPlayIntent = CurrentRequest()
     @Published var isFollowingSelectedSource = false
     @Published var isResolvingSourceLink = false
     @Published var sourceLinkCandidateReview: SourceLinkCandidateReviewState?
@@ -1963,27 +1965,6 @@ final class Gate1AppModel: ObservableObject {
         LibraryQueryEngine.librarySortDescription(query: libraryQuery)
     }
 
-    func openItem(id: String) {
-        let diagnosticStart = ProcessInfo.processInfo.systemUptime
-        recordDeveloperDiagnostic("item.open.begin", ["item": DeveloperDiagnosticRecording.token(id)])
-        defer { recordDeveloperDiagnostic("item.open.end", ["durationMs": String(Int((ProcessInfo.processInfo.systemUptime - diagnosticStart) * 1000))]) }
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_item") else { return }
-        do {
-            let store = try requireStore()
-            activeItemId = id
-            selectedItem = try loadItemDetail(id: id, store: store)
-            prepareImportedLocalAudioBridges(itemId: id)
-            scheduleTextAudioPrewarmIfNeeded(itemId: id); PublisherAudioTextMapper.resume(itemId: id, store: store, transcriber: sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(id): \($0)" }; fetchCommunityMapIfNeeded(itemId: id)
-            listeningMapJSON = ""
-            screen = .item
-            discoverFollowOfferIfEligible(itemId: id, store: store)
-            offerFollowSuggestionIfEligible(itemId: id, store: store)
-            reportSuccess("Opened \(selectedItem.title).")
-        } catch {
-            reportFailure(error, context: "Open item failed")
-        }
-    }
-
     func startItem(id: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_item") else { return }
         prepareImportedLocalAudioBridges(itemId: id); fetchCommunityMapIfNeeded(itemId: id)
@@ -2008,6 +1989,7 @@ final class Gate1AppModel: ObservableObject {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_new_session") else { return }
         // Before ending what's playing: a blocked start must not stop a downloaded episode.
         guard !blockOfflineEpisodeStart(itemId: id) else { return }
+        followedPlayIntent.cancel() // the listener moved on: a pending Play now must not take over (#2124)
         resetMixWithOtherAudioForNewSession()
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         cancelSleepTimer()
@@ -2025,6 +2007,7 @@ final class Gate1AppModel: ObservableObject {
 
     func openSession(_ session: Session) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_session") else { return }
+        followedPlayIntent.cancel() // the listener moved on: a pending Play now must not take over (#2124)
         resetMixWithOtherAudioForNewSession()
         sharedMarginOffers.removeAll()
         pendingImportedCommentary = nil
@@ -2054,6 +2037,7 @@ final class Gate1AppModel: ObservableObject {
     func resumeSession(_ session: Session) {
         guard !rejectNavigationOrSessionMutationWhileRecording("resume_session") else { return }
         guard !blockOfflineEpisodeStart(itemId: session.itemId) else { return }
+        followedPlayIntent.cancel() // the listener moved on: a pending Play now must not take over (#2124)
         resetMixWithOtherAudioForNewSession()
         cancelSleepTimer()
         sharedMarginOffers.removeAll()
