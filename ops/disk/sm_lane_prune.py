@@ -248,6 +248,8 @@ def plan_prune(lane_dir: Path, evidence_dirs: Iterable[Path], live_trees: Option
     kept free under the cap for a build about to start (steps 3 and 4 bring the folder to cap - room)."""
     warm = warm_dir or lane_dir / 'warm-build'
     plan = Plan(cap=cap, room=room, warm_dir=warm)
+    room = max(room, 0)  # a negative room would loosen the cap
+    plan.room = room
     target = max(cap - room, 0)
 
     def why() -> str:
