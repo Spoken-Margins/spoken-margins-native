@@ -19,12 +19,25 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     /// must accept it so installing this lane over another active lane does not
     /// make the existing library appear empty.
     public static let currentSchemaVersion = 5
+    /// The Library read, audio preparation, the map preparer and the placement passes can read together, and the main thread beside them.
+    private static let readConnectionLimit = 6
     private static let sessionScopedRecordKinds: Set<String> = ["interjection", "turn", "ai_job"]
     private var db: OpaquePointer?
     private let connectionLock = NSRecursiveLock()
     /// How many `withTransaction` calls are open on this connection. Guarded by `connectionLock`.
     private var transactionDepth = 0
-    /// `loadTranscriptTimelineSummary` answers by item, with the stamp of the record they were read from. Guarded by `connectionLock`.
+    /// Read-only connections for reads, so a read never waits for `connectionLock` or for another read (#2103).
+    /// nil when the file can't be read beside the writer (not WAL, or in memory): reads then use the one connection.
+    private var readConnections: ReadConnectionPool?
+    /// The thread that has a transaction open on `db`, if any. Its reads must see its own uncommitted writes, so they
+    /// stay on `db`; every other thread reads what is committed.
+    private let transactionOwnerLock = NSLock()
+    private var transactionOwner: pthread_t?
+    /// Items written inside the open transaction. Only the thread that owns it touches this, under `connectionLock`.
+    private var itemsWrittenInTransaction: [String] = []
+    /// `loadTranscriptTimelineSummary` answers by item, with the stamp of the record they were read from. Its own lock, so
+    /// answering from it never waits behind a write holding `connectionLock`.
+    private let transcriptSummaryLock = NSLock()
     private var transcriptSummaryByItem: [String: (stamp: String, summary: TranscriptTimelineSummary)] = [:]
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -50,12 +63,18 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         // Allow brief independent transactions to finish instead of dropping a save.
         sqlite3_busy_timeout(db, 1_000)
         try migrate()
+        // WAL lets readers run beside the writer. Without it (a file system that can't, or an in-memory database) a
+        // second connection would see a different database or lock the writer out, so reads stay on the one connection.
+        var journalMode = ""
+        try? readTexts("PRAGMA journal_mode;", [], name: "journal_mode") { journalMode = $0 }
+        if journalMode.lowercased() == "wal" { readConnections = ReadConnectionPool(path: path, limit: Self.readConnectionLimit) }
         // A record an older build couldn't read was set aside, not lost. If this build can read it, put it back (#1052).
         // Best effort: a failure here leaves the rows quarantined and must not stop the Library opening.
         try? restoreQuarantinedRecords()
     }
 
     deinit {
+        readConnections?.close()
         sqlite3_close(db)
     }
 
@@ -115,9 +134,9 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     }
 
     public func quarantinedRecordCount() throws -> Int {
-        try withConnectionLock {
+        try withReadConnection { connection in
             var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM quarantined_records;", -1, &statement, nil) == SQLITE_OK else {
+            guard sqlite3_prepare_v2(connection, "SELECT COUNT(*) FROM quarantined_records;", -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_quarantine_count")
             }
             defer { if statement != nil { sqlite3_finalize(statement) } }
@@ -299,7 +318,15 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     }
 
     /// Called after the write, even a failed one, so a half-done write never hides a change.
+    ///
+    /// Inside a transaction other threads still read the rows from before it, so the id is noted again once the
+    /// transaction has committed or rolled back: a reader that cached what it read under the first number sees a new one.
     private func noteItemWritten(_ id: String) {
+        bumpItemRevision(id)
+        if currentThreadHasTransactionOpen() { itemsWrittenInTransaction.append(id) }
+    }
+
+    private func bumpItemRevision(_ id: String) {
         itemRevisionLock.withLock { itemRevisions[id, default: 0] &+= 1 }
     }
 
@@ -384,17 +411,15 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     /// timestamp. `settledThrough` is therefore two seconds behind the database clock: the next call starts there
     /// and sees such a row again, and a write after the read can never land at or before it.
     public func marginNoteChanges(after: String?) throws -> MarginNoteChanges {
-        try withConnectionLock {
-            var settled = ""
-            try readTexts("SELECT strftime('%Y-%m-%d %H:%M:%S', 'now', '-2 seconds');", [], name: "margin_note_clock") { settled = $0 }
-            guard let after else { return MarginNoteChanges(sessionIds: [], settledThrough: settled) }
-            var sessionIds: Set<String> = []
-            try readTexts(
-                "SELECT DISTINCT session_id FROM records WHERE kind IN ('interjection', 'turn') AND updated_at > ?1 AND session_id IS NOT NULL;",
-                [after], name: "margin_note_changes"
-            ) { sessionIds.insert($0) }
-            return MarginNoteChanges(sessionIds: sessionIds, settledThrough: settled)
-        }
+        var settled = ""
+        try readTexts("SELECT strftime('%Y-%m-%d %H:%M:%S', 'now', '-2 seconds');", [], name: "margin_note_clock") { settled = $0 }
+        guard let after else { return MarginNoteChanges(sessionIds: [], settledThrough: settled) }
+        var sessionIds: Set<String> = []
+        try readTexts(
+            "SELECT DISTINCT session_id FROM records WHERE kind IN ('interjection', 'turn') AND updated_at > ?1 AND session_id IS NOT NULL;",
+            [after], name: "margin_note_changes"
+        ) { sessionIds.insert($0) }
+        return MarginNoteChanges(sessionIds: sessionIds, settledThrough: settled)
     }
 
     /// How many bytes of source transcript each item has, to see a transcript arrive or change without reading it.
@@ -414,9 +439,9 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     }
 
     private func readPairs(_ sql: String, name: String, _ body: (String, Int) -> Void) throws {
-        try withConnectionLock {
+        try withReadConnection { connection in
             var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_\(name)")
             }
             defer { sqlite3_finalize(statement) }
@@ -429,10 +454,11 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         }
     }
 
-    private func readTexts(_ sql: String, _ values: [String], name: String, _ body: (String) -> Void) throws {
-        try withConnectionLock {
+    /// Internal so a test can hold a read open (a long statement) and watch what else the store still answers.
+    func readTexts(_ sql: String, _ values: [String], name: String, _ body: (String) -> Void) throws {
+        try withReadConnection { connection in
             var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_\(name)")
             }
             defer { sqlite3_finalize(statement) }
@@ -460,9 +486,9 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     }
 
     private func marginAudioPaths(sql: String, bindings: [String] = [], skippingUnreadable: Bool = false) throws -> [String] {
-        try withConnectionLock {
+        try withReadConnection { connection in
             var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_margin_audio_paths")
             }
             defer { sqlite3_finalize(statement) }
@@ -630,7 +656,8 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         of layer: ImportedCommentaryLayer,
         records: [ImportedCommentaryInterjection] = []
     ) throws -> Bool {
-        try withConnectionLock {
+        // A transaction, not just the lock: reads on other threads no longer wait for the lock, so they must not see the layer without its Margins.
+        try withTransaction {
             guard var stored = try loadImportedCommentaryLayer(id: layer.id), stored.deletedAt == nil else { return false }
             stored.resolvedRecipientEditionSHA256 = layer.resolvedRecipientEditionSHA256
             stored.sourceResolutionStatus = layer.sourceResolutionStatus
@@ -784,10 +811,10 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         let newest = Self.newestTranscriptTimelineRecord
         let stamp = try transcriptTimelineStamp(itemId: itemId)
         guard let stamp else {
-            withConnectionLock { _ = transcriptSummaryByItem.removeValue(forKey: itemId) }
+            transcriptSummaryLock.withLock { _ = transcriptSummaryByItem.removeValue(forKey: itemId) }
             return nil
         }
-        if let cached = withConnectionLock({ transcriptSummaryByItem[itemId] }), cached.stamp == stamp { return cached.summary }
+        if let cached = transcriptSummaryLock.withLock({ transcriptSummaryByItem[itemId] }), cached.stamp == stamp { return cached.summary }
         var summaryJSON: String?
         try readTexts(
             """
@@ -806,7 +833,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         struct Slice: Decodable { var chapters: [MediaTimelineChapter]?; var durationMs: Int? }
         let slice = summaryJSON.data(using: .utf8).flatMap { try? decoder.decode(Slice.self, from: $0) }
         let summary = TranscriptTimelineSummary(chapters: slice?.chapters ?? [], durationMs: slice?.durationMs)
-        withConnectionLock { transcriptSummaryByItem[itemId] = (stamp: stamp, summary: summary) }
+        transcriptSummaryLock.withLock { transcriptSummaryByItem[itemId] = (stamp: stamp, summary: summary) }
         return summary
     }
 
@@ -1362,9 +1389,9 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     /// A caller that already holds the lock keeps holding it; the gain is for callers that don't.
     private func query<T: Decodable>(_ sql: String, _ values: [String]) throws -> [T] {
         var rows: [(kind: String, id: String, payload: String)] = []
-        try withConnectionLock {
+        try withReadConnection { connection in
             var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_query")
             }
             defer { if statement != nil { sqlite3_finalize(statement) } }
@@ -1587,7 +1614,14 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
             guard transactionDepth == 0 else { return try operation() }
             try execute("BEGIN IMMEDIATE TRANSACTION;")
             transactionDepth += 1
-            defer { transactionDepth -= 1 }
+            transactionOwnerLock.withLock { transactionOwner = pthread_self() }
+            defer {
+                transactionOwnerLock.withLock { transactionOwner = nil }
+                transactionDepth -= 1
+                let written = itemsWrittenInTransaction
+                itemsWrittenInTransaction = []
+                for id in written { bumpItemRevision(id) }
+            }
             do {
                 let result = try operation()
                 try execute("COMMIT;")
@@ -1636,6 +1670,21 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         }
     }
 
+    /// Runs a read on a connection of its own, so it waits for neither the writer's lock nor another read (#2103).
+    /// WAL gives such a connection the last committed state, as of when each statement starts. A thread with a
+    /// transaction open reads on the writer's connection instead, to see what it has written and not yet committed.
+    private func withReadConnection<T>(_ operation: (OpaquePointer?) throws -> T) rethrows -> T {
+        if let readConnections, !currentThreadHasTransactionOpen(), let reader = readConnections.checkOut() {
+            defer { readConnections.checkIn(reader) }
+            return try operation(reader)
+        }
+        return try withConnectionLock { try operation(db) }
+    }
+
+    private func currentThreadHasTransactionOpen() -> Bool {
+        transactionOwnerLock.withLock { transactionOwner.map { pthread_equal($0, pthread_self()) != 0 } ?? false }
+    }
+
     private func withConnectionLock<T>(_ operation: () throws -> T) rethrows -> T {
         connectionLock.lock()
         defer { connectionLock.unlock() }
@@ -1648,6 +1697,79 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
             return
         }
         sqlite3_bind_text(statement, index, value, -1, SQLITE_TRANSIENT)
+    }
+}
+
+/// Read-only connections to one WAL database, checked out one reader at a time and opened as readers need them (#2103).
+/// A connection is never shared by two readers, so a long read can't make another reader wait behind it.
+private final class ReadConnectionPool: @unchecked Sendable {
+    private let path: String
+    private let limit: Int
+    private let condition = NSCondition()
+    private var idle: [OpaquePointer] = []
+    /// Connections open or being opened, idle or checked out.
+    private var openCount = 0
+    private var isClosed = false
+
+    init(path: String, limit: Int) {
+        self.path = path
+        self.limit = limit
+    }
+
+    /// A connection to read on, or nil when none can be opened: the caller then reads on the writer's connection.
+    /// Waits only when `limit` connections are all in use.
+    func checkOut() -> OpaquePointer? {
+        condition.lock()
+        while true {
+            if isClosed { condition.unlock(); return nil }
+            if let connection = idle.popLast() { condition.unlock(); return connection }
+            if openCount < limit {
+                openCount += 1
+                condition.unlock()
+                if let connection = open() { return connection }
+                condition.lock()
+                openCount -= 1
+                condition.signal()
+                condition.unlock()
+                return nil
+            }
+            condition.wait()
+        }
+    }
+
+    func checkIn(_ connection: OpaquePointer) {
+        condition.lock()
+        if isClosed {
+            sqlite3_close(connection)
+            openCount -= 1
+        } else {
+            idle.append(connection)
+            condition.signal()
+        }
+        condition.unlock()
+    }
+
+    /// Closes the idle connections. One still checked out is closed when it comes back.
+    func close() {
+        condition.lock()
+        isClosed = true
+        for connection in idle { sqlite3_close(connection) }
+        openCount -= idle.count
+        idle = []
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    private func open() -> OpaquePointer? {
+        var connection: OpaquePointer?
+        guard sqlite3_open_v2(path, &connection, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
+            sqlite3_close(connection)
+            return nil
+        }
+        sqlite3_busy_timeout(connection, 1_000)
+        // A reader that tried to write would take the writer's lock; make it fail instead.
+        sqlite3_exec(connection, "PRAGMA query_only=ON;", nil, nil, nil)
+        return connection
     }
 }
 
@@ -1697,10 +1819,10 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
     /// The items that have a structured document, read without decoding the
     /// documents, so the Library can mark new-reader PDFs cheaply (#359).
     public func loadStructuredDocumentItemIds() throws -> Set<String> {
-        try withConnectionLock {
+        try withReadConnection { connection in
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(
-                db,
+                connection,
                 "SELECT DISTINCT item_id FROM records WHERE kind = ? AND item_id IS NOT NULL;",
                 -1,
                 &statement,
@@ -1741,9 +1863,9 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
         """
 
     public func loadSharedMarginTallies() throws -> [String: SharedMarginTally] {
-        try withConnectionLock {
+        try withReadConnection { connection in
             var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(db, Self.sharedMarginTalliesSQL, -1, &statement, nil) == SQLITE_OK else {
+            guard sqlite3_prepare_v2(connection, Self.sharedMarginTalliesSQL, -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_shared_margin_tallies")
             }
             defer { sqlite3_finalize(statement) }
@@ -1764,9 +1886,9 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
     /// SQLite's plan for `loadSharedMarginTallies`, one line per step, so a test can tell a primary-key
     /// lookup of each layer from a scan of every layer.
     func sharedMarginTalliesQueryPlan() throws -> [String] {
-        try withConnectionLock {
+        try withReadConnection { connection in
             var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(db, "EXPLAIN QUERY PLAN " + Self.sharedMarginTalliesSQL, -1, &statement, nil) == SQLITE_OK else {
+            guard sqlite3_prepare_v2(connection, "EXPLAIN QUERY PLAN " + Self.sharedMarginTalliesSQL, -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_shared_margin_tallies_plan")
             }
             defer { sqlite3_finalize(statement) }
