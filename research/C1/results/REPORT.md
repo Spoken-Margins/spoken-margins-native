@@ -26,7 +26,7 @@ Publishers: BMC (Springer Nature); BMJ; Cell Press (Elsevier); Elsevier; F1000 (
 - Median clutter rate: **24.2%** of spoken words
 - Median missing body text: **0.9%**
 - Median reading-order breaks: 2.38 per 1000 body words
-- Median extraction time: 875 ms
+- Median extraction time: 847 ms
 
 ### Failure categories ranked by listener cost
 
@@ -448,7 +448,7 @@ Ranked by listener cost per minute of real body text.
 - Median clutter rate: **10.9%** of spoken words
 - Median missing body text: **1.0%**
 - Median reading-order breaks: 1.14 per 1000 body words
-- Median extraction time: 996 ms
+- Median extraction time: 938 ms
 
 ### Failure categories ranked by listener cost
 
@@ -478,8 +478,8 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 | Category | Words | Share of spoken |
 | --- | ---: | ---: |
-| body | 408125 | 75.1% |
-| math | 28659 | 5.3% |
+| body | 408126 | 75.1% |
+| math | 28646 | 5.3% |
 | caption | 26142 | 4.8% |
 | table | 12427 | 2.3% |
 | unattributed_prose | 11346 | 2.1% |
@@ -490,7 +490,7 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 | front_matter | 4512 | 0.8% |
 | repeated | 4294 | 0.8% |
 | inline_residue | 4206 | 0.8% |
-| furniture | 4128 | 0.8% |
+| furniture | 4135 | 0.8% |
 | fragment | 2436 | 0.4% |
 | footnote | 1627 | 0.3% |
 | citation_markers | 899 | 0.2% |
