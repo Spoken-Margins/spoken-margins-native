@@ -26,8 +26,15 @@ extension Gate1AppModel {
 
     func dismissMiniPlayer() {
         recordDeveloperDiagnostic("miniPlayer.close")
-        guard !rejectNavigationOrSessionMutationWhileRecording("dismiss_mini_player") else { return }
-        guard !isDismissingMiniPlayer else { return }
+        guard !rejectNavigationOrSessionMutationWhileRecording("dismiss_mini_player") else {
+            recordMiniPlayerCloseOutcome("blocked_recording")
+            return
+        }
+        guard !isDismissingMiniPlayer else {
+            recordMiniPlayerCloseOutcome("already_dismissing")
+            return
+        }
+        recordMiniPlayerCloseOutcome("accepted")
         isDismissingMiniPlayer = true
         Task { @MainActor [weak self] in
             await Task.yield()

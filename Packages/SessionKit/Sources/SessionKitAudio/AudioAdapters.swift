@@ -364,6 +364,22 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
         try prepareTextAudio(itemId: itemId, title: title, text: text, scope: .complete)
     }
 
+    /// Renders on a serial background queue and hands back the result. The synchronous
+    /// `prepareTextAudio` is for threads that may block: `AVSpeechSynthesizer.write` can hold its caller for
+    /// seconds, so a call from the main actor froze the app for each scene summary (#2100). Serial, so
+    /// renders queue behind one another instead of piling up blocked threads.
+    public func prepareTextAudioOffMainThread(itemId: String, title: String, text: String) async throws -> PreparedTextAudio? {
+        try await Self.runOffMainThread { try self.prepareTextAudio(itemId: itemId, title: title, text: text) }
+    }
+
+    static let renderQueue = DispatchQueue(label: "SessionKitAudio.SystemTextAudioPreparationClient.render", qos: .utility)
+
+    static func runOffMainThread<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            renderQueue.async { continuation.resume(with: Result { try work() }) }
+        }
+    }
+
     public func prepareStarterTextAudio(itemId: String, title: String, text: String, targetDurationMs: Int = 30_000) throws -> PreparedTextAudio? {
         try prepareTextAudio(itemId: itemId, title: title, text: text, scope: .starter(targetDurationMs: targetDurationMs))
     }
@@ -492,6 +508,11 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
         guard SpeechTextNormalizer.isSystemSpeechSafe(text) else {
             throw SessionKitError.persistenceFailed("system_speech_utterance_unsafe")
         }
+        // A render waits on the synthesizer, so it never runs on the main thread. It used to spin a nested
+        // run loop here, which let taps run model code in the middle of another model method (#2100).
+        guard !Thread.isMainThread else {
+            throw SessionKitError.persistenceFailed("system_speech_render_on_main_thread")
+        }
         let utterance = AVSpeechUtterance(string: text)
         utterance.rate = speechRate
         utterance.preUtteranceDelay = 0
@@ -519,17 +540,7 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
                 semaphore.signal()
             }
         }
-        if Thread.isMainThread {
-            while true {
-                callbackState.lock.lock()
-                let isFinished = callbackState.isFinished
-                callbackState.lock.unlock()
-                if isFinished { break }
-                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
-            }
-        } else {
-            semaphore.wait()
-        }
+        semaphore.wait()
         if let error = callbackState.error {
             throw error
         }

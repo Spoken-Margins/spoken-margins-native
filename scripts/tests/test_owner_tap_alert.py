@@ -233,7 +233,7 @@ class Workflow(unittest.TestCase):
                       self.text)
 
     def test_check_workflows_end_with_an_alert_job_from_the_base(self):
-        for name, needs in (('linux-t1.yml', 'sessionkit-core'), ('shipped-build-compat.yml', 'compat')):
+        for name, needs in (('linux-t1.yml', '[sessionkit-core, portable]'), ('shipped-build-compat.yml', 'compat')):
             with self.subTest(name):
                 text = (SCRIPTS.parent / '.github' / 'workflows' / name).read_text()
                 head, _, job = text.partition('\n  owner-tap-alert:\n')
