@@ -72,22 +72,27 @@ final class VoiceCatalogCoordinatorTests: XCTestCase {
         fetcher: FixedFetcher = FixedFetcher(nil),
         catalogURL: URL? = URL(string: "https://voices.example/voices/v1/catalog.json")!,
         snapshot: [VoiceModelEntry]? = nil,
+        snapshotData: Data? = nil,
+        served: [String: Data]? = nil,
+        playable: Set<String> = ["neural-1"],
+        transport: VoiceModelTransport? = nil,
+        decompressor: any VoiceModelArchiveDecompressor = BZip2ArchiveDecompressor(),
         memory: Int = 8_192,
         availableBytes: Int64? = nil
     ) throws -> VoiceCatalogCoordinator {
-        let served = Dictionary(uniqueKeysWithValues: files.map { ("https://voices.example/neural-1/\($0.key)", $0.value) })
+        let served = served ?? Dictionary(uniqueKeysWithValues: files.map { ("https://voices.example/neural-1/\($0.key)", $0.value) })
         return VoiceCatalogCoordinator(
             supportDirectory: root,
             configuration: .init(
                 catalogURL: catalogURL,
                 trustedKeys: [VoiceCatalogTrustedKey(keyId: "test", publicKey: key.publicKey.rawRepresentation)],
-                playableVoiceIds: ["neural-1"],
+                playableVoiceIds: playable,
                 physicalMemoryMegabytes: memory,
-                bundledSnapshot: try snapshot.map { try catalogData(voices: $0) }
+                bundledSnapshot: try snapshotData ?? snapshot.map { try catalogData(voices: $0) }
             ),
             fetcher: fetcher,
-            transport: MemoryTransport(files: served),
-            installerConfiguration: .init(marginBytes: 0, attemptsPerSource: 1, retryDelay: .zero, availableCapacity: { _ in availableBytes }),
+            transport: transport ?? MemoryTransport(files: served),
+            installerConfiguration: .init(marginBytes: 0, attemptsPerSource: 1, retryDelay: .zero, availableCapacity: { _ in availableBytes }, decompressor: decompressor),
             repository: store,
             now: { Date(timeIntervalSince1970: 1_800_000_000) }
         )
@@ -237,6 +242,75 @@ final class VoiceCatalogCoordinatorTests: XCTestCase {
         XCTAssertEqual(afterRemove.first?.state, .notInstalled)
     }
 
+    /// A file whose text the catalog carries itself (a notice we wrote) has no download source. The
+    /// coordinator must hand that text to the installer, not an empty source list (#2055 audit on 2c27e97).
+    func testAFileTheCatalogCarriesAsTextIsWrittenWithoutADownload() async throws {
+        let notice = "Notice of modification\n"
+        var withNotice = entry(restricted: false)
+        withNotice.files.append(VoiceModelFile(path: "onnx/MODIFIED.txt", byteCount: notice.utf8.count, sha256: Self.sha256(Data(notice.utf8)),
+                                               sources: [], licenseId: "model", content: notice))
+        let voices = try coordinator(snapshot: [withNotice])
+        let folder = try await voices.install(voiceId: "neural-1")
+        XCTAssertEqual(try String(contentsOf: folder.appending(path: "onnx/MODIFIED.txt"), encoding: .utf8), notice)
+        XCTAssertEqual(try Data(contentsOf: folder.appending(path: "onnx/model.onnx")), files["onnx/model.onnx"])
+    }
+
+    /// The sibling of the carried-text case: a file the publisher ships only inside an archive. The
+    /// coordinator must pass the archive along with the member, or the install refuses before downloading.
+    func testAFileTakenFromAnArchiveIsInstalledFromThatArchive() async throws {
+        let graph = Data(repeating: 9, count: 1_500)
+        let tar = Self.tar(name: "pkg/vocoder.int8.onnx", data: graph)
+        var packed = entry(restricted: false)
+        packed.archives = [VoiceModelArchive(id: "int8", byteCount: tar.count, sha256: Self.sha256(tar), sources: ["https://voices.example/int8.tar.bz2"])]
+        packed.files.append(VoiceModelFile(path: "onnx/vocoder.onnx", byteCount: graph.count, sha256: Self.sha256(graph), sources: [],
+                                           licenseId: "model", archiveMember: VoiceModelArchiveMember(archive: "int8", member: "pkg/vocoder.int8.onnx")))
+        var served = Dictionary(uniqueKeysWithValues: files.map { ("https://voices.example/neural-1/\($0.key)", $0.value) })
+        served["https://voices.example/int8.tar.bz2"] = tar
+        let voices = try coordinator(snapshot: [packed], served: served, decompressor: PlainTar())
+        let folder = try await voices.install(voiceId: "neural-1")
+        XCTAssertEqual(try Data(contentsOf: folder.appending(path: "onnx/vocoder.onnx")), graph)
+    }
+
+    /// The Supertonic entry exactly as the app ships it in its snapshot: every source URL and every carried
+    /// text as they are. Only the downloaded bytes are stand-ins (their real size and hash are swapped for
+    /// the stand-in's), served at the entry's own pinned addresses. Carried text keeps its real hash.
+    func testTheShippedSnapshotsSupertonicEntryInstallsFromItsOwnSources() async throws {
+        let snapshotURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "App/SpokenMarginsApp/Resources/VoiceCatalog/catalog-snapshot.json")
+        var catalog = try JSONDecoder().decode(VoiceModelCatalog.self, from: Data(contentsOf: snapshotURL))
+        let id = "supertonic-3-int8"
+        let index = try XCTUnwrap(catalog.voices.firstIndex { $0.id == id })
+        XCTAssertTrue(catalog.voices[index].files.contains { $0.content != nil }, "the snapshot no longer carries any text; this test lost its point")
+
+        var served: [String: Data] = [:]
+        for fileIndex in catalog.voices[index].files.indices where catalog.voices[index].files[fileIndex].content == nil {
+            let file = catalog.voices[index].files[fileIndex]
+            XCTAssertNil(file.archiveMember)
+            let standIn = Data("stand-in for \(file.path)".utf8)
+            catalog.voices[index].files[fileIndex].byteCount = standIn.count
+            catalog.voices[index].files[fileIndex].sha256 = Self.sha256(standIn)
+            let source = try XCTUnwrap(file.sources.first, "\(file.path) has nothing to download from")
+            served[source] = standIn
+        }
+        let transport = RecordingTransport(files: served)
+        let voices = try coordinator(snapshotData: try JSONEncoder().encode(catalog), playable: [id], transport: transport)
+        let rows = await voices.rows()
+        let row = try XCTUnwrap(rows.first { $0.id == id })
+        XCTAssertTrue(row.isOffered)
+        try await voices.agree(to: row.entry.licenses)
+
+        let folder = try await voices.install(voiceId: id)
+
+        for file in catalog.voices[index].files {
+            let placed = try Data(contentsOf: folder.appending(path: file.path))
+            XCTAssertEqual(Self.sha256(placed), file.sha256, file.path)
+            if let content = file.content { XCTAssertEqual(placed, Data(content.utf8), file.path) }
+        }
+        XCTAssertEqual(Set(transport.requested), Set(served.keys), "every source asked for, and nothing else")
+    }
+
     func testRemoveDeletesOnlyThatVoice() async throws {
         let neighbour = root.appending(path: "Voices/other-voice/1/file.bin")
         try FileManager.default.createDirectory(at: neighbour.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -285,6 +359,26 @@ final class VoiceCatalogCoordinatorTests: XCTestCase {
         XCTAssertEqual(VoiceCatalogCoordinator.folderName(forVersion: "voix-é"), "voix-_")
     }
 
+    /// One regular file in a ustar archive, then the two empty blocks that end it.
+    private static func tar(name: String, data: Data) -> Data {
+        var header = [UInt8](repeating: 0, count: 512)
+        func put(_ text: String, at offset: Int) { for (i, byte) in text.utf8.enumerated() { header[offset + i] = byte } }
+        put(name, at: 0)
+        put("0000644", at: 100)
+        put("0000000", at: 108)
+        put("0000000", at: 116)
+        put(String(format: "%011o", data.count), at: 124)
+        put("00000000000", at: 136)
+        header[156] = UInt8(ascii: "0")
+        put("ustar", at: 257)
+        put("00", at: 263)
+        for i in 148..<156 { header[i] = UInt8(ascii: " ") }
+        put(String(format: "%06o", header.reduce(0) { $0 + Int($1) }) + "\0 ", at: 148)
+        var out = Data(header) + data
+        out += Data(count: (512 - data.count % 512) % 512)
+        return out + Data(count: 1_024)
+    }
+
     private static func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
@@ -307,6 +401,35 @@ private final class FixedFetcher: VoiceCatalogFetching, @unchecked Sendable {
         lock.withLock { count += 1 }
         guard let data else { throw URLError(.notConnectedToInternet) }
         return data
+    }
+}
+
+/// Hands the tar over unchanged under the tar.bz2 label, so the test needs no bzip2.
+private struct PlainTar: VoiceModelArchiveDecompressor {
+    var formats: Set<String> { ["tar.bz2"] }
+    func tarBytes(of url: URL, format: String, onChunk: (Data) throws -> Void) throws {
+        try onChunk(Data(contentsOf: url))
+    }
+}
+
+/// A `MemoryTransport` that remembers every address it was asked for.
+private final class RecordingTransport: VoiceModelTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private let inner: MemoryTransport
+    private var urls: [String] = []
+
+    init(files: [String: Data]) { inner = MemoryTransport(files: files) }
+
+    var requested: [String] { lock.withLock { urls } }
+
+    func fetch(
+        _ url: URL,
+        from offset: Int,
+        onHead: @escaping @Sendable (VoiceModelResponseHead) throws -> Bool,
+        onChunk: @escaping @Sendable (Data) throws -> Void
+    ) async throws {
+        lock.withLock { urls.append(url.absoluteString) }
+        try await inner.fetch(url, from: offset, onHead: onHead, onChunk: onChunk)
     }
 }
 

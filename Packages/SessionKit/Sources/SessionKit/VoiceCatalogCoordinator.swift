@@ -323,12 +323,18 @@ public actor VoiceCatalogCoordinator {
         guard row.licensesNeedingAgreement.isEmpty else {
             throw VoiceCatalogCoordinatorError.agreementNeeded(licenseIds: row.licensesNeedingAgreement.map(\.id))
         }
-        let files = row.entry.files.map {
-            VoiceModelInstallFile(path: $0.path, byteCount: $0.byteCount, sha256: $0.sha256, sources: $0.sources)
-        }
+        // The entry's own mapping carries every way a file arrives: downloaded, written from text the
+        // catalog carries, or taken from an archive. Rebuilding it here from `sources` alone dropped the
+        // last two, and Supertonic's notices have no source, so every install failed (#2055 audit).
         let folder: URL
         do {
-            folder = try await installer.install(voiceId: voiceId, version: Self.folderName(forVersion: row.entry.version), files: files, progress: progress)
+            folder = try await installer.install(
+                voiceId: voiceId,
+                version: Self.folderName(forVersion: row.entry.version),
+                files: row.entry.installFiles,
+                archives: row.entry.installArchives,
+                progress: progress
+            )
         } catch let error as VoiceModelInstallError {
             throw VoiceCatalogCoordinatorError.install(error)
         }
