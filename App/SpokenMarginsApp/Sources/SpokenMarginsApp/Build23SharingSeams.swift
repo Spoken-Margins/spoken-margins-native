@@ -147,6 +147,12 @@ struct Build23RecipientImportSnapshot: Equatable {
     /// A podcast packet whose source was private: the sender's links were dropped (#168), so the
     /// recipient can recover the episode from their own feed (#454).
     var isPrivatePodcastSource = false
+    /// Set for a file that carries a Listening Map and no Margins (#1471): how many chapters it holds.
+    var mapChapterCount: Int? = nil
+    /// The item already has a different shared map; adding this one replaces it.
+    var replacesExistingMap = false
+
+    var isListeningMap: Bool { mapChapterCount != nil }
 }
 
 struct Build23RecipientSourceRequest: Identifiable, Equatable {
@@ -376,7 +382,9 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             isImporting: model.isImportingSpokenMarginsPackage,
             errorMessage: model.spokenMarginsPackageImportError,
             canImport: !review.requiresRecipientItem && !model.isImportingSpokenMarginsPackage,
-            isPrivatePodcastSource: SharedEpisodeFeedMatcher.isPrivatePodcastSource(review.contents.manifest)
+            isPrivatePodcastSource: SharedEpisodeFeedMatcher.isPrivatePodcastSource(review.contents.manifest),
+            mapChapterCount: review.isListeningMap ? review.mapChapterCount : nil,
+            replacesExistingMap: review.replacesExistingMap
         )
     }
 
@@ -395,7 +403,10 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     }
 
     private func makeImportedLayers(from item: ItemDetailState) -> [Build23ImportedLayerSnapshot] {
-        item.importedCommentaryLayers
+        // Paragraph numbers for text positions (#1974); the text is only read as far as the furthest offset.
+        let furthestOffset = item.importedCommentaryInterjections.values.joined().compactMap(\.resolution.localStartChar).max()
+        let paragraphs = furthestOffset.map { MarginPlaceIndex(chapters: [], text: item.text, readingUpTo: $0) }
+        return item.importedCommentaryLayers
             .filter { $0.deletedAt == nil }
             .map { layer in
                 let margins = item.importedCommentaryInterjections[layer.id, default: []]
@@ -408,7 +419,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                             id: margin.id,
                             reviewedText: margin.approvedTranscript,
                             resolution: margin.resolution.evidenceClass,
-                            positionDescription: placement.positionDescription ?? Self.positionDescription(for: margin.resolution),
+                            positionDescription: placement.positionDescription ?? Self.positionDescription(for: margin.resolution, paragraphs: paragraphs),
                             isPlayable: Gate1AppModel.isPlayableImportedCommentaryResolution(margin.resolution),
                             hasVoice: margin.audioPath != nil,
                             placementLabel: placement.label
@@ -753,15 +764,9 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         return "Position will be resolved after import"
     }
 
-    nonisolated private static func positionDescription(for resolution: ImportedAnchorResolution) -> String {
-        if let mediaTimeMs = resolution.localMediaTimeMs {
-            let totalSeconds = max(0, mediaTimeMs / 1_000)
-            return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
-        }
-        if let start = resolution.localStartChar {
-            return "Text position \(start)"
-        }
-        return resolution.evidenceClass.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+    nonisolated private static func positionDescription(for resolution: ImportedAnchorResolution, paragraphs: MarginPlaceIndex? = nil) -> String {
+        let paragraph = resolution.localStartChar.flatMap { paragraphs?.paragraph(atChar: $0) }
+        return SharedMarginPlacementWording.importSheetLine(for: resolution, paragraph: paragraph)
     }
 
     nonisolated private static func transport(_ kind: SharedItemTransportKind) -> Build23RecipientTransport {

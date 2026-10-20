@@ -363,7 +363,14 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
         transcriptPhraseSketches[itemId]
     }
     public func savePortableListeningMapProposal(_ proposal: PortableListeningMapProposalArtifact, itemId: String) throws {
+        portableListeningMapProposals = portableListeningMapProposals.filter {
+            $0.value.itemId != itemId || !ListeningEditionMap.supersedes(proposal.id, $0.key)
+        }
         portableListeningMapProposals[proposal.id] = (itemId, proposal)
+    }
+    public func removePortableListeningMapProposals(itemId: String) throws {
+        portableListeningMapProposals = portableListeningMapProposals.filter { $0.value.itemId != itemId }
+        resolvedListeningMapProjections[itemId] = nil
     }
     public func loadPortableListeningMapProposals(itemId: String) throws -> [PortableListeningMapProposalArtifact] {
         portableListeningMapProposals.values.filter { $0.itemId == itemId }.map(\.proposal).sorted { $0.createdAt < $1.createdAt }

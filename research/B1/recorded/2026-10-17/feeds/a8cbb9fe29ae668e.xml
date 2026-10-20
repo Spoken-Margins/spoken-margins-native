@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/GLT1412515089" rel="self" type="application/rss+xml"/>
+    <title>The Joe Rogan Experience</title>
+    <language>en</language>
+    <copyright>© All rights reserved</copyright>
+    <description>The official podcast of comedian Joe Rogan.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/8e5bcebc-ca16-11ee-89f0-0fa0b9bdfc7c/image/760b684379d2f5f6a98c67f65cf7b53f.png?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>The Joe Rogan Experience</title>
+    </image>
+    <itunes:explicit>yes</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle></itunes:subtitle>
+    <itunes:author>Joe Rogan</itunes:author>
+    <itunes:summary>The official podcast of comedian Joe Rogan.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>The official podcast of comedian Joe Rogan.</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Joe Rogan</itunes:name>
+      <itunes:email>jamievernon@gmail.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/8e5bcebc-ca16-11ee-89f0-0fa0b9bdfc7c/image/760b684379d2f5f6a98c67f65cf7b53f.png?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Comedy">
+    </itunes:category>
+    

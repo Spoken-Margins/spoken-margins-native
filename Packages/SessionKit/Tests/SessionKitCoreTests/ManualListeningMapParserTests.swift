@@ -196,11 +196,54 @@ final class ManualListeningMapParserTests: XCTestCase {
     }
 
     func testCurlyQuotesInsideStringValuesAreLeftAlone() {
-        // The repair also turns a curly quote it finds between values into a straight one, but it then waits for a
-        // straight quote to close the string, so JSON delimited only by curly quotes still fails to parse.
-        // That gap predates this move and is not pinned here.
         let inside = "{\"a\": \"it’s “fine”\"}"
         XCTAssertEqual(repaired(inside), inside)
+    }
+
+    func testJSONDelimitedOnlyByCurlyQuotesParses() throws {
+        // #949: pasted from a document editor or written by a model that ignored the straight-quote instruction.
+        let raw = "{“schemaVersion”: “listening-map.v1”, “overview”: “A day.”, “chapters”: [{“id”: “c1”, “title”: “T”, “description”: “D”, “anchor”: “any phrase from the text”}]}"
+        let object = try repairedObject(raw)
+        XCTAssertEqual(object["schemaVersion"] as? String, "listening-map.v1")
+        XCTAssertEqual(object["overview"] as? String, "A day.")
+        let chapter = try XCTUnwrap((object["chapters"] as? [[String: Any]])?.first)
+        XCTAssertEqual(chapter["anchor"] as? String, "any phrase from the text")
+    }
+
+    /// Neighbouring inputs for the curly-quote rule: each row is the text a listener could paste and the
+    /// value the key "a" must hold afterwards.
+    func testCurlyQuoteRepairTable() throws {
+        let rows: [(name: String, raw: String, expected: String)] = [
+            ("curly both ends", "{“a”: “x”}", "x"),
+            ("curly opener, straight closer", "{“a\": “x\"}", "x"),
+            ("plain straight quotes are untouched", "{\"a\": \"x\"}", "x"),
+            ("right curly quote used as the opener", "{”a”: ”x”}", "x"),
+            ("empty string", "{“a”: ””}", ""),
+            ("whitespace before the comma", "{“a”: “x”   , “b”: “y”}", "x"),
+            ("newline before the closing brace", "{“a”: “x”\n}", "x"),
+            ("curly opener, straight closer, curly quotes and a comma inside", "{“a\": “He called it “great”, then left\"}", "He called it “great”, then left"),
+            ("curly quotes inside the text", "{“a”: “she said “hi” twice”}", "she said “hi” twice"),
+            ("an apostrophe inside the text", "{“a”: “it’s fine”}", "it’s fine"),
+            ("a straight quote inside the text", "{“a”: “6\" ruler”}", "6\" ruler"),
+            ("an escaped quote inside the text", "{“a”: “say \\\"hi\\\"”}", "say \"hi\""),
+            ("a colon inside the text", "{“a”: “note: this, that”}", "note: this, that"),
+            ("a list of curly strings", "{“a”: “x”, “b”: [“p”, “q”]}", "x"),
+            ("Unicode text", "{“a”: “日本語 “ok””}", "日本語 “ok”"),
+        ]
+        for row in rows {
+            guard let data = repaired(row.raw).data(using: .utf8),
+                  let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                XCTFail("\(row.name): \(repaired(row.raw)) does not parse")
+                continue
+            }
+            XCTAssertEqual(object["a"] as? String, row.expected, row.name)
+        }
+        let list = try repairedObject("{“a”: “x”, “b”: [“p”, “q”]}")
+        XCTAssertEqual(list["b"] as? [String], ["p", "q"])
+    }
+
+    func testAnUnclosedCurlyStringStillFailsToParseInsteadOfSwallowingTheRest() {
+        XCTAssertThrowsError(try ManualListeningMapParser.parse("{“schemaVersion”: “listening-map.v1", item: item()))
     }
 
     func testCommentsAreRemovedExceptInsideStrings() throws {

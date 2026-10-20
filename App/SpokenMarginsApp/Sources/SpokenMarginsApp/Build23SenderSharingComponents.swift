@@ -327,6 +327,7 @@ struct Build23MarginEditor: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text("Review this Margin")
                         .font(.title3.weight(.semibold))
+                        .screenTitle()
                         .foregroundStyle(AppColors.text)
                         .accessibilityIdentifier("build23.sender.margin.editor.\(margin.id)")
                     Spacer()
@@ -427,7 +428,7 @@ struct Build23MarginEditor: View {
                             axis: .vertical
                         )
                         .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("Anchor text before this Margin")
+                        .accessibilityLabel("Words before this Margin")
                         .accessibilityIdentifier("build23.sender.anchor.before.\(margin.id)")
 
                         TextField(
@@ -439,7 +440,7 @@ struct Build23MarginEditor: View {
                             axis: .vertical
                         )
                         .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("Anchor text after this Margin")
+                        .accessibilityLabel("Words after this Margin")
                         .accessibilityIdentifier("build23.sender.anchor.after.\(margin.id)")
                     }
                     .padding(.top, 8)

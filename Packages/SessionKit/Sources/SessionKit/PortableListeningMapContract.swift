@@ -188,6 +188,12 @@ public enum PortableListeningMapContract {
         )
     }
 
+    /// The words an anchor quotes from its source, by the same count `withoutLongAnchorQuotations` applies. An
+    /// apostrophe or hyphen splits a word, so "father's" is two.
+    public static func quotedWordCount(of anchor: PortableAnchorEvidence) -> Int {
+        words([anchor.prefix, anchor.exactText, anchor.suffix].compactMap { $0 }.joined(separator: " ")).count
+    }
+
     /// The same proposal with any scene anchor quotation of `verbatimRunWords` words or more removed.
     /// A packet that shares its item by reference carries none of its text, so a map anchor must not
     /// carry a long quotation of it either (#480). The anchor keeps its times, character offsets and
@@ -196,8 +202,7 @@ public enum PortableListeningMapContract {
         _ proposal: PortableListeningMapProposalArtifact
     ) -> PortableListeningMapProposalArtifact {
         func trimmed(_ anchor: PortableAnchorEvidence) -> PortableAnchorEvidence {
-            let quoted = [anchor.prefix, anchor.exactText, anchor.suffix].compactMap { $0 }.joined(separator: " ")
-            guard words(quoted).count >= verbatimRunWords else { return anchor }
+            guard quotedWordCount(of: anchor) >= verbatimRunWords else { return anchor }
             return PortableAnchorEvidence(
                 anchorType: anchor.anchorType, startChar: anchor.startChar, endChar: anchor.endChar,
                 mediaTimeMs: anchor.mediaTimeMs, roughPercent: anchor.roughPercent,

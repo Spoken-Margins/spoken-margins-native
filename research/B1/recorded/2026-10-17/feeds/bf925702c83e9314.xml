@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <atom:link href="https://feeds.simplecast.com/HL4TzgYC" rel="self" title="MP3 Audio" type="application/atom+xml"/>
+    <atom:link href="https://simplecast.superfeedr.com" rel="hub" xmlns="http://www.w3.org/2005/Atom"/>
+    <generator>https://simplecast.com</generator>
+    <title>Dateline NBC</title>
+    <description>Current and classic episodes, featuring compelling true-crime mysteries, powerful documentaries and in-depth investigations. 
+  
+Follow now to get the latest episodes of Dateline NBC completely free, or subscribe to Dateline Premium for ad-free listening and exclusive bonus content: DatelinePremium.com</description>
+    <copyright>2019 NBC News</copyright>
+    <language>en</language>
+    <pubDate>Fri, 16 Oct 2026 09:00:00 +0000</pubDate>
+    <lastBuildDate>Fri, 16 Oct 2026 14:37:54 +0000</lastBuildDate>
+    <image>
+      <link>https://www.nbcnews.com/dateline</link>
+      <title>Dateline NBC</title>
+      <url>https://image.simplecastcdn.com/images/ae183fe2-c634-458a-93dd-5770f0676f77/b010809a-c311-425c-9325-2235c21e6939/3000x3000/7f0421f73d2ce0ca272e392c937e1a301285d44fe7c6d710c2844d80c0c7bb1a3e9838ac03ee80fc64199891cb9d5c6e9d4490f5081fb379c0ab2317f2cadf14.jpeg?aid=rss_feed</url>
+    </image>
+    <link>https://www.nbcnews.com/dateline</link>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>Current and classic episodes, featuring compelling true-crime mysteries, powerful documentaries and in-depth investigations. 
+  
+Follow now to get the latest episodes of Dateline NBC completely free, or subscribe to Dateline Premium for ad-free listening and exclusive bonus content: DatelinePremium.com</itunes:summary>
+    <itunes:author>NBC News</itunes:author>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:image href="https://image.simplecastcdn.com/images/ae183fe2-c634-458a-93dd-5770f0676f77/b010809a-c311-425c-9325-2235c21e6939/3000x3000/7f0421f73d2ce0ca272e392c937e1a301285d44fe7c6d710c2844d80c0c7bb1a3e9838ac03ee80fc64199891cb9d5c6e9d4490f5081fb379c0ab2317f2cadf14.jpeg?aid=rss_feed"/>
+    <itunes:new-feed-url>https://podcastfeeds.nbcnews.com/dateline</itunes:new-feed-url>
+    <itunes:keywords>SOCIAL, TRUE CRIME, CULTURE, NEWS</itunes:keywords>
+    <itunes:owner>
+      <itunes:name>NBC News</itunes:name>
+      <itunes:email>news.podcasts@nbcuni.com</itunes:email>
+    </itunes:owner>
+    <itunes:category text="True Crime"/>
+    <itunes:category text="News"/>
+    <itunes:category text="Society &amp; Culture"/>
+    

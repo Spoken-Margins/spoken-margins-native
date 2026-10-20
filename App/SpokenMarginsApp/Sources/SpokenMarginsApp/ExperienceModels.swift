@@ -300,7 +300,7 @@ struct MarginRow: Identifiable, Equatable, Sendable {
         switch interjection.targetType {
         case .item: "Source"
         case .assistantTurn: "Assistant response"
-        case .summaryTurn: "Interjection summary"
+        case .summaryTurn: "Margin summary"
         }
     }
 }
@@ -324,12 +324,6 @@ struct SharedMarginRow: Identifiable, Equatable, Sendable {
     var collectionLabel: String { layer.displayLabel.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 } ?? "Imported collection" }
     var positionDescription: String {
         if let placing = placementStatus.positionDescription { return placing }
-        if interjection.resolution.isAmbiguous { return "Position needs review" }
-        switch interjection.resolution.evidenceClass {
-        case .unresolved, .absentFromRecipientEdition, .ambiguous: return "Position not matched"
-        case .timestampFallback, .mapInterpolated: return "Approximate position"
-        case .recipientConfirmed: return "Position confirmed by you"
-        default: return "Position matched"
-        }
+        return SharedMarginPlacementWording.line(for: interjection.resolution)
     }
 }

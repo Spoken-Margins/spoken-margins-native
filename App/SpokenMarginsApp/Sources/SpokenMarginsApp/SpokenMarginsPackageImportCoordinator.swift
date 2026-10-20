@@ -9,11 +9,16 @@ import SessionKitSharing
 /// forwarders under today's names, the four task launch shells, and the publication of the state to views.
 ///
 /// The coordinator reaches the app only through `Environment`, so its tests run with a real SQLite store and real
-/// packet files but without a `Gate1AppModel`. Behavior is unchanged, including these deliberate quirks:
+/// packet files but without a `Gate1AppModel`.
 /// - Success keeps `SpokenMargins/IncomingPackages/<uuid>/assets` for good. The folder is removed only by
 ///   `cancel`, a failed stage, duplicate staging and the model's restore-audio task.
-/// - `confirm` works on the review captured when it began, not on whatever review is showing when it ends.
-/// - Staging never clears or cleans up a review that is already showing.
+/// - One review shows at a time (#2122). A packet opened while one is showing, or importing, waits behind it in
+///   `PacketReviewQueue` and comes up when that one is imported or cancelled; it is never replaced or dropped.
+/// - The file a packet was opened from is released (the Share inbox copy deleted) only when the packet is imported,
+///   cancelled or already in the library, never when its review opens, so a packet survives the app being killed
+///   before Import (#2123).
+/// - `confirm` works on the review captured when it began. Its success ends only that review, and its error is
+///   shown only while that review is still the one showing.
 @MainActor
 final class SpokenMarginsPackageImportCoordinator {
     /// Opens tapped share links into this flow (#488); the model reaches it as `shareLinkOpener`.
@@ -50,10 +55,14 @@ final class SpokenMarginsPackageImportCoordinator {
         var publishReview: @MainActor (SpokenMarginsPackageImportReview?) -> Void
         var publishIsImporting: @MainActor (Bool) -> Void
         var publishError: @MainActor (String?) -> Void
+        /// Saves a shared Listening Map for a text item and tells a running session about it. Nil saves straight to the store.
+        var attachListeningMap: (@MainActor (ListeningMap) throws -> Void)? = nil
     }
 
     enum StageResult {
-        case rejected
+        /// `needsNewerApp`: the file is fine but uses something this version doesn't know, so the caller keeps
+        /// it for the listener to open after updating (#1983).
+        case rejected(needsNewerApp: Bool)
         case staged
         /// An already-imported listening package on owned audio. The caller launches the task that places it
         /// and removes `directory` when that task ends.
@@ -69,9 +78,16 @@ final class SpokenMarginsPackageImportCoordinator {
     private let environment: Environment
     private var isAdoptingFromViews = false
 
-    private(set) var review: SpokenMarginsPackageImportReview? {
-        didSet { if !isAdoptingFromViews { environment.publishReview(review) } }
+    /// Told to the listener when a packet waits behind the one already showing (#2122).
+    static let waitingMessage = "Another shared packet is waiting. It opens after you finish this one."
+
+    private var queue = PacketReviewQueue<SpokenMarginsPackageImportReview>() {
+        didSet {
+            guard queue.showing?.id != oldValue.showing?.id, !isAdoptingFromViews else { return }
+            environment.publishReview(queue.showing)
+        }
     }
+    var review: SpokenMarginsPackageImportReview? { queue.showing }
     private(set) var isImporting = false {
         didSet { if !isAdoptingFromViews { environment.publishIsImporting(isImporting) } }
     }
@@ -90,7 +106,7 @@ final class SpokenMarginsPackageImportCoordinator {
     func adoptReviewFromViews(_ value: SpokenMarginsPackageImportReview?) {
         guard value?.id != review?.id else { return }
         isAdoptingFromViews = true
-        review = value
+        queue.replaceShowing(with: value)
         isAdoptingFromViews = false
     }
 
@@ -111,8 +127,12 @@ final class SpokenMarginsPackageImportCoordinator {
     // MARK: Stage
 
     /// Copies the packet into its own folder under Application Support, verifies it and either opens an item it
-    /// already belongs to or shows it for review.
-    func stage(from sourceURL: URL) -> StageResult {
+    /// already belongs to or shows it for review. `releaseSource` runs once the packet no longer needs the file it
+    /// came from: now for a packet already in the library, otherwise when its review is imported or cancelled. A
+    /// rejected packet never calls it; the caller decides what happens to that file.
+    func stage(
+        from sourceURL: URL, announcesRejection: Bool = true, releaseSource: (@MainActor () -> Void)? = nil
+    ) -> StageResult {
         var workingDirectory: URL?
         do {
             environment.bootstrapLibrary()
@@ -132,48 +152,45 @@ final class SpokenMarginsPackageImportCoordinator {
                 throw SpokenMarginsPackageArchiveError.invalidDigest
             }
             let store = try environment.requireStore()
-            if let existing = try store.loadImportedCommentaryLayer(packageDigest: digest),
-               existing.sourceResolutionStatus != .wrongSource,
-               let associatedItemId = existing.itemId,
-               let associatedItem = try? store.loadItem(id: associatedItemId),
-               associatedItem.deletedAt == nil,
-               SharedPacketItemMatcher.layerHasValidItemAssociation(existing, item: associatedItem,
-                   ownedAudiobookDigest: environment.localAudiobookDigest(associatedItem)) {
-                if let itemId = existing.itemId {
-                    environment.openItem(itemId)
-                    if let item = try? store.loadItem(id: itemId), item.mediaType == "audiobook" {
-                        return .restoreAudio(RestoreAudio(item: item, contents: contents, directory: root))
-                    }
-                    if let localURL = environment.validatedLocalURL(itemId) {
-                        environment.resolvePodcastCommentary(itemId, localURL)
-                    }
-                    environment.reportSuccess("These shared Margins are already in your library. Playback has not started.")
-                } else {
-                    environment.reportSuccess("These shared Margins are already in your library.")
+            let existing = try store.loadImportedCommentaryLayer(packageDigest: digest)
+            let duplicateCheck = PackageImportPolicy.duplicateCheck(
+                existing: existing,
+                loadItem: { try? store.loadItem(id: $0) },
+                hasValidItemAssociation: { layer, item in
+                    SharedPacketItemMatcher.layerHasValidItemAssociation(layer, item: item,
+                        ownedAudiobookDigest: environment.localAudiobookDigest(item))
+                })
+            if case .alreadyImported(let itemId) = duplicateCheck {
+                environment.openItem(itemId)
+                releaseSource?()
+                if let item = try? store.loadItem(id: itemId), item.mediaType == "audiobook" {
+                    return .restoreAudio(RestoreAudio(item: item, contents: contents, directory: root))
                 }
+                if let localURL = environment.validatedLocalURL(itemId) {
+                    environment.resolvePodcastCommentary(itemId, localURL)
+                }
+                environment.reportSuccess("These shared Margins are already in your library. Playback has not started.")
                 environment.recordDiagnostic("lastSpokenMarginsPackageImport", "duplicate:\(digest)")
                 try? FileManager.default.removeItem(at: root)
                 return .staged
             }
-            let matchingItemId = try matchingItemID(for: contents.manifest.item, store: store)
-            importError = nil
-            review = SpokenMarginsPackageImportReview(
-                packageURL: copiedPackage,
-                extractionDirectory: root,
-                contents: contents,
-                matchingItemId: matchingItemId
-            )
-            if try store.loadImportedCommentaryLayer(packageDigest: digest) == nil {
-                environment.recordDiagnostic("lastSpokenMarginsPackageImport", "previewed:\(digest)")
-            } else {
-                environment.recordDiagnostic("lastSpokenMarginsPackageImport", "repair_previewed:\(digest)")
+            let staged = try makeReview(packageURL: copiedPackage, extractionDirectory: root, contents: contents,
+                                        store: store, releaseSource: releaseSource)
+            if review == nil { importError = nil }
+            if case .waiting = queue.offer(staged) {
+                environment.recordDiagnostic("lastSpokenMarginsPackageImport", "queued:\(digest)")
+                environment.reportConfirmation(Self.waitingMessage)
+                return .staged
             }
+            environment.recordDiagnostic("lastSpokenMarginsPackageImport",
+                duplicateCheck == .review(isRepair: true) ? "repair_previewed:\(digest)" : "previewed:\(digest)")
             return .staged
         } catch {
             if let workingDirectory { try? FileManager.default.removeItem(at: workingDirectory) }
             environment.recordDiagnostic("lastSpokenMarginsPackageImport", "rejected:\(SharedMarginsImportMessage.diagnosticDetail(error))")
-            environment.reportFailureMessage(SharedMarginsImportMessage.userFacing(error))
-            return .rejected
+            // A kept file is tried again at launch; the caller says when the listener has already been told.
+            if announcesRejection { environment.reportFailureMessage(SharedMarginsImportMessage.userFacing(error)) }
+            return .rejected(needsNewerApp: (error as? SpokenMarginsPackageArchiveError)?.listenerOutcome == .needsNewerApp)
         }
     }
 
@@ -192,11 +209,11 @@ final class SpokenMarginsPackageImportCoordinator {
     // MARK: Cancel and re-match
 
     func cancel() {
-        guard !isImporting else { return }
-        let directory = review?.extractionDirectory
-        review = nil
+        guard !isImporting, let review else { return }
+        queue.finish(review.id)
         importError = nil
-        if let directory { try? FileManager.default.removeItem(at: directory) }
+        try? FileManager.default.removeItem(at: review.extractionDirectory)
+        review.releaseSource?()
     }
 
     /// Reconciles a pending recipient-supplied package after Add Source returns.
@@ -206,18 +223,20 @@ final class SpokenMarginsPackageImportCoordinator {
               !isImporting else { return }
         do {
             let store = try environment.requireStore()
-            let matchingItemId = try matchingItemID(for: review.contents.manifest.item, store: store)
-            self.review = SpokenMarginsPackageImportReview(
-                packageURL: review.packageURL,
-                extractionDirectory: review.extractionDirectory,
-                contents: review.contents,
-                matchingItemId: matchingItemId
+            let refreshed = try makeReview(
+                packageURL: review.packageURL, extractionDirectory: review.extractionDirectory,
+                contents: review.contents, store: store, releaseSource: review.releaseSource
             )
-            if matchingItemId == nil {
-                importError = "That source does not match the item described by this package yet. Add the same item or cancel the import."
+            queue.replaceShowing(with: refreshed)
+            if refreshed.matchingItemId == nil {
+                importError = refreshed.isListeningMap
+                    ? "That source does not match the item this map was made for yet. Add the same item or cancel."
+                    : "That source does not match the item described by this package yet. Add the same item or cancel the import."
             } else {
                 importError = nil
-                environment.reportConfirmation("Source matched. Review the shared Margins before importing.")
+                environment.reportConfirmation(refreshed.isListeningMap
+                    ? "Source matched. Review the shared map before adding it."
+                    : "Source matched. Review the shared Margins before importing.")
             }
         } catch {
             importError = SharedMarginsImportMessage.userFacing(error)
@@ -240,19 +259,28 @@ final class SpokenMarginsPackageImportCoordinator {
         return review
     }
 
-    /// The model's confirm task body. `review` is the one `beginConfirmation()` returned; a different review
-    /// staged meanwhile is not what gets imported, but it is what success clears and failure annotates.
+    /// The model's confirm task body. `review` is the one `beginConfirmation()` returned. Success ends that review
+    /// and brings up the next waiting one; failure annotates it only while it is still the one showing (#2122).
     func confirm(_ review: SpokenMarginsPackageImportReview) async {
         do {
             let store = try environment.requireStore()
+            if ListeningMapPacket.isMapPacket(review.contents.manifest) {
+                try await confirmListeningMap(review, store: store)
+                return
+            }
             let itemId: String?
-            if let matching = review.matchingItemId {
-                itemId = matching
-            } else if review.contents.manifest.itemTransport.kind == .embeddedText {
+            switch PackageImportPolicy.itemSource(
+                matchingItemId: review.matchingItemId,
+                transportKind: review.contents.manifest.itemTransport.kind,
+                itemType: review.contents.manifest.item.itemType
+            ) {
+            case .existing(let matchingId):
+                itemId = matchingId
+            case .embeddedText:
                 itemId = try installEmbeddedItem(from: review.contents, store: store)
-            } else if review.contents.manifest.item.itemType == .podcast {
+            case .acquirePodcast:
                 itemId = try await environment.acquirePodcast(review.contents.manifest.item)
-            } else {
+            case .acquireArticle:
                 itemId = try await environment.acquireArticle(review.contents.manifest.item)
             }
             let item = try itemId.map { try store.loadItem(id: $0) }
@@ -307,12 +335,13 @@ final class SpokenMarginsPackageImportCoordinator {
                     environment.resolvePodcastCommentary(itemId, localURL)
                 }
             }
-            self.review = nil
+            queue.finish(review.id)
             isImporting = false
+            review.releaseSource?()
             environment.reportConfirmation("Imported shared Margins. Playback has not started.")
         } catch {
             isImporting = false
-            importError = SharedMarginsImportMessage.userFacing(error)
+            if queue.isShowing(review.id) { importError = SharedMarginsImportMessage.userFacing(error) }
             environment.recordDiagnostic("lastSpokenMarginsPackageImport", "failed:\(error.localizedDescription)")
             environment.reportFailure(error, "Shared Margins import failed")
         }
@@ -418,16 +447,94 @@ final class SpokenMarginsPackageImportCoordinator {
         return itemID
     }
 
+    private func makeReview(
+        packageURL: URL, extractionDirectory: URL, contents: VerifiedSpokenMarginsPackage, store: SQLiteSessionStore,
+        releaseSource: (@MainActor () -> Void)?
+    ) throws -> SpokenMarginsPackageImportReview {
+        let matchingItemId = try matchingItemID(for: contents, store: store)
+        var review = SpokenMarginsPackageImportReview(
+            packageURL: packageURL, extractionDirectory: extractionDirectory,
+            contents: contents, matchingItemId: matchingItemId
+        )
+        review.releaseSource = releaseSource
+        if let matchingItemId, let proposal = ListeningMapPacket.proposal(in: contents) {
+            review.replacesExistingMap = try SharedTextListeningMapImporter.existing(
+                for: proposal, itemId: matchingItemId, repository: store
+            ) == .differentMap
+        }
+        return review
+    }
+
     private func matchingItemID(
-        for itemIdentity: SharedItemIdentity,
+        for contents: VerifiedSpokenMarginsPackage,
         store: SQLiteSessionStore
     ) throws -> String? {
         if environment.consumeForcedSourceMiss() {
             environment.recordDiagnostic("uiTestSharedSourceMiss", "forced_once")
             return nil
         }
+        let items = try store.listItems()
+        if let proposal = ListeningMapPacket.proposal(in: contents) {
+            switch ListeningMapPacketItemMatcher.match(packetItem: contents.manifest.item, proposal: proposal, among: items) {
+            case .item(let id): return id
+            case .ambiguous:
+                environment.recordDiagnostic("lastSpokenMarginsPackageImport", "map_source_ambiguous")
+                return nil
+            case .none: return nil
+            }
+        }
         return SharedPacketItemMatcher.matchingItemId(
-            for: itemIdentity, among: try store.listItems(),
+            for: contents.manifest.item, among: items,
             ownedAudiobookDigest: { [environment] in environment.localAudiobookDigest($0) })
+    }
+
+    // MARK: Listening Map
+
+    /// A shared Listening Map (#1471): finds or fetches the item, places the chapters on its text and saves them.
+    /// No Margins are made and playback does not start.
+    private func confirmListeningMap(_ review: SpokenMarginsPackageImportReview, store: SQLiteSessionStore) async throws {
+        let manifest = review.contents.manifest
+        let itemId: String
+        if let matching = review.matchingItemId {
+            itemId = matching
+        } else {
+            do {
+                itemId = try await environment.acquireArticle(manifest.item)
+            } catch let error as SessionKitError {
+                if case .persistenceFailed("shared_article_unreadable") = error {
+                    throw SessionKitError.persistenceFailed("shared_map_article_unreadable")
+                }
+                throw error
+            }
+        }
+        let item = try store.loadItem(id: itemId)
+        let contents = review.contents
+        // Searching a long text for every chapter is slow, so it runs off the main actor; saving does not.
+        let plan = try await Task.detached(priority: .userInitiated) {
+            try SharedTextListeningMapImporter.plan(contents, for: item, repository: store)
+        }.value
+        var attach: ((ListeningMap) throws -> Void)?
+        if let hook = environment.attachListeningMap { attach = { map in try hook(map) } }
+        let outcome = try SharedTextListeningMapImporter.commit(
+            plan, to: item, senderLabel: manifest.senderDisplayLabel, repository: store, attach: attach
+        )
+        switch outcome {
+        case .alreadyAdded(let count):
+            environment.recordDiagnostic("lastSpokenMarginsPackageImport", "duplicate_map:\(itemId):\(count)")
+        case .added(let placed, let total, let replaced):
+            environment.recordDiagnostic("lastSpokenMarginsPackageImport", "map_added:\(itemId):\(placed)/\(total):replaced=\(replaced)")
+        }
+        // The map is saved: from here the import has succeeded, whatever happens to the screen. A map packet
+        // carries no assets, so its working copy can go now.
+        queue.finish(review.id)
+        isImporting = false
+        try? FileManager.default.removeItem(at: review.extractionDirectory)
+        review.releaseSource?()
+        environment.reportConfirmation(outcome.message)
+        do {
+            try environment.showImportedItem(itemId, store)
+        } catch {
+            environment.reportFailure(error, "Opening the item after adding a Listening Map failed")
+        }
     }
 }

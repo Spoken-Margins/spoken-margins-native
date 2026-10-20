@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Spoken Margins voice catalog check every week
+
+[Timer]
+OnCalendar=Sun 09:00 UTC
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

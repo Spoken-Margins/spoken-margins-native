@@ -4,8 +4,10 @@
 // transcript. Anyone can then fetch the map for that episode.
 //
 // Rules this package enforces, not just documents:
-//   - A transcript is never served, and is deleted as soon as its map is made
-//     or dropped. The hourly sweep deletes any older than TranscriptMaxAge.
+//   - A transcript is never served and never written to disk. It waits in
+//     memory for the worker and is dropped as soon as its map is made or
+//     dropped; the hourly sweep drops any older than TranscriptMaxAge, and a
+//     restart drops them all.
 //   - The first upload for an episode wins; later ones cause no new work.
 //   - Spending stops at a hard monthly cap kept in a ledger on disk.
 //   - Neither the episode key nor the API key is ever logged.
@@ -25,10 +27,21 @@ const (
 
 	MaxTranscriptBytes = 2 << 20
 	MaxSegments        = 3000
+	// MaxPromptBytes bounds the text the model reads (each segment's text, id
+	// and the timestamp line around it). Claude Haiku 5.5 bills a prompt over
+	// 100,000 tokens at five times the price, which the ledger's flat prices
+	// would undercount. At 2 bytes a token, the worst case, 180,000 bytes is
+	// 90,000 tokens; ordinary English is about 3 bytes a token, so this holds
+	// roughly 3 hours of speech, less in languages that need more tokens.
+	MaxPromptBytes = 180000
 	// MaxDurationMs bounds durationMs so the scene arithmetic can't overflow
 	// and a typo can't claim a week-long episode.
 	MaxDurationMs = 48 * 3600 * 1000
 )
+
+// promptLineOverhead stands for the "[id h:mm:ss] " and newline that
+// buildRequest adds around each segment's text.
+const promptLineOverhead = 14
 
 var (
 	keyPattern       = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -93,7 +106,12 @@ func ParseTranscript(data []byte) (Transcript, error) {
 		return t, invalid("segment count")
 	}
 	seen := make(map[string]bool, len(t.Segments))
+	promptBytes := 0
 	for i, s := range t.Segments {
+		promptBytes += len(s.Text) + len(s.ID) + promptLineOverhead
+		if promptBytes > MaxPromptBytes {
+			return t, invalid("too long to map")
+		}
 		if !segmentIDPattern.MatchString(s.ID) || seen[s.ID] {
 			return t, invalid("segment %d id", i)
 		}

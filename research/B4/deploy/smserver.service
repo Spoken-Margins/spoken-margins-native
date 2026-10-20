@@ -19,7 +19,7 @@ Wants=network-online.target
 [Service]
 User=smserver
 Group=smserver
-ExecStart=/usr/local/bin/smserver serve -listen 127.0.0.1:@PORT@ -state /var/lib/smserver -public @SERVER_ROOT@ -behind-proxy -maps-cap-usd 10 -maps-model claude-haiku-4-5 -maps-input-usd-per-mtok 1 -maps-output-usd-per-mtok 5
+ExecStart=/usr/local/bin/smserver serve -listen 127.0.0.1:@PORT@ -state /var/lib/smserver -public @SERVER_ROOT@ -behind-proxy -maps-cap-usd 10 -maps-model claude-haiku-5-5 -maps-input-usd-per-mtok 0.10 -maps-output-usd-per-mtok 0.50
 EnvironmentFile=-/etc/smserver/maps.env
 StateDirectory=smserver
 StateDirectoryMode=0700

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <atom:link href="https://feeds.simplecast.com/PpzWFGhg" rel="self" title="MP3 Audio" type="application/atom+xml"/>
+    <atom:link href="https://simplecast.superfeedr.com" rel="hub" xmlns="http://www.w3.org/2005/Atom"/>
+    <generator>https://simplecast.com</generator>
+    <title>Serial</title>
+    <description>Our newest podcast, “The Last 12 Weeks” is out now. Search for it wherever you get your podcasts.
+
+Serial Productions makes narrative podcasts that have transformed the medium. Sign up for our newsletter at nytimes.com/serialnewsletter to find out about new shows, get behind the scenes stories, and see photos and videos you can’t see on a podcast. 
+
+To get full access to Serial Productions shows, and to other New York Times podcasts on Apple Podcasts, Amazon Music and Spotify, subscribe at nytimes.com/podcasts. 
+
+Have a story pitch, a tip, or feedback on our shows? Email us at serialshows@nytimes.com
+
+
+&quot;Serial&quot; began in 2014 as a spinoff of the public radio show &quot;This American Life.&quot; In 2017, we formed Serial Productions when we launched the podcast “S-Town.” Since then, Serial Productions has produced every season of “Serial” along with shows like “Nice White Parents,” “The Trojan Horse Affair,” “The Coldest Case in Laramie,” “The Retrievals” and more. In 2020, we joined the New York Times Company. Our shows have reached many millions of listeners and have won nearly every major journalism award for audio, including the first-ever Peabody Award given to a podcast.</description>
+    <copyright>Copyright 2024 Serial Podcast</copyright>
+    <language>en</language>
+    <pubDate>Thu, 18 Jun 2026 10:20:00 +0000</pubDate>
+    <lastBuildDate>Mon, 5 Oct 2026 22:45:03 +0000</lastBuildDate>
+    <image>
+      <link>https://serialpodcast.org</link>
+      <title>Serial</title>
+      <url>https://image.simplecastcdn.com/images/420025f0-46ea-493d-bf27-5999548228e9/8b898b7b-d448-41c7-ac51-e1c677e75e04/3000x3000/nyt-serialprod-album-400.jpg?aid=rss_feed</url>
+    </image>
+    <link>https://serialpodcast.org</link>
+    <itunes:type>serial</itunes:type>
+    <itunes:summary>Our newest podcast, “The Last 12 Weeks” is out now. Search for it wherever you get your podcasts.
+
+Serial Productions makes narrative podcasts that have transformed the medium. Sign up for our newsletter at nytimes.com/serialnewsletter to find out about new shows, get behind the scenes stories, and see photos and videos you can’t see on a podcast. 
+
+To get full access to Serial Productions shows, and to other New York Times podcasts on Apple Podcasts, Amazon Music and Spotify, subscribe at nytimes.com/podcasts. 
+
+Have a story pitch, a tip, or feedback on our shows? Email us at serialshows@nytimes.com
+
+
+&quot;Serial&quot; began in 2014 as a spinoff of the public radio show &quot;This American Life.&quot; In 2017, we formed Serial Productions when we launched the podcast “S-Town.” Since then, Serial Productions has produced every season of “Serial” along with shows like “Nice White Parents,” “The Trojan Horse Affair,” “The Coldest Case in Laramie,” “The Retrievals” and more. In 2020, we joined the New York Times Company. Our shows have reached many millions of listeners and have won nearly every major journalism award for audio, including the first-ever Peabody Award given to a podcast.</itunes:summary>
+    <itunes:author>Serial Productions &amp; The New York Times</itunes:author>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:image href="https://image.simplecastcdn.com/images/420025f0-46ea-493d-bf27-5999548228e9/8b898b7b-d448-41c7-ac51-e1c677e75e04/3000x3000/nyt-serialprod-album-400.jpg?aid=rss_feed"/>
+    <itunes:new-feed-url>https://feeds.simplecast.com/PpzWFGhg</itunes:new-feed-url>
+    <itunes:owner>
+      <itunes:name>Serial Productions &amp; The New York Times</itunes:name>
+      <itunes:email>serialshows@nytimes.com</itunes:email>
+    </itunes:owner>
+    <itunes:category text="News"/>
+    <itunes:category text="True Crime"/>
+    <itunes:category text="Society &amp; Culture"/>
+    

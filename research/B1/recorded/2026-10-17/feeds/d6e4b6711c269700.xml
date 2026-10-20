@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/DEARMEDIALLC7892434789" rel="self" type="application/rss+xml"/>
+    <title>The Toast</title>
+    <link>https://art19.com/shows/the-toast</link>
+    <language>en</language>
+    <copyright/>
+    <description>Take a bite out of The Toast, weekdays with Jackie &amp; Claudia Oshry.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/98f67050-9f0a-11f0-b2a5-d3600b74e328/image/591f9b381e2aefc1f457f98f58cd1aa6.jpeg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>The Toast</title>
+      <link>https://art19.com/shows/the-toast</link>
+    </image>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle/>
+    <itunes:author>Dear Media</itunes:author>
+    <itunes:summary>Take a bite out of The Toast, weekdays with Jackie &amp; Claudia Oshry.</itunes:summary>
+    <content:encoded>
+      <![CDATA[
+      <p>Take a bite out of The Toast, weekdays with Jackie &amp; Claudia Oshry.</p>
+    ]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Dear Media</itunes:name>
+      <itunes:email>production@dearmedia.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/98f67050-9f0a-11f0-b2a5-d3600b74e328/image/591f9b381e2aefc1f457f98f58cd1aa6.jpeg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Comedy">
+    </itunes:category>
+    <itunes:category text="TV &amp; Film">
+    </itunes:category>
+    

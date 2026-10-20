@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/LMINC5612116895" rel="self" type="application/rss+xml"/>
+    <title>The Chef's Cut</title>
+    <link>https://podcasters.spotify.com/pod/show/adrienne-cheatham</link>
+    <language>en-us</language>
+    <copyright>Level Media</copyright>
+    <description>The Chef’s Cut focuses on the stories and techniques behind the food you love the most! &amp;nbsp;Each week, Top Chef alums Adrienne Cheatham and Joe Flamm give you behind the scenes kitchen access and share food tips that will make you look like a culinary hero, all while hanging out with their celebrity chef friends and making you laugh a lot. If you’re a foodie, there’s a good chance The Chef’s Cut will be the highlight of your week! &amp;nbsp;New episodes drop every Tuesday.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/6389c408-538d-11f0-bf5a-674fe9d25c54/image/b632260f3deff8c76a2fa3733b9d204b.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>The Chef's Cut</title>
+      <link>https://podcasters.spotify.com/pod/show/adrienne-cheatham</link>
+    </image>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle/>
+    <itunes:author>Level Media</itunes:author>
+    <itunes:summary>The Chef’s Cut focuses on the stories and techniques behind the food you love the most! &amp;nbsp;Each week, Top Chef alums Adrienne Cheatham and Joe Flamm give you behind the scenes kitchen access and share food tips that will make you look like a culinary hero, all while hanging out with their celebrity chef friends and making you laugh a lot. If you’re a foodie, there’s a good chance The Chef’s Cut will be the highlight of your week! &amp;nbsp;New episodes drop every Tuesday.</itunes:summary>
+    <content:encoded>
+      <![CDATA[The Chef’s Cut focuses on the stories and techniques behind the food you love the most! &nbsp;Each week, Top Chef alums Adrienne Cheatham and Joe Flamm give you behind the scenes kitchen access and share food tips that will make you look like a culinary hero, all while hanging out with their celebrity chef friends and making you laugh a lot. If you’re a foodie, there’s a good chance The Chef’s Cut will be the highlight of your week! &nbsp;New episodes drop every Tuesday.]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Level Media</itunes:name>
+      <itunes:email>thechefscutpodcast@gmail.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/6389c408-538d-11f0-bf5a-674fe9d25c54/image/b632260f3deff8c76a2fa3733b9d204b.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Arts">
+      <itunes:category text="Food"/>
+    </itunes:category>
+    

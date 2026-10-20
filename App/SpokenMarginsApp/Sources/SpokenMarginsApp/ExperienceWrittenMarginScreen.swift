@@ -51,9 +51,11 @@ struct ExperienceWrittenMarginScreen: View {
                                     .padding(.top, 8)
                                     .padding(.leading, 5)
                                     .allowsHitTesting(false)
+                                    .accessibilityHidden(true)
                             }
                         }
                         .accessibilityLabel("Your Margin")
+                        .accessibilityHint("What do you want to remember?")
                         .accessibilityIdentifier("writtenMargin.text")
 
                     if let error = model.lastError {

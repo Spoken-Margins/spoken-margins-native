@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/BVLLC2163264914" rel="self" type="application/rss+xml"/>
+    <title>The Weekly Show with Jon Stewart</title>
+    <link>https://art19.com/shows/jon-stewart</link>
+    <language>en</language>
+    <copyright></copyright>
+    <description>On Mondays, Jon Stewart hosts The Daily Show, but on Wednesdays, he's back in your ears with The Weekly Show -- a podcast featuring in-depth conversations with a range of special guests. From experts and advocates, to stakeholders and thought leaders, we discuss the challenges, changes, and ideas that are shaping our world.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/7ead1b94-1938-11ef-8fb8-c377abd83739/image/e02a906c269a651a42d3d01518995631.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>The Weekly Show with Jon Stewart</title>
+      <link>https://art19.com/shows/jon-stewart</link>
+    </image>
+    <itunes:explicit>yes</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle></itunes:subtitle>
+    <itunes:author>Comedy Central</itunes:author>
+    <itunes:summary>On Mondays, Jon Stewart hosts The Daily Show, but on Wednesdays, he's back in your ears with The Weekly Show -- a podcast featuring in-depth conversations with a range of special guests. From experts and advocates, to stakeholders and thought leaders, we discuss the challenges, changes, and ideas that are shaping our world.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>On Mondays, Jon Stewart hosts The Daily Show, but on Wednesdays, he's back in your ears with The Weekly Show -- a podcast featuring in-depth conversations with a range of special guests. From experts and advocates, to stakeholders and thought leaders, we discuss the challenges, changes, and ideas that are shaping our world.</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Comedy Central</itunes:name>
+      <itunes:email>podcasts@qcodemedia.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/7ead1b94-1938-11ef-8fb8-c377abd83739/image/e02a906c269a651a42d3d01518995631.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Comedy">
+    </itunes:category>
+    <itunes:category text="News">
+      <itunes:category text="News Commentary"/>
+      <itunes:category text="Politics"/>
+    </itunes:category>
+    

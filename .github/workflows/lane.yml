@@ -33,6 +33,14 @@
 # report, and moves on to the next T3. The `release` job then runs those checks on a build runner and merges on
 # PASS. Unlike a label change, a dispatch sent with the workflow's own token does start a run. The dispatched run
 # uses the base branch's copy of this file and of lane-runner.py, never the PR's.
+#
+# Hosted T2 and T3 (#1389 phase 2): with the repository variable LANE_HOSTED_APP `on`, the route job sends the `lane`
+# job to a GitHub-hosted Mac (xcode-27, Xcode 27.0, as hosted-portable.yml). The steps marked "hosted Mac only" set it
+# up: the lane's state and evidence folders in the job's temporary folder (so its slots and simulator template are its
+# own), the Python tools, Git LFS from a cache, and Xcode's compilation cache; afterwards the evidence is uploaded as the
+# run's `lane-evidence` artifact. On the Mac those steps are skipped and the job runs exactly as before. Unset (the
+# private repo, whose hosted minutes cost money), nothing changes. The `automerge` and `release` jobs stay on the Mac
+# or the VPS. Set it once the repo is public: `gh variable set LANE_HOSTED_APP --body on`.
 name: lane
 
 # The run name carries what scripts/lane_dedupe.py needs to tell this PR's runs apart (#860): the PR, the
@@ -68,6 +76,8 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  # read: the automerge runs read the hosted fast checks' results on the PR's head (#1389).
+  checks: read
 
 jobs:
   route:
@@ -117,6 +127,9 @@ jobs:
           timeout 30s gh api --paginate --slurp "repos/$GH_REPO/pulls/$PR_NUMBER/files?per_page=100" > "$RUNNER_TEMP/files.json" || echo '[]' > "$RUNNER_TEMP/files.json"
       - name: Choose queues
         id: route
+        env:
+          # #1389 phase 2: `on` sends the lane job (T2/T3) to a GitHub-hosted Mac (test-scope.py hosted_app_routing).
+          LANE_HOSTED_APP: ${{ vars.LANE_HOSTED_APP }}
         run: |
           # The base can predate this helper while this workflow is first being introduced.
           if python3 scripts/test-scope.py --runner-routing "$GITHUB_EVENT_PATH" "$RUNNER_TEMP/files.json" "$RUNNER_TEMP/runners.json" > "$RUNNER_TEMP/route.json"; then
@@ -198,10 +211,66 @@ jobs:
           persist-credentials: false
           # The Supertonic models are Git LFS files; without them the contracts check sees pointers.
           # The LFS cache lives in .git, which the checkout's clean keeps, so each runner downloads
-          # the models once.
-          lfs: true
+          # the models once. A hosted Mac starts empty, so it fetches them from a cache below instead.
+          lfs: ${{ runner.environment != 'github-hosted' }}
       - name: Take the lane runner from the base branch
         run: git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
+      # ---- hosted Mac only (#1389 phase 2) ----
+      - name: Hosted Mac - lane folders, Xcode and the iOS runtime
+        if: runner.environment == 'github-hosted'
+        run: |
+          {
+            echo "SM_LANE_GITHUB_HOSTED=1"
+            echo "SM_LANE_STATE_DIR=$RUNNER_TEMP/lane-state"
+            echo "SM_LANE_EVIDENCE_DIR=$RUNNER_TEMP/lane-evidence"
+            echo "DEVELOPER_DIR=/Applications/Xcode_27.0.app/Contents/Developer"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/lane-state" "$RUNNER_TEMP/lane-evidence"
+          export DEVELOPER_DIR=/Applications/Xcode_27.0.app/Contents/Developer
+          xcodebuild -version
+          sysctl -n hw.ncpu hw.memsize
+          # The lane tests on iOS 26 (lane_sim.IOS_MAJOR). If this image has no iOS 26 runtime, use its newest iOS;
+          # the report's simulator line names the runtime either way.
+          runtimes=$(xcrun simctl list runtimes --json)
+          echo "$runtimes" | /usr/bin/python3 -c 'import json,sys; [print("runtime:", r["identifier"], r.get("isAvailable")) for r in json.load(sys.stdin)["runtimes"]]'
+          major=$(echo "$runtimes" | /usr/bin/python3 -c 'import json,sys
+          ok=[r["version"].split(".")[0] for r in json.load(sys.stdin)["runtimes"] if r.get("isAvailable") and r.get("platform")=="iOS"]
+          print("26" if "26" in ok else (max(ok, key=int) if ok else "26"))')
+          if [ "$major" != 26 ]; then
+            echo "::warning title=Hosted lane iOS::No iOS 26 simulator runtime on this image; T3 runs on iOS $major."
+          fi
+          echo "SM_LANE_IOS_MAJOR=$major" >> "$GITHUB_ENV"
+      - name: Hosted Mac - list LFS objects
+        if: runner.environment == 'github-hosted'
+        run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
+      - name: Hosted Mac - LFS cache
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
+          restore-keys: lfs-
+      - name: Hosted Mac - fetch LFS files
+        if: runner.environment == 'github-hosted'
+        run: |
+          # The checkout keeps no credentials; the job token is handed to this one command.
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
+      # Rolling key: every run saves its cache and the next restores the newest. verify-tests.py keeps it in the lane
+      # state folder, and Xcode bounds the store itself.
+      - name: Hosted Mac - Xcode compilation cache
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/lane-state/compilation-cache
+          key: xcode-cas-27.0-lane-${{ github.run_id }}
+          restore-keys: xcode-cas-27.0-
+      - name: Hosted Mac - Python tools
+        if: runner.environment == 'github-hosted'
+        env:
+          GH_TOKEN: ''  # the PR's own script and requirements: no token, as for the PR's builds and tests
+        run: PYTHON=/usr/bin/python3 bash scripts/bootstrap-python-tools.sh
+      # ---- end of hosted Mac only ----
       - name: Run the request
         id: run
         run: >-
@@ -229,6 +298,19 @@ jobs:
         run: >-
           /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --cleanup --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
           --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode explicit
+      # hosted Mac only: the machine is gone after the job, so the report's evidence goes with the run. Logs, manifests
+      # and reports only; result bundles are large and the logs name each failure.
+      - name: Hosted Mac - keep the evidence
+        if: always() && runner.environment == 'github-hosted'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-evidence
+          path: |
+            ${{ runner.temp }}/lane-evidence/**/*.log
+            ${{ runner.temp }}/lane-evidence/**/*.json
+            ${{ runner.temp }}/lane-evidence/**/*.md
+          if-no-files-found: ignore
+          retention-days: 7
 
   automerge:
     needs: route
@@ -259,6 +341,9 @@ jobs:
       BASE_REF: ${{ github.event.pull_request.base.ref }}
       RUN_ID: ${{ github.run_id }}
       HOSTED_ARGS: ${{ contains(fromJSON(needs.route.outputs.automerge || '[]'), 'sm-vps-t1') && '--hosted' || '' }}
+      # #1389 rollout guard: `on` once the repo is public, and the runner takes the hosted fast checks' PASS
+      # (hosted-portable.yml) and runs only --plan fast-mac-rest on the Mac. Unset, the whole --plan fast, as before.
+      LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -335,6 +420,7 @@ jobs:
       T3_REPORT: ${{ inputs.t3 }}
       BASE_REF: ${{ github.ref_name }}
       RUN_ID: ${{ github.run_id }}
+      LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
     steps:
       - uses: actions/checkout@v4
         with:

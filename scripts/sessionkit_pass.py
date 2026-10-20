@@ -31,7 +31,7 @@ READS = (
     'App/SpokenMarginsAppTests/',
     # Supertonic's narration tests read the bundled voice resources.
     'App/SpokenMarginsApp/Resources/Supertonic/',
-    # The Kitten fallback voice's tests read the bundled model and the front end's test vectors (#849).
+    # The Kitten fallback voice's tests read the bundled model (the voiceAssets input) and the front end's test vectors (#849).
     'App/SpokenMarginsApp/Resources/Kitten/',
     'research/C2/frontend/',
     'research/B2/',
@@ -43,6 +43,8 @@ READS = (
     'research/C2/results/darwin/',
     # The published source catalog the catalog tests decode.
     'Site/onboarding/catalog/',
+    # The guided tour manifest test decodes the manifest and checks the clip it names (#2051).
+    'Site/onboarding/v1/',
     # The trace tests find the repository root by its README.md and traces/ folder.
     'README.md',
     'traces/',

@@ -27,22 +27,22 @@ struct Gate1RootView: View {
             } else {
                 switch model.screen {
                 case .home:
-                    ExperienceRootTabs(navigation: $navigation, showsMiniPlayer: !keyboardIsPresented && model.shouldShowMiniPlayer)
+                    ExperienceRootTabs(navigation: $navigation, showsMiniPlayer: !keyboardIsPresented && model.shouldShowMiniPlayer).announcesScreenChange()
                 case .item:
                     ExperienceItemDetailScreen()
                 case .playback:
                     PlaybackScreen()
                 case .timeline:
-                    ExperienceTimelineRailScreen()
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    ExperienceTimelineRailScreen().announcesScreenChange()
+                        .motionTransition(.move(edge: .bottom).combined(with: .opacity))
                 case .settings:
-                    SettingsScreen()
+                    SettingsScreen().announcesScreenChange()
                 case .offlineStorage:
-                    ExperienceStorageScreen()
+                    ExperienceStorageScreen().announcesScreenChange()
                 case .export:
-                    ExportScreen()
+                    ExportScreen().announcesScreenChange()
                 case .batchExport:
-                    BatchExportScreen()
+                    BatchExportScreen().announcesScreenChange()
                 }
             }
         }
@@ -187,7 +187,7 @@ private struct AIDataSharingConsentView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     Label("Send this content to OpenAI?", systemImage: "hand.raised.fill")
                         .font(.title2.bold())
-                    Text("A live AI request can include the source text needed for the task, your Margin transcripts, the current follow-up, nearby anchors, and recent conversation turns.")
+                    Text("A live AI request can include the source text needed for the task, your Margin transcripts, the current follow-up, nearby words, and recent conversation turns.")
                     Text("Spoken Margins does not send recorded audio, local file paths, or internal database identifiers. Requests disable OpenAI response storage. You can revoke permission or delete your API key in Settings.")
                         .foregroundStyle(AppColors.secondaryText)
                     Link("Read the Privacy Policy", destination: AppLinks.privacy)
@@ -368,7 +368,7 @@ struct InterjectionDetailView: View {
                             copied = false
                         }
                     } label: {
-                        Label(copied ? "Copied" : "Copy Transcript and Anchors", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        Label(copied ? "Copied" : "Copy with Context", systemImage: copied ? "checkmark" : "doc.on.doc")
                     }
                     .accessibilityIdentifier("interjection.detail.copy")
                     if current.captureKind != .written {
@@ -376,9 +376,9 @@ struct InterjectionDetailView: View {
                         model.retryInterjectionTranscription(current)
                     } label: {
                         if model.isRetryingInterjectionTranscription(current) {
-                            Label("Retranscribing Saved Audio", systemImage: "waveform.badge.magnifyingglass")
+                            Label("Transcribing again", systemImage: "waveform.badge.magnifyingglass")
                         } else {
-                            Label("Retranscribe Saved Audio", systemImage: "waveform")
+                            Label("Transcribe again", systemImage: "waveform")
                         }
                     }
                     .disabled(current.audioPath == nil || model.isRetryingInterjectionTranscription(current))
@@ -401,7 +401,7 @@ struct InterjectionDetailView: View {
                         )
                     )
                     .accessibilityIdentifier("interjection.detail.shareStar")
-                    TextField("Private note for sender review", text: $privateSharingNoteDraft, axis: .vertical)
+                    TextField("Private note for yourself", text: $privateSharingNoteDraft, axis: .vertical)
                         .lineLimit(2...5)
                         .onCompatibleChange(of: privateSharingNoteDraft) { value in
                             if value.count > Gate1AppModel.privateSharingNoteCharacterLimit {
@@ -424,8 +424,8 @@ struct InterjectionDetailView: View {
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                 }
-                Section("Anchors") {
-                    LabeledContent("Context status", value: anchorContextStatusLabel(current))
+                Section("Where in the source") {
+                    LabeledContent("Nearby words", value: anchorContextStatusLabel(current))
                     Text("Before")
                         .font(.headline)
                     Text(anchorContextText(current.anchor.anchorBefore, status: current.captureKind == .written ? .unavailable : current.anchorContextStatus))
@@ -445,7 +445,7 @@ struct InterjectionDetailView: View {
                     Button(role: .destructive) {
                         pendingDeletion = .interjection
                     } label: {
-                        Label("Delete Interjection", systemImage: "trash")
+                        Label("Delete Margin", systemImage: "trash")
                     }
                     .accessibilityIdentifier("interjection.detail.delete")
                 }
@@ -468,7 +468,7 @@ struct InterjectionDetailView: View {
                 }
             }
             .confirmationDialog(
-                pendingDeletion == .transcript ? "Delete this transcript?" : "Delete this interjection?",
+                pendingDeletion == .transcript ? "Delete this transcript?" : "Delete this Margin?",
                 isPresented: Binding(
                     get: { pendingDeletion != nil },
                     set: { if !$0 { pendingDeletion = nil } }
@@ -482,14 +482,14 @@ struct InterjectionDetailView: View {
                         dismiss()
                     }
                 } else {
-                    Button("Delete Interjection", role: .destructive) {
+                    Button("Delete Margin", role: .destructive) {
                         model.deleteInterjection(current)
                         pendingDeletion = nil
                         dismiss()
                     }
                 }
                 Button("Cancel", role: .cancel) { pendingDeletion = nil }
-            }
+            } message: { Text(pendingDeletion == .transcript ? "The transcript will be removed." : (current.captureKind == .written ? "Its words will be removed." : "Its voice recording and words will be removed.")) }
         }
     }
 }
@@ -606,7 +606,7 @@ private func interjectionTargetLabel(_ interjection: Interjection) -> String {
     switch interjection.targetType {
     case .item: return "Source"
     case .assistantTurn: return "AI response"
-    case .summaryTurn: return "Interjection summary"
+    case .summaryTurn: return "Margin summary"
     }
 }
 
@@ -653,17 +653,17 @@ enum AppColors {
     static let listeningAccent = dynamicColor(AppSemanticColorRGB.listeningAccent)
     static let background = dynamicColor(AppSemanticColorRGB.background)
     static let panel = dynamicColor(AppSemanticColorRGB.panel)
-    static let inputBackground = dynamicColor(light: (0.98, 0.99, 0.97), dark: (0.10, 0.12, 0.11))
-    static let border = dynamicColor(light: (0.84, 0.87, 0.81), dark: (0.28, 0.34, 0.30))
+    static let inputBackground = dynamicColor(AppSemanticColorRGB.inputBackground)
+    static let border = contrastAware(AppSemanticColorRGB.border, increased: AppSemanticColorRGB.borderIncreased)
     static let text = dynamicColor(AppSemanticColorRGB.text)
     static let secondaryText = dynamicColor(AppSemanticColorRGB.secondaryText)
-    static let green = dynamicColor(light: (0.13, 0.43, 0.30), dark: (0.50, 0.84, 0.62))
+    static let green = dynamicColor(AppSemanticColorRGB.green)
     static let primaryAction = dynamicColor(AppSemanticColorRGB.primaryAction)
     static let softGreen = dynamicColor(AppSemanticColorRGB.softGreen)
-    static let accent = dynamicColor(light: (0.48, 0.82, 0.59), dark: (0.56, 0.89, 0.67))
-    static let accentSoft = dynamicColor(light: (0.67, 0.91, 0.72), dark: (0.25, 0.39, 0.28))
-    static let watchBackground = Color(red: 0.09, green: 0.13, blue: 0.11)
-    static let watchControl = Color(red: 0.18, green: 0.24, blue: 0.21)
+    static let accent = dynamicColor(AppSemanticColorRGB.accent)
+    static let accentSoft = dynamicColor(AppSemanticColorRGB.accentSoft)
+    static let watchBackground = dynamicColor(AppSemanticColorRGB.watchBackground)
+    static let watchControl = dynamicColor(AppSemanticColorRGB.watchControl)
     static let watchSecondary = dynamicColor(AppSemanticColorRGB.listeningSecondary)
     static let dangerText = dynamicColor(AppSemanticColorRGB.dangerText)
     static let dangerBackground = dynamicColor(AppSemanticColorRGB.dangerBackground)
@@ -671,20 +671,9 @@ enum AppColors {
     static let bone = dynamicColor(AppSemanticColorRGB.bone)
     static let evergreen = dynamicColor(AppSemanticColorRGB.evergreen)
     static let onEvergreen = dynamicColor(AppSemanticColorRGB.onEvergreen)
-    static let ochre = dynamicColor(light: (0.76, 0.52, 0.16), dark: (0.94, 0.72, 0.32))
-    static let coral = dynamicColor(light: (0.70, 0.27, 0.20), dark: (1.00, 0.57, 0.48))
+    static let ochre = dynamicColor(AppSemanticColorRGB.ochre)
+    static let coral = dynamicColor(AppSemanticColorRGB.coral)
     static let plum = dynamicColor(AppSemanticColorRGB.plum)
-
-    private static func dynamicColor(light: (Double, Double, Double), dark: (Double, Double, Double)) -> Color {
-        #if canImport(UIKit)
-        return Color(UIColor { traits in
-            let values = traits.userInterfaceStyle == .dark ? dark : light
-            return UIColor(red: values.0, green: values.1, blue: values.2, alpha: 1)
-        })
-        #else
-        return Color(red: light.0, green: light.1, blue: light.2)
-        #endif
-    }
 
     private static func dynamicColor(_ colors: AppDynamicRGB) -> Color {
         #if canImport(UIKit)
@@ -718,7 +707,7 @@ struct SecondaryButtonStyle: ButtonStyle {
             .frame(minHeight: 42)
             .foregroundStyle(AppColors.text)
             .background(AppColors.softGreen.opacity(configuration.isPressed ? 0.7 : 1))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: 8)).expandedHitArea(vertical: 1)
     }
 }
 
@@ -727,7 +716,7 @@ struct IconButtonStyle: ButtonStyle {
         configuration.label
             .foregroundStyle(AppColors.text)
             .background(AppColors.softGreen.opacity(configuration.isPressed ? 0.7 : 1))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: 8)).expandedHitArea(horizontal: 5, vertical: 5)
     }
 }
 

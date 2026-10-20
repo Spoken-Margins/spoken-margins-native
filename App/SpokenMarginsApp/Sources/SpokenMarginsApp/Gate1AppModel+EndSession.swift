@@ -8,12 +8,16 @@ extension Gate1AppModel {
     /// a finished session. A new session of the same item would otherwise leave the moment's closures alive.
     @discardableResult
     func endEngineSession(_ engine: SessionEngine, reason: PlaybackDiagnosticFields.SessionEndReason) throws -> SessionSnapshot {
-        recordDeveloperDiagnostic("session.end", PlaybackDiagnosticFields.sessionEnd(
+        var endFields = PlaybackDiagnosticFields.sessionEnd(
             reason: reason,
             itemToken: DeveloperDiagnosticRecording.token(snapshot.itemId),
             sessionToken: DeveloperDiagnosticRecording.token(snapshot.sessionId),
             narration: narrationDiagnostics()
-        ))
+        )
+        if reason == .miniPlayerClose, let tapToEndMs = hangTelemetry.takeCloseElapsedMs() { // #2099
+            endFields["tapToEndMs"] = String(tapToEndMs)
+        }
+        recordDeveloperDiagnostic("session.end", endFields)
         return try engine.endSession(stoppingInlinePlayback: endMarginMoment)
     }
 }

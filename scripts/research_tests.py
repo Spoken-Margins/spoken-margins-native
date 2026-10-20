@@ -148,7 +148,20 @@ def caddy_suite(root):
                                      'the Caddy filter script did not run')
     done = run(['bash', str(root / 'research/B4/deploy/test-edit-caddyfile.sh')], root)
     text = done.stdout + done.stderr
-    match = re.search(r'^(\d+) checks passed$', text, re.M)
+    # The script's last line is "N checks passed", or "N checks passed, but not the Caddy ones above" where
+    # Caddy isn't installed (a hosted Linux job, #1847); both count.
+    match = re.search(r'^(\d+) checks passed(?:, but not the Caddy ones above)?$', text, re.M)
+    checks = int(match[1]) if match else 0
+    if done.returncode or not checks:
+        return Result(label, tests=checks, error=f'script exited {done.returncode} after {checks} checks\n' + tail(text))
+    return Result(label, tests=checks)
+
+
+def rollback_suite(root):
+    label = 'shell research/B4/deploy/test-server-rollback.sh'
+    done = run(['bash', str(root / 'research/B4/deploy/test-server-rollback.sh')], root)
+    text = done.stdout + done.stderr
+    match = re.search(r'^(\d+) passed$', text, re.M)
     checks = int(match[1]) if match else 0
     if done.returncode or not checks:
         return Result(label, tests=checks, error=f'script exited {done.returncode} after {checks} checks\n' + tail(text))
@@ -160,6 +173,7 @@ def suites(root):
     for label, folder, arguments in PYTHON_SUITES:
         yield lambda label=label, folder=folder, arguments=arguments: python_suite(root, label, folder, arguments)
     yield lambda: caddy_suite(root)
+    yield lambda: rollback_suite(root)
 
 
 def main(root=ROOT, out=sys.stdout):

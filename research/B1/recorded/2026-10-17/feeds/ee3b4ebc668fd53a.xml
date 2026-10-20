@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/pivot" rel="self" type="application/rss+xml"/>
+    <title>Pivot</title>
+    <link>http://nymag.com/pivot</link>
+    <language>en</language>
+    <copyright>© 2023 Vox Media, Inc. All Rights Reserved</copyright>
+    <description>With great power, comes great scrutiny. Every Tuesday and Friday, journalist Kara Swisher and NYU Professor Scott Galloway offer sharp, unfiltered insights into the biggest stories in tech, business, and politics. They make bold predictions, pick winners and losers, and bicker and banter like no one else. From New York Magazine and the Vox Media Podcast Network.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/d6280242-e5c9-11e8-a7e3-d766bb7d2d3e/image/bbb7849ef30865b87218347b3a090613.png?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>Pivot</title>
+      <link>http://nymag.com/pivot</link>
+    </image>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle>With great power comes great scrutiny.</itunes:subtitle>
+    <itunes:author>New York Magazine</itunes:author>
+    <itunes:summary>With great power, comes great scrutiny. Every Tuesday and Friday, journalist Kara Swisher and NYU Professor Scott Galloway offer sharp, unfiltered insights into the biggest stories in tech, business, and politics. They make bold predictions, pick winners and losers, and bicker and banter like no one else. From New York Magazine and the Vox Media Podcast Network.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>With great power, comes great scrutiny. Every Tuesday and Friday, journalist Kara Swisher and NYU Professor Scott Galloway offer sharp, unfiltered insights into the biggest stories in tech, business, and politics. They make bold predictions, pick winners and losers, and bicker and banter like no one else. From New York Magazine and the Vox Media Podcast Network.</p>
+<p><br></p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Vox Media Podcast Network</itunes:name>
+      <itunes:email>podcasting@voxmedia.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/d6280242-e5c9-11e8-a7e3-d766bb7d2d3e/image/bbb7849ef30865b87218347b3a090613.png?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="News">
+      <itunes:category text="News Commentary"/>
+      <itunes:category text="Tech News"/>
+    </itunes:category>
+    <itunes:category text="Technology">
+    </itunes:category>
+    <itunes:new-feed-url>https://feeds.megaphone.fm/pivot</itunes:new-feed-url>
+    

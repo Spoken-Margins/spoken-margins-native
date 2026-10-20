@@ -9,20 +9,12 @@ public enum ImportedPodcastPlacement {
     /// the resolution, so it must not change.
     public static let missingTranscriptAlgorithmVersion = "podcast-transcript-anchor.v1"
 
-    /// The layers a placement pass works on, each with its Margins. A layer is skipped when it is deleted,
-    /// is not a podcast, has no readable Margins, or has neither Margins nor map artifacts: an empty list
-    /// would otherwise count as fully resolved (`[].allSatisfy` is true).
+    /// The layers a placement pass works on, each with its Margins (`ImportedPodcastPlacementPolicy` holds the rule).
     public static func podcastLayerRecords(
         layers: [ImportedCommentaryLayer],
         loadRecords: (ImportedCommentaryLayer) -> [ImportedCommentaryInterjection]?
     ) -> [(ImportedCommentaryLayer, [ImportedCommentaryInterjection])] {
-        layers.compactMap { layer -> (ImportedCommentaryLayer, [ImportedCommentaryInterjection])? in
-            guard layer.deletedAt == nil,
-                  layer.itemIdentity.itemType == .podcast,
-                  let records = loadRecords(layer),
-                  !records.isEmpty || ImportedMarginResends.hasLayerArtifacts(layer) else { return nil }
-            return (layer, records)
-        }
+        ImportedPodcastPlacementPolicy.podcastLayerRecords(layers: layers, loadRecords: loadRecords)
     }
 
     /// Whether reading the recipient's audio into a transcript could still place this Margin: it is not

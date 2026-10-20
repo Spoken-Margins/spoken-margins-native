@@ -66,6 +66,7 @@ Times are UTC unless a zone is named. "Pause" is the way to stop that one job wi
 | `lane.yml` | `pull_request` into `next` or `lane-check/**` (labels `lane:queued`, `automerge`); `workflow_dispatch` from the lane job after a T3 PASS | `route`, `lane-open-*` on `sm-vps`; `lane`, `automerge`, `release` on the Mac | Tests the PR, merges `automerge` PRs on PASS, pings the Dial when a runner is idle |
 | `linux-t1.yml` | `pull_request` into `next` | `sm-vps-t1` | SessionKit's Foundation-only tests on Linux |
 | `shipped-build-compat.yml` | `pull_request` into `next` touching persistence, sharing or stored types | Mac `sm-lane` | Build 29 can still open the database this PR writes |
+| `verify-tests.py` step `shipped-compat` (#1899) | Every automerge run of `--plan fast` or `--plan fast-mac-rest` whose diff matches that workflow's `paths` | Mac `sm-lane` | The same two checks, inside the plan the runner merges on, because a required check can't stand on the merge commit the runner pushes |
 | `merge-audit.yml` | `push` to `next` | `sm-vps` | Labels merges that skipped the merge check |
 
 No workflow has a `schedule:`. GitHub runs scheduled workflows only from the default branch, and `main` doesn't carry them. Repo secrets `SM_LANE_OPEN_URL` and `SM_LANE_OPEN_TOKEN` (`ops/lane/README.md`) and runner status **could not be checked**: the cloud proxy blocks the Actions secrets and runners endpoints.

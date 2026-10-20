@@ -69,6 +69,7 @@ class ResearchRunnerTests(unittest.TestCase):
                     patch.object(run, 'ops_steps'), \
                     patch.object(verification, 'swift_tests', return_value=set()), \
                     patch.object(verification, 'in_codex_sandbox', return_value=False), \
+                    patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
                     patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
                 run.host_steps()
         steps = {name: (args, kw) for name, args, kw in calls}
@@ -136,6 +137,8 @@ class ResearchRunnerTests(unittest.TestCase):
             script = 'research/B4/deploy/test-edit-caddyfile.sh'
             self.write(temporary, script, 'echo "ok   one"\necho "8 checks passed"\n')
             self.assertEqual(research_tests.caddy_suite(Path(temporary)).tests, 8)
+            self.write(temporary, script, 'echo "SKIPPED caddy validate"\necho "9 checks passed, but not the Caddy ones above"\n')
+            self.assertEqual(research_tests.caddy_suite(Path(temporary)).tests, 9)   # no Caddy installed: still counted
             self.write(temporary, script, 'echo "FAIL the guard" >&2\nexit 1\n')
             self.assertIn('FAIL the guard', research_tests.caddy_suite(Path(temporary)).error)
             self.write(temporary, script, 'echo "nothing ran"\n')

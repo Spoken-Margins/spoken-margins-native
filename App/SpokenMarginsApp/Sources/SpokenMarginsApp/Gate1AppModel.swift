@@ -23,11 +23,6 @@ struct ObsidianImportRequest: Sendable {
     let itemId: String
 }
 
-struct ObsidianImportBatch: Sendable {
-    let prepared: [PreparedObsidianImport]
-    let failures: [String]
-}
-
 @MainActor
 final class Gate1AppModel: ObservableObject {
     static let welcomeSampleItemId = "item-spoken-margins-overview"
@@ -122,13 +117,13 @@ final class Gate1AppModel: ObservableObject {
     private let developerRecording = DeveloperDiagnosticRecording(fileURL:
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
             .appendingPathComponent("DeveloperDiagnostics/latest.json"))
-
     let playbackEventRecording = DeveloperDiagnosticRecording(
         limit: 300,
         fileURL: Gate1AppModel.isRunningUnitTests ? nil : FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
             .appendingPathComponent("DeveloperDiagnostics/playback-events.json"),
         automatic: true
     )
+    let hangTelemetry = HangTelemetry() // #2099
     var lastPlaybackEventCheckpoint: TimeInterval = 0
     var speechInterruptionResumeWatch = SpeechInterruptionResumeWatch()
 
@@ -508,8 +503,8 @@ final class Gate1AppModel: ObservableObject {
     let interjectionTranscriptionHandler: InterjectionTranscriptionHandler
     let alignedInterjectionTranscriptionHandler: AlignedInterjectionTranscriptionHandler?
     let preparedTextAudioPrewarmHandler: PreparedTextAudioPrewarmHandler?
-    private let shareMarginSilenceAnalysisHandler: ShareMarginSilenceAnalysisHandler
-    private let shareMarginAudioCleanupHandler: ShareMarginAudioCleanupHandler
+    let shareMarginSilenceAnalysisHandler: ShareMarginSilenceAnalysisHandler
+    let shareMarginAudioCleanupHandler: ShareMarginAudioCleanupHandler
     let trashUndoDismissDelay: Duration
     var activeItemId = "item-pill"
     var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
@@ -535,8 +530,8 @@ final class Gate1AppModel: ObservableObject {
     var reviewPlaces = ReviewReturnPlaces() // the place a "Review new Margins" owes the listener, kept across launches (#474)
     var sharedMarginReturn = SharedMarginReturnClaim() // who owes the source back after a shared Margin (#997)
     var importedCommentaryAutoPlayTask: Task<Void, Never>?
-    private var bulkSharePreparationTask: Task<Void, Never>?
-    private var bulkSharePreparationGeneration = 0
+    var bulkSharePreparationTask: Task<Void, Never>?
+    var bulkSharePreparationGeneration = 0
     var shouldForceFirstSharedSourceMissForUITesting = UITestingHooks.forcesFirstSharedSourceMiss
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
     let libraryAudioLoop = LibraryAudioPreparationLoop() // the foreground loop, its render gate and turns (#281, #534, #995)
@@ -1097,7 +1092,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleAppBecameInactiveOrBackground(entersBackground: Bool = false) {
-        if entersBackground { narrationStartupProtection.appEnteredBackground() }; reconcileNarrationOwnership(trigger: entersBackground ? "background" : "inactive")
+        if entersBackground { narrationStartupProtection.appEnteredBackground(); hangTelemetry.setForeground(false) }; reconcileNarrationOwnership(trigger: entersBackground ? "background" : "inactive")
         marginOutput.finishBeforeBackground(); readwiseHighlightSync.stop()
         OnDeviceVoiceGovernor.app.setAppBackgrounded(true) // every on-device voice is paced while away (#1679)
         syncPlaybackProgressForLifecycle()
@@ -1120,7 +1115,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleAppBecameActive() {
-        narrationStartupProtection.appEnteredForeground(); reconcileNarrationOwnership(trigger: "foreground")
+        startHangTelemetry(); narrationStartupProtection.appEnteredForeground(); reconcileNarrationOwnership(trigger: "foreground")
         openReadyListeningEdition()
         marginOutput.start(); readwiseHighlightSync.start { [weak self] in self?.store }
         if let store { CommunityMapUploadService.shared.retryFailed(store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
@@ -1889,7 +1884,7 @@ final class Gate1AppModel: ObservableObject {
     /// The listener's own map or the publisher's chapters, which a friend's map never replaces.
     static func listenerHasListeningMap(itemId: String, store: SQLiteSessionStore) throws -> Bool {
         try store.loadPortableListeningMapProposals(itemId: itemId).contains { !CommunityMapConverter.isCommunityProposal(id: $0.id) } // a community map never blocks a friend's (#553)
-            || store.loadTranscriptTimeline(itemId: itemId)?.timeline.chapters.isEmpty == false
+            || store.loadTranscriptTimelineChapters(itemId: itemId).isEmpty == false // chapters only: this runs from the Item screen's body (#2073)
     }
 
     lazy var skimBridge = SkimBridgeController(host: self) // the Skim bridge's player, poll, resources and destinations (#954)
@@ -1940,9 +1935,7 @@ final class Gate1AppModel: ObservableObject {
 
     func resetLibraryFilters() {
         // Preserve the search and sort while restoring the everyday view.
-        libraryQuery.contentType = .all
-        libraryQuery.listeningState = .unfinished
-        libraryQuery.offlineState = .all
+        libraryQuery.resetFilters()
         libraryQueryChanged()
     }
 
@@ -2328,7 +2321,7 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    private func normalizedSharingURL(_ value: String?) -> String? {
+    func normalizedSharingURL(_ value: String?) -> String? {
         SharedItemIdentityBuilder.normalizedSharingURL(value)
     }
 
@@ -2871,7 +2864,7 @@ final class Gate1AppModel: ObservableObject {
         }
         guard let engine else { return false }
         do {
-            try operation(engine)
+            try hangTelemetry.labels.scoped("engine.run") { try operation(engine) }
             return true
         } catch {
             reportFailure(error)
@@ -3256,7 +3249,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func refreshLibraryRows(store: SQLiteSessionStore) throws {
-        libraryItems = try loadLibraryRows(store: store)
+        libraryItems = try hangTelemetry.labels.scoped("loadLibraryRows") { try loadLibraryRows(store: store) }
         recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
         try refreshAudioPreparationPresentation(store: store)
     }
@@ -3416,668 +3409,6 @@ final class Gate1AppModel: ObservableObject {
             ?? podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
             resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
         }
-    }
-
-    func prepareExportShareInterjections() {
-        do {
-            let store = try requireStore()
-            guard let exportSessionId, let session = try store.loadSession(id: exportSessionId) else {
-                throw SessionKitError.persistenceFailed("export_session_missing")
-            }
-            let candidates = try store.loadInterjections(sessionId: session.id)
-            selectedItem = try loadItemDetail(id: session.itemId, store: store)
-            prepareShareInterjections(candidates: candidates)
-            if isSharingInterjectionsPresented { sharingState.draftsPreparedForExport = true }
-        } catch { reportFailure(error, context: "Prepare session sharing failed") }
-    }
-
-    func openMarginItemExport(itemID: String) {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_export") else { return }
-        do {
-            selectedItem = try loadItemDetail(id: itemID, store: requireStore())
-            guard let sessionId = try ItemShareSessionSelection.sessionId(newestFirst: selectedItem.sessionRows.map(\.id), margins: { try requireStore().loadInterjections(sessionId: $0) }) else { return reportFailure("Record at least one Margin on this item before sharing.") }
-            exportSessionId = sessionId; prepareExportShareInterjections() // #147: straight to the Share Margins sheet, not the Share/Export screen.
-        } catch { reportFailure(error, context: "Open item export failed") }
-    }
-
-    func prepareShareInterjections() {
-        prepareShareInterjections(candidates: selectedItem.interjections)
-    }
-
-    private func prepareShareInterjections(candidates source: [Interjection]) {
-        cancelBulkSharePreparation()
-        let candidates = source.filter {
-            $0.status == "active" && $0.targetType == .item
-        }
-        guard !candidates.isEmpty else {
-            reportFailure("Record at least one Margin on this item before sharing.")
-            return
-        }
-        let hasStarredCandidates = candidates.contains { $0.isStarredForSharing == true }
-        sharingState = InterjectionSharingState(isPreparing: true)
-        sharingState.draftFilter = hasStarredCandidates ? .starred : .all
-        isSharingInterjectionsPresented = true
-        if let item = try? requireStore().loadItem(id: selectedItem.id) {
-            let reference = secureSharedItemURL(for: item)
-            sharingState.itemReferenceURL = reference
-            sharingState.isAppAuthoredItem = item.id == Self.welcomeSampleItemId
-            sharingState.canEmbedLinklessItem = reference == nil
-                && sharedItemType(for: item) != .podcast
-                && !(item.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            sharingState.confirmsPrivateSharingRights = sharingState.isAppAuthoredItem
-        }
-        sharingState.drafts = candidates.map { interjection in
-            let transcript = SharedMarginTextRequirement.initialReviewedText(for: interjection)
-            let hasAudio = interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)) != nil
-            let context = BoundedAnchorContext.select(
-                before: interjection.anchor.anchorBefore,
-                after: interjection.anchor.anchorAfter
-            )
-            return ShareInterjectionDraft(
-                interjection: interjection,
-                isIncluded: !hasStarredCandidates || interjection.isStarredForSharing == true,
-                approvedTranscript: transcript,
-                representationChoice: hasAudio ? .original : .textOnly,
-                warning: SharedMarginTextRequirement.reviewWarning(for: transcript) ?? shareAnchorWarning(for: interjection),
-                anchorBefore: context.before,
-                anchorAfter: context.after
-            )
-        }
-        sharingState.isPreparing = false
-    }
-
-    var bulkSharePreparationEligibleCount: Int {
-        sharingState.drafts.filter(isEligibleForBulkSharePreparation).count
-    }
-
-    func prepareAllIncludedShareDrafts() {
-        guard !sharingState.isBulkPreparing else { return }
-        let draftIDs = sharingState.drafts
-            .filter(isEligibleForBulkSharePreparation)
-            .map(\.id)
-        guard !draftIDs.isEmpty else { return }
-
-        bulkSharePreparationGeneration += 1
-        let generation = bulkSharePreparationGeneration
-        sharingState.isBulkPreparing = true
-        sharingState.bulkPreparationCompleted = 0
-        sharingState.bulkPreparationTotal = draftIDs.count
-        sharingState.bulkPreparationFailureCount = 0
-        sharingState.errorMessage = nil
-        diagnostics["bulkSharePreparation"] = "started:total=\(draftIDs.count)"
-
-        bulkSharePreparationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            for draftID in draftIDs {
-                guard !Task.isCancelled,
-                      self.bulkSharePreparationGeneration == generation else { return }
-                let prepared = await self.prepareShareDraftForBulk(
-                    draftID,
-                    generation: generation
-                )
-                guard !Task.isCancelled,
-                      self.bulkSharePreparationGeneration == generation else { return }
-                self.sharingState.bulkPreparationCompleted += 1
-                if !prepared {
-                    self.sharingState.bulkPreparationFailureCount += 1
-                }
-            }
-            guard self.bulkSharePreparationGeneration == generation else { return }
-            self.sharingState.isBulkPreparing = false
-            self.bulkSharePreparationTask = nil
-            self.diagnostics["bulkSharePreparation"] = [
-                "complete",
-                "prepared=\(self.sharingState.bulkPreparationCompleted)",
-                "fallbacks=\(self.sharingState.bulkPreparationFailureCount)"
-            ].joined(separator: ";")
-        }
-    }
-
-    func cancelBulkSharePreparation() {
-        guard sharingState.isBulkPreparing || bulkSharePreparationTask != nil else { return }
-        bulkSharePreparationGeneration += 1
-        bulkSharePreparationTask?.cancel()
-        bulkSharePreparationTask = nil
-        sharingState.isBulkPreparing = false
-        for index in sharingState.drafts.indices {
-            let wasInFlight = sharingState.drafts[index].isAnalyzingPauses
-                || sharingState.drafts[index].isPreparingCleanup
-            sharingState.drafts[index].isAnalyzingPauses = false
-            sharingState.drafts[index].isPreparingCleanup = false
-            if wasInFlight,
-               sharingState.drafts[index].currentEditState.automaticCleanupEnabled,
-               sharingState.drafts[index].canUndoEdit {
-                let hasOriginalAudio = originalAudioURL(forShareDraft: sharingState.drafts[index].id) != nil
-                _ = sharingState.drafts[index].undoEdit(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: false)
-            }
-        }
-        diagnostics["bulkSharePreparation"] = [
-            "cancelled",
-            "prepared=\(sharingState.bulkPreparationCompleted)",
-            "total=\(sharingState.bulkPreparationTotal)"
-        ].joined(separator: ";")
-    }
-
-    private func isEligibleForBulkSharePreparation(_ draft: ShareInterjectionDraft) -> Bool {
-        draft.isIncluded
-            && draft.interjection.alignedTranscript != nil
-            && !draft.currentEditState.automaticCleanupEnabled
-    }
-
-    private func prepareShareDraftForBulk(
-        _ id: String,
-        generation: Int
-    ) async -> Bool {
-        guard let initialIndex = sharingState.drafts.firstIndex(where: { $0.id == id }),
-              let aligned = sharingState.drafts[initialIndex].interjection.alignedTranscript else {
-            return false
-        }
-        sharingState.drafts[initialIndex].preparationMessage = nil
-        recordShareEdit(for: id, renderCleanedAudio: false) {
-            $0.automaticCleanupEnabled = true
-        }
-        sharingState.automaticallyCleanedDraftIDs.insert(id)
-
-        guard let analysisIndex = sharingState.drafts.firstIndex(where: { $0.id == id }) else {
-            return false
-        }
-        let audioPath = sharingState.drafts[analysisIndex].interjection.audioPath
-        let sourceURL = audioPath.flatMap(resolvedInterjectionAudioURL(for:))
-        var analysisFailure: String?
-        if let sourceURL {
-            sharingState.drafts[analysisIndex].isAnalyzingPauses = true
-            let analyzer = shareMarginSilenceAnalysisHandler
-            let analysis = await Task.detached {
-                do {
-                    return (try analyzer(sourceURL, aligned), nil as String?)
-                } catch {
-                    return ([], error.localizedDescription)
-                }
-            }.value
-            guard !Task.isCancelled,
-                  bulkSharePreparationGeneration == generation,
-                  let current = sharingState.drafts.firstIndex(where: { $0.id == id }) else {
-                return false
-            }
-            sharingState.drafts[current].isAnalyzingPauses = false
-            sharingState.drafts[current].acousticPauseDecisions = analysis.0
-            analysisFailure = analysis.1
-            applyShareEditState(at: current, renderCleanedAudio: false)
-        } else if audioPath != nil {
-            analysisFailure = "The saved voice recording is unavailable; reviewed text remains available."
-        }
-
-        guard !Task.isCancelled,
-              bulkSharePreparationGeneration == generation else { return false }
-        let rendered = await renderBulkCleanup(forShareDraft: id, generation: generation)
-        guard bulkSharePreparationGeneration == generation,
-              let finalIndex = sharingState.drafts.firstIndex(where: { $0.id == id }) else {
-            return false
-        }
-        if let analysisFailure {
-            let analysisMessage =
-                "Pause analysis was unavailable (\(analysisFailure)). Filler and manual text edits remain reviewable."
-            if let renderMessage = sharingState.drafts[finalIndex].preparationMessage {
-                sharingState.drafts[finalIndex].preparationMessage = "\(renderMessage) \(analysisMessage)"
-            } else {
-                sharingState.drafts[finalIndex].preparationMessage = analysisMessage
-            }
-        }
-        return rendered && analysisFailure == nil
-    }
-
-    private func renderBulkCleanup(
-        forShareDraft id: String,
-        generation bulkGeneration: Int
-    ) async -> Bool {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else {
-            return false
-        }
-        guard let decisions = sharingState.drafts[index].cleanup?.decisions else {
-            return true
-        }
-        guard let sourcePath = sharingState.drafts[index].interjection.audioPath,
-              let sourceURL = resolvedInterjectionAudioURL(for: sourcePath) else {
-            sharingState.drafts[index].representationChoice = .textOnly
-            sharingState.drafts[index].preparationMessage =
-                "Cleaned voice could not be prepared because the saved recording is unavailable. Reviewed text remains available."
-            return false
-        }
-        guard let root = try? applicationSupportDirectory()
-            .appending(path: "SpokenMargins/ShareRevisions/\(UUID().uuidString)", directoryHint: .isDirectory) else {
-            sharingState.drafts[index].preparationMessage =
-                "Cleaned voice storage is unavailable. Original voice and reviewed text remain available."
-            return false
-        }
-        sharingState.drafts[index].renderGeneration += 1
-        let renderGeneration = sharingState.drafts[index].renderGeneration
-        sharingState.drafts[index].isPreparingCleanup = true
-        let destination = root.appending(path: "cleaned-\(safePodcastEvidenceComponent(id)).m4a")
-        let renderer = shareMarginAudioCleanupHandler
-        let result: (duration: Int?, failure: String?)
-        do {
-            result = (try await renderer(sourceURL, destination, decisions), nil)
-        } catch {
-            result = (nil, error.localizedDescription)
-        }
-        guard !Task.isCancelled,
-              bulkSharePreparationGeneration == bulkGeneration,
-              let current = sharingState.drafts.firstIndex(where: { $0.id == id }),
-              sharingState.drafts[current].renderGeneration == renderGeneration else {
-            try? FileManager.default.removeItem(at: destination)
-            return false
-        }
-        sharingState.drafts[current].isPreparingCleanup = false
-        if let duration = result.duration {
-            sharingState.drafts[current].cleanedAudioURL = destination
-            sharingState.drafts[current].cleanedAudioDurationMs = duration
-            sharingState.drafts[current].representationChoice = .cleaned
-            return true
-        }
-        sharingState.drafts[current].cleanedAudioURL = nil
-        sharingState.drafts[current].cleanedAudioDurationMs = nil
-        sharingState.drafts[current].representationChoice =
-            originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
-        sharingState.drafts[current].preparationMessage =
-            "Cleaned voice could not be prepared (\(result.failure ?? "unknown error")). Original voice or reviewed text remains available."
-        return false
-    }
-
-    func setShareDraftIncluded(_ id: String, included: Bool) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
-        sharingState.drafts[index].setIncluded(included)
-    }
-
-    func setShareDraftsIncluded(_ ids: [String], included: Bool) {
-        let targetIDs = Set(ids)
-        guard !targetIDs.isEmpty else { return }
-        for index in sharingState.drafts.indices where targetIDs.contains(sharingState.drafts[index].id) {
-            sharingState.drafts[index].setIncluded(included)
-        }
-    }
-
-    func setShareAutoCleanSelectedEnabled(_ enabled: Bool) {
-        ShareAutoCleanPreference.record(enabled: enabled)
-        sharingState.needsAutoCleanDecision = false
-        sharingState.autoCleanSelectedEnabled = enabled
-        if enabled {
-            prepareAllIncludedShareDrafts()
-        } else {
-            cancelBulkSharePreparation()
-            undoAutomaticallyCleanedShareDrafts()
-        }
-    }
-
-    func prepareAutomaticallyCleanedShareDraftsIfEnabled() {
-        guard sharingState.autoCleanSelectedEnabled else { return }
-        prepareAllIncludedShareDrafts()
-    }
-
-    private func undoAutomaticallyCleanedShareDrafts() {
-        let draftIDs = sharingState.automaticallyCleanedDraftIDs
-        for id in draftIDs {
-            recordShareEdit(for: id, renderCleanedAudio: false) {
-                $0.disableAutomaticCleanup()
-            }
-        }
-        sharingState.automaticallyCleanedDraftIDs.removeAll()
-        sharingState.bulkPreparationCompleted = 0
-        sharingState.bulkPreparationTotal = 0
-        sharingState.bulkPreparationFailureCount = 0
-    }
-
-    func setShareDraftRepresentation(_ id: String, choice: ShareMarginRepresentationChoice) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
-        let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
-        sharingState.drafts[index].setRepresentation(choice, hasOriginalAudio: hasOriginalAudio)
-    }
-
-    func setShareDraftAnchorBefore(_ id: String, value: String) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
-        sharingState.drafts[index].setAnchorBefore(value)
-    }
-
-    func setShareDraftAnchorAfter(_ id: String, value: String) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
-        sharingState.drafts[index].setAnchorAfter(value)
-    }
-
-    func originalAudioURL(forShareDraft id: String) -> URL? {
-        sharingState.drafts.first(where: { $0.id == id })?
-            .interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:))
-    }
-
-    func prepareCleanup(forShareDraft id: String) {
-        guard !sharingState.isBulkPreparing else { return }
-        sharingState.automaticallyCleanedDraftIDs.remove(id)
-        if let index = sharingState.drafts.firstIndex(where: { $0.id == id }) {
-            sharingState.drafts[index].preparationMessage = nil
-        }
-        recordShareEdit(for: id) { $0.automaticCleanupEnabled = true }
-        analyzeAcousticPauses(forShareDraft: id)
-    }
-
-    func setCleanupDecision(draftID: String, decisionID: String, accepted: Bool) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == draftID }) else { return }
-        let hasOriginalAudio = originalAudioURL(forShareDraft: draftID) != nil
-        if sharingState.drafts[index].setCleanupDecision(decisionID: decisionID, accepted: accepted, hasOriginalAudio: hasOriginalAudio) {
-            renderCleanup(forShareDraft: draftID)
-        }
-    }
-
-    func toggleShareDraftWord(draftID: String, segmentID: String) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == draftID }) else { return }
-        let hasOriginalAudio = originalAudioURL(forShareDraft: draftID) != nil
-        if sharingState.drafts[index].toggleWord(segmentID: segmentID, hasOriginalAudio: hasOriginalAudio) {
-            renderCleanup(forShareDraft: draftID)
-        }
-    }
-
-    func isShareDraftWordDeleted(draftID: String, segmentID: String) -> Bool {
-        sharingState.drafts.first(where: { $0.id == draftID })?.isWordDeleted(segmentID: segmentID) ?? false
-    }
-
-    func undoShareDraftEdit(_ id: String) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
-        let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
-        if sharingState.drafts[index].undoEdit(hasOriginalAudio: hasOriginalAudio) {
-            renderCleanup(forShareDraft: id)
-        }
-    }
-
-    func redoShareDraftEdit(_ id: String) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
-        let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
-        if sharingState.drafts[index].redoEdit(hasOriginalAudio: hasOriginalAudio) {
-            renderCleanup(forShareDraft: id)
-        }
-    }
-
-    func restoreOriginalShareDraft(_ id: String) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
-        sharingState.automaticallyCleanedDraftIDs.remove(id)
-        let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
-        let anchorWarning = shareAnchorWarning(for: sharingState.drafts[index].interjection)
-        sharingState.drafts[index].restoreOriginal(hasOriginalAudio: hasOriginalAudio, anchorWarning: anchorWarning)
-    }
-
-    private func recordShareEdit(
-        for id: String,
-        renderCleanedAudio: Bool = true,
-        mutate: (inout ShareMarginEditState) -> Void
-    ) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
-        let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
-        if sharingState.drafts[index].recordEdit(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: renderCleanedAudio, mutate: mutate) {
-            renderCleanup(forShareDraft: id)
-        }
-    }
-
-    private func applyShareEditState(at index: Int, renderCleanedAudio: Bool = true) {
-        guard sharingState.drafts.indices.contains(index) else { return }
-        let id = sharingState.drafts[index].id
-        let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
-        if sharingState.drafts[index].applyEditState(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: renderCleanedAudio) {
-            renderCleanup(forShareDraft: id)
-        }
-    }
-
-    private func analyzeAcousticPauses(forShareDraft id: String) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }),
-              sharingState.drafts[index].acousticPauseDecisions.isEmpty,
-              !sharingState.drafts[index].isAnalyzingPauses,
-              let aligned = sharingState.drafts[index].interjection.alignedTranscript,
-              let sourcePath = sharingState.drafts[index].interjection.audioPath,
-              let sourceURL = resolvedInterjectionAudioURL(for: sourcePath) else { return }
-        sharingState.drafts[index].isAnalyzingPauses = true
-        let analyzer = shareMarginSilenceAnalysisHandler
-        Task.detached { [weak self] in
-            let result: ([InterjectionCleanupDecision], String?)
-            do {
-                result = (try analyzer(sourceURL, aligned), nil)
-            } catch {
-                result = ([], error.localizedDescription)
-            }
-            await MainActor.run {
-                guard let self,
-                      let current = self.sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
-                self.sharingState.drafts[current].isAnalyzingPauses = false
-                self.sharingState.drafts[current].acousticPauseDecisions = result.0
-                if let failure = result.1 {
-                    self.sharingState.drafts[current].preparationMessage =
-                        "Pause analysis was unavailable (\(failure)). Filler and manual text edits remain reviewable."
-                }
-                self.applyShareEditState(at: current)
-            }
-        }
-    }
-
-    private func renderCleanup(forShareDraft id: String) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }),
-              let sourcePath = sharingState.drafts[index].interjection.audioPath,
-              let sourceURL = resolvedInterjectionAudioURL(for: sourcePath),
-              let decisions = sharingState.drafts[index].cleanup?.decisions,
-              let root = try? applicationSupportDirectory()
-                .appending(path: "SpokenMargins/ShareRevisions/\(UUID().uuidString)", directoryHint: .isDirectory) else {
-            if let index = sharingState.drafts.firstIndex(where: { $0.id == id }) {
-                sharingState.drafts[index].warning = [
-                    shareAnchorWarning(for: sharingState.drafts[index].interjection),
-                    "The cleaned audio preview could not be prepared. You can still share original voice or text."
-                ].compactMap { $0 }.joined(separator: " ")
-            }
-            return
-        }
-        sharingState.drafts[index].renderGeneration += 1
-        let generation = sharingState.drafts[index].renderGeneration
-        sharingState.drafts[index].isPreparingCleanup = true
-        let destination = root.appending(path: "cleaned-\(safePodcastEvidenceComponent(id)).m4a")
-        let renderer = shareMarginAudioCleanupHandler
-        Task.detached { [weak self] in
-            do {
-                let duration = try await renderer(sourceURL, destination, decisions)
-                await MainActor.run {
-                    guard let current = self?.sharingState.drafts.firstIndex(where: { $0.id == id }),
-                          self?.sharingState.drafts[current].renderGeneration == generation else { return }
-                    self?.sharingState.drafts[current].isPreparingCleanup = false
-                    self?.sharingState.drafts[current].cleanedAudioURL = destination
-                    self?.sharingState.drafts[current].cleanedAudioDurationMs = duration
-                    self?.sharingState.drafts[current].representationChoice = .cleaned
-                    if let interjection = self?.sharingState.drafts[current].interjection {
-                        self?.sharingState.drafts[current].warning = self?.shareAnchorWarning(for: interjection)
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    guard let current = self?.sharingState.drafts.firstIndex(where: { $0.id == id }),
-                          self?.sharingState.drafts[current].renderGeneration == generation else { return }
-                    self?.sharingState.drafts[current].isPreparingCleanup = false
-                    self?.sharingState.drafts[current].cleanedAudioURL = nil
-                    self?.sharingState.drafts[current].cleanedAudioDurationMs = nil
-                    self?.sharingState.drafts[current].representationChoice =
-                        self?.originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
-                    self?.sharingState.drafts[current].preparationMessage =
-                        "Cleaned voice could not be prepared. Original voice or reviewed text remains available."
-                    if let interjection = self?.sharingState.drafts[current].interjection {
-                        self?.sharingState.drafts[current].warning = [
-                            self?.shareAnchorWarning(for: interjection),
-                            "Cleaned audio could not be regenerated. Original voice and reviewed text are still available."
-                        ].compactMap { $0 }.joined(separator: " ")
-                    }
-                }
-            }
-        }
-    }
-
-    private func shareAnchorWarning(for interjection: Interjection) -> String? {
-        SharedMarginExport.anchorWarning(for: interjection, isNativeAudio: selectedItem.isNativeAudio)
-    }
-
-    func exportSharedInterjections(presentsReadySheet: Bool = true) {
-        guard !sharingState.isBulkPreparing else {
-            sharingState.errorMessage = "Finish or cancel bulk preparation before sharing."
-            return
-        }
-        let (drafts, omission) = SharedMarginTextRequirement.shareable(sharingState.drafts.filter(\.isIncluded), text: \.approvedTranscript)
-        guard !drafts.isEmpty else {
-            sharingState.errorMessage = omission ?? "Select at least one Margin with reviewed text."
-            return
-        }
-        sharingState.isExporting = true
-        sharingState.errorMessage = nil
-        do {
-            let store = try requireStore()
-            let item = try store.loadItem(id: selectedItem.id)
-            let itemIdentity = sharedItemIdentity(for: item, drafts: drafts)
-            let itemTransport = SharedMarginExport.itemTransport(item: item, identity: itemIdentity, isAppAuthored: sharingState.isAppAuthoredItem, confirmsPrivateRights: sharingState.confirmsPrivateSharingRights)
-            var machineEvidence: [ReviewedMachineEvidenceAsset] = []
-            var selections: [ReviewedInterjectionSelection] = []
-
-            for (index, draft) in drafts.enumerated() {
-                let revisionID = "share-revision-\(UUID().uuidString.lowercased())"
-                let cleanedPath = draft.representationChoice == .cleaned ? draft.cleanedAudioURL?.path : nil
-                let revision = InterjectionShareRevision(
-                    id: revisionID,
-                    interjectionId: draft.interjection.id,
-                    itemId: draft.interjection.itemId,
-                    sessionId: draft.interjection.sessionId,
-                    createdAt: Date(),
-                    approvedTranscript: draft.approvedTranscript.trimmingCharacters(in: .whitespacesAndNewlines),
-                    cleanedAudioPath: cleanedPath,
-                    cleanedAudioDurationMs: draft.representationChoice == .cleaned ? draft.cleanedAudioDurationMs : nil,
-                    decisions: draft.cleanup?.decisions ?? [],
-                    anchorBefore: draft.anchorBefore,
-                    anchorAfter: draft.anchorAfter,
-                    status: .senderApproved
-                )
-                try store.saveInterjectionShareRevision(revision)
-
-                let evidence = sharingState.includesAcousticEvidence
-                    ? (draft.interjection.podcastAnchorEvidence ?? []).filter { FileManager.default.fileExists(atPath: $0.localPath) }
-                    : []
-                machineEvidence.append(contentsOf: evidence.map {
-                    ReviewedMachineEvidenceAsset(
-                        id: $0.id,
-                        path: "assets/evidence/\($0.id).shazamsignature",
-                        sourceURL: URL(fileURLWithPath: $0.localPath),
-                        durationMs: $0.durationMs,
-                        anchorOffsetMs: $0.anchorOffsetMs,
-                        provenance: ($0.provenance ?? .exactLocalPlaybackEdition).rawValue
-                    )
-                })
-                let anchor = SharedMarginExport.anchor(
-                    for: draft.interjection,
-                    item: item,
-                    isNativeAudio: selectedItem.isNativeAudio,
-                    mediaChapters: selectedItem.mediaChapters,
-                    machineEvidenceAssetIds: evidence.map(\.id)
-                )
-                let representation: ReviewedRepresentationSelection
-                switch draft.representationChoice {
-                case .original:
-                    guard let url = draft.interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)),
-                          let duration = audioDurationMs(at: url) else {
-                        throw SessionKitError.persistenceFailed("selected_original_margin_audio_unavailable")
-                    }
-                    representation = .originalAudio(sourceURL: url, durationMs: duration)
-                case .cleaned:
-                    guard let url = draft.cleanedAudioURL else {
-                        throw SessionKitError.persistenceFailed("selected_cleaned_margin_audio_unavailable")
-                    }
-                    representation = .cleanedAudio(sourceURL: url)
-                case .textOnly:
-                    representation = .textOnly
-                }
-                selections.append(ReviewedInterjectionSelection(
-                    packageScopedId: String(format: "margin-%04d", index + 1),
-                    revision: revision,
-                    anchor: anchor,
-                    representation: representation, replyTo: draft.interjection.replyTo
-                ))
-            }
-
-            let mapProposals = SharedMarginExport.mapProposals(try store.loadPortableListeningMapProposals(itemId: item.id))
-            let fingerprintSpines = sharingState.includesAcousticEvidence
-                ? try store.loadEditionFingerprintSpine(itemId: item.id).map { [$0] } ?? []
-                : []
-            let phraseSketches = try store.loadTranscriptPhraseSketch(itemId: item.id).map { [$0] } ?? []
-            if let spine = fingerprintSpines.first {
-                let directory = try episodeMapDirectory(itemId: item.id)
-                let existingEvidenceIDs = Set(machineEvidence.map(\.id))
-                for landmark in spine.landmarks where !existingEvidenceIDs.contains(landmark.signatureAssetId) {
-                    let url = directory.appending(path: "\(landmark.signatureAssetId).shazamsignature")
-                    guard FileManager.default.fileExists(atPath: url.path) else { continue }
-                    machineEvidence.append(ReviewedMachineEvidenceAsset(
-                        id: landmark.signatureAssetId,
-                        path: "assets/evidence/\(landmark.signatureAssetId).shazamsignature",
-                        sourceURL: url,
-                        durationMs: max(1, landmark.sourceMediaEndMs - landmark.sourceMediaStartMs),
-                        anchorOffsetMs: 0,
-                        provenance: landmark.provenance.rawValue
-                    ))
-                }
-            }
-
-            let packageID = "package-\(UUID().uuidString.lowercased())"
-            let prepared = try SpokenMarginsPackageBuilder.prepare(
-                packageId: packageID,
-                createdAt: Date(),
-                item: itemIdentity,
-                itemTransportSelection: itemTransport,
-                selections: selections,
-                mapProposals: mapProposals, localSourceTexts: [item.text, store.loadTranscriptTimeline(itemId: item.id)?.timeline.segments.map(\.text).joined(separator: " ")].compactMap { $0 },
-                fingerprintSpines: fingerprintSpines,
-                phraseSketches: phraseSketches,
-                machineEvidence: machineEvidence,
-                senderDisplayLabel: sharingState.senderDisplayLabel.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-            )
-            let directory = try applicationSupportDirectory()
-                .appending(path: "SpokenMargins/SharedPackages", directoryHint: .isDirectory)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let destination = directory.appending(path: "\(SharedMarginExport.fileName(item.title))-\(packageID.suffix(8)).spokenmargins")
-            let writtenManifest = try SpokenMarginsPackageArchive.write(prepared, to: destination); try? SpokenMarginsPackageExportRecord.recordExport(manifest: writtenManifest, selections: selections, repository: store) // replies link back through the recorded identity; the share still succeeds without it (#473)
-            listeningSignals.export(itemId: item.id, packetId: packageID, marginCount: drafts.count, packetURL: destination)
-            UserDefaults.standard.set(sharingState.senderDisplayLabel, forKey: "sharingSenderDisplayLabel")
-            sharedSpokenMarginsPackageURL = destination
-            sharingState.isExporting = false
-            if presentsReadySheet {
-                isSharingInterjectionsPresented = false
-                isSharedSpokenMarginsPackagePresented = true
-            }
-            diagnostics["lastSharedPackage"] = "margins=\(drafts.count);evidence=\(machineEvidence.count);map=\(mapProposals.isEmpty ? "preparing_or_unavailable" : "included")"
-            if let omission { reportWarning(omission) }
-        } catch {
-            sharingState.isExporting = false
-            sharingState.errorMessage = error.localizedDescription
-            diagnostics["lastSharedPackageFailure"] = String(describing: error)
-        }
-    }
-
-    private func sharedItemIdentity(
-        for item: Item,
-        drafts: [ShareInterjectionDraft]
-    ) -> SharedItemIdentity {
-        SharedItemIdentityBuilder.exportIdentity(
-            for: item,
-            draftEditionDigests: drafts.map(\.interjection.sourceExactEditionSHA256),
-            localAudioDigest: localAudiobookDigest(for: item)
-        )
-    }
-
-    /// Mirrors the link the packet builder keeps, so the share screen never promises a private feed link (#168).
-    private func secureSharedItemURL(for item: Item) -> String? {
-        ShareableLinkPolicy.shareableLink(
-            item.externalReference.flatMap(SharedItemIdentityBuilder.normalizedSharingURL)
-                ?? item.media?.url.flatMap(SharedItemIdentityBuilder.normalizedSharingURL)
-        )
-    }
-
-    private func sharedItemType(for item: Item) -> SharedItemType {
-        SharedPacketItemMatcher.itemType(for: item)
-    }
-
-    private func audioDurationMs(at url: URL) -> Int? {
-        guard let file = try? AVAudioFile(forReading: url), file.processingFormat.sampleRate > 0 else { return nil }
-        return max(1, Int((Double(file.length) / file.processingFormat.sampleRate * 1_000).rounded()))
     }
 
     func setImportedCommentaryLayerEnabled(_ layerID: String, enabled: Bool) {
@@ -4292,7 +3623,7 @@ final class Gate1AppModel: ObservableObject {
 
     func refreshSelectedItem() {
         guard let store, !activeItemId.isEmpty else { return }
-        if let detail = try? loadItemDetail(id: activeItemId, store: store) {
+        if let detail = try? hangTelemetry.labels.scoped("loadItemDetail", { try loadItemDetail(id: activeItemId, store: store) }) {
             selectedItem = detail
             selectedListeningEdition = try? ListeningEditionStore.application().load(itemID: activeItemId)
             offerFollowSuggestionIfEligible(itemId: activeItemId, store: store)

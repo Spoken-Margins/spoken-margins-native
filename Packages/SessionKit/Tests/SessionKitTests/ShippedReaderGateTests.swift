@@ -84,6 +84,43 @@ final class ShippedReaderGateTests: XCTestCase {
         XCTAssertEqual(try ShippedPacketReader.importPacket(at: url).sorted(), ["margin-001", "margin-002", "margin-003"])
     }
 
+    // MARK: The Margin comparison (#1898)
+
+    func testTheComparisonNamesEveryWayTheShippedBuildCanDisagree() {
+        XCTAssertNil(shippedMarginsMismatch(sent: ["a", "b"], shippedBuildRead: ["b", "a"]), "order does not matter")
+        XCTAssertNil(shippedMarginsMismatch(sent: [], shippedBuildRead: []))
+        XCTAssertNil(shippedMarginsMismatch(sent: nil, shippedBuildRead: ["a"]), "no commentary layer, nothing to compare")
+
+        XCTAssertEqual(shippedMarginsMismatch(sent: ["a", "b", "c"], shippedBuildRead: ["c", "a"]),
+                       .marginsDiffer(sent: ["a", "b", "c"], shippedBuildRead: ["a", "c"]), "a dropped Margin")
+        XCTAssertEqual(shippedMarginsMismatch(sent: ["a"], shippedBuildRead: ["a", "x"]),
+                       .marginsDiffer(sent: ["a"], shippedBuildRead: ["a", "x"]), "a Margin that was never sent")
+        XCTAssertEqual(shippedMarginsMismatch(sent: ["a", "b"], shippedBuildRead: ["a", "z"]),
+                       .marginsDiffer(sent: ["a", "b"], shippedBuildRead: ["a", "z"]), "a different Margin")
+        XCTAssertEqual(shippedMarginsMismatch(sent: ["a", "b"], shippedBuildRead: ["a", "a"]),
+                       .marginsDiffer(sent: ["a", "b"], shippedBuildRead: ["a", "a"]), "the same Margin twice")
+        XCTAssertEqual(shippedMarginsMismatch(sent: ["a"], shippedBuildRead: []),
+                       .marginsDiffer(sent: ["a"], shippedBuildRead: []), "everything dropped")
+    }
+
+    func testTheGateRefusesAPacketWhoseMarginTheShippedBuildDrops() throws {
+        let prepared = try prepare([selection("margin-001"), selection("margin-002"), selection("margin-003")])
+        let url = root.appendingPathComponent("dropped.spokenmargins")
+        // A reader that decodes the zip but loses the last Margin, which is what a Margin kind Build 29 can't read looks like.
+        let dropsOne: (URL) throws -> [String] = { try ShippedPacketReader.importPacket(at: $0).sorted().dropLast().map { $0 } }
+        XCTAssertThrowsError(try exportPacket(prepared, to: url, shippedBuildReader: dropsOne)) {
+            XCTAssertEqual($0 as? ShippedReaderGateError,
+                           .marginsDiffer(sent: ["margin-001", "margin-002", "margin-003"], shippedBuildRead: ["margin-001", "margin-002"]))
+        }
+    }
+
+    func testTheGateAcceptsAPacketWhoseMarginsTheShippedBuildReadsInAnyOrder() throws {
+        let prepared = try prepare([selection("margin-001"), selection("margin-002")])
+        let url = root.appendingPathComponent("reordered.spokenmargins")
+        let reversed: (URL) throws -> [String] = { try ShippedPacketReader.importPacket(at: $0).sorted().reversed().map { $0 } }
+        XCTAssertNoThrow(try exportPacket(prepared, to: url, shippedBuildReader: reversed))
+    }
+
     // MARK: Nothing writes a packet around the gate
 
     private func swiftFiles(under folder: URL) throws -> [URL] {
@@ -106,11 +143,12 @@ final class ShippedReaderGateTests: XCTestCase {
     }
 
     func testTheAppTestsThatWritePacketsDirectlyAreTheOnesWeKnowAbout() throws {
-        // App tests cannot call exportPacket (the frozen reader is not linked into the app test target), so seven
+        // App tests cannot call exportPacket (the frozen reader is not linked into the app test target), so these
         // writes there are not read by Build 29. EpisodeMapStoredNamesTests writes one only to drive an import and
         // check the names the app saves; it asserts nothing about what Build 29 can read. SpokenMarginsPackageImportCoordinatorTests
         // writes embedded-text packets only to drive the import coordinator's stage and confirm paths; the same
-        // packet shape is exported through exportPacket in SharingTests. SourceLinkImportTests
+        // packet shape is exported through exportPacket in SharingTests. Its map packet (#1471) is the same shape
+        // TextListeningMapPacketTests exports through exportMapOnlyPacket, which asserts the shipped build refuses it. SourceLinkImportTests
         // writes a private-feed packet only to drive the #454 recovery; PrivateFeedRecoveryTests exports the same
         // kind of linkless packet through exportPacket. This pins that list: a new
         // direct write fails here until someone either routes it through a packet the Mac package tests also read
@@ -128,6 +166,6 @@ final class ShippedReaderGateTests: XCTestCase {
         }
         XCTAssertEqual(counts, ["EpisodeMapStoredNamesTests.swift": 1, "LocalAudioListeningPackageTests.swift": 3,
                                 "SourceLinkImportTests.swift": 1, "SpokenMarginsPackageHandoffTests.swift": 1,
-                                "SpokenMarginsPackageImportCoordinatorTests.swift": 1])
+                                "SpokenMarginsPackageImportCoordinatorTests.swift": 2])
     }
 }

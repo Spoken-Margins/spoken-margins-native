@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <atom:link href="https://feeds.simplecast.com/zyaxg_KL" rel="self" title="MP3 Audio" type="application/atom+xml"/>
+    <atom:link href="https://simplecast.superfeedr.com" rel="hub" xmlns="http://www.w3.org/2005/Atom"/>
+    <generator>https://simplecast.com</generator>
+    <title>The Book Review</title>
+    <description>The world&apos;s top authors and critics join host Gilbert Cruz and editors at The New York Times Book Review to talk about the week&apos;s top books, what we&apos;re reading and what&apos;s going on in the literary world.
+
+Subscribe today at nytimes.com/podcasts or on Apple Podcasts, Spotify and Amazon Music. You can also subscribe via your favorite podcast app here https://www.nytimes.com/activate-access/audio?source=podcatcher. For more podcasts and narrated articles, download The New York Times app at nytimes.com/app.</description>
+    <copyright>©  2023 The New York Times Company</copyright>
+    <language>en</language>
+    <pubDate>Fri, 16 Oct 2026 09:00:00 +0000</pubDate>
+    <lastBuildDate>Fri, 16 Oct 2026 23:35:10 +0000</lastBuildDate>
+    <image>
+      <link>https://www.nytimes.com/column/book-review-podcast</link>
+      <title>The Book Review</title>
+      <url>https://image.simplecastcdn.com/images/621229bd-2556-4ce6-8ae0-9fa3046f9da9/1e9abcf9-af9c-4105-8b1b-8e05c60c1fcf/3000x3000/8ce0200f165a6c5cafeecc11ac3294f228d9e46d8af6079a5a9db0fe3b62c8fe48ee2dbb6b2460bf705631e82a06b6b79e940141aad774c868833e2a204ce41b.jpeg?aid=rss_feed</url>
+    </image>
+    <link>https://www.nytimes.com/column/book-review-podcast</link>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>The world&apos;s top authors and critics join host Gilbert Cruz and editors at The New York Times Book Review to talk about the week&apos;s top books, what we&apos;re reading and what&apos;s going on in the literary world.
+
+Subscribe today at nytimes.com/podcasts or on Apple Podcasts, Spotify and Amazon Music. You can also subscribe via your favorite podcast app here https://www.nytimes.com/activate-access/audio?source=podcatcher. For more podcasts and narrated articles, download The New York Times app at nytimes.com/app.</itunes:summary>
+    <itunes:author>The New York Times</itunes:author>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:image href="https://image.simplecastcdn.com/images/621229bd-2556-4ce6-8ae0-9fa3046f9da9/1e9abcf9-af9c-4105-8b1b-8e05c60c1fcf/3000x3000/8ce0200f165a6c5cafeecc11ac3294f228d9e46d8af6079a5a9db0fe3b62c8fe48ee2dbb6b2460bf705631e82a06b6b79e940141aad774c868833e2a204ce41b.jpeg?aid=rss_feed"/>
+    <itunes:new-feed-url>https://feeds.simplecast.com/zyaxg_KL</itunes:new-feed-url>
+    <itunes:owner>
+      <itunes:name>The New York Times</itunes:name>
+      <itunes:email>books@nytimes.com</itunes:email>
+    </itunes:owner>
+    <itunes:category text="Arts">
+      <itunes:category text="Books"/>
+    </itunes:category>
+    

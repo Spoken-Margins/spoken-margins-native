@@ -1,36 +1,33 @@
 import Foundation
 import XCTest
 @testable import SessionKitSpeechFrontEnd
+import SessionKitTestInputs
 
 /// The Swift front end for the bundled Kitten voice must say exactly what the Python reference
 /// (`research/C2/frontend`) says: same normalized text, same phonemes, same Kitten ids. The vectors
 /// are the reference's own output; the lexicon and weights are the files the app bundles.
 final class KittenFrontEndTests: XCTestCase {
-    private static let repositoryRoot: URL = {
-        var root = URL(fileURLWithPath: #filePath)
-        for _ in 0..<5 { root.deleteLastPathComponent() }          // file, SessionKitCoreTests, Tests, SessionKit, Packages
-        return root
-    }()
-
-    private static let resources = repositoryRoot.appending(path: "App/SpokenMarginsApp/Resources/Kitten")
-    private static let reference = repositoryRoot.appending(path: "research/C2/frontend")
+    /// A file of the bundled voice (`voiceAssets`); the test skips, naming it, when the package is checked out alone.
+    private func resource(_ name: String) throws -> URL { try TestInputs.url(.voiceAssets, name) }
 
     private func frontEnd() throws -> KittenFrontEnd {
         try KittenFrontEnd(
-            lexiconURL: Self.resources.appending(path: "lexicon.tsv"),
-            g2pWeightsURL: Self.resources.appending(path: "g2p_weights.bin"),
-            g2pManifestURL: Self.resources.appending(path: "g2p_weights.json")
+            lexiconURL: resource("lexicon.tsv"),
+            g2pWeightsURL: resource("g2p_weights.bin"),
+            g2pManifestURL: resource("g2p_weights.json")
         )
     }
 
     private func json(_ name: String) throws -> [String: Any] {
-        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: Self.reference.appending(path: name)))
+        let url = try TestInputs.url(.research, "C2/frontend/" + name)
+        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url))
         return try XCTUnwrap(object as? [String: Any])
     }
 
     func testEverySentenceVectorReproducesNormalizedTextPhonemesAndIds() throws {
         let frontEnd = try frontEnd()
-        let sentences = try XCTUnwrap(json("test_vectors.json")["sentences"] as? [[String: Any]])
+        let vectors = try json("test_vectors.json")
+        let sentences = try XCTUnwrap(vectors["sentences"] as? [[String: Any]])
         XCTAssertGreaterThanOrEqual(sentences.count, 16)
         for vector in sentences {
             let text = try XCTUnwrap(vector["text"] as? String)
@@ -64,8 +61,9 @@ final class KittenFrontEndTests: XCTestCase {
     }
 
     func testLexiconFindsFirstMiddleLastAndMissingWords() throws {
-        let lexicon = try PronunciationLexicon(contentsOf: Self.resources.appending(path: "lexicon.tsv"))
-        let lines = try String(contentsOf: Self.resources.appending(path: "lexicon.tsv"), encoding: .utf8)
+        let lexiconURL = try resource("lexicon.tsv")
+        let lexicon = try PronunciationLexicon(contentsOf: lexiconURL)
+        let lines = try String(contentsOf: lexiconURL, encoding: .utf8)
             .split(separator: "\n").map { $0.split(separator: "\t", maxSplits: 1).map(String.init) }
         XCTAssertGreaterThan(lines.count, 100_000)
         for index in [0, 1, lines.count / 2, lines.count - 2, lines.count - 1] {

@@ -1,0 +1,19 @@
+<rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:sy="http://purl.org/rss/1.0/modules/syndication/" xmlns:admin="http://webns.net/mvcb/" xmlns:atom="http://www.w3.org/2005/Atom/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" version="2.0">
+  <channel>
+    <title>Cortex</title>
+    <link>https://relay.fm/cortex</link>
+    <pubDate>Wed, 23 Sep 2026 11:52:00 GMT</pubDate>
+    <description>Cortex is a show that explores how creative people think about their work — and how they get it done. Each episode dives into the workflows they follow, the apps and devices they depend on, and the habits that keep projects moving. Hosted by CGP Grey and Myke Hurley.</description>
+    <language>en-US</language>
+    <copyright>Copyright © 2026 Relay FM, LLC</copyright>
+    <itunes:author>Relay</itunes:author>
+    <itunes:keywords>cgp, grey, myke, hurley, work, time, technology, productivity, getting, things, done</itunes:keywords>
+    <itunes:explicit>clean</itunes:explicit>
+    <itunes:image href="http://files.relay.fm/uploads/broadcast/image/17/cortex_artwork_bc912281-9faa-4538-b034-74a2acf872bd.png"/>
+    <itunes:owner>
+      <itunes:name>Relay</itunes:name>
+      <itunes:email>hello@relay.fm</itunes:email>
+    </itunes:owner>
+    <itunes:block>no</itunes:block>
+    <itunes:category text="Technology"/>
+    

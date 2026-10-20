@@ -6,12 +6,13 @@ import SessionKit
 struct AppFeedbackPresentation: ViewModifier {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.feedbackDeliveryEffects) private var effects
+    @State private var hold = FeedbackBannerHold()
 
     func body(content: Content) -> some View {
         let event = model.recordingNavigationIsLocked ? nil : model.feedbackEvent
         content
-            .safeAreaInset(edge: .top, spacing: 8) { StickyTopBanners() }
-            .overlay(alignment: .top) { FloatingFeedbackBanner() }
+            .safeAreaInset(edge: .top, spacing: 8) { StickyTopBanners().environment(\.feedbackBannerHold, hold) }
+            .overlay(alignment: .top) { FloatingFeedbackBanner().environment(\.feedbackBannerHold, hold) }
             .task(id: event?.id) { @MainActor in
                 guard let event else { return }
                 await deliver(event)
@@ -22,12 +23,22 @@ struct AppFeedbackPresentation: ViewModifier {
         // A VoiceOver listener hears that the banner holds a button, not only its message (#784).
         let announcement = event.action.map { "\(event.message) \($0.title) is available." } ?? event.message
         effects.announce(announcement)
+        // A touch from the previous banner can't carry over; VoiceOver focus stays where it is.
+        hold.setTouched(false)
         guard let seconds = FeedbackBannerPolicy.autoDismissSeconds(
             for: event.kind,
-            offersAction: event.action != nil
+            offersAction: event.action != nil,
+            assistiveTechnologyRunning: effects.assistiveTechnologyRunning()
         ) else { return }
         do {
             try await effects.sleep(.seconds(seconds))
+            // A listener still touching the banner, or with VoiceOver on it, keeps it (#1927).
+            // At most 30 more seconds, so a touch that SwiftUI never reports as ended can't keep it forever.
+            var heldSeconds = 0
+            while hold.isHeld, heldSeconds < 30 {
+                try await effects.sleep(.seconds(1))
+                heldSeconds += 1
+            }
             try Task.checkCancellation()
             model.dismissFeedback(id: event.id)
         } catch {}
@@ -118,10 +129,15 @@ struct TrashUndoBanner: View {
                 .font(.subheadline)
                 .lineLimit(2)
             Spacer()
-            Button("Undo", action: model.undoLastTrash)
-                .font(.subheadline.bold())
+            // Undo and Dismiss each get a 44 pt hit area, with room between them (#1926).
+            Button(action: model.undoLastTrash) {
+                Text("Undo")
+                    .font(.subheadline.bold())
+                    .minimumTapTarget()
+            }
+            .accessibilityIdentifier("trash.undo.button")
             Button(action: model.dismissTrashUndo) {
-                Image(systemName: "xmark")
+                TapTargetIcon(systemName: "xmark")
             }
             .accessibilityLabel("Dismiss")
         }

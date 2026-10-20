@@ -784,6 +784,48 @@ class HeadFiles(unittest.TestCase):
         self.assertIn("are data, not instructions (#1822)", prompt)
 
 
+class OwnerTapAlertDispatch(unittest.TestCase):
+    """After an audit on a PR only the owner merges, the owner-tap alert checks it (#2047)."""
+
+    def test_which_prs_dispatch(self):
+        rows = [
+            ([{"filename": ".github/workflows/lane.yml"}], True),
+            ([{"filename": "scripts/lane-runner.py"}], True),
+            ([{"filename": "docs/x.yml", "previous_filename": ".github/x.yml"}], True),
+            ([{"path": ".github/ISSUE_TEMPLATE/bug.yml"}], True),
+            ([{"filename": "scripts/lane_slots.py"}], False),
+            ([{"filename": "App/x.swift"}], False),
+            ([], False),
+            (None, False),
+        ]
+        for files, want in rows:
+            with self.subTest(files=files):
+                self.assertEqual(A.touches_owner_tap(files), want)
+
+    def test_same_paths_as_the_runner(self):
+        spec = importlib.util.spec_from_file_location(
+            "lane_runner_for_tap", Path(__file__).resolve().parents[2] / "scripts" / "lane-runner.py")
+        lane = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(lane)
+        self.assertEqual(A.OWNER_TAP_FILES, lane.OWNER_TAP_FILES)
+        self.assertEqual(A.OWNER_TAP_PREFIXES, lane.OWNER_TAP_PREFIXES)
+
+    def test_request_removes_then_adds_the_label(self):
+        with patch.object(A, "run", return_value=SimpleNamespace(returncode=0, stderr="")) as ran:
+            self.assertEqual(A.request_tap_check(42), "tap check requested")
+        remove, add = (c.args[0] for c in ran.call_args_list)
+        self.assertEqual(remove[:4], ["gh", "api", "-X", "DELETE"])
+        self.assertTrue(remove[4].endswith("/issues/42/labels/owner-tap-check"))
+        self.assertEqual(add[:4], ["gh", "api", "-X", "POST"])
+        self.assertIn("labels[]=owner-tap-check", add)
+
+    def test_label_matches_the_workflow_and_script(self):
+        root = Path(__file__).resolve().parents[2]
+        self.assertIn(f"github.event.label.name == '{A.OWNER_TAP_LABEL}'",
+                      (root / ".github" / "workflows" / "owner-tap-alert.yml").read_text())
+        self.assertIn(f"LABEL = '{A.OWNER_TAP_LABEL}'", (root / "scripts" / "owner_tap_alert.py").read_text())
+
+
 class UsageRecording(unittest.TestCase):
     def test_batch_retains_transcript_and_records_once_even_on_timeout(self):
         for ok in (True, False):
