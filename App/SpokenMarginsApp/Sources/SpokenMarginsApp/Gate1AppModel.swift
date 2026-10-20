@@ -69,7 +69,9 @@ final class Gate1AppModel: ObservableObject {
             presentedScreen = newValue
         }
     }
-    @Published var snapshot = SessionSnapshot() {
+    /// Publishes to every screen except when only the playback position moved (`publishSnapshotChange`, #2074).
+    var snapshot = SessionSnapshot() {
+        willSet { publishSnapshotChange(to: newValue) }
         didSet {
             recordPlaybackEventState(previous: oldValue)
             if oldValue.sessionId != snapshot.sessionId { resumeDeferredPodcastPlacements() }
@@ -84,8 +86,8 @@ final class Gate1AppModel: ObservableObject {
                 stopImportedCommentaryPlayback(resumeSource: false)
             }
             if snapshot.status.isPlaybackActive { releaseOwnMarginReturn() }
-            preparedTextAudioStatus = snapshot.preparedTextAudioStatus ?? preparedTextAudioStatus
-            if let snapshotSourceTranscriptStatus = snapshot.sourceTranscriptStatus,
+            if let status = snapshot.preparedTextAudioStatus, status != preparedTextAudioStatus { preparedTextAudioStatus = status } // an equal write still publishes
+            if let snapshotSourceTranscriptStatus = snapshot.sourceTranscriptStatus, snapshotSourceTranscriptStatus != sourceTranscriptStatus,
                !(sourceTranscriptStatus == "transcribing" && snapshotSourceTranscriptStatus == "not_started") {
                 sourceTranscriptStatus = snapshotSourceTranscriptStatus
             }
@@ -105,6 +107,8 @@ final class Gate1AppModel: ObservableObject {
     @Published var narrationVoiceNotice = NarrationVoiceNotice() // written by updateNarrationVoiceNotice() only
     var gate2CompactSnapshot: CompactControlSnapshot?
     let runtimeDiagnostics = RuntimeDiagnostics()
+    let playbackClock = PlaybackClock() // the playhead, for the views that follow it (#2074)
+    let selectedItemStreamFlag = CachedItemFlag() // whether the open item is a remote stream, read from the store once (#2074)
     var diagnostics: [String: String] {
         get { runtimeDiagnostics.values }
         set { if runtimeDiagnostics.values != newValue { runtimeDiagnostics.values = newValue } }
@@ -234,7 +238,7 @@ final class Gate1AppModel: ObservableObject {
             if selectedItem.id == snapshot.itemId { activePlaybackDetail = selectedItem }
             else if oldValue.id == snapshot.itemId { activePlaybackDetail = oldValue }
             if oldValue.id != selectedItem.id { selectedListeningEdition = try? ListeningEditionStore.application().load(itemID: selectedItem.id) }
-            skimBridge.invalidateResources()
+            skimBridge.invalidateResources(); selectedItemStreamFlag.invalidate()
             prepareLeveledMargins(from: oldValue)
             if oldValue.id != selectedItem.id || oldValue.externalReference != selectedItem.externalReference {
                 storedSourceFollowSuggestionCandidates = []
@@ -907,12 +911,6 @@ final class Gate1AppModel: ObservableObject {
     static let supportedMediaSkipSeconds = MediaSkipRule.supportedSeconds
     static let supportedPodcastCacheLimitsGB = PodcastCacheLimitGB.allCases.map(\.rawValue)
     static let supportedRenderedSpeechCacheLimitsMB = [128, 256, 512, 1_024]
-
-    var selectedPodcastDownloadState: PodcastDownloadState? {
-        if let state = podcastDownloadRecords[selectedItem.id]?.state { return state }
-        if let item = try? store?.loadItem(id: selectedItem.id), item.media?.sourceType == .remoteStream { return .streamingOnly }
-        return nil
-    }
 
     private static func storedMediaSkipSeconds(forKey key: String) -> Int {
         MediaSkipRule.validated(UserDefaults.standard.integer(forKey: key))
@@ -2676,7 +2674,7 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         do {
-            snapshot = try engine.updateStreamingTurnPosition(turnId: turnId, charOffset: presentationOffset)
+            let next = try engine.updateStreamingTurnPosition(turnId: turnId, charOffset: presentationOffset); if next != snapshot { snapshot = next } // an equal write publishes to every screen
             diagnostics["streamingInterjectionTurnId"] = turnId
             diagnostics["streamingPresentationOffset"] = "\(presentationOffset)"
             diagnostics["streamingRecoveryOffset"] = "\(streamingSpeechQueue.currentRecoveryOffset ?? presentationOffset)"
@@ -2695,10 +2693,8 @@ final class Gate1AppModel: ObservableObject {
                     charOffset: observation.charOffset
                 )
             case .progressed:
-                snapshot = try engine.updateStreamingTurnPosition(
-                    turnId: observation.turnId,
-                    charOffset: observation.charOffset
-                )
+                let next = try engine.updateStreamingTurnPosition(turnId: observation.turnId, charOffset: observation.charOffset)
+                if next != snapshot { snapshot = next } // an equal write publishes to every screen
             case .failed:
                 diagnostics["streamingSpeechFailure:\(observation.turnId)"] = "offset:\(observation.charOffset)"
             }

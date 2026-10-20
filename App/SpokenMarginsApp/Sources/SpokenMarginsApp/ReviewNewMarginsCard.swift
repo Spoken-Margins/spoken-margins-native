@@ -7,12 +7,14 @@ import SessionKit
 struct ReviewNewMarginsCard: View {
     @EnvironmentObject private var model: Gate1AppModel
     let moment: MarginMomentSequence
+    @State private var playbackTick = 0 // bumped by each progress tick: the countdown follows the playhead (#2074)
 
     private var current: MarginMomentAnchor { moment.playing ?? moment.target }
     private var whose: String { current.label.map { "\($0)'s Margin" } ?? "A friend's Margin" }
     private var isLast: Bool { moment.unplayed.isEmpty }
 
     var body: some View {
+        let _ = playbackTick
         VStack(alignment: .leading, spacing: 10) {
             Text("Reviewing new Margins · \(moment.reviewNumber ?? 1) of \(moment.review?.count ?? 1)")
                 .font(.footnote.weight(.semibold))
@@ -65,6 +67,7 @@ struct ReviewNewMarginsCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
         .accessibilityElement(children: .contain)
+        .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
     }
 
     private static func countdown(_ ms: Int) -> String {

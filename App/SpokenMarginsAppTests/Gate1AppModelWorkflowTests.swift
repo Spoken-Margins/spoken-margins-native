@@ -228,6 +228,49 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         withExtendedLifetime((modelObserver, diagnosticObserver)) {}
     }
 
+    /// #2074: the progress tick used to publish through the model twice a second and re-run every screen's `body`.
+    func testPlaybackTicksReachTheClockAndNotEveryScreen() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        var screenNotifications = 0
+        var clockNotifications = 0
+        let screenObserver = model.objectWillChange.sink { screenNotifications += 1 }
+        let clockObserver = model.playbackClock.objectWillChange.sink { clockNotifications += 1 }
+        var held = model.snapshot
+        held.status = .paused
+        held.chapterTitle = "Chapter one"
+        held.preparedTextAudioStatus = "ready"
+        held.sourceTranscriptStatus = "ready"
+        held.currentMediaTimeMs = 1_000
+        model.snapshot = held
+        XCTAssertGreaterThan(screenNotifications, 0, "a change of state still reaches every screen")
+
+        screenNotifications = 0
+        clockNotifications = 0
+        for ms in stride(from: 1_500, through: 5_000, by: 500) {
+            held.currentMediaTimeMs = ms
+            held.currentTextStart = ms / 10
+            held.currentTextEnd = ms / 10 + 40
+            model.snapshot = held
+        }
+        XCTAssertEqual(screenNotifications, 0, "a progress tick must not re-run every screen")
+        XCTAssertEqual(clockNotifications, 8, "each tick still moves the playhead for the views that follow it")
+        XCTAssertEqual(model.playbackClock.position.mediaTimeMs, 5_000)
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, 5_000)
+
+        held.sourceProgressPercent = 7
+        model.snapshot = held
+        XCTAssertEqual(screenNotifications, 1, "a new whole percent reaches every screen")
+        screenNotifications = 0
+        held.currentMediaTimeMs = 5_500
+        held.chapterTitle = "Chapter two"
+        model.snapshot = held
+        XCTAssertEqual(screenNotifications, 1, "a chapter change reaches every screen even as the position moves")
+        screenNotifications = 0
+        model.snapshot = held
+        XCTAssertEqual(screenNotifications, 1, "writing the same snapshot still makes screens look again")
+        withExtendedLifetime((screenObserver, clockObserver)) {}
+    }
+
     func testDeferredHomeRefreshCannotReplaceNewerLibraryPresentation() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
