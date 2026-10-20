@@ -8,20 +8,50 @@ import XCTest
 /// must import there, and that reader rejects manifest keys it doesn't know. Tests that export a packet
 /// call this instead of SpokenMarginsPackageArchive.write; the test below keeps it that way.
 @discardableResult
-func exportPacket(_ prepared: PreparedSpokenMarginsPackage, to url: URL) throws -> SpokenMarginsPackageManifest {
+func exportPacket(
+    _ prepared: PreparedSpokenMarginsPackage,
+    to url: URL,
+    shippedBuildReader: (URL) throws -> [String] = { try ShippedPacketReader.importPacket(at: $0) }
+) throws -> SpokenMarginsPackageManifest {
     let manifest = try SpokenMarginsPackageArchive.write(prepared, to: url)
-    let shippedReadIDs = try ShippedPacketReader.importPacket(at: url)
+    let shippedReadIDs = try shippedBuildReader(url)
     // Build 29 must decode every Margin the new writer put in (#1039 PKT-01): a packet whose Margins its reader
     // drops comes back "successfully" with a short list. This compares what its reader decoded from the zip, not
     // what its importer then saved. Skipped only when the packet has no commentary layer to compare with.
-    if let sentIDs = try marginIDs(in: prepared), sentIDs.sorted() != shippedReadIDs.sorted() {
-        throw ShippedReaderGateError.marginsDiffer(sent: sentIDs.sorted(), shippedBuildRead: shippedReadIDs.sorted())
+    if let mismatch = shippedMarginsMismatch(sent: try marginIDs(in: prepared), shippedBuildRead: shippedReadIDs) {
+        throw mismatch
     }
     return manifest
 }
 
+/// Writes a map-only packet (#1471), then checks the shipped build refuses it by its ordinary "unsupported capability"
+/// path: not a crash, not a half import, not a different complaint. This is the one packet that must NOT import there.
+@discardableResult
+func exportMapOnlyPacket(_ prepared: PreparedSpokenMarginsPackage, to url: URL) throws -> SpokenMarginsPackageManifest {
+    let manifest = try SpokenMarginsPackageArchive.write(prepared, to: url)
+    do {
+        _ = try ShippedPacketReader.importPacket(at: url)
+    } catch let rejected as ShippedPacketReader.Rejected {
+        guard rejected.description.contains("unsupportedRequiredCapability") else {
+            throw ShippedReaderGateError.mapPacketRefusedForAnotherReason(rejected.description)
+        }
+        return manifest
+    }
+    throw ShippedReaderGateError.mapPacketImportedByTheShippedBuild
+}
+
+/// The gate's comparison, on its own so a test can feed it a reader that drops a Margin (#1898). Margin ids only:
+/// anchors, transcripts, reply links and audio are not compared here. `sent` is nil when the packet has no
+/// commentary layer.
+func shippedMarginsMismatch(sent: [String]?, shippedBuildRead: [String]) -> ShippedReaderGateError? {
+    guard let sent, sent.sorted() != shippedBuildRead.sorted() else { return nil }
+    return .marginsDiffer(sent: sent.sorted(), shippedBuildRead: shippedBuildRead.sorted())
+}
+
 enum ShippedReaderGateError: Error, Equatable {
     case marginsDiffer(sent: [String], shippedBuildRead: [String])
+    case mapPacketImportedByTheShippedBuild
+    case mapPacketRefusedForAnotherReason(String)
 }
 
 /// The package-scoped IDs of the Margins in a prepared packet's commentary layers, or nil when there is no layer.

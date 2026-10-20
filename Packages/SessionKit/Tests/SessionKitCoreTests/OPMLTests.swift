@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 @testable import SessionKit
 @testable import SessionKitFeeds
+import SessionKitTestInputs
 
 final class OPMLTests: XCTestCase {
     func testExportsFromFourAppsParseToTheirFeedsAndSkipOvercastEpisodes() throws {
@@ -218,6 +219,6 @@ final class OPMLTests: XCTestCase {
     }
 
     private static func fixture(_ name: String) throws -> Data {
-        try Data(contentsOf: SourceCatalogTests.path("Contracts/fixtures/opml/\(name).opml"))
+        try Data(contentsOf: TestInputs.url(.contracts, "fixtures/opml/\(name).opml"))
     }
 }

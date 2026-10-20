@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/nolayingup" rel="self" type="application/rss+xml"/>
+    <title>No Laying Up - Golf Podcast</title>
+    <link>https://nolayingup.com</link>
+    <language>en</language>
+    <copyright>Pro Traj Holdings, LLC</copyright>
+    <description>The No Laying Up Podcast is a fresh, funny and informative conversation on all things golf.
+Founded in 2014, No Laying Up and its flagship podcast seeks to entertain and inform a community of avid golfers around the world.&amp;nbsp;What started as a group text among college friends has now grown into one of the most popular podcasts in the game of golf, and our archives include appearances from the biggest names in the sport. Outside of the podcast, No Laying Up also produces multiple video travel series, best-in-class writing about the PGA Tour and LPGA, a robust social media presence, and a thriving community of friends and fans (The Nest).&amp;nbsp;</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/2646220c-ef7c-11ed-9222-bfc4b0a551e1/image/e9683a997b86f170b0ee1a1b770cc781.png?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>No Laying Up - Golf Podcast</title>
+      <link>https://nolayingup.com</link>
+    </image>
+    <itunes:explicit>yes</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle>A fresh, funny and informative conversation on all things golf.</itunes:subtitle>
+    <itunes:author>NoLayingUp.com</itunes:author>
+    <itunes:summary>The No Laying Up Podcast is a fresh, funny and informative conversation on all things golf.
+Founded in 2014, No Laying Up and its flagship podcast seeks to entertain and inform a community of avid golfers around the world.&amp;nbsp;What started as a group text among college friends has now grown into one of the most popular podcasts in the game of golf, and our archives include appearances from the biggest names in the sport. Outside of the podcast, No Laying Up also produces multiple video travel series, best-in-class writing about the PGA Tour and LPGA, a robust social media presence, and a thriving community of friends and fans (The Nest).&amp;nbsp;</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>The No Laying Up Podcast is a fresh, funny and informative conversation on all things golf.</p><p>Founded in 2014, No Laying Up and its flagship podcast seeks to entertain and inform a community of avid golfers around the world.&nbsp;What started as a group text among college friends has now grown into one of the most popular podcasts in the game of golf, and our archives include appearances from the biggest names in the sport. Outside of the podcast, No Laying Up also produces multiple <a href="https://www.youtube.com/c/NoLayingUp">video travel series</a>, best-in-class <a href="https://nolayingup.com/">writing</a> about the PGA Tour and LPGA, a robust social media presence, and a thriving community of friends and fans (<a href="https://api.nolayingup.com/join">The Nest</a>).&nbsp;</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>NoLayingUp.com</itunes:name>
+      <itunes:email>nolayingup@gmail.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/2646220c-ef7c-11ed-9222-bfc4b0a551e1/image/e9683a997b86f170b0ee1a1b770cc781.png?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Sports">
+      <itunes:category text="Golf"/>
+    </itunes:category>
+    <itunes:new-feed-url>https://feeds.megaphone.fm/nolayingup</itunes:new-feed-url>
+    

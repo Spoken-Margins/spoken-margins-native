@@ -1760,6 +1760,27 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// #1970: reopens the written Margin a closed app left unsaved. The capture comes from the draft journal; the
+    /// session it names must be the one the engine has open, and nothing else may be mid-capture. The source is
+    /// left paused, so saving or cancelling it never starts playback.
+    @discardableResult
+    public func restoreWrittenInterjection(_ capture: WrittenInterjectionCapture) throws -> WrittenInterjectionCapture {
+        guard pendingWrittenInterjection == nil, snapshot.status != .recording,
+              let session = currentSession,
+              session.id == capture.sessionId,
+              session.itemId == capture.itemId else {
+            throw SessionKitError.invalidCommandForState("restoreWrittenInterjection")
+        }
+        let restored = WrittenInterjectionCapture(
+            id: capture.id, sessionId: capture.sessionId, itemId: capture.itemId, targetType: capture.targetType,
+            targetId: capture.targetId, anchor: capture.anchor, roughPercent: capture.roughPercent,
+            wasPlaying: false, replyTo: capture.replyTo
+        )
+        pendingWrittenInterjection = restored
+        publish(status: .paused, phase: session.phase)
+        return restored
+    }
+
     private func restoreWrittenInterjectionTransport(wasPlaying: Bool, session: Session) throws {
         if wasPlaying {
             if externallyStreamedTurnId == session.currentTargetId {
@@ -3036,7 +3057,9 @@ public final class SessionEngine {
                 bibliography: options.includeReference ? item.documentStructure?.bibliography : nil
             ),
             session: ExportSession(id: session.id, status: session.status, completionPercent: session.completionPercent),
-            listeningMap: options.includeListeningMap ? try repository.loadListeningMap(itemId: item.id) : nil,
+            listeningMap: options.includeListeningMap
+                ? try ListeningMapExportResolver.resolve(item: item, repository: repository, durationMs: sourceTimeline?.durationMs)
+                : nil,
             turns: turns,
             timeline: exportTimeline(interjections: interjections, turns: turns),
             interjections: interjections.map { interjection in

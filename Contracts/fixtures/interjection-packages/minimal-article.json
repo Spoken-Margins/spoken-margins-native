@@ -3,8 +3,8 @@
   "packageId": "package-article-001",
   "createdAt": "2026-08-22T12:00:00Z",
   "contentDigest": "0000000000000000000000000000000000000000000000000000000000000000",
-  "source": {
-    "sourceType": "article",
+  "item": {
+    "itemType": "text",
     "canonicalURL": "https://example.com/article",
     "originalURL": "https://example.com/article?ref=share",
     "title": "A Useful Article",
@@ -12,9 +12,14 @@
     "publisher": "Example Publisher",
     "languageCode": "en"
   },
+  "itemTransport": {
+    "kind": "reference"
+  },
   "senderDisplayLabel": "A Friend",
   "suggestedRevealMode": "companion",
-  "requiredCapabilities": ["spoken-margins.commentary-layer.v1"],
+  "requiredCapabilities": [
+    "spoken-margins.commentary-layer.v1"
+  ],
   "artifacts": [
     {
       "id": "commentary-layer",
@@ -30,11 +35,11 @@
   "redactions": {
     "rawAudioOmitted": true,
     "rawTranscriptOmitted": true,
-    "fullSourceTextOmitted": true,
-    "sourceAudioOmitted": true,
     "diagnosticsOmitted": true,
     "filesystemPathsOmitted": true,
     "unrelatedTurnsOmitted": true,
-    "privateRepresentationsOmitted": true
+    "privateRepresentationsOmitted": true,
+    "fullItemOmitted": true,
+    "itemAudioOmitted": true
   }
 }

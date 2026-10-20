@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Mechanical audit (headless Claude since #1195; the name is legacy) for Spoken Margins PRs into next, every 5 minutes.
+  Template: not installed by default. Install and switch-over steps are in
+  ops/codex/README.md.
+  Its own log is artifacts/ops/codex-audit.log; launchd stderr goes to
+  artifacts/ops/codex-audit.launchd.err (crashes and permission errors only).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.spokenmargins.codex-audit</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>@HOME@/SpokenMarginsOps/repo/ops/codex/sm_codex_audit.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>@HOME@/SpokenMarginsOps/repo</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>GH_PROMPT_DISABLED</key>
+    <string>1</string>
+    <key>GIT_TERMINAL_PROMPT</key>
+    <string>0</string>
+  </dict>
+
+  <key>StartInterval</key>
+  <integer>300</integer>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/dev/null</string>
+
+  <key>StandardErrorPath</key>
+  <string>@HOME@/SpokenMarginsOps/repo/artifacts/ops/codex-audit.launchd.err</string>
+</dict>
+</plist>

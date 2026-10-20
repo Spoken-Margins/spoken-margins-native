@@ -1,6 +1,9 @@
 import Foundation
 import SessionKit
 import SessionKitPersistence
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Recently Deleted actions and undo. Moved out of `Gate1AppModel.swift` unchanged (#1007).
 extension Gate1AppModel {
@@ -26,6 +29,7 @@ extension Gate1AppModel {
                 selectedItem = libraryItems.first.map { (try? loadItemDetail(id: $0.id, store: store)) ?? ItemDetailState() } ?? ItemDetailState()
             }
             screen = .home
+            withdrawFeedback(aboutItem: id)
             presentTrashUndo(itemId: id, title: item.title)
             reportSuccess("Moved \(item.title) to Recently Deleted.")
         } catch {
@@ -46,6 +50,11 @@ extension Gate1AppModel {
         trashUndoDismissTask?.cancel()
         let undo = TrashUndoState(itemId: itemId, title: title)
         trashUndo = undo
+        // VoiceOver and Switch Control listeners keep the banner until they act on it (#1926).
+        guard !TrashUndoPolicy.staysUntilDismissed(assistiveTechnologyRunning: Self.assistiveTechnologyIsRunning) else {
+            trashUndoDismissTask = nil
+            return
+        }
         trashUndoDismissTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -55,6 +64,14 @@ extension Gate1AppModel {
                 // Manual dismissal, Undo, replacement, and teardown cancel this timer.
             }
         }
+    }
+
+    private static var assistiveTechnologyIsRunning: Bool {
+        #if canImport(UIKit)
+        UIAccessibility.isVoiceOverRunning || UIAccessibility.isSwitchControlRunning
+        #else
+        false
+        #endif
     }
 
     private func dismissTrashUndo(id: UUID?) {
@@ -102,6 +119,7 @@ extension Gate1AppModel {
             if trashUndo?.itemId == id {
                 dismissTrashUndo()
             }
+            withdrawFeedback(aboutItem: id)
             reportSuccess("Permanently deleted \(item.title).")
         } catch {
             reportFailure(error, context: "Permanent delete failed")
@@ -137,6 +155,7 @@ extension Gate1AppModel {
             if let undoItemId = trashUndo?.itemId, ids.contains(undoItemId) {
                 dismissTrashUndo()
             }
+            withdrawFeedback(aboutItems: ids)
             reportSuccess("Permanently deleted \(ids.count) item\(ids.count == 1 ? "" : "s") from Recently Deleted.")
         } catch {
             reportFailure(error, context: "Empty Recently Deleted failed")

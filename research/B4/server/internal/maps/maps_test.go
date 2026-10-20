@@ -1,10 +1,12 @@
 package maps
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -60,58 +62,23 @@ func TestParseTranscriptRefusals(t *testing.T) {
 	if _, err := ParseTranscript(encode(t, big)); err == nil {
 		t.Error("over 2 MB: accepted")
 	}
+	long := testTranscript()
+	long.Segments[0].Text = strings.Repeat("a", MaxPromptBytes)
+	if _, err := ParseTranscript(encode(t, long)); err == nil {
+		t.Error("over the prompt limit: accepted")
+	}
+	fits := testTranscript()
+	fits.Segments[0].Text = strings.Repeat("a", MaxPromptBytes-4000)
+	if _, err := ParseTranscript(encode(t, fits)); err != nil {
+		t.Errorf("under the prompt limit: refused: %v", err)
+	}
 	if _, err := ParseTranscript([]byte(`{"schema":`)); err == nil {
 		t.Error("broken JSON: accepted")
 	}
 }
 
-func TestCheckAnswer(t *testing.T) {
-	tr := testTranscript()
-	scenes, err := CheckAnswer(tr, goodAnswer)
-	if err != nil {
-		t.Fatalf("good answer refused: %v", err)
-	}
-	want := []Scene{
-		{StartMs: 0, EndMs: 7 * 60000},
-		{StartMs: 7 * 60000, EndMs: 14 * 60000},
-		{StartMs: 14 * 60000, EndMs: 20 * 60000},
-	}
-	for i, w := range want {
-		if scenes[i].StartMs != w.StartMs || scenes[i].EndMs != w.EndMs || scenes[i].Title == "" {
-			t.Fatalf("scene %d = %+v, want times %d-%d", i, scenes[i], w.StartMs, w.EndMs)
-		}
-	}
-
-	quote := strings.Join(words(tr.Segments[7].Text)[2:12], " ") // ten words in a row
-	bad := map[string]string{
-		"malformed":    `{"scenes": [`,
-		"two scenes":   answerJSON([3]string{"s0", "A", "B"}, [3]string{"s5", "C", "D"}),
-		"unknown id":   answerJSON([3]string{"s0", "A", "B"}, [3]string{"s99", "C", "D"}, [3]string{"s15", "E", "F"}),
-		"out of order": answerJSON([3]string{"s0", "A", "B"}, [3]string{"s14", "C", "D"}, [3]string{"s7", "E", "F"}),
-		"same start":   answerJSON([3]string{"s0", "A", "B"}, [3]string{"s7", "C", "D"}, [3]string{"s7", "E", "F"}),
-		"long title":   answerJSON([3]string{"s0", strings.Repeat("t", 81), "B"}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-		"long summary": answerJSON([3]string{"s0", "A", strings.Repeat("s", 301)}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-		"empty title":  answerJSON([3]string{"s0", " ", "B"}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-		"quotes":       answerJSON([3]string{"s0", "A", "B"}, [3]string{"s7", "C", "As they put it: " + strings.ToUpper(quote) + "!"}, [3]string{"s14", "E", "F"}),
-		// A run that crosses from one segment into the next still counts.
-		"quotes across segments": answerJSON([3]string{"s0", "A", strings.Join(append(words(tr.Segments[0].Text)[14:], words(tr.Segments[1].Text)[:5]...), " ")},
-			[3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"}),
-	}
-	for name, text := range bad {
-		if _, err := CheckAnswer(tr, text); err == nil {
-			t.Errorf("%s: accepted", name)
-		}
-	}
-	// Nine words in a row is allowed.
-	nine := strings.Join(words(tr.Segments[7].Text)[2:11], " ")
-	ok := answerJSON([3]string{"s0", "A", "B"}, [3]string{"s7", "C", nine}, [3]string{"s14", "E", "F"})
-	if _, err := CheckAnswer(tr, ok); err != nil {
-		t.Errorf("nine copied words refused: %v", err)
-	}
-}
-
 func TestWorkerMakesMapAndDeletesTranscript(t *testing.T) {
-	api := newFakeAPI(t, goodAnswer)
+	api := newFakeAPI(t)
 	svc, _, logs := newService(t, api, 10)
 	if out, err := svc.Submit(testTranscript()); err != nil || out != Accepted {
 		t.Fatalf("submit = %v, %v", out, err)
@@ -121,8 +88,8 @@ func TestWorkerMakesMapAndDeletesTranscript(t *testing.T) {
 	}
 	svc.ProcessWaiting(context.Background())
 
-	if api.callCount() != 1 {
-		t.Fatalf("calls = %d, want 1", api.callCount())
+	if api.callCount() != goodCalls {
+		t.Fatalf("calls = %d, want %d", api.callCount(), goodCalls)
 	}
 	if svc.Store.HasTranscript(testKey) {
 		t.Fatal("transcript kept after its map was made")
@@ -134,23 +101,27 @@ func TestWorkerMakesMapAndDeletesTranscript(t *testing.T) {
 	var m Map
 	json.Unmarshal(data, &m)
 	if m.Schema != MapSchema || m.EpisodeKey != testKey || m.Generator != "anthropic/"+DefaultModel ||
-		m.CreatedAt != "2026-10-01T14:00:00Z" || len(m.Scenes) != 3 || m.DurationMs != 20*60000 {
+		m.CreatedAt != "2026-10-01T14:00:00Z" || len(m.Scenes) != 4 || m.DurationMs != 20*60000 {
 		t.Fatalf("map = %s", data)
 	}
 	if strings.Contains(string(data), "lighthouse keeper number") {
 		t.Fatal("map carries transcript text")
 	}
-	// The request named the model, asked for the scene schema, and sent the key.
-	body := api.bodies[0]
+	// The first call is the pick; every call named the model, asked for a
+	// schema, and sent the key.
+	if strings.Join(api.kinds, ",") != "pick,scene,scene,scene,scene" {
+		t.Fatalf("calls %v", api.kinds)
+	}
+	body := api.bodies[1]
 	if body["model"] != DefaultModel || api.keys[0] != "sk-test-secret-key" {
 		t.Fatalf("request model %v key %q", body["model"], api.keys[0])
 	}
 	if _, ok := body["output_config"].(map[string]any)["format"]; !ok {
 		t.Fatalf("request has no output format: %v", body["output_config"])
 	}
-	// Cost: 13,000 in at $1/M plus 2,000 out at $5/M = $0.023.
-	if spent := svc.Ledger.Spent(svc.Now()); spent != 23000 {
-		t.Fatalf("ledger = %d micro-dollars, want 23000", spent)
+	// Cost: per call, 13,000 in at $1/M plus 2,000 out at $5/M = $0.023.
+	if spent := svc.Ledger.Spent(svc.Now()); spent != goodSpend {
+		t.Fatalf("ledger = %d micro-dollars, want %d", spent, goodSpend)
 	}
 	// A second upload of the same episode makes no new work.
 	if out, _ := svc.Submit(testTranscript()); out != AlreadyMapped || svc.Store.HasTranscript(testKey) {
@@ -161,45 +132,8 @@ func TestWorkerMakesMapAndDeletesTranscript(t *testing.T) {
 	}
 }
 
-func TestWorkerRetriesOnceThenDrops(t *testing.T) {
-	tr := testTranscript()
-	quote := strings.Join(words(tr.Segments[7].Text)[0:12], " ")
-	bad := map[string]string{
-		"malformed":    `not json`,
-		"out of order": answerJSON([3]string{"s0", "A", "B"}, [3]string{"s14", "C", "D"}, [3]string{"s7", "E", "F"}),
-		"quotes":       answerJSON([3]string{"s0", "A", "B"}, [3]string{"s7", "C", quote}, [3]string{"s14", "E", "F"}),
-	}
-	for name, answer := range bad {
-		t.Run(name+" then good", func(t *testing.T) {
-			api := newFakeAPI(t, answer, goodAnswer)
-			svc, _, _ := newService(t, api, 10)
-			svc.Submit(tr)
-			svc.ProcessWaiting(context.Background())
-			if api.callCount() != 2 || !svc.Store.HasMap(testKey) || svc.Store.HasTranscript(testKey) {
-				t.Fatalf("calls %d, map %v, transcript %v", api.callCount(), svc.Store.HasMap(testKey), svc.Store.HasTranscript(testKey))
-			}
-		})
-		t.Run(name+" twice", func(t *testing.T) {
-			api := newFakeAPI(t, answer)
-			svc, _, logs := newService(t, api, 10)
-			svc.Submit(tr)
-			svc.ProcessWaiting(context.Background())
-			if api.callCount() != 2 || svc.Store.HasMap(testKey) || svc.Store.HasTranscript(testKey) {
-				t.Fatalf("calls %d, map %v, transcript %v", api.callCount(), svc.Store.HasMap(testKey), svc.Store.HasTranscript(testKey))
-			}
-			if !containsAny(*logs, "dropped a transcript") {
-				t.Fatalf("logs %v", *logs)
-			}
-			// Both failed answers were billed.
-			if spent := svc.Ledger.Spent(svc.Now()); spent != 46000 {
-				t.Fatalf("ledger = %d", spent)
-			}
-		})
-	}
-}
-
 func TestCapStopsCallsAndUploads(t *testing.T) {
-	api := newFakeAPI(t, goodAnswer)
+	api := newFakeAPI(t)
 	svc, clock, _ := newService(t, api, 10)
 	if err := svc.Ledger.Add(clock.Now(), USDToMicro(10)); err != nil {
 		t.Fatal(err)
@@ -234,7 +168,7 @@ func TestCapStopsCallsAndUploads(t *testing.T) {
 		t.Fatalf("submit in a new month = %v", out)
 	}
 	svc.ProcessWaiting(context.Background())
-	if api.callCount() != 1 || !svc.Store.HasMap(testKey) {
+	if api.callCount() != goodCalls || !svc.Store.HasMap(testKey) {
 		t.Fatalf("calls %d in the new month", api.callCount())
 	}
 }
@@ -265,25 +199,41 @@ func TestLedgerSurvivesRestart(t *testing.T) {
 	}
 }
 
-func TestSweepDeletesOldTranscripts(t *testing.T) {
+func TestSweepDropsOldTranscripts(t *testing.T) {
 	store, _ := OpenStore(t.TempDir())
 	t0 := time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC)
 	store.PutTranscript(testTranscript(), t0)
-	if n, _ := store.Sweep(t0.Add(22*time.Hour), TranscriptMaxAge); n != 0 || !store.HasTranscript(testKey) {
-		t.Fatalf("swept a 22-hour-old transcript (%d)", n)
+	if n, _ := store.Sweep(t0.Add(TranscriptMaxAge-time.Minute), TranscriptMaxAge); n != 0 || !store.HasTranscript(testKey) {
+		t.Fatalf("swept a young transcript (%d)", n)
 	}
-	if n, _ := store.Sweep(t0.Add(24*time.Hour), TranscriptMaxAge); n != 1 || store.HasTranscript(testKey) {
-		t.Fatalf("kept a 24-hour-old transcript (%d)", n)
+	if n, _ := store.Sweep(t0.Add(TranscriptMaxAge), TranscriptMaxAge); n != 1 || store.HasTranscript(testKey) {
+		t.Fatalf("kept an old transcript (%d)", n)
 	}
-	// One that can't be read goes at once.
-	os.WriteFile(store.transcriptPath(testKey), []byte("junk"), 0o600)
-	if n, _ := store.Sweep(t0, TranscriptMaxAge); n != 1 {
-		t.Fatalf("kept an unreadable transcript (%d)", n)
+	if keys, _ := store.WaitingKeys(); len(keys) != 0 {
+		t.Fatalf("the order still lists %v", keys)
+	}
+
+	// Old and young entries mixed: the young ones stay, in arrival order.
+	mixed := []string{strings.Repeat("1", 64), strings.Repeat("2", 64), strings.Repeat("3", 64), strings.Repeat("4", 64)}
+	for i, key := range mixed {
+		tr := testTranscript()
+		tr.EpisodeKey = key
+		arrived := t0
+		if i%2 == 1 {
+			arrived = t0.Add(time.Hour)
+		}
+		store.PutTranscript(tr, arrived)
+	}
+	if n, _ := store.Sweep(t0.Add(TranscriptMaxAge+time.Minute), TranscriptMaxAge); n != 2 {
+		t.Fatalf("swept %d of the 2 old transcripts", n)
+	}
+	if got, _ := store.WaitingKeys(); strings.Join(got, ",") != mixed[1]+","+mixed[3] || !store.HasTranscript(mixed[1]) || store.HasTranscript(mixed[0]) {
+		t.Fatalf("after a mixed sweep, WaitingKeys = %v", got)
 	}
 }
 
 func TestTakedownKeepsMapDown(t *testing.T) {
-	api := newFakeAPI(t, goodAnswer)
+	api := newFakeAPI(t)
 	svc, _, _ := newService(t, api, 10)
 	svc.Submit(testTranscript())
 	svc.ProcessWaiting(context.Background())
@@ -296,7 +246,7 @@ func TestTakedownKeepsMapDown(t *testing.T) {
 	if out, _ := svc.Submit(testTranscript()); out != Withdrawn {
 		t.Fatalf("upload after takedown = %v", out)
 	}
-	if svc.Store.HasTranscript(testKey) || api.callCount() != 1 {
+	if svc.Store.HasTranscript(testKey) || api.callCount() != goodCalls {
 		t.Fatal("upload after takedown made new work")
 	}
 	if _, err := svc.Store.Takedown("not-a-key"); err == nil {
@@ -305,7 +255,7 @@ func TestTakedownKeepsMapDown(t *testing.T) {
 }
 
 func TestProviderErrorsNeverCarryTheKey(t *testing.T) {
-	api := newFakeAPI(t, goodAnswer)
+	api := newFakeAPI(t)
 	api.status = 401 // the fake echoes the key in its error body
 	svc, _, logs := newService(t, api, 10)
 	svc.Submit(testTranscript())
@@ -328,23 +278,23 @@ func TestProviderErrorsNeverCarryTheKey(t *testing.T) {
 }
 
 func TestProviderRetriesOverloadThenAnswers(t *testing.T) {
-	api := newFakeAPI(t, goodAnswer)
+	api := newFakeAPI(t)
 	api.fail = []int{529, 500}
 	svc, _, _ := newService(t, api, 10)
 	svc.Provider.(*Anthropic).Backoff = []time.Duration{0, 0}
 	svc.Submit(testTranscript())
 	svc.ProcessWaiting(context.Background())
-	if api.callCount() != 3 || !svc.Store.HasMap(testKey) {
+	if api.callCount() != goodCalls+2 || !svc.Store.HasMap(testKey) {
 		t.Fatalf("calls %d, map %v", api.callCount(), svc.Store.HasMap(testKey))
 	}
-	// Overloaded answers bill nothing; only the good one is in the ledger.
-	if spent := svc.Ledger.Spent(svc.Now()); spent != 23000 {
+	// Overloaded answers bill nothing; only the good ones are in the ledger.
+	if spent := svc.Ledger.Spent(svc.Now()); spent != goodSpend {
 		t.Fatalf("ledger = %d", spent)
 	}
 }
 
 func TestSwitchedOffWorkerMakesNoCalls(t *testing.T) {
-	api := newFakeAPI(t, goodAnswer)
+	api := newFakeAPI(t)
 	svc, _, _ := newService(t, api, 10)
 	svc.Submit(testTranscript())
 	svc.Enabled = func() bool { return false }
@@ -364,11 +314,11 @@ func (c *cancelling) Generator() string { return "stub" }
 func (c *cancelling) Generate(ctx context.Context, req Request) (Response, error) {
 	c.calls++
 	c.cancel()
-	return Response{Text: goodAnswer, InputTokens: 13000, OutputTokens: 2000, Complete: true}, nil
+	return Response{Text: goodScene, InputTokens: 13000, OutputTokens: 2000, Complete: true}, nil
 }
 
 func TestShutdownMidCallStillRecordsTheCost(t *testing.T) {
-	api := newFakeAPI(t, goodAnswer)
+	api := newFakeAPI(t)
 	svc, _, _ := newService(t, api, 10)
 	ctx, cancel := context.WithCancel(context.Background())
 	stub := &cancelling{cancel: cancel}
@@ -385,7 +335,7 @@ func TestShutdownMidCallStillRecordsTheCost(t *testing.T) {
 
 func TestLostAnswerIsCountedAndNotRetried(t *testing.T) {
 	block := make(chan struct{})
-	slow := newFakeAPI(t, goodAnswer)
+	slow := newFakeAPI(t)
 	slow.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		slow.mu.Lock()
 		slow.calls++
@@ -398,12 +348,13 @@ func TestLostAnswerIsCountedAndNotRetried(t *testing.T) {
 	svc.Provider.(*Anthropic).Backoff = []time.Duration{0, 0}
 	svc.Submit(testTranscript())
 	svc.ProcessWaiting(context.Background())
-	// Two attempts, one HTTP call each: a lost answer is never retried by
-	// the provider, and each is counted at the estimate.
-	if slow.callCount() != 2 {
-		t.Fatalf("calls = %d, want 2", slow.callCount())
+	// One HTTP call: a lost answer is never retried, by the provider or the
+	// worker, and it is counted at the estimate.
+	if slow.callCount() != 1 {
+		t.Fatalf("calls = %d, want 1", slow.callCount())
 	}
-	want := 2 * svc.estimate(buildRequest(testTranscript()))
+	tr := testTranscript()
+	want := svc.estimate(buildPickRequest(tr, planBreaks(tr)))
 	if spent := svc.Ledger.Spent(svc.Now()); spent != want || want == 0 {
 		t.Fatalf("ledger = %d, want %d", spent, want)
 	}
@@ -426,23 +377,88 @@ func TestLogsNeverNameAPath(t *testing.T) {
 func TestWaitingKeysOldestFirst(t *testing.T) {
 	store, _ := OpenStore(t.TempDir())
 	keys := []string{strings.Repeat("b", 64), strings.Repeat("a", 64), strings.Repeat("c", 64)}
-	base := time.Now().Add(-time.Hour)
-	for i, key := range keys {
+	for _, key := range keys {
 		tr := testTranscript()
 		tr.EpisodeKey = key
-		store.PutTranscript(tr, base)
-		os.Chtimes(store.transcriptPath(key), base.Add(time.Duration(i)*time.Minute), base.Add(time.Duration(i)*time.Minute))
+		store.PutTranscript(tr, time.Now())
 	}
 	got, err := store.WaitingKeys()
 	if err != nil || strings.Join(got, ",") != strings.Join(keys, ",") {
 		t.Fatalf("WaitingKeys = %v, %v", got, err)
+	}
+	store.DeleteTranscript(keys[1])
+	if got, _ := store.WaitingKeys(); strings.Join(got, ",") != keys[0]+","+keys[2] {
+		t.Fatalf("after a delete, WaitingKeys = %v", got)
+	}
+}
+
+// Nothing of a transcript is ever written to disk (#1730): not on upload, not
+// while it waits, not while it is mapped, and not after.
+func TestNoTranscriptTextIsEverWrittenToDisk(t *testing.T) {
+	api := newFakeAPI(t)
+	svc, _, _ := newService(t, api, 10)
+	dir := svc.Store.dir
+	tr := testTranscript()
+	if out, err := svc.Submit(tr); out != Accepted || err != nil {
+		t.Fatalf("Submit: %v %v", out, err)
+	}
+	needle := []byte(tr.Segments[0].Text)
+	scan := func(stage string) {
+		t.Helper()
+		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			data, rerr := os.ReadFile(path)
+			if rerr != nil {
+				return rerr
+			}
+			if bytes.Contains(data, needle) {
+				t.Errorf("%s: transcript text found in %s", stage, path)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "transcripts")); err == nil {
+			t.Errorf("%s: a transcripts directory exists", stage)
+		}
+	}
+	scan("waiting")
+	svc.ProcessWaiting(context.Background())
+	if !svc.Store.HasMap(testKey) || svc.Store.HasTranscript(testKey) {
+		t.Fatalf("map %v, transcript kept %v", svc.Store.HasMap(testKey), svc.Store.HasTranscript(testKey))
+	}
+	scan("mapped")
+}
+
+// A transcript file left by the earlier file-backed queue is removed on open.
+func TestOpenStoreRemovesTranscriptsLeftOnDisk(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, "transcripts")
+	if err := os.MkdirAll(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(old, testKey+".json"), []byte(`{"transcript":"left"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the old transcripts directory survived: %v", err)
+	}
+	if store.HasTranscript(testKey) {
+		t.Fatal("an old file came back as a waiting transcript")
 	}
 }
 
 // A spend runs only when the transcript is about to be queued, and a failed
 // spend queues nothing (#743).
 func TestSubmitSpendingChargesOnlyQueuedWork(t *testing.T) {
-	svc, _, _ := newService(t, newFakeAPI(t, goodAnswer), 10)
+	svc, _, _ := newService(t, newFakeAPI(t), 10)
 	spent := 0
 	spend := func() error { spent++; return nil }
 
@@ -463,7 +479,7 @@ func TestSubmitSpendingChargesOnlyQueuedWork(t *testing.T) {
 // Uploads of one episode racing with different tokens pay once between
 // them, and racing uploads can't overfill the queue.
 func TestSubmitSpendingRacesPayOnce(t *testing.T) {
-	svc, _, _ := newService(t, newFakeAPI(t, goodAnswer), 10)
+	svc, _, _ := newService(t, newFakeAPI(t), 10)
 	var spends atomic.Int32
 	var wg sync.WaitGroup
 	for i := 0; i < 16; i++ {
@@ -491,5 +507,46 @@ func TestSubmitSpendingRacesPayOnce(t *testing.T) {
 	wg.Wait()
 	if n, _ := svc.Store.CountTranscripts(); n != 3 {
 		t.Fatalf("%d transcripts waiting, want MaxWaiting 3", n)
+	}
+}
+
+func TestNameGrounding(t *testing.T) {
+	source := "Grace Hopper joined the navy. Hopper's compiler changed things in Boston."
+	cases := []struct {
+		summary string
+		want    string
+	}{
+		{"The story of Grace Hopper in Boston.", ""},
+		{"Hopper's compiler comes up.", ""},
+		{"Dr. Hopper is introduced.", ""},                // abbreviation, not a sentence end
+		{"Compilers matter. Lovelace is mentioned.", ""}, // sentence start is skipped
+		{"A talk about Ada Lovelace.", "Ada"},
+		{"The host visits Paris.", "Paris"},
+		{"A short plain summary with no names.", ""},
+	}
+	for _, c := range cases {
+		if got := ungroundedName(c.summary, source, "en"); got != c.want {
+			t.Errorf("%q: got %q, want %q", c.summary, got, c.want)
+		}
+	}
+
+	// Acronyms: a dotted form, initials of words in a row, and plurals.
+	source = "Today we ask what A.I. means for the U.S. and why large language models hallucinate. The NFL weighs in."
+	cases = []struct {
+		summary string
+		want    string
+	}{
+		{"How AI changes work.", ""},
+		{"What the US makes of it.", ""},
+		{"Why LLMs make things up.", ""},
+		{"Why LLM answers drift.", ""},
+		{"How the NFLs view it.", ""},
+		{"The NBA weighs in.", "NBA"},     // no such initials or word
+		{"Talk of Ng and friends.", "Ng"}, // not all capitals, so no initials
+	}
+	for _, c := range cases {
+		if got := ungroundedName(c.summary, source, "en"); got != c.want {
+			t.Errorf("%q: got %q, want %q", c.summary, got, c.want)
+		}
 	}
 }

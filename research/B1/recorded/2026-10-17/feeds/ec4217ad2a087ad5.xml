@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:art19="https://art19.com/xmlns/rss-extensions/1.0" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0/" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">
+  <channel>
+    <title>IMO with Michelle Obama and Craig Robinson</title>
+    <description>
+      <![CDATA[<p>Michelle Obama and her big brother Craig Robinson bring their unique experiences and candid perspectives to a range of listeners’ personal dilemmas, from the everyday to the existential. Each week, they’re joined by special guests to tackle audience questions with practical advice, relatable anecdotes, and plenty of laughs. From dating and relationships to parenting and financial planning, IMO sees the iconic First Lady at her most relaxed and honest. This podcast will leave you laughing, reflecting, and feeling more prepared to tackle life’s challenges. Join the fun and submit your questions at <a href="http://imopod.com" rel="noopener noreferrer" target="_blank">imopod.com</a>!</p>]]>
+    </description>
+    <managingEditor>podcastdistro@highergroundproductions.com (Higher Ground)</managingEditor>
+    <copyright>© All rights reserved</copyright>
+    <generator>ART19</generator>
+    <atom:link href="https://rss.art19.com/hga-imo" rel="self" type="application/rss+xml"/>
+    <link>https://art19.com/shows/hga-imo</link>
+    <itunes:owner>
+      <itunes:name>Higher Ground</itunes:name>
+      <itunes:email>podcastdistro@highergroundproductions.com</itunes:email>
+    </itunes:owner>
+    <itunes:author>Higher Ground</itunes:author>
+    <itunes:summary>
+      <![CDATA[<p>Michelle Obama and her big brother Craig Robinson bring their unique experiences and candid perspectives to a range of listeners’ personal dilemmas, from the everyday to the existential. Each week, they’re joined by special guests to tackle audience questions with practical advice, relatable anecdotes, and plenty of laughs. From dating and relationships to parenting and financial planning, IMO sees the iconic First Lady at her most relaxed and honest. This podcast will leave you laughing, reflecting, and feeling more prepared to tackle life’s challenges. Join the fun and submit your questions at <a href="http://imopod.com" rel="noopener noreferrer" target="_blank">imopod.com</a>!</p>]]>
+    </itunes:summary>
+    <language>en</language>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:category text="Education">
+      <itunes:category text="Self-Improvement"/>
+    </itunes:category>
+    <itunes:category text="Society &amp; Culture"/>
+    <itunes:type>episodic</itunes:type>
+    <itunes:image href="https://content.production.cdn.art19.com/images/ae/b7/ee/00/aeb7ee00-3633-4871-a1ab-63814d9dbbc2/6974bbb1d592955edc05fcae62635a65ace00078688b652237a2eaa24615e584391e238a45c92b6433a358a6c4fb826a7b4e006dad49b84b7a4dad41d2258649.jpeg"/>
+    <image>
+      <url>https://content.production.cdn.art19.com/images/ae/b7/ee/00/aeb7ee00-3633-4871-a1ab-63814d9dbbc2/6974bbb1d592955edc05fcae62635a65ace00078688b652237a2eaa24615e584391e238a45c92b6433a358a6c4fb826a7b4e006dad49b84b7a4dad41d2258649.jpeg</url>
+      <link>https://art19.com/shows/hga-imo</link>
+      <title>IMO with Michelle Obama and Craig Robinson</title>
+    </image>
+    

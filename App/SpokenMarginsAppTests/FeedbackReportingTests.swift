@@ -7,19 +7,21 @@ import XCTest
 final class FeedbackReportingTests: XCTestCase {
     func testErrorDescriptionsAndContextKeepTheirPrecedence() async {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
-        let cases: [(Error, String?, String)] = [
-            (URLError(.timedOut), nil, Gate1AppModel.userFacingMessage(for: URLError(.timedOut))),
-            (DescribedError(), nil, "A useful localized description"),
-            (PlainError(), nil, "plain error description"),
-            (UndescribedError(), nil, "fallback without a localized description"),
-            (DescribedError(), "Import failed", "Import failed: A useful localized description"),
-            (DescribedError(), "", ": A useful localized description")
+        let fallback = ListenerErrorText.fallback
+        // (error, context, what the banner reads, what diagnostics keep for bug reports (#1965))
+        let cases: [(Error, String?, String, String)] = [
+            (URLError(.timedOut), nil, Gate1AppModel.userFacingMessage(for: URLError(.timedOut)), Gate1AppModel.userFacingMessage(for: URLError(.timedOut))),
+            (DescribedError(), nil, "A useful localized description", "A useful localized description"),
+            (PlainError(), nil, fallback, "plain error description"),
+            (UndescribedError(), nil, fallback, "fallback without a localized description"),
+            (DescribedError(), "Import failed", "Import failed: A useful localized description", "Import failed: A useful localized description"),
+            (DescribedError(), "", ": A useful localized description", ": A useful localized description")
         ]
-        for (error, context, expected) in cases {
+        for (error, context, expected, raw) in cases {
             model.reportFailure(error, context: context)
             XCTAssertEqual(model.lastError, expected)
             XCTAssertEqual(model.feedbackEvent?.message, expected)
-            XCTAssertEqual(model.diagnostics["recentFailure"], expected)
+            XCTAssertEqual(model.diagnostics["recentFailure"], raw)
         }
     }
 

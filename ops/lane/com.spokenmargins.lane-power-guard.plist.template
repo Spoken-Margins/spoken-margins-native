@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Lane power guard (#762): every 15 seconds, pause idle lane runners while the Mac is on battery or
+  its lid is closed, and start them again on power (ops/lane/README.md). Not installed by the PR.
+  It runs the main checkout's copy, which the hourly Mac tick fast-forwards to origin/next.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.spokenmargins.lane-power-guard</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>@HOME@/Documents/GitHub/spoken-margins-native/ops/lane/sm_lane_power_guard.py</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>15</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>AbandonProcessGroup</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>@HOME@/SpokenMarginsOps/lane-power-guard/launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>@HOME@/SpokenMarginsOps/lane-power-guard/launchd.log</string>
+</dict>
+</plist>

@@ -1,0 +1,47 @@
+Spoken Margins
+Copyright (C) 2026 Cole Miller
+
+SPDX-License-Identifier: AGPL-3.0-only
+
+Unless a file says otherwise, everything in this repository is licensed
+under the GNU Affero General Public License, version 3 only (LICENSE),
+with an additional permission for Apple App Store distribution
+(COPYING.iOS).
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero
+General Public License for more details.
+
+Source files do not carry their own license headers. This file is the
+single statement that covers them.
+
+Third-party components keep their own licenses. THIRD_PARTY_NOTICES.md
+lists every one (Swift packages, JavaScript packages, voice models, tools
+and captured data), with its licence and where its text is. It is
+generated from docs/legal/third-party-components.json, and
+scripts/third_party_notices.py fails when something is missing from it.
+The notice texts themselves are in these files, which are the
+authoritative copies:
+
+- App/SpokenMarginsApp/Resources/Kitten/NOTICES.txt
+  Kitten fallback voice: KittenTTS model, misaki lexicon and g2p_en
+  weights (Apache-2.0), CMU Pronouncing Dictionary (CMUdict-LICENSE.txt
+  in the same folder).
+- App/SpokenMarginsApp/Resources/Supertonic/licenses/
+  Supertonic code (MIT), Supertonic model (OpenRAIL-M), ONNX Runtime
+  (MIT, plus its own third-party notices) and sherpa-onnx (Apache-2.0).
+- App/SpokenMarginsApp/Resources/Legal/ZIPFoundation-LICENSE.txt
+  ZIPFoundation (MIT).
+- App/SharedResources/BundledJavaScript-NOTICES.txt and
+  App/SharedResources/Defuddle-LICENSE.txt
+  JavaScript packages compiled into the page-reading scripts
+  (@xmldom/xmldom, defuddle, mathml-to-latex, temml, turndown). The
+  share extension carries copies of the same files.
+- Packages/SessionKit/Sources/SessionKitSupertonic/SupertonicRuntime.swift
+  Adapted from Supertone Inc.'s Supertonic Swift example (MIT); its
+  header says so.
+
+Swift packages fetched at build time (for example
+onnxruntime-swift-package-manager, listed in
+Packages/SessionKit/Package.swift) are covered by their own licenses.

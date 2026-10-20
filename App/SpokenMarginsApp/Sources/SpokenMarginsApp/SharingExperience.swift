@@ -61,6 +61,15 @@ struct SpokenMarginsPackageImportReview: Identifiable {
     let extractionDirectory: URL
     let contents: VerifiedSpokenMarginsPackage
     let matchingItemId: String?
+    /// A map packet whose item already carries a different shared map: adding this one replaces it.
+    var replacesExistingMap = false
+    /// Removes the file the packet was opened from (the Share inbox copy), once it is imported or cancelled (#2123).
+    var releaseSource: (@MainActor () -> Void)?
+
+    /// A file that carries a Listening Map for an article or PDF and no Margins (#1471).
+    var isListeningMap: Bool { ListeningMapPacket.isMapPacket(contents.manifest) }
+
+    var mapChapterCount: Int? { ListeningMapPacket.proposal(in: contents)?.scenes.count }
 
     var marginCount: Int {
         contents.commentaryLayers.reduce(0) { $0 + $1.interjections.count }
@@ -75,7 +84,9 @@ struct SpokenMarginsPackageImportReview: Identifiable {
     }
 
     var requiresRecipientItem: Bool {
-        contents.manifest.itemTransport.kind == .recipientSupplied && matchingItemId == nil
+        // A PDF or EPUB can't be fetched from a link, so the listener picks their copy even when the sender had a link.
+        let needsPickedFile = isListeningMap && contents.manifest.item.itemType != .text
+        return (contents.manifest.itemTransport.kind == .recipientSupplied || needsPickedFile) && matchingItemId == nil
     }
 }
 
@@ -190,13 +201,13 @@ struct SpokenMarginsPackageImportView: View {
 
     private var importExplanation: String {
         if review.matchingItemId != nil {
-            return "Spoken Margins found this item in your library and will resolve the shared anchors against it. Nothing will play automatically."
+            return "Spoken Margins found this item in your library and will place the shared Margins in it. Nothing will play automatically."
         }
         switch review.contents.manifest.itemTransport.kind {
         case .embeddedText:
             return "The sender included the exact text they listened to. Spoken Margins will add it to your library and resolve the Margins. Nothing will play automatically."
         case .reference:
-            return "Spoken Margins will reconstruct this linked item and then resolve the shared anchors. Nothing will play automatically."
+            return "Spoken Margins will reconstruct this linked item and then place the shared Margins in it. Nothing will play automatically."
         case .recipientSupplied:
             if SharedEpisodeFeedMatcher.isPrivatePodcastSource(review.contents.manifest) {
                 return "These Margins came from a private podcast feed, so the episode is not included. Add the same episode to your library, for example by pasting your own feed link in the import screen, then reopen this .spokenmargins file."
@@ -230,7 +241,7 @@ struct InterjectionSharingView: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("Review what you are sending")
                                         .font(.headline)
-                                    Text("The package includes only selected Margins, the reviewed text and voice version shown below, bounded anchor context, item identity, and optional acoustic signatures. It never includes the podcast audio, raw diagnostics, or unrelated sessions.")
+                                    Text("The package includes only selected Margins, the reviewed text and voice version shown below, the words around each Margin, item identity, and optional acoustic signatures. It never includes the podcast audio, raw diagnostics, or unrelated sessions.")
                                         .font(.callout)
                                         .foregroundStyle(AppColors.secondaryText)
                                 }
@@ -484,6 +495,7 @@ struct InterjectionSharingView: View {
                             .padding(10)
                             .background(AppColors.inputBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .increasedContrastEdge(cornerRadius: 12)
                         Text("Expand to edit individual words and pauses.")
                             .font(.caption2)
                             .foregroundStyle(AppColors.secondaryText)
@@ -559,6 +571,7 @@ struct InterjectionSharingView: View {
                         .padding(10)
                         .background(AppColors.inputBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .increasedContrastEdge(cornerRadius: 12)
                     if isLong {
                         Button {
                             toggleTranscriptExpansion(draft.id)
@@ -645,7 +658,7 @@ struct InterjectionSharingView: View {
                         .foregroundStyle(.orange)
                 }
 
-                DisclosureGroup("Shared anchor context") {
+                DisclosureGroup("Words around the Margin") {
                     VStack(alignment: .leading, spacing: 8) {
                         TextField("Context before", text: Binding(
                             get: { model.sharingState.drafts.first(where: { $0.id == draft.id })?.anchorBefore ?? "" },

@@ -107,8 +107,24 @@ func (r *Reader) Current() (Document, error) {
 	return r.doc, r.err
 }
 
-// Set flips one service and bumps the serial, writing atomically.
+// KeepMinimumBuild leaves a service's minimumBuild as it is.
+const KeepMinimumBuild = -1
+
+// Set flips one service and bumps the serial, writing atomically. Any
+// minimumBuild the service already has is kept.
 func Set(path, service string, enabled bool) (Document, error) {
+	return SetWithMinimumBuild(path, service, enabled, KeepMinimumBuild)
+}
+
+// SetWithMinimumBuild is Set that also sets the service's minimumBuild, so
+// one command (and one serial bump) can switch a feature on for new builds
+// only. KeepMinimumBuild leaves it unchanged and 0 removes it. Any other
+// negative number is refused: the app treats it as a malformed document
+// and switches every feature off.
+func SetWithMinimumBuild(path, service string, enabled bool, minimumBuild int) (Document, error) {
+	if minimumBuild < KeepMinimumBuild {
+		return Document{}, fmt.Errorf("config: minimumBuild %d must be 0 or more", minimumBuild)
+	}
 	known := false
 	for _, s := range KnownServices {
 		known = known || s == service
@@ -126,6 +142,9 @@ func Set(path, service string, enabled bool) (Document, error) {
 	}
 	svc := d.Services[service]
 	svc.Enabled = enabled
+	if minimumBuild != KeepMinimumBuild {
+		svc.MinimumBuild = minimumBuild
+	}
 	if d.Services == nil {
 		d.Services = map[string]Service{}
 	}
@@ -156,6 +175,9 @@ func (d Document) Summary() string {
 		state := "off"
 		if d.Services[n].Enabled {
 			state = "on"
+		}
+		if m := d.Services[n].MinimumBuild; m > 0 {
+			state += fmt.Sprintf("(build>=%d)", m)
 		}
 		out += fmt.Sprintf(" %s=%s", n, state)
 	}

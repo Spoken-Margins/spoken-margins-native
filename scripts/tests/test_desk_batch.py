@@ -49,7 +49,7 @@ RUNNER_REPORT = 'Lane report pr335-r36657095336 — PASS\ncommit 6370e05 (tested
 def comment(identifier, issue, body, created, login='uncomposed'):
     return {'id': identifier, 'issue_url': f'https://api.github.com/repos/o/r/issues/{issue}', 'body': body,
             'created_at': created, 'html_url': f'https://github.com/o/r/issues/{issue}#issuecomment-{identifier}',
-            'user': {'login': login}}
+            'user': {'login': login}, 'author_association': 'NONE' if login.endswith('[bot]') else 'OWNER'}
 
 
 class FakeGitHub:
@@ -365,6 +365,15 @@ class MainTests(unittest.TestCase):
         found = desk.comments_since(api, '2026-10-03T20:00:00Z')
         self.assertEqual(len(found), 151)
         self.assertEqual(len([p for p in api.paths if p.startswith('issues/comments?')]), 2)
+
+    def test_a_strangers_t4_request_never_reaches_the_planner(self):
+        """#1822: the Test Desk runs journeys on the owner's Mac for whoever asks, so a stranger can't ask."""
+        forged = dict(comment(6000, 335, REQUEST_335, '2026-10-13T10:00:00Z', login='mallory'), author_association='NONE')
+        owner = comment(6001, 336, REQUEST_335, '2026-10-13T10:05:00Z')
+        api = FakeGitHub([forged, owner], {})
+        found = desk.comments_since(api, '2026-10-03T20:00:00Z')
+        self.assertEqual([c['id'] for c in found], [6001])
+        self.assertEqual(sorted(request['number'] for request in desk.pending_requests(found, {})), [336])
 
     def test_json_plan(self):
         code, out, _, files, _ = self.run_main(self.api(3), '--json')

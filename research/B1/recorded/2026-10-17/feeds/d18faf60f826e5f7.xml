@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:castfire="https://amperwave.com/mrss/" xmlns:media="http://search.yahoo.com/mrss/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link type="application/rss+xml" rel="first" href="https://rss.amperwave.net/v2/feed/audacynetwork/38ad78ba12adc2acec34b47b1a455b85?offset=0"/>
+    <atom:link type="application/rss+xml" rel="self" href="https://rss.amperwave.net/v2/feed/audacynetwork/38ad78ba12adc2acec34b47b1a455b85"/>
+    <atom:link type="application/rss+xml" rel="last" href="https://rss.amperwave.net/v2/feed/audacynetwork/38ad78ba12adc2acec34b47b1a455b85?offset=0"/>
+    <atom:link type="application/rss+xml" rel="previous" href="https://rss.amperwave.net/v2/feed/audacynetwork/38ad78ba12adc2acec34b47b1a455b85?offset=0"/>
+    <atom:updated>2026-10-16T18:55:47+00:00</atom:updated>
+    <lastBuildDate>Fri, 16 Oct 2026 18:55:47 +0000</lastBuildDate>
+    <itunes:owner>
+      <itunes:email><![CDATA[cbssportspodcast@gmail.com]]></itunes:email>
+      <itunes:name/>
+    </itunes:owner>
+    <title><![CDATA[Fantasy Football Today]]></title>
+    <description><![CDATA[Want to dominate your league and earn Fantasy Football bragging rights? Join host Adam Aizer, analysts Dave Richard, Jamey Eisenberg, Heath Cummings, and the rest of our crew throughout the year. Start or Sit, Waiver Wire, Buy or Sell, Grade the Trade, Fantasy Cops to settle your league disputes and mailbag episodes from your emails and #AskFFT tweets. Come hang out with your buddies and talk Fantasy Football! This is the only podcast you'll need to win your league!]]></description>
+    <content:encoded><![CDATA[<p>Want to dominate your league and earn Fantasy Football bragging rights? Join host Adam Aizer, analysts Dave Richard, Jamey Eisenberg, Heath Cummings, and the rest of our crew throughout the year. Start or Sit, Waiver Wire, Buy or Sell, Grade the Trade, Fantasy Cops to settle your league disputes and mailbag episodes from your emails and #AskFFT tweets. Come hang out with your buddies and talk Fantasy Football! This is the only podcast you'll need to win your league!</p>]]></content:encoded>
+    <itunes:author><![CDATA[CBS Sports]]></itunes:author>
+    <itunes:explicit>False</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <language><![CDATA[en]]></language>
+    <itunes:image href="https://images.castfire.com/image/661/0/0/0/0-8382520.jpg"/>
+    <image>
+      <url>https://images.castfire.com/image/661/0/0/0/0-8382520.jpg</url>
+      <title><![CDATA[Fantasy Football Today]]></title>
+      <link><![CDATA[http://fantasynews.cbssports.com/fantasyfootball]]></link>
+    </image>
+    <link><![CDATA[http://fantasynews.cbssports.com/fantasyfootball]]></link>
+    <itunes:category text="Sports">
+      <itunes:category text="Fantasy Sports"/>
+    </itunes:category>
+    <copyright><![CDATA[©2018 CBS Interactive. 027373]]></copyright>
+    <castfire:playlistCustomField key="megaphone_podcast_id" value="98f79b5c-dc88-11e8-b84f-9740ad7ba51d" />
+<itunes:new-feed-url>https://rss.amperwave.net/v2/feed/audacynetwork/38ad78ba12adc2acec34b47b1a455b85</itunes:new-feed-url>
+  

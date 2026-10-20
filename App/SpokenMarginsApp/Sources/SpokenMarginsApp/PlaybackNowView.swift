@@ -57,13 +57,16 @@ struct PlaybackNowView: View {
                         showDetails: { selectedMargin = row }, play: { _ = model.playMarginMoment(row) })
                 } else if let row = shared.first(where: { $0.id == entry.id }), entry.origin == .shared {
                     PlaybackMarginRowView(title: row.interjection.approvedTranscript,
-                        detail: "\(row.collectionLabel) · \(entry.isApproximate ? "Approximate position" : row.positionDescription)",
+                        detail: "\(row.collectionLabel) · \(entry.isApproximate ? SharedMarginPlacementWording.approximate : row.positionDescription)",
                         countdown: entry.countdown, isShared: true, identifier: "playback.now.margin.\(row.id)",
                         canPlay: row.interjection.audioPath != nil,
                         showDetails: { selectedSharedMargin = row }, play: { model.playSharedMarginMoment(row) })
                 }
             }
         }
+        // The player paints its own dark green whatever the system appearance,
+        // so text that sets no style must default to white here, not `.primary`.
+        .foregroundStyle(.white)
         .accessibilityIdentifier("playback.now.margins")
         .sheet(item: $selectedMargin) { row in
             ExperienceMarginDetailView(row: row).environmentObject(model)

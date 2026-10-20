@@ -44,6 +44,8 @@ final class SupertonicClientHarness {
     let fallbackReasons = HarnessFallbackLog()
     /// The stall events the client logged, in order (`supertonic.stall`, `supertonic.stall_handover`, ...).
     let stallEvents = HarnessFallbackLog()
+    /// One entry for each time the client asked the audio session to activate (#2101).
+    let sessionActivations = HarnessFallbackLog()
     private let players = HarnessPlayerLog()
     private let root: URL
 
@@ -72,10 +74,11 @@ final class SupertonicClientHarness {
         let players = players
         let fallbackReasons = fallbackReasons
         let stallEvents = stallEvents
+        let sessionActivations = sessionActivations
         client = SupertonicSpeechPlaybackClient(
             renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             audioSessionNotificationCenter: notificationCenter,
-            audioSessionActivator: {},
+            audioSessionActivator: { sessionActivations.add("activate") },
             audioPlayerStarter: { player, rate in
                 players.started(player)
                 player.volume = 0
@@ -85,7 +88,8 @@ final class SupertonicClientHarness {
             pressureRenderer: pressureRenderer,
             fallbackClient: systemVoice,
             onFallback: { reason, _, _ in fallbackReasons.add(reason) },
-            onStall: { kind, _ in stallEvents.add(kind) },
+            // The activation timing is a diagnostic, not a stall; a slow simulator must not add it to the lists tests compare.
+            onStall: { kind, _ in if kind != "supertonic.session_activate" { stallEvents.add(kind) } },
             stallRecoveryCooldown: stallRecoveryCooldown,
             applicationIsActive: applicationIsActive,
             applicationIsInBackground: applicationIsInBackground

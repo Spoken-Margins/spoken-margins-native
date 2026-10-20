@@ -35,7 +35,7 @@ enum SharingRightsPresentation {
         case .recipientSupplied: lines.append("The source is omitted; the recipient must supply a matching item.")
         case .embeddedText:
             for text in package.embeddedTextItems {
-                lines.append("Complete source text included: \(text.text.count) characters. This is the full listened-to text, not just the anchor excerpts.")
+                lines.append("Complete source text included: \(text.text.count) characters. This is the full listened-to text, not just the words around each Margin.")
             }
         }
         for (index, record) in package.commentaryLayers.flatMap(\.interjections).enumerated() {

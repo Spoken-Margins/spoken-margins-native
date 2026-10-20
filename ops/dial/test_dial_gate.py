@@ -47,7 +47,7 @@ def ts(d):
 
 def tick(percent, at, extra=''):
     return {'body': f'**time (Mac tick)** · next x\n- pace: Claude {percent}% used, 70% of the week gone{extra}',
-            'created_at': ts(at)}
+            'author_association': 'OWNER', 'created_at': ts(at)}
 
 
 class ParseDial(unittest.TestCase):
@@ -117,12 +117,12 @@ class ParseDial(unittest.TestCase):
 class ParseUsage(unittest.TestCase):
     def test_latest_usage_and_breaker(self):
         comments = [tick(80, NOW - dt.timedelta(hours=4)),
-                    {'body': '**HALT (usage breaker)** (Mac tick) at 81', 'created_at': ts(NOW - dt.timedelta(hours=3))},
+                    {'body': '**HALT (usage breaker)** (Mac tick) at 81', 'author_association': 'OWNER', 'created_at': ts(NOW - dt.timedelta(hours=3))},
                     tick(82, NOW - dt.timedelta(hours=1))]
         u = g.parse_usage(comments)
         self.assertEqual(u['usage']['percent'], 82)
         self.assertTrue(u['halted'])
-        comments.append({'body': '**RESUMED (usage breaker)** · (Mac tick, owner override)', 'created_at': ts(NOW)})
+        comments.append({'body': '**RESUMED (usage breaker)** · (Mac tick, owner override)', 'author_association': 'OWNER', 'created_at': ts(NOW)})
         self.assertFalse(g.parse_usage(comments)['halted'])
 
 
@@ -130,7 +130,7 @@ class UsageBreakerPerProvider(unittest.TestCase):
     """Owner, 2026-10-09: a provider over its line halts only the work that runs on it."""
 
     def comments(self, *bodies):
-        return [{'body': b, 'created_at': ts(NOW - dt.timedelta(hours=len(bodies) - i))}
+        return [{'body': b, 'author_association': 'OWNER', 'created_at': ts(NOW - dt.timedelta(hours=len(bodies) - i))}
                 for i, b in enumerate(bodies)]
 
     def advice_tick(self, advice):
@@ -281,6 +281,12 @@ class Decide(unittest.TestCase):
         self.assertFalse(r['fire'])
         self.assertIn('ahead of the trend', r['why'])
 
+    def test_paced_fires_eight_points_ahead_of_trend(self):
+        # 2026-10-19: the worker held all evening at 44% against a 36% line while the breaker allowed 10.
+        dial = g.parse_dial(BODY.replace('- [x] Fri noon', '- [ ] Fri noon'))  # finish at the reset: line ~70% now
+        usage = g.parse_usage([tick(78, NOW - dt.timedelta(minutes=30))])
+        self.assertTrue(self.decide(dial=dial, usage_info=usage)['fire'])
+
     def test_paced_fires_when_within_slack_of_trend(self):
         self.assertTrue(self.decide()['fire'])  # Fri noon: line ~79%, usage 82%
 
@@ -294,24 +300,65 @@ class Decide(unittest.TestCase):
 
 def claim(title, issue, at):
     return {'body': f'Claimed by project thread "{title}" at {at:%Y-%m-%d %H:%M} UTC. Likely files: x.',
-            'created_at': ts(at), 'issue_url': f'https://api.github.com/repos/o/r/issues/{issue}'}
+            'author_association': 'OWNER', 'created_at': ts(at), 'issue_url': f'https://api.github.com/repos/o/r/issues/{issue}'}
 
 
 def stop(title, issue, at):
     return {'body': f'Thread "{title}" stopping: PR #900 armed · context near 250k',
-            'created_at': ts(at), 'issue_url': f'https://api.github.com/repos/o/r/issues/{issue}'}
+            'author_association': 'OWNER', 'created_at': ts(at), 'issue_url': f'https://api.github.com/repos/o/r/issues/{issue}'}
 
 
 def comment(issue, at, body='Progress: tests written.'):
-    return {'body': body, 'created_at': ts(at), 'issue_url': f'https://api.github.com/repos/o/r/issues/{issue}'}
+    return {'body': body, 'author_association': 'OWNER', 'created_at': ts(at), 'issue_url': f'https://api.github.com/repos/o/r/issues/{issue}'}
 
 
 def push(branch, at):
-    return {'type': 'PushEvent', 'created_at': ts(at), 'payload': {'ref': f'refs/heads/{branch}'}}
+    return {'type': 'PushEvent', 'author_association': 'OWNER', 'created_at': ts(at), 'payload': {'ref': f'refs/heads/{branch}'}}
 
 
 def ago(**kw):
     return NOW - dt.timedelta(**kw)
+
+
+def by_stranger(item):
+    return dict(item, author_association='NONE', user={'login': 'mallory'})
+
+
+class Strangers(unittest.TestCase):
+    """#1822: anyone can comment once the repo is public, so only trusted authors move the gate."""
+
+    def test_a_strangers_halt_does_not_halt_the_project(self):
+        halt = by_stranger({'body': '**HALT (usage breaker)** (Mac tick) at 99', 'created_at': ts(NOW)})
+        self.assertFalse(g.parse_usage([tick(10, NOW - dt.timedelta(hours=1)), halt])['halted'])
+        self.assertTrue(g.parse_usage([dict(halt, **{'author_association': 'OWNER', 'user': {'login': 'uncomposed'}})])['halted'])
+
+    def test_a_strangers_usage_figure_is_not_the_macs(self):
+        forged = by_stranger(tick(99, NOW))
+        info = g.parse_usage([tick(10, NOW - dt.timedelta(hours=1)), forged])
+        self.assertEqual(info['usage']['percent'], 10)
+
+    def test_a_strangers_resume_does_not_lift_a_halt(self):
+        halt = {'body': '**HALT (usage breaker)** (Mac tick) at 81', 'author_association': 'OWNER', 'created_at': ts(NOW - dt.timedelta(hours=1))}
+        resume = by_stranger({'body': '**RESUMED (usage breaker)** · (Mac tick)', 'created_at': ts(NOW)})
+        self.assertTrue(g.parse_usage([halt, resume])['halted'])
+
+    def test_a_strangers_claim_note_is_not_a_thread(self):
+        forged = by_stranger(claim('Fake thread', 592, ago(minutes=5)))
+        self.assertEqual(g.parse_threads([forged], [], NOW), [])
+
+    def test_a_strangers_comment_naming_a_thread_is_not_a_sign_of_life(self):
+        old = claim('A', 592, ago(hours=3))
+        named = by_stranger(comment(592, ago(minutes=1), body='"A" is great'))
+        thread = g.parse_threads([old, named], [], NOW)[0]
+        self.assertEqual(thread['state'], 'quiet')
+
+    def test_a_strangers_stop_note_does_not_end_a_thread(self):
+        thread = g.parse_threads([claim('A', 592, ago(minutes=30)), by_stranger(stop('A', 592, ago(minutes=5)))], [], NOW)[0]
+        self.assertEqual(thread['state'], 'active')
+
+    def test_a_strangers_acknowledgement_is_not_the_coordinators(self):
+        forged = by_stranger({'body': g.ACK_MARK + '\nAck fire-20261001T1200Z · running 3', 'created_at': ts(NOW), 'id': 5})
+        self.assertIsNone(g.parse_ack([forged]))
 
 
 class Threads(unittest.TestCase):
@@ -401,7 +448,7 @@ class StatusBreaker(unittest.TestCase):
     def status(self, halt):
         dial = g.parse_dial(BODY)
         usage = g.parse_usage([tick(82, NOW - dt.timedelta(minutes=30)),
-                               {'body': f'**{halt}** (Mac tick)', 'created_at': ts(NOW)}])
+                               {'body': f'**{halt}** (Mac tick)', 'author_association': 'OWNER', 'created_at': ts(NOW)}])
         decision = g.decide(NOW, dial, usage, 10, None, {}, 0)
         return g.status_text(NOW, dial, usage, 10, None, {}, decision, [])
 

@@ -98,6 +98,16 @@ def holders(directory=None):
     return _read_holders(build_slot_names(), directory)
 
 
+def host_holders(directory=None):
+    """Who holds each host-test slot right now (best effort, for records only)."""
+    return _read_holders(host_slot_names(), directory)
+
+
+def simulator_holders(directory=None):
+    """Who holds each simulator slot right now (best effort, for records only)."""
+    return _read_holders(SIMULATOR_SLOTS, directory)
+
+
 def _describe(holder):
     pid = f"pid {holder.get('pid')}" + (' (gone; a child still holds its lock)' if holder.get('gone') else '')
     return f"{pid} in {holder.get('cwd')} ({holder.get('label')}, since {holder.get('started')})"

@@ -1,0 +1,131 @@
+# Hosted integration run (#1389 phase 2, part B): test each new tip of next on a GitHub-hosted Mac instead of the
+# owner's, with the same script the Mac's launchd job runs (ops/testdesk/sm_integration_run.py --hosted):
+# --plan app, two re-runs of any failing test on the same build, the scripted journeys in
+# TestPlans/scripted-journeys.json, then one `Lane report integration-<sha7>` on #184 with
+# `run by: hosted integration`. scripts/phone-build reads that report unchanged.
+#
+# What it never does here: search for the culprit, revert, file issues or ask Claude. A PR opened with the job's
+# token starts no workflows, so a revert PR would never merge, and there is no Claude token here. While this is
+# on, the Mac's job tests no new tip; it acts only on a confirmed hosted FAIL it hasn't handled (it re-runs the
+# failing tests there first, then does today's culprit search, revert, diagnosis and issues). It counts no journey
+# streaks or catch-ledger rows. Desks get the tip's simulator app from this run instead of the Mac's
+# ~/SpokenMarginsOps/sim-builds: the artifact `sim-app-<sha>`, uploaded only when the build of exactly this SHA
+# passed bundle-contracts, which scripts/sim-build-latest downloads with gh when no local build matches.
+#
+# Skipped, and free, until the repository variable LANE_HOSTED_APP is `on`: the same switch as hosted /lane T2
+# and T3. Hosted macOS minutes cost money while the repo is private; once it is public they are free.
+# GitHub offers workflow_dispatch only for a workflow file on the default branch (main).
+#
+# Image and Xcode as in hosted-app-macos.yml (the measured setup). The xcode-27 image's simulator runtime is
+# iOS 27 (the draft's measured boot), so the run asks verify-tests for iOS 27; the owner's Mac stays on 26
+# because iOS 27's services crash-flood there (#184), which a fresh hosted machine hasn't shown.
+# No secrets: a read-only checkout, and the job token may only comment on issues (#184).
+name: hosted-integration
+
+on:
+  push:
+    # Both trunks (#1492); the job runs only for the one SM_TRUNK names.
+    branches: [next, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+# One run at a time, newest tip wins: GitHub keeps one pending run and cancels older pending ones, but never
+# cancels the run in progress (a half-run tip would post nothing). Tips that land meanwhile are tested together.
+concurrency:
+  group: hosted-integration
+  cancel-in-progress: false
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  TZ: America/Chicago
+
+jobs:
+  integration:
+    name: 'integration run on ${{ github.ref_name }}'
+    if: vars.LANE_HOSTED_APP == 'on' && github.ref_name == (vars.SM_TRUNK || 'next')
+    runs-on: xcode-27
+    # The Mac takes about 18 min; hosted builds are 2-3.5x slower (hosted-app-macos.yml), plus re-runs and journeys.
+    timeout-minutes: 150
+    steps:
+      - name: Start the clock
+        run: |
+          echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
+          # The lane's simulator slot and the script's log belong to this job alone.
+          echo "SM_LANE_STATE_DIR=$RUNNER_TEMP/lane-state" >> "$GITHUB_ENV"
+          echo "SM_INTEGRATION_HOME=$RUNNER_TEMP/integration-run" >> "$GITHUB_ENV"
+
+      # Full history: the report lists the merges since the last PASS.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The app bundles the voice models (LFS). Cached, then fetched with the read-only token for this one command.
+      - name: List LFS objects
+        run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
+      - uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
+          restore-keys: lfs-
+      - name: Fetch LFS files
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Python tools
+        run: bash scripts/bootstrap-python-tools.sh
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes | grep -i ios || true
+          sysctl -n hw.ncpu hw.memsize
+          df -h "$GITHUB_WORKSPACE" | tail -1
+
+      - name: Integration run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SM_INTEGRATION_IOS: '27'
+          SM_TRUNK: ${{ vars.SM_TRUNK || 'next' }}
+          SHA: ${{ github.sha }}
+        run: python3 ops/testdesk/sm_integration_run.py --hosted --sha "$SHA"
+
+      # Logs and manifests only: the script deletes the .xcresult bundles before the upload.
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-integration-${{ github.sha }}
+          path: artifacts/integration-run/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # The tip's simulator app for desks (scripts/sim_builds.py). ditto already zipped it, keeping the bundle's
+      # symlinks and modes, so no second compression. About 290 MB on 2026-10-18 at 1-2 tips a day. 2 days: a desk
+      # wants today's tip, and storage counts against the account's quota while the repo is private.
+      # Absent when the build failed or wasn't this SHA's.
+      - name: Keep the simulator app for desks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sim-app-${{ github.sha }}
+          path: artifacts/sim-app/
+          if-no-files-found: ignore
+          retention-days: 2
+          compression-level: 0
+
+      - name: Report time
+        if: always()
+        run: |
+          seconds=$(( $(date +%s) - STARTED ))
+          echo "hosted-integration took ${seconds}s on xcode-27 (Xcode 27.0)." | tee -a "$GITHUB_STEP_SUMMARY"

@@ -5,6 +5,7 @@ import ShazamKit
 import XCTest
 @testable import SessionKit
 @testable import SessionKitAudio
+import SessionKitTestInputs
 
 /// ShazamKit's custom catalog only accepts query signatures of 1-12 s. Evidence cut to exactly 12,000 ms from
 /// 44.1/48 kHz audio came out at 12.01 s, every query errored, and the resolver treated that as "no match": no
@@ -18,7 +19,7 @@ final class PodcastEvidenceSignatureLengthTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         // A 40 s synthetic 48 kHz stereo MP3 (1152-sample frames), like most podcast enclosures. AVFoundation can't
         // write MP3, and AAC files round under the limit, so the fixture is checked in.
-        let episode = try Self.repositoryRoot().appending(path: "Contracts/fixtures/audio/evidence-length-48k-stereo.mp3")
+        let episode = try TestInputs.url(.contracts, "fixtures/audio/evidence-length-48k-stereo.mp3")
 
         let generated = try await PodcastAnchorEvidenceGenerator.generate(
             sourceURL: episode, anchorMediaTimeMs: 20_000,
@@ -45,16 +46,6 @@ final class PodcastEvidenceSignatureLengthTests: XCTestCase {
         let placed = try XCTUnwrap(resolution?.localMediaTimeMs, "evidence class: \(String(describing: resolution?.evidenceClass))")
         XCTAssertLessThanOrEqual(abs(placed - 20_000), 1_500)
         XCTAssertEqual(resolution?.evidenceClass, .fused, "both flanks must match and agree")
-    }
-
-    private static func repositoryRoot() throws -> URL {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while !FileManager.default.fileExists(atPath: root.appending(path: "Contracts").path) {
-            let parent = root.deletingLastPathComponent()
-            guard parent != root else { throw CocoaError(.fileNoSuchFile) }
-            root = parent
-        }
-        return root
     }
 }
 #endif

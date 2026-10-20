@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/ESP3456903052" rel="self" type="application/rss+xml"/>
+    <title>20/20</title>
+    <link>https://abcaudio.com/podcasts/20-20/</link>
+    <language>en</language>
+    <copyright>Copyright 2026, ABC Audio. All rights reserved.</copyright>
+    <description>Unforgettable true crime mysteries, exclusive newsmaker interviews, hard-hitting investigative reports and in-depth coverage of high profile stories. Now listen throughout the week with the official 20/20 After Show, the True Crime Vault, and our spotlight of true crime originals.
+
+Subscribe to 20/20 True Crime+ for ad-free listening, early access to new series, exclusive bonus content, and hundreds of episodes from the 20/20 true crime vault. Visit apple.co/2020truecrime to subscribe now.&amp;nbsp; Terms apply.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/ac00eed0-99e0-11ea-aeb9-d3bdda2ad25d/image/e82f0e492d40910541fac6ccd8656611.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>20/20</title>
+      <link>https://abcaudio.com/podcasts/20-20/</link>
+    </image>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle></itunes:subtitle>
+    <itunes:author>ABC News</itunes:author>
+    <itunes:summary>Unforgettable true crime mysteries, exclusive newsmaker interviews, hard-hitting investigative reports and in-depth coverage of high profile stories. Now listen throughout the week with the official 20/20 After Show, the True Crime Vault, and our spotlight of true crime originals.
+
+Subscribe to 20/20 True Crime+ for ad-free listening, early access to new series, exclusive bonus content, and hundreds of episodes from the 20/20 true crime vault. Visit apple.co/2020truecrime to subscribe now.&amp;nbsp; Terms apply.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>Unforgettable true crime mysteries, exclusive newsmaker interviews, hard-hitting investigative reports and in-depth coverage of high profile stories. Now listen throughout the week with the official 20/20 After Show, the True Crime Vault, and our spotlight of true crime originals.</p>
+<p>Subscribe to 20/20 True Crime+ for ad-free listening, early access to new series, exclusive bonus content, and hundreds of episodes from the 20/20 true crime vault. Visit <a href="https://apple.co/2020truecrime">apple.co/2020truecrime</a> to subscribe now.&nbsp; Terms apply.</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>ABC News</itunes:name>
+      <itunes:email>abc.podcast.support@abc.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/ac00eed0-99e0-11ea-aeb9-d3bdda2ad25d/image/e82f0e492d40910541fac6ccd8656611.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="True Crime">
+    </itunes:category>
+    <itunes:new-feed-url>https://feeds.megaphone.fm/ESP3456903052</itunes:new-feed-url>
+    

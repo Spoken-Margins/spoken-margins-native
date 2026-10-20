@@ -1,0 +1,88 @@
+# The daily Substack format canary (#2027). It reads the newest posts of three Substack feeds of different
+# shapes with the app's own parser (SessionKitFeeds, through scripts/substack-canary.sh) and fails when a page
+# plainly holds a completed publisher voice the parser doesn't read. That is #2024: Substack moved
+# window._preloads into a JSON script tag, and the app found no voice on any Substack page, silently, until
+# the owner noticed on his phone. On failure it opens one issue (labelled ready and regression), or comments
+# on the open one; never one a day (scripts/substack_canary_issue.py). A network error is "could not check",
+# not a failure.
+#
+# It runs on the owner's VPS runner (sm-vps-t1, user smt1, Swift 6.2.4 in /opt/swift; see linux-t1.yml),
+# sharing linux-t1's build folder, so after the first build it builds incrementally. Not ubuntu-latest: the
+# private repo's free Linux minutes ran out on 2026-10-07 (#1023). Move it to ubuntu-latest (with a
+# swift:6.2.4 toolchain, as hosted-sessionkit-linux.yml does) once the repo is public and hosted minutes are free.
+# Not the Mac: it needs nothing Apple, and the Mac shouldn't have to be awake for it.
+#
+# GitHub reads `schedule` and `workflow_dispatch` only from the default branch (main), so the daily run
+# starts once the owner moves main past this file. Until then, a push to next that touches the parser or
+# the canary runs it, which also shows it go green when a parser fix merges.
+#
+# Cost and catch: a few minutes of the VPS runner a day (incremental build plus about 15 page requests),
+# no tokens, no owner clicks unless it fails. Waste signal: three months with no catch, or more than one
+# "could not check" run a week.
+name: substack-canary
+
+on:
+  schedule:
+    # 10:41 UTC daily (6:41 am Eastern, before the 8 am Central phone build). A jittered minute, not :00.
+    - cron: '41 10 * * *'
+  workflow_dispatch:
+  push:
+    branches: [next, main]  # either trunk (#1492); the job runs only for the one SM_TRUNK names
+    paths:
+      - 'Packages/SessionKit/Sources/SessionKitFeeds/**'
+      - 'Packages/SessionKit/Sources/SubstackCanary/**'
+      - 'Packages/SessionKit/Sources/SubstackCanaryCore/**'
+      - 'scripts/substack-canary.sh'
+      - 'scripts/substack_canary_issue.py'
+      - '.github/workflows/substack-canary.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: substack-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    if: github.event_name != 'push' || github.ref_name == (vars.SM_TRUNK || 'next')
+    runs-on: [sm-vps-t1]
+    timeout-minutes: 30
+    steps:
+      - name: Start the clock
+        run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
+      # The scheduled run checks the trunk's parser, the code the next phone build carries; a push or a
+      # dispatch checks the commit it ran for.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'schedule' && (vars.SM_TRUNK || 'next') || github.sha }}
+      - name: Run the canary
+        id: canary
+        run: |
+          set +e
+          bash scripts/substack-canary.sh --scratch-path "$HOME/sm-t1-build" --report "$RUNNER_TEMP/canary.md"
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+      - name: Report
+        if: always()
+        run: |
+          cat "$RUNNER_TEMP/canary.md" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "No report (the canary didn't build or run)." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "substack-canary took $(( $(date +%s) - STARTED ))s on sm-vps-t1." >> "$GITHUB_STEP_SUMMARY"
+      - name: File or update the issue
+        if: steps.canary.outputs.status == '0' || steps.canary.outputs.status == '1'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CANARY_STATUS: ${{ steps.canary.outputs.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/substack_canary_issue.py --status "$CANARY_STATUS" --report "$RUNNER_TEMP/canary.md" --run-url "$RUN_URL"
+      - name: Verdict
+        env:
+          CANARY_STATUS: ${{ steps.canary.outputs.status }}
+        run: |
+          case "$CANARY_STATUS" in
+            0) echo "Passed." ;;
+            3) echo "::warning::Substack canary inconclusive: feeds couldn't be read. Not a parser failure." ;;
+            1) echo "::error::The app's parser missed a Substack publisher voice. See the issue titled 'Substack canary: the app's parser missed a publisher voice'."; exit 1 ;;
+            *) echo "::error::The canary didn't build or run (status $CANARY_STATUS)."; exit 1 ;;
+          esac

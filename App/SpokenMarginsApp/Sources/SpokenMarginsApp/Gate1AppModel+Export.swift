@@ -184,7 +184,7 @@ extension Gate1AppModel {
             let text = try renderExport(export, format: format)
             #if canImport(UIKit)
             UIPasteboard.general.string = text
-            reportConfirmation("Copied Margin with its anchors.")
+            reportConfirmation("Copied Margin with its context.")
             #else
             exportPreview = text
             reportSuccess("Built Margin export.")

@@ -253,7 +253,7 @@ class TestScopeTests(unittest.TestCase):
         # Ordinary PRs stay off it: the lane's tests, the Test Desk's journey list, other scripts, docs.
         ordinary = ['scripts/tests/test_lane_runner.py', 'TestPlans/scripted-journeys.json', 'scripts/phone-build',
                     'scripts/validate-contracts.py', 'docs/workstreams/test-lane.md', '.github/ISSUE_TEMPLATE/bug.md',
-                    '.claude/skills/lane-request/SKILL.md', 'ops/codex/sm_codex_worker.py', APP + 'PlaybackScreen.swift']
+                    '.claude/skills/lane-request/SKILL.md', 'ops/claude/sm_claude_worker.py', APP + 'PlaybackScreen.swift']
         result = self.classify(*ordinary)
         self.assertEqual(result['lane_paths'], [])
         self.assertFalse(any(note.startswith('Lane change:') for note in result['notes']))
@@ -290,19 +290,19 @@ class LaneRunnerRoutingTests(unittest.TestCase):
         self.assert_priority(self.route([APP + 'Gate1AppModel.swift'], ['priority']))
 
     def test_ops_only_t1_with_lane_and_docs_routes_priority(self):
-        self.assert_priority(self.route(['ops/codex/sm_codex_worker.py', 'scripts/lane-runner.py',
+        self.assert_priority(self.route(['ops/claude/sm_claude_worker.py', 'scripts/lane-runner.py',
                                          '.github/workflows/lane.yml', 'docs/workstreams/test-lane.md']))
 
     def test_mixed_t1_diff_stays_normal(self):
         for path in ('Packages/SessionKit/Sources/SessionKit/ListeningEdition.swift',
                      'scripts/tests/test_lane_runner.py', 'scripts/validate-contracts.py'):
             with self.subTest(path=path):
-                self.assert_normal(self.route(['ops/codex/sm_codex_worker.py', path]))
+                self.assert_normal(self.route(['ops/claude/sm_claude_worker.py', path]))
 
     def test_build_lane_script_and_app_diff_stay_normal(self):
         for path in (APP + 'ExperienceLibraryScreen.swift', 'project.yml'):
             with self.subTest(path=path):
-                self.assert_normal(self.route(['ops/codex/sm_codex_worker.py', path]))
+                self.assert_normal(self.route(['ops/claude/sm_claude_worker.py', path]))
 
     def test_docs_and_workflow_only_t0_stay_normal(self):
         self.assert_normal(self.route(['docs/journeys.md', '.github/workflows/lane.yml']))
@@ -310,7 +310,7 @@ class LaneRunnerRoutingTests(unittest.TestCase):
 
     def test_no_online_runner_falls_back_for_both_priority_reasons(self):
         self.assert_normal(self.route([APP + 'Gate1AppModel.swift'], ['priority'], online=False))
-        self.assertEqual(self.route(['ops/codex/sm_codex_worker.py'], online=False)['automerge'], ['sm-vps-t1'])
+        self.assertEqual(self.route(['ops/claude/sm_claude_worker.py'], online=False)['automerge'], ['sm-vps-t1'])
         self.assert_normal(self.route(labels=['priority'], runners=[]))
 
     def test_runner_must_match_all_priority_labels(self):
@@ -393,6 +393,32 @@ class LaneRunnerRoutingTests(unittest.TestCase):
         main['labels'].append({'name': 'sm-lane-build'})
         self.assert_normal(self.spill([main, self.runner('sm-lane-priority', False)]))
 
+    # #2147: on 2026-10-19 a priority job waited 40 minutes for sm-lane-mac-3 while sm-lane-mac-2 freed up three times.
+    def shared_runners(self, busy=True):
+        shared = self.runner('sm-lane-build', busy)
+        shared['labels'].append({'name': 'sm-lane-priority'})
+        return [self.runner('sm-lane-build', busy), shared]
+
+    def test_priority_work_uses_the_build_queue_when_the_priority_runner_also_builds(self):
+        for busy in (True, False):
+            for kwargs in ({'labels': ['priority']}, {'paths': ['scripts/lane_slots.py']}):
+                with self.subTest(busy=busy, **kwargs):
+                    result = self.spill(self.shared_runners(busy), **kwargs)
+                    self.assertEqual(result, {'lane': ['self-hosted', 'sm-lane-priority'],
+                                              'automerge': ['self-hosted', 'macOS', 'sm-lane-build']})
+
+    def test_a_dedicated_priority_runner_beside_a_shared_one_keeps_the_priority_queue(self):
+        self.assert_priority(self.spill(self.shared_runners() + [self.runner('sm-lane-priority', True)],
+                                        labels=['priority']))
+        offline = self.runner('sm-lane-priority', True, online=False)
+        self.assertEqual(self.spill(self.shared_runners() + [offline], labels=['priority'])['automerge'],
+                         ['self-hosted', 'macOS', 'sm-lane-build'])
+
+    def test_ordinary_work_stays_normal_with_a_shared_priority_runner(self):
+        for busy in (True, False):
+            with self.subTest(busy=busy):
+                self.assert_normal(self.spill(self.shared_runners(busy)))
+
     def test_t2_lane_path_stays_normal(self):
         self.assert_normal(self.route(['ops/codex/a.py', 'project.yml']))
         with tempfile.TemporaryDirectory() as directory:
@@ -405,7 +431,7 @@ class LaneRunnerRoutingTests(unittest.TestCase):
             self.assert_normal(result)
 
     def test_ops_only_goes_hosted_and_lane_only_t1_routes_priority(self):
-        self.assertEqual(self.route(['ops/codex/sm_codex_worker.py'])['automerge'], ['sm-vps-t1'])
+        self.assertEqual(self.route(['ops/claude/sm_claude_worker.py'])['automerge'], ['sm-vps-t1'])
         self.assert_priority(self.route(['scripts/lane_slots.py']))
 
     def test_cli_reads_real_json_files_and_falls_back_on_bad_json(self):

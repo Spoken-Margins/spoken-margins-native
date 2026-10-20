@@ -33,3 +33,6 @@ artifacts/
 *.dSYM/
 *.ips
 *.logarchive/
+
+# Scratch output; never tracked (#1383).
+/tmp/

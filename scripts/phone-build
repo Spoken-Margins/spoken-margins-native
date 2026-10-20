@@ -2,7 +2,7 @@
 """Build next's tip for the owner's iPhone, ready for the Desktop installer (#384).
 
 Usage:
-  scripts/phone-build                 build origin/next's tip now
+  scripts/phone-build                 build the trunk's tip now (origin/next until #1492 moves it)
   scripts/phone-build --commit <sha>  build that commit instead
   scripts/phone-build --if-changed    coalesce changed tips to hourly (or sooner after integration PASS)
   scripts/phone-build --plan-only     rewrite latest's test-plan.md against the build installed now
@@ -87,12 +87,18 @@ import subprocess
 import sys
 
 SCRIPTS = Path(__file__).resolve().parent
-ROOT = Path(os.environ.get('SM_PHONE_REPO') or SCRIPTS.parent)  # tests use a scratch repo
 sys.path.insert(0, str(SCRIPTS))
+import sm_paths  # noqa: E402
+
+PUBLIC = sm_paths.repo(__file__)                      # the public checkout (SM_REPO): lane scripts, packages
+ROOT = Path(os.environ.get('SM_PHONE_REPO') or PUBLIC)  # the repo it builds from; tests use a scratch repo
+sys.path.insert(0, str(PUBLIC / 'scripts'))
+import comment_trust  # noqa: E402  (#1822: whose comments the plan believes)
 import lane_slots  # noqa: E402
+from trunk import trunk_branch  # noqa: E402  (#1492: the branch it builds)
 
 REPO = 'uncomposed/spoken-margins-native'
-BRANCH = 'next'
+BRANCH = trunk_branch()
 REPORTS_ISSUE = 184      # where the integration run and the Test Desk post their lane reports
 DISK_FLOOR_GB = 10
 DISK_PER_BUILD_GB = 4
@@ -305,6 +311,23 @@ def guard_reason() -> str | None:
     return None
 
 
+# Each comment as one JSON line with the fields comment_trust reads (#1822).
+COMMENT_JSON = '.[] | {body, author_association, user: {login: .user.login}} | @json'
+
+
+def trusted_comment_lines(raw: str | None) -> list[dict]:
+    """The comments of a `gh api ... --jq COMMENT_JSON` answer written by the owner, a collaborator or the bot."""
+    found = []
+    for line in (raw or '').split('\n'):  # not splitlines(): JSON leaves U+2028 and friends unescaped
+        try:
+            comment = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(comment, dict):
+            found.append(comment)
+    return comment_trust.trusted_only(found)
+
+
 def runner_tested(sha: str) -> str | None:
     """Evidence that the lane's host-test gate covers this commit, or None.
 
@@ -318,11 +341,12 @@ def runner_tested(sha: str) -> str | None:
     found = re.match(r'Merge pull request #(\d+): ', subject)
     if not found:
         return None
-    raw = gh('api', f'repos/{REPO}/issues/{found.group(1)}/comments', '--paginate',
-             '--jq', '.[] | select(.body | startswith("**Merge check (triage desk)")) | .body')
-    if not raw:
+    raw = gh('api', f'repos/{REPO}/issues/{found.group(1)}/comments', '--paginate', '--jq', COMMENT_JSON)
+    checks = [c.get('body') or '' for c in trusted_comment_lines(raw)
+              if (c.get('body') or '').startswith('**Merge check (triage desk)')]
+    if not checks:
         return None
-    for body in raw.split('**Merge check (triage desk)')[1:]:
+    for body in '\n'.join(checks).split('**Merge check (triage desk)')[1:]:
         if f'Pushing `{sha[:7]}`' in body and ': PASS' in body.split('\n', 1)[0]:
             ran = re.search(r'- Ran: (.+?)\.?\n', body)
             return f'the lane runner tested this merge commit before pushing it (PR #{found.group(1)}' + \
@@ -460,7 +484,7 @@ def reverted_prs(sha: str) -> set[int]:
     return _reverted[sha]
 
 
-COMMENTS = 'comments(last:30){nodes{body}}'  # a check written in a comment (#927)
+COMMENTS = 'comments(last:30){nodes{body authorAssociation author{login __typename}}}'  # a check written in a comment (#927)
 PR_FIELDS = '''number title url mergedAt body labels(first:20){nodes{name}} files(first:100){nodes{path}}
 closingIssuesReferences(first:5){nodes{number title url state body labels(first:20){nodes{name}} milestone{title state} %s}}''' % COMMENTS
 ISSUE_FIELDS = 'number title url state body labels(first:20){nodes{name}} milestone{title state} ' + COMMENTS  # state: passed_on_phone (#1100)
@@ -624,7 +648,7 @@ def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in
     current = min((n for n in map(build_number, issues) if n is not None), default=None)
     fixes = []
     for issue in issues:
-        comments = [(comment or {}).get('body') or '' for comment in (issue.get('comments') or {}).get('nodes') or []]
+        comments = [comment.get('body') or '' for comment in trusted_nodes(issue)]
         named = {int(a or b) for body in comments for a, b in FIXED_IN.findall(body)}
         sources = [(node or {}).get('source') or {} for node in (issue.get('timelineItems') or {}).get('nodes') or []]
         prs = {pr['number']: pr for pr in sources if pr.get('number') in built and pr.get('merged')
@@ -779,14 +803,22 @@ def heading_section(lines: list[str], first: str = '') -> str | None:
     return '\n'.join(kept).strip() or None
 
 
+def trusted_nodes(issue: dict) -> list[dict]:
+    """An issue's GraphQL comment nodes written by the owner, a collaborator or a member (#1822), oldest first.
+
+    A stranger's "Owner check: none" or "Merged in #N" is data: it must not take a fix off the owner's plan.
+    """
+    return comment_trust.trusted_only([node for node in (issue.get('comments') or {}).get('nodes') or [] if node])
+
+
 def comment_check(issue: dict) -> str | None:
     """The newest "Owner check" or "Phone check" in an issue's comments (#927: #180's, #158's and #237's
     checks were written there), or "none (...)" when the newest such comment takes it off the plans
     (#288: "Leave this off the owner's plans until ..."). The hourly dispatch's prose counts too ("This needs
     the owner's Bluetooth headphones: ..."): #1708's only check was written that way. GitHub lists comments
     oldest first."""
-    for comment in reversed((issue.get('comments') or {}).get('nodes') or []):
-        body = (comment or {}).get('body') or ''
+    for comment in reversed(trusted_nodes(issue)):
+        body = comment.get('body') or ''
         off = next((line.strip() for line in body.splitlines() if OFF_PLANS.search(line)), None)
         if off:
             return f'none ({off})'
@@ -945,18 +977,10 @@ def labels(item: dict) -> set[str]:
 
 def report_comments() -> list[str] | None:
     """The bodies of the comments on #184, oldest first; None when gh fails (the plan says unknown)."""
-    raw = gh('api', f'repos/{REPO}/issues/{REPORTS_ISSUE}/comments', '--paginate', '--jq', '.[] | .body | @json')
+    raw = gh('api', f'repos/{REPO}/issues/{REPORTS_ISSUE}/comments', '--paginate', '--jq', COMMENT_JSON)
     if raw is None:
         return None
-    bodies = []
-    for line in raw.split('\n'):  # not splitlines(): JSON leaves U+2028 and friends unescaped
-        try:
-            body = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(body, str):
-            bodies.append(body)
-    return bodies
+    return [c['body'] for c in trusted_comment_lines(raw) if isinstance(c.get('body'), str)]
 
 
 def report_lines(bodies: list[str], kind: str, sha: str) -> list[str] | None:
@@ -1590,7 +1614,7 @@ def build(sha: str) -> int:
             if any(p.stat().st_size < 1024 for p in pointers):
                 raise RuntimeError('the voice models are still Git LFS pointers after `git lfs pull`')
         run_logged(['bash', str(src / 'scripts/setup-worktree.sh')], src, log)
-        lane = [sys.executable, str(SCRIPTS / 'xcodebuild-lane')]
+        lane = [sys.executable, str(PUBLIC / 'scripts' / 'xcodebuild-lane')]
         project = ['-project', 'SpokenMarginsNative.xcodeproj', '-scheme', 'SpokenMarginsApp']
         checks = runner_tested(sha)
         if not checks:
@@ -1670,7 +1694,7 @@ class BuildFailed(Exception):
 
 def main(argv) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
-    parser.add_argument('--commit', help='build this commit instead of origin/next')
+    parser.add_argument('--commit', help='build this commit instead of the trunk\'s tip')
     parser.add_argument('--if-changed', action='store_true', help='coalesce changed tips to hourly, or after integration PASS')
     parser.add_argument('--plan-only', action='store_true', help="rewrite latest's test-plan.md and stop")
     args = parser.parse_args(argv)

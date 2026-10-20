@@ -778,7 +778,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
 
     /// #872: the Hollywood packet's Margins carry only the sender's clock time. After a placement pass has run and
-    /// left them unplaced, the Timeline row says that, not "Position not matched", which reads as a match that
+    /// left them unplaced, the Timeline row says that, not "Couldn't place this one", which reads as a match that
     /// failed. Before any pass has run, a freshly imported podcast layer (`.contextOnly`, no file digest) says
     /// "Not placed yet" for every unplaced Margin, bare or fingerprinted: a pass may still place it.
     func testSharedMarginRowSaysUnresolvedWordingOnlyAfterAPassLeftTheMarginUnplaced() {
@@ -803,7 +803,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(bare.positionDescription, "Sent without a position")
         let fingerprinted = row(fingerprintedAnchor, in: afterPass)
         XCTAssertEqual(fingerprinted.placementStatus, .settled)
-        XCTAssertEqual(fingerprinted.positionDescription, "Position not matched")
+        XCTAssertEqual(fingerprinted.positionDescription, SharedMarginPlacementWording.couldntPlace)
 
         // The state a packet is in right after import into a podcast whose download hasn't finished.
         for anchor in [bareAnchor, fingerprintedAnchor] {
@@ -1746,7 +1746,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.sessionRows.map(\.interjectionCount), [0])
         model.marginCollectionQuery = MarginCollectionQuery(itemID: b.id)
         XCTAssertTrue(model.visiblePrivateMarginRows.isEmpty, "B's Margins list is empty")
-        XCTAssertEqual(try model.loadLibraryRows(store: store).first { $0.id == b.id }, bLibraryRow,
+        // Without the storage rank: it is B's place in the store's updated_at order, so it moves whenever A's
+        // record gets a later timestamp, and it is not a badge (#2164).
+        let bLibraryRowAfter = try XCTUnwrap(model.loadLibraryRows(store: store).first { $0.id == b.id })
+        XCTAssertEqual(libraryRowFieldsExceptStorageRank(bLibraryRowAfter), libraryRowFieldsExceptStorageRank(bLibraryRow),
                        "B's Library status and progress badges do not change")
         model.openItem(id: "item-pill")
         XCTAssertEqual(model.selectedItem.interjections.map(\.id), [saved.id])
@@ -5852,6 +5855,13 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             model.listeningMapGenerationAvailabilityDescription,
             "This podcast already includes publisher chapters. A generated Listening Map is unnecessary."
         )
+    }
+
+    /// Every field of a Library row except `storageRecencyRank`, so a new field is still compared.
+    private func libraryRowFieldsExceptStorageRank(_ row: LibraryItemRow) -> [String] {
+        Mirror(reflecting: row).children
+            .filter { $0.label != "storageRecencyRank" }
+            .map { "\($0.label ?? "?")=\(String(describing: $0.value))" }
     }
 
     private func waitFor(

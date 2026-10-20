@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="https://audioboom.com/feeds.xsl" media="screen" ?>
+<rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:georss="http://www.georss.org/georss" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0" xml:base="https://audioboom.com/">
+<!--
+
+      ***************************************************************
+      * Hi! You're looking at an RSS feed. If you're not sure what  *
+      * to do here, you can visit our help center to find out more: *
+      *                https://support.audioboom.com                *
+      ***************************************************************
+
+-->
+<channel>
+<title>The Tim Dillon Show</title>
+<description><![CDATA[Tim Dillon is a comedian and tour guide. He’s very excited to give you a tour of the end of the world. Each week from a porch in Los Angeles he shares apocalyptic visions with his friends and berates a local diner.]]></description>
+<link>http://timdilloncomedy.com</link>
+<generator>audioboom.com</generator>
+<atom:link href="https://audioboom.com/channels/5093219" rel="alternate" type="text/html" />
+<atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" />
+<atom:link href="https://audioboom.com/channels/5093219.rss" rel="self" type="application/rss+xml" />
+<pubDate>Sat, 10 Oct 2026 16:10:00 +0000</pubDate>
+<language>en-us</language>
+<image>
+  <url>https://audioboom.com/i/40034741/s=1400x1400/el=1/rt=fill.jpg</url>
+  <title>The Tim Dillon Show</title>
+  <link>http://timdilloncomedy.com</link>
+</image>
+<itunes:image href="https://audioboom.com/i/40034741/s=1400x1400/el=1/rt=fill.jpg" />
+<itunes:category text="Comedy" />
+<itunes:category text="News"><itunes:category text="News Commentary" /></itunes:category>
+<itunes:explicit>false</itunes:explicit>
+<itunes:author>The Tim Dillon Show</itunes:author>
+<itunes:owner>
+  <itunes:name>Audioboom</itunes:name>
+</itunes:owner>
+<podcast:guid>ea1d9721-63ea-5f1f-bdce-dc1ae8cd73b4</podcast:guid>
+<itunes:new-feed-url>https://audioboom.com/channels/5093219.rss</itunes:new-feed-url>
+<itunes:type>episodic</itunes:type>
+

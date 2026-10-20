@@ -59,6 +59,7 @@ struct NativeTextPeekView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(AppColors.inputBackground)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .increasedContrastEdge(cornerRadius: 14)
             .padding(20)
             .navigationTitle(title.isEmpty ? "Source Text" : title)
             .navigationBarTitleDisplayMode(.inline)

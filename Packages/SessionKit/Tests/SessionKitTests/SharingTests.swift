@@ -774,6 +774,89 @@ final class SharingTests: XCTestCase {
         #endif
     }
 
+    // #1872: the integration run stored a pre-Margin window 319 ms short. The check on the first and last media
+    // times can't see a buffer the tap never delivered, so a window with a hole inside it passed while holding
+    // less audio than it claimed.
+    func testPreWindowWithAHoleInsideItIsNotCapturedButAHoleOutsideItIs() async throws {
+        #if canImport(AVFoundation) && canImport(ShazamKit) && canImport(MediaToolbox)
+        let sampleRate = 8_000.0
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
+        // Feeds 20-40 s as 100 ms buffers, leaving out the ones that start inside `dropped` and starting every
+        // other one `jitterMs` late.
+        func fill(
+            _ context: PostResumePodcastEvidenceTapContext,
+            dropping dropped: Range<Int> = 0..<0,
+            jitterMs: Int = 0
+        ) throws {
+            for tenth in 200..<400 where !dropped.contains(tenth * 100) {
+                let frameCount = AVAudioFrameCount(sampleRate / 10)
+                let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount))
+                buffer.frameLength = frameCount
+                let samples = try XCTUnwrap(buffer.floatChannelData?[0])
+                for frame in 0..<Int(frameCount) {
+                    samples[frame] = Float(0.2 * sin(2 * .pi * (220 + Double(tenth % 40)) * Double(frame) / sampleRate))
+                }
+                context.process(
+                    bufferList: buffer.mutableAudioBufferList,
+                    frameCount: CMItemCount(frameCount),
+                    timeRange: CMTimeRange(
+                        start: CMTime(value: CMTimeValue(tenth * 100 + (tenth.isMultiple(of: 2) ? 0 : jitterMs)), timescale: 1_000),
+                        duration: CMTime(value: 100, timescale: 1_000)
+                    )
+                )
+            }
+        }
+        // The anchor is at 40 s, so the 12 s window runs 23-35 s.
+        func request(_ id: String) -> PostResumeAudioSampleRequest {
+            PostResumeAudioSampleRequest(
+                interjectionId: id, sessionId: "session-hole", itemId: "episode-hole",
+                anchorMediaTimeMs: 40_000, targetDurationMs: 12_000
+            )
+        }
+        func makeContext(
+            _ handler: @escaping @Sendable (PostResumePodcastEvidenceCaptureResult) -> Void = { _ in }
+        ) -> PostResumePodcastEvidenceTapContext {
+            let context = PostResumePodcastEvidenceTapContext(
+                resultHandler: handler, becameIdle: {}, continuousCollection: true, itemId: "episode-hole"
+            )
+            context.prepare(processingFormat: format.streamDescription)
+            return context
+        }
+
+        // Three buffers (300 ms) missing at 30 s: the same size of hole the run saw.
+        let holed = makeContext()
+        try fill(holed, dropping: 30_000..<30_300)
+        XCTAssertFalse(holed.captureBufferedPreInterjection(request("ij-hole-inside")),
+                       "a hole inside the window must not be stored as 12 s of audio")
+
+        // Before the window starts (21 s), the audio the window holds is unbroken.
+        let (clearResults, clearContinuation) = AsyncStream<PostResumePodcastEvidenceCaptureResult>.makeStream()
+        let clear = makeContext { clearContinuation.yield($0) }
+        try fill(clear, dropping: 21_000..<21_300)
+        XCTAssertTrue(clear.captureBufferedPreInterjection(request("ij-hole-outside")))
+        if case .captured(let capture)? = await clearResults.first(where: { _ in true }) {
+            XCTAssertEqual(capture.durationMs, 12_000, accuracy: 250)
+        } else {
+            XCTFail("Expected the unbroken window to be captured")
+        }
+        clearContinuation.finish()
+
+        // Start times a couple of milliseconds off from where the last buffer ended are rounding, not a hole.
+        let (jitterResults, jitterContinuation) = AsyncStream<PostResumePodcastEvidenceCaptureResult>.makeStream()
+        let jittery = makeContext { jitterContinuation.yield($0) }
+        try fill(jittery, jitterMs: 2)
+        XCTAssertTrue(jittery.captureBufferedPreInterjection(request("ij-jitter")))
+        if case .captured(let capture)? = await jitterResults.first(where: { _ in true }) {
+            XCTAssertEqual(capture.durationMs, 12_000, accuracy: 250)
+        } else {
+            XCTFail("Expected the jittered window to be captured")
+        }
+        jitterContinuation.finish()
+        #else
+        throw XCTSkip("AVFoundation, MediaToolbox, and ShazamKit are required")
+        #endif
+    }
+
     func testPodcastResolverFusesConsistentEvidenceAndRejectsAmbiguity() {
         let query = PodcastPortableAnchorQuery(
             packageScopedId: "margin",

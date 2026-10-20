@@ -62,10 +62,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, List, Optional, Tuple
 
-import sm_lane_prune as lane_prune
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+import sm_lane_prune as lane_prune  # noqa: E402
+import sm_paths  # noqa: E402
+from trunk import trunk_ref  # noqa: E402  (#1492)
 
 GiB = 1024 ** 3
 HOME = Path.home()
+# The owner's development checkout, which is not this script's own (SM_REPO replaces it, #1844).
+DEV_CHECKOUT = sm_paths.repo(__file__, default=HOME / 'Documents/GitHub/spoken-margins-native')
 
 CACHE_IDLE_SECONDS = 30 * 60
 ARTIFACT_AGE_SECONDS = 2 * 86400
@@ -89,8 +94,8 @@ PHONE_BUILD_NAME = re.compile(r'^\d{8}-\d{6}-[0-9a-f]{7}$')
 @dataclass
 class Config:
     home: Path = HOME
-    repo: Path = HOME / 'Documents/GitHub/spoken-margins-native'
-    checkout_glob: str = str(HOME / 'Documents/GitHub/spoken-margins-native*')
+    repo: Path = DEV_CHECKOUT
+    checkout_glob: str = str(DEV_CHECKOUT) + '*'
     data_volume: Path = Path('/System/Volumes/Data')
     drive: Path = Path('/Volumes/SlawBulk')
     offload_dir: str = 'Codex-Offload'
@@ -105,7 +110,7 @@ class Config:
     snapshot_volume: Path = Path('/')
     night_start_hour: int = 2
     night_end_hour: int = 5
-    ops_dir: Path = HOME / 'SpokenMarginsOps/disk-relief'
+    ops_dir: Path = sm_paths.state_dir('disk-relief', home=HOME)
     phone_dir: Path = HOME / 'SpokenMargins-phone'
     device_support: Path = HOME / 'Library/Developer/Xcode/iOS DeviceSupport'
     launch_agents: Path = HOME / 'Library/LaunchAgents'
@@ -823,11 +828,11 @@ def plan_moves(cfg: Config, machine: Machine, procs: List[Proc], protected: List
 
 
 def is_stale(machine: Machine, tree: Path) -> bool:
-    """Clean (no changes, no untracked files) and HEAD already in origin/next."""
+    """Clean (no changes, no untracked files) and HEAD already in the trunk (origin/next until #1492 moves it)."""
     code, status = machine.git(tree, 'status', '--porcelain')
     if code != 0 or status.strip():
         return False
-    code, _ = machine.git(tree, 'merge-base', '--is-ancestor', 'HEAD', 'origin/next')
+    code, _ = machine.git(tree, 'merge-base', '--is-ancestor', 'HEAD', trunk_ref())
     return code == 0
 
 
@@ -888,11 +893,11 @@ def plan_worktrees(cfg: Config, machine: Machine, trees: List[Worktree], protect
 
         def recheck(tree=tree):
             if not is_stale(machine, tree.path):
-                return 'no longer clean and in origin/next'
+                return f'no longer clean and in {trunk_ref()}'
             return worktree_keep_reason(cfg, machine, tree,
                                         [cwd for _, cwd in live_sessions(cfg, machine) if cwd])
         found.append(Candidate('worktree', tree.path, tree_stats(tree.path).disk_bytes,
-                               'finished worktree: clean, in origin/next, idle 24 hours', recheck))
+                               f'finished worktree: clean, in {trunk_ref()}, idle 24 hours', recheck))
     plan.candidates += sorted(found, key=lambda c: -c.size)
     return {c.path for c in found}
 

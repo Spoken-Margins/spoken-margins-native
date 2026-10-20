@@ -1,0 +1,85 @@
+# Push the owner's phone when a PR into next waits only for his merge tap (#2047).
+#
+# The lane runner never merges a PR touching scripts/lane-runner.py or .github/ (owner rule 2026-10-09). Agents
+# post as the owner, and GitHub doesn't notify anyone of their own activity, so nothing told him one was ready:
+# on 2026-10-18 #1964, #1966, #2038 and #1885 sat waiting only for his tap. scripts/owner_tap_alert.py posts one
+# comment as github-actions[bot] that @mentions the owner, once per head, when such a PR is ready (not a draft,
+# no conflict, head checks finished with none failed, no blocking Claude audit on the head). The GitHub mobile
+# app pushes mentions.
+#
+# Where the alert is decided:
+# - Mostly at the end of linux-t1.yml and shipped-build-compat.yml, in their own `owner-tap-alert` job, so it comes
+#   when a PR's checks finish. Their push event fires while the checks are still running, and check_suite,
+#   workflow_run and workflow_dispatch all take their triggers from main, which doesn't carry this file until
+#   #1492. After #1492 those jobs can move here as a `workflow_run` or `check_suite` trigger.
+# - Here, when a PR touching those paths gets the `owner-tap-check` label, is marked ready for review or is
+#   reopened. The label is how the Mac asks for a check: there `gh` is the owner, whose comment would notify
+#   nobody, so the audit script (after auditing such a PR) and the Mac tick (optional backstop,
+#   ops/lane/README.md) remove and re-add the label, and this run posts as the bot and removes it again.
+#
+# The script is taken from the PR's base with no credentials kept, and reads PRs only through the API; a base
+# without the script skips quietly. A same-repo PR that edits this file runs its own copy on pull_request; only
+# collaborators can open those (forks are skipped below). One run at a time per PR, and the script reads the
+# alert marker again just before it posts.
+name: owner-tap-alert
+
+on:
+  pull_request:
+    branches: [next, main]  # either trunk (#1492); the checks read the PR's own base
+    # Not opened or synchronize: the head's checks have only just started, and their own last job decides.
+    types: [reopened, ready_for_review, labeled]
+    paths: ['.github/**', 'scripts/lane-runner.py']
+  # Refused by GitHub until main carries this file (#1492); kept so it works from then on.
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'Check only this PR (default: every open PR into the trunk)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+  checks: read
+  statuses: read
+
+concurrency:
+  group: owner-tap-alert-${{ inputs.pr || github.event.pull_request.number || 'sweep' }}
+  cancel-in-progress: false
+
+jobs:
+  alert:
+    # The script ignores its own job by this name (the same in linux-t1.yml and shipped-build-compat.yml).
+    name: owner-tap-alert
+    # A label event counts only for owner-tap-check; lane labels come and go on these PRs all day.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft &&
+       (github.event.action != 'labeled' || github.event.label.name == 'owner-tap-check'))
+    runs-on: [self-hosted, Linux, sm-vps]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Policy and code from the base, never PR code.
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/owner_tap_alert.py
+            scripts/comment_trust.py
+            scripts/trunk.py
+          sparse-checkout-cone-mode: false
+      - name: Alert the owner about PRs ready for his merge tap
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SM_TRUNK: ${{ vars.SM_TRUNK || 'next' }}
+          ONLY_PR: ${{ inputs.pr || github.event.pull_request.number }}
+          CLEAR: ${{ github.event.label.name == 'owner-tap-check' && 'owner-tap-check' || '' }}
+        run: |
+          if [ ! -f scripts/owner_tap_alert.py ]; then
+            echo "The base has no scripts/owner_tap_alert.py yet; nothing to check."
+            exit 0
+          fi
+          python3 scripts/owner_tap_alert.py ${ONLY_PR:+--pr "$ONLY_PR"} ${CLEAR:+--clear-label "$CLEAR"}

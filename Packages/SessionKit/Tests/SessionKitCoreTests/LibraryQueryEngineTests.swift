@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import SessionKit
+import SessionKitTestInputs
 
 final class LibraryQueryEngineTests: XCTestCase {
     private struct Row: LibraryQueryRow {
@@ -17,6 +18,7 @@ final class LibraryQueryEngineTests: XCTestCase {
         var addedAt: Date?
         var lastListenedAt: Date?
         var storageRecencyRank = Int.max
+        var sharedMargins = SharedMarginTally.none
     }
 
     private let listeningRows = [
@@ -42,6 +44,42 @@ final class LibraryQueryEngineTests: XCTestCase {
         XCTAssertEqual(ids(listeningRows, .init(listeningState: .unfinished)), ["nil", "started", "zero"])
         XCTAssertEqual(ids(listeningRows, .init(listeningState: .completed)), ["done-started", "done-zero"])
         XCTAssertEqual(ids(listeningRows, .init(listeningState: .all)).count, 5)
+    }
+
+    /// #1792: the Library finds the items a friend left Margins on, and the ones with Margins not yet heard.
+    func testSharedMarginsFilterFindsItemsWithMarginsFromOthers() {
+        let rows = [
+            Row(id: "none"),
+            Row(id: "heard", sharedMargins: SharedMarginTally(total: 2, new: 0)),
+            Row(id: "new", sharedMargins: SharedMarginTally(total: 3, new: 1)),
+            Row(id: "done-new", isCompleted: true, sharedMargins: SharedMarginTally(total: 1, new: 1))
+        ]
+        XCTAssertEqual(ids(rows, .init(listeningState: .all)).count, 4)
+        XCTAssertEqual(ids(rows, .init(listeningState: .all, sharedMargins: .fromOthers)), ["done-new", "heard", "new"])
+        XCTAssertEqual(ids(rows, .init(listeningState: .all, sharedMargins: .newToMe)), ["done-new", "new"])
+        XCTAssertEqual(ids(rows, .init(listeningState: .unfinished, sharedMargins: .newToMe)), ["new"], "combines with the other filters")
+        XCTAssertEqual(LibraryQueryEngine.libraryFilterDescription(query: .init(listeningState: .all, sharedMargins: .newToMe)), "New shared Margins")
+        XCTAssertEqual(LibraryQueryEngine.libraryFilterDescription(query: .init(listeningState: .all)), "All items")
+    }
+
+    func testAFilteredLibraryIsNotCaughtUp() {
+        let rows = [Row(id: "done", isCompleted: true)]
+        XCTAssertTrue(LibraryQueryEngine.libraryIsCaughtUp(rows, query: .init()))
+        XCTAssertFalse(LibraryQueryEngine.libraryIsCaughtUp(rows, query: .init(sharedMargins: .fromOthers)))
+    }
+
+    func testResetFiltersClearsTheSharedMarginsFilterAndKeepsSearchAndSort() {
+        var query = LibraryQuery(query: "essay", contentType: .pdf, listeningState: .all, offlineState: .readyOffline, sharedMargins: .newToMe, sort: .title)
+        query.resetFilters()
+        XCTAssertEqual(query, LibraryQuery(query: "essay", sort: .title))
+    }
+
+    /// The filter is a session choice: it isn't saved, and a query saved before it existed still reads.
+    func testSharedMarginsFilterIsNotPartOfTheSavedQuery() throws {
+        let saved = try JSONEncoder().encode(LibraryQuery(sharedMargins: .newToMe))
+        XCTAssertFalse(String(decoding: saved, as: UTF8.self).contains("sharedMargins"))
+        let old = Data(#"{"query":"","contentType":"all","listeningState":"unfinished","offlineState":"all","sort":"recently_added"}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(LibraryQuery.self, from: old), LibraryQuery())
     }
 
     func testSearchFoldsCaseAndDiacriticsAcrossMetadata() {
@@ -101,6 +139,22 @@ final class LibraryQueryEngineTests: XCTestCase {
         XCTAssertEqual(LibraryQueryEngine.loadLibraryListeningFilter(defaults: defaults), .unfinished)
     }
 
+    /// The Library filter menu once labelled these "Pdf" and "Epub" while the summary said "PDF" (#972).
+    func testMenuLabelsAreTheSameWordsAsTheSummary() throws {
+        XCTAssertEqual(LibraryContentTypeFilter.allCases.map { LibraryQueryEngine.displayName($0.rawValue) },
+                       ["All", "Text", "PDF", "EPUB", "Article", "Podcast", "Audiobook"])
+        XCTAssertEqual(LibraryListeningStateFilter.allCases.map { LibraryQueryEngine.displayName($0.rawValue) },
+                       ["All", "Unfinished", "Unplayed", "In Progress", "Completed"])
+        XCTAssertEqual(LibraryOfflineStateFilter.allCases.map { LibraryQueryEngine.displayName($0.rawValue) },
+                       ["All", "Preparing", "Ready Offline", "Needs Repreparation", "Online Only"])
+        XCTAssertEqual(LibrarySort.allCases.map { LibraryQueryEngine.displayName($0.rawValue) },
+                       ["Recently Added", "Recently Listened", "Title", "Progress"])
+        // The menu lives in the app target: it must ask the engine, not capitalize on its own.
+        let screen = try TestInputs.text(.appSources, "ExperienceLibraryScreen.swift")
+        XCTAssertTrue(screen.contains("LibraryQueryEngine.displayName(rawValue)"))
+        XCTAssertFalse(screen.contains(".capitalized"))
+    }
+
     func testCaptionsAndPersistedSpellings() throws {
         XCTAssertEqual(LibraryQueryEngine.libraryFilterDescription(query: .init(listeningState: .all)), "All items")
         XCTAssertEqual(LibraryQueryEngine.libraryFilterDescription(query: .init(contentType: .pdf, listeningState: .unplayed)), "PDF · Unplayed")
@@ -111,9 +165,7 @@ final class LibraryQueryEngineTests: XCTestCase {
         XCTAssertEqual(LibraryOfflineStateFilter.allCases.map(\.rawValue), ["all", "preparing", "ready_offline", "needs_repreparation", "online_only"])
         XCTAssertEqual(LibrarySort.allCases.map(\.rawValue), ["recently_added", "recently_listened", "title", "progress"])
         // The writer stays app-side. Pin its literal keys without loading the iOS app.
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appendingPathComponent("App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift"), encoding: .utf8)
+        let source = try TestInputs.text(.appSources, "Gate1AppModel.swift")
         for key in ["libraryContentTypeFilter", "libraryListeningStateFilter", "libraryOfflineStateFilter", "librarySort"] {
             XCTAssertTrue(source.contains("forKey: \"\(key)\""), key)
         }

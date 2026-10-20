@@ -103,9 +103,25 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
         try model.consumePendingSpokenMarginsPackageHandoffs(from: store)
 
-        XCTAssertNotNil(model.spokenMarginsPackageImportReview)
-        XCTAssertTrue(try store.pendingPayloadIDs().isEmpty)
+        let review = try XCTUnwrap(model.spokenMarginsPackageImportReview)
+        XCTAssertEqual(try store.pendingPayloadIDs().count, 1, "the shared copy waits until Import or Cancel (#2123)")
         XCTAssertTrue(model.diagnostics.values.contains("opened"))
+
+        // Coming back to the foreground while the review shows stages nothing again.
+        try model.consumePendingSpokenMarginsPackageHandoffs(from: store)
+        XCTAssertEqual(model.spokenMarginsPackageImportReview?.id, review.id)
+
+        // The app is killed before Import: the next launch reopens the review once, not on every foreground.
+        let relaunched = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        try relaunched.consumePendingSpokenMarginsPackageHandoffs(from: store)
+        let reopened = try XCTUnwrap(relaunched.spokenMarginsPackageImportReview, "the packet survived the relaunch")
+        try relaunched.consumePendingSpokenMarginsPackageHandoffs(from: store)
+        XCTAssertEqual(relaunched.spokenMarginsPackageImportReview?.id, reopened.id, "reopened once, not on a loop")
+        XCTAssertEqual(try store.pendingPayloadIDs().count, 1)
+
+        relaunched.cancelSpokenMarginsPackageImport()
+        XCTAssertNil(relaunched.spokenMarginsPackageImportReview)
+        XCTAssertTrue(try store.pendingPayloadIDs().isEmpty, "Cancel removes the shared copy")
         model.cancelSpokenMarginsPackageImport()
     }
 
@@ -161,6 +177,23 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         model.cancelSpokenMarginsPackageImport()
     }
 
+    /// #1967: no connection is not an expired link, and the banner offers Retry.
+    @MainActor
+    func testAShareLinkOpenedOfflineSaysSoAndOffersARetry() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-share-link-offline")
+        let model = shareLinkModel(root: root) { _, _ in throw URLError(.notConnectedToInternet) }
+        let link = try XCTUnwrap(ShareLinkSealing.linkURL(
+            base: URL(string: "https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)")!, key: .random()
+        ))
+
+        model.handleIncomingURL(link)
+        try await waitForShareLink(model) { model.lastError != nil }
+
+        XCTAssertEqual(model.lastError, "You're offline. Reconnect, then tap the link again.")
+        XCTAssertNotNil(model.feedbackEvent?.retry, "an offline link is worth another try")
+        XCTAssertNil(model.spokenMarginsPackageImportReview)
+    }
+
     @MainActor
     func testAnExpiredShareLinkSaysSoAndOpensNoReview() async throws {
         let root = try temporaryDirectory(named: "spoken-margins-share-link-expired")
@@ -172,7 +205,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         model.handleIncomingURL(link)
         try await waitForShareLink(model) { model.lastError != nil }
 
-        XCTAssertEqual(model.lastError, "This link has expired or can't be reached.")
+        XCTAssertEqual(model.lastError, "This link has expired. Ask your friend to share it again.")
         XCTAssertNil(model.spokenMarginsPackageImportReview)
     }
 
@@ -211,12 +244,12 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let first = try XCTUnwrap(ShareLinkURL(url: try XCTUnwrap(ShareLinkSealing.linkURL(base: URL(string: base + firstID)!, key: .random()))))
         let second = try XCTUnwrap(ShareLinkURL(url: try XCTUnwrap(ShareLinkSealing.linkURL(base: URL(string: base + secondID)!, key: .random()))))
 
-        opener.open(first, stage: { _ in XCTFail("the first link has no packet") }, fail: { failures.first.append($0) })
+        opener.open(first, stage: { _ in XCTFail("the first link has no packet") }, fail: { message, _ in failures.first.append(message) })
         for _ in 0..<250 where !firstAnswer.isWaiting {
             try await Task.sleep(for: .milliseconds(20))
         }
         XCTAssertTrue(firstAnswer.isWaiting, "the first link's download never started")
-        opener.open(second, stage: { _ in XCTFail("the second link has no packet") }, fail: { failures.second.append($0) })
+        opener.open(second, stage: { _ in XCTFail("the second link has no packet") }, fail: { message, _ in failures.second.append(message) })
         firstAnswer.answer()
         for _ in 0..<250 where failures.second.isEmpty || !firstAnswer.answered {
             try await Task.sleep(for: .milliseconds(20))
@@ -224,7 +257,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         // Give the replaced task time to reach its catch on the main actor.
         try await Task.sleep(for: .milliseconds(200))
 
-        XCTAssertEqual(failures.second, ["This link has expired or can't be reached."])
+        XCTAssertEqual(failures.second, ["This link has expired. Ask your friend to share it again."])
         XCTAssertEqual(failures.first, [], "the replaced link must not show an error over the link the listener tapped next")
     }
 

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<?xml-stylesheet href="https://rss.buzzsprout.com/styles.xsl" type="text/xsl"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:podcast="https://podcastindex.org/namespace/1.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:psc="http://podlove.org/simple-chapters" xmlns:atom="http://www.w3.org/2005/Atom">
+<channel>
+  <atom:link href="https://rss.buzzsprout.com/1411126.rss" rel="self" type="application/rss+xml" />
+  <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" xmlns="http://www.w3.org/2005/Atom" />
+  <title>Maintenance Phase</title>
+
+  <lastBuildDate>Mon, 28 Sep 2026 09:51:42 -0400</lastBuildDate>
+  <link>http://maintenancephase.com</link>
+  <language>en</language>
+  <copyright>© 2026 Maintenance Phase</copyright>
+  <podcast:locked>yes</podcast:locked>
+  <podcast:funding url="https://www.patreon.com/maintenancephase">Support this Podcast</podcast:funding>
+  <podcast:guid>b9bd23ec-45b2-5b38-83a4-30f72c0bd065</podcast:guid>
+  <itunes:author>Aubrey Gordon &amp; Michael Hobbes</itunes:author>
+  <itunes:type>episodic</itunes:type>
+  <itunes:explicit>true</itunes:explicit>
+  <description><![CDATA[Debunking the junk science behind health fads, wellness scams and nonsensical nutrition advice.]]></description>
+  <generator>Buzzsprout (https://www.buzzsprout.com)</generator>
+  <itunes:keywords>Health, Wellness, History, Science</itunes:keywords>
+  <itunes:owner>
+    <itunes:name>Aubrey Gordon &amp; Michael Hobbes</itunes:name>
+  </itunes:owner>
+  <image>
+     <url>https://storage.buzzsprout.com/fec61jabs16rwgkpgcrqwe7puh43?.jpg</url>
+     <title>Maintenance Phase</title>
+     <link>http://maintenancephase.com</link>
+  </image>
+  <itunes:image href="https://storage.buzzsprout.com/fec61jabs16rwgkpgcrqwe7puh43?.jpg" />
+  <itunes:category text="Health &amp; Fitness" />
+  <itunes:category text="Education" />
+  <itunes:category text="History" />
+  <podcast:person role="host" href="https://www.yourfatfriend.com/" img="https://storage.buzzsprout.com/lzfokkyngoh185jd9e39rbaps089">Aubrey Gordon</podcast:person>
+  <podcast:person role="host" img="https://storage.buzzsprout.com/qrg6gdsirq9jvhys3awuprb1o9c7">Michael Hobbes</podcast:person>
+  

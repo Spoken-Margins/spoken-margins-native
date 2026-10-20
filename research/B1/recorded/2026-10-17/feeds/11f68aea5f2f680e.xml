@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:atom="http://www.w3.org/2005/Atom" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:sy="http://purl.org/rss/1.0/modules/syndication/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">
+  <channel>
+    <title>Darknet Diaries</title>
+    <link>https://darknetdiaries.com/</link>
+    <pubDate>Tue, 06 Oct 2026 07:00:00 -0000</pubDate>
+    <lastBuildDate>Sat, 17 Oct 2026 00:32:18 -0000</lastBuildDate>
+    <ttl>60</ttl>
+    <language>en-us</language>
+    <copyright>Jack Rhysider</copyright>
+    <webMaster>help@prx.org (PRX)</webMaster>
+    <description>
+      <![CDATA[<p>Explore true stories of the dark side of the Internet with host Jack Rhysider as he takes you on a journey through the chilling world of hacking, data breaches, and cyber crime.</p><p>¿Hablas español? Escucha en español aquí ➔ <a href="https://darknetdiaries.com/es/">https://darknetdiaries.com/es/</a></p>]]>
+    </description>
+    <generator>PRX Feeder v1.0.0</generator>
+    <docs>http://blogs.law.harvard.edu/tech/rss</docs>
+    <image>
+      <url>https://f.prxu.org/7057/images/18744d5d-8091-4bb8-b41a-1ed06efcd508/uploads_2F1562951997273-pdd2keiryql-99f75240ab90a579e25720d85d3057b2_2Fdarknet-diaries-rss.jpg</url>
+      <title>Darknet Diaries</title>
+      <link>https://darknetdiaries.com/</link>
+      <width>1400</width>
+      <height>1400</height>
+      <description>True stories from the dark side of the Internet</description>
+    </image>
+    <atom:link href="https://podcast.darknetdiaries.com" rel="self" type="application/rss+xml"/>
+    <itunes:new-feed-url>https://podcast.darknetdiaries.com</itunes:new-feed-url>
+    <itunes:author>Jack Rhysider</itunes:author>
+    <itunes:type>episodic</itunes:type>
+    <itunes:category text="Technology"/>
+    <itunes:image href="https://f.prxu.org/7057/images/68ff605a-20f3-437f-9ba9-2d17316724b1/uploads_2F1562951997273-pdd2keiryql-99f75240ab90a579e25720d85d3057b2_2Fdarknet-diaries-rss.jpg"/>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:owner>
+      <itunes:email>podcast@darknetdiaries.com</itunes:email>
+      <itunes:name>Jack Rhysider</itunes:name>
+    </itunes:owner>
+    <itunes:subtitle>True stories from the dark side of the Internet</itunes:subtitle>
+    <itunes:summary>
+      <![CDATA[Explore true stories of the dark side of the Internet with host Jack Rhysider as he takes you on a journey through the chilling world of hacking, data breaches, and cyber crime.
+
+¿Hablas español? Escucha en español aquí ➔ <a href="https://darknetdiaries.com/es/">https://darknetdiaries.com/es/</a>]]>
+    </itunes:summary>
+    <media:copyright>Jack Rhysider</media:copyright>
+    <media:thumbnail url="https://f.prxu.org/7057/images/18744d5d-8091-4bb8-b41a-1ed06efcd508/uploads_2F1562951997273-pdd2keiryql-99f75240ab90a579e25720d85d3057b2_2Fdarknet-diaries-rss.jpg"/>
+    <media:category scheme="http://www.itunes.com/dtds/podcast-1.0.dtd">Technology</media:category>
+    <podcast:guid>ac631a54-a629-5367-a1a5-c2e2f7c25054</podcast:guid>
+    <podcast:podping usesPodping="true"/>
+    <podcast:locked>yes</podcast:locked>
+    

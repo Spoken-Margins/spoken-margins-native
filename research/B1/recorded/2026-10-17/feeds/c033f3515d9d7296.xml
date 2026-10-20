@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0" xmlns:anchor="https://anchor.fm/xmlns" xmlns:podcast="https://podcastindex.org/namespace/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:psc="http://podlove.org/simple-chapters">
+	<channel>
+		<title><![CDATA[The AI Daily Brief: Artificial Intelligence News and Analysis]]></title>
+		<description><![CDATA[A daily news analysis show on all things artificial intelligence. NLW looks at AI from multiple angles, from the explosion of creativity brought on by new tools like Midjourney and ChatGPT to the potential disruptions to work and industries as we know them to the great philosophical, ethical and practical questions of advanced general intelligence, alignment and x-risk.]]></description>
+		<link>https://aidailybrief.ai/</link>
+		<generator>Anchor Podcasts</generator>
+		<lastBuildDate>Sat, 17 Oct 2026 00:22:18 GMT</lastBuildDate>
+		<atom:link href="https://anchor.fm/s/f7cac464/podcast/rss" rel="self" type="application/rss+xml"/>
+		<author><![CDATA[Nathaniel Whittemore]]></author>
+		<copyright><![CDATA[Nathaniel Whittemore]]></copyright>
+		<language><![CDATA[en-us]]></language>
+		<atom:link rel="hub" href="https://pubsubhubbub.appspot.com/"/>
+		<itunes:author>Nathaniel Whittemore</itunes:author>
+		<itunes:summary>A daily news analysis show on all things artificial intelligence. NLW looks at AI from multiple angles, from the explosion of creativity brought on by new tools like Midjourney and ChatGPT to the potential disruptions to work and industries as we know them to the great philosophical, ethical and practical questions of advanced general intelligence, alignment and x-risk.</itunes:summary>
+		<itunes:type>episodic</itunes:type>
+		<itunes:owner>
+			<itunes:name>Nathaniel Whittemore</itunes:name>
+			<itunes:email>nlw@whittemore.io</itunes:email>
+		</itunes:owner>
+		<itunes:explicit>false</itunes:explicit>
+		<itunes:category text="Technology"/>
+		<itunes:image href="https://d3t3ozftmdmh3i.cloudfront.net/staging/podcast_uploaded_nologo/41472609/41472609-1752234663609-8665756a468e5.jpg"/>
+		

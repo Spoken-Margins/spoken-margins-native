@@ -5,7 +5,8 @@ IFS=$'\n\t'
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 site_directory="${repository_root}/Site"
-vps_remote="${SPOKEN_MARGINS_VPS_REMOTE:-root@72.60.117.194}"
+# `ptp` is an alias in the owner's ~/.ssh/config for the VPS; set SPOKEN_MARGINS_VPS_REMOTE to use another host.
+vps_remote="${SPOKEN_MARGINS_VPS_REMOTE:-root@ptp}"
 ssh_key="${SPOKEN_MARGINS_VPS_SSH_KEY:-}"
 site_host="spokenmargins.proximitytoprogress.com"
 web_root="/srv/www/spokenmargins"
@@ -50,12 +51,42 @@ ssh "${ssh_master_arguments[@]}" -fnNT "${vps_remote}"
 echo "Preparing ${web_root}."
 ssh -S "${control_socket}" "${vps_remote}" "install -d -m 0755 '${web_root}'"
 
+# The voice mirror (#1818) goes up first, so the catalog never points at files that are not there yet. It lives in
+# voices/files/ on the server, outside Site/, and is never deleted by the site upload below. `scripts/voice-catalog
+# publish --apply` sets SPOKEN_MARGINS_VOICE_MIRROR_DIR to a folder of links to the checked files.
+mirror_directory="${SPOKEN_MARGINS_VOICE_MIRROR_DIR:-}"
+if [[ -n "${mirror_directory}" ]]; then
+  if [[ ! -d "${mirror_directory}" ]]; then
+    echo "SPOKEN_MARGINS_VOICE_MIRROR_DIR is not a folder: ${mirror_directory}" >&2
+    exit 1
+  fi
+  echo "Uploading the voice mirror from ${mirror_directory}/."
+  ssh -S "${control_socket}" "${vps_remote}" "install -d -m 0755 '${web_root}/voices/files'"
+  rsync \
+    --archive \
+    --copy-links \
+    --compress \
+    --partial \
+    --exclude '.DS_Store' \
+    -e "ssh -S ${control_socket}" \
+    "${mirror_directory}/" \
+    "${vps_remote}:${web_root}/voices/files/"
+fi
+
+# voices/files/ is never deleted. A checkout with no Site/voices/ (the voice catalog is committed only after a publish)
+# leaves the server's whole voices/ folder alone, because rsync cannot delete a folder that still holds a protected one.
+voice_excludes=(--exclude '/voices/files/')
+if [[ ! -d "${site_directory}/voices" ]]; then
+  voice_excludes=(--exclude '/voices/')
+fi
+
 echo "Uploading ${site_directory}/."
 rsync \
   --archive \
   --compress \
   --delete \
   --exclude '.DS_Store' \
+  "${voice_excludes[@]}" \
   -e "ssh -S ${control_socket}" \
   "${site_directory}/" \
   "${vps_remote}:${web_root}/"
@@ -98,7 +129,11 @@ systemctl is-active --quiet caddy
 REMOTE_SCRIPT
 
 echo "Verifying public HTTPS pages."
-for route in / /privacy/ /support/ /terms/; do
+routes=(/ /privacy/ /support/ /terms/)
+if [[ -f "${site_directory}/voices/index.html" ]]; then
+  routes+=(/voices/ /voices/v1/manifest.json /voices/v1/catalog.json)
+fi
+for route in "${routes[@]}"; do
   if ! status_code="$(curl --silent --location --output /dev/null --write-out '%{http_code}' --max-time 30 --retry 5 --retry-delay 2 --retry-all-errors "https://${site_host}${route}")"; then
     echo "Verification failed: could not reach https://${site_host}${route}." >&2
     exit 1

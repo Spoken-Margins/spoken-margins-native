@@ -34,6 +34,32 @@ enum Build23RecipientPresentation {
         }
     }
 
+    static func heading(for snapshot: Build23RecipientImportSnapshot) -> String {
+        snapshot.isListeningMap ? "Shared Listening Map" : "Shared Margins"
+    }
+
+    /// The confirm button. A map asks before it replaces another: the button says so.
+    static func confirmTitle(for snapshot: Build23RecipientImportSnapshot) -> String {
+        guard snapshot.isListeningMap else { return "Import" }
+        return snapshot.replacesExistingMap ? "Replace Map" : "Add Map"
+    }
+
+    static func progressTitle(for snapshot: Build23RecipientImportSnapshot) -> String {
+        snapshot.isListeningMap ? "Adding…" : "Importing…"
+    }
+
+    static func notice(for snapshot: Build23RecipientImportSnapshot) -> String {
+        guard snapshot.isListeningMap else { return importNotice }
+        let base = "Adding a map never starts playback. It sets this item's chapters and keeps each chapter's summary. Your own Margins stay as they are."
+        return snapshot.replacesExistingMap ? "This item already has a shared map. Adding this one replaces it. " + base : base
+    }
+
+    static func confirmHint(for snapshot: Build23RecipientImportSnapshot) -> String {
+        snapshot.isListeningMap
+            ? "Sets the item's chapters from this map without starting playback"
+            : "Imports the Margins as a separate layer without starting playback"
+    }
+
     static func itemContentsLabel(includesEmbeddedItem: Bool) -> String {
         includesEmbeddedItem ? "Item included in package" : "Item not included in package"
     }
@@ -55,8 +81,9 @@ struct Build23RecipientSharingExperience: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text("Shared Margins")
+                Text(coordinator.recipientSnapshot.map { Build23RecipientPresentation.heading(for: $0) } ?? "Shared Margins")
                     .font(.title2.weight(.bold))
+                    .screenTitle()
                     .foregroundStyle(AppColors.text)
 
                 if let snapshot = coordinator.recipientSnapshot {
@@ -122,11 +149,11 @@ struct Build23RecipientSharingExperience: View {
         }
 
         ExperienceSurface {
-            Label(Build23RecipientPresentation.importNotice, systemImage: "play.slash")
+            Label(Build23RecipientPresentation.notice(for: snapshot), systemImage: "play.slash")
                 .font(.subheadline)
                 .foregroundStyle(AppColors.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel(Text(Build23RecipientPresentation.importNotice))
+                .accessibilityLabel(Text(Build23RecipientPresentation.notice(for: snapshot)))
         }
 
         if let errorMessage = snapshot.errorMessage {
@@ -138,11 +165,15 @@ struct Build23RecipientSharingExperience: View {
 
     private func packageFacts(_ snapshot: Build23RecipientImportSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            packageFact(
-                title: "Margins",
-                value: "\(snapshot.marginCount)",
-                systemImage: "quote.bubble"
-            )
+            if let chapters = snapshot.mapChapterCount {
+                packageFact(title: "Chapters", value: "\(chapters)", systemImage: "list.bullet")
+            } else {
+                packageFact(
+                    title: "Margins",
+                    value: "\(snapshot.marginCount)",
+                    systemImage: "quote.bubble"
+                )
+            }
             packageFact(
                 title: "Source transport",
                 value: Build23RecipientPresentation.transportLabel(snapshot.transport),
@@ -194,7 +225,9 @@ struct Build23RecipientSharingExperience: View {
                         choose: { coordinator.chooseRecoveredEpisode($0) }
                     )
                 } else {
-                    Text("This verified package stays ready while you add the matching source. Import remains unavailable until the source is resolved.")
+                    Text(snapshot.isListeningMap
+                        ? "This map stays ready while you add your copy of the item. It can't be added until the item is in your Library."
+                        : "This verified package stays ready while you add the matching source. Import remains unavailable until the source is resolved.")
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -233,7 +266,7 @@ struct Build23RecipientSharingExperience: View {
         VStack(spacing: 12) {
             switch Build23RecipientPresentation.primaryAction(for: snapshot) {
             case .addSource:
-                Button("Import") {}
+                Button(Build23RecipientPresentation.confirmTitle(for: snapshot)) {}
                     .filledActionButton()
                     .frame(maxWidth: .infinity)
                     .disabled(true)
@@ -248,13 +281,15 @@ struct Build23RecipientSharingExperience: View {
                             ProgressView()
                                 .controlSize(.small)
                         }
-                        Text(snapshot.isImporting ? "Importing…" : "Import")
+                        Text(snapshot.isImporting
+                            ? Build23RecipientPresentation.progressTitle(for: snapshot)
+                            : Build23RecipientPresentation.confirmTitle(for: snapshot))
                     }
                     .frame(maxWidth: .infinity)
                 }
                 .filledActionButton()
                 .disabled(!enabled)
-                .accessibilityHint("Imports the Margins as a separate layer without starting playback")
+                .accessibilityHint(Build23RecipientPresentation.confirmHint(for: snapshot))
             }
 
             Button("Cancel", role: .cancel) {

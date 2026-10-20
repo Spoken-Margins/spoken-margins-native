@@ -12,11 +12,14 @@ The binary lands in `Packages/SessionKit/.build/debug/coop-packet`. Keep packets
 
 - `inspect <packet>...` prints each packet as JSON: item, sender, digest, and every Margin's time, anchor, text, voice length and reply links. Read this before writing replies.
 - `build <plan.json> [--out <dir>]` writes a packet from a plan, then runs `check` on it.
+- `map <edition.json> [--type text|pdf|epub] [--url <link> | --no-url] [--sender <label>] [--name <file>] [--out <dir>]` writes a map-only packet (#1471): a skim-ready Listening Map for an article or a PDF, with chapter titles and summaries and no Margins, from a Listening Edition. Each chapter is placed by its first seven words, so the packet holds none of the text. `--type pdf --no-url` makes the packet a PDF the listener supplies from their own copy; otherwise the link is the edition's source link. It then runs `check`.
 - `check <packet>...` runs four checks:
   - every packet imports in the current reader and in the Build 29 reader, with the same Margins;
   - packets on the same item import into fresh SQLite Libraries in every order (all orders up to five packets, then 120 shuffles), and every order gives the same packets, Margins and reply threads;
   - opening any packet again adds nothing;
   - a sender who shared again (the same Margin in two packets, #858) leaves the listener one copy of it: a copy kept for a Margin no packet carries twice fails the check, and a note says how many Margins were re-sent.
+
+  A map-only packet is checked differently: the current reader must read it, and Build 29 must refuse it with its usual "unsupported capability" message (the packet declares `spoken-margins.listening-map-packet.v1` as required and carries an empty commentary layer so that older readers get as far as that check).
 
   It exits 2 on a failure.
 
@@ -45,7 +48,7 @@ Paths are relative to the plan file.
 | `base` | The packet being answered. The item, fingerprint spine and acoustic evidence come from it. |
 | `item` | The item (a `SharedItemIdentity`), when there's no base: a thread the synthetic listener starts. |
 | `episodeAudio` | A downloaded copy of the episode. Each Margin placed by time gets ShazamKit evidence made from it, as the sender's phone would, so it lands right on a copy with different ads. |
-| `embeddedText` | Article text to embed instead of a link. |
+| `embeddedText` | Article text to embed instead of a link. The item must be a text, pdf, epub or other item with no `canonicalURL`; its two hashes are set from the text. |
 | `margins[].replyTo` | The parent: `margin` is its package-scoped id, and `packet` defaults to `base`. A reply to a reply joins its parent's conversation. |
 | `margins[].atMs`, `offsetMs` | Where it sits. Without `atMs`, a reply sits at its parent's place and carries the parent's evidence. Any offset drops that evidence, so the Margin is placed by time only. |
 | `margins[].quote` | For an article: the words it's anchored to. |

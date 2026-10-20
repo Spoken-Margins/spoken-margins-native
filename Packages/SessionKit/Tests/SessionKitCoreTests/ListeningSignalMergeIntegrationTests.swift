@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import SessionKitTestInputs
 
 /// Host-only wiring checks for #567's overlapping edits with #273 and #466.
 /// These catch merge omissions; app builds and journeys still verify the runtime boundary.
@@ -45,8 +46,23 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
         XCTAssertTrue(helper.contains("scheduleTranscription(for:"))
     }
 
-    func testFeedSaveKeepsPublicationSignalsGUIDsAndAutomaticImportCandidates() throws {
-        let source = try packageSource(at: "Packages/SessionKit/Sources/SessionKitFeeds/FollowedSourceCoordinator.swift")
+    /// The coordinator's recording is proven in FollowedSourceSignalTests; this keeps the app from handing it no
+    /// recorder (#1896).
+    func testTheAppBuildsEveryFollowedSourceCoordinatorWithTheAppSignalLog() throws {
+        for file in ["Gate1AppModel.swift", "Gate1AppModel+LazyServices.swift"] {
+            let source = try appSource(file)
+            let builds = source.components(separatedBy: "FollowedSourceCoordinator(repository:").dropFirst()
+            XCTAssertFalse(builds.isEmpty, "\(file) no longer builds the coordinator: update this guard")
+            for build in builds {
+                let line = String(build.prefix { $0 != "\n" })
+                XCTAssertTrue(line.contains("signals: .app)"), "\(file): the coordinator needs the app's signal log, got: \(line)")
+            }
+        }
+    }
+
+    // The item_published signal itself is proven by a recorded row in FollowedSourceSignalTests (#1896).
+    func testFeedSaveKeepsGUIDsAndAutomaticImportCandidates() throws {
+        let source = try packageSource(at: "Sources/SessionKitFeeds/FollowedSourceCoordinator.swift")
         let save = try body(source, from: "private func save(entries:", to: "private static func entryID(")
         XCTAssertFalse(save.contains("<<<<<<<"), "The feed-save merge must be resolved")
         XCTAssertTrue(save.contains("episodeGUID: item.guid"), "Keep the feed GUID used by podcast anchors")
@@ -55,7 +71,6 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
             "var saved: [FeedEntry] = []",
             "try repository.saveFeedEntry(entry)",
             "saved.append(entry)",
-            "signals?.record(.itemPublished",
             "return (saved, existingEntries)",
         ], in: save)
         XCTAssertFalse(save.contains("if existing[id] == nil {"),
@@ -92,17 +107,12 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
     /// App source with comments and string contents blanked, so a match cannot come from a comment
     /// or a string, and braces inside strings do not confuse `functionBody`.
     private func appSource(_ name: String) throws -> String {
-        try packageSource(at: "App/SpokenMarginsApp/Sources/SpokenMarginsApp/\(name)")
+        blankingCommentsAndStrings(try TestInputs.text(.appSources, name))
     }
 
+    /// A SessionKit source file, blanked the same way.
     private func packageSource(at relativePath: String) throws -> String {
-        let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent() // SessionKitCoreTests
-            .deletingLastPathComponent() // Tests
-            .deletingLastPathComponent() // SessionKit
-            .deletingLastPathComponent() // Packages
-            .deletingLastPathComponent() // repository
-        let raw = try String(contentsOf: root.appendingPathComponent(relativePath), encoding: .utf8)
+        let raw = try String(contentsOf: TestInputs.packageURL(relativePath), encoding: .utf8)
         return blankingCommentsAndStrings(raw)
     }
 

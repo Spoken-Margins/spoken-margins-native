@@ -10,6 +10,13 @@ import XCTest
 
 @MainActor
 final class SupertonicSpeechTests: XCTestCase {
+    /// #2088: the governor is process-wide, and app test classes that run first can leave it counting the app as
+    /// away. Tests here that want that state set it themselves.
+    override func setUp() {
+        super.setUp()
+        OnDeviceVoiceGovernor.app.setAppBackgrounded(false)
+    }
+
     func testMemoryBackoffExtendsOnRepeatedWarningsAndExpires() {
         let backoff = SupertonicMemoryBackoff()
         XCTAssertFalse(backoff.isActive(now: 100))
@@ -3015,7 +3022,8 @@ final class SupertonicSpeechTests: XCTestCase {
             bundledVoiceChunkLookup: { _, _, _ in .init(audioURL: template, duration: 0.2) },
             onFallback: { reason, _, _ in log.recordFallback(reason) },
             onBundledVoice: { _, _, _ in log.recordNotice("bundled_voice") },
-            onResumeDecision: { decisions.add($0) }
+            onResumeDecision: { decisions.add($0) },
+            renderAheadWindow: { nil }
         )
         _ = try client.prepareSpeechText(Self.pressureArticle(paragraphs: 4))
         try client.play(targetId: "saved-kitten")
@@ -3118,7 +3126,11 @@ final class SupertonicSpeechTests: XCTestCase {
             preparedChunkLookup: { _, _, plan in
                 savedSupertonic.contains(plan.index) ? .init(audioURL: template, duration: declaredSeconds) : nil
             },
-            onFallback: { reason, _, _ in log.recordFallback(reason) }
+            onFallback: { reason, _, _ in log.recordFallback(reason) },
+            // #2088: the default window reads the shared governor and the device. If an earlier test class left the
+            // app counted as away, a 300 s window rested the chain mid-run, and with no player lifecycle nothing woke
+            // it. #1681's limit has its own tests; this helper renders to the end.
+            renderAheadWindow: { nil }
         )
         _ = try client.prepareSpeechText(text)
         try client.play(targetId: "saved-run")

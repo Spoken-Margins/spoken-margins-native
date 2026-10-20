@@ -9,6 +9,9 @@ So each boot:
 - never boots a third simulator (the slots in lane_slots.py decide whether a second may run);
 - holds both build slots, so no build runs while a simulator boots;
 - never retries a failed `simctl boot`: it shuts the device down and marks it unsafe;
+- at a boot stall (SpringBoard restarted or vanished while booting), boot_with_retry deletes that device and
+  boots one fresh device in its place, once, for callers that can make one, unless a crash report for the stalled
+  device lands within LATE_REPORT_WAIT (a possible flood: no retry); each stall is logged on #1802;
 - watches the device's SpringBoard process until it is ready, and stops at the first restart or
   disappearance (crash reports reach DiagnosticReports about 80 s late, after a flood is under way),
   with crash reports as a second signal.
@@ -45,7 +48,9 @@ import time
 from lane_slots import (build_slot_file, disable_second_slot, memory_pressure_level, simulator_boot_lock,
                         simulator_jobs_running, state_dir, PRESSURE_NAMES, SLOTS)
 
-IOS_MAJOR = 26  # iOS 27's Apple Intelligence services crash-flood on this Mac (#184)
+# iOS 27's Apple Intelligence services crash-flood on this Mac (#184). A GitHub-hosted Mac (lane.yml, #1389) sets
+# SM_LANE_IOS_MAJOR to the iOS its image ships when it has no iOS 26 runtime; the report names the runtime it used.
+IOS_MAJOR = int(os.environ.get('SM_LANE_IOS_MAJOR') or 26)
 DEVICE_TYPE = 'com.apple.CoreSimulator.SimDeviceType.iPhone-17'
 FIRST_BOOT_TIMEOUT = 900
 LOCK_WAIT = 1800
@@ -72,7 +77,16 @@ def crash_reports_dir() -> Path:
 
 
 class BootError(Exception):
-    """The device isn't ready and must not be retried as is."""
+    """The device isn't ready and must not be retried as is.
+
+    stall is True for a boot stall: SpringBoard restarted or vanished while booting, with no crash report.
+    Those were 26 of 45 INCONCLUSIVE integration runs and 22 of 42 INCONCLUSIVE T3s from 10-09 to 10-16, on
+    fresh devices too (#705, #1389), so boot_with_retry gives them one fresh device.
+    """
+
+    def __init__(self, message: str, stall: bool = False):
+        super().__init__(message)
+        self.stall = stall
 
 
 def simctl() -> list[str]:
@@ -170,12 +184,23 @@ def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
             # Only retire devices this function owns, never an arbitrary UDID from a state file.
             for old in owned:
                 release(old)
-            udid = subprocess.check_output(simctl() + ['create', template_name, DEVICE_TYPE, runtime],
-                                           text=True, timeout=120).strip()
+            def create():
+                return subprocess.check_output(simctl() + ['create', template_name, DEVICE_TYPE, runtime],
+                                               text=True, timeout=120).strip()
+
+            def replace(stalled):
+                release(stalled)
+                return create()
+
+            udid = create()
             info = {}
             completed = False
             try:
-                boot(udid, 'T3 template first boot', out=out, info=info, first_boot=True)
+                try:
+                    udid, _ = boot_with_retry(udid, f'T3 template first boot (for {name})', replace, out=out, info=info,
+                                              first_boot=True)
+                finally:
+                    udid = info.get('udid', udid)  # after a stall, the fresh template is the one to keep or delete
                 start_watcher(udid, Path(__file__).resolve().with_name('lane-sim-boot'),
                               crash_window=info.get('boot_window'))
                 # Once per template: give delayed boot crash reports time to reach the watcher.
@@ -462,7 +487,7 @@ def wait_until_ready(udid: str, is_ready, monitor, find_crash, timeout: float, c
         if seen and seen != 'shut down':
             stop(udid, f'{seen} during boot')
             raise BootError(f'{seen} while booting. The device is shut down and marked unsafe. '
-                            'Delete it and use a fresh device.')
+                            'Delete it and use a fresh device.', stall=True)
         crash = find_crash()
         if crash:
             stop(udid, f'crashed during boot: {crash.name}')
@@ -506,10 +531,10 @@ def wait_for_room(udid: str, max_wait: float, poll: float = 15, booted=booted_ud
         time.sleep(poll)
 
 
-def announce(text: str) -> None:
+def announce(text: str, issue: int = LANE_ISSUE) -> None:
     """Best effort: say it on the lane's tracking issue (needs gh with a token; silent otherwise)."""
     try:
-        subprocess.run([os.environ.get('SM_LANE_GH', 'gh'), 'issue', 'comment', str(LANE_ISSUE),  # SM_LANE_GH: tests
+        subprocess.run([os.environ.get('SM_LANE_GH', 'gh'), 'issue', 'comment', str(issue),  # SM_LANE_GH: tests
                         '--repo', os.environ.get('GH_REPO', LANE_REPO), '--body', text], capture_output=True, timeout=60)
     except (OSError, subprocess.SubprocessError):
         pass
@@ -629,5 +654,92 @@ def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lo
         raise BootError(f'the lane stayed busy: {error}') from None
     except BootError as error:
         if 'pressure' in info:
-            raise BootError(f'{error} Memory pressure at boot: {info["pressure"]}.') from None
+            raise BootError(f'{error} Memory pressure at boot: {info["pressure"]}.', stall=error.stall) from None
         raise
+
+
+STALL_ISSUE = 1802  # where every boot stall is logged as evidence (#705 is closed)
+
+
+def stall_note(label: str, stalls: list, outcome: str) -> str:
+    """The evidence-log comment for one boot with a stall: what stalled, and how the retry went."""
+    lines = [f'Boot stall {outcome}: {label}, {datetime.datetime.now().isoformat(timespec="seconds")} local.']
+    for number, stall in enumerate(stalls, 1):
+        lines.append(f'- Boot {number}, device `{stall["udid"]}` (memory pressure {stall.get("pressure", "unknown")}): '
+                     f'{stall["error"]}')
+    lines.append('_Posted by the lane\'s boot rules (scripts/lane_sim.py)._')
+    return '\n'.join(lines)
+
+
+def post_stall(label: str, stalls: list, outcome: str) -> None:
+    """The default stall log: a comment on the evidence log (STALL_ISSUE). Best effort; a boot never fails on it."""
+    announce(stall_note(label, stalls, outcome), issue=STALL_ISSUE)
+
+
+def boot_with_retry(udid: str, label: str, replace=None, out=sys.stderr, timeout: float | None = None,
+                    lock_wait: float | None = None, info: dict | None = None, first_boot: bool = False,
+                    log_stall=None) -> tuple:
+    """boot(), plus one fresh device after a boot stall (#705). Returns (the ready device's UDID, seconds).
+
+    replace(old_udid) disposes of the stalled device (shut down, deleted or retired) and returns a fresh one; it
+    is the caller's, because a clone, a pool device and the Test Runner are each made differently. Without
+    replace, or for any failure that isn't a stall (simctl boot failing, a crash report, a timeout), this is
+    boot() unchanged: those keep the old rules, and a crash report is a flood's first sign. A stall on the
+    fresh device too raises BootError, so the run stays INCONCLUSIVE as before. A stalled device is never booted
+    again: boot() has marked it unsafe.
+
+    A SpringBoard restart can be a crash flood's first sign, and crash reports land about 80 s late. So before any
+    retry this waits LATE_REPORT_WAIT and looks for a crash report naming the stalled device during its boot; if
+    one is there, nothing is retried (the rule: don't switch devices to get around a flood). The retry happens
+    before any app is installed or test runs, so it can't hide an app failure; the caller's report names it.
+
+    info['udid'] always names the device the caller holds now (the one to release, even after a failure), and
+    info['boot_stalls'] lists each stall. log_stall(label, stalls, outcome) logs them, by default on the evidence log (#1802).
+    """
+    info = {} if info is None else info
+    stalls = info.setdefault('boot_stalls', [])
+    log_stall = post_stall if log_stall is None else log_stall
+    info['udid'] = udid
+    started = time.time()
+    try:
+        return udid, boot(udid, label, out=out, timeout=timeout, lock_wait=lock_wait, info=info, first_boot=first_boot)
+    except BootError as error:
+        if not error.stall or replace is None:
+            raise
+        stalls.append({'udid': udid, 'error': str(error), 'pressure': info.get('pressure', 'unknown')})
+        first = error
+    window = (started, time.time())
+    print(f'[lane] boot stall on {udid}: {first}; waiting {LATE_REPORT_WAIT}s for any late crash report before a retry',
+          file=out, flush=True)
+    time.sleep(LATE_REPORT_WAIT)
+    report = late_report(crash_reports_dir(), udid, window)
+    if report:
+        mark_unsafe(udid, f'late crash report for a crash during boot: {report.name}')
+        record_event(udid, f'boot stall with a crash report ({report.name}): no retry, a possible crash flood')
+        log_stall(label, stalls, f'not retried: crash report {report.name} names the stalled device (a possible crash flood)')
+        raise BootError(f'{first} Crash report {report.name} names this device, so no fresh device was booted: a '
+                        'possible crash flood. Look before booting again.') from None
+    print(f'[lane] no crash report for {udid}; deleting it and booting one fresh device in its place (#1802)',
+          file=out, flush=True)
+    record_event(udid, 'boot stall: replaced by a fresh device for one retry (#1802)')
+    try:
+        fresh = replace(udid)
+    except Exception as made:  # noqa: BLE001 - however making it failed, the stall is logged and reported
+        log_stall(label, stalls, f'not retried (no fresh device: {made})')
+        raise BootError(f'{first} A fresh device for the one retry could not be made: {made}', stall=True) from None
+    info['udid'] = fresh
+    print(f'[lane] retrying the boot once on fresh device {fresh}', file=out, flush=True)
+    try:
+        seconds = boot(fresh, f'{label} (retry after a boot stall)', out=out, timeout=timeout, lock_wait=lock_wait,
+                       info=info, first_boot=True)
+    except BootError as again:
+        if again.stall:
+            stalls.append({'udid': fresh, 'error': str(again), 'pressure': info.get('pressure', 'unknown')})
+            log_stall(label, stalls, 'not recovered (two in a row), so the run stays INCONCLUSIVE')
+        else:
+            log_stall(label, stalls, f'retried on a fresh device, which failed another way: {again}')
+        raise BootError(f'Boot stall, then the one retry on a fresh device ({fresh}) failed too: {again} '
+                        f'First boot ({udid}): {first}', stall=again.stall) from None
+    info['boot_retry'] = {'stalled': udid, 'fresh': fresh, 'seconds': round(seconds)}
+    log_stall(label, stalls, f'recovered on a fresh device (`{fresh}`, ready after {seconds:.0f}s)')
+    return fresh, seconds

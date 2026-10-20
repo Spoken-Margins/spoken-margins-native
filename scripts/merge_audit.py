@@ -32,6 +32,29 @@ import subprocess
 import sys
 import time
 
+# Whose comments count (#1822). .github/workflows/merge-audit.yml checks out this one file, so the rule of
+# scripts/comment_trust.py is copied here, not imported; test_comment_trust.py fails if the two drift.
+TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
+TRUSTED_BOTS = ('github-actions[bot]',)
+GRAPHQL_BOT_LOGINS = ('github-actions', 'app/github-actions')
+
+
+def trusted(item: dict) -> bool:
+    """Whether a comment (REST or `gh --json` shape) is from the owner, a member, a collaborator or the bot."""
+    person = item.get('user') or item.get('author') or {}
+    login = person.get('login') or ''
+    association = item.get('author_association', item.get('authorAssociation'))
+    if (isinstance(association, str) and association in TRUSTED_ASSOCIATIONS) or login in TRUSTED_BOTS:
+        return True
+    author = item.get('author')
+    return (isinstance(author, dict) and login in GRAPHQL_BOT_LOGINS
+            and (author.get('__typename') == 'Bot' or author.get('is_bot') is True))
+
+
+def trusted_only(items: list[dict]) -> list[dict]:
+    return [item for item in items or [] if trusted(item)]
+
+
 PREFIX = '**Merge check (triage desk)'
 LABEL = 'merge-audit'
 LABEL_COLOR = 'b60205'
@@ -54,7 +77,7 @@ def parse_time(text: str) -> datetime.datetime:
 def has_merge_check(comments: list[dict], head_sha: str, merged_at: str) -> bool:
     """Whether a triage-desk merge check for this head was posted before the merge."""
     sha7, merged = head_sha[:7], parse_time(merged_at)
-    for comment in comments:
+    for comment in trusted_only(comments):  # #1822: a stranger's look-alike is not a merge check
         body = (comment.get('body') or '').lstrip()
         if body.startswith(PREFIX) and sha7 in body and parse_time(comment['created_at']) < merged:
             return True
@@ -68,7 +91,7 @@ def same_commit(a: str, b: str) -> bool:
 def lane_reports(comments: list[dict], head_sha: str, merged: datetime.datetime) -> list[tuple[str, str]]:
     """(verdict, tier) of the runner's lane reports on this head posted before the merge, oldest first."""
     found = []
-    for comment in comments:
+    for comment in trusted_only(comments):
         if (comment.get('user') or {}).get('login') != LANE_BOT or parse_time(comment['created_at']) >= merged:
             continue
         body = (comment.get('body') or '').lstrip()
@@ -85,7 +108,7 @@ def lane_reports(comments: list[dict], head_sha: str, merged: datetime.datetime)
 def audit_verdict(comments: list[dict], head_sha: str, merged: datetime.datetime) -> str | None:
     """The verdict line of the newest Codex or Claude audit naming this head posted before the merge, if any."""
     verdict = None
-    for comment in comments:
+    for comment in trusted_only(comments):  # #1822: only the owner's, a collaborator's or the bot's
         body = (comment.get('body') or '').lstrip()
         heading, _, rest = body.partition('\n')
         is_audit = (body.startswith(AUDITS[:2]) or
@@ -121,30 +144,36 @@ def hand_merge_gap(comments: list[dict], head_sha: str, merged_at: str) -> str |
     return '; '.join(missing) or None
 
 
-def failure_comment(head_sha: str, gap: str | None = None) -> str:
+def trunk() -> str:
+    """The trunk branch (scripts/trunk.py, #1492), imported late so the lane runner's base_policy load works."""
+    from trunk import trunk_branch
+    return trunk_branch()
+
+
+def failure_comment(head_sha: str, gap: str | None = None, base: str | None = None) -> str:
     missing = f'Hand-merge rule not met before the merge: {gap}. ' if gap else ''
-    return (f'Merged into next without a triage-desk merge check on {head_sha[:7]}. {missing}'
+    return (f'Merged into {base or trunk()} without a triage-desk merge check on {head_sha[:7]}. {missing}'
             'If the owner merged this directly, remove the label.')
 
 
-def recently_merged(recent: list[dict], hours: float, now: datetime.datetime) -> list[dict]:
-    """PRs into next merged within the last `hours`."""
-    since = now - datetime.timedelta(hours=hours)
-    return [p for p in recent if p.get('merged_at') and (p.get('base') or {}).get('ref') == 'next'
+def recently_merged(recent: list[dict], hours: float, now: datetime.datetime, base: str | None = None) -> list[dict]:
+    """PRs into <base> (the trunk by default) merged within the last `hours`."""
+    since, base = now - datetime.timedelta(hours=hours), base or trunk()
+    return [p for p in recent if p.get('merged_at') and (p.get('base') or {}).get('ref') == base
             and parse_time(p['merged_at']) >= since]
 
 
-def classify_push(pushed: list[str], head: str, recent: list[dict]) -> tuple[dict, bool]:
+def classify_push(pushed: list[str], head: str, recent: list[dict], base: str | None = None) -> tuple[dict, bool]:
     """Which merged PRs this push brought in, and whether its tip came from no PR at all.
 
-    recent are recently closed PRs into next. A PR belongs to this push when its merge commit (merge,
+    recent are recently closed PRs into <base> (the trunk by default). A PR belongs to this push when its merge commit (merge,
     squash or rebase) is one of the pushed commits. GitHub's commit-to-PR lookup can't be used: for
     commits not on the default branch (main) it returns only open PRs.
     """
-    pushed_set = set(pushed)
+    pushed_set, base = set(pushed), base or trunk()
     merged = {p['number']: p for p in recent
               if p.get('merged_at') and p.get('merge_commit_sha') in pushed_set
-              and (p.get('base') or {}).get('ref') == 'next'}
+              and (p.get('base') or {}).get('ref') == base}
     tip_from_pr = any(p['merge_commit_sha'] == head for p in merged.values())
     return merged, not tip_from_pr
 
@@ -173,32 +202,33 @@ class GitHub:
         except (RuntimeError, ValueError):
             return [after]  # a force-push: audit the head only
 
-    def recently_closed_into_next(self) -> list[dict]:
-        return json.loads(self.api(f'repos/{self.repo}/pulls?state=closed&base=next&sort=updated&direction=desc'
+    def recently_closed_into(self, base: str) -> list[dict]:
+        return json.loads(self.api(f'repos/{self.repo}/pulls?state=closed&base={base}&sort=updated&direction=desc'
                                    '&per_page=50'))
 
     def ensure_label(self) -> None:
         self.api(f'repos/{self.repo}/labels', '-f', f'name={LABEL}', '-f', f'color={LABEL_COLOR}',
                  '-f', f'description={LABEL_DESCRIPTION}', check=False)  # already exists: fine
 
-    def flag_pull(self, number: int, head_sha: str, gap: str | None = None) -> None:
+    def flag_pull(self, number: int, head_sha: str, gap: str | None = None, base: str | None = None) -> None:
         labels = {l['name'] for l in json.loads(self.api(f'repos/{self.repo}/issues/{number}'))['labels']}
         if LABEL in labels:
             return
         self.ensure_label()
         self.api('-X', 'POST', f'repos/{self.repo}/issues/{number}/labels', '-f', f'labels[]={LABEL}')
-        self.api(f'repos/{self.repo}/issues/{number}/comments', '-f', f'body={failure_comment(head_sha, gap)}')
+        self.api(f'repos/{self.repo}/issues/{number}/comments', '-f', f'body={failure_comment(head_sha, gap, base)}')
 
-    def flag_direct(self, head: str, shas: list[str]) -> None:
+    def flag_direct(self, head: str, shas: list[str], base: str | None = None) -> None:
+        base = base or trunk()
         self.ensure_label()
         lines = '\n'.join(f'- {sha}' for sha in shas)
-        self.api(f'repos/{self.repo}/issues', '-f', f'title=merge-audit: {head[:7]} reached next without a pull '
-                 'request', '-f', f'body=The push that moved next to {head} did not come from merging a pull request, '
+        self.api(f'repos/{self.repo}/issues', '-f', f'title=merge-audit: {head[:7]} reached {base} without a pull '
+                 'request', '-f', f'body=The push that moved {base} to {head} did not come from merging a pull request, '
                  f'so no triage-desk merge check could run. Pushed commits:\n{lines}\n\nIf the owner pushed '
                  'this, close the issue.', '-f', f'labels[]={LABEL}')
 
 
-def audit_pull(github: 'GitHub', pull: dict, dry_run: bool) -> None:
+def audit_pull(github: 'GitHub', pull: dict, dry_run: bool, base: str | None = None) -> None:
     number, head = pull['number'], pull['head']['sha']
     comments = github.json_lines(f'repos/{github.repo}/issues/{number}/comments')
     if has_merge_check(comments, head, pull['merged_at']):
@@ -210,36 +240,38 @@ def audit_pull(github: 'GitHub', pull: dict, dry_run: bool) -> None:
         return
     print(f'#{number} ({head[:7]}): no triage-desk merge check before the merge ({gap}); flagged')
     if not dry_run:
-        github.flag_pull(number, head, gap)
+        github.flag_pull(number, head, gap, base)
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--before')
     parser.add_argument('--after')
-    parser.add_argument('--sweep-hours', type=float, help='audit PRs merged into next within this many hours')
+    parser.add_argument('--sweep-hours', type=float, help='audit PRs merged into the base within this many hours')
+    parser.add_argument('--base', help='the branch the push moved, or the sweep audits (default: the trunk)')
     parser.add_argument('--dry-run', action='store_true', help='print the decisions; change nothing on GitHub')
     args = parser.parse_args(argv)
+    base = args.base or trunk()
     github = GitHub(os.environ['GH_REPO'])
     if args.sweep_hours is not None:
         now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None, microsecond=0)
-        for pull in sorted(recently_merged(github.recently_closed_into_next(), args.sweep_hours, now),
+        for pull in sorted(recently_merged(github.recently_closed_into(base), args.sweep_hours, now, base),
                            key=lambda p: p['number']):
-            audit_pull(github, pull, args.dry_run)
+            audit_pull(github, pull, args.dry_run, base)
         return 0
     if not (args.before and args.after):
         parser.error('--before and --after are required unless --sweep-hours is given')
     pushed = github.pushed_commits(args.before, args.after)
-    merged, direct = classify_push(pushed, args.after, github.recently_closed_into_next())
+    merged, direct = classify_push(pushed, args.after, github.recently_closed_into(base), base)
     if direct:  # the PR list can lag a merge by a moment
         time.sleep(10)
-        merged, direct = classify_push(pushed, args.after, github.recently_closed_into_next())
+        merged, direct = classify_push(pushed, args.after, github.recently_closed_into(base), base)
     for _, pull in sorted(merged.items()):
-        audit_pull(github, pull, args.dry_run)
+        audit_pull(github, pull, args.dry_run, base)
     if direct:
-        print(f'{args.after[:7]} reached next without a pull request; flagged')
+        print(f'{args.after[:7]} reached {base} without a pull request; flagged')
         if not args.dry_run:
-            github.flag_direct(args.after, pushed)
+            github.flag_direct(args.after, pushed, base)
     return 0
 
 

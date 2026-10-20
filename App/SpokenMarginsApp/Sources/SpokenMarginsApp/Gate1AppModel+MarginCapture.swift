@@ -333,12 +333,12 @@ extension Gate1AppModel {
     }
 
     /// The draft the written Margin screen opens with, for a capture the engine has locked to its place.
-    private func makeWrittenMarginDraft(for capture: WrittenInterjectionCapture, store: SQLiteSessionStore, reply: MarginReplyDraft?) -> WrittenMarginDraft {
+    func makeWrittenMarginDraft(for capture: WrittenInterjectionCapture, store: SQLiteSessionStore, reply: MarginReplyDraft?) -> WrittenMarginDraft {
         WrittenMarginDraft(
             capture: capture,
             text: "",
             itemTitle: (try? store.loadItem(id: capture.itemId).title) ?? "Current item",
-            targetDescription: capture.targetType == .item ? "Source" : (capture.targetType == .assistantTurn ? "Assistant response" : "Interjection summary"),
+            targetDescription: capture.targetType == .item ? "Source" : (capture.targetType == .assistantTurn ? "Assistant response" : "Margin summary"),
             progressPercent: capture.roughPercent,
             reply: reply
         )
@@ -372,6 +372,7 @@ extension Gate1AppModel {
     func updateWrittenMarginText(_ text: String) {
         guard writtenMarginDraft != nil else { return }
         marginCapture.setDraftText(text)
+        journalWrittenMarginText()
     }
 
     func switchPendingVoiceCaptureToWrittenMargin() {
@@ -390,6 +391,7 @@ extension Gate1AppModel {
             snapshot = try engine.saveWrittenInterjection(captureId: draft.capture.id, text: text)
             listeningSignals.writtenMargin(itemId: draft.capture.itemId, text: text)
             marginCapture.closeDraft()
+            clearWrittenMarginJournal(captureId: draft.capture.id)
             if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
             refreshSelectedItem()
             refreshMarginRows()
@@ -409,6 +411,7 @@ extension Gate1AppModel {
         do {
             snapshot = try engine.cancelWrittenInterjection(captureId: draft.capture.id)
             marginCapture.closeDraft()
+            clearWrittenMarginJournal(captureId: draft.capture.id)
             if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
             refreshSelectedItem()
         } catch {

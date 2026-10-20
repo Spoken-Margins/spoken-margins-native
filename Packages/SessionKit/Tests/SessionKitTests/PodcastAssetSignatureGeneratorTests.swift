@@ -3,6 +3,7 @@ import AVFoundation
 import Foundation
 import XCTest
 @testable import SessionKitAudio
+import SessionKitTestInputs
 
 final class PodcastAssetSignatureGeneratorTests: XCTestCase {
     func testCancelledRequestDoesNotStartSignatureGeneration() async throws {
@@ -58,13 +59,7 @@ final class PodcastAssetSignatureGeneratorTests: XCTestCase {
         if let realEpisode = ProcessInfo.processInfo.environment["SM_SIGNATURE_TEST_AUDIO"] {
             episode = URL(fileURLWithPath: realEpisode)
         } else {
-            var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            while !FileManager.default.fileExists(atPath: root.appending(path: "Contracts").path) {
-                let parent = root.deletingLastPathComponent()
-                guard parent != root else { throw CocoaError(.fileNoSuchFile) }
-                root = parent
-            }
-            episode = root.appending(path: "Contracts/fixtures/audio/evidence-length-48k-stereo.mp3")
+            episode = try TestInputs.url(.contracts, "fixtures/audio/evidence-length-48k-stereo.mp3")
         }
 
         let poolThreads = ProcessInfo.processInfo.activeProcessorCount

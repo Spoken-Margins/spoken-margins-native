@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 import SessionKitAudio
+import SessionKitTestInputs
 
 final class SourceTranscriptionCachesTests: XCTestCase {
     private func withCaches(_ body: (URL) throws -> Void) throws {
@@ -48,9 +49,7 @@ final class SourceTranscriptionCachesTests: XCTestCase {
                 )
             }
             // Pin both the export and evidence lookup paths without invoking speech recognition.
-            let package = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-                .deletingLastPathComponent().deletingLastPathComponent()
-            let adapters = try String(contentsOf: package.appendingPathComponent("Sources/SessionKitAudio/AudioAdapters.swift"), encoding: .utf8)
+            let adapters = try String(contentsOf: TestInputs.packageURL("Sources/SessionKitAudio/AudioAdapters.swift"), encoding: .utf8)
             XCTAssertEqual(adapters.components(separatedBy: #"appending(path: "window-\(anchorMediaTimeMs)-v3", directoryHint: .isDirectory)"#).count - 1, 2)
         }
     }

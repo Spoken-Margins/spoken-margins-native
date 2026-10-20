@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="/template/rss.xsl"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podaccess="https://access.acast.com/schema/1.0/" xmlns:acast="https://schema.acast.com/1.0/">
+   <channel>
+		<ttl>60</ttl>
+		<generator>acast.com</generator>
+		<title>Dan Snow&apos;s History Hit</title>
+		<link>https://www.historyhit.com/podcasts/</link>
+		<atom:link href="https://access.acast.com/rss/c939f8d1-c4bc-478e-8bb9-e5343f9a7ab5/default" rel="self" type="application/rss+xml"/>
+
+    <language>en</language>
+		<copyright>History Hit</copyright>
+		<itunes:keywords/>
+		<itunes:author>History Hit</itunes:author>
+		<itunes:subtitle><![CDATA[Historian Dan Snow investigates the 'how' and 'why' of history's defining moments.]]></itunes:subtitle>
+		<itunes:summary>&lt;p&gt;Historian Dan Snow journeys across the globe to tell the stories of history&apos;s defining moments. From the Colosseum in Rome to the Great Wall of China, the battlefields of Waterloo to the Tomb of Tutankhamun, join Dan as he explores the how and why of the greatest monuments, battles, heroes, villains and events that have shaped our world.&lt;/p&gt;&lt;br&gt;&lt;p&gt;New episodes on Mondays and Thursdays with bonus subscriber only episodes every other Friday.&lt;/p&gt;&lt;br&gt;&lt;p&gt;You can get in touch with us at &lt;a href=&quot;mailto:ds.hh@historyhit.com&quot; rel=&quot;noopener noreferrer&quot; target=&quot;_blank&quot;&gt;ds.hh@historyhit.com&lt;/a&gt;&lt;/p&gt;&lt;br&gt;&lt;p&gt;A podcast by History Hit, the world&apos;s best history channel and creators of award-winning podcasts &lt;em&gt;The Ancients, Gone Medieval, and Betwixt the Sheets&lt;/em&gt;.&lt;/p&gt;&lt;br&gt;&lt;p&gt;History Hit is part of Little Dot Studios, a Certified B Corp™&lt;/p&gt;&lt;br&gt;&lt;p&gt;Sign up to History Hit for hundreds of hours of original documentaries, with a new release every week and ad-free podcasts. Sign up at &lt;a href=&quot;https://www.historyhit.com/subscribe&quot; rel=&quot;noopener noreferrer&quot; target=&quot;_blank&quot;&gt;https://www.historyhit.com/subscribe&lt;/a&gt;.&amp;nbsp;&amp;nbsp;&lt;/p&gt;
+
+&lt;hr&gt;&lt;p style=&apos;color:grey; font-size:0.75em;&apos;&gt; Hosted on Acast. See &lt;a style=&apos;color:grey;&apos; target=&apos;_blank&apos; rel=&apos;noopener noreferrer&apos; href=&apos;https://acast.com/privacy&apos;&gt;acast.com/privacy&lt;/a&gt; for more information.&lt;/p&gt;</itunes:summary>
+		<description>&lt;p&gt;Historian Dan Snow journeys across the globe to tell the stories of history&apos;s defining moments. From the Colosseum in Rome to the Great Wall of China, the battlefields of Waterloo to the Tomb of Tutankhamun, join Dan as he explores the how and why of the greatest monuments, battles, heroes, villains and events that have shaped our world.&lt;/p&gt;&lt;br&gt;&lt;p&gt;New episodes on Mondays and Thursdays with bonus subscriber only episodes every other Friday.&lt;/p&gt;&lt;br&gt;&lt;p&gt;You can get in touch with us at &lt;a href=&quot;mailto:ds.hh@historyhit.com&quot; rel=&quot;noopener noreferrer&quot; target=&quot;_blank&quot;&gt;ds.hh@historyhit.com&lt;/a&gt;&lt;/p&gt;&lt;br&gt;&lt;p&gt;A podcast by History Hit, the world&apos;s best history channel and creators of award-winning podcasts &lt;em&gt;The Ancients, Gone Medieval, and Betwixt the Sheets&lt;/em&gt;.&lt;/p&gt;&lt;br&gt;&lt;p&gt;History Hit is part of Little Dot Studios, a Certified B Corp™&lt;/p&gt;&lt;br&gt;&lt;p&gt;Sign up to History Hit for hundreds of hours of original documentaries, with a new release every week and ad-free podcasts. Sign up at &lt;a href=&quot;https://www.historyhit.com/subscribe&quot; rel=&quot;noopener noreferrer&quot; target=&quot;_blank&quot;&gt;https://www.historyhit.com/subscribe&lt;/a&gt;.&amp;nbsp;&amp;nbsp;&lt;/p&gt;
+
+&lt;hr&gt;&lt;p style=&apos;color:grey; font-size:0.75em;&apos;&gt; Hosted on Acast. See &lt;a style=&apos;color:grey;&apos; target=&apos;_blank&apos; rel=&apos;noopener noreferrer&apos; href=&apos;https://acast.com/privacy&apos;&gt;acast.com/privacy&lt;/a&gt; for more information.&lt;/p&gt;</description>
+		<itunes:explicit>false</itunes:explicit>
+		<itunes:owner>
+			<itunes:name>History Hit</itunes:name>
+			<itunes:email>info+c939f8d1-c4bc-478e-8bb9-e5343f9a7ab5@mg-eu.acast.com</itunes:email>
+		</itunes:owner>
+		<acast:showId>c939f8d1-c4bc-478e-8bb9-e5343f9a7ab5</acast:showId>
+		<acast:showUrl>dansnowshistoryhit</acast:showUrl>
+		<acast:signature key="EXAMPLE" algorithm="aes-256-cbc"><![CDATA[wbG1Z7+6h9QOi+CR1Dv0uQ==]]></acast:signature>
+		<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmStkiTEE0CNxIPxmLPEYNwMKCHLDRL22sHQZ4ElCEGqt3fze1jZ6iH+IMFJT2mYmZI6bDVnoBfkq1408cSklrxh7wGG3hx0cUvB9E0I9nI+dPXxlqC35RE2EnNnLJw0mEvVCVN32x9IW1jJfWsD0O5tY0eIbhp3BhGkOQYUjVJfY2PlJv8bkkkNF+p7taE4UaiORfQ2ii598zhcmVE5z3CG6SwRup4Lj/+/qU+ilEW5eaaYWSvpCsnezHWSmfpP7EXZnD201fHid/a+b0aYqSCFx59IoX5+tOVkMPp1ez7hL34MDg56IDhMhk4o71te3UMmiEmv5j9kjIhQnihbw0aHCEvpjMebqtZ+0oYQG2F8D0J7SmSN7a3HJcAiD75PUs9u6BoTReW0jlBwOzynScoEYsTzsnrZKsZp/u57S8Xn/]]></acast:settings>
+		<acast:network id="9221b5ec-26da-8157-6a50-5a6044907ab6" slug="hit-networks-ltd"><![CDATA[HIT Networks LTD]]></acast:network>
+		<acast:importedFeed>https://rss.acast.com/dansnowshistoryhit</acast:importedFeed>
+		<itunes:type>episodic</itunes:type>
+		<itunes:image href="https://assets.pippa.io/shows/6215f67d4b795a40fffd3b2c/1723125486275-6a1ef96b-9474-4be2-bb87-7a9532f54a02.jpeg"/>
+
+  <image>
+			<url>https://assets.pippa.io/shows/6215f67d4b795a40fffd3b2c/1723125486275-6a1ef96b-9474-4be2-bb87-7a9532f54a02.jpeg</url>
+			<link>https://www.historyhit.com/podcasts/</link>
+			<title><![CDATA[Dan Snow's History Hit]]></title>
+		</image>
+			

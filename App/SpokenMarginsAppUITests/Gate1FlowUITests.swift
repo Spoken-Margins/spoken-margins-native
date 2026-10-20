@@ -559,10 +559,12 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(summarize.isEnabled)
         summarize.tap()
 
-        let failure = element("app.feedback.banner")
+        // A failure about the playing listen is the playback screen's one-line tag, not the top banner (#430).
+        let failure = element("playback.feedbackTag")
         XCTAssertTrue(failure.waitForExistence(timeout: 8))
-        XCTAssertTrue(failure.label.contains("Summary couldn’t finish."))
-        XCTAssertTrue(app.buttons["app.feedback.retry"].isEnabled)
+        XCTAssertTrue(failure.label.contains("Summary couldn’t finish"))
+        XCTAssertTrue(app.buttons["playback.feedbackTag.retry"].isEnabled)
+        XCTAssertFalse(element("app.feedback.banner").exists)
 
         XCTAssertTrue(summarize.waitForExistence(timeout: 4))
         XCTAssertTrue(summarize.label.contains("Retry summary"))
@@ -860,7 +862,7 @@ final class Gate1FlowUITests: XCTestCase {
         copy.press(forDuration: 0.05)
         captureScreen(named: "margin-detail-after-quick-tap")
         XCTAssertTrue(element("app.feedback.banner").waitForExistence(timeout: 3), "Copy confirmation must be visible inside the Margin sheet")
-        XCTAssertTrue(app.staticTexts["Copied Margin with its anchors."].exists)
+        XCTAssertTrue(app.staticTexts["Copied Margin with its context."].exists)
         app.buttons["marginDetail.star.button"].tap()
         XCTAssertEqual(app.buttons["marginDetail.star.button"].label, "Unstar Margin")
         captureScreen(named: "second-edition-written-margin-detail")

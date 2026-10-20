@@ -1,5 +1,6 @@
 import XCTest
 @testable import SessionKit
+import SessionKitTestInputs
 
 final class Gate1PlaybackAutoplayQueueTests: XCTestCase {
     func testSourceFinishAllowsQueuedSummaryToAutoplay() {
@@ -244,12 +245,7 @@ final class Gate1PlaybackAutoplayQueueTests: XCTestCase {
         XCTAssertTrue(Gate1SummaryEligibility.unsummarizedInterjections(
             turns: [], interjections: [], currentTargetType: "item", currentTargetId: nil
         ).isEmpty)
-        let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-        let model = try String(contentsOf: root.appendingPathComponent(
-            "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift"
-        ), encoding: .utf8)
+        let model = try TestInputs.text(.appSources, "Gate1AppModel.swift")
         XCTAssertTrue(model.contains("diagnostics[\"pendingAutoPlayQueue\"]"))
         XCTAssertTrue(model.contains("diagnostics[\"pendingAutoPlayTurnId\"]"))
     }

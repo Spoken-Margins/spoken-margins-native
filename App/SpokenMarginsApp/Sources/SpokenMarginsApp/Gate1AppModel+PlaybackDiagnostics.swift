@@ -33,6 +33,7 @@ extension Gate1AppModel {
                 Task { @MainActor [weak self] in self?.reconcileNarrationOwnership(trigger: "session_cleared") }
             }
         }
+        recordTapAnswer(previous: previous)
         let now = ProcessInfo.processInfo.systemUptime
         let changed = previous.status != snapshot.status || previous.targetId != snapshot.targetId
             || previous.lastFailure != snapshot.lastFailure

@@ -40,3 +40,35 @@ func TestLinkServiceIsOffAndCanBeSwitched(t *testing.T) {
 		}
 	}
 }
+
+// The owner switches maps on for build 33 and up in one command: one serial
+// bump, and later on/off flips keep the minimum until it is changed.
+func TestSwitchSetsAndKeepsMinimumBuild(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	d, err := SetWithMinimumBuild(path, ServiceMaps, true, 33)
+	if err != nil || !d.Enabled(ServiceMaps) || d.Services[ServiceMaps].MinimumBuild != 33 || d.Serial != 2 {
+		t.Fatalf("on with minimum: %+v %v", d, err)
+	}
+	if got := d.Summary(); got != "serial 2: attest=on bridge=on links=off maps=on(build>=33)" {
+		t.Fatalf("summary %q", got)
+	}
+	d, err = Set(path, ServiceMaps, false)
+	if err != nil || d.Enabled(ServiceMaps) || d.Services[ServiceMaps].MinimumBuild != 33 || d.Serial != 3 {
+		t.Fatalf("off must keep the minimum: %+v %v", d, err)
+	}
+	d, err = SetWithMinimumBuild(path, ServiceMaps, true, 0)
+	if err != nil || d.Services[ServiceMaps].MinimumBuild != 0 || d.Serial != 4 {
+		t.Fatalf("0 must remove the minimum: %+v %v", d, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SetWithMinimumBuild(path, ServiceMaps, true, -2); err == nil {
+		t.Fatal("a negative minimum other than keep must be refused")
+	}
+	after, _ := os.ReadFile(path)
+	if string(after) != string(data) {
+		t.Fatal("a refused minimum must leave the file untouched")
+	}
+}
