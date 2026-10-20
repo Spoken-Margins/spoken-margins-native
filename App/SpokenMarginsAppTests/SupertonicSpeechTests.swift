@@ -2398,8 +2398,10 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(harness.playerStarts, starts)
     }
 
-    func testSelectableCatalogExposesOnlyJamesLilyAndSystem() {
-        XCTAssertEqual(AppTTSVoiceSelection.allCases, [.james, .lily, .system])
+    func testSelectableCatalogExposesJamesLilyKittenAndSystem() {
+        XCTAssertEqual(AppTTSVoiceSelection.allCases, [.james, .lily, .kitten, .system])
+        XCTAssertEqual(AppTTSVoiceSelection.kitten.rawValue, "kitten:jasper")
+        XCTAssertNil(AppTTSVoiceSelection.kitten.supertonicVoice)
         XCTAssertEqual(AppTTSVoiceSelection.james.rawValue, "supertonic:M2")
         XCTAssertEqual(AppTTSVoiceSelection.james.supertonicVoice, .m2)
         XCTAssertEqual(AppTTSVoiceSelection.lily.rawValue, "supertonic:F2")
@@ -4730,6 +4732,38 @@ final class SupertonicSpeechTests: XCTestCase {
         await fulfillment(of: [started], timeout: 3)
         let texts = await kitten.renderedTexts
         XCTAssertFalse(texts.isEmpty, "Kitten rendered the passage")
+        XCTAssertTrue(fallback.playedOffsets.isEmpty, "the iOS voice did not take over: \(fallback.playedOffsets)")
+        try client.stop()
+    }
+
+    // #2226: Kitten picked as the voice is this player with Supertonic never allowed and no saved Supertonic audio
+    // wired in (nil lookup, nil disk cache, as `makeSpeechPlaybackClient` builds it): Kitten renders every chunk
+    // and Supertonic's renderer is never asked, even though one is present.
+    func testWithKittenPickedKittenReadsEveryChunkAndSupertonicIsNeverAsked() async throws {
+        let template = try makeTestWAV(duration: 1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let kitten = RecordingBundledVoiceRenderer(templateURL: template)
+        let supertonic = CountingAudioSupertonicRenderer(templateURL: template)
+        let fallback = RecordingFallbackAudioClient()
+        let started = expectation(description: "Kitten's audio starts")
+        started.assertForOverFulfill = false
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: supertonic, voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            diskCache: nil,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in started.fulfill() },
+            observesPlayerLifecycle: false, onDeviceRenderingAllowed: { false },
+            pressureRenderer: kitten,
+            fallbackClient: fallback,
+            preparedChunkLookup: nil
+        )
+        _ = try client.prepareSpeechText("Kitten was picked, so it reads this sentence and every one after it.")
+        try client.play(targetId: "kitten-picked")
+        await fulfillment(of: [started], timeout: 3)
+        let texts = await kitten.renderedTexts
+        XCTAssertFalse(texts.isEmpty, "Kitten rendered the passage")
+        let supertonicRenders = await supertonic.renderCount
+        XCTAssertEqual(supertonicRenders, 0, "Supertonic was never asked")
         XCTAssertTrue(fallback.playedOffsets.isEmpty, "the iOS voice did not take over: \(fallback.playedOffsets)")
         try client.stop()
     }

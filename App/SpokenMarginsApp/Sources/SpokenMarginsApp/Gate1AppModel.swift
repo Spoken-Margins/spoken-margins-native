@@ -764,12 +764,12 @@ final class Gate1AppModel: ObservableObject {
             defaults.removeObject(forKey: Self.supertonicVoicePendingTermsKey)
             return
         }
-        if ttsVoiceSelection.supertonicVoice != nil {
+        if ttsVoiceSelection.isOnDeviceVoice {
             pendingTermsVoiceSelection = ttsVoiceSelection
             defaults.set(ttsVoiceSelection.rawValue, forKey: Self.supertonicVoicePendingTermsKey)
         } else if let rawValue = defaults.string(forKey: Self.supertonicVoicePendingTermsKey),
                   let pendingVoice = AppTTSVoiceSelection(rawValue: rawValue),
-                  pendingVoice.supertonicVoice != nil {
+                  pendingVoice.isOnDeviceVoice {
             pendingTermsVoiceSelection = pendingVoice
         }
         guard pendingTermsVoiceSelection != nil else { return }
@@ -1562,7 +1562,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Supertonic renders the narration on the phone, so its start has no audio keeping a backgrounded app alive.
     private func narrationRendersOnDevice(itemId: String) -> Bool {
-        ttsVoiceSelection.supertonicVoice != nil && !playsPublisherAudio(itemId: itemId)
+        ttsVoiceSelection.isOnDeviceVoice && !playsPublisherAudio(itemId: itemId)
             && (try? store?.loadItem(id: itemId))?.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
@@ -2104,7 +2104,7 @@ final class Gate1AppModel: ObservableObject {
                     return
                 }
                 guard hasAcceptedCurrentTerms, ttsVoiceSelection.supertonicVoice != nil else {
-                    reportWarning("Choose a bundled voice and accept its terms before preparing this item offline.")
+                    reportWarning("Offline preparation needs James or Lily, with the Terms accepted.")
                     return
                 }
                 Task { [weak self] in
@@ -2708,7 +2708,7 @@ final class Gate1AppModel: ObservableObject {
     private var frontierPublicationKey: String?
     var renderedFractionForPlayback: Double? {
         guard frontierPublicationKey == renderFrontierKey else { return nil }
-        if ttsVoiceSelection.supertonicVoice != nil,
+        if ttsVoiceSelection.isOnDeviceVoice,
            snapshot.targetType == TargetType.itemTextTTS.rawValue,
            onDeviceSpeechGenerationProgress.totalChunks > 0 {
             return Double(onDeviceSpeechGenerationProgress.percent) / 100
@@ -3144,7 +3144,7 @@ final class Gate1AppModel: ObservableObject {
     @discardableResult
     func sanitizeTTSMode() -> Bool {
         let priorMode = ttsMode
-        if ttsVoiceSelection.supertonicVoice != nil, !hasAcceptedCurrentTerms {
+        if ttsVoiceSelection.isOnDeviceVoice, !hasAcceptedCurrentTerms {
             ttsVoiceSelection = .system
         }
         synchronizeTTSModeFromSelection()
