@@ -51,7 +51,7 @@ The Xcode project is generated from `project.yml` with XcodeGen, and both are co
 | `SessionKitSpeechFrontEnd`, `SessionKitSupertonic` | the text front end and the on-device neural voice runtime. `SessionKitPocket`, an experimental second runtime, is in the package but the app does not link it |
 | `SessionKitAI` | descriptions of the optional AI providers |
 
-Some of these build on Linux as well as macOS. The list is at the bottom of `Packages/SessionKit/Package.swift`, and [the package README](../../Packages/SessionKit/README.md) says what each module does and how its tests run. The package also builds three Mac-only developer tools (`coop-packet`, `speech-bench`, `phone-plan`) that the app never links.
+Some of these build on Linux as well as macOS. The list is at the bottom of `Packages/SessionKit/Package.swift`, and [the package README](../../Packages/SessionKit/README.md) says what each module does and how its tests run. The package also builds Mac-only developer tools (`speech-bench`, `tour-render`, `substack-canary`) that the app never links. `coop-packet` and `phone-plan` are in their own package, `Packages/SessionKitTools`, so a project using SessionKit doesn't resolve them (#1873).
 
 ## Contracts
 

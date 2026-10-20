@@ -114,11 +114,11 @@ The two `*-reference` packets were written by the app's Swift writer: `coop-pack
 ```
 
 ```zsh
-swift build --package-path Packages/SessionKitTools --product coop-packet
+swift build --package-path Packages/SessionKitTools --scratch-path Packages/SessionKit/.build/tools --product coop-packet
 ```
 
 ```zsh
-Packages/SessionKitTools/.build/debug/coop-packet check Contracts/examples/packets/<name>.spokenmargins
+Packages/SessionKit/.build/tools/debug/coop-packet check Contracts/examples/packets/<name>.spokenmargins
 ```
 
 Record each `check` result in `expectations.json`; `validate-contracts.py` fails if a committed packet, a regenerated one and the recorded verdict disagree.
