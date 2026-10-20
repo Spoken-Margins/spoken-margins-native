@@ -52,6 +52,9 @@ final class SubstackPreloadsJSONTagTests: XCTestCase {
 
     /// Each reason the followed path can keep no voice gets its own token, so the next miss on a phone says why.
     func testTheLookupSaysWhyNoVoiceWasKept() async throws {
+        // The fake server reads the page fixture; outside the repository a missing one would surface as
+        // fetch_failed:NSURLError instead of a skip.
+        _ = try Self.page()
         let coordinator = Self.coordinator(InMemorySessionRepository())
         func entry(_ url: String = SubstackPreloadsJSONTagTests.post, platform: String? = "substack", words: Int? = 2_413, confirmed: Bool? = nil) -> FeedEntry {
             FeedEntry(id: "e", subscriptionId: "s", canonicalURL: url, title: "Post", bodyWordCount: words,

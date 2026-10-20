@@ -14,6 +14,13 @@ import SessionKitTestInputs
 final class VoiceModelCatalogTests: XCTestCase {
     private static let folder = "fixtures/voice-model-catalog"
 
+    /// Outside the repository (scripts/check-sessionkit-standalone.sh) the fixtures are missing. Skip here:
+    /// a fixture read inside XCTAssertThrowsError or XCTAssertEqual turns the skip into a failure.
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        _ = try TestInputs.url(.contracts, Self.folder)
+    }
+
     private struct TestKeys: Decodable {
         struct Key: Decodable { var keyId: String; var publicKey: String }
         var trusted: Key
