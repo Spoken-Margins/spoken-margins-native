@@ -4,7 +4,7 @@
 
 Read with [privacy-policy-draft.md](privacy-policy-draft.md) and [terms-draft.md](terms-draft.md).
 
-The list was cut from 20 questions to 6 on 2026-10-16. A question stays only if the answer turns on legal judgment we can't get from the statute, Apple's rules or a fee table. The rest are decisions, recorded below as defaults the owner can veto by number, or engineering work, filed as issues.
+The list was cut from 20 questions to 6 on 2026-10-16; question 7 was added on 2026-10-20 (#2035). A question stays only if the answer turns on legal judgment we can't get from the statute, Apple's rules or a fee table. The rest are decisions, recorded below as defaults the owner can veto by number, or engineering work, filed as issues.
 
 ## Questions for counsel
 
@@ -18,6 +18,7 @@ In priority order. The first two are where the real exposure is.
 4. **Repeat infringers with no accounts.** § 512(i) expects a repeat-infringer policy. Our plan (#1728): two takedowns in 90 days against the same install set an Apple DeviceCheck flag on that device, which blocks it from sharing links even after a reinstall. We never store a device identifier. Is that a reasonable policy?
 5. **Defamation and harassment in shared comments.** Calling something commentary protects it from a copyright claim, not a defamation claim. With Section 230, a "Report this link" button and deletion on report, is there anything else we owe the person a comment is about?
 6. **Does a single-member LLC protect me if I personally handle takedowns?** I'll be the only member, the only operator and the person who acts on notices. What would still reach me personally, and what habits keep the LLC's protection intact?
+7. **Is direct-to-Readwise sync "collection" under Apple's privacy definitions?** A listener who turns on "Send Margins to Readwise" has their Margin text, the source passage around it, and the item's title and author sent from the phone to readwise.io with their own Readwise token. No Spoken Margins server sees it, and it is off by default. Apple counts data as collected when it leaves the device and the developer or a partner can keep it. Does a transfer the listener chooses, to an account they own, count? Until counsel answers, the draft label is the conservative one: "Other User Content", linked to the user, not tracking ([app-store-submission.md](../launch/app-store-submission.md), row 12; #2035).
 
 ## Decided without counsel
 
