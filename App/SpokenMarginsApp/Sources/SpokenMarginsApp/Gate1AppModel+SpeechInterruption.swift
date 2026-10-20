@@ -29,6 +29,7 @@ extension Gate1AppModel {
     func handleMediaPlaybackInterruption(_ event: AudioPlaybackInterruptionEvent) {
         switch event {
         case .began:
+            mediaInterruptionResumeRetrier.cancel()
             guard snapshot.status.isPlaybackActive, let engine else {
                 diagnostics["mediaPlaybackInterruption"] = "pause_skipped"
                 return
@@ -51,10 +52,45 @@ extension Gate1AppModel {
                 refreshSelectedItem()
                 diagnostics["mediaPlaybackInterruption"] = "resumed"
             } catch {
-                diagnostics["mediaPlaybackInterruption"] = "resume_failed:\(error.localizedDescription)"
-                reportWarning("Playback paused after the interruption. Tap Play to resume.")
+                diagnostics["mediaPlaybackInterruption"] = "resume_failed:\(InterruptionResumeRetrier.describe(error))"
+                retryMediaResumeAfterInterruption(after: error, engine: engine)
             }
         }
+    }
+
+    /// iOS can refuse to reactivate the session for a moment after another app lets go of it, most often in the
+    /// background or in Low Power Mode. Tries again a few times while the item is still paused where it was, then
+    /// leaves it paused and says why (#2183).
+    private func retryMediaResumeAfterInterruption(after error: Error, engine: SessionEngine) {
+        let sessionId = snapshot.sessionId
+        let targetId = snapshot.targetId
+        mediaInterruptionResumeRetrier.begin(
+            after: error,
+            stillWaiting: { [weak self] in
+                guard let self else { return false }
+                return snapshot.status == .paused && snapshot.sessionId == sessionId && snapshot.targetId == targetId
+            },
+            attempt: { [weak self] in
+                guard let self else { return }
+                snapshot = try engine.resumePlayback()
+                refreshSelectedItem()
+            },
+            report: { [weak self] outcome in
+                guard let self else { return }
+                switch outcome {
+                case .resumed(let attempt):
+                    diagnostics["mediaPlaybackInterruption"] = "resumed_on_retry_\(attempt)"
+                case .retryFailed(let attempt, let reason):
+                    diagnostics["mediaPlaybackInterruption"] = "resume_retry_\(attempt)_failed:\(reason)"
+                case .gaveUp(let attempts, let reason):
+                    diagnostics["mediaPlaybackInterruption"] = "resume_gave_up_after_\(attempts)_retries:\(reason)"
+                    reportWarning("Playback paused after the interruption. Tap Play to resume.")
+                case .abandoned(let attempts):
+                    diagnostics["mediaPlaybackInterruption"] = "resume_retry_abandoned_after_\(attempts)"
+                }
+                recordDeveloperDiagnostic("media.interruption_resume", ["outcome": diagnostics["mediaPlaybackInterruption"] ?? "none"])
+            }
+        )
     }
 
     func handleSpeechPlaybackInterruption(_ event: AudioPlaybackInterruptionEvent) {
