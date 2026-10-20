@@ -60,7 +60,7 @@ Buckets:
 
 | Path | Bucket | Why |
 |---|---|---|
-| `project.yml` `DEVELOPMENT_TEAM` (5 targets) | Example | Move to an untracked `Config/Local.xcconfig` (or a command-line override) with the owner's team ID in the private repo. A simulator build needs no team; a device build needs the contributor's own. |
+| `project.yml` `DEVELOPMENT_TEAM` (5 targets) | Example | Done (#1841): every target reads the team from the untracked `Config/Local.xcconfig` through `Config/Signing.xcconfig`; `Config/Local.xcconfig.example` shows the line. A simulator build needs no team; a device build needs the contributor's own. |
 | `Config/ExportOptions-*.plist` | Example | Same team ID; keep as examples with a placeholder. |
 | `App/.../SpokenMarginsApp.entitlements` associated domain | Public | Product domain, already shipped in the app. |
 | `research/B4/server/`, `contracts/`, `DESIGN.md`, `scripts/demo.sh` | Public | Product backend source. Public source makes the privacy claims checkable. |

@@ -57,7 +57,8 @@ class LinkLocalConfigTests(unittest.TestCase):
         (self.main / 'Config/Signing.xcconfig').write_text('#include? "Local.xcconfig"\n')
         git('init', '-q', cwd=self.main)
         git('add', '.', cwd=self.main)
-        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'init', cwd=self.main)
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init',
+            cwd=self.main)
         self.worktree = Path(self.tmp.name) / 'wt'
         git('worktree', 'add', '-q', '--detach', str(self.worktree), cwd=self.main)
 

@@ -60,7 +60,10 @@ def link_local_config(root, log=None):
     source = Path(common).parent / 'Config' / 'Local.xcconfig'
     if source.parent.parent.resolve() == Path(root).resolve() or not source.is_file():
         return None
-    target.symlink_to(source)
+    try:
+        target.symlink_to(source)
+    except OSError:  # a parallel call linked it first, or the folder is read-only: build on without it
+        return None
     if log:
         log(f'[lane] Config/Local.xcconfig: linked to {source} (the signing team, #1841)')
     return target
