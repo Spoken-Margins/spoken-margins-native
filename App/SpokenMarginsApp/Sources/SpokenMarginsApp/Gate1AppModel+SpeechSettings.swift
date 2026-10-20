@@ -321,4 +321,34 @@ extension Gate1AppModel {
     var hasConfiguredProviderAPIKey: Bool {
         !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+
+    #if canImport(AVFoundation)
+    func stopSpeechPreviews() {
+        supertonicPreviewRequest.cancel() // a preview still rendering must not start later (#2125)
+        if speechPreviewSynthesizer.isSpeaking {
+            speechPreviewSynthesizer.stopSpeaking(at: .immediate)
+        }
+        supertonicPreviewPlayer?.stop()
+    }
+
+    func playSupertonicPreview(url: URL) throws {
+        stopSpeechPreviews()
+        if let priorURL = supertonicPreviewURL, let renderer = supertonicRenderer {
+            Task { await renderer.discardGeneratedAudio(at: priorURL) }
+        }
+        #if os(iOS)
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try AVAudioSession.sharedInstance().setActive(true)
+        #endif
+        supertonicPreviewPlayer = try AVAudioPlayer(contentsOf: url)
+        supertonicPreviewPlayer?.prepareToPlay()
+        guard supertonicPreviewPlayer?.play() == true else {
+            throw SupertonicNarrationError.unsafeAudio("preview_playback_failed")
+        }
+        supertonicPreviewURL = url
+    }
+
+    #else
+    func stopSpeechPreviews() { supertonicPreviewRequest.cancel() }
+    #endif
 }
