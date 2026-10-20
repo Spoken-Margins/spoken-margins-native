@@ -32,7 +32,7 @@ final class SubstackPreloadsJSONTagTests: XCTestCase {
     /// `publisherAudioLookup` → `confirmedEntry` → `publisherAudio(for:)` chain.
     func testAFollowedPostOnTheNewPageShapeKeepsSubstacksAutomaticVoice() async throws {
         let repository = InMemorySessionRepository()
-        let coordinator = Self.coordinator(repository)
+        let coordinator = try Self.coordinator(repository)
         _ = try await coordinator.follow(urlString: "https://thezvi.substack.com/feed")
         let entries = try await coordinator.entries()
         let entry = try XCTUnwrap(entries.first { $0.canonicalURL == Self.post })
@@ -52,7 +52,7 @@ final class SubstackPreloadsJSONTagTests: XCTestCase {
 
     /// Each reason the followed path can keep no voice gets its own token, so the next miss on a phone says why.
     func testTheLookupSaysWhyNoVoiceWasKept() async throws {
-        let coordinator = Self.coordinator(InMemorySessionRepository())
+        let coordinator = try Self.coordinator(InMemorySessionRepository())
         func entry(_ url: String = SubstackPreloadsJSONTagTests.post, platform: String? = "substack", words: Int? = 2_413, confirmed: Bool? = nil) -> FeedEntry {
             FeedEntry(id: "e", subscriptionId: "s", canonicalURL: url, title: "Post", bodyWordCount: words,
                       publisherPlatform: platform, publisherNarrationConfirmed: confirmed)
@@ -110,7 +110,11 @@ final class SubstackPreloadsJSONTagTests: XCTestCase {
         XCTAssertTrue(PublisherNarrationEvidence.declaresPreloads(Data(readable.last!.1.utf8)), "a shared link's page is read without the inline parse")
     }
 
-    private static func coordinator(_ repository: InMemorySessionRepository) -> FollowedSourceCoordinator {
+    /// Reads the fixtures the stub serves before any request, so a missing input skips the test here
+    /// instead of reaching the lookup as a failed fetch.
+    private static func coordinator(_ repository: InMemorySessionRepository) throws -> FollowedSourceCoordinator {
+        ZviURLProtocol.feed = try fixture("substack-zvi-generated-voice.rss")
+        ZviURLProtocol.page = try fixture("substack-preloads-json-generated-voice-page.html")
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ZviURLProtocol.self]
         return FollowedSourceCoordinator(repository: repository, session: URLSession(configuration: configuration), signals: nil)
@@ -121,6 +125,8 @@ final class SubstackPreloadsJSONTagTests: XCTestCase {
 /// and a page about another post.
 private final class ZviURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var pageStatus = 200
+    nonisolated(unsafe) static var feed = Data()
+    nonisolated(unsafe) static var page = Data()
 
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "thezvi.substack.com" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -130,20 +136,16 @@ private final class ZviURLProtocol: URLProtocol, @unchecked Sendable {
         var status = 200
         let data: Data
         let type: String
-        do {
-            switch path {
-            case "/feed":
-                (data, type) = (try SubstackPreloadsJSONTagTestsFixture.load("substack-zvi-generated-voice.rss"), "application/rss+xml")
-            case "/p/leaked-anthropic-draft-ai-regulatory", "/p/other":
-                status = Self.pageStatus
-                (data, type) = (try SubstackPreloadsJSONTagTestsFixture.load("substack-preloads-json-generated-voice-page.html"), "text/html")
-            case "/p/plain":
-                (data, type) = (Data("<html><body><p>No preloads here.</p></body></html>".utf8), "text/html")
-            default:
-                (status, data, type) = (404, Data(), "text/plain")
-            }
-        } catch {
-            client?.urlProtocol(self, didFailWithError: error); return
+        switch path {
+        case "/feed":
+            (data, type) = (Self.feed, "application/rss+xml")
+        case "/p/leaked-anthropic-draft-ai-regulatory", "/p/other":
+            status = Self.pageStatus
+            (data, type) = (Self.page, "text/html")
+        case "/p/plain":
+            (data, type) = (Data("<html><body><p>No preloads here.</p></body></html>".utf8), "text/html")
+        default:
+            (status, data, type) = (404, Data(), "text/plain")
         }
         guard let url = request.url, let response = HTTPURLResponse(
             url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": type]
@@ -154,10 +156,4 @@ private final class ZviURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func stopLoading() {}
-}
-
-private enum SubstackPreloadsJSONTagTestsFixture {
-    static func load(_ name: String) throws -> Data {
-        try TestInputs.data(.contracts, "fixtures/feeds/\(name)")
-    }
 }
