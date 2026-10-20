@@ -66,6 +66,56 @@ final class SkimBridgeControllerTests: XCTestCase {
         XCTAssertEqual(host.compactRefreshes, 1)
     }
 
+    // MARK: loaded resources
+
+    /// #2184: every reload of the selected item dropped the loaded map, so the next snapshot tick re-read the projection,
+    /// proposals, layers and the owned-asset table on the main thread. They load once per item and map change now.
+    func testResourcesLoadOncePerItemAndMapChange() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "skim-resources-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let host = ScriptedSkimHost()
+        host.store = try SQLiteSessionStore(path: directory.appending(path: "store.sqlite").path)
+        host.source = SkimSource(itemId: "episode", durationMs: 60_000)
+        let controller = makeController(host)
+        var episode = ItemDetailState()
+        episode.id = "episode"
+        episode.listeningMapScenes = [MediaTimelineChapter(id: "scene-0", title: "Opening", startMs: 0, transcriptSegmentId: "s0")]
+        let key = SkimResourceKey(episode)
+
+        controller.updateAvailability(refreshResources: false)
+        XCTAssertEqual(controller.resourceLoadCount, 1)
+
+        var reloaded = episode
+        reloaded.status = "in_progress"
+        reloaded.text = "A saved position, a new Margin."
+        for _ in 0..<5 {
+            controller.itemDetailChanged(from: key, to: SkimResourceKey(reloaded))
+            controller.updateAvailability(refreshResources: false)
+        }
+        XCTAssertEqual(controller.resourceLoadCount, 1, "a reload that leaves the map alone keeps what was loaded")
+
+        var other = ItemDetailState()
+        other.id = "another"
+        controller.itemDetailChanged(from: key, to: SkimResourceKey(other))
+        controller.updateAvailability(refreshResources: false)
+        XCTAssertEqual(controller.resourceLoadCount, 1, "browsing another item keeps the playing item's map")
+
+        controller.itemDetailChanged(from: SkimResourceKey(other), to: key)
+        controller.updateAvailability(refreshResources: false)
+        XCTAssertEqual(controller.resourceLoadCount, 2, "arriving at the playing item reads it once")
+
+        var remapped = episode
+        remapped.listeningMapScenes[0].startMs = 1_000
+        controller.itemDetailChanged(from: key, to: SkimResourceKey(remapped))
+        controller.updateAvailability(refreshResources: false)
+        controller.updateAvailability(refreshResources: false)
+        XCTAssertEqual(controller.resourceLoadCount, 3, "a map change reads it once")
+
+        controller.updateAvailability()
+        XCTAssertEqual(controller.resourceLoadCount, 4, "an explicit refresh still reads it")
+    }
+
     // MARK: a second tap and an unavailable Skim
 
     func testASecondSkimTapCompletesTheBridgeAtItsDestinationInsteadOfResolvingAnother() {
@@ -221,8 +271,10 @@ private final class ScriptedSkimHost: SkimBridgeHost {
 
     var skimSourceIsPlaying: Bool { true }
     var skimCurrentMediaTimeMs: Int? { 1_000 }
-    var skimSource: SkimSource? { nil }
-    var skimStore: SQLiteSessionStore? { nil }
+    var source: SkimSource?
+    var store: SQLiteSessionStore?
+    var skimSource: SkimSource? { source }
+    var skimStore: SQLiteSessionStore? { store }
     var skimHasEngine: Bool { hasEngine }
     var skimMediaPlaybackRate: Double { 1 }
 
