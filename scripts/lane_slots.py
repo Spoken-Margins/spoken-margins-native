@@ -215,13 +215,25 @@ def second_slot_cooldown(trips):
 def disable_second_slot(reason, by_hand=False, now=None):
     """Switch the second slot off (back to one simulator). Returns True if this call switched it off.
 
-    An automatic switch-off expires (second_slot_status); one made by hand stays until enable_second_slot.
+    An automatic switch-off expires (second_slot_status); one made by hand stays until enable_second_slot,
+    and replaces an automatic one that is still running so its end time no longer applies.
     """
     now = time.time() if now is None else now
     state_dir().mkdir(parents=True, exist_ok=True)
     path = state_dir() / SECOND_SLOT_OFF
     if path.exists():
-        return False
+        if not by_hand:
+            return False
+        try:
+            if _read_second_slot_off(path).get('until') is None:
+                return False
+        except OSError:
+            pass  # switched on meanwhile: write the hand switch-off below
+        else:
+            spare = path.with_name(f'{SECOND_SLOT_OFF}.{os.getpid()}.tmp')
+            spare.write_text(json.dumps({'since': now, 'until': None, 'reason': reason}) + '\n')
+            os.replace(spare, path)
+            return True
     until = None if by_hand else now + second_slot_cooldown(_record_trip(now))
     try:
         with open(path, 'x') as handle:

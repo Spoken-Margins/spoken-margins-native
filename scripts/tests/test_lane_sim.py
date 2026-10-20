@@ -739,6 +739,21 @@ class LaneSimTests(unittest.TestCase):
         lane_slots.enable_second_slot()
         self.assertTrue(lane_slots.second_slot_status()[0])
 
+    def test_a_switch_off_by_hand_after_an_automatic_one_never_expires(self):
+        # A hand switch-off while an automatic one is active must replace it, not leave its end time (#2158 audit).
+        announced = []
+        with mock.patch.object(lane_sim, 'announce', side_effect=announced.append):
+            self.assertTrue(lane_slots.disable_second_slot('memory pressure', now=0))
+            self.assertTrue(lane_sim.back_to_one_simulator('keep it at one (switched off by hand)', by_hand=True))
+            self.assertFalse(lane_sim.back_to_one_simulator('again (switched off by hand)', by_hand=True))
+        self.assertEqual(len(announced), 1)
+        self.assertIn('stays off until someone runs', announced[0])
+        self.assertIsNone(lane_slots.second_slot_back_on_at())
+        allowed, why = lane_slots.second_slot_status(now=30 * 24 * self.HOUR)
+        self.assertFalse(allowed)
+        self.assertIn('keep it at one', why)
+        self.assertIn('stays off until switched on', why)
+
     def test_a_switch_off_written_before_the_expiry_counts_from_its_file_time(self):
         off = Path(self.env['SM_LANE_STATE_DIR']) / lane_slots.SECOND_SLOT_OFF
         off.parent.mkdir(parents=True, exist_ok=True)
