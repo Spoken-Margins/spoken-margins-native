@@ -71,18 +71,29 @@ extension Gate1AppModel {
         })
     }
 
-    /// The Library list and the Recently deleted list from one read, published when they changed.
+    /// A transport tap (skip, seek, rate) that finishes the item reloads on the spot: the next tap, Play or Resume reads
+    /// the finished session off `selectedItem`, and a stale one would resume it instead of offering to restart. Rare,
+    /// so the main-thread read is acceptable here. Every other tap reloads in the background.
+    func refreshSelectedItemAfterTransport() {
+        if snapshot.sourceProgressPercent >= 100 { refreshSelectedItem() } else { refreshSelectedItemInBackground() }
+    }
+
+    /// The Library list and the Recently deleted list from one read, published when they changed. A single-row change
+    /// (a download or a prewarm tick) landing during the read makes it stale; it is read again, not dropped.
     func refreshLibraryRowsInBackground() {
         guard let store else { return }
         let generation = backgroundRefresh.beginLibrary()
-        let revision = libraryPresentationRevision
         let read = navigationLibraryRead
         backgroundRefresh.holdLibrary(Task { [weak self] in
-            guard let data = try? await read(store) else { return }
-            guard let self, !Task.isCancelled, self.backgroundRefresh.isCurrentLibrary(generation),
-                  self.libraryPresentationRevision == revision else { return }
-            self.publishLibrary(data)
-            self.refreshAudioPreparationPresentation()
+            for _ in 0..<3 {
+                guard let revision = self?.libraryPresentationRevision,
+                      let data = try? await read(store) else { return }
+                guard let self, !Task.isCancelled, self.backgroundRefresh.isCurrentLibrary(generation) else { return }
+                if self.libraryPresentationRevision != revision { continue }
+                self.publishLibrary(data)
+                self.refreshAudioPreparationPresentation()
+                return
+            }
         })
     }
 

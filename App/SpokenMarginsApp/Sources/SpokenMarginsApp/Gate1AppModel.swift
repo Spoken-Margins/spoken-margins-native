@@ -2054,8 +2054,9 @@ final class Gate1AppModel: ObservableObject {
             }
             _ = try engine.inspectSession(sessionId: session.id)
             try prepareSourceMediaPlayback(itemId: session.itemId)
+            let completion = (try? store.loadSession(id: session.id))?.completionPercent ?? session.completionPercent // the row on screen can lag a skip (#2102)
             do {
-                if session.completionPercent >= 100 {
+                if completion >= 100 {
                     let inspected = try engine.inspectSession(sessionId: session.id)
                     snapshot = try applyPreferredPlaybackRate(to: inspected, engine: engine)
                 } else {
@@ -2068,9 +2069,9 @@ final class Gate1AppModel: ObservableObject {
             selectedItem = try loadItemDetail(id: session.itemId, store: store)
             try refreshLibraryRows(store: store)
             screen = .playback
-            reportSuccess(session.completionPercent >= 100
+            reportSuccess(completion >= 100
                 ? "Opened completed session. Use Play from Beginning to restart."
-                : "Resumed session at \(session.completionPercent)% complete.")
+                : "Resumed session at \(completion)% complete.")
         } catch {
             reportFailure(error, context: "Resume session failed")
         }

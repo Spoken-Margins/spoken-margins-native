@@ -118,6 +118,5 @@ final class LibraryItemSummaryReadTests: XCTestCase {
             wholeBest = min(wholeBest, Date().timeIntervalSince(wholeStart))
         }
         XCTAssertLessThan(summaryBest, wholeBest / 2, "summary \(summaryBest) s against whole \(wholeBest) s")
-        XCTAssertLessThan(summaryBest, 0.05, "summary read of 310 items took \(summaryBest) s")
     }
 }

@@ -113,7 +113,7 @@ extension Gate1AppModel: SkimBridgeHost {
     }
 
     func skimBridgeDidFinish() {
-        refreshSelectedItemInBackground()
+        refreshSelectedItemAfterTransport()
     }
 
     func skimEngineCallFailedWhileCancelling() {

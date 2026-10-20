@@ -1,4 +1,6 @@
 import XCTest
+import SessionKit
+import SessionKitAudio
 @testable import SpokenMarginsApp
 
 /// #2102: a reload read off the main thread may publish only while nothing newer has happened. The first version of
@@ -37,5 +39,39 @@ final class BackgroundRefreshGateTests: XCTestCase {
         _ = gate.beginLibrary()
         XCTAssertFalse(gate.isCurrentLibrary(library))
         XCTAssertTrue(gate.isCurrentItem(item), "a newer Library read leaves the item reload alone")
+    }
+
+    func testAnItemOpenedWhileAPauseReloadsIsNotOverwrittenByTheOlderRead() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.importTitle = "First Item"
+        model.importText = "One sentence only."
+        model.importTextItem()
+        let firstId = model.selectedItem.id
+        model.pause() // reloads "First Item" off the main thread
+
+        model.importTitle = "Second Item"
+        model.importText = "Another sentence only."
+        model.importTextItem()
+        let secondId = model.selectedItem.id
+        XCTAssertNotEqual(firstId, secondId)
+
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(model.selectedItem.id, secondId, "the older read finished after the newer item opened and must be dropped")
+        XCTAssertEqual(model.activePlaybackItemId, secondId)
+    }
+
+    func testASkipThatFinishesTheItemShowsTheFinishedSessionAtOnce() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.importTitle = "Short Item"
+        model.importText = "One sentence only."
+        model.importTextItem()
+        model.skipUnit = "section"
+        model.skipForward()
+
+        XCTAssertEqual(model.snapshot.sourceProgressPercent, 100)
+        let shown = try XCTUnwrap(model.selectedItem.sessions.last)
+        XCTAssertEqual(shown.completionPercent, 100, "Resume and Play read the finished session off the item at once, not after a background read")
     }
 }
