@@ -157,7 +157,18 @@ class BuildCacheLinks(unittest.TestCase):
         (self.tree / 'Packages/SessionKit/.build/debug').mkdir(parents=True)
         cache.ensure_links(self.tree)
         self.assertTrue((self.tree / '.build/dd/Build/blob').exists(), 'the same worktree lost its build')
+        first_inode = os.stat(self.tree).st_ino
         shutil.rmtree(self.tree)
+        # The slot knows a worktree by path and directory inode. APFS does not hand a freed inode back, but ext4 and
+        # tmpfs do at once (the cloud and the VPS runner), which made this recreated worktree look like the old
+        # one (#2215). Park each directory that got the old inode aside, so the new worktree gets another.
+        parked = 0
+        while True:
+            self.tree.mkdir(parents=True, exist_ok=True)
+            if os.stat(self.tree).st_ino != first_inode:
+                break
+            parked += 1
+            self.tree.rename(self.tree.parent / f'parked-{parked}')
         (self.tree / 'Packages/SessionKit').mkdir(parents=True)
         (self.tree / '.git').write_text('gitdir: /x/.git/worktrees/w1\n')
         cache.ensure_links(self.tree)

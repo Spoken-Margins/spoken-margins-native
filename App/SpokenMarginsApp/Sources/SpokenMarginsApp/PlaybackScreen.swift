@@ -876,9 +876,14 @@ struct PlaybackScreen: View {
 
                 Button(action: model.playPauseTapped) {
                     Group {
-                        if model.snapshot.status == .starting {
-                            ProgressView()
-                                .tint(.white)
+                        if model.playPauseFace == .cancelStart {
+                            // A start is pending and a tap cancels it: a stop mark inside the spinner says so (#2098).
+                            ZStack {
+                                ProgressView()
+                                    .tint(.white)
+                                Image(systemName: "stop.fill")
+                                    .font(.system(size: 12, weight: .bold))
+                            }
                         } else {
                             Image(systemName: model.snapshot.phase == .finished && model.playingImportedCommentary == nil ? "arrow.counterclockwise" : (model.snapshot.skimBridgeState?.status == .playing
                                 || model.activePlaybackIsPlaying ? "pause.fill" : "play.fill"))
@@ -888,6 +893,7 @@ struct PlaybackScreen: View {
                 .buttonStyle(MainPlaybackButtonStyle())
                 .accessibilityLabel(model.snapshot.phase == .finished && model.playingImportedCommentary == nil ? "Replay in a new session" : (model.snapshot.skimBridgeState?.status == .playing
                     || model.activePlaybackIsPlaying ? "Pause" : "Play"))
+                .accessibilityHint(model.playPauseFace.accessibilityHint ?? "")
                 .accessibilityIdentifier("playback.play.button")
 
                 Button {
