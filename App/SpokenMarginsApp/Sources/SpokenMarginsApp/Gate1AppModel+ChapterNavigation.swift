@@ -69,7 +69,7 @@ extension Gate1AppModel {
         clearPendingAutoPlayTurns()
         run { engine in
             try move(engine)
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
             screen = .playback
             if fromTimeline {
                 recordTimelineReviewCompleted()

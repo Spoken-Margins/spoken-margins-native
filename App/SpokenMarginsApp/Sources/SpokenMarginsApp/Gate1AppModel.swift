@@ -217,6 +217,7 @@ final class Gate1AppModel: ObservableObject {
         try await Task.detached(priority: .utility) { try LibraryReadSnapshot.read(store: store) }.value
     }
     var activePlaybackDetail: ItemDetailState?
+    let backgroundRefresh = BackgroundRefreshGate() // #2102
     @Published var libraryItems: [LibraryItemRow] = [] {
         didSet { quickAccess.invalidateCandidates(); libraryPresentationRevision += 1 }
     }
@@ -238,7 +239,7 @@ final class Gate1AppModel: ObservableObject {
             if selectedItem.id == snapshot.itemId { activePlaybackDetail = selectedItem }
             else if oldValue.id == snapshot.itemId { activePlaybackDetail = oldValue }
             if oldValue.id != selectedItem.id { selectedListeningEdition = try? ListeningEditionStore.application().load(itemID: selectedItem.id) }
-            skimBridge.invalidateResources(); selectedItemStreamFlag.invalidate()
+            backgroundRefresh.selectionWasAssigned(); skimBridge.invalidateResources(); selectedItemStreamFlag.invalidate()
             prepareLeveledMargins(from: oldValue)
             if oldValue.id != selectedItem.id || oldValue.externalReference != selectedItem.externalReference {
                 storedSourceFollowSuggestionCandidates = []
@@ -358,7 +359,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var sourceLinkImportState = "idle"
     @Published var sourceLinkImportMessage: String?
     @Published var sourceLinkSafariOffer: OpenInSafariOffer? // #145, set in Gate1AppModel+PasteAndGo.swift
-    @Published private(set) var selectedListeningEdition: ListeningEdition?
+    @Published var selectedListeningEdition: ListeningEdition?
     @Published private(set) var isImportingReadLater = false
     let readwiseHighlightSync = ReadwiseHighlightSync()
     /// Margin Output (#492): every notes destination, its settings and its delivery loop.
@@ -1620,7 +1621,7 @@ final class Gate1AppModel: ObservableObject {
         run { engine in
             snapshot = try engine.pause()
             streamingSpeechQueue.relinquishToCanonicalPlayback()
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
             reportSuccess("Paused.")
         }
     }
@@ -3153,10 +3154,6 @@ final class Gate1AppModel: ObservableObject {
         return priorMode != ttsMode
     }
 
-    func loadLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {
-        LibraryRowBuilder.rows(from: try LibraryReadSnapshot.read(store: store), context: startupAudioContext)
-    }
-
     /// What the Library row builder needs to know about the app right now.
     var startupAudioContext: StartupAudioContext {
         StartupAudioContext(
@@ -3193,12 +3190,6 @@ final class Gate1AppModel: ObservableObject {
         try store.listDeletedItems().map { item in
             LibraryItemRow(id: item.id, title: item.title, status: "Recently deleted", canDelete: true)
         }
-    }
-
-    func refreshLibraryRows(store: SQLiteSessionStore) throws {
-        libraryItems = try hangTelemetry.labels.scoped("loadLibraryRows") { try loadLibraryRows(store: store) }
-        recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
-        try refreshAudioPreparationPresentation(store: store)
     }
 
     static func firstURL(in text: String) -> URL? {
@@ -3566,22 +3557,6 @@ final class Gate1AppModel: ObservableObject {
             .replacingOccurrences(of: #"[^a-z0-9]+"#, with: "-", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
         return "item-obsidian-\(Int(Date().timeIntervalSince1970))-\(index)-\(base.isEmpty ? "clip" : base)"
-    }
-
-    func refreshSelectedItem() {
-        guard let store, !activeItemId.isEmpty else { return }
-        if let detail = try? hangTelemetry.labels.scoped("loadItemDetail", { try loadItemDetail(id: activeItemId, store: store) }) {
-            selectedItem = detail
-            selectedListeningEdition = try? ListeningEditionStore.application().load(itemID: activeItemId)
-            offerFollowSuggestionIfEligible(itemId: activeItemId, store: store)
-        }
-    }
-
-    func loadItemDetail(id: String, store: SQLiteSessionStore) throws -> ItemDetailState {
-        try ItemDetailLoader.load(
-            id: id, store: store,
-            snapshotItemId: snapshot.itemId, snapshotSessionId: snapshot.sessionId,
-            placementPasses: sharedMarginPlacementPasses)
     }
 
     func requireStore() throws -> SQLiteSessionStore {
