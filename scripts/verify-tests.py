@@ -443,6 +443,7 @@ PORTABLE_LEFT_OUT = {
     'package-core-serial': 'needs the Swift toolchain on macOS',
     'package': 'needs the Swift toolchain, AVFoundation and a sound output; only the Mac lane runs the whole package',
     'shipped-compat': 'builds SessionKit and Build 29\'s persistence code with Swift on macOS; only the Mac lane runs it',
+    'hot-file-ratchet': 'the author\'s own fast run checks it, and the lane runner checks next\'s copy with the PR\'s labels',
 }
 # Inside runner-tests and ops, the tests that drive an Apple tool. Each is matched as a test id prefix (module,
 # class or test) in scripts/tests, or as a folder under ops/.
@@ -474,7 +475,7 @@ PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snaps
 # Between them the three plans run every fast-plan step (test_fast_split.py checks it).
 FAST_SPLIT_PLANS = ('fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest')
 HOSTED_SESSIONKIT_STEPS = ('package-build', 'package-core', 'package-core-serial')
-MAC_REST_STEPS = ('runner-tests', 'ops', 'package-build', 'package', 'shipped-compat')
+MAC_REST_STEPS = ('hot-file-ratchet', 'runner-tests', 'ops', 'package-build', 'package', 'shipped-compat')
 # runner-tests without the tests above: discover scripts/tests as the plain step does, then drop the listed ids.
 PORTABLE_RUNNER_LOADER = '''
 import sys, unittest
@@ -1124,6 +1125,10 @@ class Run:
                 entry['gating'] = {test: records.get(test, {}).get('status', 'missing')
                                    for test in sorted(set(expected or ()) - probation)}
                 entry['probation'] = {test: records.get(test, {}).get('status', 'missing') for test in sorted(probation)}
+        if name == 'hot-file-ratchet':
+            # The lane's own words (lane-runner.py run_auto), so a local FAIL reads as the queue's would.
+            errors.extend(f'hot-file ratchet — {line[len("FAIL "):]}' for line in text.splitlines()
+                          if line.startswith('FAIL '))
         if name == 'runner-tests' or name.startswith('ops-'):
             match = re.search(r'Ran (\d+) tests? in ', text)
             entry['executed_count'] = int(match[1]) if match else 0
@@ -1150,7 +1155,7 @@ class Run:
         probation_only = (tests and not errors and not entry.get('interrupted')
                           and any(status != 'passed' for status in entry.get('probation', {}).values()))
         if result and not probation_only:
-            if not any(error.startswith('Failed: ') for error in errors):  # failed tests already say why
+            if not any(error.startswith(('Failed: ', 'hot-file ratchet — ')) for error in errors):  # they already say why
                 errors[:0] = log_errors(text)
             errors.insert(0, f'Process exit {result}')
             if entry.get('timeout_note'):
@@ -1182,6 +1187,8 @@ class Run:
             return self.portable()
         if self.manifest['plan'] == 'fast-hosted-sessionkit':
             return self.hosted_sessionkit()
+        # First and outside the slot: it takes seconds, and a failure here would otherwise cost a lane queue trip.
+        self.hot_file_ratchet()
         # The host steps share two Mac-wide host-test slots with every session and the runner (#350);
         # the package step's swift test runs inside this run's slot.
         with host_test_slot(f'verify-tests {self.manifest["plan"]} in {ROOT}', out=sys.stdout,
@@ -1192,6 +1199,29 @@ class Run:
                 self.mac_rest()
             else:
                 self.host_steps()
+
+    def hot_file_ratchet(self, base=None):
+        """The lane's hot-file ratchet (scripts/hot_file_ratchet.py) in the author's own loop (#2175).
+
+        On 2026-10-19 #2159, #2155 and #2067 each failed only this check, hours into the lane queue. It compares the
+        committed branch with the local `base` (fetch first for an up-to-date verdict) and fails with the lane's words.
+        A lane run (one given the PR's changed paths, or any CI job) leaves it to the runner, which judges next's copy with the PR's
+        labels. With the hot-file-ok label granted, set SM_HOT_FILE_OK=1. `base` defaults to the trunk's ref."""
+        if self.changed is not None or os.environ.get('GITHUB_ACTIONS') == 'true':
+            # A CI job is a lane job even without --changed-files (the lane drops it for a path it can't pass), and
+            # the lane's runner-tests step runs inside it too.
+            return self.skip('hot-file-ratchet', 'the lane runner checks next\'s ratchet, with the PR\'s labels, before any build')
+        if os.environ.get('SM_HOT_FILE_OK') == '1':
+            return self.skip('hot-file-ratchet', 'SM_HOT_FILE_OK=1: the PR carries the hot-file-ok label')
+        from trunk import trunk_branch  # #1492: the branch the author's run judges the ratchet against
+        base = base or f'origin/{trunk_branch()}'
+        known = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', '--verify', '--quiet', f'{base}^{{commit}}'],
+                               capture_output=True, text=True)
+        if known.returncode:
+            # Name the fetch for the base actually judged, which a caller may give instead of the trunk (#2180 audit).
+            branch = base[len('origin/'):] if base.startswith('origin/') else base
+            return self.skip('hot-file-ratchet', f'{base} is not in this clone; run `git fetch origin {branch}` to check it')
+        self.command('hot-file-ratchet', [sys.executable, 'scripts/hot_file_ratchet.py', '--base', base], timeout=60)
 
     def shipped_compat(self):
         """The shipped build's packet reader and database checks (#1899), when the diff reaches what they watch.
@@ -1670,7 +1700,7 @@ def main():
               else '\n'.join(sorted(plan_tests(ROOT, PLANS[args.plan][1]))) if args.plan in PLANS
               else ('fast-portable runs ' + ', '.join(PORTABLE_STEPS) + '; it leaves out ' + ', '.join(PORTABLE_LEFT_OUT)
                     if args.plan == 'fast-portable'
-                    else 'runner-tests, ops tests, contracts, surfaces, inventory, browser, all SessionKit tests'))
+                    else 'hot-file ratchet, runner-tests, ops tests, contracts, surfaces, inventory, browser, all SessionKit tests'))
         return 0
     if journeys is not None and not any(journeys.values()):
         print('No scripted journeys are listed in TestPlans/scripted-journeys.json; nothing to run.')
