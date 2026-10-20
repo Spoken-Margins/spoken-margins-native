@@ -1965,28 +1965,6 @@ final class Gate1AppModel: ObservableObject {
         LibraryQueryEngine.librarySortDescription(query: libraryQuery)
     }
 
-    func openItem(id: String) {
-        let diagnosticStart = ProcessInfo.processInfo.systemUptime
-        recordDeveloperDiagnostic("item.open.begin", ["item": DeveloperDiagnosticRecording.token(id)])
-        defer { recordDeveloperDiagnostic("item.open.end", ["durationMs": String(Int((ProcessInfo.processInfo.systemUptime - diagnosticStart) * 1000))]) }
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_item") else { return }
-        followedPlayIntent.cancel() // the listener moved on: a pending Play now must not take over (#2124)
-        do {
-            let store = try requireStore()
-            activeItemId = id
-            selectedItem = try loadItemDetail(id: id, store: store)
-            prepareImportedLocalAudioBridges(itemId: id)
-            scheduleTextAudioPrewarmIfNeeded(itemId: id); PublisherAudioTextMapper.resume(itemId: id, store: store, transcriber: sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(id): \($0)" }; fetchCommunityMapIfNeeded(itemId: id)
-            listeningMapJSON = ""
-            screen = .item
-            discoverFollowOfferIfEligible(itemId: id, store: store)
-            offerFollowSuggestionIfEligible(itemId: id, store: store)
-            reportSuccess("Opened \(selectedItem.title).")
-        } catch {
-            reportFailure(error, context: "Open item failed")
-        }
-    }
-
     func startItem(id: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_item") else { return }
         prepareImportedLocalAudioBridges(itemId: id); fetchCommunityMapIfNeeded(itemId: id)
