@@ -39,4 +39,45 @@ final class RecordingTransportGuardTests: XCTestCase {
         XCTAssertLessThanOrEqual(RecordingTransportGuard.startGraceMs, MarginCaptureTimings.startGraceMs)
         XCTAssertLessThanOrEqual(RecordingTransportGuard.routeChangeGraceMs, RecordingTransportGuard.startGraceMs)
     }
+
+    /// #2182: the owner's phantom `play` came 2,182 ms in, on a hands-free Bluetooth recording, after the 1.5 s window.
+    func testABarePlayOnAHandsFreeInputNeverEndsTheMarginHoweverLateItComes() {
+        for recordingMs in [14, 38, 2_182, 60_000, 3_600_000] {
+            XCTAssertNotEqual(
+                RecordingTransportGuard.verdict(command: .play, recordingMs: recordingMs, sinceRouteChangeMs: nil, onHandsFreeProfile: true),
+                .endMargin,
+                "play at \(recordingMs) ms"
+            )
+        }
+        XCTAssertEqual(
+            RecordingTransportGuard.verdict(command: .play, recordingMs: 2_182, sinceRouteChangeMs: nil, onHandsFreeProfile: true),
+            .ignore(.barePlayOnHandsFree)
+        )
+    }
+
+    /// #1030: a real press still ends the Margin. Pause and the toggle on a hands-free input, and `play` on any other
+    /// route (the Lock Screen button and wired headsets), keep ending it.
+    func testRealPressesStillEndTheMargin() {
+        for command in [CompactControlCommand.pause, .togglePlayPause, .skipForward] {
+            XCTAssertEqual(
+                RecordingTransportGuard.verdict(command: command, recordingMs: 2_182, sinceRouteChangeMs: nil, onHandsFreeProfile: true),
+                .endMargin, "\(command)"
+            )
+        }
+        XCTAssertEqual(
+            RecordingTransportGuard.verdict(command: .play, recordingMs: 2_182, sinceRouteChangeMs: nil, onHandsFreeProfile: false),
+            .endMargin
+        )
+    }
+
+    func testTheEarlierReasonsStillNameThemselvesForABarePlayOnAHandsFreeInput() {
+        XCTAssertEqual(
+            RecordingTransportGuard.verdict(command: .play, recordingMs: 14, sinceRouteChangeMs: nil, onHandsFreeProfile: true),
+            .ignore(.recordingJustStarted)
+        )
+        XCTAssertEqual(
+            RecordingTransportGuard.verdict(command: .play, recordingMs: 20_000, sinceRouteChangeMs: 10, onHandsFreeProfile: true),
+            .ignore(.routeJustChanged)
+        )
+    }
 }
