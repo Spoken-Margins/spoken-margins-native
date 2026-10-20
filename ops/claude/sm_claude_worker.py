@@ -96,7 +96,7 @@ MAX_RUNS = 3               # runs per issue before the Mac finisher takes the br
 HANDOFF_WINDOW = dt.timedelta(hours=48)
 MAX_WORKERS = int(os.environ.get('SM_CLAUDE_WORKER_MAX', '1'))  # the Mac has two build slots and one simulator
 MARGIN = 3                 # points below the Dial's stop line where new work holds (as the Dial gate)
-TREND_SLACK = 5            # points ahead of the trend line allowed (as the Dial gate)
+TREND_SLACK = 10           # points ahead of the trend line allowed (as the Dial gate; owner 2026-10-19)
 MIN_FREE_GIB = 20          # the Mac finisher's pause line; AGENTS.md wants 10 GiB plus 4 per build
 FOCUS_MILESTONE = os.environ.get('SM_CLAUDE_WORKER_FOCUS_MILESTONE', 'Solid Ground')
 CLAIM_STALE = dt.timedelta(hours=6)      # another thread's claim this old and quiet is released
