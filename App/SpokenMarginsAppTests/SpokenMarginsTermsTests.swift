@@ -87,6 +87,13 @@ final class SupertonicTermsGateTests: XCTestCase {
     func testAPendingVoicePreviewIsDroppedByAVoiceChangeOrPlaybackStart() throws {
         let snapshot = StandardDefaultsSnapshot(keys: termsAndVoiceDefaultsKeys)
         defer { snapshot.restore() }
+        // Set the Terms and voice here: on fresh defaults the voice migration picks James without the Terms, so
+        // startItem waits on the Terms sheet and starts no session. It passed only after other tests accepted them.
+        let defaults = UserDefaults.standard
+        SpokenMarginsTerms.recordAcceptance()
+        defaults.set(true, forKey: "supertonicTTSMigrationV1")
+        defaults.set(AppTTSVoiceSelection.system.rawValue, forKey: "ttsVoiceSelection")
+        defaults.set("systemImmediate", forKey: "ttsMode")
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -145,6 +152,86 @@ final class SupertonicTermsGateTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["supertonicPreviewEngine"], KittenNarrationRenderer.engine)
         XCTAssertTrue(model.statusMessage.contains("Settings › Voices"), model.statusMessage)
         XCTAssertEqual(model.ttsVoiceSelection, .james, "the preview never changes the chosen voice")
+    }
+
+    /// #2226: Kitten is a voice the listener can pick, like James and Lily. It reads on the device, so it needs the
+    /// Terms first, and the choice is saved under its own code.
+    func testSelectingKittenPresentsTermsAndAcceptanceEnablesIt() {
+        let snapshot = StandardDefaultsSnapshot(keys: termsAndVoiceDefaultsKeys)
+        defer { snapshot.restore() }
+        let defaults = UserDefaults.standard
+        SpokenMarginsTerms.clearAcceptance(in: defaults)
+        defaults.set(true, forKey: "supertonicTTSMigrationV1")
+        defaults.set(AppTTSVoiceSelection.system.rawValue, forKey: "ttsVoiceSelection")
+        defaults.set("systemImmediate", forKey: "ttsMode")
+        let model = Gate1AppModel(audioPlaybackClient: TermsNoopAudioPlaybackClient())
+
+        model.ttsVoiceSelection = .kitten
+        model.ttsVoiceSelectionChanged()
+        XCTAssertTrue(model.isTermsOfUsePresented)
+        XCTAssertEqual(model.ttsVoiceSelection, .system)
+
+        model.acceptCurrentTermsAndEnableOnDeviceVoice()
+        XCTAssertEqual(model.ttsVoiceSelection, .kitten)
+        XCTAssertEqual(defaults.string(forKey: "ttsVoiceSelection"), "kitten:jasper")
+        XCTAssertEqual(model.ttsMode, "supertonic", "the on-device player reads, as for James and Lily")
+    }
+
+    /// #2226 Done when 1 and 2: the choice survives a relaunch, and picking Kitten is not a Supertonic choice, so it
+    /// shows no "Supertonic is now a free download" card and offers no download.
+    func testKittenChoiceSurvivesRelaunchAndNeverAsksForTheSupertonicDownload() {
+        let snapshot = StandardDefaultsSnapshot(keys: termsAndVoiceDefaultsKeys + [SupertonicDownloadNoticePolicy.seenKey])
+        defer { snapshot.restore() }
+        let defaults = UserDefaults.standard
+        SpokenMarginsTerms.recordAcceptance()
+        defaults.set(true, forKey: "supertonicTTSMigrationV1")
+        defaults.set(AppTTSVoiceSelection.kitten.rawValue, forKey: "ttsVoiceSelection")
+        defaults.set("supertonic", forKey: "ttsMode")
+
+        defaults.removeObject(forKey: SupertonicDownloadNoticePolicy.seenKey)
+        let relaunched = Gate1AppModel(audioPlaybackClient: TermsNoopAudioPlaybackClient())
+
+        XCTAssertEqual(relaunched.ttsVoiceSelection, .kitten)
+        XCTAssertNil(relaunched.ttsVoiceSelection.supertonicVoice)
+        XCTAssertEqual(
+            SupertonicDownloadNoticePolicy.decide(
+                savedVoiceIsSupertonic: relaunched.ttsVoiceSelection.supertonicVoice != nil,
+                modelInstalled: false, hasSeen: false, anotherSheetShowing: false),
+            .wait, "the card is for James or Lily, never for Kitten")
+    }
+
+    /// #2226 Done when 3: what earlier builds saved still loads as the same voice.
+    func testVoicesSavedByEarlierBuildsStillLoad() {
+        let snapshot = StandardDefaultsSnapshot(keys: termsAndVoiceDefaultsKeys)
+        defer { snapshot.restore() }
+        let defaults = UserDefaults.standard
+        SpokenMarginsTerms.recordAcceptance()
+        defaults.set(true, forKey: "supertonicTTSMigrationV1")
+        for saved in [AppTTSVoiceSelection.james, .lily, .system] {
+            defaults.set(saved.rawValue, forKey: "ttsVoiceSelection")
+            XCTAssertEqual(Gate1AppModel(audioPlaybackClient: TermsNoopAudioPlaybackClient()).ttsVoiceSelection, saved)
+        }
+    }
+
+    /// #2226 Done when 4: with Kitten picked, the app builds its on-device player held on Kitten. Supertonic never
+    /// renders for it, whether or not the model is downloaded, and none of its saved audio is looked up.
+    func testNarrationWithKittenPickedUsesTheOnDevicePlayerHeldOnKitten() throws {
+        let snapshot = StandardDefaultsSnapshot(keys: termsAndVoiceDefaultsKeys)
+        defer { snapshot.restore() }
+        SpokenMarginsTerms.recordAcceptance()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = Gate1AppModel(databaseURLOverride: root.appendingPathComponent("kitten-narration.sqlite"))
+        model.resetAndSeed()
+        model.ttsVoiceSelection = .kitten
+
+        model.ttsVoiceSelectionChanged()
+
+        XCTAssertEqual(model.ttsVoiceSelection, .kitten)
+        XCTAssertTrue(model.speechPlaybackClient is SupertonicSpeechPlaybackClient, "the on-device player reads Kitten")
+        XCTAssertEqual(model.diagnostics["sessionTTS"], "Kitten (chosen)")
+        XCTAssertNil(model.lastError)
     }
 
     func testDecliningTermsKeepsSystemVoiceAndDoesNotRecordAcceptance() {

@@ -102,7 +102,7 @@ extension Gate1AppModel {
         saveSpeechSettings()
         if changed {
             _ = rebuildEngineForCurrentSettings()
-        } else if ttsVoiceSelection.supertonicVoice != nil, audioPlaybackClientOverride == nil {
+        } else if ttsVoiceSelection.isOnDeviceVoice, audioPlaybackClientOverride == nil {
             applySupertonicPlaybackRate()
         } else if !isMediaPlaybackSnapshot {
             run { engine in
@@ -118,7 +118,7 @@ extension Gate1AppModel {
     }
 
     func ttsVoiceSelectionChanged() {
-        if ttsVoiceSelection.supertonicVoice != nil, !hasAcceptedCurrentTerms {
+        if ttsVoiceSelection.isOnDeviceVoice, !hasAcceptedCurrentTerms {
             pendingTermsVoiceSelection = ttsVoiceSelection
             UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: Self.supertonicVoicePendingTermsKey)
             ttsVoiceSelection = .system
@@ -137,7 +137,7 @@ extension Gate1AppModel {
             refreshSelectedItem()
         }
         _ = rebuildEngineForCurrentSettings()
-        if ttsVoiceSelection == .system, let renderer = supertonicModel.reset(retiring: false) {
+        if ttsVoiceSelection.supertonicVoice == nil, let renderer = supertonicModel.reset(retiring: false) {
             Task { await renderer.unload() }
         }
         if ttsVoiceSelection == .system, let renderer = kittenRenderer {
@@ -153,6 +153,10 @@ extension Gate1AppModel {
 
     func previewAppVoice() {
         saveSpeechSettings()
+        if ttsVoiceSelection == .kitten {
+            previewKittenVoice()
+            return
+        }
         if let voice = ttsVoiceSelection.supertonicVoice {
             previewSupertonicVoice(voice)
             return
@@ -324,7 +328,8 @@ extension Gate1AppModel {
 
     var speechVoiceDescription: String {
         if ttsVoiceSelection != .system {
-            return "\(ttsVoiceSelection.displayName) (Supertonic \(ttsVoiceSelection.supertonicVoice?.rawValue ?? ""))"
+            guard let voice = ttsVoiceSelection.supertonicVoice else { return ttsVoiceSelection.displayName }
+            return "\(ttsVoiceSelection.displayName) (Supertonic \(voice.rawValue))"
         }
         guard !speechVoiceIdentifier.isEmpty else {
             return "System Spoken Content Voice (Siri falls back)"
@@ -338,6 +343,9 @@ extension Gate1AppModel {
     var speechRateDescription: String {
         if ttsVoiceSelection.supertonicVoice != nil {
             return String(format: "Supertonic %.2fx", speechPlaybackRateMultiplier)
+        }
+        if ttsVoiceSelection == .kitten {
+            return String(format: "Kitten %.2fx", speechPlaybackRateMultiplier)
         }
         return String(format: "System %.2fx", speechPlaybackRateMultiplier)
     }

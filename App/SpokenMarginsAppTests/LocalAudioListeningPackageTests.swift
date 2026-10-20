@@ -90,6 +90,9 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let loadedResources = model.skimResourceLoadCount
         for _ in 0..<40 { model.snapshot.currentMediaTimeMs = model.snapshot.currentMediaTimeMs }
         XCTAssertEqual(model.skimResourceLoadCount, loadedResources, "Progress updates must reuse the loaded map and asset metadata")
+        // #2184: reloading the item (a pause, a saved position, a Margin) leaves the map alone, so Skim keeps what it loaded.
+        for _ in 0..<3 { model.refreshSelectedItem(); model.snapshot.currentMediaTimeMs = model.snapshot.currentMediaTimeMs }
+        XCTAssertEqual(model.skimResourceLoadCount, loadedResources, "Item reloads must reuse the loaded map and asset metadata")
         // Next chapter reads the summary of the chapter being left, then lands at the next chapter;
         // a second press skips the summary instead of queueing another (#569).
         XCTAssertEqual(model.nextPlaybackMediaChapter?.startMs, 5_000)

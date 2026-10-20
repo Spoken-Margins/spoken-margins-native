@@ -3063,7 +3063,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
            url.scheme?.isEmpty == false {
             info[MPNowPlayingInfoPropertyAssetURL] = url
         }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        NowPlayingInfoOwnership.shared.write(info, as: .mediaPlayer, detail: nowPlayingLedgerDetail())
         configureRemoteCommandAvailability(canSeek: durationSeconds != nil)
         #if canImport(UIKit)
         Task { @MainActor in
@@ -3073,11 +3073,19 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         #endif
     }
 
+    /// Removes this player's card. A card another writer holds (live speech, a shared Margin) stays: this player
+    /// clears on every tick while its remote commands are off, and used to take those cards down with it (#2181).
     private func clearNowPlaying() {
         #if canImport(MediaPlayer) && os(iOS)
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        NowPlayingInfoOwnership.shared.clear(as: .mediaPlayer, detail: nowPlayingLedgerDetail())
         #endif
     }
+
+    #if canImport(MediaPlayer) && os(iOS)
+    private func nowPlayingLedgerDetail() -> String {
+        "targets=\(remoteCommandTargets.count) commands=\(remoteCommandHandlingEnabled ? "on" : "off") player=\(player.map { String($0.timeControlStatus.rawValue) } ?? "none")"
+    }
+    #endif
 
     private func installRemoteCommandHandlers() {
         #if canImport(MediaPlayer) && os(iOS)

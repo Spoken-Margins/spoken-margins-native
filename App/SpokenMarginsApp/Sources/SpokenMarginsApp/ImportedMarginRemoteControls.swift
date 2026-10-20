@@ -1,6 +1,7 @@
 import AVFoundation
 import MediaPlayer
 import SessionKit
+import SessionKitAudio
 
 /// Temporarily owns system transport while the separate received-Margin player
 /// is active. The source adapter must relinquish its handlers before install.
@@ -61,7 +62,7 @@ final class ImportedMarginRemoteControls {
         ]
         if elapsed.isFinite { info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = max(0, elapsed) }
         if duration.isFinite, duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = duration }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        NowPlayingInfoOwnership.shared.write(info, as: .sharedMargin)
     }
 
     func end() {
@@ -76,7 +77,7 @@ final class ImportedMarginRemoteControls {
     fileprivate static func releaseMetadata(owner: UUID) {
         guard metadataOwner == owner else { return }
         metadataOwner = nil
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        NowPlayingInfoOwnership.shared.clear(as: .sharedMargin)
     }
 }
 

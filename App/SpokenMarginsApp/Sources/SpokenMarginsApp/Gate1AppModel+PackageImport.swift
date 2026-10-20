@@ -19,6 +19,7 @@ extension Gate1AppModel {
         appVersion: String = KeptPackageNotices.currentAppVersion,
         now: Date = Date()
     ) throws {
+        packageImport.sweepOrphanedFoldersOnce()
         let payloadIDs = try packageStore.pendingPayloadIDs()
         diagnostics["pendingSpokenMarginsPackages"] = "\(payloadIDs.count)"
         for payloadID in payloadIDs where spokenMarginsPackageImportReview == nil {
@@ -167,6 +168,8 @@ extension Gate1AppModel {
         Task { @MainActor [weak self] in
             guard let self else { return }
             defer { self.preparingLocalAudioMapItems.remove(itemId) }
+            // A pass that stops early may still have adopted supplied summaries; Skim reads what was committed (#2184).
+            defer { self.updateSkimAvailability() }
             do {
                 for scene in proposal.scenes where scene.eligibility == .eligible {
                     try Task.checkCancellation()
