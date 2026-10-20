@@ -64,6 +64,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 from ledger import usage  # noqa: E402
 import sm_paths  # noqa: E402
 import comment_trust  # noqa: E402  (#1822: whose comments the worker believes)
+from trunk import trunk_branch  # noqa: E402  (#1492: the branch its PRs go into)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -72,7 +73,7 @@ import comment_trust  # noqa: E402  (#1822: whose comments the worker believes)
 REPO = os.environ.get('SM_CLAUDE_WORKER_REPO', 'uncomposed/spoken-margins-native')
 DIAL_ISSUE = int(os.environ.get('SM_DIAL_ISSUE', '589'))
 STATUS_ISSUE = int(os.environ.get('SM_DIAL_STATUS_ISSUE', '337'))
-BASE_BRANCH = 'next'
+BASE_BRANCH = trunk_branch()
 OWN_ROOT = sm_paths.own_root(__file__)                   # where this script lives (ops/, scripts/sm_project_sync.py)
 REPO_ROOT = sm_paths.repo(__file__)                      # the public checkout it works in (SM_REPO)
 HOME_DIR = Path(os.environ.get('SM_CLAUDE_WORKER_HOME') or sm_paths.state_dir('claude-worker'))
@@ -95,7 +96,7 @@ MAX_RUNS = 3               # runs per issue before the Mac finisher takes the br
 HANDOFF_WINDOW = dt.timedelta(hours=48)
 MAX_WORKERS = int(os.environ.get('SM_CLAUDE_WORKER_MAX', '1'))  # the Mac has two build slots and one simulator
 MARGIN = 3                 # points below the Dial's stop line where new work holds (as the Dial gate)
-TREND_SLACK = 5            # points ahead of the trend line allowed (as the Dial gate)
+TREND_SLACK = 10           # points ahead of the trend line allowed (as the Dial gate; owner 2026-10-19)
 MIN_FREE_GIB = 20          # the Mac finisher's pause line; AGENTS.md wants 10 GiB plus 4 per build
 FOCUS_MILESTONE = os.environ.get('SM_CLAUDE_WORKER_FOCUS_MILESTONE', 'Solid Ground')
 CLAIM_STALE = dt.timedelta(hours=6)      # another thread's claim this old and quiet is released
