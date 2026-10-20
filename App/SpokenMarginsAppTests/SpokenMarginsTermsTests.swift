@@ -145,6 +145,7 @@ final class SupertonicTermsGateTests: XCTestCase {
         defaults.set(AppTTSVoiceSelection.kitten.rawValue, forKey: "ttsVoiceSelection")
         defaults.set("supertonic", forKey: "ttsMode")
 
+        defaults.removeObject(forKey: SupertonicDownloadNoticePolicy.seenKey)
         let relaunched = Gate1AppModel(audioPlaybackClient: TermsNoopAudioPlaybackClient())
 
         XCTAssertEqual(relaunched.ttsVoiceSelection, .kitten)

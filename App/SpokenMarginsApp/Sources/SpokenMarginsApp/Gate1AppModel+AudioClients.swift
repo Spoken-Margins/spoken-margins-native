@@ -65,7 +65,7 @@ extension Gate1AppModel {
             let hooks = PreparedSpeechHooks(store: store, coordinator: coordinator, signatureTask: signatureTask) // #336
             Task { [weak self] in
                 guard let signature = try? await signatureTask.value,
-                      let self, self.ttsVoiceSelection == selection else { return }
+                      let self, self.ttsVoiceSelection == selection, !selection.choice.bundledVoiceIsChosen else { return }
                 self.currentSupertonicRenderSignature = signature
             }
             let diskCache: RenderedSpeechDiskCache
