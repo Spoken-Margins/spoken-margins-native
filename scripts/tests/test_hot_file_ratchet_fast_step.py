@@ -110,7 +110,8 @@ class RatchetStepVerdictTests(unittest.TestCase):
         run = verification.Run(Path(self.temporary.name) / 'run', 'fast', None)
         with mock.patch.object(verification, 'ROOT', self.root), mock.patch.dict(os.environ), \
                 contextlib.redirect_stdout(io.StringIO()):
-            os.environ.pop('SM_HOT_FILE_OK', None)
+            for key in ('SM_HOT_FILE_OK', 'GITHUB_ACTIONS'):  # the lane's runner-tests step runs these inside a CI job
+                os.environ.pop(key, None)
             run.hot_file_ratchet(base='next')
         return run
 
@@ -129,7 +130,10 @@ class RatchetStepVerdictTests(unittest.TestCase):
 
     def test_a_clone_without_the_base_names_the_skip(self):
         run = verification.Run(Path(self.temporary.name) / 'run', 'fast', None)
-        with mock.patch.object(verification, 'ROOT', self.root), contextlib.redirect_stdout(io.StringIO()):
+        with mock.patch.object(verification, 'ROOT', self.root), mock.patch.dict(os.environ), \
+                contextlib.redirect_stdout(io.StringIO()):
+            for key in ('SM_HOT_FILE_OK', 'GITHUB_ACTIONS'):
+                os.environ.pop(key, None)
             run.hot_file_ratchet(base='origin/next')
         self.assertIn('git fetch origin next', run.manifest['steps'][-1]['skipped'])
 
