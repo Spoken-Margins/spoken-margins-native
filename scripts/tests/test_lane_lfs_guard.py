@@ -24,6 +24,7 @@ spec.loader.exec_module(lane)
 MODEL = 'Resources/model.onnx'
 CONTENT = b'\x08\x07\x12\x07pytorch' + bytes(range(256)) * 8  # stands in for an ONNX graph
 OID = 'sha256:' + '4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393'
+ATTRIBUTES = '*.onnx filter=lfs diff=lfs merge=lfs -text\n'
 POINTER = f'version https://git-lfs.github.com/spec/v1\noid {OID}\nsize 132\n'.encode()
 
 
@@ -58,7 +59,6 @@ class GuardTestCase(unittest.TestCase):
         git(self.tree, 'init', '--quiet')
         git(self.tree, 'config', 'user.name', 'lane test')
         git(self.tree, 'config', 'user.email', 'lane@localhost')
-        (self.tree / '.gitattributes').write_text('*.onnx filter=lfs diff=lfs merge=lfs -text\n')
         (self.tree / 'Resources').mkdir()
         (self.tree / 'Resources/notes.txt').write_bytes(POINTER)  # not an LFS path: never the guard's business
 
@@ -67,7 +67,8 @@ class GuardTestCase(unittest.TestCase):
 
 
 class PointerGuardTests(GuardTestCase):
-    """Plain Git, no git-lfs needed: the model is committed as whatever bytes the test writes."""
+    """Plain Git, no git-lfs needed: the model is committed as whatever bytes the test writes. The attribute comes
+    after the commit, so no LFS filter a machine has configured runs; ls-files reads it from the working tree."""
 
     def setUp(self):
         super().setUp()
@@ -75,6 +76,7 @@ class PointerGuardTests(GuardTestCase):
         (self.tree / MODEL).write_bytes(POINTER)
         git(self.tree, 'add', '.')
         git(self.tree, 'commit', '--quiet', '-m', 'model')
+        (self.tree / '.gitattributes').write_text(ATTRIBUTES)
 
     def test_finds_only_lfs_paths_that_hold_a_pointer(self):
         self.assertEqual(lane.lfs_pointer_files(self.tree), [MODEL])
@@ -119,9 +121,13 @@ class PointerGuardTests(GuardTestCase):
 
     def test_a_job_that_skips_lfs_on_purpose_is_not_checked(self):
         # sm-vps-t1's hosted checks and the hosted fast checks keep pointers on purpose.
-        os.environ['GIT_LFS_SKIP_SMUDGE'] = '1'
-        self.assertIsNone(lane.ensure_lfs_files(self.tree, run=lambda *a, **k: self.fail('skipped jobs repair nothing')))
+        for value in ('1', 'true', 'TRUE'):
+            os.environ['GIT_LFS_SKIP_SMUDGE'] = value
+            self.assertIsNone(lane.ensure_lfs_files(self.tree, run=lambda *a, **k: self.fail('skipped jobs repair nothing')))
         self.assertEqual(self.steps(), [])
+        os.environ['GIT_LFS_SKIP_SMUDGE'] = '0'
+        self.assertIsNotNone(lane.ensure_lfs_files(self.tree, run=lambda command, **k: subprocess.CompletedProcess(
+            command, 0, '', '')))
 
     def test_host_tests_stop_before_running_when_a_pointer_stays(self):
         with tempfile.TemporaryDirectory() as evidence, \
@@ -140,6 +146,7 @@ class GitLfsGuardTests(GuardTestCase):
         super().setUp()
         self.init()
         git(self.tree, 'lfs', 'install', '--local')
+        (self.tree / '.gitattributes').write_text(ATTRIBUTES)
         (self.tree / MODEL).write_bytes(CONTENT)
         git(self.tree, 'add', '.')
         git(self.tree, 'commit', '--quiet', '-m', 'model')

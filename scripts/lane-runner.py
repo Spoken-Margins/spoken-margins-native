@@ -790,7 +790,7 @@ def ensure_lfs_files(tree: Path, run=subprocess.run) -> str | None:
     """Make every LFS file in the tree its content. Returns None when they are (after a repair, if one was needed),
     else the report line naming each file still a pointer. A job that skips LFS on purpose (GIT_LFS_SKIP_SMUDGE=1,
     the VPS runner's) is not checked."""
-    if os.environ.get('GIT_LFS_SKIP_SMUDGE') == '1':
+    if os.environ.get('GIT_LFS_SKIP_SMUDGE', '').strip().lower() in ('1', 't', 'true', 'y', 'yes', 'on'):  # as git-lfs reads it
         return None
     started = time.monotonic()
     pointers = lfs_pointer_files(tree)
@@ -803,8 +803,8 @@ def ensure_lfs_files(tree: Path, run=subprocess.run) -> str | None:
     left = [name for name in lfs_pointer_files(tree) if name in pointers]
     if not left:
         print(f'[lane] git lfs checkout restored {len(pointers)} file(s).', flush=True)
-        # A runner fault in the ledger's terms: the checkout was wrong, not the PR. A guard that never repairs or
-        # stops a run in 60 days is waste.
+        # A runner fault in the ledger's terms: the checkout was wrong, not the PR. Repairs in a row raise its fault
+        # alarm, as something keeps writing pointers. No repair or stop in 60 days says the guard is waste.
         note_step(LFS_STEP, 'REPAIRED', time.monotonic() - started)
         return None
     note_step(LFS_STEP, 'INCONCLUSIVE', time.monotonic() - started)
