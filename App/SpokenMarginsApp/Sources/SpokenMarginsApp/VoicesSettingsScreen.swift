@@ -84,16 +84,16 @@ private struct VoiceRow: View {
             Text(row.entry.publisher)
                 .font(.subheadline)
                 .foregroundStyle(AppColors.secondaryText)
-            HStack(spacing: 12) {
-                Text(sizeText).font(.subheadline).monospacedDigit()
-                ForEach(row.entry.licenses, id: \.id) { license in
-                    NavigationLink {
-                        VoiceLicenseView(license: license).miniPlayerKeepOut()
-                    } label: {
-                        Text(license.spdxId ?? "Licence").font(.subheadline)
-                    }
-                    .accessibilityLabel("Licence: \(license.name)")
+            // The status on its own line and each licence on its own, so a card with four licences (Supertonic) never
+            // squeezes "Downloaded · 148.1 MB" or "Apache-2.0" into a shared row that wraps mid-word, at any text size (#2225).
+            Text(sizeText).font(.subheadline).monospacedDigit()
+            ForEach(row.entry.licenses, id: \.id) { license in
+                NavigationLink {
+                    VoiceLicenseView(license: license).miniPlayerKeepOut()
+                } label: {
+                    Text(license.spdxId ?? "Licence").font(.subheadline)
                 }
+                .accessibilityLabel("Licence: \(license.name)")
             }
             status
         }
