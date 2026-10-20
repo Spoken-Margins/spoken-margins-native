@@ -86,12 +86,12 @@ extension Gate1AppModel {
             if selection.choice.playsSavedSupertonicAudio {
                 savedSupertonicLookup = { await hooks.lookup(itemId: $0, articleIdentity: $1, plan: $2) }
             }
-            let renderingAllowed: @Sendable () -> Bool = kittenIsChosen
-                ? { false }
-                : supertonicModel.renderingAllowed(when: SupertonicModelNotDownloaded.governorAllowsRendering)
+            let renderingAllowed: @Sendable () -> Bool
             if kittenIsChosen {
+                renderingAllowed = { return false }
                 diagnostics["sessionTTS"] = "Kitten (chosen)"
             } else {
+                renderingAllowed = supertonicModel.renderingAllowed(when: SupertonicModelNotDownloaded.governorAllowsRendering)
                 refreshSupertonicSessionDiagnostics(voice: voice)
             }
             diagnostics["renderedSpeechCacheLimitMB"] = "\(renderedSpeechCacheLimitMB)"
