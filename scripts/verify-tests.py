@@ -473,8 +473,6 @@ PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snaps
 # Mac: the runner and ops tests that drive Apple tools or measure the Mac, and the SessionKitTests and
 # SessionKitTraceTests targets, whose real-time AVFoundation tests need a sound output (PORTABLE_LEFT_OUT 'package').
 # Between them the three plans run every fast-plan step (test_fast_split.py checks it).
-# The ref the author's fast run judges the hot-file ratchet against (#2175).
-HOT_FILE_BASE = 'origin/next'
 FAST_SPLIT_PLANS = ('fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest')
 HOSTED_SESSIONKIT_STEPS = ('package-build', 'package-core', 'package-core-serial')
 MAC_REST_STEPS = ('hot-file-ratchet', 'runner-tests', 'ops', 'package-build', 'package', 'shipped-compat')
@@ -1166,23 +1164,25 @@ class Run:
             else:
                 self.host_steps()
 
-    def hot_file_ratchet(self, base=HOT_FILE_BASE):
+    def hot_file_ratchet(self, base=None):
         """The lane's hot-file ratchet (scripts/hot_file_ratchet.py) in the author's own loop (#2175).
 
         On 2026-10-19 #2159, #2155 and #2067 each failed only this check, hours into the lane queue. It compares the
         committed branch with the local `base` (fetch first for an up-to-date verdict) and fails with the lane's words.
         A lane run (one given the PR's changed paths, or any CI job) leaves it to the runner, which judges next's copy with the PR's
-        labels. With the hot-file-ok label granted, set SM_HOT_FILE_OK=1."""
+        labels. With the hot-file-ok label granted, set SM_HOT_FILE_OK=1. `base` defaults to the trunk's ref."""
         if self.changed is not None or os.environ.get('GITHUB_ACTIONS') == 'true':
             # A CI job is a lane job even without --changed-files (the lane drops it for a path it can't pass), and
             # the lane's runner-tests step runs inside it too.
             return self.skip('hot-file-ratchet', 'the lane runner checks next\'s ratchet, with the PR\'s labels, before any build')
         if os.environ.get('SM_HOT_FILE_OK') == '1':
             return self.skip('hot-file-ratchet', 'SM_HOT_FILE_OK=1: the PR carries the hot-file-ok label')
+        from trunk import trunk_branch  # #1492: the branch the author's run judges the ratchet against
+        base = base or f'origin/{trunk_branch()}'
         known = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', '--verify', '--quiet', f'{base}^{{commit}}'],
                                capture_output=True, text=True)
         if known.returncode:
-            return self.skip('hot-file-ratchet', f'{base} is not in this clone; run `git fetch origin next` to check it')
+            return self.skip('hot-file-ratchet', f'{base} is not in this clone; run `git fetch origin {trunk_branch()}` to check it')
         self.command('hot-file-ratchet', [sys.executable, 'scripts/hot_file_ratchet.py', '--base', base], timeout=60)
 
     def shipped_compat(self):
