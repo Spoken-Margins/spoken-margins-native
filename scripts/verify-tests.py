@@ -393,7 +393,7 @@ CODEX_SANDBOX_SKIPS = {'runner-tests': 'Codex sandbox: `ps` cannot run here, so 
 # .github/ runs every runner test. So does the root .gitignore, which the lane runner's warm-build tests copy.
 RUNNER_TEST_TRIGGERS = ('scripts/', '.github/', '.gitignore')
 # Some tests also read the repository outside scripts/: the filled-button and mini player keep-out scans read
-# App/; the inventory and
+# App/ (and the accessibility source scans read App/ Swift files, #2041); the inventory and
 # contract checks read project.yml, Package.swift, TestPlans/, Contracts/ and validation/; the hot-file test
 # checks that the hot files exist under App/; the research harness test reads research/; and the lane
 # runner's T3 scope and "only testing" tests, and one lane-sim test, plan against the real TestPlans/ and the
@@ -414,7 +414,11 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
                        'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved',
                        'test_building_md', 'test_third_party_notices',
-                       'test_starter_catalog')
+                       'test_starter_catalog',
+                       # The accessibility source scans read App/ Swift files (#2041).
+                       'test_screen_change_cue', 'test_selected_trait', 'test_screen_title_heading',
+                       'test_row_accessibility_actions', 'test_voiceover_label_nits',
+                       'test_increase_contrast_wiring', 'test_reduce_motion', 'test_tap_target_styles')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
                       'docs/sharing-test-kit/', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
                       # test_third_party_notices reads the dependency manifests and its own list (#1823).
