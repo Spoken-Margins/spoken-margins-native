@@ -6,7 +6,9 @@ Usage: scripts/xcodebuild-lane <xcodebuild arguments>
 - Waits for one of the two Mac-wide build slots (scripts/lane_slots.py), so stream sessions and
   the lane never run more than two builds at once. Queued builds print who holds the slots.
 - Adds `-derivedDataPath <worktree>/.build/dd` unless the arguments already name one. A shared
-  DerivedData across branches produces false "does not conform" errors (AGENTS.md).
+  DerivedData across branches produces false "does not conform" errors (AGENTS.md). In a worktree under
+  ~/Documents, `.build` is first linked to its own folder in ~/Library/Caches/SpokenMarginsBuilds, where
+  the disk-relief job can clear it (scripts/sm_build_cache.py).
 - Adds `ARCHS=arm64` to a generic iOS Simulator build on Apple silicon, unless the arguments set
   ARCHS or -arch. A generic destination builds every architecture: each Swift file, packages
   included, was compiled for x86_64 too, a simulator no Mac here runs (#1326).
@@ -26,6 +28,7 @@ import threading
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lane_slots import build_slot  # noqa: E402
+import sm_build_cache  # noqa: E402
 import xcodebuild_finish  # noqa: E402
 
 NO_BUILD_FLAGS = {'-version', '-list', '-showsdks', '-showBuildSettings', '-showdestinations',
@@ -56,7 +59,9 @@ def main(argv):
         os.execvp(xcodebuild, [xcodebuild, *argv])
     args = list(argv)
     if '-derivedDataPath' not in args:
-        args += ['-derivedDataPath', str(worktree_root() / '.build/dd')]
+        root = worktree_root()
+        sm_build_cache.ensure_links(root, log=lambda line: print(line, file=sys.stderr, flush=True))
+        args += ['-derivedDataPath', str(root / '.build/dd')]
     args += simulator_arch(args)
     derived = args[args.index('-derivedDataPath') + 1]
     action = next((a for a in reversed(argv) if not a.startswith('-') and '=' not in a
