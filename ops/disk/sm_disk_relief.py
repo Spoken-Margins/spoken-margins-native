@@ -622,11 +622,13 @@ def verification_running(folder: Path) -> bool:
     return False
 
 
-def plan_build_slots(cfg: Config, machine: Machine, procs: List[Proc], protected: List[Path], plan: Plan) -> None:
+def plan_build_slots(cfg: Config, machine: Machine, procs: List[Proc], protected: List[Path], plan: Plan,
+                     busy: Optional[dict] = None) -> None:
     """Build folders that worktrees under ~/Documents keep in ~/Library/Caches/SpokenMarginsBuilds/<slot>/
-    (`root/` is the worktree's `.build`, `sessionkit/` its SessionKit `.build`). Same idle rule as step 2;
-    the folders are emptied, not removed, so the worktree's links keep working. A slot whose worktree is
-    gone goes whole."""
+    (`root/` is the worktree's `.build`, `sessionkit/` its SessionKit `.build`). Same idle rule as step 2,
+    including a live agent's worktree lock (`busy`, from busy_worktrees); the folders are emptied, not
+    removed, so the worktree's links keep working. A slot whose worktree is gone goes whole."""
+    busy = busy or {}
     root = cfg.build_cache_dir
     if not root.is_dir() or is_protected(root, protected):
         return
@@ -636,9 +638,13 @@ def plan_build_slots(cfg: Config, machine: Machine, procs: List[Proc], protected
         if slot.is_symlink() or not slot.is_dir():
             continue
         try:
-            owner = (slot / SLOT_OWNER).read_text(errors='replace').strip() or None
+            # First line: the worktree's path. Second: its identity, which only sm_build_cache reads.
+            owner = ((slot / SLOT_OWNER).read_text(errors='replace').strip().splitlines() or [''])[0] or None
         except OSError:
             owner = None
+        if owner and real(owner) in busy:
+            plan.skipped.append(f'{slot}: {busy[real(owner)]}')
+            continue
         watched = [slot] + ([Path(owner)] if owner else [])
         if busy_paths(watched, procs):
             plan.skipped.append(f'{slot}: a process works in or builds {owner or slot}')
@@ -1078,7 +1084,7 @@ def make_plan(cfg: Config, machine: Machine) -> Plan:
 
     removing = step('worktrees', plan_worktrees, cfg, machine, trees, protected, busy, plan) or set()
     step('caches', plan_caches, cfg, machine, trees, busy, protected, plan, removing)
-    step('build cache folder', plan_build_slots, cfg, machine, procs, protected, plan)
+    step('build cache folder', plan_build_slots, cfg, machine, procs, protected, plan, busy)
     step('session scratch', plan_session_scratch, cfg, machine, procs, protected, plan)
     step('tmp', plan_tmp, cfg, machine, procs, protected, plan)
     step('device support', plan_device_support, cfg, procs, protected, plan)

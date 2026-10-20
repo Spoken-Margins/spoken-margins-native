@@ -840,6 +840,21 @@ class BuildCacheFolder(Base):
         for slot in (busy_slot, recent_slot, testing_slot):
             self.assertTrue((slot / 'root/dd/Build/blob').exists(), slot)
 
+    def test_a_slot_whose_worktree_a_live_agent_has_locked_stays(self):
+        # A sub-agent's worktree, locked with its pid while the agent itself works from another folder:
+        # its DerivedData must survive between build-for-testing and test-without-building (finding 3).
+        repo, (a, b) = self.make_repo('a', 'b')
+        locked_slot = self.linked(a)
+        dead_slot = self.linked(b)
+        git(repo, 'worktree', 'lock', '--reason', 'claude agent x (pid 42 start Thu)', str(a))
+        git(repo, 'worktree', 'lock', '--reason', 'claude agent y (pid 43 start Thu)', str(b))
+        m = FakeMachine(self.cfg, base_free=10 * MiB, live_pids={42})
+        plan = d.make_plan(self.cfg, m)
+        planned = {c.path for c in plan.candidates}
+        self.assertFalse({locked_slot / 'root/dd', locked_slot / 'sessionkit'} & planned, planned)
+        self.assertIn(dead_slot / 'root/dd', planned)
+        self.assertTrue(any('live agent' in s for s in plan.skipped), plan.skipped)
+
     def test_a_worktree_this_job_may_not_look_into_is_not_counted_as_gone(self):
         _, (a,) = self.make_repo('a')
         slot = self.linked(a)
