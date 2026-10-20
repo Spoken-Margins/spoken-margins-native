@@ -11,9 +11,10 @@ import Foundation
 ///
 /// Timing alone let one through (#2182): on a hands-free Bluetooth recording a phantom `play` came 2.2 s in. On that
 /// profile the listener's own stem presses never reach the app as media commands (the owner's stem-press test logged
-/// none), so a bare `play` there is the profile's noise at any time and never ends the Margin. A `pause` or
-/// play/pause toggle still does, and so does `play` on every other route, where the Lock Screen and wired headsets
-/// send it as a real press.
+/// none), so a bare `play` there is the profile's noise at any time and never ends the Margin. A `pause`, the
+/// play/pause toggle and skip forward still end it, and so does `play` on every other route (wired headsets, the
+/// Lock Screen without a hands-free input). The cost: while recording the Lock Screen card shows a play button, so on
+/// a hands-free headset that button no longer ends the Margin; the Live Activity's Finish and the app still do.
 ///
 /// Pure: the app passes the milliseconds on a clock that only moves forward.
 public enum RecordingTransportGuard {
