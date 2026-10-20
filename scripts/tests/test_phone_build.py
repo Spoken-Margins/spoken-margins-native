@@ -487,6 +487,21 @@ class PhoneBuildTests(unittest.TestCase):
         self.assertIn('build-for-testing', calls)
         self.assertIn('passed here', json.loads((self.phone / 'latest/build.json').read_text())['checks'])
 
+    def test_host_checks_leave_the_hot_file_ratchet_to_the_merge(self):
+        # The ratchet is a merge rule, not a build check: an unmerged PR that grows a hot file (a compaction the
+        # owner asked to see on his phone first, or a hot-file-ok PR) still gets a phone build (#2180 audit).
+        (self.repo / '.venv/bin').mkdir(parents=True)
+        python = self.repo / '.venv/bin/python'
+        python.write_text('#!/bin/sh\necho "fast hot-file-ok=${SM_HOT_FILE_OK:-unset} $*" >> "$FAKE_LOG"\n'
+                          '[ "$SM_HOT_FILE_OK" = 1 ]\n')
+        python.chmod(0o755)
+        self.git('add', '-f', '.venv/bin/python')
+        self.git('commit', '-q', '-m', 'Grow Gate1RootView.swift for the compaction mockup')
+        self.tip = self.git('rev-parse', 'HEAD')
+        done = self.run_build(FAKE_TIP=self.tip)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('fast hot-file-ok=1 scripts/verify-tests.py --plan fast', self.log.read_text())
+
     def commit_the_host_check_python(self, subject):
         """Commit a fake `.venv/bin/python` (what the build runs verify-tests.py with) as the new tip.
 

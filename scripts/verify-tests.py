@@ -1182,7 +1182,9 @@ class Run:
         known = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', '--verify', '--quiet', f'{base}^{{commit}}'],
                                capture_output=True, text=True)
         if known.returncode:
-            return self.skip('hot-file-ratchet', f'{base} is not in this clone; run `git fetch origin {trunk_branch()}` to check it')
+            # Name the fetch for the base actually judged, which a caller may give instead of the trunk (#2180 audit).
+            branch = base[len('origin/'):] if base.startswith('origin/') else base
+            return self.skip('hot-file-ratchet', f'{base} is not in this clone; run `git fetch origin {branch}` to check it')
         self.command('hot-file-ratchet', [sys.executable, 'scripts/hot_file_ratchet.py', '--base', base], timeout=60)
 
     def shipped_compat(self):

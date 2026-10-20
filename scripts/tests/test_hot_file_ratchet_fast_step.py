@@ -48,9 +48,11 @@ class FastPlanOrderTests(unittest.TestCase):
                     mock.patch.object(verification, 'ROOT', root), \
                     mock.patch.object(verification, 'host_test_slot',
                                       side_effect=lambda *a, **k: calls.append(('slot', None)) or contextlib.nullcontext({})), \
-                    mock.patch.dict(os.environ, env or {}), \
+                    mock.patch.dict(os.environ, {'SM_TRUNK': 'next', **(env or {})}), \
                     contextlib.redirect_stdout(io.StringIO()):
-                for key in ('SM_HOT_FILE_OK', 'GITHUB_ACTIONS'):  # these tests may themselves run in the lane
+                # These tests may themselves run in the lane, whose workflows set SM_TRUNK from the repository
+                # variable; the fixture's trunk is next whatever that variable says (#2180 audit).
+                for key in ('SM_HOT_FILE_OK', 'GITHUB_ACTIONS'):
                     if key not in (env or {}):
                         os.environ.pop(key, None)
                 run.fast()
@@ -134,8 +136,20 @@ class RatchetStepVerdictTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             for key in ('SM_HOT_FILE_OK', 'GITHUB_ACTIONS'):
                 os.environ.pop(key, None)
+            os.environ['SM_TRUNK'] = 'main'  # the lane sets it from the repository variable once #1492 moves the trunk
             run.hot_file_ratchet(base='origin/next')
+        # The fetch it names is the base it was given, not whatever the environment calls the trunk (#2180 audit).
         self.assertIn('git fetch origin next', run.manifest['steps'][-1]['skipped'])
+
+    def test_a_clone_without_the_trunk_names_the_trunk_s_fetch(self):
+        run = verification.Run(Path(self.temporary.name) / 'run', 'fast', None)
+        with mock.patch.object(verification, 'ROOT', self.root), mock.patch.dict(os.environ, {'SM_TRUNK': 'main'}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            for key in ('SM_HOT_FILE_OK', 'GITHUB_ACTIONS'):
+                os.environ.pop(key, None)
+            run.hot_file_ratchet()
+        self.assertIn('origin/main is not in this clone; run `git fetch origin main`',
+                      run.manifest['steps'][-1]['skipped'])
 
 
 if __name__ == '__main__':

@@ -1620,8 +1620,11 @@ def build(sha: str) -> int:
         checks = runner_tested(sha)
         if not checks:
             say('no lane host-test evidence for this commit; running host tests and the simulator build here first')
+            # The hot-file ratchet is a merge rule, not a build check: an unmerged PR that grows a hot file still
+            # goes on the phone (#2175, #2180 audit). The lane judges it, with the PR's labels, before merging.
             if run_logged([str(src / '.venv/bin/python'), 'scripts/verify-tests.py', '--plan', 'fast',
-                           '--output', str(work / 'fast')], src, log) != 0:
+                           '--output', str(work / 'fast')], src, log,
+                          env={**os.environ, 'SM_HOT_FILE_OK': '1'}) != 0:
                 raise BuildFailed('host tests (--plan fast) failed')
             if run_logged([*lane, *project, '-destination', 'generic/platform=iOS Simulator',
                            '-derivedDataPath', str(work / 'dd-sim'), 'build-for-testing'], src, log) != 0:
