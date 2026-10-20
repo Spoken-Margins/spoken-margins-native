@@ -12,7 +12,7 @@ Re-check the citations if the network code changes before submission.
 
 ### Short answer
 
-- **Does the app collect data?** Draft answer: **No, "Data Not Collected"**, on one condition (question Q1): the owner's server must keep no logs that tie an IP address to a request beyond serving it.
+- **Does the app collect data?** Draft answer: **Yes, one type: "Other User Content", linked to the user, not used for tracking.** The reason is the optional Readwise sync (row 12): when a listener turns on "Send Margins to Readwise", Margin text and the passage around it go from the phone to their own Readwise account. Over-declaring is safe; under-declaring is the compliance risk (owner's walkthrough on #175, 2026-10-17). Whether that sync is "collection" at all is attorney question 7 ([attorney-questions.md](../legal/attorney-questions.md)). Nothing else is collected, on one condition (question Q1): the owner's server must keep no logs that tie an IP address to a request beyond serving it.
 - **Tracking:** No. The app has no ad or analytics SDK and never calls App Tracking Transparency, AdServices, `ASIdentifierManager` or `identifierForVendor`. The only packages are onnxruntime 1.24.2 and ZIPFoundation 0.9.20.
 
 ### What leaves the device
@@ -32,6 +32,7 @@ Apple counts data as "collected" when it leaves the device and the developer or 
 | 9 | User connects Readwise Reader or Raindrop.io, and taps Refresh | `readwise.io/api/v3/list/`, `api.raindrop.io/rest/v1/raindrops/0` | The user's own access token. It is kept in the Keychain as `WhenUnlockedThisDeviceOnly` (`A/ReadLaterModel.swift:21`, `M:16835`) | `SK/SessionKit/ReadLaterClient.swift:29-36`; `A/ReadLaterModel.swift:52` |
 | 10 | **Off in this build.** The OpenAI features would send an API key, source text, Margin transcripts and questions to `api.openai.com` | — | — | `A/OpenAIResponsesClient.swift:30`; turned off by `SMRemoteProviderExperienceEnabled: false` (`project.yml:117`, read at `A/LocalFoundationModels.swift:7-18`) |
 | 11 | First on-device transcription | Apple's speech-model download (`AssetInventory`) | The locale | `SK/SessionKitAudio/AudioAdapters.swift:226-229` |
+| 12 | **Off by default.** The listener turns on "Send Margins to Readwise" in Settings. Then the app checks once a minute while it is open, including Margins that already exist when it is first turned on | `readwise.io/api/v2/highlights/` (Readwise, with the listener's own token; no Spoken Margins server) | For each Margin with text: the Margin text (as the note; for a spoken Margin, its transcribed words), the source passage around it (as the highlight), the item's title, author, a shareable source URL (private feed links are dropped), category and creation time. Recording audio is not sent | `A/ReadwiseHighlightSync.swift:12`, `:33-45`, `:89-114`; `SK/SessionKit/ReadwiseHighlightClient.swift:8-52`, `:79`; toggle text `A/PKMSettingsViews.swift:427-430` |
 
 Also checked, and nothing leaves the device:
 
@@ -45,7 +46,7 @@ Also checked, and nothing leaves the device:
 
 ### Answer per data type
 
-Every answer below is **Not collected**, which makes "Linked to identity" and "Used for tracking" moot. The reason column says why.
+Every answer below is **Not collected** except one: **User content: other** is declared as collected, linked to the user, not used for tracking, because of the Readwise sync (row 12). That is the conservative reading; the other answers make "Linked to identity" and "Used for tracking" moot. The reason column says why.
 
 | Apple data type | Answer | Why |
 |---|---|---|
@@ -56,7 +57,7 @@ Every answer below is **Not collected**, which makes "Linked to identity" and "U
 | Sensitive info | Not collected | — |
 | Contacts | Not collected | — |
 | User content: audio | Not collected | Recordings stay on the device and are shared only as a file the user sends |
-| User content: other (Margin text, notes) | Not collected | Same. It would change to "Collected, shared with OpenAI, not linked, not tracking" if `SMRemoteProviderExperienceEnabled` is turned on (row 10) |
+| User content: other (Margin text, notes) | **Collected: "Other User Content", linked to the user, not used for tracking** | Only if the listener turns on "Send Margins to Readwise": Margin text and the passage around it go to their Readwise account (row 12). Everyone else's Margin text stays on the device and is shared only as a file the user sends. It would also be "shared with OpenAI" if `SMRemoteProviderExperienceEnabled` is turned on (row 10) |
 | User content: emails or texts, photos or videos, gameplay, customer support | Not collected | Support is by email from the user's own mail app |
 | Browsing history | Not collected | Article and feed URLs go only to the site itself (rows 3, 7) |
 | Search history | Not collected | Episode titles go to Apple's iTunes Search to answer the request (row 4). The app keeps no search history of its own |
@@ -65,11 +66,11 @@ Every answer below is **Not collected**, which makes "Linked to identity" and "U
 | Usage data: product interaction, advertising, other | Not collected | Playback events are logged on the device only (`M:628`). Diagnostics go out only when the user copies them into an email (`A/SettingsScreen.swift:351`) |
 | Diagnostics: crash, performance, other | Not collected | No crash SDK. Crash logs reach the developer only through Apple's own opt-in sharing (Xcode Organizer). Check Apple's current guidance on declaring that at submission (#175, "Crash reporting through Xcode Organizer") |
 | Surroundings, body | Not collected | — |
-| Other data | Not collected | Readwise and Raindrop tokens go only to the user's own account at that service (row 9) |
+| Other data | Not collected | Readwise and Raindrop tokens go only to the user's own account at that service (row 9). The Margin text sent to Readwise is under "User content: other" above |
 
 ### Mismatches with the privacy manifests
 
-The data answers agree with `App/SpokenMarginsApp/Sources/PrivacyInfo.xcprivacy`, which declares `NSPrivacyTracking` false and no collected data types. The required-reason API declarations didn't agree with the code in three places. All three are now fixed:
+The answers agree with `App/SpokenMarginsApp/Sources/PrivacyInfo.xcprivacy`: it declares `NSPrivacyTracking` false and one collected data type, `NSPrivacyCollectedDataTypeOtherUserContent` (linked, not tracking, purpose App Functionality), which matches the label above. The required-reason API declarations didn't agree with the code in three places. All three are now fixed:
 
 1. **Disk space, main app.** `Packages/SessionKit/Sources/SessionKit/OfflineStorageLedger.swift` (`physicallyAvailableBytes()`) reads `volumeAvailableCapacityForImportantUsageKey` before writing offline audio. Fixed: the manifest now declares `NSPrivacyAccessedAPICategoryDiskSpace` with reasons `E174.1` and `85F4.1` (a refused download tells the listener how many bytes are free), and this is the only disk-space call in the app and SessionKit. Issue: #514.
 2. **System boot time, main app.** `ProcessInfo.processInfo.systemUptime` measures elapsed time, for example at `M:646`, `A/SupertonicSpeechPlaybackClient.swift:259` and `A/AutomaticMarginNoteGatherer.swift:19`. Fixed: the manifest now declares `NSPrivacyAccessedAPICategorySystemBootTime` with reason `35F9.1`. Every `systemUptime` read in the app and SessionKit is subtracted from another reading to time something inside the app; no raw uptime value is stored or sent. Issue: #515.
@@ -82,13 +83,13 @@ The draft label above describes the app. The public privacy policy (`Site/privac
 - the launch-time fetches from the developer's own server (rows 1 and 2);
 - automatic feed refresh, transcript fetches and Wi-Fi downloads (rows 3, 5, 6);
 - a recipient's device fetching the source URLs in a packet someone sent them (row 4);
-- Readwise and Raindrop (row 9).
+- Readwise and Raindrop (row 9). The policy now covers the optional Readwise sync of Margin text (`Site/privacy/index.html:12-13`); check it matches row 12 when #455 lands.
 
 It also says there is "no developer-operated … backend", but rows 1 and 2 use one. Updating the policy is #455's job; this list is its input.
 
 ### Questions for Cole
 
-- **Q1. Server logs.** Does the VPS web server keep access logs (IP address, time, path) for `/onboarding/`? If they're kept only briefly for security, "Data Not Collected" holds. If they're kept longer, or used for anything else, answer "Coarse location" or "Other data" as collected, not linked, not tracking. My pick: keep logs short-lived and say so in the privacy policy.
+- **Q1. Server logs.** Does the VPS web server keep access logs (IP address, time, path) for `/onboarding/`? If they're kept only briefly for security, the label stays at "Other User Content" alone. If they're kept longer, or used for anything else, answer "Coarse location" or "Other data" as collected, not linked, not tracking. My pick: keep logs short-lived and say so in the privacy policy.
 
 ## 2. App Review notes (DRAFT)
 
@@ -195,7 +196,7 @@ Copy that reads as internal, for the listing pass rather than an issue: `A/Setti
 
 ## 5. Download size input for #175
 
-The bundled Supertonic 3 INT8 voice is **148,065,254 bytes (148.1 MB, 141.2 MiB)** across 23 files. The four ONNX models are 144,508,203 bytes of that. Source: the sum of `bytes` in `App/SpokenMarginsApp/Resources/Supertonic/asset-manifest.json`. The onnxruntime framework comes on top of that. The real download and install sizes come from App Store Connect's size report for a TestFlight build.
+Since #1820 the app no longer bundles Supertonic; listeners download it in Settings › Voices. The download is all 23 files (the 16 model files marked `downloaded` in the manifest, the licences and the notice), 148,065,254 bytes, and the app shrinks by the 147,709,674 bytes of model files. Before #1820, the bundled Supertonic 3 INT8 voice was **148,065,254 bytes (148.1 MB, 141.2 MiB)** across 23 files. The four ONNX models are 144,508,203 bytes of that. Source: the sum of `bytes` in `App/SpokenMarginsApp/Resources/Supertonic/asset-manifest.json`. The onnxruntime framework comes on top of that. The real download and install sizes come from App Store Connect's size report for a TestFlight build.
 
 ## 6. Licenses and the EULA (#449 item 7)
 

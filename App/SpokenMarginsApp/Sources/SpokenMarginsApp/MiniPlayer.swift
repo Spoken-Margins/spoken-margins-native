@@ -76,6 +76,7 @@ struct MiniPlayerBar: View {
     static let controlSpacing: CGFloat = 12
 
     @EnvironmentObject private var model: Gate1AppModel
+    @State private var playbackTick = 0 // bumped by each progress tick: the chapter line can follow the playhead (#2074)
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -86,6 +87,7 @@ struct MiniPlayerBar: View {
     }
 
     var body: some View {
+        let _ = playbackTick
         layout {
             Button(action: model.openPlayback) {
                 HStack(spacing: 11) {
@@ -154,8 +156,13 @@ struct MiniPlayerBar: View {
                     }
                 } label: {
                     Group {
-                        if model.snapshot.status == .starting {
-                            ProgressView().tint(AppColors.onEvergreen)
+                        if model.playPauseFace == .cancelStart {
+                            // A start is pending and a tap cancels it: a stop mark inside the spinner says so (#2098).
+                            ZStack {
+                                ProgressView().tint(AppColors.onEvergreen)
+                                Image(systemName: "stop.fill")
+                                    .font(.system(size: 9, weight: .bold))
+                            }
                         } else {
                             Image(systemName: model.activePlaybackIsPlaying ? "pause.fill" : "play.fill")
                                 .resizable()
@@ -168,7 +175,8 @@ struct MiniPlayerBar: View {
                     .background(AppColors.evergreen, in: Circle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(model.snapshot.status == .starting ? PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot) : model.activePlaybackIsPlaying ? "Pause" : "Play")
+                .accessibilityLabel(model.playPauseFace.accessibilityLabel(isMedia: model.isMediaPlaybackSnapshot))
+                .accessibilityHint(model.playPauseFace.accessibilityHint ?? "")
                 .accessibilityIdentifier("miniPlayer.playPause.button")
 
                 Button(action: model.dismissMiniPlayer) {
@@ -195,5 +203,6 @@ struct MiniPlayerBar: View {
         .shadow(color: .black.opacity(0.14), radius: 18, y: 7)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("miniPlayer.bar")
+        .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
     }
 }

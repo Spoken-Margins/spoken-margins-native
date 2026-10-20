@@ -155,10 +155,9 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             attemptedJob = job
             recordDeveloperDiagnostic("preparation.selected", ["item": DeveloperDiagnosticRecording.token(job.itemId), "policy": String(describing: job.policy), "nextChunk": String(job.nextChunkIndex)])
             let support = try applicationSupportDirectory()
-            guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
+            guard let assets = SupertonicAssetResolver.location() else {
                 return !foregroundDemandOnly
             }
-            let assets = SupertonicAssetLocation(rootURL: resourceRoot)
             let signature = try await Task.detached(priority: .utility) {
                 try SupertonicRenderIdentity.make(assets: assets, voice: voice)
             }.value

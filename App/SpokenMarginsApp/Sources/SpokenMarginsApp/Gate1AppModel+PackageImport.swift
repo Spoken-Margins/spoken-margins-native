@@ -19,6 +19,7 @@ extension Gate1AppModel {
         appVersion: String = KeptPackageNotices.currentAppVersion,
         now: Date = Date()
     ) throws {
+        packageImport.sweepOrphanedFoldersOnce()
         let payloadIDs = try packageStore.pendingPayloadIDs()
         diagnostics["pendingSpokenMarginsPackages"] = "\(payloadIDs.count)"
         for payloadID in payloadIDs where spokenMarginsPackageImportReview == nil {

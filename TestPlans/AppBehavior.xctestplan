@@ -21,7 +21,7 @@
       "skippedTests": [
         "MediaPlaybackInterruptionTests",
         "MixedPlaybackAudioSessionTests",
-        "SupertonicSpeechTests/testBundledRendererSynthesizesJamesAndLilyAndReusesSessions()"
+        "SupertonicSpeechTests/testDownloadedRendererSynthesizesJamesAndLilyAndReusesSessions()"
       ],
       "parallelizable": false
     }

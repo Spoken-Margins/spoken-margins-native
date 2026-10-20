@@ -693,6 +693,105 @@ class LaneSimTests(unittest.TestCase):
         self.assertIn('second simulator slot: available', on.stdout)
         self.assertNotEqual(subprocess.run(helper + ['off'], env=env, capture_output=True, text=True).returncode, 0)
 
+    # An automatic switch-off expires (#2157): the 2026-09-29 one stayed three weeks with nothing to lift it.
+    HOUR = 3600
+
+    def test_an_automatic_switch_off_comes_back_on_after_its_cooldown_once_pressure_is_normal(self):
+        lane_slots.disable_second_slot('pressure stayed at warn', now=0)
+        off = Path(self.env['SM_LANE_STATE_DIR']) / lane_slots.SECOND_SLOT_OFF
+        allowed, why = lane_slots.second_slot_status(now=4 * self.HOUR - 1)
+        self.assertFalse(allowed)
+        self.assertIn('comes back on after', why)
+        allowed, why = lane_slots.second_slot_status(now=4 * self.HOUR + 1)
+        self.assertTrue(allowed, why)
+        self.assertIn('came back on after its cooldown', why)
+        self.assertFalse(off.exists())
+
+    def test_an_expired_switch_off_stays_off_while_pressure_is_above_normal(self):
+        lane_slots.disable_second_slot('pressure stayed at warn', now=0)
+        for level, name in (('2', 'warn'), ('4', 'critical')):
+            with mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': level}):
+                allowed, why = lane_slots.second_slot_status(now=30 * self.HOUR)
+            self.assertFalse(allowed)
+            self.assertIn(f'once memory pressure is normal (now {name})', why)
+        self.assertTrue((Path(self.env['SM_LANE_STATE_DIR']) / lane_slots.SECOND_SLOT_OFF).exists())
+        self.assertTrue(lane_slots.second_slot_status(now=30 * self.HOUR)[0])
+
+    def test_each_repeat_trip_within_a_week_doubles_the_cooldown_up_to_a_day(self):
+        expected = [4, 8, 16, 24, 24]
+        start = 0
+        for hours in expected:
+            lane_slots.disable_second_slot('trip', now=start)
+            self.assertEqual(lane_slots.second_slot_back_on_at(), start + hours * self.HOUR)
+            self.assertTrue(lane_slots.second_slot_status(now=start + hours * self.HOUR + 1)[0])
+            start += hours * self.HOUR + 2
+        # A week with no trip resets it to the base cooldown.
+        start += 8 * 24 * self.HOUR
+        lane_slots.disable_second_slot('trip', now=start)
+        self.assertEqual(lane_slots.second_slot_back_on_at(), start + 4 * self.HOUR)
+
+    def test_a_switch_off_by_hand_never_expires(self):
+        lane_slots.disable_second_slot('journeys too slow', by_hand=True, now=0)
+        allowed, why = lane_slots.second_slot_status(now=30 * 24 * self.HOUR)
+        self.assertFalse(allowed)
+        self.assertIn('stays off until switched on', why)
+        self.assertIsNone(lane_slots.second_slot_back_on_at())
+        lane_slots.enable_second_slot()
+        self.assertTrue(lane_slots.second_slot_status()[0])
+
+    def test_a_switch_off_by_hand_after_an_automatic_one_never_expires(self):
+        # A hand switch-off while an automatic one is active must replace it, not leave its end time (#2158 audit).
+        announced = []
+        with mock.patch.object(lane_sim, 'announce', side_effect=announced.append):
+            self.assertTrue(lane_slots.disable_second_slot('memory pressure', now=0))
+            self.assertTrue(lane_sim.back_to_one_simulator('keep it at one (switched off by hand)', by_hand=True))
+            self.assertFalse(lane_sim.back_to_one_simulator('again (switched off by hand)', by_hand=True))
+        self.assertEqual(len(announced), 1)
+        self.assertIn('stays off until someone runs', announced[0])
+        self.assertIsNone(lane_slots.second_slot_back_on_at())
+        allowed, why = lane_slots.second_slot_status(now=30 * 24 * self.HOUR)
+        self.assertFalse(allowed)
+        self.assertIn('keep it at one', why)
+        self.assertIn('stays off until switched on', why)
+
+    def test_a_switch_off_written_before_the_expiry_counts_from_its_file_time(self):
+        off = Path(self.env['SM_LANE_STATE_DIR']) / lane_slots.SECOND_SLOT_OFF
+        off.parent.mkdir(parents=True, exist_ok=True)
+        off.write_text('2026-09-29T10:12:00: memory pressure stayed above normal for over 10 min\n')
+        os.utime(off, (1000, 1000))
+        allowed, why = lane_slots.second_slot_status(now=1000 + 4 * self.HOUR - 1)
+        self.assertFalse(allowed)
+        self.assertIn('memory pressure stayed above normal', why)
+        self.assertTrue(lane_slots.second_slot_status(now=1000 + 4 * self.HOUR + 1)[0])
+
+    def test_a_switch_off_by_hand_written_before_the_expiry_never_expires(self):
+        # The old `lane-sim-boot --second-slot off` wrote the same one-line shape, marked by its reason (#2158 audit).
+        off = Path(self.env['SM_LANE_STATE_DIR']) / lane_slots.SECOND_SLOT_OFF
+        off.parent.mkdir(parents=True, exist_ok=True)
+        for text in ('2026-10-18T09:00:00: J5 too slow (switched off by hand)\n',
+                     '2026-10-18T09:00:00: J5 too slow (switched off by hand)  \r\n',
+                     '',  # created by hand some other way: not the old automatic writer's shape
+                     'off while I look at the J5 runs\n'):
+            with self.subTest(text=text):
+                off.write_text(text)
+                os.utime(off, (1000, 1000))
+                allowed, why = lane_slots.second_slot_status(now=1000 + 30 * 24 * self.HOUR)
+                self.assertFalse(allowed)
+                self.assertIn('by hand', why)
+                self.assertTrue(off.exists())
+                self.assertIsNone(lane_slots.second_slot_back_on_at())
+
+    def test_the_announcement_says_when_an_automatic_switch_off_ends(self):
+        announced = []
+        with mock.patch.object(lane_sim, 'announce', side_effect=announced.append):
+            self.assertTrue(lane_sim.back_to_one_simulator('a two-simulator T3 run timed out.'))
+            self.assertFalse(lane_sim.back_to_one_simulator('again'))
+            lane_slots.enable_second_slot()
+            self.assertTrue(lane_sim.back_to_one_simulator('looking into it', by_hand=True))
+        self.assertEqual(len(announced), 2)
+        self.assertIn('comes back on by itself after', announced[0])
+        self.assertIn('stays off until someone runs', announced[1])
+
     def test_a_second_simulator_job_waits_until_the_first_is_done_while_the_second_slot_is_off(self):
         helper = [sys.executable, str(SCRIPTS / 'lane-sim-boot')]
         lane_slots.disable_second_slot('test')

@@ -14,7 +14,7 @@ These are compiled into or packaged with the app, and some are also stored in th
 - From: Microsoft Corporation
 - Source: <https://github.com/microsoft/onnxruntime-swift-package-manager>
 - Where: `Packages/SessionKit/Package.swift`
-- Licence text: [ONNXRUNTIME_MIT.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/ONNXRUNTIME_MIT.txt), [ONNXRUNTIME_THIRD_PARTY_NOTICES.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt)
+- Licence text: [ONNXRUNTIME_MIT.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/ONNXRUNTIME_MIT.txt), [ONNXRUNTIME_THIRD_PARTY_NOTICES.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt), [onnxruntime-mit.txt](Contracts/voice-models/licenses/onnxruntime-mit.txt)
 
 Runs the voice models on the phone. ONNX Runtime's own third-party components (MIT, BSD, Apache-2.0, zlib, Boost, ISC, public domain and MPL-2.0 for Eigen) are listed in the second file.
 
@@ -79,7 +79,7 @@ Compiled into Defuddle's bundle.
 - From: KittenML
 - Source: <https://huggingface.co/KittenML/kitten-tts-nano-0.8-fp32>
 - Where: `App/SpokenMarginsApp/Resources/Kitten`
-- Licence text: [NOTICES.txt](App/SpokenMarginsApp/Resources/Kitten/NOTICES.txt)
+- Licence text: [NOTICES.txt](App/SpokenMarginsApp/Resources/Kitten/NOTICES.txt), [apache-2-0.txt](Contracts/voice-models/licenses/apache-2-0.txt)
 
 The voice that stays in the app. About 62 MB with the inputs below. The same folder holds the misaki 0.9.4 pronunciation lexicon (hexgrad, Apache-2.0), the g2p_en 2.1.0 letter-to-sound weights (Kyubyong Park and Jongseok Kim, Apache-2.0) and the CMU Pronouncing Dictionary (Carnegie Mellon University, BSD-style, CMUdict-LICENSE.txt). No GPL code or data; espeak-ng is not used.
 
@@ -88,19 +88,9 @@ The voice that stays in the app. About 62 MB with the inputs below. The same fol
 - Licence: BSD-style (Carnegie Mellon University)
 - From: Carnegie Mellon University
 - Source: <http://www.speech.cs.cmu.edu/cgi-bin/cmudict>
-- Licence text: [CMUdict-LICENSE.txt](App/SpokenMarginsApp/Resources/Kitten/CMUdict-LICENSE.txt)
+- Licence text: [CMUdict-LICENSE.txt](App/SpokenMarginsApp/Resources/Kitten/CMUdict-LICENSE.txt), [cmudict.txt](Contracts/voice-models/licenses/cmudict.txt)
 
 Part of the Kitten voice's pronunciations.
-
-### Supertonic 3 model and preset voice styles (INT8)
-
-- Licence: BigScience Open RAIL-M
-- From: Supertone Inc.; INT8 conversion by the k2-fsa sherpa-onnx project
-- Source: <https://huggingface.co/Supertone/supertonic-3>
-- Where: `App/SpokenMarginsApp/Resources/Supertonic`
-- Licence text: [SUPERTONIC_MODEL_OPENRAIL-M.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/SUPERTONIC_MODEL_OPENRAIL-M.txt), [SHERPA_ONNX_APACHE-2.0.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/SHERPA_ONNX_APACHE-2.0.txt), [THIRD_PARTY_NOTICES.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/THIRD_PARTY_NOTICES.txt)
-
-Ships in the app today and its model files sit in this repository's Git LFS storage. It moves to a download with #1820; this entry then changes to "downloaded". The graphs are modified, quantized derivatives of Supertone's model; the sherpa-onnx conversion is Apache-2.0. The licence's use restrictions are part of the app's Terms of Use.
 
 ### Supertonic Swift inference code
 
@@ -108,7 +98,7 @@ Ships in the app today and its model files sit in this repository's Git LFS stor
 - From: Supertone Inc.
 - Source: <https://github.com/supertone-inc/supertonic>
 - Where: `Packages/SessionKit/Sources/SessionKitSupertonic/SupertonicRuntime.swift`
-- Licence text: [SUPERTONIC_CODE_MIT.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/SUPERTONIC_CODE_MIT.txt)
+- Licence text: [SUPERTONIC_CODE_MIT.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/SUPERTONIC_CODE_MIT.txt), [supertonic-code-mit.txt](Contracts/voice-models/licenses/supertonic-code-mit.txt)
 
 SupertonicRuntime.swift is adapted from Supertone's Swift example; its header says so.
 
@@ -116,13 +106,23 @@ SupertonicRuntime.swift is adapted from Supertone's Swift example; its header sa
 
 Fetched on request. They are not in this repository or in the app. Where the voice catalog (#1818) publishes the current address and licence text, it is the reference.
 
+### Supertonic 3 model and preset voice styles (INT8)
+
+- Licence: BigScience Open RAIL-M
+- From: Supertone Inc.; INT8 conversion by the k2-fsa sherpa-onnx project
+- Source: <https://huggingface.co/Supertone/supertonic-3>
+- Where: `App/SpokenMarginsApp/Resources/Supertonic`, `Contracts/voice-models/licenses`
+- Licence text: [SUPERTONIC_MODEL_OPENRAIL-M.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/SUPERTONIC_MODEL_OPENRAIL-M.txt), [SHERPA_ONNX_APACHE-2.0.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/SHERPA_ONNX_APACHE-2.0.txt), [THIRD_PARTY_NOTICES.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/THIRD_PARTY_NOTICES.txt), [supertonic-model-openrail-m.txt](Contracts/voice-models/licenses/supertonic-model-openrail-m.txt), [apache-2-0.txt](Contracts/voice-models/licenses/apache-2-0.txt)
+
+Downloaded, not in the app or this repository since #1820: Settings › Voices fetches it from the voice catalog, each file pinned by sha256 in Contracts/voice-models/sources.json. The app keeps only the licence texts and the modification notice (App/SpokenMarginsApp/Resources/Supertonic) and the catalog's licence copies (Contracts/voice-models/licenses). The graphs are modified, quantized derivatives of Supertone's model; the sherpa-onnx conversion is Apache-2.0. The licence's use restrictions are part of the app's Terms of Use.
+
 ### Kyutai Pocket TTS voice
 
 - Licence: CC-BY-4.0 (weights, ONNX export and the alba voice); MIT (Kyutai's code)
 - From: Kyutai
 - Source: <https://huggingface.co/kyutai/pocket-tts>
 - Where: `Packages/SessionKit/Sources/SessionKitPocket`
-- Licence text: <https://huggingface.co/kyutai/pocket-tts>
+- Licence text: [cc-by-4.0-pocket-tts.txt](Contracts/voice-models/licenses/cc-by-4.0-pocket-tts.txt), <https://huggingface.co/kyutai/pocket-tts>
 
 Downloaded, not distributed here. No Pocket TTS model or voice file is in this repository or the app, and the app doesn't link its runtime yet. The repository holds only our own runtime code and a tokenizer test fixture. The research harness fetches the int8 ONNX export (KevinAHM/pocket-tts-onnx) and alba's voice state (kyutai/pocket-tts-without-voice-cloning), both CC BY 4.0, so the voice needs an attribution line where it is offered. The voice catalog (#1818) will carry the current download address and licence text. The MIT code licence is recorded in research/C2/README.md; the licence texts are on the model page. Details: research/C2/pocket/README.md.
 

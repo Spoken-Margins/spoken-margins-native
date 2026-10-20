@@ -87,5 +87,5 @@ Questions about these Terms or Spoken Margins may be sent to resists.fabric-0o@i
 | Section 4, the Developer's server | The app fetches onboarding content from it at launch | `App/SpokenMarginsApp/Sources/SpokenMarginsApp/GuidedOnboardingCoordinator.swift:30`; `Packages/SessionKit/Sources/SessionKit/SourceCatalogStore.swift:32` |
 | Section 5, struck sentence | Followed feeds refresh without a tap, and launch fetches the tour | see the privacy draft's table |
 | 5A, 5B | Share links host user content on the Developer's server for 30 days | #486 |
-| 5C | The § 512 safe harbor needs a designated agent, a notice process and a repeat-infringer policy | attorney questions 4-7 |
+| 5C | The § 512 safe harbor needs a designated agent, a notice process and a repeat-infringer policy | attorney questions 4-5 |
 | Section 8, contact (unchanged unless Cole picks another) | The support address for the listing is still an open owner choice | #173 |

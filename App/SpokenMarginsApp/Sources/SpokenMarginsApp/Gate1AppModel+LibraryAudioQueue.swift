@@ -101,7 +101,7 @@ extension Gate1AppModel {
                   let sourceText = PreparedSpeechHooks.preparedText(of: item, in: store),
                   LibraryRowBuilder.shouldPrewarmTextAudio(for: item),
                   let voice = ttsVoiceSelection.supertonicVoice,
-                  let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
+                  let assets = SupertonicAssetResolver.location() else {
                 updateLibraryStartupAudioState(itemId: itemId, state: .notRequired)
                 return
             }
@@ -112,7 +112,6 @@ extension Gate1AppModel {
                 updateLibraryStartupAudioState(itemId: itemId, state: .notRequired)
                 return
             }
-            let assets = SupertonicAssetLocation(rootURL: resourceRoot)
             let signature = try await Task.detached(priority: .utility) {
                 try SupertonicRenderIdentity.make(assets: assets, voice: voice)
             }.value
@@ -342,11 +341,10 @@ extension Gate1AppModel {
             failedStartupAudioPreparationItemIds.remove(item.id)
             let store = try requireStore()
             let support = try applicationSupportDirectory()
-            guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
-                reportFailure("The bundled speech assets are unavailable.")
+            guard let assets = SupertonicAssetResolver.location() else {
+                reportFailure("Supertonic isn't downloaded. Get it in Settings › Voices.")
                 return
             }
-            let assets = SupertonicAssetLocation(rootURL: resourceRoot)
             let signature = try await Task.detached(priority: .utility) {
                 try SupertonicRenderIdentity.make(assets: assets, voice: voice)
             }.value
@@ -388,8 +386,7 @@ extension Gate1AppModel {
         do {
             let store = try requireStore()
             let support = try applicationSupportDirectory()
-            guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else { return }
-            let assets = SupertonicAssetLocation(rootURL: resourceRoot)
+            guard let assets = SupertonicAssetResolver.location() else { return }
             let signature = try await Task.detached(priority: .utility) {
                 try SupertonicRenderIdentity.make(assets: assets, voice: voice)
             }.value

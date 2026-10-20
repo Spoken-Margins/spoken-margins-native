@@ -6,8 +6,10 @@ struct PlaybackNowView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
+    @State private var playbackTick = 0 // bumped by each progress tick: the rows count down on the playhead (#2074)
 
     var body: some View {
+        let _ = playbackTick
         let own = model.marginRows
         let shared = model.sharedMarginRows
         let candidates = own.compactMap { PlaybackNowMargins.Margin(own: $0.interjection, itemID: model.selectedItem.id) }
@@ -74,5 +76,6 @@ struct PlaybackNowView: View {
         .sheet(item: $selectedSharedMargin) { row in
             SharedMarginDetailView(row: row).environmentObject(model)
         }
+        .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
     }
 }

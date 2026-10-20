@@ -403,12 +403,17 @@ final class VoiceModelCatalogTests: XCTestCase {
         XCTAssertEqual(weights.licenseId, "supertonic-model-openrail-m")
         XCTAssertEqual(weights.byteCount, 78_400_833)
         XCTAssertEqual(weights.sha256, "20cd86fa5c6effedfda0e7cffe5b0569ca401c440a0c3a1d72bf39286c0db3fd")
-        XCTAssertNotNil(weights.origin, "the INT8 files exist only inside the pinned sherpa-onnx archive")
+        XCTAssertEqual(weights.sources, ["https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/vector_estimator.int8.onnx"],
+                       "the INT8 graphs come from the sherpa-onnx author's pinned Hugging Face revision")
 
-        // Files the pinned upstream revision serves are fetched from there first, the mirror second.
+        // Every file comes from its publisher at a pinned revision, never the owner's server (owner, 2026-10-19).
         let style = try XCTUnwrap(voice.files.first { $0.path == "voice_styles/F1.json" })
-        XCTAssertTrue(style.sources[0].hasPrefix("https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/"))
-        XCTAssertEqual(style.sources.count, 2)
+        XCTAssertEqual(style.sources, ["https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/F1.json"])
+        XCTAssertFalse(voice.files.flatMap(\.sources).contains { $0.contains("proximitytoprogress") })
+        // Our notice of modification has no publisher copy, so the catalog carries it.
+        let notice = try XCTUnwrap(voice.files.first { $0.path == "onnx/MODIFIED.txt" })
+        XCTAssertEqual(notice.sources, [])
+        XCTAssertEqual(notice.content?.utf8.count, notice.byteCount)
 
         let total = voice.downloadByteCount
         XCTAssertGreaterThan(total, 140_000_000)
