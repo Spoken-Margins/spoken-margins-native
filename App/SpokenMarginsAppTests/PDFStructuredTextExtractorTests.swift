@@ -798,6 +798,63 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertFalse(PDFStructuredTextExtractor.isSideStamp("Short", bounds: CGRect(x: 300, y: 400, width: 10, height: 12), pageBox: box))
     }
 
+    func testV2SideStampTableOfNeighbouringInputs() {
+        // #2061: the real stamp of 1706.03762 reached Now as the first sentence.
+        let box = CGRect(x: 0, y: 0, width: 612, height: 792)
+        let rotated = CGRect(x: 21, y: 182, width: 20, height: 340)
+        let upright = CGRect(x: 72, y: 400, width: 468, height: 12)
+        let stamps = [
+            "arXiv:1706.03762v7 [] 2 Aug 2023",                      // category lost in extraction
+            "arXiv:1706.03762v7 [cs.CL] 2 Aug 2023",
+            "arXiv:1706.03762v7  [cs.CL]  2  Aug  2023",             // extra spaces
+            "arXiv:1706.03762v7\u{00A0}[cs.CL]\u{00A0}2\u{00A0}Aug\u{00A0}2023", // non-breaking spaces
+            "arXiv:1706.03762 [cs.CL] 2 Aug 2023",                   // no version
+            "arXiv:hep-th/9901001v2 [hep-th] 5 Jan 1999",            // old-style id
+            "arXiv:math.GT/0309136v1 [math.GT] 8 Sep 2003",
+        ]
+        for stamp in stamps {
+            XCTAssertTrue(PDFStructuredTextExtractor.isSideStamp(stamp, bounds: rotated, pageBox: box), stamp)
+            XCTAssertTrue(PDFStructuredTextExtractor.isSideStamp(stamp, bounds: upright, pageBox: box), "upright: \(stamp)")
+            XCTAssertTrue(PDFStructuredTextExtractor.isSideStamp(stamp, bounds: nil, pageBox: box), "no bounds: \(stamp)")
+        }
+        let body = [
+            "We cite arXiv:1706.03762v7 [cs.CL] 2 Aug 2023 in the text.",
+            "Attention is all you need. arXiv:1706.03762v7 [cs.CL] 2 Aug 2023",
+            "Vaswani et al. arXiv preprint arXiv:1706.03762, 2017.",
+            "arXiv:1706.03762v7",
+            "2 Aug 2023",
+        ]
+        for line in body {
+            XCTAssertFalse(PDFStructuredTextExtractor.isSideStamp(line, bounds: upright, pageBox: box), line)
+            XCTAssertFalse(PDFStructuredTextExtractor.isSideStamp(line, bounds: nil, pageBox: box), "no bounds: \(line)")
+        }
+    }
+
+    func testV2LeavesTheSideStampOutOfTheDocumentSoItIsNeverTheFirstSentence() throws {
+        // #2061: a PDF printed like arXiv 1706.03762: the stamp runs up the left margin,
+        // and the body text sits on either side of it in the page's reading order.
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 11)]
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            ("Attention is all you need and nothing else." as NSString).draw(at: CGPoint(x: 90, y: 100), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 20)])
+            ("The dominant sequence transduction models are based on recurrent networks." as NSString).draw(at: CGPoint(x: 90, y: 160), withAttributes: body)
+            context.cgContext.saveGState()
+            context.cgContext.translateBy(x: 36, y: 560)
+            context.cgContext.rotate(by: -.pi / 2)
+            ("arXiv:1706.03762v7 [cs.CL] 2 Aug 2023" as NSString).draw(at: .zero, withAttributes: [.font: UIFont.systemFont(ofSize: 20)])
+            context.cgContext.restoreGState()
+            ("We propose a new simple network architecture, the Transformer." as NSString).draw(at: CGPoint(x: 90, y: 180), withAttributes: body)
+        }
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: XCTUnwrap(PDFDocument(data: data)))
+        XCTAssertFalse(document.text.contains("arXiv:"), document.text)
+        XCTAssertFalse(document.text.contains("2 Aug 2023"), document.text)
+        XCTAssertTrue(document.text.contains("Attention is all you need"), document.text)
+        XCTAssertFalse(document.segments.contains { $0.role == .pageHeader }, "the stamp is dropped, not labelled")
+        XCTAssertTrue(document.text.contains("recurrent networks"))
+        XCTAssertTrue(document.text.contains("the Transformer"))
+    }
+
     func testV2KeepsFormulaLikeLinesInsideAReferenceList() {
         // #220 corpus check: math-looking titles in a reference list were labelled
         // equations, and "Equation not read. References skipped." alternated 15 times.

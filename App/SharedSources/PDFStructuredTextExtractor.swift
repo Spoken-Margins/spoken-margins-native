@@ -245,9 +245,10 @@ enum PDFStructuredTextExtractor {
         }
     }
 
-    /// Every line of the PDF in reading order with a role. Nothing is dropped:
-    /// what v1 cut (running heads, stamps, contents pages, the reference list)
-    /// is labelled, and the speech path decides what is heard (I14).
+    /// Every line of the PDF in reading order with a role. Nothing is dropped
+    /// except margin stamps (`isSideStamp`): what v1 cut (running heads, contents
+    /// pages, the reference list) is labelled, and the speech path decides what is
+    /// heard (I14).
     static func structuredLines(from document: PDFDocument) throws -> [StructuredDocumentLine] {
         // Merged PDFs can carry a bookmark per source file ("main.pdf"): not a heading (#355).
         let outline = outlineHeadings(in: document).filter {
@@ -255,7 +256,14 @@ enum PDFStructuredTextExtractor {
         }
         var pages: [[TextLine]] = []
         for pageIndex in 0..<document.pageCount {
-            pages.append(document.page(at: pageIndex).map { lines(from: $0, detectSuperscripts: true) } ?? [])
+            guard let page = document.page(at: pageIndex) else { pages.append([]); continue }
+            let pageBox = page.bounds(for: .mediaBox)
+            // A margin stamp is the repository's or publisher's mark, not part of the text. It is
+            // dropped here, not labelled page furniture: a labelled one was silent but still the
+            // first sentence in Now (#2061).
+            pages.append(lines(from: page, detectSuperscripts: true).filter {
+                !isSideStamp($0.text, bounds: $0.bounds, pageBox: pageBox)
+            })
         }
         let allLines = pages.flatMap { $0 }
         guard allLines.contains(where: { !$0.text.isEmpty }) else {
@@ -285,9 +293,6 @@ enum PDFStructuredTextExtractor {
         }
         let threshold = max(3, Int(ceil(Double(pages.count) * 0.3)))
         func furnitureRole(_ line: TextLine, page: PDFPage) -> StructuredDocument.Role? {
-            if let bounds = line.bounds, isSideStamp(line.text, bounds: bounds, pageBox: page.bounds(for: .mediaBox)) {
-                return .pageHeader
-            }
             guard let side = edge(line, page: page) else { return nil }
             let repeated = pages.count >= 3 && occurrences[furnitureKey(line.text), default: []].count >= threshold
             let pageNumber = line.text.range(of: "^(?:[0-9]+|[ivxlcdm]+)$", options: [.regularExpression, .caseInsensitive]) != nil
@@ -1011,16 +1016,25 @@ enum PDFStructuredTextExtractor {
     }
 
     /// Text printed sideways in a page's outer margin, like arXiv's
-    /// "arXiv:2607.28282v1 [cs.CL] 30 Jul 2026" or a publisher's download line: page
-    /// furniture, never read (#162, #220). The arXiv stamp is also known by its form,
-    /// in case PDFKit reports it with upright bounds.
-    static func isSideStamp(_ text: String, bounds: CGRect, pageBox: CGRect) -> Bool {
-        if text.range(of: #"^arXiv:[0-9]{4}\.[0-9]{4,5}v[0-9]+\s*\[[^\]]*\]\s*[0-9]{1,2}\s+[A-Z][a-z]{2}\s+[0-9]{4}\s*$"#, options: .regularExpression) != nil {
-            return true
-        }
+    /// "arXiv:2607.28282v1 [cs.CL] 30 Jul 2026" or a publisher's download line: not part
+    /// of the text, never read or shown (#162, #220, #2061). The arXiv stamp is also known by
+    /// its form, so it is taken when PDFKit reports it with upright bounds or none.
+    static func isSideStamp(_ text: String, bounds: CGRect?, pageBox: CGRect) -> Bool {
+        if isArXivStamp(text) { return true }
+        guard let bounds else { return false }
         let rotated = bounds.height > bounds.width * 4 && bounds.width < 40 && bounds.height > 60
         let inSideMargin = bounds.maxX < pageBox.minX + pageBox.width * 0.15 || bounds.minX > pageBox.maxX - pageBox.width * 0.15
         return rotated && inSideMargin
+    }
+
+    /// The whole line is arXiv's stamp: "arXiv:1706.03762v7 [cs.CL] 2 Aug 2023", with the
+    /// category missing ("[]") or the version left out, or an old-style id
+    /// ("arXiv:hep-th/9901001v2 [hep-th] 5 Jan 1999"). A sentence that cites an id is not.
+    static func isArXivStamp(_ text: String) -> Bool {
+        text.range(
+            of: #"^\s*arXiv:(?:[0-9]{4}\.[0-9]{4,5}|[a-z][a-z\-]*(?:\.[A-Za-z]{2})?/[0-9]{7})(?:v[0-9]+)?\s*(?:\[[^\]]*\])?\s*[0-9]{1,2}\s+[A-Z][a-z]{2,8}\.?\s+[0-9]{4}\s*$"#,
+            options: .regularExpression
+        ) != nil
     }
 
     /// The first line of a bibliography entry in the common styles: numbered
