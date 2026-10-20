@@ -49,7 +49,7 @@ final class EpisodeMapStoredNamesTests: XCTestCase {
             XCTAssertEqual(Array(job.id.unicodeScalars), Array(entry.jobID.unicodeScalars),
                            entry.itemID.debugDescription)
             XCTAssertEqual(job.stage, .verifySource)
-            XCTAssertEqual(model.diagnostics["episodeMapPreparation:\(entry.itemID)"], "waiting_for_local_audio")
+            XCTAssertTrue(model.diagnostics["episodeMapPreparation:\(entry.itemID)"]?.hasPrefix("waiting_for_local_audio:trigger=listener_request:at=") == true)
         }
     }
 

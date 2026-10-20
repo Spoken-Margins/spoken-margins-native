@@ -10,7 +10,9 @@ import SessionKitSharing
 extension Gate1AppModel {
     /// Opens the files the Share extension left in the inbox. A file that needs a newer app stays, so the listener
     /// can open it after updating; it is tried again once per app version, which tells the listener, and
-    /// goes after 30 days or when five newer ones are kept (#1983). Every other file is removed once it has been tried.
+    /// goes after 30 days or when five newer ones are kept (#1983). A file shown for review stays until the listener
+    /// imports or cancels it, so it survives the app being killed first (#2123); while any review shows, nothing more
+    /// is staged, so a kept file reopens once per launch. Every other file is removed once it has been tried.
     func consumePendingSpokenMarginsPackageHandoffs(
         from packageStore: SpokenMarginsPackageHandoffStore,
         keptNotices: KeptPackageNotices = KeptPackageNotices(),
@@ -35,15 +37,22 @@ extension Gate1AppModel {
                     continue
                 }
                 let packageURL = try packageStore.packageURL(payloadID: payloadID)
-                let outcome = stageSpokenMarginsPackage(from: packageURL, announcesRejection: announces)
+                let outcome = stageSpokenMarginsPackage(from: packageURL, announcesRejection: announces) {
+                    try? packageStore.deletePackage(payloadID: payloadID)
+                    keptNotices.forget(payloadID: payloadID)
+                }
                 if outcome == .rejectedNeedsNewerApp {
                     keptNotices.noteKept(payloadID: payloadID, appVersion: appVersion, now: now)
                     diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "kept_needs_newer_app"
                     continue
                 }
+                if outcome == .opened {
+                    diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "opened"
+                    continue
+                }
                 try packageStore.deletePackage(payloadID: payloadID)
                 keptNotices.forget(payloadID: payloadID)
-                diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = outcome == .opened ? "opened" : "rejected"
+                diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "rejected"
             } catch {
                 try? packageStore.deletePackage(payloadID: payloadID)
                 keptNotices.forget(payloadID: payloadID)
@@ -69,8 +78,10 @@ extension Gate1AppModel {
         stageSpokenMarginsPackage(from: sourceURL, announcesRejection: true) == .opened
     }
 
-    func stageSpokenMarginsPackage(from sourceURL: URL, announcesRejection: Bool) -> SpokenMarginsPackageStageOutcome {
-        switch packageImport.stage(from: sourceURL, announcesRejection: announcesRejection) {
+    func stageSpokenMarginsPackage(
+        from sourceURL: URL, announcesRejection: Bool, releaseSource: (@MainActor () -> Void)? = nil
+    ) -> SpokenMarginsPackageStageOutcome {
+        switch packageImport.stage(from: sourceURL, announcesRejection: announcesRejection, releaseSource: releaseSource) {
         case .rejected(let needsNewerApp):
             return needsNewerApp ? .rejectedNeedsNewerApp : .rejected
         case .staged:

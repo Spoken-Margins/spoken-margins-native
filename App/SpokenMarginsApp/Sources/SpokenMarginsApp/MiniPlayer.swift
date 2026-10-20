@@ -150,9 +150,9 @@ struct MiniPlayerBar: View {
 
                 Button {
                     if model.snapshot.phase == .finished {
-                        model.startNewSession(id: model.snapshot.itemId ?? model.selectedItem.id)
+                        model.finishedPlayTapped(id: model.snapshot.itemId ?? model.selectedItem.id)
                     } else {
-                        model.playPause()
+                        model.playPauseTapped()
                     }
                 } label: {
                     Group {

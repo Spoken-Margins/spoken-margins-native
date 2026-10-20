@@ -62,8 +62,23 @@ struct VoicePreferencesSnapshot {
     }
 }
 
+private final class MainQueueDrainFlag: @unchecked Sendable { var done = false } // set and read on the main thread only
+
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    /// Several of these tests leave a second or more of blocking main-queue work behind (#2195). A synchronous test
+    /// never spins the run loop, so that work used to run during whichever later test waited first, and could push a
+    /// short wait in another class past its timeout (#2104). Running it here keeps it inside the test that queued it.
+    override func tearDown() {
+        let start = Date()
+        let drained = MainQueueDrainFlag()
+        DispatchQueue.main.async { DispatchQueue.main.async { drained.done = true } }
+        while !drained.done, Date().timeIntervalSince(start) < 30 {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+        super.tearDown()
+    }
+
     func testRichClipboardRestoresOnlyExplicitHTMLHeadings() {
         let plain = "Article & notes\nA paragraph.\nNext section\nMore prose."
         let html = "<h1>Article &amp; notes</h1><p>A paragraph.</p><h2><em>Next section</em></h2><p>More prose.</p>"
@@ -1789,7 +1804,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.sessionRows.map(\.interjectionCount), [0])
         model.marginCollectionQuery = MarginCollectionQuery(itemID: b.id)
         XCTAssertTrue(model.visiblePrivateMarginRows.isEmpty, "B's Margins list is empty")
-        XCTAssertEqual(try model.loadLibraryRows(store: store).first { $0.id == b.id }, bLibraryRow,
+        // Without the storage rank: it is B's place in the store's updated_at order, so it moves whenever A's
+        // record gets a later timestamp, and it is not a badge (#2164).
+        let bLibraryRowAfter = try XCTUnwrap(model.loadLibraryRows(store: store).first { $0.id == b.id })
+        XCTAssertEqual(libraryRowFieldsExceptStorageRank(bLibraryRowAfter), libraryRowFieldsExceptStorageRank(bLibraryRow),
                        "B's Library status and progress badges do not change")
         model.openItem(id: "item-pill")
         XCTAssertEqual(model.selectedItem.interjections.map(\.id), [saved.id])
@@ -5895,6 +5913,13 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             model.listeningMapGenerationAvailabilityDescription,
             "This podcast already includes publisher chapters. A generated Listening Map is unnecessary."
         )
+    }
+
+    /// Every field of a Library row except `storageRecencyRank`, so a new field is still compared.
+    private func libraryRowFieldsExceptStorageRank(_ row: LibraryItemRow) -> [String] {
+        Mirror(reflecting: row).children
+            .filter { $0.label != "storageRecencyRank" }
+            .map { "\($0.label ?? "?")=\(String(describing: $0.value))" }
     }
 
     private func waitFor(

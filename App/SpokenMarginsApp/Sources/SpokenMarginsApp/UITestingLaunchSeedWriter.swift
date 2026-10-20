@@ -44,6 +44,29 @@ enum UITestingLaunchSeedWriter {
         return item
     }
 
+    /// A co-op relaunch (#474): adds one friend's layer, with a voice, to the podcast the first launch seeded, as
+    /// importing a packet for an episode the listener already has would. Does nothing without the co-op switch, and
+    /// a second relaunch that finds the layer already there adds nothing.
+    static func importCoopLayerIfRequested(into store: SQLiteSessionStore) throws {
+        guard UITestingHooks.importsCoopLayer else { return }
+        let layer = UITestingLaunchSeed.coopLayer(importedAt: Date())
+        guard try store.loadImportedCommentaryLayer(packageDigest: layer.packageDigest) == nil else { return }
+        let support = try FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+        )
+        // The stand-in recorder writes a tone as long as its clock says the recording lasted.
+        let began = Date()
+        var reads = 0
+        let recorder = UITestingToneRecordingClient(supportDirectory: support, now: {
+            reads += 1
+            return began.addingTimeInterval(reads == 1 ? 0 : Double(UITestingLaunchSeed.coopMarginDurationMs) / 1_000)
+        })
+        try recorder.beginRecording()
+        let audioPath = try recorder.finishRecording(audioRef: nil)
+        let margin = UITestingLaunchSeed.coopInterjection(audioPath: audioPath, createdAt: layer.importedAt)
+        _ = try store.importCommentaryLayer(layer, interjections: [margin])
+    }
+
     /// A quiet tone as small 8 kHz PCM, so writing a 25-minute episode takes well under a second.
     private static func writeEpisodeAudio(to url: URL, seconds: Int) throws -> Int64 {
         try? FileManager.default.removeItem(at: url)

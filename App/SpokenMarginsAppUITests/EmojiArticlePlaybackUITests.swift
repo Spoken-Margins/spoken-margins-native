@@ -1,7 +1,7 @@
 import XCTest
 
 final class EmojiArticlePlaybackUITests: XCTestCase {
-    private let title = "Designing emoji for the way we communicate today"
+    private let title = "Drawing pictograms for the way people talk now"
 
     func testExactEmojiArticleCompletesAfterPauseAndResumeNearCrashPoint() throws {
         let article = try Self.fixtureText()
@@ -91,5 +91,5 @@ final class EmojiArticlePlaybackUITests: XCTestCase {
         ) == .completed
     }
 
-    private static let sourceURL = "https://blog.google/products-and-platforms/platforms/android/world-emoji-day-noto-3d/"
+    private static let sourceURL = "https://example.com/studio/pictogram-day-tidepool-3d/"
 }

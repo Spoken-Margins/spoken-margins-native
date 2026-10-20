@@ -16,6 +16,9 @@ final class PreviousRunExitRecorder: NSObject, MXMetricManagerSubscriber, @unche
     private static let diagnosticsKey = "previousRunExit.diagnosticsThrough"
     private static let metricsKey = "previousRunExit.metricsThrough"
 
+    /// The name MetricKit gives the app's executable in a call stack: the frames in it are kept (#2099).
+    private static let appBinaryNames: Set<String> = Set([Bundle.main.executableURL?.lastPathComponent].compactMap { $0 })
+
     private let defaults: UserDefaults
     // Set once on the main actor in `start`, before MetricKit can call back.
     private var record: Record?
@@ -57,7 +60,8 @@ final class PreviousRunExitRecorder: NSObject, MXMetricManagerSubscriber, @unche
     @MainActor
     func deliver(diagnostics: [Data], metrics: [Data], isLaunch: Bool) {
         guard let record else { return }
-        let exit = PreviousRunExit.summarize(diagnosticPayloads: diagnostics, metricPayloads: metrics, seen: seen())
+        let exit = PreviousRunExit.summarize(diagnosticPayloads: diagnostics, metricPayloads: metrics, seen: seen(),
+                                             appBinaryNames: Self.appBinaryNames)
         remember(exit.seen)
         guard isLaunch || exit.newReports > 0 else { return }
         var fields = exit.fields

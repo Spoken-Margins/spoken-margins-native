@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Validate every vendored Supertonic payload against the checked manifest."""
+"""Validate the Supertonic files kept in the tree against the checked manifest, and that its model files are not.
+
+Since #1820 the model (the ONNX graphs, tts.json, unicode_indexer.json, the voice styles) is a download, marked
+"downloaded" in the manifest. What stays is what the app shows or the mirror needs: the licences and the
+modification notice.
+"""
 
 from __future__ import annotations
 
@@ -57,6 +62,12 @@ def main() -> int:
         if not provenance_entry.get("source") or not provenance_entry.get("version"):
             failures.append(f"provenance: {relative_path} has no source and version")
         path = ASSET_ROOT / relative_path
+        if entry.get("downloaded"):
+            # Supertonic's model is a download (#1820): its files must never come back into the tree or the app.
+            # The manifest keeps their sizes and hashes, which the catalog and the fetched copies are held to.
+            if path.exists():
+                failures.append(f"downloaded file is in the tree: {relative_path} (the model is a download, #1820)")
+            continue
         if not path.is_file():
             failures.append(f"missing: {relative_path}")
             continue
@@ -95,7 +106,9 @@ def main() -> int:
         return 1
 
     note = f" ({pointers} checked as Git LFS pointers, not downloaded)" if pointers else ""
-    print(f"Validated {len(expected)} Supertonic files{note}.")
+    downloads = sum(1 for entry in expected.values() if entry.get("downloaded"))
+    print(f"Validated {len(expected) - downloads} Supertonic files in the tree{note}; "
+          f"its {downloads} model files are downloads and not in the tree.")
     return 0
 
 

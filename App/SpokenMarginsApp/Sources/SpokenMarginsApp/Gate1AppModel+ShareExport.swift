@@ -35,6 +35,7 @@ extension Gate1AppModel {
         }
         sharingState.isExporting = true
         sharingState.errorMessage = nil
+        var prepared: PreparedSpokenMarginsPackage?
         do {
             let store = try requireStore()
             let item = try store.loadItem(id: selectedItem.id)
@@ -106,7 +107,10 @@ extension Gate1AppModel {
                 ))
             }
 
-            let mapProposals = SharedMarginExport.mapProposals(try store.loadPortableListeningMapProposals(itemId: item.id))
+            let mapProposals = SharedMarginExport.mapProposals(
+                try store.loadPortableListeningMapProposals(itemId: item.id),
+                currentProposalID: try store.loadResolvedListeningMapProjection(itemId: item.id)?.proposalId
+            )
             let fingerprintSpines = sharingState.includesAcousticEvidence
                 ? try store.loadEditionFingerprintSpine(itemId: item.id).map { [$0] } ?? []
                 : []
@@ -129,7 +133,7 @@ extension Gate1AppModel {
             }
 
             let packageID = "package-\(UUID().uuidString.lowercased())"
-            let prepared = try SpokenMarginsPackageBuilder.prepare(
+            let package = try SpokenMarginsPackageBuilder.prepare(
                 packageId: packageID,
                 createdAt: Date(),
                 item: itemIdentity,
@@ -141,11 +145,12 @@ extension Gate1AppModel {
                 machineEvidence: machineEvidence,
                 senderDisplayLabel: sharingState.senderDisplayLabel.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
             )
+            prepared = package
             let directory = try applicationSupportDirectory()
                 .appending(path: "SpokenMargins/SharedPackages", directoryHint: .isDirectory)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let destination = directory.appending(path: "\(SharedMarginExport.fileName(item.title))-\(packageID.suffix(8)).spokenmargins")
-            let writtenManifest = try SpokenMarginsPackageArchive.write(prepared, to: destination); try? SpokenMarginsPackageExportRecord.recordExport(manifest: writtenManifest, selections: selections, repository: store) // replies link back through the recorded identity; the share still succeeds without it (#473)
+            let writtenManifest = try SpokenMarginsPackageArchive.write(package, to: destination); try? SpokenMarginsPackageExportRecord.recordExport(manifest: writtenManifest, selections: selections, repository: store) // replies link back through the recorded identity; the share still succeeds without it (#473)
             listeningSignals.export(itemId: item.id, packetId: packageID, marginCount: drafts.count, packetURL: destination)
             UserDefaults.standard.set(sharingState.senderDisplayLabel, forKey: "sharingSenderDisplayLabel")
             sharedSpokenMarginsPackageURL = destination
@@ -158,8 +163,9 @@ extension Gate1AppModel {
             if let omission { reportWarning(omission) }
         } catch {
             sharingState.isExporting = false
-            sharingState.errorMessage = error.localizedDescription
-            diagnostics["lastSharedPackageFailure"] = String(describing: error)
+            let failure = SharedPacketExportFailure(error: error, prepared: prepared)
+            sharingState.errorMessage = failure.listenerMessage
+            diagnostics["lastSharedPackageFailure"] = failure.diagnostic
         }
     }
 

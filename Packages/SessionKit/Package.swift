@@ -22,6 +22,8 @@ let package = Package(
         // Mac tool for co-op test packets (#856). The app never links it.
         .executable(name: "coop-packet", targets: ["CoopPacket"]),
         .executable(name: "speech-bench", targets: ["SpeechBench"]),
+        // Renders the guided tour clip with the bundled Kitten voice (#2051). The app never links it.
+        .executable(name: "tour-render", targets: ["TourRender"]),
         .executable(name: "phone-plan", targets: ["PhonePlan"]),
         // The daily Substack format canary (#2027), run by .github/workflows/substack-canary.yml. The app never links it.
         .executable(name: "substack-canary", targets: ["SubstackCanary"]),
@@ -130,6 +132,10 @@ let package = Package(
         // Real-time factor of each bundled narration engine on the Mac (#849).
         .executableTarget(
             name: "SpeechBench",
+            dependencies: ["SessionKit", "SessionKitSupertonic"]
+        ),
+        .executableTarget(
+            name: "TourRender",
             dependencies: ["SessionKit", "SessionKitSupertonic"]
         ),
         .executableTarget(

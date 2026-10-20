@@ -27,7 +27,7 @@ cd spoken-margins-native
 git lfs pull
 ```
 
-If you cloned first, `git lfs pull` fills in the model files afterwards. Without it the files under `App/SpokenMarginsApp/Resources/Supertonic/onnx/` and `App/SpokenMarginsApp/Resources/Kitten/` are tiny text stubs, and `scripts/validate-contracts.py` fails on them.
+If you cloned first, `git lfs pull` fills in the model files afterwards. Without it the files under `App/SpokenMarginsApp/Resources/Kitten/` are tiny text stubs, and the app's bundled Kitten voice won't load. Supertonic's model isn't in the repository: listeners download it in Settings › Voices, and `scripts/voice-catalog fetch supertonic-3-int8` puts a copy in `artifacts/` for the tests that render with it (#1820).
 
 ## Python tools and contract checks
 

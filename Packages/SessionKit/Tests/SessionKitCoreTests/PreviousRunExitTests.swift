@@ -174,4 +174,99 @@ final class PreviousRunExitTests: XCTestCase {
         XCTAssertEqual(exit.fields["diagnosticsPeriod"], "2026-10-14 09:00:00 to 2026-10-16 09:00:00")
         XCTAssertEqual(exit.seen.diagnosticsThrough, "2026-10-16 09:00:00")
     }
+
+    // MARK: - Call stacks (#2099)
+
+    /// A hang report in MetricKit's `callStackTree` shape: the thread the report is attributed to runs
+    /// dyld > app > UIKit > app > app > libsystem, with a lighter side branch; a busier but unattributed
+    /// thread carries a different app frame.
+    private let hangWithStacks = """
+    {
+      "timeStampBegin" : "2026-10-19 09:00:00",
+      "timeStampEnd" : "2026-10-19 10:00:00",
+      "hangDiagnostics" : [
+        {
+          "callStackTree" : {
+            "callStackPerThread" : true,
+            "callStacks" : [
+              {
+                "threadAttributed" : false,
+                "callStackRootFrames" : [
+                  { "binaryName" : "SpokenMarginsApp", "binaryUUID" : "AAAA0000-0000-0000-0000-000000000001",
+                    "offsetIntoBinaryTextSegment" : 99999, "sampleCount" : 500, "subFrames" : [] }
+                ]
+              },
+              {
+                "threadAttributed" : true,
+                "callStackRootFrames" : [
+                  { "binaryName" : "dyld", "binaryUUID" : "DDDD", "offsetIntoBinaryTextSegment" : 1, "sampleCount" : 100,
+                    "subFrames" : [
+                      { "binaryName" : "SpokenMarginsApp", "binaryUUID" : "AAAA0000-0000-0000-0000-000000000001",
+                        "offsetIntoBinaryTextSegment" : 100, "sampleCount" : 100,
+                        "subFrames" : [
+                          { "binaryName" : "UIKitCore", "binaryUUID" : "UUUU", "offsetIntoBinaryTextSegment" : 7, "sampleCount" : 90,
+                            "subFrames" : [
+                              { "binaryName" : "SpokenMarginsApp", "binaryUUID" : "AAAA0000-0000-0000-0000-000000000001",
+                                "offsetIntoBinaryTextSegment" : 2000, "sampleCount" : 90,
+                                "subFrames" : [
+                                  { "binaryName" : "SpokenMarginsApp", "binaryUUID" : "AAAA0000-0000-0000-0000-000000000001",
+                                    "offsetIntoBinaryTextSegment" : 3000, "sampleCount" : 80,
+                                    "subFrames" : [
+                                      { "binaryName" : "libsystem_kernel.dylib", "binaryUUID" : "KKKK",
+                                        "offsetIntoBinaryTextSegment" : 5, "sampleCount" : 80, "subFrames" : [] }
+                                    ] },
+                                  { "binaryName" : "SpokenMarginsApp", "binaryUUID" : "AAAA0000-0000-0000-0000-000000000001",
+                                    "offsetIntoBinaryTextSegment" : 4000, "sampleCount" : 10, "subFrames" : [] }
+                                ] }
+                            ] }
+                        ] }
+                    ] }
+                ]
+              }
+            ]
+          },
+          "diagnosticMetaData" : { "hangDuration" : "26 sec" }
+        }
+      ]
+    }
+    """
+
+    func testAHangKeepsTheAppsFramesOfTheHeaviestPathInnermostFirst() {
+        let exit = PreviousRunExit.summarize(diagnosticPayloads: [data(hangWithStacks)], metricPayloads: [],
+                                             appBinaryNames: ["SpokenMarginsApp"])
+        XCTAssertEqual(exit.fields["hangFrames"], "0xbb8,0x7d0,0x64", "3000, 2000 and 100, from the busiest path of the attributed thread")
+        XCTAssertEqual(exit.fields["hangFramesBinary"], "AAAA0000-0000-0000-0000-000000000001")
+        XCTAssertEqual(exit.fields["hangDuration"], "26 sec")
+        XCTAssertNil(exit.fields["cpuFrames"])
+        let everything = exit.fields.keys.joined(separator: " ") + " " + exit.fields.values.joined(separator: " ")
+        for leak in ["callStack", "UIKitCore", "libsystem", "dyld", "KKKK"] {
+            XCTAssertFalse(everything.contains(leak), "other binaries and the stack's own keys stay out: \(leak)")
+        }
+    }
+
+    func testFramesAreCappedAtEightAndOnlyTheAppsOwnBinaryCounts() {
+        var frames = #"{ "binaryName" : "SpokenMarginsApp", "binaryUUID" : "B1", "offsetIntoBinaryTextSegment" : 1, "sampleCount" : 1, "subFrames" : [] }"#
+        for offset in 2...12 {
+            frames = #"{ "binaryName" : "SpokenMarginsApp", "binaryUUID" : "B1", "offsetIntoBinaryTextSegment" : \#(offset), "sampleCount" : 1, "subFrames" : [\#(frames)] }"#
+        }
+        let json = #"{ "cpuExceptionDiagnostics" : [ { "callStackTree" : { "callStacks" : [ { "threadAttributed" : true, "callStackRootFrames" : [\#(frames)] } ] } } ] }"#
+        let exit = PreviousRunExit.summarize(diagnosticPayloads: [data(json)], metricPayloads: [], appBinaryNames: ["SpokenMarginsApp"])
+        // Root is offset 12, the innermost 1: the eight innermost are 1 to 8.
+        XCTAssertEqual(exit.fields["cpuFrames"], "0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8")
+        let other = PreviousRunExit.summarize(diagnosticPayloads: [data(json)], metricPayloads: [], appBinaryNames: ["NotThisApp"])
+        XCTAssertNil(other.fields["cpuFrames"])
+        let unnamed = PreviousRunExit.summarize(diagnosticPayloads: [data(json)], metricPayloads: [])
+        XCTAssertNil(unnamed.fields["cpuFrames"], "no binary name given, no frames kept")
+    }
+
+    func testAStackWithoutTheAppsFramesOrWithJunkOffsetsAddsNothing() {
+        let noApp = #"{ "hangDiagnostics" : [ { "callStackTree" : { "callStacks" : [ { "threadAttributed" : true, "callStackRootFrames" : [ { "binaryName" : "UIKitCore", "binaryUUID" : "U", "offsetIntoBinaryTextSegment" : 1, "sampleCount" : 1 } ] } ] } } ] }"#
+        let junk = #"{ "hangDiagnostics" : [ { "callStackTree" : { "callStacks" : [ { "callStackRootFrames" : [ { "binaryName" : "SpokenMarginsApp", "binaryUUID" : "U", "offsetIntoBinaryTextSegment" : "x", "sampleCount" : 1 } ] } ] } } ] }"#
+        let empty = #"{ "hangDiagnostics" : [ { "callStackTree" : { "callStacks" : [] } }, { "diagnosticMetaData" : { "hangDuration" : "1 sec" } } ] }"#
+        for json in [noApp, junk, empty] {
+            let exit = PreviousRunExit.summarize(diagnosticPayloads: [data(json)], metricPayloads: [], appBinaryNames: ["SpokenMarginsApp"])
+            XCTAssertNil(exit.fields["hangFrames"])
+            XCTAssertNil(exit.fields["hangFramesBinary"])
+        }
+    }
 }

@@ -24,10 +24,10 @@ name: lane-conflicts
 
 on:
   pull_request:
-    branches: [next, 'lane-check/**']
+    branches: [next, main, 'lane-check/**']  # both trunks (#1492); the job runs only for SM_TRUNK's
     types: [labeled, synchronize, reopened]
   push:
-    branches: [next]
+    branches: [next, main]
   workflow_dispatch:
     inputs:
       pr:
@@ -50,12 +50,14 @@ jobs:
   check:
     # Only same-repo PRs that carry a lane label (and, on a label event, only when it is one of the two).
     if: >-
-      github.event_name != 'pull_request' ||
+      (github.event_name != 'push' || github.ref_name == (vars.SM_TRUNK || 'next')) &&
+      (github.event_name != 'pull_request' || (github.event.pull_request.base.ref == (vars.SM_TRUNK || 'next') || startsWith(github.event.pull_request.base.ref, 'lane-check/'))) &&
+      (github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
        (contains(github.event.pull_request.labels.*.name, 'automerge') ||
         contains(github.event.pull_request.labels.*.name, 'lane:queued')) &&
        (github.event.action != 'labeled' ||
-        github.event.label.name == 'automerge' || github.event.label.name == 'lane:queued'))
+        github.event.label.name == 'automerge' || github.event.label.name == 'lane:queued')))
     runs-on: [self-hosted, Linux, sm-vps]
     timeout-minutes: 20
     steps:
@@ -72,7 +74,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          BASE_REF: ${{ github.event.pull_request.base.ref || 'next' }}
+          BASE_REF: ${{ github.event.pull_request.base.ref || vars.SM_TRUNK || 'next' }}
           # Only a manual dispatch narrows the check. Every PR event sweeps all armed PRs, because a waiting run
           # for one PR can replace another's under the single concurrency group.
           ONLY_PR: ${{ inputs.pr }}

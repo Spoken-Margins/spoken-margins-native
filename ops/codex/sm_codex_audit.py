@@ -78,6 +78,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ledger import usage
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import sm_paths
+from trunk import trunk_branch  # #1492: the branch whose PRs it audits
 sys.path.insert(0, str(sm_paths.repo(__file__) / "scripts"))  # the public checkout's lane modules (SM_REPO)
 import comment_trust
 from lane_dedupe import GitHubApi, automerge_holds_a_slot
@@ -89,7 +90,7 @@ import lane_inherited_holds as inherited
 # ---------------------------------------------------------------------------
 
 REPO = "uncomposed/spoken-margins-native"
-BASE_BRANCH = "next"
+BASE_BRANCH = trunk_branch()
 AUTOMERGE = "automerge"
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = sm_paths.repo(__file__)  # the public checkout it audits (SM_REPO)
@@ -168,7 +169,7 @@ RISKY_PATTERNS = {
         r"^\.github/workflows/",
         r"^scripts/lane",
         r"^scripts/(xcodebuild-lane|host-test-lane|install-lane-guard\.py|test-scope\.py"
-        r"|hot_file_ratchet\.py|merge_audit\.py|verify-tests\.py)$",
+        r"|hot_file_ratchet\.py|merge_audit\.py|verify-tests\.py|trunk\.py)$",
         r"^TestPlans/(AppBehavior|AudioAdapters)\.xctestplan$",
     ],
 }
@@ -983,8 +984,8 @@ def build_prompt(batch: list[dict], blocks: list[str], base_sha: str) -> str:
     nums = ", ".join(f"#{c['number']}" for c in batch)
     head = [
         f"You are auditing {'this pull request' if len(batch) == 1 else 'these pull requests'} "
-        f"({nums}) into `next` of Spoken Margins, read-only.",
-        f"The working directory is a checkout of origin/next at {base_sha}. Each PR's diff, its "
+        f"({nums}) into `{BASE_BRANCH}` of Spoken Margins, read-only.",
+        f"The working directory is a checkout of origin/{BASE_BRANCH} at {base_sha}. Each PR's diff, its "
         "changed files as they are at its head, and the diffs since earlier audited heads are "
         "files named below. Read AGENTS.md first; its hard rules apply.",
         "You can only read files (Read, Grep, Glob); you cannot run commands or git. Do not ask to. "
