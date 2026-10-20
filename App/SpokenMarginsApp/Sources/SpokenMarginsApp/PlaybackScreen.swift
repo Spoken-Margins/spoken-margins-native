@@ -241,7 +241,8 @@ struct PlaybackScreen: View {
     /// Spacing only is tightened (owner, 2026-10-13): the rows, their order and their controls stay as approved, so
     /// the dock is about 40% of a 6.1-inch phone and still leaves the Now pane half of an iPhone SE (#1475).
     private var playbackControls: some View {
-        VStack(spacing: 4) {
+        // The scrubber's 44 pt bar reaches into the gaps either side of it (`PlaybackPositionSlider.rowGapOverlap`).
+        VStack(spacing: PlaybackPositionSlider.rowGapOverlap) {
             PlaybackPaneSwitchView(selection: $selectedPane)
                 .id("playback.timeline")
             PlaybackChapterRowView(
@@ -261,22 +262,24 @@ struct PlaybackScreen: View {
             )
             playbackPosition
             playbackTransport
+            // These are plain buttons, which take taps only on what they draw, and the speed and More frames sat
+            // outside their buttons: each was a target the size of its word (#430). The 44 pt target is the label's.
             PlaybackSecondaryControlsRow {
                 Button(action: model.openLibrary) {
                     if dynamicTypeSize.isAccessibilitySize {
-                        Image(systemName: "books.vertical").frame(minWidth: 44, minHeight: 44)
+                        Image(systemName: "books.vertical").minimumTapTarget()
                     } else {
-                        Text("Library").frame(minWidth: 44, minHeight: 44)
+                        Text("Library").minimumTapTarget()
                     }
                 }
                 .accessibilityLabel("Library")
                 .accessibilityIdentifier("playback.home.button")
-                Button(model.compactPlaybackRateDescription, action: model.cyclePlaybackRate)
-                    .frame(minWidth: 44, minHeight: 44)
-                    .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
-                    .accessibilityIdentifier("playback.rate.button")
+                Button(action: model.cyclePlaybackRate) {
+                    Text(model.compactPlaybackRateDescription).minimumTapTarget()
+                }
+                .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
+                .accessibilityIdentifier("playback.rate.button")
                 listeningOptionsButton
-                    .frame(minWidth: 44, minHeight: 44)
             }
             .foregroundStyle(.white)
             .buttonStyle(.plain)
@@ -298,11 +301,12 @@ struct PlaybackScreen: View {
                 // #142: the same spoken + written row as during playback, so the flow is
                 // finish, add a recap Margin, then Share.
                 marginRow
-                Button("Share", systemImage: "square.and.arrow.up", action: model.openExport)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.white)
-                    .frame(minHeight: 44)
-                    .accessibilityIdentifier("playback.finished.share.button")
+                Button(action: model.openExport) {
+                    Label("Share", systemImage: "square.and.arrow.up").minimumTapTarget()
+                }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.white)
+                .accessibilityIdentifier("playback.finished.share.button")
             } else {
                 marginRow
             }
@@ -348,9 +352,9 @@ struct PlaybackScreen: View {
             isPlaybackOptionsPresented = true
         } label: {
             if dynamicTypeSize.isAccessibilitySize {
-                Image(systemName: "ellipsis").frame(minWidth: 52, minHeight: 52)
+                Image(systemName: "ellipsis").frame(minWidth: 52, minHeight: 52).contentShape(Rectangle())
             } else {
-                Label("More", systemImage: "ellipsis")
+                Label("More", systemImage: "ellipsis").minimumTapTarget()
             }
         }
         .fixedSize(horizontal: true, vertical: false)
@@ -765,6 +769,7 @@ struct PlaybackScreen: View {
                     positionAccessibilityValue: "\(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))"
                 )
                 .tint(AppColors.accent)
+                .padding(.vertical, -PlaybackPositionSlider.rowGapOverlap)
                 .onCompatibleChange(of: canonicalMediaSeconds) { value in
                     model.recordDeveloperDiagnostic("scrub.media.display", ["canonical": String(value), "displayed": String(mediaScrubState.displayedValue(canonicalValue: value, range: mediaScrubRange)), "editing": String(mediaScrubState.isEditing), "range": String(mediaScrubRange.upperBound)])
                 }
@@ -808,6 +813,7 @@ struct PlaybackScreen: View {
                     positionAccessibilityValue: textTimeEstimate?.scrubberAccessibilityValue(percent: textScrubberPercent) ?? "\(textScrubberPercent) percent"
                 )
                 .tint(AppColors.accent)
+                .padding(.vertical, -PlaybackPositionSlider.rowGapOverlap)
                 .onCompatibleChange(of: canonicalTextOffset) { value in
                     model.recordDeveloperDiagnostic("scrub.text.display", ["canonical": String(value), "displayed": String(textScrubState.displayedValue(canonicalValue: value, range: textScrubRange)), "editing": String(textScrubState.isEditing), "range": String(textScrubRange.upperBound)])
                 }

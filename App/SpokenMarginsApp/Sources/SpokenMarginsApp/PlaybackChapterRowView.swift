@@ -71,6 +71,8 @@ struct PlaybackChapterRowView: View {
                 Text(PlaybackSourceLabels.chapterTitle(title, sourceTitle: sourceTitle))
                     .lineLimit(titleLineLimit, reservesSpace: reservesTitleSpace)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    // A plain button takes taps only on what it draws: a short title left most of the row dead (#430).
+                    .contentShape(Rectangle())
             }
             .accessibilityIdentifier("playback.dock.chapter.button")
         }
@@ -89,7 +91,7 @@ struct PlaybackChapterRowView: View {
         case .nextChapter:
             Button(action: nextChapter) {
                 Image(systemName: "forward.end")
-                    .frame(minWidth: 44, minHeight: 44)
+                    .minimumTapTarget()
             }
             .accessibilityLabel("Next chapter")
             .accessibilityIdentifier("playback.nextChapter.button")
@@ -102,7 +104,7 @@ struct PlaybackChapterRowView: View {
     private func skimButton(backward isBackward: Bool, enabled: Bool) -> some View {
         Button(action: isBackward ? skimBackward : skimForward) {
             Image(systemName: isBackward ? "backward.end.alt.fill" : "forward.end.alt.fill")
-                .frame(minWidth: 44, minHeight: 44)
+                .minimumTapTarget()
         }
         .disabled(!enabled || skimLocked)
         .opacity(enabled ? 1 : 0.35)
