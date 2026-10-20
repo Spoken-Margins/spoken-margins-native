@@ -37,6 +37,7 @@ DEFAULT_WORK = ROOT / 'artifacts' / 'sharing-kit'
 sys.path.insert(0, str(ROOT / 'Contracts' / 'tools'))
 import spoken_margins_format as _format  # noqa: E402
 COOP_PACKET = ROOT / 'Packages' / 'SessionKitTools'  # the package that builds coop-packet (#1873)
+COOP_PACKET_BUILD = ROOT / 'Packages' / 'SessionKit' / '.build' / 'tools'
 
 # The limits below come from the code that reads and writes packets.
 MAX_MARGINS = 50                      # InterjectionPackageArchive.maximumInterjections
@@ -591,9 +592,11 @@ def build(kit, work, run=subprocess.run, fetch=download, platform=sys.platform):
     out.mkdir(parents=True, exist_ok=True)
     for old in out.glob('*.spokenmargins'):
         old.unlink()
-    package = str(COOP_PACKET)
-    run(['swift', 'build', '--package-path', package, '--product', 'coop-packet'], check=True)
-    bin_path = run(['swift', 'build', '--package-path', package, '--show-bin-path'],
+    # Built inside SessionKit's .build, which worktrees link to a warm cache that disk relief clears, as
+    # scripts/run-sessionkit-tests.sh --tools does (#1873).
+    package = ['--package-path', str(COOP_PACKET), '--scratch-path', str(COOP_PACKET_BUILD)]
+    run(['swift', 'build', *package, '--product', 'coop-packet'], check=True)
+    bin_path = run(['swift', 'build', *package, '--show-bin-path'],
                    check=True, capture_output=True, text=True).stdout.strip()
     tool = str(Path(bin_path) / 'coop-packet')
     for plan in plans:

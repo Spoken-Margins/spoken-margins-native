@@ -2,7 +2,6 @@ import Foundation
 import SessionKit
 import SessionKitSharing
 import ShippedPacketReader
-import XCTest
 
 /// Writes a packet, then imports it with the last shipped build's reader, which must read back every Margin the
 /// writer put in. The same gate as SessionKitTests' `exportPacket` (ShippedReaderRoundTrip.swift, #317 and #1039),
@@ -17,6 +16,14 @@ func exportPacket(_ prepared: PreparedSpokenMarginsPackage, to url: URL) throws 
         .filter { $0.kind == SpokenMarginsArtifactKind.commentaryLayer }
         .compactMap { prepared.artifactData[$0.path] }
         .flatMap { try decoder.decode(SharedCommentaryLayerArtifact.self, from: $0).interjections.map(\.packageScopedId) }
-    XCTAssertEqual(sent.sorted(), shippedReadIDs.sorted(), "the shipped build's reader must read every Margin sent")
+    guard sent.sorted() == shippedReadIDs.sorted() else {
+        throw ShippedReaderMismatch(sent: sent.sorted(), shippedBuildRead: shippedReadIDs.sorted())
+    }
     return manifest
+}
+
+/// The shipped build's reader read back other Margins than the writer put in.
+struct ShippedReaderMismatch: Error, Equatable {
+    var sent: [String]
+    var shippedBuildRead: [String]
 }
