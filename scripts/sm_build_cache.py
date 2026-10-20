@@ -13,13 +13,18 @@ So a worktree under ~/Documents gets its two build folders as links into this Ma
 
 One slot per worktree path (its folder name plus a hash of the path), so each worktree keeps its own
 DerivedData (AGENTS.md: a shared one gives false "does not conform" errors). `<slot>/owner.txt` names
-the worktree, which is how disk relief tells a slot whose worktree is gone. Every tool keeps using the
-same paths (`.build/dd`, `.build/verification/...`, `Packages/SessionKit/.build/debug/...`).
+the worktree on its first line, which is how disk relief tells a slot whose worktree is gone, and the
+worktree folder's inode on the second. A new worktree made at a removed one's path has another inode,
+so it gets the slot emptied instead of building against the old branch's DerivedData. Every tool keeps
+using the same paths (`.build/dd`, `.build/verification/...`, `Packages/SessionKit/.build/debug/...`).
 
-Left alone: a worktree outside ~/Documents (the lane's runner workspaces, which link `.build` to the
-lane's own warm cache, and Codex worktrees in ~/.codex, which the job can read), an existing link, and
-an existing real folder that a build may be using. An idle real folder is moved into the slot: a rename
-on the same disk, so nothing is copied.
+Only linked worktrees (`.git` is a `gitdir:` file) are linked. Left alone: the main checkout and other
+clones (the daily phone-plan job runs the main checkout's prebuilt `Packages/SessionKit/.build/release/
+phone-plan`, which disk relief must never empty), a worktree outside ~/Documents (the lane's runner
+workspaces, which link `.build` to the lane's own warm cache, and Codex worktrees in ~/.codex, which the
+job can read), an existing link, and an existing real folder that a build may be using. An idle real
+folder is moved into the slot: a rename on the same disk, so nothing is copied. Linking holds
+`<slot>/link.lock`, so two builds started at once in a fresh worktree don't race.
 
 Settings: SM_BUILD_CACHE=off turns linking off; SM_BUILD_CACHE_ROOT moves the cache folder;
 SM_BUILD_CACHE_UNDER changes which worktrees are linked (default ~/Documents). Tests use all three.
@@ -34,6 +39,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -41,6 +47,7 @@ from typing import List, Optional, Tuple
 
 FOLDERS = (('.build', 'root'), ('Packages/SessionKit/.build', 'sessionkit'))
 OWNER_FILE = 'owner.txt'
+LINK_LOCK = 'link.lock'
 # A real folder changed this recently may belong to a build in progress: it isn't moved.
 MOVE_IDLE_SECONDS = 10 * 60
 
@@ -75,7 +82,9 @@ def applies_to(worktree: Path) -> bool:
     if os.environ.get('SM_BUILD_CACHE', '').strip().lower() in ('off', '0', 'no') or os.environ.get('GITHUB_ACTIONS'):
         return False
     area = str(_real(linked_area())).rstrip('/') + '/'
-    return str(_real(worktree)).startswith(area)
+    if not str(_real(worktree)).startswith(area):
+        return False
+    return (Path(worktree) / '.git').is_file()  # a linked worktree, not the main checkout or a clone
 
 
 def _newest_mtime(path: Path, newer_than: float) -> float:
@@ -132,20 +141,60 @@ def _move_in(folder: Path, target: Path) -> Optional[str]:
     return None
 
 
+def _identity(worktree: Path) -> str:
+    return f'inode={os.stat(worktree).st_ino}'
+
+
+def _empty(folder: Path) -> None:
+    for child in folder.iterdir():
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child, ignore_errors=True)
+        else:
+            child.unlink(missing_ok=True)
+
+
+def _claim_slot(slot: Path, worktree: Path) -> None:
+    """Write owner.txt; a slot left by an earlier worktree at the same path is emptied first."""
+    owner = slot / OWNER_FILE
+    lines = owner.read_text(errors='replace').splitlines() if owner.exists() else []
+    want = [str(_real(worktree)), _identity(worktree)]
+    if lines == want:
+        return
+    # A slot written before identities were recorded (path only, same path) is adopted as it is.
+    foreign = bool(lines) and (lines[0] != want[0] or (len(lines) > 1 and lines[1] != want[1]))
+    if foreign:
+        for _, name in FOLDERS:
+            if (slot / name).is_dir():
+                _empty(slot / name)
+    owner.write_text('\n'.join(want) + '\n')
+
+
 def ensure_links(worktree: Path, log=None) -> List[Tuple[Path, str]]:
     """Link the worktree's two build folders into its slot. Returns (link, what happened) for each folder."""
     worktree = Path(worktree)
     if not applies_to(worktree):
         return []
     slot = slot_for(worktree)
-    done = []
     try:
         slot.mkdir(parents=True, exist_ok=True)
-        owner = slot / OWNER_FILE
-        if not owner.exists() or owner.read_text().strip() != str(_real(worktree)):
-            owner.write_text(str(_real(worktree)) + '\n')
+        lock = (slot / LINK_LOCK).open('a')
     except OSError as error:
         return [(worktree, f'no cache folder ({error.strerror}); building in the worktree')]
+    with lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            _claim_slot(slot, worktree)
+        except OSError as error:
+            return [(worktree, f'no cache folder ({error.strerror}); building in the worktree')]
+        done = _link_folders(worktree, slot)
+    if log:
+        for link, what in done:
+            log(f'[build-cache] {link}: {what}')
+    return done
+
+
+def _link_folders(worktree: Path, slot: Path) -> List[Tuple[Path, str]]:
+    done = []
     for relative, name in FOLDERS:
         link, target = worktree / relative, slot / name
         target.mkdir(exist_ok=True)
@@ -161,11 +210,14 @@ def ensure_links(worktree: Path, log=None) -> List[Tuple[Path, str]]:
             if why:
                 done.append((link, f'kept in the worktree: {why}'))
                 continue
-        link.symlink_to(target, target_is_directory=True)
+        try:
+            link.symlink_to(target, target_is_directory=True)
+        except FileExistsError:
+            # Something outside this lock (an older copy of this script) linked it first.
+            if not (link.is_symlink() and _real(link) == _real(target)):
+                done.append((link, 'made by another process meanwhile; left alone'))
+                continue
         done.append((link, f'linked to {target}'))
-    if log:
-        for link, what in done:
-            log(f'[build-cache] {link}: {what}')
     return done
 
 
