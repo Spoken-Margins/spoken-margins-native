@@ -517,7 +517,8 @@ final class SupertonicSpeechTests: XCTestCase {
         renderer: CountingAudioSupertonicRenderer? = nil,
         articleText: SupertonicSpeechPlaybackClient.ArticleTextLookup? = nil,
         renderingAllowed: (@Sendable () -> Bool)? = nil,
-        maxCharacters: Int = RenderedSpeechChunker.spokenCostBudget
+        maxCharacters: Int = RenderedSpeechChunker.spokenCostBudget,
+        playerClock: (@Sendable (AVPlayer) -> TimeInterval)? = nil
     ) -> SupertonicSpeechPlaybackClient {
         SupertonicSpeechPlaybackClient(
             renderer: renderer ?? CountingAudioSupertonicRenderer(templateURL: template), voice: .m2, speed: 1,
@@ -531,6 +532,7 @@ final class SupertonicSpeechTests: XCTestCase {
                     player.volume = 0; player.playImmediately(atRate: rate)
                 }
             },
+            playerClock: playerClock,
             observesPlayerLifecycle: false,
             onDeviceRenderingAllowed: renderingAllowed ?? { SupertonicResourcePolicy.allowsRendering() },
             fallbackClient: fallback,
@@ -566,6 +568,36 @@ final class SupertonicSpeechTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(800))
         XCTAssertEqual(log.values.filter { $0 == "supertonic.stall" }.count, 1, "at most one re-seat per 30 s")
         try client.stop()
+    }
+
+    // #2119: the stall monitor read the player's clock while holding the client's lock, so an AVFoundation call
+    // that blocked (a slow or resetting media server) blocked every other caller of the client, the main thread
+    // included. The clock is now read outside the lock: stop() and the state read return while it is stuck.
+    func testABlockedClockReadDoesNotFreezeTheClient() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let clock = BlockableClock()
+        defer { clock.release() }
+        let client = stallClient(log, template: template, plays: true, playerClock: { _ in clock.read() })
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "blocked-clock", from: 0)
+        for _ in 0..<150 where log.startCount < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThanOrEqual(log.startCount, 1, "the chunk is playing")
+
+        clock.blockReads()
+        for _ in 0..<150 where !clock.isStuck { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(clock.isStuck, "the stall monitor is inside the blocked clock read")
+
+        let finished = CompletionFlag()
+        DispatchQueue.global().async {
+            _ = client.debugActiveAudioState()
+            try? client.stop()
+            finished.set()
+        }
+        for _ in 0..<100 where !finished.isSet { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(finished.isSet, "stop() and the state read return while the clock read is blocked")
+        clock.release()
     }
 
     // #540: the owner's phone, locked in a pocket, stalled and then paused for a tap: silence, with nothing on
@@ -5328,6 +5360,42 @@ private final class StallEventLog: @unchecked Sendable {
     func stall(_ kind: String, _ fields: [String: String]) { lock.withLock { kinds.append(kind); last = fields } }
     func started() { lock.withLock { starts += 1 } }
     func fellBack(_ reason: String) { lock.withLock { fallbacks.append(reason) } }
+}
+
+/// A player clock that can be made to block, as `AVPlayer.currentTime()` does when the media server is slow (#2119).
+private final class BlockableClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private let gate = DispatchSemaphore(value: 0)
+    private var blocking = false
+    private var waiting = 0
+    var isStuck: Bool { lock.withLock { waiting > 0 } }
+
+    func blockReads() { lock.withLock { blocking = true } }
+
+    /// Lets every blocked read go, and every later one through.
+    func release() {
+        let stuck = lock.withLock { () -> Int in blocking = false; return waiting }
+        for _ in 0..<stuck { gate.signal() }
+    }
+
+    func read() -> TimeInterval {
+        let mustWait = lock.withLock { () -> Bool in
+            if blocking { waiting += 1 }
+            return blocking
+        }
+        if mustWait {
+            gate.wait()
+            lock.withLock { waiting -= 1 }
+        }
+        return 0.1
+    }
+}
+
+private final class CompletionFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    var isSet: Bool { lock.withLock { done } }
+    func set() { lock.withLock { done = true } }
 }
 
 /// Switches to another item the first time a stall is about to be handled.
