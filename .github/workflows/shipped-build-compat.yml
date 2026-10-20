@@ -15,7 +15,7 @@ name: shipped-build-compat
 
 on:
   pull_request:
-    branches: [next]
+    branches: [next, main]  # either trunk (#1492); the checks read the PR's own base
     paths:
       - 'Packages/SessionKit/Sources/SessionKitPersistence/**'
       - 'Packages/SessionKit/Sources/SessionKitSharing/**'

@@ -103,9 +103,25 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
         try model.consumePendingSpokenMarginsPackageHandoffs(from: store)
 
-        XCTAssertNotNil(model.spokenMarginsPackageImportReview)
-        XCTAssertTrue(try store.pendingPayloadIDs().isEmpty)
+        let review = try XCTUnwrap(model.spokenMarginsPackageImportReview)
+        XCTAssertEqual(try store.pendingPayloadIDs().count, 1, "the shared copy waits until Import or Cancel (#2123)")
         XCTAssertTrue(model.diagnostics.values.contains("opened"))
+
+        // Coming back to the foreground while the review shows stages nothing again.
+        try model.consumePendingSpokenMarginsPackageHandoffs(from: store)
+        XCTAssertEqual(model.spokenMarginsPackageImportReview?.id, review.id)
+
+        // The app is killed before Import: the next launch reopens the review once, not on every foreground.
+        let relaunched = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        try relaunched.consumePendingSpokenMarginsPackageHandoffs(from: store)
+        let reopened = try XCTUnwrap(relaunched.spokenMarginsPackageImportReview, "the packet survived the relaunch")
+        try relaunched.consumePendingSpokenMarginsPackageHandoffs(from: store)
+        XCTAssertEqual(relaunched.spokenMarginsPackageImportReview?.id, reopened.id, "reopened once, not on a loop")
+        XCTAssertEqual(try store.pendingPayloadIDs().count, 1)
+
+        relaunched.cancelSpokenMarginsPackageImport()
+        XCTAssertNil(relaunched.spokenMarginsPackageImportReview)
+        XCTAssertTrue(try store.pendingPayloadIDs().isEmpty, "Cancel removes the shared copy")
         model.cancelSpokenMarginsPackageImport()
     }
 

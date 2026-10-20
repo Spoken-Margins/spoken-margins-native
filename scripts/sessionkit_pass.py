@@ -29,10 +29,14 @@ READS = (
     # Source-scraping tests (appSource(...), Gate1AppModel.swift) and the shipped-reader gate that scans the app tests.
     'App/SpokenMarginsApp/Sources/SpokenMarginsApp/',
     'App/SpokenMarginsAppTests/',
-    # Supertonic's narration tests read the bundled voice resources.
-    'App/SpokenMarginsApp/Resources/Supertonic/',
+    # Supertonic's narration tests read its model from artifacts/voice-catalog/files/ (the supertonicModel input),
+    # which is git-ignored: `scripts/voice-catalog fetch` writes it, each file pinned by sha256 in
+    # Contracts/voice-models/sources.json, which Contracts/ above covers (#1820).
     # The Kitten fallback voice's tests read the bundled model (the voiceAssets input) and the front end's test vectors (#849).
     'App/SpokenMarginsApp/Resources/Kitten/',
+    # Supertonic's pinned hashes (asset-manifest.json) and the catalog snapshot the download card reads (#1820).
+    'App/SpokenMarginsApp/Resources/Supertonic/',
+    'App/SpokenMarginsApp/Resources/VoiceCatalog/',
     'research/C2/frontend/',
     'research/B2/',
     'research/B4/',
@@ -43,6 +47,8 @@ READS = (
     'research/C2/results/darwin/',
     # The published source catalog the catalog tests decode.
     'Site/onboarding/catalog/',
+    # The guided tour manifest test decodes the manifest and checks the clip it names (#2051).
+    'Site/onboarding/v1/',
     # The trace tests find the repository root by its README.md and traces/ folder.
     'README.md',
     'traces/',

@@ -20,6 +20,7 @@ from lane_xcresult_attachments import export_failed_attachments
 
 from check_posterboard_repair import crash_snapshot, new_crash
 import host_audio
+import lane_conditions
 import lane_sim
 import sessionkit_pass
 import lane_sim_pool
@@ -223,9 +224,11 @@ def inputs_changed_message(prefix, before, limit=5):
     shown = ', '.join(paths[:limit]) + (f' and {len(paths) - limit} more' if len(paths) > limit else '')
     message = f'{prefix}: {shown}'
     if 'Packages/SessionKit/Package.resolved' in paths:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from trunk import trunk_ref  # #1492: the branch the fix restores from
         message += ('. SwiftPM rewrote Package.resolved during the build, so the copy committed on this branch does not '
                     'match Package.swift on the Mac (a Linux `swift test` rewrites it). Restore it with '
-                    '`git checkout origin/next -- Packages/SessionKit/Package.resolved` and push; if this branch '
+                    f'`git checkout {trunk_ref()} -- Packages/SessionKit/Package.resolved` and push; if this branch '
                     'changes dependencies on purpose, run `swift package resolve` on a Mac instead')
     return message
 
@@ -434,6 +437,7 @@ PORTABLE_LEFT_OUT = {
     'package-core': 'needs the Swift toolchain on macOS (SessionKitCoreTests also run in hosted-sessionkit-linux.yml)',
     'package-core-serial': 'needs the Swift toolchain on macOS',
     'package': 'needs the Swift toolchain, AVFoundation and a sound output; only the Mac lane runs the whole package',
+    'shipped-compat': 'builds SessionKit and Build 29\'s persistence code with Swift on macOS; only the Mac lane runs it',
 }
 # Inside runner-tests and ops, the tests that drive an Apple tool. Each is matched as a test id prefix (module,
 # class or test) in scripts/tests, or as a folder under ops/.
@@ -451,6 +455,9 @@ PORTABLE_RUNNER_TESTS_LEFT_OUT = {
     'test_phone_build.PhoneBuildTests.test_release_cache_and_source_survive_and_are_reused_for_the_next_tip': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_untested_commit_runs_host_checks_first': PHONE_BUILD_NEEDS_MAC,
     'test_lane_slots.VerifyTestsSlotTests.test_runner_xcodebuild_steps_take_a_slot_and_record_it': 'runs xcodebuild',
+    'test_sim_builds.': 'packs and unpacks app builds with macOS ditto',
+    # The runner (lane-runner.py) runs only on the Mac; Ubuntu 22.04's git 2.34 on the VPS runner is too old (#2160).
+    'test_lane_hosted_fast.HostedChecksStandTests.': 'needs git merge-tree --write-tree (git 2.38 or later)',
 }
 PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snapshots and the Mac-only caches'}
 # --plan fast-hosted-sessionkit and --plan fast-mac-rest (#1389): the fast plan split three ways once the repo is
@@ -462,7 +469,7 @@ PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snaps
 # Between them the three plans run every fast-plan step (test_fast_split.py checks it).
 FAST_SPLIT_PLANS = ('fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest')
 HOSTED_SESSIONKIT_STEPS = ('package-build', 'package-core', 'package-core-serial')
-MAC_REST_STEPS = ('runner-tests', 'ops', 'package-build', 'package')
+MAC_REST_STEPS = ('runner-tests', 'ops', 'package-build', 'package', 'shipped-compat')
 # runner-tests without the tests above: discover scripts/tests as the plain step does, then drop the listed ids.
 PORTABLE_RUNNER_LOADER = '''
 import sys, unittest
@@ -487,6 +494,55 @@ kept = unittest.TestSuite(t for t in tests(unittest.defaultTestLoader.discover("
                           if t.id().startswith(only))
 sys.exit(not unittest.TextTestRunner().run(kept).wasSuccessful())
 '''
+
+
+# The last shipped build's compatibility checks (#1899): the frozen packet reader still matches the tag, and a
+# database this tree writes opens in that build's own persistence code. .github/workflows/shipped-build-compat.yml
+# runs them too, but the runner pushes a merge commit it built itself, so no required check can stand on it and a
+# red workflow never stopped a PR landing. They run here instead, in the plan the runner merges on, for a diff that
+# touches a file that workflow's `paths` names. They need the Mac (the writer builds SessionKit's test target),
+# so they are a Mac step in the split plans.
+SHIPPED_COMPAT_WORKFLOW = '.github/workflows/shipped-build-compat.yml'
+SHIPPED_COMPAT_COMMAND = 'scripts/freeze-shipped-reader.sh --check && scripts/check-build29-database.sh'
+SHIPPED_COMPAT_TIMEOUT = 2400  # the workflow's own 40-minute budget
+
+
+def shipped_compat_paths(root):
+    """The `paths` globs of the compatibility workflow in <root>, or None when the tree has no such workflow."""
+    workflow = Path(root) / SHIPPED_COMPAT_WORKFLOW
+    if not workflow.is_file():
+        return None
+    text = workflow.read_text()
+    if '    paths:\n' not in text:
+        raise RuntimeError(f'{SHIPPED_COMPAT_WORKFLOW} has no `paths:` list; shipped_compat_paths cannot read it')
+    block = text.split('    paths:\n', 1)[1].split('\npermissions:', 1)[0]
+    paths = [m.group(1) for m in re.finditer(r"^\s*-\s*'([^'!][^']*)'\s*(?:#.*)?$", block, re.M)]
+    entries = [line for line in block.splitlines() if line.strip().startswith('-')]
+    if len(entries) != len(paths):  # a double-quoted, unquoted or `!negated` entry would be dropped, not matched
+        raise RuntimeError(f'{SHIPPED_COMPAT_WORKFLOW} has a `paths:` entry that is not a plain single-quoted glob')
+    if not paths:
+        raise RuntimeError(f'{SHIPPED_COMPAT_WORKFLOW} lists no paths; shipped_compat_paths cannot read it')
+    return paths
+
+
+def github_glob_matches(pattern, path):
+    """GitHub's path glob: `*` stays inside a folder, `**` crosses folders."""
+    regex = re.escape(pattern).replace(r'\*\*', '\0').replace(r'\*', '[^/]*').replace('\0', '.*')
+    return re.fullmatch(regex, path) is not None
+
+
+def shipped_compat_needed(changed, root=None):
+    """(run, reason) for the compatibility checks. changed=None means no diff information: run, as every other
+    step does, so the Test Desk's run on next's tip and an author's own --plan fast keep them."""
+    if not changed:
+        return True, 'no list of changed paths, so every step runs'
+    patterns = shipped_compat_paths(root or ROOT)
+    if patterns is None:
+        return False, f'this tree has no {SHIPPED_COMPAT_WORKFLOW} to take the watched paths from'
+    hit = [path for path in changed if any(github_glob_matches(pattern, path) for pattern in patterns)]
+    if hit:
+        return True, 'the diff touches ' + ', '.join(hit[:3]) + (f' and {len(hit) - 3} more' if len(hit) > 3 else '')
+    return False, 'the diff touches none of the files shipped-build-compat.yml watches'
 
 
 def touches(changed, prefixes):
@@ -550,6 +606,32 @@ POCKET_WEIGHT_TESTS = frozenset(f'SessionKitTests/PocketRendererTests/{test}' fo
     'testRendersTheThreeC2PassagesFasterThanRealTimeOnOneThread',
     'testProsePassagesAreSpokenWithinTwoPointsOfThePyTorchWordError',
 ))
+
+
+# Supertonic's render tests need its model, which is a download since #1820, in neither the repository nor the app.
+# Without `scripts/voice-catalog fetch supertonic-3-int8` (or SESSIONKIT_SUPERTONIC_DIR) they skip, naming the
+# supertonicModel input; SM_REQUIRE_MODELS makes them fail instead.
+SUPERTONIC_MODEL_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
+    'SupertonicChunkingTests/testNumberHeavyTableSpanRendersNoChunkNearTheBabbleLength',
+    'SupertonicChunkingTests/testSystemVoiceReadsAFlaggedChunkInSupertonicsFormat',
+    'SupertonicDownloadedModelTests/testThePinnedTreeHashIsTheDownloadedModels',
+    'SupertonicNarrationTests/testDiscardDeletesOnlyAudioTheRendererGenerated',
+    'SupertonicNarrationTests/testRealRenderComesBackTrimmedToItsSpeech',
+    'SupertonicNarrationTests/testRealRendersArePacedByWhoAskedNotBySharedState',
+    'SupertonicVoiceSelectionTests/testJamesAndLilyReadTheSameSentenceInTheirOwnAudibleVoices',
+))
+
+
+# The one app-hosted test that runs Supertonic's real model, in the adapters plan. The model is a download since #1820,
+# so the run fetches it (pinned by sha256 in Contracts/voice-models/sources.json) into a cache outside the checkout,
+# once per Mac, and hands it to the app's tests; a fetch that fails fails the run instead of letting the test skip.
+SUPERTONIC_APP_MODEL_TEST = 'SupertonicSpeechTests/testDownloadedRendererSynthesizesJamesAndLilyAndReusesSessions'
+SUPERTONIC_MODEL_VOICE = 'supertonic-3-int8'
+
+
+def supertonic_model_cache():
+    """Where the lane keeps the fetched model: SM_VOICE_CACHE, else the user's Caches folder (about 150 MB)."""
+    return Path(os.environ.get('SM_VOICE_CACHE') or Path.home() / 'Library/Caches/SpokenMargins/voice-catalog')
 
 
 def in_codex_sandbox():
@@ -853,6 +935,14 @@ class Run:
             log_size = 0
             attempt = 1
             watching = startup is not None
+            # #2176: the host's conditions as each launch starts, when its tests start and when it stalls.
+            conditions = startup.get('conditions') if startup else None
+
+            def note_conditions(at, **extra):
+                if conditions:
+                    entry.setdefault('launch_conditions', []).append({'attempt': attempt, 'at': at, **extra,
+                                                                      **conditions()})
+            note_conditions('start')
             scan_from = 0  # each launch is judged by its own part of the shared log
             # #2053: an xcodebuild test run that has printed its summary and then goes quiet is finished, not hung.
             finish = xcodebuild_finish.FinishWatch() if tests and args[0] == 'xcodebuild' else None
@@ -893,15 +983,19 @@ class Run:
                     text = (self.output / f'{name}.log').read_text(errors='replace')[scan_from:]
                     if TESTS_STARTED.search(text):
                         watching = False
+                        note_conditions('tests_started', seconds=round(time.monotonic() - attempt_start, 1))
                     elif time.monotonic() - attempt_start >= startup['seconds']:
                         lines = [line for line in text.splitlines() if line.strip()]
                         stall = {'attempt': attempt, 'after_seconds': round(time.monotonic() - attempt_start, 1),
                                  'last_log_line': lines[-1][:200] if lines else None}
+                        if conditions:
+                            stall['conditions'] = conditions()
                         stall.update(startup['diagnose'](self.output / f'{name}-stall-{attempt}'))
                         # The diagnosis takes seconds; a launch that began its tests meanwhile is slow, not stalled.
                         if TESTS_STARTED.search((self.output / f'{name}.log').read_text(errors='replace')[scan_from:]):
                             entry.setdefault('slow_starts', []).append(stall)
                             watching = False
+                            note_conditions('tests_started', seconds=round(time.monotonic() - attempt_start, 1))
                             continue
                         entry.setdefault('startup_stalls', []).append(stall)
                         print(f'warning: {name} printed no test output {stall["after_seconds"]}s after launch '
@@ -923,6 +1017,7 @@ class Run:
                         log.flush()
                         scan_from = len((self.output / f'{name}.log').read_text(errors='replace'))
                         attempt_start = time.monotonic()
+                        note_conditions('start')
                         if finish is not None:
                             finish = xcodebuild_finish.FinishWatch()
                         process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
@@ -1057,6 +1152,16 @@ class Run:
             else:
                 self.host_steps()
 
+    def shipped_compat(self):
+        """The shipped build's packet reader and database checks (#1899), when the diff reaches what they watch.
+        After the SessionKit steps, so the writer's `swift test` finds that build already done."""
+        needed, why = shipped_compat_needed(self.changed)
+        if needed:
+            self.manifest.setdefault('notes', []).append('shipped-build compatibility checks ran: ' + why)
+            self.command('shipped-compat', ['sh', '-c', SHIPPED_COMPAT_COMMAND], timeout=SHIPPED_COMPAT_TIMEOUT)
+        else:
+            self.skip('shipped-compat', why)
+
     def hosted_sessionkit(self):
         """SessionKit's build and SessionKitCoreTests on a GitHub-hosted Mac (#1389), for hosted-portable.yml. No
         sound output there, so SessionKitTests and SessionKitTraceTests are left to the lane Mac (fast-mac-rest)."""
@@ -1103,6 +1208,7 @@ class Run:
             self.skip('package', why)
         else:
             self.package_steps(expected, core_elsewhere=True)
+        self.shipped_compat()
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError(inputs_changed_message('Inputs changed during Mac-only verification', self.input_files))
 
@@ -1179,6 +1285,7 @@ class Run:
             self.package_steps(expected)
             if pass_key and sessionkit_pass.key(ROOT, identity) == pass_key:
                 sessionkit_pass.record(state_dir(), pass_key, head=self.manifest['head'], tests=len(expected))
+        self.shipped_compat()
 
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError(inputs_changed_message('Inputs changed during fast verification', self.input_files))
@@ -1206,7 +1313,7 @@ class Run:
                          timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
                          expected=expected - core if split else expected, tests=True,
                          allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus',
-                                        *POCKET_WEIGHT_TESTS},
+                                        *POCKET_WEIGHT_TESTS, *SUPERTONIC_MODEL_TESTS},
                          probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
         except RuntimeError as error:
             step = self.manifest['steps'][-1]
@@ -1338,6 +1445,19 @@ class Run:
                      str(derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')])
         return derived, identity
 
+    def provide_supertonic_model(self):
+        """Fetch Supertonic's model before the simulator boots, and give its folder to the app's tests, which read
+        SESSIONKIT_SUPERTONIC_DIR (xcodebuild passes TEST_RUNNER_-prefixed variables on without the prefix)."""
+        folder = os.environ.get('SESSIONKIT_SUPERTONIC_DIR')
+        if not folder:
+            cache = supertonic_model_cache()
+            self.command('supertonic-model', [sys.executable, str(ROOT / 'scripts/voice-catalog'), '--state-dir', str(cache),
+                                              'fetch', SUPERTONIC_MODEL_VOICE], timeout=1200)
+            folder = str(cache / 'files' / SUPERTONIC_MODEL_VOICE)
+        os.environ['TEST_RUNNER_SESSIONKIT_SUPERTONIC_DIR'] = folder
+        self.manifest['supertonic_model'] = folder
+        self.save()
+
     def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None, simulator_slot_fd=None,
               require_build=False):
         if input_identity() != self.manifest['input_sha256']:
@@ -1354,6 +1474,9 @@ class Run:
                                      {f'{APP_TEST_TARGET}/{test}' for test in target_tests(ROOT, APP_TEST_TARGET)})
         if selectors:
             self.manifest['only_testing'] = selectors
+        if any(test.endswith(SUPERTONIC_APP_MODEL_TEST)
+               for test in planned if not selectors or any(selected(test, s) for s in selectors)):
+            self.provide_supertonic_model()
         chosen, created = self.simulator(device, ios)
         refuse_unsafe(chosen, lane_sim.unsafe_devices())
         self.manifest['destination'] = chosen
@@ -1434,8 +1557,12 @@ class Run:
             # Only the app-hosted unit tests (app, adapters): the UI plans launch a separate runner app.
             startup = {'seconds': STARTUP_STALL_SECONDS, 'retries': STARTUP_RETRIES,
                        'diagnose': lambda folder: stall_evidence(chosen['udid'], folder, result_bundle=result_bundle),
-                       'reset': relaunch} if scheme == 'SpokenMarginsAppBehavior' else None
+                       'reset': relaunch, 'conditions': lane_conditions.snapshot} \
+                if scheme == 'SpokenMarginsAppBehavior' else None
             if startup is not None:
+                # What each launch installs (#2176): #2067 takes Supertonic's model out, about 144 MB.
+                self.manifest['app_bundle_mb'] = lane_conditions.folder_mb(
+                    derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')
                 self.manifest['settle_before_tests'] = settle_before_tests(chosen['udid'])
                 self.save()
             self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [

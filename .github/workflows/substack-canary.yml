@@ -27,7 +27,7 @@ on:
     - cron: '41 10 * * *'
   workflow_dispatch:
   push:
-    branches: [next]
+    branches: [next, main]  # either trunk (#1492); the job runs only for the one SM_TRUNK names
     paths:
       - 'Packages/SessionKit/Sources/SessionKitFeeds/**'
       - 'Packages/SessionKit/Sources/SubstackCanary/**'
@@ -46,16 +46,17 @@ concurrency:
 
 jobs:
   canary:
+    if: github.event_name != 'push' || github.ref_name == (vars.SM_TRUNK || 'next')
     runs-on: [sm-vps-t1]
     timeout-minutes: 30
     steps:
       - name: Start the clock
         run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
-      # The scheduled run checks next's parser, the code the next phone build carries; a push or a
+      # The scheduled run checks the trunk's parser, the code the next phone build carries; a push or a
       # dispatch checks the commit it ran for.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'schedule' && 'next' || github.sha }}
+          ref: ${{ github.event_name == 'schedule' && (vars.SM_TRUNK || 'next') || github.sha }}
       - name: Run the canary
         id: canary
         run: |

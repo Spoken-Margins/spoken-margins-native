@@ -1,6 +1,6 @@
 # Lighthouse
 
-A lighthouse is a tower, building or other type of structure designed to emit light from a system of lamps and lenses. Lighthouses serve as navigational aids for maritime pilots at sea or on inland waterways.
+A lighthouse is a tall marker on a coast or a harbour wall that shows a light at night. Ships use it to find their way in and to keep clear of rocks and shallow water.
 
 ## History
 

@@ -17,6 +17,9 @@ import unittest
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
+# A bare environment for the scripts under test, plus the loader path a Python built as a shared library needs to start
+# (actions/setup-python on the VPS runner, #2160).
+BASE_ENV = {name: os.environ[name] for name in ('PATH', 'LD_LIBRARY_PATH') if name in os.environ}
 ROOT = SCRIPTS.parent
 sys.path.insert(0, str(SCRIPTS))
 import sm_paths  # noqa: E402
@@ -102,7 +105,7 @@ class HelperTable(unittest.TestCase):
 
 class ShellSnippet(unittest.TestCase):
     def run_sh(self, env_extra, home):
-        env = {'PATH': os.environ['PATH'], 'HOME': str(home), **env_extra}
+        env = {**BASE_ENV, 'HOME': str(home), **env_extra}
         script = f'sm_paths_dir={SCRIPTS}; . "$sm_paths_dir/sm_paths.sh" && echo "$SM_REPO" && echo "$SM_OPS_HOME"'
         done = subprocess.run(['sh', '-c', script], env=env, capture_output=True, text=True)
         self.assertEqual(done.returncode, 0, done.stderr)
@@ -117,7 +120,7 @@ class ShellSnippet(unittest.TestCase):
 
     def test_the_cli_agrees(self):
         with tempfile.TemporaryDirectory() as tmp:
-            env = {'PATH': os.environ['PATH'], 'HOME': tmp, 'SM_OPS_HOME': str(Path(tmp) / 'o')}
+            env = {**BASE_ENV, 'HOME': tmp, 'SM_OPS_HOME': str(Path(tmp) / 'o')}
             out = subprocess.run([sys.executable, str(SCRIPTS / 'sm_paths.py'), 'state', 'keep-awake'],
                                  env=env, capture_output=True, text=True, check=True).stdout.strip()
             self.assertEqual(out, str(Path(tmp) / 'o' / 'keep-awake'))
@@ -170,7 +173,7 @@ COPY_IGNORE = shutil.ignore_patterns('tests', 'fixtures', '__pycache__', 'test_*
 
 
 def probe(root: Path, home: Path, env_extra: dict) -> dict:
-    env = {'PATH': os.environ['PATH'], 'HOME': str(home), **env_extra}
+    env = {**BASE_ENV, 'HOME': str(home), **env_extra}
     done = subprocess.run([sys.executable, '-I', '-c', PROBE, str(root)], env=env, cwd=str(home),
                           capture_output=True, text=True)
     if done.returncode:

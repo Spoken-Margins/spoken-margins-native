@@ -54,12 +54,14 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 episodeTaskIsRunning: episodeMapPreparationTask != nil
             )
         ) {
-            prepareEpisodeMap(itemId: job.itemId, policy: job.policy)
+            prepareEpisodeMap(itemId: job.itemId, policy: job.policy, trigger: .backgroundPass)
             if let task = episodeMapPreparationTask {
+                let preparer = episodeMapPreparer
                 await withTaskCancellationHandler {
                     await task.value
                 } onCancel: {
-                    task.cancel()
+                    // iOS ending background time pauses the job; a plain cancel dropped it for good (#2092).
+                    Task { @MainActor in preparer.pause(.backgroundTimeExpired) }
                 }
             }
             backgroundPreparationPlanner.afterEpisodePass()
@@ -153,10 +155,9 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             attemptedJob = job
             recordDeveloperDiagnostic("preparation.selected", ["item": DeveloperDiagnosticRecording.token(job.itemId), "policy": String(describing: job.policy), "nextChunk": String(job.nextChunkIndex)])
             let support = try applicationSupportDirectory()
-            guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
+            guard let assets = SupertonicAssetResolver.location() else {
                 return !foregroundDemandOnly
             }
-            let assets = SupertonicAssetLocation(rootURL: resourceRoot)
             let signature = try await Task.detached(priority: .utility) {
                 try SupertonicRenderIdentity.make(assets: assets, voice: voice)
             }.value

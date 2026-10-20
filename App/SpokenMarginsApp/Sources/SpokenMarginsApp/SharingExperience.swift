@@ -63,6 +63,8 @@ struct SpokenMarginsPackageImportReview: Identifiable {
     let matchingItemId: String?
     /// A map packet whose item already carries a different shared map: adding this one replaces it.
     var replacesExistingMap = false
+    /// Removes the file the packet was opened from (the Share inbox copy), once it is imported or cancelled (#2123).
+    var releaseSource: (@MainActor () -> Void)?
 
     /// A file that carries a Listening Map for an article or PDF and no Margins (#1471).
     var isListeningMap: Bool { ListeningMapPacket.isMapPacket(contents.manifest) }

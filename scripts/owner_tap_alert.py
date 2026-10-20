@@ -234,13 +234,16 @@ def check_pr(api: GitHubApi, number: int, mention: str, dry_run: bool, via_label
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     ap.add_argument('--repo', default=os.environ.get('GH_REPO', ''))
-    ap.add_argument('--base', default='next')
+    ap.add_argument('--base', help='the base branch (default: the trunk)')
     ap.add_argument('--mention', help='login to @mention (default: the repository owner)')
     ap.add_argument('--pr', type=int, help='check only this PR')
     ap.add_argument('--dry-run', action='store_true')
     ap.add_argument('--via-label', metavar='LABEL', help='for a ready PR, re-add this label instead of commenting')
     ap.add_argument('--clear-label', metavar='LABEL', help='with --pr: remove this label after the check')
     args = ap.parse_args(argv)
+    if args.base is None:  # #1492: the trunk (scripts/trunk.py)
+        from trunk import trunk_branch
+        args.base = trunk_branch()
     args.mention = args.mention or args.repo.partition('/')[0]
     if not args.repo or not re.fullmatch(r'[A-Za-z0-9_.-]+', args.mention):
         ap.error('need --repo (or GH_REPO) and a plain --mention login')

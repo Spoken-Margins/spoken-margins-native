@@ -3,16 +3,23 @@ import Foundation
 public struct OfflineStorageCategoryRow: Identifiable, Equatable, Sendable {
     public let category: OfflineAssetCategory
     public let byteCount: Int64
+    /// Downloaded voices (#1819) are stored under an existing category, because Build 29 decodes the
+    /// category enum strictly, and get their own row by their asset ids instead.
+    public let isDownloadedVoices: Bool
 
-    public init(category: OfflineAssetCategory, byteCount: Int64) {
+    public init(category: OfflineAssetCategory, byteCount: Int64, isDownloadedVoices: Bool = false) {
         self.category = category
         self.byteCount = byteCount
+        self.isDownloadedVoices = isDownloadedVoices
     }
 
-    public var id: String { category.rawValue }
+    public static let downloadedVoicesId = "downloaded_voices"
+
+    public var id: String { isDownloadedVoices ? Self.downloadedVoicesId : category.rawValue }
 
     public var title: String {
-        switch category {
+        if isDownloadedVoices { return "Downloaded voices" }
+        return switch category {
         case .preparedAudio: "Prepared audio"
         case .preparedChunk: "Prepared audio parts"
         case .podcast: "Podcasts"
@@ -81,10 +88,15 @@ public struct OfflineStorageSnapshot: Equatable, Sendable {
         let reproducible = assets.filter(\.isReproducible).reduce(Int64(0)) { $0 + $1.byteCount }
         let clearable = assets.filter(\.isAutomaticallyEvictable).reduce(Int64(0)) { $0 + $1.byteCount }
         let overage = max(0, used + reserved - budget.limitBytes)
-        let grouped = Dictionary(grouping: assets, by: \.category)
-        let categories = OfflineAssetCategory.allCases.compactMap { category -> OfflineStorageCategoryRow? in
+        let isVoice: (OwnedOfflineAsset) -> Bool = { $0.id.hasPrefix(VoiceCatalogCoordinator.ledgerAssetPrefix) }
+        let grouped = Dictionary(grouping: assets.filter { !isVoice($0) }, by: \.category)
+        var categories = OfflineAssetCategory.allCases.compactMap { category -> OfflineStorageCategoryRow? in
             let bytes = grouped[category, default: []].reduce(Int64(0)) { $0 + $1.byteCount }
             return bytes == 0 ? nil : OfflineStorageCategoryRow(category: category, byteCount: bytes)
+        }
+        let voiceBytes = assets.filter(isVoice).reduce(Int64(0)) { $0 + $1.byteCount }
+        if voiceBytes > 0 {
+            categories.append(OfflineStorageCategoryRow(category: VoiceCatalogCoordinator.ledgerCategory, byteCount: voiceBytes, isDownloadedVoices: true))
         }
         return OfflineStorageSnapshot(
             budgetBytes: budget.limitBytes,

@@ -393,6 +393,32 @@ class LaneRunnerRoutingTests(unittest.TestCase):
         main['labels'].append({'name': 'sm-lane-build'})
         self.assert_normal(self.spill([main, self.runner('sm-lane-priority', False)]))
 
+    # #2147: on 2026-10-19 a priority job waited 40 minutes for sm-lane-mac-3 while sm-lane-mac-2 freed up three times.
+    def shared_runners(self, busy=True):
+        shared = self.runner('sm-lane-build', busy)
+        shared['labels'].append({'name': 'sm-lane-priority'})
+        return [self.runner('sm-lane-build', busy), shared]
+
+    def test_priority_work_uses_the_build_queue_when_the_priority_runner_also_builds(self):
+        for busy in (True, False):
+            for kwargs in ({'labels': ['priority']}, {'paths': ['scripts/lane_slots.py']}):
+                with self.subTest(busy=busy, **kwargs):
+                    result = self.spill(self.shared_runners(busy), **kwargs)
+                    self.assertEqual(result, {'lane': ['self-hosted', 'sm-lane-priority'],
+                                              'automerge': ['self-hosted', 'macOS', 'sm-lane-build']})
+
+    def test_a_dedicated_priority_runner_beside_a_shared_one_keeps_the_priority_queue(self):
+        self.assert_priority(self.spill(self.shared_runners() + [self.runner('sm-lane-priority', True)],
+                                        labels=['priority']))
+        offline = self.runner('sm-lane-priority', True, online=False)
+        self.assertEqual(self.spill(self.shared_runners() + [offline], labels=['priority'])['automerge'],
+                         ['self-hosted', 'macOS', 'sm-lane-build'])
+
+    def test_ordinary_work_stays_normal_with_a_shared_priority_runner(self):
+        for busy in (True, False):
+            with self.subTest(busy=busy):
+                self.assert_normal(self.spill(self.shared_runners(busy)))
+
     def test_t2_lane_path_stays_normal(self):
         self.assert_normal(self.route(['ops/codex/a.py', 'project.yml']))
         with tempfile.TemporaryDirectory() as directory:

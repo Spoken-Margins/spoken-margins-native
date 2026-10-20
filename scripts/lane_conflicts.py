@@ -262,12 +262,15 @@ def sweep(api, remote, base, workdir, token=None, only=None, log=print):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('--repo', default=os.environ.get('GH_REPO'), help='OWNER/NAME')
-    parser.add_argument('--base', default='next')
+    parser.add_argument('--base', help='the base branch (default: the trunk)')
     parser.add_argument('--pr', type=int, help='check only this PR')
     parser.add_argument('--remote', help='clone URL (default: the repository on the GitHub server)')
     parser.add_argument('--workdir', default=os.environ.get('SM_LANE_CONFLICTS_DIR')
                         or str(Path.home() / '.cache' / 'sm-lane-conflicts'))
     args = parser.parse_args(argv)
+    if args.base is None:  # #1492: the trunk (scripts/trunk.py)
+        from trunk import trunk_branch
+        args.base = trunk_branch()
     if not args.repo:
         parser.error('--repo or GH_REPO is required')
     remote = args.remote or f'{os.environ.get("GITHUB_SERVER_URL", "https://github.com")}/{args.repo}.git'

@@ -5,8 +5,11 @@ import Foundation
 ///
 /// Built from the JSON form of MetricKit's reports (`MXDiagnosticPayload.jsonRepresentation()` and
 /// `MXMetricPayload.jsonRepresentation()`), so it is host-testable with recorded reports. It keeps counts,
-/// category names, a few system-supplied numbers and the report's dates, and nothing else: no call stacks,
-/// device model, OS version, bundle or exception text, so nothing in it can tell whose phone it came from.
+/// category names, a few system-supplied numbers and the report's dates, and nothing else: no device model,
+/// OS version, bundle or exception text, so nothing in it can tell whose phone it came from. For a crash, CPU
+/// exception or hang it also keeps the top frames of the heaviest thread that lie in the app's own binary, as
+/// offsets into that binary plus the binary's build UUID (#2099). Those name the code the app shipped, which
+/// the Mac can symbolicate, and nothing about the listener.
 ///
 /// MetricKit hands the same report over again for 24 hours, so `Seen` remembers how far earlier launches
 /// already reported and a report is only counted once.
@@ -58,6 +61,16 @@ public struct PreviousRunExit: Sendable, Equatable {
         ],
     ]
 
+    /// The sections whose newest entry also gives the app's top frames, and the event field for them.
+    private static let frameFields: [String: String] = [
+        "crashDiagnostics": "crashFrames",
+        "cpuExceptionDiagnostics": "cpuFrames",
+        "hangDiagnostics": "hangFrames",
+    ]
+
+    /// How many of the app's own frames are kept, leaf first.
+    static let maxFrames = 8
+
     private static let exitCounts: [(section: String, key: String, field: String, reason: String)] = [
         ("backgroundExitData", "cumulativeCPUResourceLimitExitCount", "bgCpuLimit", "background_cpu_limit"),
         ("backgroundExitData", "cumulativeMemoryResourceLimitExitCount", "bgMemoryLimit", "background_memory_limit"),
@@ -75,7 +88,14 @@ public struct PreviousRunExit: Sendable, Equatable {
         ("foregroundExitData", "cumulativeAbnormalExitCount", "fgAbnormal", "foreground_abnormal"),
     ]
 
-    public static func summarize(diagnosticPayloads: [Data], metricPayloads: [Data], seen: Seen = Seen()) -> PreviousRunExit {
+    /// - Parameter appBinaryNames: the names MetricKit gives the app's own executable in a call stack. Empty
+    ///   keeps no frames.
+    public static func summarize(
+        diagnosticPayloads: [Data],
+        metricPayloads: [Data],
+        seen: Seen = Seen(),
+        appBinaryNames: Set<String> = []
+    ) -> PreviousRunExit {
         var fields: [String: String] = ["source": "metrickit"]
         var reasons: [String] = []
         var newReports = 0
@@ -94,6 +114,11 @@ public struct PreviousRunExit: Sendable, Equatable {
                     let meta = latest["diagnosticMetaData"] as? [String: Any] ?? [:]
                     for detail in diagnosticDetails[section.key] ?? [] {
                         if let text = label(meta[detail.key]) { fields[detail.field] = text }
+                    }
+                    if let field = frameFields[section.key],
+                       let frames = topFrames(of: latest["callStackTree"], inBinaries: appBinaryNames) {
+                        fields[field] = frames.offsets.joined(separator: ",")
+                        fields[field + "Binary"] = frames.binary
                     }
                 }
             }
@@ -132,6 +157,40 @@ public struct PreviousRunExit: Sendable, Equatable {
     }
 
     // MARK: - Reading the reports
+
+    /// The frames of the heaviest thread in `tree` (MetricKit's `callStackTree`) that are in one of `binaries`,
+    /// innermost first, as hex offsets into that binary's text segment, with the binary's build UUID.
+    /// "Heaviest" is the thread MetricKit attributes the report to, else the one with the most samples; down
+    /// the stack it follows the child with the most samples. Nil when the tree has no such frame.
+    private static func topFrames(of tree: Any?, inBinaries binaries: Set<String>) -> (offsets: [String], binary: String)? {
+        guard !binaries.isEmpty, let tree = tree as? [String: Any],
+              let stacks = tree["callStacks"] as? [[String: Any]] else { return nil }
+        func weight(_ frames: [[String: Any]]) -> Int { frames.reduce(0) { $0 + (count($1["sampleCount"]) ?? 0) } }
+        func roots(_ stack: [String: Any]) -> [[String: Any]] { stack["callStackRootFrames"] as? [[String: Any]] ?? [] }
+        let chosen = stacks.first { $0["threadAttributed"] as? Bool == true }
+            ?? stacks.max { weight(roots($0)) < weight(roots($1)) }
+        guard let chosen else { return nil }
+
+        var path: [[String: Any]] = []
+        var level = roots(chosen)
+        while let next = level.max(by: { (count($0["sampleCount"]) ?? 0) < (count($1["sampleCount"]) ?? 0) }) {
+            path.append(next)
+            level = next["subFrames"] as? [[String: Any]] ?? []
+            if path.count > 512 { break }
+        }
+        let own = path.filter { frame in
+            guard let name = frame["binaryName"] as? String else { return false }
+            return binaries.contains(name)
+        }
+        guard let innermost = own.last, let uuid = innermost["binaryUUID"] as? String else { return nil }
+        let sameBuild = own.filter { $0["binaryUUID"] as? String == uuid }
+        let offsets = sameBuild.reversed().prefix(maxFrames).compactMap { frame -> String? in
+            guard let offset = count(frame["offsetIntoBinaryTextSegment"]), offset >= 0 else { return nil }
+            return "0x" + String(offset, radix: 16)
+        }
+        guard !offsets.isEmpty, let binary = label(uuid) else { return nil }
+        return (Array(offsets), binary)
+    }
 
     private struct Report {
         let root: [String: Any]

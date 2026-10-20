@@ -136,8 +136,7 @@ extension Gate1AppModel {
             refreshSelectedItem()
         }
         _ = rebuildEngineForCurrentSettings()
-        if ttsVoiceSelection == .system, let renderer = supertonicRenderer {
-            supertonicRenderer = nil
+        if ttsVoiceSelection == .system, let renderer = supertonicModel.reset(retiring: false) {
             Task { await renderer.unload() }
         }
         if ttsVoiceSelection == .system, let renderer = kittenRenderer {

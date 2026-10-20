@@ -63,6 +63,8 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   head merged onto the next they tested, and next's commits since can't matter (untested_moves), the automerge
   run takes them for the portable steps and SessionKitCoreTests and runs only --plan fast-mac-rest on the Mac.
   Anything short of that, and with the variable unset, it runs the whole --plan fast as before.
+  Until the repo is public (#2160), the same rule takes the two VPS checks in linux-t1.yml instead: `vps fast:
+  portable` (--plan fast-portable) and `sessionkit-core` (SessionKitCoreTests on Linux), with no switch.
 - Hosted T2 and T3 (#1389 phase 2), only with the LANE_HOSTED_APP repository variable `on` (the same kind of rollout
   guard): test-scope.py routes the lane job to a GitHub-hosted Mac, and lane.yml sets SM_LANE_GITHUB_HOSTED=1 there,
   with the lane state and evidence folders in the job's own temporary folder. This script runs as on the Mac: the
@@ -310,6 +312,13 @@ def duration(seconds: float) -> str:
     return f'{minutes}m{seconds:02d}s' if minutes else f'{seconds}s'
 
 
+def trunk() -> str:
+    """The trunk branch, from scripts/trunk.py (#1492). Imported late, like the other helpers, so a tree that
+    predates it takes origin/<base>'s copy through base_scripts_fallback."""
+    from trunk import trunk_branch
+    return trunk_branch()
+
+
 def github_hosted() -> bool:
     """This job runs on a GitHub-hosted Mac (lane.yml sets it there, #1389 phase 2)."""
     return os.environ.get('SM_LANE_GITHUB_HOSTED') == '1'
@@ -317,7 +326,8 @@ def github_hosted() -> bool:
 
 def report(request_id: str, verdict: str, head: str, base: str, tier: str, where: str, seconds: float,
            ran: str, details: list[str], crashes: str, evidence: str, not_verified: str, wanted: dict,
-           cc: str = '', base_name: str = 'next', hosted: bool = False) -> str:
+           cc: str = '', base_name: str | None = None, hosted: bool = False) -> str:
+    base_name = base_name or trunk()
     location = ('on the VPS runner' if hosted else
                 'on a GitHub-hosted Mac; the run\'s `lane-evidence` artifact keeps it for 7 days' if github_hosted()
                 else 'on the Mac')
@@ -840,6 +850,11 @@ HOSTED_FAST_SWITCH = 'LANE_HOSTED_FAST'
 # check run name (the job's `name:` in hosted-portable.yml) -> the verify-tests.py plan it ran
 HOSTED_FAST_CHECKS = {'hosted fast: portable': 'fast-portable',
                       'hosted fast: SessionKit core': 'fast-hosted-sessionkit'}
+# The bridge until then (#2160): the same two halves on the owner's VPS runner sm-vps-t1 (linux-t1.yml), on the same
+# merge commit, with no switch. Its SessionKitCoreTests run on Linux, which leaves out the few Darwin-only core tests
+# (3,281 there against about 3,290 on the Mac on 2026-10-19); every whole --plan fast on the Mac (a fallback, a T3
+# release) still runs them. Missing, failed or for another tree, the Mac runs the whole --plan fast as before.
+VPS_FAST_CHECKS = {'vps fast: portable': 'fast-portable', 'sessionkit-core': 'linux-sessionkit-core'}
 HOSTED_TESTED_TITLE = 'lane-hosted-tested'
 HOSTED_TESTED = re.compile(r'^plan=(\S+) tree=([0-9a-f]{40}) parents=([0-9a-f]{40}) ([0-9a-f]{40})\s*$')
 
@@ -859,11 +874,11 @@ def hosted_tested(annotations: list[dict]) -> dict | None:
     return {'plan': plan, 'tree': tree, 'base': base, 'head': head}
 
 
-def hosted_fast_records(github, head: str) -> tuple[dict | None, str]:
-    """({check name: what it tested}, '') when every required hosted fast check has a successful newest run on the PR's
-    <head> that says what it tested; else (None, why not)."""
+def hosted_fast_records(github, head: str, checks: dict = HOSTED_FAST_CHECKS) -> tuple[dict | None, str]:
+    """({check name: what it tested}, '') when every check in <checks> (name -> plan) has a successful newest run on
+    the PR's <head> that says what it tested; else (None, why not)."""
     found = {}
-    for name, plan in HOSTED_FAST_CHECKS.items():
+    for name, plan in checks.items():
         runs = json.loads(github.api(f'repos/{github.repo}/commits/{head}/check-runs?check_name='
                                      f'{urllib.parse.quote(name, safe="")}&filter=latest&per_page=50'))
         # Only GitHub Actions' own runs: another app could post a check run with the same name.
@@ -891,16 +906,27 @@ def merged_tree(tree: Path, base: str, head: str) -> str | None:
 
 def hosted_fast_checks(github, tree: Path, base: str, head: str, base_sha: str, env=None,
                        records=hosted_fast_records) -> tuple[dict | None, str]:
-    """(the hosted fast checks that stand for <head> merged onto <base> at <base_sha>, '') or (None, why the Mac runs
-    the whole --plan fast). '' as the reason while the switch is off.
+    """(the fast checks off the Mac that stand for <head> merged onto <base> at <base_sha>, '') or (None, why the Mac
+    runs the whole --plan fast). The GitHub-hosted pair (with the switch on), else the VPS pair (#2160); each record
+    says which ('runner').
 
-    A hosted run stands when it tested exactly <head> merged onto some next (its merge tree matches the one this
+    A run stands when it tested exactly <head> merged onto some next (its merge tree matches the one this
     runner computes for that next), and that next is <base_sha> or next's commits since can't change what it showed:
     the rule a held PASS meets after next moves (untested_moves)."""
-    if not hosted_fast_on(env):
-        return None, ''
+    sources = ([('GitHub-hosted', HOSTED_FAST_CHECKS)] if hosted_fast_on(env) else []) + [('VPS', VPS_FAST_CHECKS)]
+    reasons = []
+    for runner, checks in sources:
+        found, why = _fast_checks_stand(github, tree, base, head, base_sha, records, checks)
+        if found is not None:
+            return {name: {**record, 'runner': runner} for name, record in found.items()}, ''
+        reasons.append(why)
+    return None, '; '.join(reasons)
+
+
+def _fast_checks_stand(github, tree: Path, base: str, head: str, base_sha: str, records,
+                       checks: dict) -> tuple[dict | None, str]:
     try:
-        found, why = records(github, head)
+        found, why = records(github, head, checks)
         if found is None:
             return None, why
         for name, record in found.items():
@@ -913,13 +939,15 @@ def hosted_fast_checks(github, tree: Path, base: str, head: str, base_sha: str, 
                     return None, f'"{name}" tested it on {base} at {record["base"][:7]}, and {base} since: {why}'
                 record['moved'] = skipped
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as error:
-        return None, f'the runner could not read the hosted fast checks ({error!r})'
+        return None, f'the runner could not read the fast checks off the Mac ({error!r})'
     return found, ''
 
 
 def hosted_fast_ran(found: dict) -> str:
     bases = sorted({record['base'][:7] for record in found.values()})
-    return (f'host tests (hosted: --plan fast-portable and SessionKitCoreTests with next at {", ".join(bases)}; '
+    where = sorted({record.get('runner', 'GitHub-hosted') for record in found.values()})
+    core = 'SessionKitCoreTests on Linux' if where == ['VPS'] else 'SessionKitCoreTests'
+    return (f'host tests ({" and ".join(where)}: --plan fast-portable and {core} with next at {", ".join(bases)}; '
             'Mac: --plan fast-mac-rest)')
 
 
@@ -929,7 +957,7 @@ def hosted_fast_lines(found: dict) -> list[str]:
         moved = record.get('moved')
         since = (f'; next\'s {len(moved)} commit{"s" if len(moved) != 1 else ""} since touch none of this PR\'s files '
                  'and no build inputs its checks read' if moved else '')
-        lines.append(f'hosted check "{name}": PASS on this head merged with next at {record["base"][:7]} '
+        lines.append(f'{record.get("runner", "GitHub-hosted")} check "{name}": PASS on this head merged with next at {record["base"][:7]} '
                      f'(tree {record["tree"][:7]}){since}. {record.get("url", "")}'.rstrip())
     return lines
 
@@ -1197,13 +1225,42 @@ def push_merge(tree: Path, sha: str, base: str) -> tuple[bool, str]:
 
 def sweep_merge_audit(tree: Path, base: str) -> None:
     """Pushes made with the workflow token start no workflow, so merge-audit's push run never sees the
-    runner's merges. After each merge, run next's audit over the last two hours instead. Best effort: never fails a job."""
+    runner's merges. After each merge, run the base's audit over the last two hours instead. Best effort: never fails a job."""
     try:
         audit = base_policy(tree, base, 'scripts/merge_audit.py')
         if audit:
-            audit.main(['--sweep-hours', '2'])
+            audit.main(['--sweep-hours', '2', '--base', base])
     except Exception as error:  # noqa: BLE001 - the audit is a safety net, not part of the verdict
         print(f'merge-audit sweep skipped: {error!r}')
+
+
+# hosted-integration.yml tests the trunk's tip on a GitHub-hosted Mac (#1389), whichever branch that is (#1492).
+HOSTED_INTEGRATION_WORKFLOW = 'hosted-integration.yml'
+
+
+def dispatch_hosted_integration(base: str) -> str:
+    """Start hosted-integration on <base>'s new tip after the runner pushed it (#2127), and say what happened.
+
+    The runner pushes with the workflow token, and such a push starts no workflow, so hosted-integration's push
+    trigger never sees the runner's merges. A workflow_dispatch does start a run from that token, as for the
+    release job (hand_off_release). GitHub accepts it only once the workflow file is on the default branch (main);
+    until then it refuses, and the Mac's integration script tests the tip itself (sm_integration_run.py). While
+    LANE_HOSTED_APP is not `on` the run's job is skipped, at no cost. Best effort: never fails a job. Only inside
+    the lane job (GITHUB_ACTIONS and GH_TOKEN set), so tests and local runs dispatch nothing."""
+    if base != trunk():
+        return f'hosted integration not started: it tests {trunk()}, not {base}'
+    repo = os.environ.get('GH_REPO')
+    if os.environ.get('GITHUB_ACTIONS') != 'true' or not os.environ.get('GH_TOKEN') or not repo:
+        return 'hosted integration not started: not in a lane job'
+    try:
+        sent = subprocess.run(['gh', 'api', '-X', 'POST', f'repos/{repo}/actions/workflows/'
+                               f'{HOSTED_INTEGRATION_WORKFLOW}/dispatches', '-f', f'ref={base}'],
+                              capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as error:
+        return f'hosted integration not started: {error!r}'
+    if sent.returncode:
+        return f'hosted integration not started: {(sent.stderr or sent.stdout).strip()[-200:]}'
+    return f'hosted integration started on {base} ({HOSTED_INTEGRATION_WORKFLOW}, workflow_dispatch)'
 
 
 def next_moved(push_message: str) -> bool:
@@ -1452,6 +1509,7 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
         pushed, message = push_merge(ROOT, merge_sha, base)
         if pushed:
             sweep_merge_audit(ROOT, base)
+            print(f'[lane] {dispatch_hosted_integration(base)}', flush=True)
             return verdict, where, ran, details + [f'merged into {base} as {merge_sha[:7]}']
         if not next_moved(message):  # no permission, network: testing again wouldn't help
             return verdict, where, ran, details + [f'not merged: the push to {base} failed ({message}). A job '
@@ -2395,7 +2453,7 @@ def lane_report_verdict(body: str) -> tuple[bool, str] | None:
     return True, 'INCONCLUSIVE: ' + (lines[0][:200] if lines else 'no reason given')
 
 
-def lane_reports_after(tree: Path, merge: dict, comments, base: str = 'next') -> list[dict]:
+def lane_reports_after(tree: Path, merge: dict, comments, base: str | None = None) -> list[dict]:
     """The runner's lane reports on PRs from after the lane merge, oldest first, at most two.
 
     `comments` is the repository's issue comments, oldest first. A report counts only if it says it
@@ -2405,6 +2463,7 @@ def lane_reports_after(tree: Path, merge: dict, comments, base: str = 'next') ->
     no tested commit (the job stopped before it fetched one, or a runner from before 2026-10-01's
     audit fix) doesn't count.
     """
+    base = base or trunk()
     since, found = utc(merge['time']), []
     for comment in comments:
         body = comment.get('body') or ''
@@ -2484,6 +2543,7 @@ def revert_merge(tree: Path, base: str, merge: dict, message: str,
             sha = subprocess.check_output(git + ['rev-parse', 'HEAD'], text=True).strip()
             pushed, why = push_merge(tree, sha, base)
             if pushed:
+                print(f'[lane] {dispatch_hosted_integration(base)}', flush=True)
                 return sha, ''
             if not next_moved(why):
                 return None, f'the push to {base} failed ({why})'
@@ -2749,7 +2809,7 @@ def main(argv=None) -> int:
     parser.add_argument('--event-head', required=True, help='head SHA the triggering event saw')
     parser.add_argument('--run-id', required=True)
     parser.add_argument('--tree', type=Path, default=ROOT, help='checkout of the PR head to test')
-    parser.add_argument('--base', default='next', help='branch the PR merges into')
+    parser.add_argument('--base', help='branch the PR merges into (default: the trunk, scripts/trunk.py)')
     parser.add_argument('--cleanup', action='store_true', help='tidy up after a cancelled or failed job')
     parser.add_argument('--hosted', action='store_true', help='auto only: T0 or ops Python tests, no Mac setup')
     parser.add_argument('--mode', choices=['explicit', 'auto', 'release', 'any'], default='any',
@@ -2761,6 +2821,8 @@ def main(argv=None) -> int:
         parser.error('--hosted requires --mode auto')
     ROOT = args.tree.resolve()
     sys.path.insert(0, str(ROOT / 'scripts'))
+    if not args.base:  # the workflows always pass the PR's base; a local run means the trunk
+        args.base = trunk()
     try:
         fallback = base_scripts_fallback(ROOT, args.base)
         if fallback:
@@ -2777,7 +2839,7 @@ def main(argv=None) -> int:
     if args.cleanup:
         return cleanup(github, run_url, args.mode, hosted=args.hosted)
     STEP_RUNS.clear()
-    if args.base == 'next' and not args.hosted and not github_hosted():  # Mac jobs own the lane auto-revert check
+    if args.base == trunk() and not args.hosted and not github_hosted():  # Mac jobs own the lane auto-revert check
         try:
             print(f'Lane auto-revert check: {auto_revert(ROOT, args.base, Repo(repo))}')
         except Exception as error:  # noqa: BLE001 - the check must never stop the job it runs in
