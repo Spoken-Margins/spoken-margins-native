@@ -39,6 +39,9 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     /// answering from it never waits behind a write holding `connectionLock`.
     private let transcriptSummaryLock = NSLock()
     private var transcriptSummaryByItem: [String: (stamp: String, summary: TranscriptTimelineSummary)] = [:]
+    private let anchorContextLock = NSLock()
+    private var anchorContextByItem: [String: (stamp: String, contexts: [Int: SourceAnchorContext?])] = [:]
+    private var anchorTimelineDecodeCount = 0
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     /// How often each item was written or deleted through this connection, for `itemRevision(id:)`.
@@ -836,6 +839,32 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         transcriptSummaryLock.withLock { transcriptSummaryByItem[itemId] = (stamp: stamp, summary: summary) }
         return summary
     }
+
+    /// The words around each media time, for Margins placed by media time (#2102). Naming the words needs the full
+    /// timeline (thousands of segments, several MB of JSON), and every refresh of the Item screen asked for it again, so a
+    /// mapped episode with a spoken Margin held the main thread for each tap. The answers are kept per timeline record
+    /// (the same stamp as the summary) and the timeline is only decoded for times not answered yet. A time with no
+    /// passage is kept as nil so it isn't asked again either.
+    public func resolveSourceAnchorContexts(itemId: String, mediaTimesMs: Set<Int>) throws -> [Int: SourceAnchorContext?] {
+        guard !mediaTimesMs.isEmpty, let stamp = try transcriptTimelineStamp(itemId: itemId) else {
+            anchorContextLock.withLock { _ = anchorContextByItem.removeValue(forKey: itemId) }
+            return [:]
+        }
+        var known: [Int: SourceAnchorContext?] = anchorContextLock.withLock {
+            anchorContextByItem[itemId].flatMap { $0.stamp == stamp ? $0.contexts : nil } ?? [:]
+        }
+        let missing = mediaTimesMs.filter { known.index(forKey: $0) == nil }
+        if !missing.isEmpty {
+            guard let timeline = try loadTranscriptTimeline(itemId: itemId)?.timeline else { return [:] }
+            anchorContextLock.withLock { anchorTimelineDecodeCount += 1 }
+            for ms in missing { known[ms] = .some(SourceAnchorContextResolver.resolve(mediaTimeMs: ms, timeline: timeline)) }
+            anchorContextLock.withLock { anchorContextByItem[itemId] = (stamp: stamp, contexts: known) }
+        }
+        return known.filter { mediaTimesMs.contains($0.key) }
+    }
+
+    /// How many times `resolveSourceAnchorContexts` decoded a whole timeline. A test reads it to prove a repeat refresh doesn't.
+    public var anchorTimelineDecodes: Int { anchorContextLock.withLock { anchorTimelineDecodeCount } }
 
     /// Only the chapters of an item's source transcript timeline (#777). Empty when there is no timeline.
     public func loadTranscriptTimelineChapters(itemId: String) throws -> [MediaTimelineChapter] {

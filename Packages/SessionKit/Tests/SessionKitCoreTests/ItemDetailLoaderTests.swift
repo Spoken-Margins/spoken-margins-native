@@ -148,6 +148,44 @@ final class ItemDetailLoaderTests: XCTestCase {
         }
     }
 
+    /// #2102: every tap that reloaded a mapped episode's Item screen decoded its whole transcript again (several MB)
+    /// to name the words around each media-timed Margin. The words are kept per timeline record: the first load
+    /// decodes once, a repeat load decodes nothing, and a new timeline is read again.
+    func testRepeatLoadsOfAMappedEpisodeDecodeItsTranscriptOnce() throws {
+        try withFixture { fixture, store, _ in
+            var episode = item("A")
+            episode.media = ItemMedia(sourceType: .nativeMediaFile, url: "file:///A.mp3", durationMs: 600_000)
+            try store.saveItem(episode)
+            try store.saveSession(Session(id: "S", itemId: "A",
+                createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1),
+                status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS,
+                currentTargetId: "A", position: Position(), completionPercent: 0, playbackRate: 1))
+            var margin = note("m1", session: "S", item: "A", time: 10)
+            margin.anchor = Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 60_000)
+            try store.saveInterjection(margin)
+            func saveTimeline(id: String, text: String) throws {
+                try store.saveTranscriptTimeline(SourceTranscriptTimeline(id: id, itemId: "A",
+                    createdAt: Date(timeIntervalSince1970: 5),
+                    timeline: TranscriptTimeline(segments: [
+                        MediaTimelineSegment(id: "seg", startMs: 30_000, endMs: 90_000, text: text)
+                    ], chapters: [], durationMs: 600_000)))
+            }
+            try saveTimeline(id: "t1", text: "The first transcript.")
+
+            let first = try fixture.load("A", store)
+            XCTAssertEqual(first.interjections.first?.anchorContextStatus, .ready)
+            XCTAssertEqual(store.anchorTimelineDecodes, 1)
+            let again = try fixture.load("A", store)
+            XCTAssertEqual(again.interjections.first?.anchor, first.interjections.first?.anchor)
+            XCTAssertEqual(store.anchorTimelineDecodes, 1, "A repeat load must not decode the transcript again")
+
+            try saveTimeline(id: "t2", text: "A replaced transcript.")
+            let replaced = try fixture.load("A", store)
+            XCTAssertEqual(store.anchorTimelineDecodes, 2)
+            XCTAssertNotEqual(replaced.interjections.first?.anchor.anchorBefore, first.interjections.first?.anchor.anchorBefore)
+        }
+    }
+
     func testOptionalTurnReadFailureReturnsNoTurnsAfterAHealthyControl() throws {
         try withFixture { fixture, store, database in
             try seedSessions(store)
