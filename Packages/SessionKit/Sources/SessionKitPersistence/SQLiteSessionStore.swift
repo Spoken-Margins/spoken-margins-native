@@ -33,6 +33,8 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     /// stay on `db`; every other thread reads what is committed.
     private let transactionOwnerLock = NSLock()
     private var transactionOwner: pthread_t?
+    /// Items written inside the open transaction. Only the thread that owns it touches this, under `connectionLock`.
+    private var itemsWrittenInTransaction: [String] = []
     /// `loadTranscriptTimelineSummary` answers by item, with the stamp of the record they were read from. Its own lock, so
     /// answering from it never waits behind a write holding `connectionLock`.
     private let transcriptSummaryLock = NSLock()
@@ -316,7 +318,15 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     }
 
     /// Called after the write, even a failed one, so a half-done write never hides a change.
+    ///
+    /// Inside a transaction other threads still read the rows from before it, so the id is noted again once the
+    /// transaction has committed or rolled back: a reader that cached what it read under the first number sees a new one.
     private func noteItemWritten(_ id: String) {
+        bumpItemRevision(id)
+        if currentThreadHasTransactionOpen() { itemsWrittenInTransaction.append(id) }
+    }
+
+    private func bumpItemRevision(_ id: String) {
         itemRevisionLock.withLock { itemRevisions[id, default: 0] &+= 1 }
     }
 
@@ -1608,6 +1618,9 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
             defer {
                 transactionOwnerLock.withLock { transactionOwner = nil }
                 transactionDepth -= 1
+                let written = itemsWrittenInTransaction
+                itemsWrittenInTransaction = []
+                for id in written { bumpItemRevision(id) }
             }
             do {
                 let result = try operation()

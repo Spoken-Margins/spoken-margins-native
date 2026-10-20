@@ -144,6 +144,32 @@ final class SQLiteStoreLockContentionTests: XCTestCase {
         XCTAssertEqual(Set(try store.listItems().map(\.id)), ["committed", "pending"], "after the commit both are there")
     }
 
+    /// A reader that looked at an item mid-transaction got the rows from before it, under the revision the save had
+    /// already moved. The commit moves it again, so what the reader cached under the first number is read afresh.
+    func testTheItemRevisionMovesAgainWhenATransactionThatSavedTheItemCommits() throws {
+        let (store, _) = try makeStore()
+        try store.saveItem(item("item", text: "Old"))
+        let inside = DispatchSemaphore(value: 0)
+        let finish = DispatchSemaphore(value: 0)
+        let done = DispatchSemaphore(value: 0)
+        Thread.detachNewThread {
+            try? store.withSessionTransaction {
+                try store.saveItem(Self.item("item", text: "New"))
+                inside.signal()
+                _ = finish.wait(timeout: .now() + 10)
+            }
+            done.signal()
+        }
+        XCTAssertEqual(inside.wait(timeout: .now() + 10), .success)
+        let revisionSeenMidTransaction = store.itemRevision(id: "item")
+        XCTAssertEqual(try store.loadItem(id: "item").text, "Old", "another thread reads what is committed")
+        finish.signal()
+        XCTAssertEqual(done.wait(timeout: .now() + 10), .success)
+
+        XCTAssertNotEqual(store.itemRevision(id: "item"), revisionSeenMidTransaction)
+        XCTAssertEqual(try store.loadItem(id: "item").text, "New")
+    }
+
     /// A database that can't be read beside the writer (in memory: a second connection would open a different, empty
     /// one) keeps reading on the one connection.
     func testAnInMemoryStoreStillReadsWhatItSaved() throws {
