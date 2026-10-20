@@ -52,8 +52,8 @@ extension Gate1AppModel {
         ttsVoiceSelection.supertonicVoice != nil && !supertonicModel.isModelPresent
     }
 
-    private func currentSummaryBridgeVoiceKey() -> String {
-        if summaryBridgeUsesKitten {
+    private func currentSummaryBridgeVoiceKey(usesKitten: Bool) -> String {
+        if usesKitten {
             return safePodcastEvidenceComponent("\(KittenNarrationRenderer.engine)--\(SummaryBridgeRatePolicy.cacheVersion)")
         }
         let systemIdentifier = ttsVoiceSelection == .system ? speechVoiceIdentifier : ""
@@ -61,7 +61,14 @@ extension Gate1AppModel {
     }
 
     func summaryBridgeAssetID(itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String? = nil) -> String {
-        let voiceKey = suppliedAssetId.map { "supplied-\(safePodcastEvidenceComponent($0))" } ?? currentSummaryBridgeVoiceKey()
+        summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: sceneId, suppliedAssetId: suppliedAssetId,
+                             usesKitten: summaryBridgeUsesKitten)
+    }
+
+    /// `usesKitten` is read once by the caller, so an ID and the voice that renders under it can't disagree if the
+    /// Supertonic download lands or is removed in between.
+    private func summaryBridgeAssetID(itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String?, usesKitten: Bool) -> String {
+        let voiceKey = suppliedAssetId.map { "supplied-\(safePodcastEvidenceComponent($0))" } ?? currentSummaryBridgeVoiceKey(usesKitten: usesKitten)
         return "summary-bridge-\(safePodcastEvidenceComponent(itemId))-\(safePodcastEvidenceComponent(proposalId))-\(safePodcastEvidenceComponent(sceneId))-\(voiceKey)"
     }
 
@@ -73,7 +80,9 @@ extension Gate1AppModel {
     ) async throws -> OwnedOfflineAsset? {
         guard let summary = scene.summaryText?.trimmingCharacters(in: .whitespacesAndNewlines),
               !summary.isEmpty else { return nil }
-        let assetID = summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id, suppliedAssetId: scene.summaryAssetId)
+        let usesKitten = summaryBridgeUsesKitten
+        let assetID = summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id,
+                                           suppliedAssetId: scene.summaryAssetId, usesKitten: usesKitten)
         if let existing = try store.loadOwnedOfflineAssets().first(where: {
             $0.id == assetID && $0.integrity == .valid
         }), resolvedApplicationSupportAssetURL(for: existing.relativePath) != nil { return existing }
@@ -90,9 +99,9 @@ extension Gate1AppModel {
         )
         do {
             let sourceURL: URL
-            if summaryBridgeUsesKitten {
-                // The lookup above and the asset ID both used the Kitten key, so this is the voice that gets saved.
-                guard let kitten = makeKittenRenderer() else { throw SupertonicNarrationError.missingAsset("Supertonic") }
+            if usesKitten {
+                // The asset ID above was built from this same reading, so it names the voice that gets saved.
+                guard let kitten = makeKittenRenderer() else { throw KittenNarrationError.missingAsset("Kitten") }
                 sourceURL = try await kitten.render(text: summary).audioURL
             } else if let voice = ttsVoiceSelection.supertonicVoice {
                 let renderer = try makeSupertonicRenderer()
