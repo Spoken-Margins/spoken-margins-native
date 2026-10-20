@@ -9,6 +9,12 @@ import Foundation
 /// recording began. No listener clicks a headset that fast, so a command in the first moment, or just after the
 /// audio route changed, is ignored and logged.
 ///
+/// Timing alone let one through (#2182): on a hands-free Bluetooth recording a phantom `play` came 2.2 s in. On that
+/// profile the listener's own stem presses never reach the app as media commands (the owner's stem-press test logged
+/// none), so a bare `play` there is the profile's noise at any time and never ends the Margin. A `pause` or
+/// play/pause toggle still does, and so does `play` on every other route, where the Lock Screen and wired headsets
+/// send it as a real press.
+///
 /// Pure: the app passes the milliseconds on a clock that only moves forward.
 public enum RecordingTransportGuard {
     public enum Verdict: Equatable, Sendable {
@@ -21,6 +27,7 @@ public enum RecordingTransportGuard {
     public enum Reason: String, Equatable, Sendable {
         case recordingJustStarted = "recording_just_started"
         case routeJustChanged = "route_just_changed"
+        case barePlayOnHandsFree = "bare_play_on_hands_free"
     }
 
     /// After a recording begins. Bluetooth routes take over a second to settle (`MarginCaptureTimings.startGraceMs`);
@@ -29,11 +36,18 @@ public enum RecordingTransportGuard {
     /// After the audio route changes while recording: the headset can announce its new profile with a command.
     public static let routeChangeGraceMs = 1_000
 
-    /// `recordingMs` is how long the Margin has been recording. `sinceRouteChangeMs` is how long ago the audio
-    /// route last changed during this recording, nil when it has not.
-    public static func verdict(recordingMs: Int, sinceRouteChangeMs: Int?) -> Verdict {
+    /// `command` is what arrived (it only matters for `play`). `recordingMs` is how long the Margin has been
+    /// recording. `sinceRouteChangeMs` is how long ago the audio route last changed during this recording, nil when
+    /// it has not. `onHandsFreeProfile` is whether the recording input is a Bluetooth hands-free port.
+    public static func verdict(
+        command: CompactControlCommand = .togglePlayPause,
+        recordingMs: Int,
+        sinceRouteChangeMs: Int?,
+        onHandsFreeProfile: Bool = false
+    ) -> Verdict {
         if recordingMs < startGraceMs { return .ignore(.recordingJustStarted) }
         if let sinceRouteChangeMs, sinceRouteChangeMs < routeChangeGraceMs { return .ignore(.routeJustChanged) }
+        if onHandsFreeProfile, command == .play { return .ignore(.barePlayOnHandsFree) }
         return .endMargin
     }
 }
