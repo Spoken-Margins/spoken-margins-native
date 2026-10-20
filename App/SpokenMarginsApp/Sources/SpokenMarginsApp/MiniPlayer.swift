@@ -156,8 +156,13 @@ struct MiniPlayerBar: View {
                     }
                 } label: {
                     Group {
-                        if model.snapshot.status == .starting {
-                            ProgressView().tint(AppColors.onEvergreen)
+                        if model.playPauseFace == .cancelStart {
+                            // A start is pending and a tap cancels it: a stop mark inside the spinner says so (#2098).
+                            ZStack {
+                                ProgressView().tint(AppColors.onEvergreen)
+                                Image(systemName: "stop.fill")
+                                    .font(.system(size: 9, weight: .bold))
+                            }
                         } else {
                             Image(systemName: model.activePlaybackIsPlaying ? "pause.fill" : "play.fill")
                                 .resizable()
@@ -170,7 +175,8 @@ struct MiniPlayerBar: View {
                     .background(AppColors.evergreen, in: Circle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(model.snapshot.status == .starting ? PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot) : model.activePlaybackIsPlaying ? "Pause" : "Play")
+                .accessibilityLabel(model.playPauseFace.accessibilityLabel(isMedia: model.isMediaPlaybackSnapshot))
+                .accessibilityHint(model.playPauseFace.accessibilityHint ?? "")
                 .accessibilityIdentifier("miniPlayer.playPause.button")
 
                 Button(action: model.dismissMiniPlayer) {
