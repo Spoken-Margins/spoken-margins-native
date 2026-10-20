@@ -284,7 +284,7 @@ public enum StructuredDocumentBuilder {
         segments: [StructuredDocument.Segment],
         excluding existing: [StructuredDocument.Marker]
     ) -> [StructuredDocument.Marker] {
-        let numeric = #"\[[0-9]{1,4}(?:\s*[,–-]\s*[0-9]{1,4})*(?:,\s*(?i:pp?\.|§|(?:lemma|theorem|thm|corollary|cor|proposition|prop|example|appendix|definition|def|remark|section|sec|chapter|chap|ch|eqs?|equation|fig|figure|table|part|page|pages|claim)\b)[^\[\]]{0,40})?\]"#
+        let numeric = #"\[[0-9]{1,4}(?:\s*[,–-]\s*[0-9]{1,4})*(?:,\s*(?i:pp?\.|§|(?:lemma|theorem|thm|corollary|cor|proposition|prop|example|appendix|definition|def|remark|section|sec|chapter|chap|ch|eqs?|equation|fig|figure|table|part|page|pages|claim)\b)\.?\s*[\p{Lu}0-9][^\[\]]{0,40})?\]"#
         let authorYear = #"\((?:(?:see|e\.g\.,?|cf\.)\s+)?\p{Lu}[\p{L}'’\-]+(?:,?\s+(?:et\s+al\.|and|&)\s*(?:\p{Lu}[\p{L}'’\-]+)?)?,?\s+(?:19|20)[0-9]{2}[a-z]?(?:\s*[;,]\s*(?:\p{Lu}[\p{L}'’\-]+(?:,?\s+(?:et\s+al\.|and|&)\s*(?:\p{Lu}[\p{L}'’\-]+)?)?,?\s+)?(?:19|20)[0-9]{2}[a-z]?)*\)"#
         let round = #"\([0-9]{1,4}(?:\s*[,–-]\s*[0-9]{1,4})*\)"#
         let characters = Array(text)
@@ -349,7 +349,7 @@ public enum StructuredDocumentBuilder {
     /// sentence or nothing after it, so "BA.1 variant", "rc.2, both" and "class II.1 without" are read.
     /// After a comma it must too when the document drops the space after commas ("of these,15 were").
     /// A bracket stuck to a word is a formula or a chemical ("f(x)2", "Pb(NO3)2"), and one holding
-    /// a formula or a single letter is squared ("(a+b)2", "(n)2"). A decimal ("0.18"), "B.1", "Fig.2",
+    /// a formula, a pair of letters or a single letter is squared ("(a+b)2", "(a, b)2", "(n)2"). A decimal ("0.18"), "B.1", "Fig.2",
     /// "No.5", "v7.3" and a number running into a word ("noon.5mg") stay, and a second number after a
     /// bare space joins only when a new sentence follows ("the dose,3 12 Gy").
     private static func flattenedSuperscriptMarkers(
@@ -361,17 +361,24 @@ public enum StructuredDocumentBuilder {
         let group = #"([0-9]{1,3}(?:\s*[,–-]\s*[0-9]{1,3}|[ ][0-9]{1,3})*)(?=\s|$|[;:,.](?:\s|$))"#
         guard let regex = try? NSRegularExpression(pattern: #"(?<=\p{L}\p{L})([.,;])"# + group + #"|([)\]”"])[.,;:]?"# + group),
               let math = try? NSRegularExpression(pattern: #"[+−×÷^=<>/*|]|(?:^|[^\p{L}])[\p{L}0-9]\s*-\s*[\p{L}0-9](?:[^\p{L}]|$)"#),
-              let lostSpace = try? NSRegularExpression(pattern: #"\p{Ll}{2}[,;]\p{Ll}{2}"#)
+              let lostSpace = try? NSRegularExpression(pattern: #"\p{Ll}{2}[,;]\p{Ll}{2}"#),
+              // "(a, b)2", "(x, y)2": a pair of variables, squared.
+              let letters = try? NSRegularExpression(pattern: #"^\s*\p{L}(?:\s*,\s*\p{L})+\s*$"#)
         else { return [] }
         let dropsSpaces = slices.reduce(0) { $0 + lostSpace.numberOfMatches(in: $1, range: NSRange(location: 0, length: ($1 as NSString).length)) } >= 3
         var result: [StructuredDocument.Marker] = []
         for (segment, slice) in zip(read, slices) {
             let nsSlice = slice as NSString
+            // Body lines merge into one long segment, so each match looks only at a short window around
+            // it, and offsets advance from the previous match: a book-length segment stays linear.
+            var cursor = (index: slice.startIndex, offset: 0)
             for match in regex.matches(in: slice, range: NSRange(location: 0, length: nsSlice.length)) {
                 let afterWord = match.range(at: 1).location != NSNotFound
                 var digits = match.range(at: afterWord ? 2 : 4)
                 func following() -> Character? {
-                    nsSlice.substring(from: digits.location + digits.length).drop { $0.isWhitespace }.first
+                    let end = digits.location + digits.length
+                    return nsSlice.substring(with: NSRange(location: end, length: min(64, nsSlice.length - end)))
+                        .drop { $0.isWhitespace }.first
                 }
                 // "the dose,3 12 Gy": a number after a bare space joins only if a new sentence follows.
                 let space = (nsSlice.substring(with: digits) as NSString).range(of: "[0-9] [0-9]", options: .regularExpression)
@@ -381,7 +388,8 @@ public enum StructuredDocumentBuilder {
                 let next = following()
                 let sentenceFollows = next.map { $0.isUppercase || !($0.isLetter || $0.isNumber || "([,.;:-".contains($0)) } ?? true
                 if afterWord {
-                    let before = nsSlice.substring(to: match.range.location)
+                    let start = max(0, match.range.location - 32)
+                    let before = nsSlice.substring(with: NSRange(location: start, length: match.range.location - start))
                     let word = String(before.reversed().prefix { $0.isLetter }.reversed()).lowercased()
                     let punctuation = nsSlice.substring(with: match.range(at: 1))
                     guard !nonCitationWords.contains(word), !nonCitationAbbreviations.contains(word),
@@ -389,18 +397,22 @@ public enum StructuredDocumentBuilder {
                 } else if let close = Range(match.range(at: 3), in: slice), "])".contains(slice[close]) {
                     // What the closing bracket closes, when it opens in this segment.
                     let open: Character = slice[close] == ")" ? "(" : "["
-                    if let start = slice[..<close.lowerBound].lastIndex(of: open) {
+                    let window = slice.index(close.lowerBound, offsetBy: -200, limitedBy: slice.startIndex) ?? slice.startIndex
+                    if let start = slice[window..<close.lowerBound].lastIndex(of: open) {
                         let content = String(slice[slice.index(after: start)..<close.lowerBound])
                         let previous = start > slice.startIndex ? slice[slice.index(before: start)] : nil
+                        let contentRange = NSRange(location: 0, length: (content as NSString).length)
                         guard previous?.isLetter != true, previous?.isNumber != true, content.count > 2,
-                              math.firstMatch(in: content, range: NSRange(location: 0, length: (content as NSString).length)) == nil
+                              math.firstMatch(in: content, range: contentRange) == nil,
+                              letters.firstMatch(in: content, range: contentRange) == nil
                         else { continue }
                     }
                 }
                 let numbers = nsSlice.substring(with: digits).split { !$0.isNumber }.compactMap { Int($0) }
                 guard !numbers.isEmpty, numbers.allSatisfy({ 1...references ~= $0 }), numbers == numbers.sorted(),
                       let range = Range(digits, in: slice) else { continue }
-                let lower = segment.range.start + slice.distance(from: slice.startIndex, to: range.lowerBound)
+                cursor = (range.lowerBound, cursor.offset + slice.distance(from: cursor.index, to: range.lowerBound))
+                let lower = segment.range.start + cursor.offset
                 let upper = lower + slice[range].count
                 guard !taken.contains(where: { $0.overlaps(lower..<upper) }) else { continue }
                 result.append(StructuredDocument.Marker(

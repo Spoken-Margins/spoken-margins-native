@@ -271,9 +271,12 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(citationLabels(["The dose was 0.18 mg, and 3,4 more.", "COVID-19.2 cases rose."], references: listed), [])
         XCTAssertEqual(citationLabels(["Strain B.1 was common, see Fig.2 and No.5 and ref.3 here."], references: listed), [])
         XCTAssertEqual(citationLabels(["We used MSigDB v7.3 today.", "The ratio was 3:1 then."], references: listed), [])
-        XCTAssertEqual(citationLabels(["Then x = (a+b)2 holds, and (n)2 too."], references: listed), [], "a square, not a citation")
-        XCTAssertEqual(citationLabels(["Patients left the cohort.3 12 patients stayed.", "It took a dose,3 12 more."], references: listed), ["3"],
-                       "a second number after a space is a citation only when a new sentence follows")
+        XCTAssertEqual(citationLabels(["Then x = (a+b)2 holds, and (n)2 too, and (a, b)2 and (x,y)2."], references: listed), [],
+                       "a square, not a citation")
+        XCTAssertEqual(citationLabels(["Patients left the cohort.3 12 patients stayed."], references: listed), [],
+                       "after a full stop, a number followed by more numbers is not the end of a sentence")
+        XCTAssertEqual(citationLabels(["It took a dose,3 12 more."], references: listed), ["3"],
+                       "a second number after a space joins the citation only when a new sentence follows")
         XCTAssertEqual(citationLabels(["Doses were given at noon.5mg each."], references: listed), [], "the number runs into a word")
         XCTAssertEqual(citationLabels(["Omicron BA.1 variants, and Omicron BA.1 (p < 0.01).", "We used DSH 0.1.5-rc.2, both times.",
                                        "Most were class I or II.1 without pain.", "The Sah:1 equation."], references: listed), [],
@@ -305,6 +308,8 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(citationLabels(body, references: nil),
                        ["[7, Lemma A.1]", "[1, Theorem 2.1]", "[48, p. 214]", "[2, Lemma 3 and Theorem 7]"])
         XCTAssertEqual(citationLabels(["Pick a point in [1, x] or [2, the end]."], references: nil), [], "no locator word")
+        XCTAssertEqual(citationLabels(["Take [1, part of the set] and [0, section] here."], references: nil), [],
+                       "a locator word with no number or label after it is an interval")
     }
 
     func testDocumentRoundTripsAsI13JSON() throws {
