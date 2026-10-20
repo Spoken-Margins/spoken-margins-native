@@ -22,6 +22,7 @@ from check_posterboard_repair import crash_snapshot, new_crash
 import host_audio
 import lane_conditions
 import lane_sim
+import sm_build_cache
 import sessionkit_pass
 import lane_sim_pool
 import third_party_notices
@@ -1638,6 +1639,9 @@ def main():
     if journeys is not None and not any(journeys.values()):
         print('No scripted journeys are listed in TestPlans/scripted-journeys.json; nothing to run.')
         return 0
+    # In a worktree under ~/Documents, .build and SessionKit's .build live in ~/Library/Caches, where the
+    # disk-relief job (no Full Disk Access) can clear them (sm_build_cache.py).
+    sm_build_cache.ensure_links(ROOT, log=lambda line: print(line, file=sys.stderr, flush=True))
     (ROOT / '.build').mkdir(exist_ok=True)
     with (ROOT / '.build/verification.lock').open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
