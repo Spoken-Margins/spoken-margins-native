@@ -54,7 +54,7 @@ final class MainThreadHangProbeTests: XCTestCase {
                     record((ProcessInfo.processInfo.systemUptime - before) * 1000 - 10)
                 }
             }
-            sampler.qualityOfService = .userInitiated
+            // Default quality of service, like the queues the probe is timed on: a busy host delays those most.
             sampler.start()
         }
 
@@ -75,6 +75,12 @@ final class MainThreadHangProbeTests: XCTestCase {
         }
     }
 
+    private func startJitterSampling() -> SchedulerJitter {
+        let jitter = SchedulerJitter()
+        addTeardownBlock { _ = jitter.stop() }  // a test that ends early must not leave the sampler running
+        return jitter
+    }
+
     /// A 10 ms sleep that ran this much late means the probe's timer was just as late. The probe's duration
     /// windows below are about 70 ms wide on each side, so past this the verdict would say nothing about the probe.
     private static let busyHostLateMs = 40.0
@@ -91,7 +97,7 @@ final class MainThreadHangProbeTests: XCTestCase {
     private let cyclePhases = [100, 130, 160, 190, 220, 250, 280, 310]
 
     func testAFourHundredMillisecondBlockRecordsOneHangWithItsLabel() throws {
-        let jitter = SchedulerJitter()
+        let jitter = startJitterSampling()
         let hangs = Hangs()
         let probe = makeProbe(into: hangs)
         probe.start(intervalMs: 100)
@@ -113,7 +119,7 @@ final class MainThreadHangProbeTests: XCTestCase {
     }
 
     func testAThreeHundredFiftyMillisecondBlockIsStillRecorded() throws {
-        let jitter = SchedulerJitter()
+        let jitter = startJitterSampling()
         let hangs = Hangs()
         let probe = makeProbe(into: hangs)
         probe.start(intervalMs: 100)
@@ -130,7 +136,7 @@ final class MainThreadHangProbeTests: XCTestCase {
     }
 
     func testAHundredMillisecondBlockRecordsNothing() throws {
-        let jitter = SchedulerJitter()
+        let jitter = startJitterSampling()
         let hangs = Hangs()
         let probe = makeProbe(into: hangs)
         probe.start(intervalMs: 100)
@@ -145,7 +151,7 @@ final class MainThreadHangProbeTests: XCTestCase {
     }
 
     func testNestedLabelsReadOutermostFirstAndAnUnlabelledHangHasNone() throws {
-        let jitter = SchedulerJitter()
+        let jitter = startJitterSampling()
         let hangs = Hangs()
         let probe = makeProbe(into: hangs)
         probe.start(intervalMs: 100)
@@ -165,7 +171,7 @@ final class MainThreadHangProbeTests: XCTestCase {
     }
 
     func testAStoppedProbeRecordsNothingAndASecondHangAfterAFirstIsCounted() throws {
-        let jitter = SchedulerJitter()
+        let jitter = startJitterSampling()
         let hangs = Hangs()
         let probe = makeProbe(into: hangs)
         probe.start(intervalMs: 100)
