@@ -29,6 +29,8 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'dial'))
 import dial_gate  # noqa: E402  (the Dial's own parsers, so both read #589 and #337 the same way)
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+from trunk import trunk_branch  # noqa: E402  (#1492)
 
 REPO = dial_gate.REPO
 DIAL_ISSUE = dial_gate.DIAL_ISSUE
@@ -356,7 +358,7 @@ def main(argv=None) -> int:
     ap.add_argument('--hours', type=float, required=True, help='hours the owner will be away')
     ap.add_argument('--rate', type=float, default=ISSUES_PER_THREAD_HOUR,
                     help='issues one thread finishes per hour (default %(default)s)')
-    ap.add_argument('--ref', default='next', help='branch to read AGENTS.md from')
+    ap.add_argument('--ref', default=trunk_branch(), help='branch to read AGENTS.md from (default: the trunk)')
     args = ap.parse_args(argv)
 
     now = dt.datetime.now(dt.timezone.utc)

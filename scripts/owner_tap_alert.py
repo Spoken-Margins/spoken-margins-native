@@ -19,6 +19,10 @@ mentions by default, and tapping the push opens the PR. A PR is ready when all o
 5. no alert names this head yet. The alert carries `<!-- owner-tap-alert: <full head sha> -->`, so a new push
    alerts again once it is ready and a re-run never repeats one.
 
+An alert posted before the audit says so. When the audit of that head lands afterwards (the audit script audits an
+owner-tap PR once its checks finish and then asks for a check, #2052), one follow-up comment says "no blocking
+findings" or names the blocking verdict, so his tap rests on the audit either way. One follow-up per head.
+
 Only trusted comments are read (scripts/comment_trust.py, #1822), so after the repository goes public a
 stranger's look-alike audit or alert marker can't start or stop an alert.
 
@@ -62,6 +66,9 @@ AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
 CLEAN_AUDIT = re.compile(r'no (blocking )?findings\b', re.I)
 MARKER = '<!-- owner-tap-alert: {sha} -->'
 MARKER_RE = re.compile(r'<!-- owner-tap-alert: ([0-9a-f]{40}) -->')
+FOLLOWUP_MARKER = '<!-- owner-tap-audit: {sha} -->'
+FOLLOWUP_RE = re.compile(r'<!-- owner-tap-audit: ([0-9a-f]{40}) -->')
+NO_AUDIT_TEXT = 'no Claude audit covers this head'  # what an alert posted before the audit says (alert_body)
 # The job that runs this script (the same name in all three workflows): it is running on the head while it checks it.
 OWN_CHECKS = {'owner-tap-alert'}
 LABEL = 'owner-tap-check'  # the Mac's and the audit script's way to ask Actions for a check (--via-label)
@@ -156,13 +163,43 @@ def readiness(pr: dict, files: list[dict], check_runs: list[dict], statuses: lis
 def alert_body(pr: dict, tap: list[str], mention: str, audited: bool) -> str:
     head = pr['head']['sha']
     shown = ', '.join(f'`{p}`' for p in tap[:5]) + (f' and {len(tap) - 5} more' if len(tap) > 5 else '')
-    audit = ('the Claude audit of this head found no blocking findings' if audited
-             else 'no Claude audit covers this head')
+    audit = ('the Claude audit of this head found no blocking findings' if audited else NO_AUDIT_TEXT)
     return (f'@{mention} ready for your merge tap. This PR touches {shown}, which only you merge. '
             f'On head `{head[:7]}` it merges cleanly, its checks passed, and {audit}. '
             'Tap **Merge pull request** below.\n\n'
             '_Posted by the owner-tap alert (scripts/owner_tap_alert.py, #2047): one alert per head._\n'
             + MARKER.format(sha=head))
+
+
+def followed_up(comments: list[dict], head: str) -> bool:
+    return any(head in FOLLOWUP_RE.findall(c.get('body') or '') for c in comment_trust.trusted_only(comments))
+
+
+def alerted_without_audit(comments: list[dict], head: str) -> bool:
+    """An alert named this head and said no audit covered it."""
+    return any(head in MARKER_RE.findall(c.get('body') or '') and NO_AUDIT_TEXT in (c.get('body') or '')
+               for c in comment_trust.trusted_only(comments))
+
+
+def followup_verdict(pr: dict, comments: list[dict], repo: str) -> str | None:
+    """The audit verdict line when a follow-up is due: the head was alerted before its audit, the audit has landed
+    since, and no follow-up names the head. None for a draft, a fork, or anything else."""
+    head = pr['head']['sha']
+    if pr.get('draft') or (pr['head'].get('repo') or {}).get('full_name') != repo:
+        return None
+    if not alerted_without_audit(comments, head) or followed_up(comments, head):
+        return None
+    return head_audit_verdict(comments, head)
+
+
+def followup_body(head: str, mention: str, verdict: str) -> str:
+    if CLEAN_AUDIT.match(verdict):
+        result = 'it found no blocking findings.'
+    else:
+        result = f'it has blocking findings, so hold your tap until they are fixed. Its verdict: {verdict[:200]}'
+    return (f'@{mention} the Claude audit of head `{head[:7]}` landed after the alert above: {result}\n\n'
+            '_Posted by the owner-tap alert (scripts/owner_tap_alert.py, #2052): one follow-up per head._\n'
+            + FOLLOWUP_MARKER.format(sha=head))
 
 
 class GitHubApi:
@@ -213,6 +250,19 @@ def check_pr(api: GitHubApi, number: int, mention: str, dry_run: bool, via_label
     runs = api.get_all(f'commits/{head}/check-runs?filter=latest&per_page=100')
     statuses = api.get_all(f'commits/{head}/statuses?per_page=100')
     comments = api.get_all(f'issues/{number}/comments?per_page=100')
+    verdict = followup_verdict(pr, comments, api.repo)
+    if verdict is not None:  # alerted before the audit, which has landed since (#2052)
+        if dry_run:
+            return 'audit follow-up due (dry run, nothing posted)'
+        if via_label:
+            api.readd_label(number, via_label)
+            return f'audit follow-up due, `{via_label}` re-added for Actions to post it'
+        if api.get(f'pulls/{number}')['head']['sha'] != head:
+            return 'head moved during the check'
+        if followed_up(api.get_all(f'issues/{number}/comments?per_page=100'), head):
+            return f'already followed up on {head[:7]}'
+        api.comment(number, followup_body(head, mention, verdict))
+        return 'audit follow-up posted'
     ready, why = readiness(pr, files, runs, statuses, comments, api.repo)
     if not ready:
         return why
@@ -234,13 +284,16 @@ def check_pr(api: GitHubApi, number: int, mention: str, dry_run: bool, via_label
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     ap.add_argument('--repo', default=os.environ.get('GH_REPO', ''))
-    ap.add_argument('--base', default='next')
+    ap.add_argument('--base', help='the base branch (default: the trunk)')
     ap.add_argument('--mention', help='login to @mention (default: the repository owner)')
     ap.add_argument('--pr', type=int, help='check only this PR')
     ap.add_argument('--dry-run', action='store_true')
     ap.add_argument('--via-label', metavar='LABEL', help='for a ready PR, re-add this label instead of commenting')
     ap.add_argument('--clear-label', metavar='LABEL', help='with --pr: remove this label after the check')
     args = ap.parse_args(argv)
+    if args.base is None:  # #1492: the trunk (scripts/trunk.py)
+        from trunk import trunk_branch
+        args.base = trunk_branch()
     args.mention = args.mention or args.repo.partition('/')[0]
     if not args.repo or not re.fullmatch(r'[A-Za-z0-9_.-]+', args.mention):
         ap.error('need --repo (or GH_REPO) and a plain --mention login')

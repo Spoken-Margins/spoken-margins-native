@@ -62,8 +62,23 @@ struct VoicePreferencesSnapshot {
     }
 }
 
+private final class MainQueueDrainFlag: @unchecked Sendable { var done = false } // set and read on the main thread only
+
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    /// Several of these tests leave a second or more of blocking main-queue work behind (#2195). A synchronous test
+    /// never spins the run loop, so that work used to run during whichever later test waited first, and could push a
+    /// short wait in another class past its timeout (#2104). Running it here keeps it inside the test that queued it.
+    override func tearDown() {
+        let start = Date()
+        let drained = MainQueueDrainFlag()
+        DispatchQueue.main.async { DispatchQueue.main.async { drained.done = true } }
+        while !drained.done, Date().timeIntervalSince(start) < 30 {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+        super.tearDown()
+    }
+
     func testRichClipboardRestoresOnlyExplicitHTMLHeadings() {
         let plain = "Article & notes\nA paragraph.\nNext section\nMore prose."
         let html = "<h1>Article &amp; notes</h1><p>A paragraph.</p><h2><em>Next section</em></h2><p>More prose.</p>"
@@ -211,6 +226,49 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(modelNotifications, 0)
         XCTAssertEqual(diagnosticNotifications, 1)
         withExtendedLifetime((modelObserver, diagnosticObserver)) {}
+    }
+
+    /// #2074: the progress tick used to publish through the model twice a second and re-run every screen's `body`.
+    func testPlaybackTicksReachTheClockAndNotEveryScreen() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        var screenNotifications = 0
+        var clockNotifications = 0
+        let screenObserver = model.objectWillChange.sink { screenNotifications += 1 }
+        let clockObserver = model.playbackClock.objectWillChange.sink { clockNotifications += 1 }
+        var held = model.snapshot
+        held.status = .paused
+        held.chapterTitle = "Chapter one"
+        held.preparedTextAudioStatus = "ready"
+        held.sourceTranscriptStatus = "ready"
+        held.currentMediaTimeMs = 1_000
+        model.snapshot = held
+        XCTAssertGreaterThan(screenNotifications, 0, "a change of state still reaches every screen")
+
+        screenNotifications = 0
+        clockNotifications = 0
+        for ms in stride(from: 1_500, through: 5_000, by: 500) {
+            held.currentMediaTimeMs = ms
+            held.currentTextStart = ms / 10
+            held.currentTextEnd = ms / 10 + 40
+            model.snapshot = held
+        }
+        XCTAssertEqual(screenNotifications, 0, "a progress tick must not re-run every screen")
+        XCTAssertEqual(clockNotifications, 8, "each tick still moves the playhead for the views that follow it")
+        XCTAssertEqual(model.playbackClock.position.mediaTimeMs, 5_000)
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, 5_000)
+
+        held.sourceProgressPercent = 7
+        model.snapshot = held
+        XCTAssertEqual(screenNotifications, 1, "a new whole percent reaches every screen")
+        screenNotifications = 0
+        held.currentMediaTimeMs = 5_500
+        held.chapterTitle = "Chapter two"
+        model.snapshot = held
+        XCTAssertEqual(screenNotifications, 1, "a chapter change reaches every screen even as the position moves")
+        screenNotifications = 0
+        model.snapshot = held
+        XCTAssertEqual(screenNotifications, 1, "writing the same snapshot still makes screens look again")
+        withExtendedLifetime((screenObserver, clockObserver)) {}
     }
 
     func testDeferredHomeRefreshCannotReplaceNewerLibraryPresentation() async throws {

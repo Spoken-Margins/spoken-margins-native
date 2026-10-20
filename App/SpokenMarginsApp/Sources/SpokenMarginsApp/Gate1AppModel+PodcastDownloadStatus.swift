@@ -7,6 +7,17 @@ extension Gate1AppModel {
         podcastDownloadRecords[selectedItem.id]
     }
 
+    /// The saved state, or `.streamingOnly` for a stream with no download record. Screens read it in `body`, so the
+    /// store read behind the stream check is made once per item and not on every render (#2074).
+    var selectedPodcastDownloadState: PodcastDownloadState? {
+        if let state = selectedPodcastDownloadRecord?.state { return state }
+        let id = selectedItem.id
+        let isRemoteStream = selectedItemStreamFlag.value(itemID: id) {
+            (try? store?.loadItem(id: id))?.media?.sourceType == .remoteStream
+        }
+        return isRemoteStream ? .streamingOnly : nil
+    }
+
     /// "Downloading 42% of 107 MB" while it runs, "Downloaded, 107 MB" once it is saved, nil otherwise.
     var selectedPodcastDownloadStatusText: String? {
         guard let record = selectedPodcastDownloadRecord else { return nil }

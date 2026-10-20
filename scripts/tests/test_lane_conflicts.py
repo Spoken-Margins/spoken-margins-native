@@ -445,7 +445,7 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_it_starts_when_next_moves_and_when_a_lane_label_or_push_lands(self):
         text = self.workflow.read_text()
         self.assertIn('ONLY_PR: ${{ inputs.pr }}', text)  # a PR event sweeps everything; only a dispatch narrows
-        for needle in ('push:', 'branches: [next]', 'pull_request:', 'types: [labeled, synchronize, reopened]',
+        for needle in ('push:', 'branches: [next, main]', 'pull_request:', 'types: [labeled, synchronize, reopened]',
                        'workflow_dispatch:', "'automerge'", "'lane:queued'"):
             self.assertIn(needle, text)
 

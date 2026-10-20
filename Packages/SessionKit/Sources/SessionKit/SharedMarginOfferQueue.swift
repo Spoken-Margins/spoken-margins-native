@@ -64,6 +64,12 @@ public struct SharedMarginOfferQueue: Equatable {
         waitingIDs.removeAll { $0 == id }
     }
 
+    /// A review of new Margins that stopped short gives back the ones it didn't reach (#474): they
+    /// may be offered again when the source crosses them.
+    public mutating func markUnannounced(_ ids: Set<String>) {
+        announcedIDs.subtract(ids)
+    }
+
     /// A Margin the listener played themselves no longer waits, but may still be offered when
     /// the source crosses it.
     public mutating func remove(id: String) {

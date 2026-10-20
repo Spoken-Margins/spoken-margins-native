@@ -1,0 +1,389 @@
+{
+  "schemaVersion": "voice-model-catalog.v1",
+  "catalogVersion": 1,
+  "issuedAt": "2026-10-19T22:04:49Z",
+  "voices": [
+    {
+      "id": "supertonic-3-int8",
+      "displayName": "Supertonic 3",
+      "publisher": "Supertone Inc. (INT8 build by k2-fsa/sherpa-onnx)",
+      "version": "3cadd1e+int8-2026-05-11",
+      "runtime": {
+        "name": "onnxruntime",
+        "version": "1.24.2"
+      },
+      "minimumIOSVersion": "26.0",
+      "minimumMemoryMegabytes": 4096,
+      "status": "available",
+      "bundled": false,
+      "files": [
+        {
+          "path": "onnx/duration_predictor.onnx",
+          "byteCount": 3700147,
+          "sha256": "c3eb91414d5ff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325db",
+          "sources": [
+            "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/duration_predictor.int8.onnx"
+          ],
+          "licenseId": "supertonic-model-openrail-m"
+        },
+        {
+          "path": "onnx/text_encoder.onnx",
+          "byteCount": 36416150,
+          "sha256": "c7befd5ea8c3119769e8a6c1486c4edc6a3bc8365c67621c881bbb774b9902ff",
+          "sources": [
+            "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/text_encoder.int8.onnx"
+          ],
+          "licenseId": "supertonic-model-openrail-m"
+        },
+        {
+          "path": "onnx/vector_estimator.onnx",
+          "byteCount": 78400833,
+          "sha256": "20cd86fa5c6effedfda0e7cffe5b0569ca401c440a0c3a1d72bf39286c0db3fd",
+          "sources": [
+            "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/vector_estimator.int8.onnx"
+          ],
+          "licenseId": "supertonic-model-openrail-m"
+        },
+        {
+          "path": "onnx/vocoder.onnx",
+          "byteCount": 25991073,
+          "sha256": "e923d60f53f95eb1ce235f1dc33ec56d9c057823c96fa6f8acf98f32b0da6152",
+          "sources": [
+            "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/vocoder.int8.onnx"
+          ],
+          "licenseId": "supertonic-model-openrail-m"
+        },
+        {
+          "path": "onnx/tts.json",
+          "byteCount": 8253,
+          "sha256": "42078d3aef1cd43ab43021f3c54f47d2d75ceb4e75f627f118890128b06a0d09",
+          "sources": [
+            "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/onnx/tts.json"
+          ],
+          "licenseId": "supertonic-model-openrail-m"
+        },
+        {
+          "path": "onnx/unicode_indexer.json",
+          "byteCount": 277676,
+          "sha256": "9bf7346e43883a81f8645c81224f786d43c5b57f3641f6e7671a7d6c493cb24f",
+          "sources": [
+            "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/onnx/unicode_indexer.json"
+          ],
+          "licenseId": "supertonic-model-openrail-m"
+        },
+        {
+          "path": "onnx/MODIFIED.txt",
+          "byteCount": 876,
+          "sha256": "c909635a97090f19fa5ce22742edd9ac467d7c34da76df90fd41b5b5e57e8ee8",
+          "content": "Notice of modification (BigScience Open RAIL-M, paragraph 4(c))\n\nThe files duration_predictor.onnx, text_encoder.onnx, vector_estimator.onnx\nand vocoder.onnx in this folder are modified derivatives of Supertone's\nSupertonic 3 model (https://huggingface.co/Supertone/supertonic-3, revision\n3cadd1ee6394adea1bd021217a0e650ede09a323).\n\nThey were changed as follows:\n1. The k2-fsa sherpa-onnx project quantized Supertone's public ONNX graphs to\n   INT8 (archive sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2).\n2. Spoken Margins renamed the quantized graph files to match the official\n   Supertonic Swift runtime and packaged them with the official configuration,\n   Unicode index and preset voice styles, which are unchanged.\n\nThe model remains licensed under BigScience Open RAIL-M; see\n../licenses/SUPERTONIC_MODEL_OPENRAIL-M.txt and ../licenses/THIRD_PARTY_NOTICES.txt.\n"
+        },
+        {
+          "path": "voice_styles/F1.json",
+          "byteCount": 292046,
+          "sha256": "bbdec6ee00231c2c742ad05483df5334cab3b52fda3ba38e6a07059c4563dbc2",
+          "sources": [
+            "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/F1.json"
+          ],
+          "licenseId": "supertonic-model-openrail-m"
+        },
+        {
+          "path": "voice_styles/F2.json",
+          "byteCount": 292423,
+          "sha256": "7c722c6a72707b1a77f035d67f0d1351ba187738e06f7683e8c72b1df3477fc6",
+          "sources": [
+            "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/F2.json"
+          ],
+          "licenseId": "supertonic-model-openrail-m"
+        },
+        {
+          "path": "voice_styles/F3.json",
+          "byteCount": 290794,
+          "sha256": "12f6ef2573baa2defa1128069cb59f203e3ab67c92af77b42df8a0e3a2f7c6ab",
+          "sources": [
+            "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/F3.json"
+          ],
+          "licenseId": "supertonic-model-openrail-m"
+        },
+        {
+          "path": "voice_styles/F4.json",
+          "byteCount": 291808,
+          "sha256": "c2fa764c1225a76dfc3e2c73e8aa4f70d9ee48793860eb34c295fff01c2e032b",
+          "sources": [
+            "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/F4.json"
+          ],
+          "licenseId": "supertonic-model-openrail-m"
+        },
+        {
+          "path": "voice_styles/F5.json",
+          "byteCount": 291479,
+          "sha256": "45966e73316415626cf41a7d1c6f3b4c70dbc1ba2bee5c1978ef0ce33244fc8d",
+          "sources": [
+            "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/F5.json"
+          ],
+          "licenseId": "supertonic-model-openrail-m"
+        },
+        {
+          "path": "voice_styles/M1.json",
+          "byteCount": 291748,
+          "sha256": "e35604687f5d23694b8e91593a93eec0e4eca6c0b02bb8ed69139ab2ea6b0a5b",
+          "sources": [
+            "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/M1.json"
+          ],
+          "licenseId": "supertonic-model-openrail-m"
+        },
+        {
+          "path": "voice_styles/M2.json",
+          "byteCount": 292055,
+          "sha256": "b76cbf62bac707c710cf0ae5aba5e31eea1a6339a9734bfae33ab98499534a50",
+          "sources": [
+            "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/M2.json"
+          ],
+          "licenseId": "supertonic-model-openrail-m"
+        },
+        {
+          "path": "voice_styles/M3.json",
+          "byteCount": 290198,
+          "sha256": "ea1ac35ccb91b0d7ecad533a2fbd0eec10c91513d8951e3b25fbba99954e159b",
+          "sources": [
+            "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/M3.json"
+          ],
+          "licenseId": "supertonic-model-openrail-m"
+        },
+        {
+          "path": "voice_styles/M4.json",
+          "byteCount": 291522,
+          "sha256": "ca8eefad4fcd989c9379032ff3e50738adc547eeb5e221b82593a6d7b3bac303",
+          "sources": [
+            "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/M4.json"
+          ],
+          "licenseId": "supertonic-model-openrail-m"
+        },
+        {
+          "path": "voice_styles/M5.json",
+          "byteCount": 291469,
+          "sha256": "dd22b92740314321f8ae11c5e87f8dd60d060f15dd3a632b5adf77f471f77af2",
+          "sources": [
+            "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/M5.json"
+          ],
+          "licenseId": "supertonic-model-openrail-m"
+        },
+        {
+          "path": "licenses/ONNXRUNTIME_MIT.txt",
+          "byteCount": 1073,
+          "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+          "sources": [
+            "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.2/LICENSE"
+          ],
+          "licenseId": "onnxruntime-mit"
+        },
+        {
+          "path": "licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt",
+          "byteCount": 325054,
+          "sha256": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",
+          "sources": [
+            "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.2/ThirdPartyNotices.txt"
+          ],
+          "licenseId": "onnxruntime-mit"
+        },
+        {
+          "path": "licenses/SHERPA_ONNX_APACHE-2.0.txt",
+          "byteCount": 11358,
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "sources": [
+            "https://www.apache.org/licenses/LICENSE-2.0.txt"
+          ],
+          "licenseId": "sherpa-onnx-apache-2-0"
+        },
+        {
+          "path": "licenses/SUPERTONIC_CODE_MIT.txt",
+          "byteCount": 1070,
+          "sha256": "0dfe0d0ba84416fe3879d9a34f4909d8d0137c78d1e95834177b0414ac096fa2",
+          "sources": [
+            "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/LICENSE"
+          ],
+          "licenseId": "supertonic-code-mit"
+        },
+        {
+          "path": "licenses/SUPERTONIC_MODEL_OPENRAIL-M.txt",
+          "byteCount": 15007,
+          "sha256": "0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f",
+          "sources": [
+            "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/LICENSE"
+          ],
+          "licenseId": "supertonic-model-openrail-m"
+        },
+        {
+          "path": "licenses/THIRD_PARTY_NOTICES.txt",
+          "byteCount": 1142,
+          "sha256": "b076bc0ff98d8233ffdf03426889395d67228d0428d3f2bf735c475603d35578",
+          "content": "Spoken Margins on-device voice notices\n\nSupertonic 3 model and preset voice styles\nCopyright (c) 2026 Supertone Inc.\nLicensed under BigScience Open RAIL-M. The complete license is included as\nSUPERTONIC_MODEL_OPENRAIL-M.txt.\n\nSupertonic Swift inference code\nCopyright (c) 2026 Supertone Inc.\nAdapted from https://github.com/supertone-inc/supertonic and licensed under\nthe MIT License included as SUPERTONIC_CODE_MIT.txt.\n\nINT8 model conversion\nThe bundled ONNX graphs are modified, quantized derivatives of Supertonic 3.\nThey were produced by the k2-fsa sherpa-onnx project from Supertone's public\nONNX assets. Spoken Margins renamed the graph files for the official Swift\nruntime contract and packaged them with the official configuration, Unicode\nindex, and preset voice-style files. The sherpa-onnx Apache 2.0 license is\nincluded as SHERPA_ONNX_APACHE-2.0.txt.\n\nONNX Runtime\nCopyright (c) Microsoft Corporation.\nLicensed under the MIT License included as ONNXRUNTIME_MIT.txt. Notices for\nits bundled third-party software are included in\nONNXRUNTIME_THIRD_PARTY_NOTICES.txt.\n\nNo Supertone, sherpa-onnx, or Microsoft endorsement is implied.\n"
+        }
+      ],
+      "licenses": [
+        {
+          "id": "supertonic-model-openrail-m",
+          "name": "BigScience Open RAIL-M License (Supertonic 3 model)",
+          "textURL": "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/LICENSE",
+          "textSHA256": "0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f",
+          "requiresAcceptance": true,
+          "restrictionsSummary": "You may not use the voice, anything derived from it, or its output to: break the law; exploit or harm children; deliberately spread false information to hurt people, or personal information that can be used to harm someone; defame, harass or impersonate someone without their consent; make fully automated decisions that affect a person's legal rights; discriminate against or harm people or groups because of their behaviour, personality or legally protected characteristics; exploit the vulnerabilities of a group because of their age or their social, physical or mental characteristics so as to harm them; give medical advice or interpret medical results; or support justice, law-enforcement, immigration or asylum decisions about individuals (Attachment A has the exact wording). Anything the voice generates and you share must be clearly labelled as machine-generated."
+        },
+        {
+          "id": "supertonic-code-mit",
+          "name": "MIT License (Supertonic code)",
+          "spdxId": "MIT",
+          "textURL": "https://raw.githubusercontent.com/supertone-inc/supertonic/main/LICENSE",
+          "textSHA256": "0dfe0d0ba84416fe3879d9a34f4909d8d0137c78d1e95834177b0414ac096fa2",
+          "requiresAcceptance": false
+        },
+        {
+          "id": "onnxruntime-mit",
+          "name": "MIT License (ONNX Runtime)",
+          "spdxId": "MIT",
+          "textURL": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.2/LICENSE",
+          "textSHA256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+          "requiresAcceptance": false
+        },
+        {
+          "id": "sherpa-onnx-apache-2-0",
+          "name": "Apache License 2.0 (sherpa-onnx INT8 build)",
+          "spdxId": "Apache-2.0",
+          "textURL": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "textSHA256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "requiresAcceptance": false
+        }
+      ]
+    },
+    {
+      "id": "pocket-tts-alba",
+      "displayName": "Pocket TTS (alba)",
+      "publisher": "Kyutai (ONNX export by KevinAHM)",
+      "version": "58a6d00+575d143",
+      "runtime": {
+        "name": "pocket-tts",
+        "version": "english_2026-04"
+      },
+      "minimumIOSVersion": "26.0",
+      "minimumMemoryMegabytes": 6144,
+      "status": "available",
+      "bundled": false,
+      "files": [
+        {
+          "path": "bundle.json",
+          "byteCount": 24381,
+          "sha256": "bab643150f437f37df080a710520ff39ed9ebd9a339f8ebdc739f7eddfc28b3f",
+          "sources": [
+            "https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/bundle.json"
+          ],
+          "licenseId": "pocket-tts-cc-by-4-0"
+        },
+        {
+          "path": "tokenizer.model",
+          "byteCount": 59339,
+          "sha256": "d461765ae179566678c93091c5fa6f2984c31bbe990bf1aa62d92c64d91bc3f6",
+          "sources": [
+            "https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/tokenizer.model"
+          ],
+          "licenseId": "pocket-tts-cc-by-4-0"
+        },
+        {
+          "path": "text_conditioner.onnx",
+          "byteCount": 16388344,
+          "sha256": "4ecee995fb69f85c7a7493d11f7b5ee15d9950facc7ab3f5c9c49ef1e03847bb",
+          "sources": [
+            "https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/text_conditioner.onnx"
+          ],
+          "licenseId": "pocket-tts-cc-by-4-0"
+        },
+        {
+          "path": "flow_lm_main_int8.onnx",
+          "byteCount": 76341079,
+          "sha256": "f9bd8106b79a0192c1c43399ab938fb24900a95c1c599870d75a884e99000116",
+          "sources": [
+            "https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/flow_lm_main_int8.onnx"
+          ],
+          "licenseId": "pocket-tts-cc-by-4-0"
+        },
+        {
+          "path": "flow_lm_flow_int8.onnx",
+          "byteCount": 9962530,
+          "sha256": "3dd781ee5abee9e195320bf0106bebd6372a852b3b36352524ee78b40554635d",
+          "sources": [
+            "https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/flow_lm_flow_int8.onnx"
+          ],
+          "licenseId": "pocket-tts-cc-by-4-0"
+        },
+        {
+          "path": "mimi_decoder_int8.onnx",
+          "byteCount": 22684077,
+          "sha256": "3630450a3297a101792a6ac66619ebc70ab916b265e6220c2afaef8b1673f925",
+          "sources": [
+            "https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/mimi_decoder_int8.onnx"
+          ],
+          "licenseId": "pocket-tts-cc-by-4-0"
+        },
+        {
+          "path": "alba.safetensors",
+          "byteCount": 6194424,
+          "sha256": "69c32db63ca56843d994f81f343f62e0bf2d73f7e4c9bc73e44bb1110b1d8845",
+          "sources": [
+            "https://huggingface.co/kyutai/pocket-tts-without-voice-cloning/resolve/575d14372df89a4534bcb989870a34e77544b09f/languages/english_2026-04/embeddings/alba.safetensors"
+          ],
+          "licenseId": "pocket-tts-cc-by-4-0"
+        },
+        {
+          "path": "LICENSE.txt",
+          "byteCount": 18655,
+          "sha256": "fe7b4ce83b8381cc5b216bbb4af73c570688d1b819c73bbaed8ca401f4677cd6",
+          "sources": [
+            "https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/LICENSE"
+          ],
+          "licenseId": "pocket-tts-cc-by-4-0"
+        }
+      ],
+      "licenses": [
+        {
+          "id": "pocket-tts-cc-by-4-0",
+          "name": "Creative Commons Attribution 4.0 (Pocket TTS ONNX export and the alba voice)",
+          "spdxId": "CC-BY-4.0",
+          "textURL": "https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/LICENSE",
+          "textSHA256": "fe7b4ce83b8381cc5b216bbb4af73c570688d1b819c73bbaed8ca401f4677cd6",
+          "requiresAcceptance": true,
+          "restrictionsSummary": "Kyutai's model page for Pocket TTS lists prohibited uses: you may not use the voice to break the law, to impersonate or clone someone's voice without their explicit and lawful consent, to spread misinformation or deceive people (including presenting generated speech as a genuine recording of a real person or event), or to produce unlawful, harmful, libelous, abusive, harassing, discriminatory, hateful or privacy-invasive content. The licence also requires crediting the authors wherever the voice is used."
+        }
+      ]
+    },
+    {
+      "id": "kitten-nano-0-8",
+      "displayName": "Kitten (Jasper)",
+      "publisher": "KittenML",
+      "version": "0.8 fp32, revision 7a1db64",
+      "runtime": {
+        "name": "onnxruntime",
+        "version": "1.24.2"
+      },
+      "minimumIOSVersion": "26.0",
+      "minimumMemoryMegabytes": 2048,
+      "status": "available",
+      "bundled": true,
+      "files": [],
+      "licenses": [
+        {
+          "id": "kitten-apache-2-0",
+          "name": "Apache License 2.0 (KittenTTS nano 0.8 model, misaki lexicon, g2p_en weights)",
+          "spdxId": "Apache-2.0",
+          "textURL": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "textSHA256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "requiresAcceptance": false
+        },
+        {
+          "id": "cmu-pronouncing-dictionary",
+          "name": "CMU Pronouncing Dictionary licence (BSD-style)",
+          "textURL": "https://raw.githubusercontent.com/cmusphinx/cmudict/master/LICENSE",
+          "textSHA256": "bd4ce8e44170a5f9f481310ca85c51de3c4f851a65e679b40e603b143bd3542a",
+          "requiresAcceptance": false
+        }
+      ]
+    }
+  ]
+}

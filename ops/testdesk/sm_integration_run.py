@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test each new tip of origin/next with --plan app, unattended and without a model (#1178).
+"""Test each new tip of the trunk (origin/next until #1492 moves it) with --plan app, unattended and without a model (#1178).
 
 Stdlib only, Python 3.9+. launchd ticks every 10 minutes. A tip is tested once, by whoever
 reports first on #184, when the Mac has room and no lane app tests are waiting for the simulator. Failing tests are re-run twice on the same build
@@ -27,11 +27,12 @@ from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 import sm_paths  # noqa: E402
+from trunk import trunk_branch  # noqa: E402  (#1492: the branch it tests)
 
 REPO = os.environ.get('SM_INTEGRATION_REPO', 'uncomposed/spoken-margins-native')
 REPO_ROOT = sm_paths.repo(__file__)                      # the public checkout it tests (SM_REPO)
 HOME_DIR = Path(os.environ.get('SM_INTEGRATION_HOME') or sm_paths.state_dir('integration-run'))
-BASE_BRANCH = 'next'
+BASE_BRANCH = trunk_branch()
 REPORT_ISSUE = 184
 RUN_BY = 'integration script'
 HOSTED_RUN_BY = 'hosted integration'   # hosted-integration.yml on a GitHub-hosted Mac (#1389)

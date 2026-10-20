@@ -61,9 +61,10 @@ PUBLIC = sm_paths.repo(__file__)  # the public checkout (SM_REPO): test-scope.py
 sys.path.insert(0, str(PUBLIC / 'scripts'))
 import comment_trust  # noqa: E402  (#1822: who may be believed)
 import merge_audit  # noqa: E402  (the lane's report and audit formats live there; reused so they can't drift)
+from trunk import trunk_branch  # noqa: E402  (#1492: the branch whose PRs it lists)
 
 REPO = os.environ.get('SM_STATUS_REPO', 'uncomposed/spoken-margins-native')
-BASE = 'next'
+BASE = trunk_branch()
 API = 'https://api.github.com'
 
 LANE_BOT = merge_audit.LANE_BOT

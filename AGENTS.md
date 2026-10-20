@@ -155,6 +155,7 @@ Replace this section when the focus changes; do not append to it.
   - **The repo moves to a free organization he owns, after a readiness check.** He is creating it as "My personal account" on the Free plan (#2169). The transfer is his tap.
   - **Every PR names its issue.** "please do" (#2167). See "Small, verified commits".
   - **One board.** He said "sure" to a single Project board. It already exists: "Spoken Margins areas" (#6, Status and Area, kept by `scripts/sm_project_sync.py`). His boards #1 to #5 belong to other repos; leave them alone.
+  - **Paced work may run 10 points ahead of the straight-line pace.** Asked how far ahead of the trend line the Mac worker may run (10 points to match the usage breaker, no limit tonight, or keep 5), he answered "1": 10 points (#2190). On 2026-10-19 the worker held from about 12:19 to 20:15 CDT at 44% against a 36% line, with 11 armed PRs waiting on fixes. `TREND_SLACK` is 10 in `ops/claude/sm_claude_worker.py` and `ops/dial/dial_gate.py` (#2191).
 - **Podcast anchors** continue as stream C4: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
 - **Parked, reference only:**
   - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand. Its packets use a Margin kind this build can't read.
@@ -225,7 +226,7 @@ While parallel streams are running, pick the lowest tier that covers your change
    - Every app change: build for the simulator and device:
      - `scripts/xcodebuild-lane -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS Simulator' build-for-testing`
      - `scripts/xcodebuild-lane -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS' build`
-   - `scripts/xcodebuild-lane` takes xcodebuild's arguments. It waits for one of two Mac-wide build slots and uses this worktree's `.build/dd`. A hook blocks raw `xcodebuild` builds in this repo.
+   - `scripts/xcodebuild-lane` takes xcodebuild's arguments. It waits for one of two Mac-wide build slots and uses this worktree's `.build/dd`, which is a link into `~/Library/Caches/SpokenMarginsBuilds` so the disk-relief job can clear it ([ops/disk](ops/disk/README.md)). A hook blocks raw `xcodebuild` builds in this repo.
    - After switching branches, use a fresh `-derivedDataPath`. Stale SessionKit modules in the shared DerivedData produce false "does not conform" errors.
    - App orchestration changes: run `--plan app` (app-hosted XCTest in one simulator). If it stalls before XCTest connects, stop and report it; don't retry in a loop.
    - `--plan app` uses its own `SpokenMargins Test Runner` simulator, never the journey one. It removes the app's data there before testing and shuts the simulator down afterwards if it booted it.
@@ -271,6 +272,7 @@ Apple build numbers identify uploads, not product milestones. Each replacement u
 3. Archive (`artifacts/` is git-ignored):
    `scripts/xcodebuild-lane -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -configuration Release -destination generic/platform=iOS -archivePath artifacts/SpokenMargins-<build>.xcarchive -allowProvisioningUpdates archive`
    Check the archive's `CFBundleVersion` is the new build number.
+   The signing team comes from the owner's git-ignored `Config/Local.xcconfig` in the main checkout; `scripts/xcodebuild-lane` links it into the worktree (#1841).
 4. Upload with external-review eligibility retained (`testFlightInternalTestingOnly` is false in the default plist), then assign only the authorized tester groups:
    `PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" xcodebuild -exportArchive -archivePath artifacts/SpokenMargins-<build>.xcarchive -exportOptionsPlist scripts/TestFlightUploadOptions.plist -exportPath artifacts/export-<build> -allowProvisioningUpdates`
    The PATH prefix matters: Homebrew's rsync breaks Xcode's packaging step. A warning that onnxruntime.framework has no dSYM is expected and harmless.

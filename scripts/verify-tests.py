@@ -20,7 +20,9 @@ from lane_xcresult_attachments import export_failed_attachments
 
 from check_posterboard_repair import crash_snapshot, new_crash
 import host_audio
+import lane_conditions
 import lane_sim
+import sm_build_cache
 import sessionkit_pass
 import lane_sim_pool
 import third_party_notices
@@ -223,9 +225,11 @@ def inputs_changed_message(prefix, before, limit=5):
     shown = ', '.join(paths[:limit]) + (f' and {len(paths) - limit} more' if len(paths) > limit else '')
     message = f'{prefix}: {shown}'
     if 'Packages/SessionKit/Package.resolved' in paths:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from trunk import trunk_ref  # #1492: the branch the fix restores from
         message += ('. SwiftPM rewrote Package.resolved during the build, so the copy committed on this branch does not '
                     'match Package.swift on the Mac (a Linux `swift test` rewrites it). Restore it with '
-                    '`git checkout origin/next -- Packages/SessionKit/Package.resolved` and push; if this branch '
+                    f'`git checkout {trunk_ref()} -- Packages/SessionKit/Package.resolved` and push; if this branch '
                     'changes dependencies on purpose, run `swift package resolve` on a Mac instead')
     return message
 
@@ -390,7 +394,7 @@ CODEX_SANDBOX_SKIPS = {'runner-tests': 'Codex sandbox: `ps` cannot run here, so 
 # .github/ runs every runner test. So does the root .gitignore, which the lane runner's warm-build tests copy.
 RUNNER_TEST_TRIGGERS = ('scripts/', '.github/', '.gitignore')
 # Some tests also read the repository outside scripts/: the filled-button and mini player keep-out scans read
-# App/; the inventory and
+# App/ (and the accessibility source scans read App/ Swift files, #2041); the inventory and
 # contract checks read project.yml, Package.swift, TestPlans/, Contracts/ and validation/; the hot-file test
 # checks that the hot files exist under App/; the research harness test reads research/; and the lane
 # runner's T3 scope and "only testing" tests, and one lane-sim test, plan against the real TestPlans/ and the
@@ -411,7 +415,11 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
                        'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved',
                        'test_building_md', 'test_third_party_notices',
-                       'test_starter_catalog')
+                       'test_starter_catalog',
+                       # The accessibility source scans read App/ Swift files (#2041).
+                       'test_screen_change_cue', 'test_selected_trait', 'test_screen_title_heading',
+                       'test_row_accessibility_actions', 'test_voiceover_label_nits',
+                       'test_increase_contrast_wiring', 'test_reduce_motion', 'test_tap_target_styles')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
                       'docs/sharing-test-kit/', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
                       # test_third_party_notices reads the dependency manifests and its own list (#1823).
@@ -606,6 +614,32 @@ POCKET_WEIGHT_TESTS = frozenset(f'SessionKitTests/PocketRendererTests/{test}' fo
     'testRendersTheThreeC2PassagesFasterThanRealTimeOnOneThread',
     'testProsePassagesAreSpokenWithinTwoPointsOfThePyTorchWordError',
 ))
+
+
+# Supertonic's render tests need its model, which is a download since #1820, in neither the repository nor the app.
+# Without `scripts/voice-catalog fetch supertonic-3-int8` (or SESSIONKIT_SUPERTONIC_DIR) they skip, naming the
+# supertonicModel input; SM_REQUIRE_MODELS makes them fail instead.
+SUPERTONIC_MODEL_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
+    'SupertonicChunkingTests/testNumberHeavyTableSpanRendersNoChunkNearTheBabbleLength',
+    'SupertonicChunkingTests/testSystemVoiceReadsAFlaggedChunkInSupertonicsFormat',
+    'SupertonicDownloadedModelTests/testThePinnedTreeHashIsTheDownloadedModels',
+    'SupertonicNarrationTests/testDiscardDeletesOnlyAudioTheRendererGenerated',
+    'SupertonicNarrationTests/testRealRenderComesBackTrimmedToItsSpeech',
+    'SupertonicNarrationTests/testRealRendersArePacedByWhoAskedNotBySharedState',
+    'SupertonicVoiceSelectionTests/testJamesAndLilyReadTheSameSentenceInTheirOwnAudibleVoices',
+))
+
+
+# The one app-hosted test that runs Supertonic's real model, in the adapters plan. The model is a download since #1820,
+# so the run fetches it (pinned by sha256 in Contracts/voice-models/sources.json) into a cache outside the checkout,
+# once per Mac, and hands it to the app's tests; a fetch that fails fails the run instead of letting the test skip.
+SUPERTONIC_APP_MODEL_TEST = 'SupertonicSpeechTests/testDownloadedRendererSynthesizesJamesAndLilyAndReusesSessions'
+SUPERTONIC_MODEL_VOICE = 'supertonic-3-int8'
+
+
+def supertonic_model_cache():
+    """Where the lane keeps the fetched model: SM_VOICE_CACHE, else the user's Caches folder (about 150 MB)."""
+    return Path(os.environ.get('SM_VOICE_CACHE') or Path.home() / 'Library/Caches/SpokenMargins/voice-catalog')
 
 
 def in_codex_sandbox():
@@ -909,6 +943,14 @@ class Run:
             log_size = 0
             attempt = 1
             watching = startup is not None
+            # #2176: the host's conditions as each launch starts, when its tests start and when it stalls.
+            conditions = startup.get('conditions') if startup else None
+
+            def note_conditions(at, **extra):
+                if conditions:
+                    entry.setdefault('launch_conditions', []).append({'attempt': attempt, 'at': at, **extra,
+                                                                      **conditions()})
+            note_conditions('start')
             scan_from = 0  # each launch is judged by its own part of the shared log
             # #2053: an xcodebuild test run that has printed its summary and then goes quiet is finished, not hung.
             finish = xcodebuild_finish.FinishWatch() if tests and args[0] == 'xcodebuild' else None
@@ -949,15 +991,19 @@ class Run:
                     text = (self.output / f'{name}.log').read_text(errors='replace')[scan_from:]
                     if TESTS_STARTED.search(text):
                         watching = False
+                        note_conditions('tests_started', seconds=round(time.monotonic() - attempt_start, 1))
                     elif time.monotonic() - attempt_start >= startup['seconds']:
                         lines = [line for line in text.splitlines() if line.strip()]
                         stall = {'attempt': attempt, 'after_seconds': round(time.monotonic() - attempt_start, 1),
                                  'last_log_line': lines[-1][:200] if lines else None}
+                        if conditions:
+                            stall['conditions'] = conditions()
                         stall.update(startup['diagnose'](self.output / f'{name}-stall-{attempt}'))
                         # The diagnosis takes seconds; a launch that began its tests meanwhile is slow, not stalled.
                         if TESTS_STARTED.search((self.output / f'{name}.log').read_text(errors='replace')[scan_from:]):
                             entry.setdefault('slow_starts', []).append(stall)
                             watching = False
+                            note_conditions('tests_started', seconds=round(time.monotonic() - attempt_start, 1))
                             continue
                         entry.setdefault('startup_stalls', []).append(stall)
                         print(f'warning: {name} printed no test output {stall["after_seconds"]}s after launch '
@@ -979,6 +1025,7 @@ class Run:
                         log.flush()
                         scan_from = len((self.output / f'{name}.log').read_text(errors='replace'))
                         attempt_start = time.monotonic()
+                        note_conditions('start')
                         if finish is not None:
                             finish = xcodebuild_finish.FinishWatch()
                         process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
@@ -1299,7 +1346,7 @@ class Run:
                          timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
                          expected=expected - core if split else expected, tests=True,
                          allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus',
-                                        *POCKET_WEIGHT_TESTS},
+                                        *POCKET_WEIGHT_TESTS, *SUPERTONIC_MODEL_TESTS},
                          probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
         except RuntimeError as error:
             step = self.manifest['steps'][-1]
@@ -1431,6 +1478,19 @@ class Run:
                      str(derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')])
         return derived, identity
 
+    def provide_supertonic_model(self):
+        """Fetch Supertonic's model before the simulator boots, and give its folder to the app's tests, which read
+        SESSIONKIT_SUPERTONIC_DIR (xcodebuild passes TEST_RUNNER_-prefixed variables on without the prefix)."""
+        folder = os.environ.get('SESSIONKIT_SUPERTONIC_DIR')
+        if not folder:
+            cache = supertonic_model_cache()
+            self.command('supertonic-model', [sys.executable, str(ROOT / 'scripts/voice-catalog'), '--state-dir', str(cache),
+                                              'fetch', SUPERTONIC_MODEL_VOICE], timeout=1200)
+            folder = str(cache / 'files' / SUPERTONIC_MODEL_VOICE)
+        os.environ['TEST_RUNNER_SESSIONKIT_SUPERTONIC_DIR'] = folder
+        self.manifest['supertonic_model'] = folder
+        self.save()
+
     def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None, simulator_slot_fd=None,
               require_build=False):
         if input_identity() != self.manifest['input_sha256']:
@@ -1447,6 +1507,9 @@ class Run:
                                      {f'{APP_TEST_TARGET}/{test}' for test in target_tests(ROOT, APP_TEST_TARGET)})
         if selectors:
             self.manifest['only_testing'] = selectors
+        if any(test.endswith(SUPERTONIC_APP_MODEL_TEST)
+               for test in planned if not selectors or any(selected(test, s) for s in selectors)):
+            self.provide_supertonic_model()
         chosen, created = self.simulator(device, ios)
         refuse_unsafe(chosen, lane_sim.unsafe_devices())
         self.manifest['destination'] = chosen
@@ -1527,8 +1590,12 @@ class Run:
             # Only the app-hosted unit tests (app, adapters): the UI plans launch a separate runner app.
             startup = {'seconds': STARTUP_STALL_SECONDS, 'retries': STARTUP_RETRIES,
                        'diagnose': lambda folder: stall_evidence(chosen['udid'], folder, result_bundle=result_bundle),
-                       'reset': relaunch} if scheme == 'SpokenMarginsAppBehavior' else None
+                       'reset': relaunch, 'conditions': lane_conditions.snapshot} \
+                if scheme == 'SpokenMarginsAppBehavior' else None
             if startup is not None:
+                # What each launch installs (#2176): #2067 takes Supertonic's model out, about 144 MB.
+                self.manifest['app_bundle_mb'] = lane_conditions.folder_mb(
+                    derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')
                 self.manifest['settle_before_tests'] = settle_before_tests(chosen['udid'])
                 self.save()
             self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
@@ -1600,6 +1667,9 @@ def main():
     if journeys is not None and not any(journeys.values()):
         print('No scripted journeys are listed in TestPlans/scripted-journeys.json; nothing to run.')
         return 0
+    # In a worktree under ~/Documents, .build and SessionKit's .build live in ~/Library/Caches, where the
+    # disk-relief job (no Full Disk Access) can clear them (sm_build_cache.py).
+    sm_build_cache.ensure_links(ROOT, log=lambda line: print(line, file=sys.stderr, flush=True))
     (ROOT / '.build').mkdir(exist_ok=True)
     with (ROOT / '.build/verification.lock').open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

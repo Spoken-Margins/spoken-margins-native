@@ -38,7 +38,7 @@ class BuildSlotTests(unittest.TestCase):
         fake.chmod(0o755)
         self.record = self.dir / 'record.jsonl'
         self.env = {**os.environ, 'SM_LANE_STATE_DIR': str(self.dir / 'state'), 'SM_LANE_XCODEBUILD': str(fake),
-                    'FAKE_RECORD': str(self.record)}
+                    'FAKE_RECORD': str(self.record), 'SM_BUILD_CACHE': 'off'}  # links nothing in this checkout
 
     def tearDown(self):
         self.temporary.cleanup()

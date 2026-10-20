@@ -28,9 +28,6 @@ NOT_REPOSITORY_READS = {
 # Package tests that still name the app's or the research folder's files themselves instead of going through
 # TestInputs (#1851). Each waits for its voice to move to the download registry; delete the entry when it moves.
 NOT_YET_THROUGH_HELPER = {
-    'SupertonicChunkingTests.swift': 'Supertonic voice files, until the voice downloads land (#1391, #1820)',
-    'SupertonicNarrationTests.swift': 'Supertonic voice files, until the voice downloads land (#1391, #1820)',
-    'SupertonicVoiceSelectionTests.swift': 'Supertonic voice files, until the voice downloads land (#1391, #1820)',
     'PocketRendererTests.swift': 'Pocket weights and research results, until its voice moves (#1392)',
 }
 
@@ -45,13 +42,14 @@ def make_repo(root):
     files = {path: 'x' for path in (
         'Packages/SessionKit/Sources/SessionKit/A.swift', 'Packages/SessionKit/Package.swift',
         'Contracts/fixtures/a.json', 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift',
-        'App/SpokenMarginsAppTests/T.swift', 'App/SpokenMarginsApp/Resources/Supertonic/asset-manifest.json',
+        'App/SpokenMarginsAppTests/T.swift',
         'research/B2/f.json', 'research/B4/v.json', 'fixtures/maps/m.json', 'Site/onboarding/catalog/v1/catalog.json', 'README.md',
         'traces/t.json', 'scripts/run-sessionkit-tests.sh', 'scripts/host-test-lane', 'scripts/verify-tests.py',
         'scripts/sessionkit_pass.py',
         # Not read by the package tests:
         'docs/a.md', 'App/Gate2Shared/G.swift', 'App/SpokenMarginsApp/Info.plist', 'ops/codex/x.py',
-        'scripts/lane-runner.py', 'research/B1/n.md', 'Site/index.html', 'project.yml')}
+        'scripts/lane-runner.py', 'research/B1/n.md', 'Site/index.html', 'project.yml',
+        'App/SpokenMarginsApp/Resources/Supertonic/asset-manifest.json')}
     for relative, text in files.items():
         (root / relative).parent.mkdir(parents=True, exist_ok=True)
         (root / relative).write_text(text)
