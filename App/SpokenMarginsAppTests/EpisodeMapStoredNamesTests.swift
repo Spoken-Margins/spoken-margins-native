@@ -74,8 +74,6 @@ final class EpisodeMapStoredNamesTests: XCTestCase {
     func testJamesSummaryWithoutSupertonicDownloadSavesKittenKeyAndEmptySystemIdentifier() async throws {
         // Supertonic's model is a download (#1820), so on the lane James has none and the bundled Kitten voice speaks
         // the summary. The asset ID names Kitten, not James, and the supplied system identifier must not appear in it.
-        try XCTSkipIf(model.supertonicModel.isModelPresent,
-            "a Supertonic download is present, so James would render the summary himself")
         let asset = try await importSummary(itemID: "p19-james-996",
             safeItemDirectory: "p19-james-996", voice: .james)
         XCTAssertEqual(asset.id,
@@ -148,6 +146,9 @@ final class EpisodeMapStoredNamesTests: XCTestCase {
         try store.saveOwnedOfflineAsset(OwnedOfflineAsset(id: "p19-source", itemId: itemID,
             category: .audiobook, relativePath: sourcePath, byteCount: Int64(bytes.count),
             checksumSHA256: digest, isReproducible: false))
+        // These tests expect Kitten to speak James's summary; with a Supertonic download present, James would.
+        try XCTSkipIf(voice == .james && model.supertonicModel.isModelPresent,
+            "a Supertonic download is present, so James would render the summary himself")
         if voice == .james { model.acceptCurrentTermsAndEnableOnDeviceVoice() }
         model.ttsVoiceSelection = voice
         model.speechVoiceIdentifier = "com.apple.voice.test:en_US"
