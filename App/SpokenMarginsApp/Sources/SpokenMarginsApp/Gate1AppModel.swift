@@ -434,6 +434,8 @@ final class Gate1AppModel: ObservableObject {
     ) ?? .james
     @Published var ttsMode = UserDefaults.standard.string(forKey: "ttsMode") ?? "supertonic"
     @Published var isRenderingSupertonicPreview = false
+    /// The Supertonic preview still rendering; playback, a Margin or a voice change makes it stale (#2125).
+    var supertonicPreviewRequest = VoicePreviewRequest<SupertonicVoiceID>()
     @Published var providerAPIKey = KeychainStore.load(service: "SpokenMargins", account: "OpenAICompatibleAPIKey") ?? ""
     @Published var providerProbeStatus = "Not checked"
     @Published var aiDataSharingConsent = AIDataSharingConsent(
@@ -570,9 +572,9 @@ final class Gate1AppModel: ObservableObject {
     let sourceWindowContextBeforeMs = SourceAnchorContextResolver.windowBeforeMs
     let sourceWindowContextAfterMs = SourceAnchorContextResolver.windowAfterMs
     #if canImport(AVFoundation)
-    private let speechPreviewSynthesizer = AVSpeechSynthesizer()
-    private var supertonicPreviewPlayer: AVAudioPlayer?
-    private var supertonicPreviewURL: URL?
+    let speechPreviewSynthesizer = AVSpeechSynthesizer()
+    var supertonicPreviewPlayer: AVAudioPlayer?
+    var supertonicPreviewURL: URL?
     #endif
     let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
@@ -2886,35 +2888,6 @@ final class Gate1AppModel: ObservableObject {
         reportFailure("Speech preview unavailable on this platform.")
         #endif
     }
-
-    #if canImport(AVFoundation)
-    func stopSpeechPreviews() {
-        if speechPreviewSynthesizer.isSpeaking {
-            speechPreviewSynthesizer.stopSpeaking(at: .immediate)
-        }
-        supertonicPreviewPlayer?.stop()
-    }
-
-    func playSupertonicPreview(url: URL) throws {
-        stopSpeechPreviews()
-        if let priorURL = supertonicPreviewURL, let renderer = supertonicRenderer {
-            Task { await renderer.discardGeneratedAudio(at: priorURL) }
-        }
-        #if os(iOS)
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
-        try AVAudioSession.sharedInstance().setActive(true)
-        #endif
-        supertonicPreviewPlayer = try AVAudioPlayer(contentsOf: url)
-        supertonicPreviewPlayer?.prepareToPlay()
-        guard supertonicPreviewPlayer?.play() == true else {
-            throw SupertonicNarrationError.unsafeAudio("preview_playback_failed")
-        }
-        supertonicPreviewURL = url
-    }
-
-    #else
-    func stopSpeechPreviews() {}
-    #endif
 
     func applicationSupportDirectory() throws -> URL {
         try FileManager.default.url(
