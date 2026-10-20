@@ -3,6 +3,10 @@ import SessionKit
 import SessionKitAudio
 
 extension Gate1AppModel {
+    /// Tries a podcast or publisher recording's resume again when iOS refuses to reactivate the session (#2183).
+    /// One per process: a stored property can't live in an extension, and Gate1AppModel is capped (hot-file ratchet).
+    static let mediaInterruptionResumeRetrier = InterruptionResumeRetrier()
+
     /// Shows what came of an interruption's resume request in diagnostics, and logs it in the
     /// timestamped playback events beside the interruption itself (#538).
     func noteSpeechInterruptionResume(_ outcome: SpeechInterruptionResume) {
@@ -29,7 +33,7 @@ extension Gate1AppModel {
     func handleMediaPlaybackInterruption(_ event: AudioPlaybackInterruptionEvent) {
         switch event {
         case .began:
-            mediaInterruptionResumeRetrier.cancel()
+            Self.mediaInterruptionResumeRetrier.cancel()
             guard snapshot.status.isPlaybackActive, let engine else {
                 diagnostics["mediaPlaybackInterruption"] = "pause_skipped"
                 return
@@ -66,7 +70,7 @@ extension Gate1AppModel {
         let targetId = snapshot.targetId
         // Where it paused. A seek, skip, or a Play and Pause by the listener moves this, and then the item is theirs.
         let pausedAtMs = snapshot.currentMediaTimeMs
-        mediaInterruptionResumeRetrier.begin(
+        Self.mediaInterruptionResumeRetrier.begin(
             after: error,
             stillWaiting: { [weak self] in
                 guard let self else { return false }

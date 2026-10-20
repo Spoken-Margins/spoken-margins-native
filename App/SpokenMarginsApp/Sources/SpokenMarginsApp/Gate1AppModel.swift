@@ -130,8 +130,6 @@ final class Gate1AppModel: ObservableObject {
     let hangTelemetry = HangTelemetry() // #2099
     var lastPlaybackEventCheckpoint: TimeInterval = 0
     var speechInterruptionResumeWatch = SpeechInterruptionResumeWatch()
-    /// Tries a podcast or publisher recording's resume again when iOS refuses to reactivate the session (#2183).
-    let mediaInterruptionResumeRetrier = InterruptionResumeRetrier()
 
     func recordDeveloperDiagnostic(_ kind: String, _ fields: [String: String] = [:]) {
         developerRecording.record(kind, fields)
