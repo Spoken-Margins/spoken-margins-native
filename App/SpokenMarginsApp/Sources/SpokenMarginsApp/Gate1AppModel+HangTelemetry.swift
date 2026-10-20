@@ -18,7 +18,13 @@ extension Gate1AppModel {
 
     /// What the Play/Pause button shows, so a tap on a pending start reads as the cancel it is (#2098).
     var playPauseFace: PlayPauseFace {
-        PlayPauseFace(status: snapshot.status, isPlaying: activePlaybackIsPlaying)
+        // The branches of `playPause()` that take the tap before the source does.
+        let tapReachesTheSource = playingImportedCommentary == nil
+            && marginMomentConductor?.isPlayingVoice != true
+            && !ownMarginVoiceHasTransport
+            && snapshot.skimBridgeState == nil
+            && snapshot.phase != .finished
+        return PlayPauseFace(status: snapshot.status, isPlaying: activePlaybackIsPlaying, tapReachesTheSource: tapReachesTheSource)
     }
 
     /// The Play/Pause button on the mini player and the full player. It logs the tap like the Lock Screen

@@ -12,8 +12,10 @@ public enum PlayPauseFace: Equatable, Sendable {
     case cancelStart
 
     /// `isPlaying` is whether the audio the button controls is playing (a Margin's voice, a skim, or the source).
-    public init(status: PlaybackStatus, isPlaying: Bool) {
-        self = status == .starting ? .cancelStart : (isPlaying ? .pause : .play)
+    /// `tapReachesTheSource` is false while the tap goes to something else (an imported Margin's or own Margin's voice,
+    /// a skim, a finished item's replay): a pending start of the source is then not what a tap cancels.
+    public init(status: PlaybackStatus, isPlaying: Bool, tapReachesTheSource: Bool = true) {
+        self = status == .starting && tapReachesTheSource ? .cancelStart : (isPlaying ? .pause : .play)
     }
 
     /// Whether a tap stops what is going on, as opposed to starting or resuming it.

@@ -27,6 +27,14 @@ final class PlayPauseFaceTests: XCTestCase {
         }
     }
 
+    /// The model sends a tap to a Margin's voice, a skim or a finished item's replay before it reaches the source, so
+    /// a pending start of the source must not read as the thing that tap cancels.
+    func testAPendingStartIsNotACancelWhenTheTapGoesToSomethingElse() {
+        XCTAssertEqual(PlayPauseFace(status: .starting, isPlaying: true, tapReachesTheSource: false), .pause)
+        XCTAssertEqual(PlayPauseFace(status: .starting, isPlaying: false, tapReachesTheSource: false), .play)
+        XCTAssertEqual(PlayPauseFace(status: .starting, isPlaying: true, tapReachesTheSource: true), .cancelStart)
+    }
+
     func testPlayAndPauseKeepTheirWords() {
         XCTAssertEqual(PlayPauseFace(status: .paused, isPlaying: false), .play)
         XCTAssertEqual(PlayPauseFace(status: .playing, isPlaying: true), .pause)
