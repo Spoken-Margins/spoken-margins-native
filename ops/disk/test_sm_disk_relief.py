@@ -807,6 +807,14 @@ class LaneFolder(Base):
         self.assertFalse(self.spare.exists())
         self.assertTrue(self.newest.exists(), 'the newest cache of a live checkout stays')
 
+    def test_disk_relief_prunes_to_the_cap_with_no_room_for_a_build(self):
+        # Only the lane runner's call, just before a build, leaves room under the cap (#1775).
+        self.lane_fixture()
+        m = FakeMachine(self.cfg, base_free=500 * MiB, open_prs={3})
+        plan = d.plan_lane(self.cfg, m)
+        self.assertEqual(plan.room, 0)
+        self.assertEqual(plan.cap, self.cfg.lane_cap_bytes)
+
     def test_dry_run_lists_the_lane_step_and_changes_nothing(self):
         self.lane_fixture()
         m = FakeMachine(self.cfg, base_free=500 * MiB, open_prs={3})

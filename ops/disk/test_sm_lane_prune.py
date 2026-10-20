@@ -2,8 +2,10 @@
 
 Run: python3 -m unittest ops/disk/test_sm_lane_prune.py
 """
+import contextlib
 import fcntl
 import importlib.util
+import io
 import os
 import sys
 import tempfile
@@ -221,6 +223,35 @@ class Warm(LaneTests):
         p.prune(plan, NOW, lambda message: None)
         self.assertTrue(a_new.exists() and b_new.exists())
         self.assertFalse(b_old.exists() or a_mid.exists())
+
+    def test_before_a_build_it_leaves_room_under_the_cap_for_that_build(self):
+        # Pruned only to the cap, each build took the folder over it until the next run (19.5 GiB on 10-18, cap 16).
+        a_new = self.cache(self.runner_a, 'a-new', 30 * MiB, 1 * DAY)
+        a_old = self.cache(self.runner_a, 'a-old', 30 * MiB, 4 * DAY)
+        b_new = self.cache(self.runner_b, 'b-new', 30 * MiB, 2 * DAY)
+        b_mid = self.cache(self.runner_b, 'b-mid', 30 * MiB, 3 * DAY)
+        self.assertEqual(self.paths(self.plan(cap=130 * MiB)), set())  # 120 MiB is under the cap
+        plan = p.plan_prune(self.lane, [self.evidence], [self.runner_a, self.runner_b], set(), NOW,
+                            cap=130 * MiB, room=50 * MiB)
+        self.assertEqual([i.path for i in plan.items], [a_old, b_mid])  # 120 MiB down to 60, under 130 - 50
+        self.assertLessEqual(plan.after + 50 * MiB, 130 * MiB)
+        self.assertFalse(plan.over_cap)
+        p.prune(plan, NOW, lambda message: None)
+        self.assertTrue(a_new.exists() and b_new.exists())
+
+    def test_the_command_line_run_the_lane_runner_makes_leaves_room_and_disk_relief_does_not(self):
+        seen = {}
+        real_plan, real_open = p.plan_prune, p.open_pull_requests
+        p.plan_prune = lambda *args, **kwargs: seen.update(kwargs) or real_plan(*args, **kwargs)
+        p.open_pull_requests = lambda repo: set()
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                p.main(['--dry-run', '--lane-dir', str(self.lane)])
+        finally:
+            p.plan_prune, p.open_pull_requests = real_plan, real_open
+        self.assertEqual(seen['room'], p.BUILD_ROOM_BYTES)
+        self.assertGreaterEqual(p.BUILD_ROOM_BYTES, 3 * 1024 ** 3)  # an app build's warm cache is 3 to 4 GB
+        self.assertEqual(p.Plan().room, 0)
 
     def test_the_newest_cache_of_each_checkout_is_never_evicted(self):
         a = self.cache(self.runner_a, 'a', 60 * MiB, 9 * DAY)
