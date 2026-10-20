@@ -20,6 +20,7 @@ targets:
         type: syncedFolder
       - path: App/SharedSources
         type: syncedFolder
+      # Supertonic's licences and modification notice only; the model is a download from Settings › Voices (#1820).
       - path: App/SpokenMarginsApp/Resources/Supertonic
         type: folder
         buildPhase: resources
@@ -27,6 +28,12 @@ targets:
         type: folder
         buildPhase: resources
       - path: App/SpokenMarginsApp/Resources/Legal
+        type: folder
+        buildPhase: resources
+      - path: App/SpokenMarginsApp/Resources/VoiceCatalog
+        type: folder
+        buildPhase: resources
+      - path: Contracts/voice-models/licenses
         type: folder
         buildPhase: resources
       - path: App/SharedResources/browserTextCapture.js

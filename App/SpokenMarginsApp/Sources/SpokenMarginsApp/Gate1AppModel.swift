@@ -472,7 +472,7 @@ final class Gate1AppModel: ObservableObject {
     let streamingSpeechQueue = StreamingSpeechQueue(speech: SystemSpeechPlaybackClient())
     var speechPlaybackClient: AudioPlaybackClient?
     var sessionAudioPlaybackClient: AudioPlaybackClient?
-    var supertonicRenderer: SupertonicNarrationRenderer?
+    let supertonicModel = SupertonicModelFollower<SupertonicNarrationRenderer>(locate: { SupertonicAssetResolver.location() }, retire: { old in Task { await old.unload(removingGeneratedAudio: false) } }) // a download (#1820)
     var kittenRenderer: KittenNarrationRenderer? // bundled fallback voice, built on first use (#849)
     var preparedAudioCoordinator: PreparedAudioCoordinator?
     var currentSupertonicRenderSignature: TTSRenderSignature? { // older prepared chunks go first when space is needed (#281)
@@ -489,6 +489,8 @@ final class Gate1AppModel: ObservableObject {
     let connectivity = ConnectivityMonitor()
     var requestedPodcastTransportReplacements: Set<String> = []
     var offlineStorageLedger: OfflineStorageLedger?
+    /// Settings › Voices (#1819); created on first use by `requireVoiceDownloads()`.
+    var voiceDownloadsModel: VoiceDownloadsModel?
     private var localSourceImporter: LocalSourceImporter?
     var followedSourceCoordinator: FollowedSourceCoordinator?
     /// A fresh install: the Library was empty before the welcome sample was added (B1 drawer).
@@ -2729,17 +2731,14 @@ final class Gate1AppModel: ObservableObject {
         frontierPublicationKey = key
         guard let itemID = snapshot.itemId, let voice = ttsVoiceSelection.supertonicVoice,
               [TargetType.itemTextTTS.rawValue, TargetType.transcriptBackedMedia.rawValue].contains(snapshot.targetType ?? ""),
-              let store, let resources = Bundle.main.resourceURL else { return }
+              let store else { return }
         do {
             let signature: TTSRenderSignature
             if let cached = frontierSignatures[voice.rawValue] { signature = cached }
             else {
-                let assets = SupertonicAssetLocation(rootURL: resources.appendingPathComponent("Supertonic"))
-                let existing = currentSupertonicRenderSignature
+                // Saved audio shows before the model is downloaded too (#1820).
                 signature = try await Task.detached(priority: .utility) {
-                    if let existing,
-                       existing.voiceStyleHash == SupertonicRenderIdentity.sha256(try Data(contentsOf: assets.voiceStyleURL(for: voice))) { return existing }
-                    return try SupertonicRenderIdentity.make(assets: assets, voice: voice)
+                    try SupertonicRenderIdentity.current(voice: voice)
                 }.value
                 frontierSignatures[voice.rawValue] = signature
             }
@@ -2762,11 +2761,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func openReadyListeningEdition() {
-        guard !snapshot.isRecording, let id = ListeningReadyNotifications.pendingItemID else { return }
-        ListeningReadyNotifications.pendingItemID = nil
-        openItem(id: id)
-    }
     func activateListeningEditionAudio(itemId: String, timeline: TranscriptTimeline) {
         guard let edition = try? ListeningEditionStore.application().load(itemID: itemId), let store else { return }
         do {

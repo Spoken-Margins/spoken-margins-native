@@ -1607,7 +1607,8 @@ def build(sha: str) -> int:
             git('checkout', '--detach', sha, cwd=src)
         else:
             git('worktree', 'add', '--detach', str(src), sha)
-        pointers = [p for p in (src / 'App/SpokenMarginsApp/Resources/Supertonic/onnx').glob('*.onnx')
+        # Kitten is the voice model the app still bundles; Supertonic's is a download since #1820.
+        pointers = [p for p in (src / 'App/SpokenMarginsApp/Resources/Kitten').glob('*.onnx')
                     if p.stat().st_size < 1024 and p.read_bytes().startswith(b'version https://git-lfs')]
         if pointers:
             run_logged(['git', 'lfs', 'pull'], src, log)
