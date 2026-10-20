@@ -1091,6 +1091,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func refreshLockScreenSurfacesForLifecycle() {
+        NowPlayingInfoOwnership.shared.note("lifecycle_refresh")
         gate2CompactControls.reconcileLiveActivities()
         diagnostics["lockScreenLifecycleRefresh"] = snapshot.targetType ?? "none"
     }
