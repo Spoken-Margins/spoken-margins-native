@@ -72,7 +72,7 @@ Spoken Margins' data practices are described in the Privacy Policy at https://sp
 
 **The process for removing intimate images shared without consent is posted at [[intimate-image removal page URL]]. The content policy, which explains what may not be shared by link and how reports are handled, is posted at [[content policy URL]].**
 
-**The Developer may block a device from sending reports if it clearly misuses the report form and does not respond when the Developer tries to discuss it.**
+**The Developer may block a device from sending reports only when the written reasons sent with its reports show that it is misusing the report form. Not responding to a message from the Developer is never, on its own, a reason to block. A reporter whose reasons show good-faith reports is not blocked, however many reports they send.**
 
 **5C. Copyright complaints and repeat sharers**
 
