@@ -3421,7 +3421,7 @@ class FreshCloneRerunTests(unittest.TestCase):
     """#2176: a plan that ends on its second startup stall runs once more on a fresh clone in the same job, instead of
     reporting INCONCLUSIVE and going back to the queue (12 of 32 T3 runs stalled on 2026-10-19)."""
 
-    def run_t3(self, manifests, boots_fail=(), grouped=None):
+    def run_t3(self, manifests, boots_fail=(), grouped=None, unsafe=lambda: {}):
         import lane_sim
         clones, released, commands = iter(['U1', 'U2', 'U3']), [], []
         manifests = iter(manifests)
@@ -3446,7 +3446,7 @@ class FreshCloneRerunTests(unittest.TestCase):
                 mock.patch.object(lane_sim, 'boot', side_effect=boot), \
                 mock.patch.object(lane_sim, 'start_watcher'), \
                 mock.patch.object(lane_sim, 'release', side_effect=lambda udid, *a, **k: released.append(udid)), \
-                mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
+                mock.patch.object(lane_sim, 'unsafe_devices', side_effect=unsafe), \
                 mock.patch.object(lane_sim, 'is_available', return_value=True), \
                 mock.patch.object(lane_sim, 'post_stall'), \
                 mock.patch.object(lane, 'run_bounded', side_effect=run_bounded):
@@ -3506,6 +3506,45 @@ class FreshCloneRerunTests(unittest.TestCase):
         self.assertTrue(any('could not start' in line and 'simctl boot U2 failed' in line for line in details))
         self.assertTrue(any('not run: adapters' in line for line in details))
         self.assertIn('simctl boot U2 failed', json.loads((evidence / lane.FRESH_RERUNS).read_text())[0]['boot'])
+
+    def test_a_stalled_clone_the_watcher_stopped_is_not_swapped_for_a_fresh_one(self):
+        # Audit on 041d4f4: a SpringBoard crash on U1 stops it and marks it unsafe, and the next launch then
+        # "stalls" twice. Rerunning on U2 would switch devices to get around a crash and could report PASS.
+        stopped = {'U1': {'reason': 'SpringBoard crashed: SpringBoard-x.ips'}}
+        (verdict, _, _, _, crashes, cc), released, devices, _, evidence = self.run_t3(
+            [stalled_out_manifest(), passing_manifest()], unsafe=lambda: stopped)
+        self.assertEqual((verdict, devices, released), ('INCONCLUSIVE', ['U1'], ['U1']))
+        self.assertIn('the SpringBoard watcher stopped the device: SpringBoard crashed', crashes)
+        self.assertTrue(crashes.startswith('crash flood: '))
+        self.assertTrue(cc)
+        self.assertFalse((evidence / lane.FRESH_RERUNS).exists())
+
+    def test_a_watcher_mark_on_the_stalled_clone_after_the_rerun_starts_still_reaches_the_verdict(self):
+        # The mark can land after the check (the watcher's crash report arrives late): the final check reads every
+        # clone a plan ran on, not only the last one.
+        calls = []
+
+        def unsafe():
+            calls.append(1)
+            return {} if len(calls) == 1 else {'U1': {'reason': 'SpringBoard crashed: SpringBoard-y.ips'}}
+
+        (verdict, _, _, _, crashes, _), _, devices, _, _ = self.run_t3(
+            [stalled_out_manifest(), passing_manifest()], unsafe=unsafe)
+        self.assertEqual((verdict, devices), ('INCONCLUSIVE', ['U1', 'U2']))
+        self.assertIn('the SpringBoard watcher stopped the device: SpringBoard crashed: SpringBoard-y.ips', crashes)
+
+    def test_a_late_boot_crash_report_on_the_stalled_clone_is_noted_not_a_stop(self):
+        late = {'U1': {'reason': 'late crash report for a crash during boot: SpringBoard-z.ips'}}
+        calls = []
+
+        def unsafe():
+            calls.append(1)
+            return {} if len(calls) == 1 else late
+
+        (verdict, _, _, details, crashes, _), _, devices, _, _ = self.run_t3(
+            [stalled_out_manifest(), passing_manifest()], unsafe=unsafe)
+        self.assertEqual((verdict, devices, crashes), ('PASS', ['U1', 'U2'], 'none'))
+        self.assertTrue(any('SpringBoard-z.ips' in line and 'U1' in line for line in details))
 
     def test_each_rerun_is_logged_on_the_stall_issue(self):
         with tempfile.TemporaryDirectory() as folder:

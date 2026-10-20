@@ -2325,7 +2325,9 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
         plan, not a loop."""
         nonlocal udid
         manifest = run_plan(plan, selectors, output)
-        if reruns or not startup_stalled_out(manifest):
+        if reruns or not startup_stalled_out(manifest) or lane_sim.unsafe_devices().get(udid):
+            # A clone the SpringBoard watcher stopped "stalls" at every launch after: switching devices then would
+            # get around a simulator crash (AGENTS.md), so the stop decides the verdict below, as before #2176.
             return manifest
         stalls = [stall for step in manifest.get('steps', []) for stall in step.get('startup_stalls') or []]
         rerun = {'plan': plan, 'stalled': udid, 'first': str(output), 'output': str(output.with_name(output.name + '-fresh')),
@@ -2389,12 +2391,15 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
                        f'evidence: {evidence}/simulator-clone.log')
     finally:
         lane_sim.release(udid)
-    watched = lane_sim.unsafe_devices().get(udid)
-    if watched and watched['reason'].startswith('late crash report'):
-        # A crash during the boot, reported after it: the device is marked unsafe, but the run itself went on.
-        details.append(f'after the run started, a crash report arrived for a crash during the boot ({watched["reason"]}); '
-                       'the device was marked unsafe and deleted')
-        watched = None
+    watched, unsafe = None, lane_sim.unsafe_devices()
+    for device in dict.fromkeys([*(rerun['stalled'] for rerun in reruns), udid]):  # every clone a plan ran on
+        mark = unsafe.get(device)
+        if mark and mark['reason'].startswith('late crash report'):
+            # A crash during the boot, reported after it: the device is marked unsafe, but the run itself went on.
+            details.append(f'after the run started, a crash report arrived for a crash during the boot of {device} '
+                           f'({mark["reason"]}); the device was marked unsafe and deleted')
+        elif mark and not watched:
+            watched = mark
     crash_names = [c for s in summaries for c in s['crashes']]
     flood = any(s['flood'] for s in summaries) or bool(watched)
     crashes = ('crash flood: ' if flood else '') + (', '.join(crash_names) if crash_names else 'none')
