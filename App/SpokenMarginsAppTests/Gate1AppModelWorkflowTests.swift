@@ -62,8 +62,23 @@ struct VoicePreferencesSnapshot {
     }
 }
 
+private final class MainQueueDrainFlag: @unchecked Sendable { var done = false } // set and read on the main thread only
+
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    /// Several of these tests leave a second or more of blocking main-queue work behind (#2195). A synchronous test
+    /// never spins the run loop, so that work used to run during whichever later test waited first, and could push a
+    /// short wait in another class past its timeout (#2104). Running it here keeps it inside the test that queued it.
+    override func tearDown() {
+        let start = Date()
+        let drained = MainQueueDrainFlag()
+        DispatchQueue.main.async { DispatchQueue.main.async { drained.done = true } }
+        while !drained.done, Date().timeIntervalSince(start) < 30 {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+        super.tearDown()
+    }
+
     func testRichClipboardRestoresOnlyExplicitHTMLHeadings() {
         let plain = "Article & notes\nA paragraph.\nNext section\nMore prose."
         let html = "<h1>Article &amp; notes</h1><p>A paragraph.</p><h2><em>Next section</em></h2><p>More prose.</p>"
