@@ -2,7 +2,7 @@
 """Build next's tip for the owner's iPhone, ready for the Desktop installer (#384).
 
 Usage:
-  scripts/phone-build                 build origin/next's tip now
+  scripts/phone-build                 build the trunk's tip now (origin/next until #1492 moves it)
   scripts/phone-build --commit <sha>  build that commit instead
   scripts/phone-build --if-changed    coalesce changed tips to hourly (or sooner after integration PASS)
   scripts/phone-build --plan-only     rewrite latest's test-plan.md against the build installed now
@@ -95,9 +95,10 @@ ROOT = Path(os.environ.get('SM_PHONE_REPO') or PUBLIC)  # the repo it builds fro
 sys.path.insert(0, str(PUBLIC / 'scripts'))
 import comment_trust  # noqa: E402  (#1822: whose comments the plan believes)
 import lane_slots  # noqa: E402
+from trunk import trunk_branch  # noqa: E402  (#1492: the branch it builds)
 
 REPO = 'uncomposed/spoken-margins-native'
-BRANCH = 'next'
+BRANCH = trunk_branch()
 REPORTS_ISSUE = 184      # where the integration run and the Test Desk post their lane reports
 DISK_FLOOR_GB = 10
 DISK_PER_BUILD_GB = 4
@@ -1693,7 +1694,7 @@ class BuildFailed(Exception):
 
 def main(argv) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
-    parser.add_argument('--commit', help='build this commit instead of origin/next')
+    parser.add_argument('--commit', help='build this commit instead of the trunk\'s tip')
     parser.add_argument('--if-changed', action='store_true', help='coalesce changed tips to hourly, or after integration PASS')
     parser.add_argument('--plan-only', action='store_true', help="rewrite latest's test-plan.md and stop")
     args = parser.parse_args(argv)

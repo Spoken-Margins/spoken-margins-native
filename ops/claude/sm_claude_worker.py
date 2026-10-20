@@ -64,6 +64,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 from ledger import usage  # noqa: E402
 import sm_paths  # noqa: E402
 import comment_trust  # noqa: E402  (#1822: whose comments the worker believes)
+from trunk import trunk_branch  # noqa: E402  (#1492: the branch its PRs go into)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -72,7 +73,7 @@ import comment_trust  # noqa: E402  (#1822: whose comments the worker believes)
 REPO = os.environ.get('SM_CLAUDE_WORKER_REPO', 'uncomposed/spoken-margins-native')
 DIAL_ISSUE = int(os.environ.get('SM_DIAL_ISSUE', '589'))
 STATUS_ISSUE = int(os.environ.get('SM_DIAL_STATUS_ISSUE', '337'))
-BASE_BRANCH = 'next'
+BASE_BRANCH = trunk_branch()
 OWN_ROOT = sm_paths.own_root(__file__)                   # where this script lives (ops/, scripts/sm_project_sync.py)
 REPO_ROOT = sm_paths.repo(__file__)                      # the public checkout it works in (SM_REPO)
 HOME_DIR = Path(os.environ.get('SM_CLAUDE_WORKER_HOME') or sm_paths.state_dir('claude-worker'))

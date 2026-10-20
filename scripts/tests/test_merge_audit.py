@@ -189,7 +189,7 @@ class FakeGitHub:
     def json_lines(self, path):
         return self.comments
 
-    def flag_pull(self, number, head_sha, gap=None):
+    def flag_pull(self, number, head_sha, gap=None, base=None):
         self.flagged.append((number, gap))
 
 
