@@ -155,6 +155,78 @@ final class MemoryFootprintRecorderTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["memoryExits"], "foreground 1 · background 0 · background system pressure 0")
     }
 
+    // PROBE (#2074, not for merge): each test names one fact; the lane report lists which ones fail.
+    private func probeSetup() -> (Gate1AppModel, PinnedDiagnostics, MemoryFootprintRecorder) {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let pinned = PinnedDiagnostics(diagnostics: model.runtimeDiagnostics)
+        let recorder = MemoryFootprintRecorder(
+            diagnostics: pinned, fileURL: nil,
+            read: { .init(footprintBytes: 300 * 1_048_576, availableBytes: nil) },
+            now: { [unowned self] in self.clock }
+        )
+        recorder.record(.launch, mediaType: nil)
+        pinned.set("memoryExits", "foreground 1 · background 0 · background system pressure 0")
+        return (model, pinned, recorder)
+    }
+
+    private func hops(_ n: Int) {
+        let done = expectation(description: "hops")
+        func go(_ left: Int) { DispatchQueue.main.async { left == 0 ? done.fulfill() : go(left - 1) } }
+        go(n)
+        wait(for: [done], timeout: 5)
+    }
+
+    func testProbe1FootprintBackAfterRefreshTwoHops() {
+        let (model, pinned, recorder) = probeSetup()
+        model.refreshDiagnostics(); hops(1)
+        XCTAssertEqual(model.diagnostics["memoryFootprint"], "09-21 14:13:20Z launch none 300MB")
+        withExtendedLifetime((pinned, recorder)) {}
+    }
+
+    func testProbe2ExitsBackAfterRefreshTwoHops() {
+        let (model, pinned, recorder) = probeSetup()
+        model.refreshDiagnostics(); hops(1)
+        XCTAssertEqual(model.diagnostics["memoryExits"], "foreground 1 · background 0 · background system pressure 0")
+        withExtendedLifetime((pinned, recorder)) {}
+    }
+
+    func testProbe3RefreshReplacedTheDictionary() {
+        let (model, pinned, recorder) = probeSetup()
+        XCTAssertNil(model.diagnostics["sessionId"])
+        model.refreshDiagnostics()
+        XCTAssertNotNil(model.diagnostics["sessionId"], "refresh ran and stored a new dictionary")
+        withExtendedLifetime((pinned, recorder)) {}
+    }
+
+    func testProbe4FootprintBackAfterRefreshTenHops() {
+        let (model, pinned, recorder) = probeSetup()
+        model.refreshDiagnostics(); hops(10)
+        XCTAssertEqual(model.diagnostics["memoryFootprint"], "09-21 14:13:20Z launch none 300MB")
+        withExtendedLifetime((pinned, recorder)) {}
+    }
+
+    func testProbe5PinnedLinesPresentBeforeRefresh() {
+        let (model, pinned, recorder) = probeSetup()
+        XCTAssertEqual(model.diagnostics["memoryFootprint"], "09-21 14:13:20Z launch none 300MB")
+        XCTAssertEqual(model.diagnostics["memoryExits"], "foreground 1 · background 0 · background system pressure 0")
+        withExtendedLifetime((pinned, recorder)) {}
+    }
+
+    func testProbe6RestoreWorksForADirectReplacement() {
+        let (model, pinned, recorder) = probeSetup()
+        model.diagnostics = ["x": "y"]; hops(1)
+        XCTAssertEqual(model.diagnostics["memoryExits"], "foreground 1 · background 0 · background system pressure 0")
+        withExtendedLifetime((pinned, recorder)) {}
+    }
+
+    func testProbe7RefreshKeepsRunningWhenTheModelIsHeld() {
+        let (model, pinned, recorder) = probeSetup()
+        model.refreshDiagnostics(); hops(1)
+        XCTAssertNotNil(model.diagnostics["sessionId"], "the replaced dictionary is still there after the hops")
+        withExtendedLifetime((pinned, recorder)) {}
+    }
+
     func testMemoryExitsLineComesFromTheNewestReportWithExitData() {
         let older = Data(#"{"applicationExitMetrics":{"foregroundExitData":{"cumulativeMemoryResourceLimitExitCount":2}}}"#.utf8)
         let newer = Data(#"{"applicationExitMetrics":{"foregroundExitData":{"cumulativeMemoryResourceLimitExitCount":0},"backgroundExitData":{"cumulativeMemoryResourceLimitExitCount":1,"cumulativeMemoryPressureExitCount":0}}}"#.utf8)
