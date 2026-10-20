@@ -1128,10 +1128,10 @@ final class SupertonicSpeechTests: XCTestCase {
         let template = try makeTestWAV(duration: 3)
         defer { try? FileManager.default.removeItem(at: template) }
         let log = StallEventLog()
-        let client = stallClient(log, template: template, plays: false) { player in
+        let client = stallClient(log, template: template, plays: false, onStart: { player in
             player.currentItem?.cancelPendingSeeks()
             player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
-        }
+        })
         _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
         try client.play(targetId: "mid", from: 24)
         for _ in 0..<150 where log.startCount < 2 { try await Task.sleep(for: .milliseconds(20)) }
