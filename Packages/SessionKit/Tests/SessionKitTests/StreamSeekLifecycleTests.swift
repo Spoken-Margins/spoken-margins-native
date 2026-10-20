@@ -266,6 +266,39 @@ final class StreamSeekLifecycleTests: XCTestCase {
                        "at most one re-seek a minute")
     }
 
+    /// #2109 audit: a phone call, an announcement or a lost Bluetooth route pauses playback without `pause()`.
+    /// During a clock freeze that path must also keep where the audio was, or resuming sends the listener back.
+    func testASystemPauseDuringAClockFreezeKeepsTheAudiosPosition() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "stream-frozen-system-pause-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let episodeURL = try Self.writeTone(to: directory.appending(path: "episode.caf"), seconds: 30, hz: 220)
+        let client = AVPlayerStreamPlaybackClient()
+        try client.setPlaybackVolume(0)
+        try client.configureMediaContext(PlaybackMediaContext(
+            itemId: "episode", targetType: .transcriptBackedMedia, targetId: "episode-target",
+            title: "Test episode", playbackURL: episodeURL.absoluteString, durationMs: 30_000,
+            sourceType: .nativeMediaFile
+        ))
+        defer { try? client.stop() }
+        try client.setPlaybackRate(1.5)
+        try client.play(targetId: "episode-target", fromMediaTimeMs: 0)
+        XCTAssertTrue(spin(until: 8) { (client.currentMediaTimeMs() ?? 0) >= 3_000 }, "the episode plays")
+        XCTAssertTrue(client.hasPodcastEvidenceTapOnCurrentItem, "precondition: the decoded-audio tap is attached")
+
+        // The clock freezes, and the listener hears about 3.75 s more before the headset drops, inside the
+        // watchdog's first 5 s, so no recovery seek has moved the clock yet.
+        let frozenAtMs = try XCTUnwrap(client.playbackStateTraceFields()["playerMs"].flatMap(Int.init))
+        client.frozenPlayerClockForTesting = frozenAtMs
+        _ = spin(until: 2.5) { _ = client.currentMediaTimeMs(); return false }
+        client.pauseForSystemInterruption(awaitsEnd: false)
+        RunLoop.main.run(until: Date().addingTimeInterval(1))
+        let pausedMs = try XCTUnwrap(client.currentMediaTimeMs())
+        XCTAssertGreaterThan(pausedMs, frozenAtMs + 2_000, "a system pause during a freeze keeps the audio's position")
+        XCTAssertLessThan(pausedMs, frozenAtMs + 5_500, "and not ahead of the audio")
+    }
+
     private func spin(until seconds: TimeInterval, _ condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {

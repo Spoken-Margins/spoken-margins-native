@@ -1837,7 +1837,15 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var mixesWithOtherAudio = false
     private var lowersBackgroundAudio = false
     private var playbackVolume: Float = 1
-    private var paused = true
+    /// Every way playback pauses (the listener, a phone call or announcement, a lost route, the end of the item)
+    /// passes through here, so each keeps where the audio was during a clock freeze, not the frozen time (#2094).
+    private var paused = true {
+        willSet {
+            guard newValue, !paused else { return }
+            pausedTrustedMediaTimeMs = decodedAudioMediaTimeMs(overruling: reportedMediaTimeMs())
+            clockGuard.notePaused()
+        }
+    }
     private var remoteCommandHandlingEnabled = true
     private var interruptionResumePolicy = AudioPlaybackInterruptionResumePolicy()
     /// Background time while an interruption waits to end, so a backgrounded app isn't suspended before iOS says
@@ -2356,11 +2364,6 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     public func pause() throws {
         #if canImport(AVFoundation)
         cancelAutomaticInterruptionResume()
-        if !paused {
-            // Pausing during a clock freeze keeps where the audio was, not the frozen time, for the resume (#2094).
-            pausedTrustedMediaTimeMs = decodedAudioMediaTimeMs(overruling: reportedMediaTimeMs())
-        }
-        clockGuard.notePaused()
         paused = true
         player?.pause()
         stopStallWatchdog()
@@ -2951,7 +2954,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     /// `awaitsEnd` is false for a lost route, which never reports an end: nothing to wait for.
-    private func pauseForSystemInterruption(awaitsEnd: Bool) {
+    /// Internal so host tests can stand in for the iOS-only interruption and route-change notifications.
+    func pauseForSystemInterruption(awaitsEnd: Bool) {
         let wasPlaying = activeTargetId != nil && !paused
         guard interruptionResumePolicy.began(wasPlaying: wasPlaying) else { return }
         if awaitsEnd {
