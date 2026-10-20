@@ -238,7 +238,7 @@ final class Gate1AppModel: ObservableObject {
             if selectedItem.id == snapshot.itemId { activePlaybackDetail = selectedItem }
             else if oldValue.id == snapshot.itemId { activePlaybackDetail = oldValue }
             if oldValue.id != selectedItem.id { selectedListeningEdition = try? ListeningEditionStore.application().load(itemID: selectedItem.id) }
-            skimBridge.invalidateResources(); selectedItemStreamFlag.invalidate()
+            skimBridge.itemDetailChanged(from: SkimResourceKey(oldValue), to: SkimResourceKey(selectedItem)); selectedItemStreamFlag.invalidate()
             prepareLeveledMargins(from: oldValue)
             if oldValue.id != selectedItem.id || oldValue.externalReference != selectedItem.externalReference {
                 storedSourceFollowSuggestionCandidates = []
@@ -1061,7 +1061,7 @@ final class Gate1AppModel: ObservableObject {
         listeningSignals.endListening()
     }
 
-    func syncPlaybackProgressForLifecycle() {
+    func syncPlaybackProgressForLifecycle(refreshingItem: Bool = true) {
         guard snapshot.status.isPlaybackActive, let engine else { return }
         do {
             synchronizeStreamingSpeechAnchorIfNeeded()
@@ -1083,7 +1083,7 @@ final class Gate1AppModel: ObservableObject {
             if completedCurrentAudio && !playedPendingTurn {
                 closeCompletedSessionIfReady()
             }
-            refreshSelectedItem()
+            if refreshingItem || completedCurrentAudio { refreshSelectedItem() }
             diagnostics["playbackLifecycleSync"] = "saved"
         } catch {
             diagnostics["playbackLifecycleSyncError"] = String(describing: error)
@@ -1099,7 +1099,7 @@ final class Gate1AppModel: ObservableObject {
         if entersBackground { narrationStartupProtection.appEnteredBackground(); hangTelemetry.setForeground(false) }; reconcileNarrationOwnership(trigger: entersBackground ? "background" : "inactive")
         marginOutput.finishBeforeBackground(); readwiseHighlightSync.stop()
         OnDeviceVoiceGovernor.app.setAppBackgrounded(true) // every on-device voice is paced while away (#1679)
-        syncPlaybackProgressForLifecycle()
+        syncPlaybackProgressForLifecycle(refreshingItem: false) // saves the position; re-reading the item decoded a mapped transcript on main as iOS waited, unseen (#2184)
         refreshLockScreenSurfacesForLifecycle()
         scheduleAutomaticAudioPreparationIfNeeded()
     }
@@ -1430,7 +1430,7 @@ final class Gate1AppModel: ObservableObject {
     func handleApplicationWillTerminate() {
         stopImportedCommentaryPlayback(resumeSource: false)
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
-        syncPlaybackProgressForLifecycle()
+        syncPlaybackProgressForLifecycle(refreshingItem: false) // the item isn't shown again; iOS gives this a deadline (#2184)
         narrationStartupProtection.stop()
         gate2CompactControls.endLiveActivities()
     }

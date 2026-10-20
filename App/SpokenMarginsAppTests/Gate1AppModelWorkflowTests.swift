@@ -3847,6 +3847,32 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["playbackLifecycleSync"], "saved")
     }
 
+    /// #2184: leaving the foreground saves the position but does not re-read the item on the main thread. On the owner's
+    /// phone that read decoded a mapped episode's transcript as iOS waited for the app to settle, and iOS killed it.
+    func testLeavingTheForegroundSavesThePositionWithoutReloadingTheItem() throws {
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio)
+        defer { OnDeviceVoiceGovernor.app.setAppBackgrounded(false) } // the background handler sets it app-wide
+        model.resetAndSeed()
+        model.importTitle = "Long Item"
+        model.importText = "One. Two. Three."
+        model.importTextItem()
+        let shownOffset = try XCTUnwrap(model.selectedItem.sessions.last).position.charOffset
+        let sessionID = try XCTUnwrap(model.snapshot.sessionId)
+
+        audio.currentOffset = "One. Two. ".count
+        model.handleAppBecameInactiveOrBackground(entersBackground: true)
+
+        XCTAssertEqual(model.diagnostics["playbackLifecycleSync"], "saved")
+        let stored = try XCTUnwrap(model.store?.loadSessions(itemId: model.selectedItem.id).first { $0.id == sessionID })
+        XCTAssertEqual(stored.position.charOffset, "One. Two. ".count, "the position is saved before the app is suspended")
+        XCTAssertEqual(model.selectedItem.sessions.last?.position.charOffset, shownOffset, "the item is not re-read on the way out")
+        XCTAssertNotEqual(shownOffset, "One. Two. ".count, "precondition: a reload would have shown the new position")
+
+        model.syncPlaybackProgressForLifecycle()
+        XCTAssertEqual(model.selectedItem.sessions.last?.position.charOffset, "One. Two. ".count, "coming back re-reads it")
+    }
+
     func testCompletingFinalAudioRetainsFinishedSessionForReview() throws {
         let audio = WorkflowCompletionAudioClient()
         let model = Gate1AppModel(audioPlaybackClient: audio)
