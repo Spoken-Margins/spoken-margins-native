@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import SessionKit
 @testable import SpokenMarginsApp
@@ -146,10 +147,31 @@ final class MemoryFootprintRecorderTests: XCTestCase {
         recorder.record(.launch, mediaType: nil)
         pinned.set("memoryExits", "foreground 1 · background 0 · background system pressure 0")
 
+        // PROBE (#2104, not for merge): time two main-queue hops before and after the refresh, and count what
+        // publishes while we wait, to tell a backlog left by earlier tests from a loop the refresh starts.
+        var valueEmissions = 0, modelEmissions = 0, clockEmissions = 0
+        let probeObservers = (
+            model.runtimeDiagnostics.$values.sink { _ in valueEmissions += 1 },
+            model.objectWillChange.sink { modelEmissions += 1 },
+            model.playbackClock.snapshots.sink { _ in clockEmissions += 1 }
+        )
+        func twoHops(_ label: String) -> TimeInterval {
+            let start = Date()
+            let done = expectation(description: label)
+            DispatchQueue.main.async { DispatchQueue.main.async { done.fulfill() } }
+            wait(for: [done], timeout: 60)
+            return Date().timeIntervalSince(start)
+        }
+        let before = twoHops("before refresh")
+        let countsBefore = (valueEmissions, modelEmissions, clockEmissions)
         model.refreshDiagnostics() // the Settings button: replaces the whole dictionary
-        let restored = expectation(description: "pinned lines put back on the next main-queue turn")
-        DispatchQueue.main.async { DispatchQueue.main.async { restored.fulfill() } }
-        wait(for: [restored], timeout: 2)
+        let countsAtRefresh = (valueEmissions, modelEmissions, clockEmissions)
+        let after = twoHops("after refresh")
+        let countsAfter = (valueEmissions, modelEmissions, clockEmissions)
+        let report = "PROBE hops before=\(before)s after=\(after)s; emissions (values, model, clock) before=\(countsBefore) atRefresh=\(countsAtRefresh) after=\(countsAfter)"
+        print(report)
+        XCTAssertLessThan(after, 2, report)
+        withExtendedLifetime(probeObservers) {}
 
         XCTAssertEqual(model.diagnostics["memoryFootprint"], "09-21 14:13:20Z launch none 300MB")
         XCTAssertEqual(model.diagnostics["memoryExits"], "foreground 1 · background 0 · background system pressure 0")
