@@ -29,6 +29,8 @@ public final class InterruptionResumeRetrier {
     private let delaysMs: [Int]
     private let sleep: @Sendable (Int) async -> Void
     private var task: Task<Void, Never>?
+    /// The task `cancel()` last stopped, so a test can wait for it to wind down.
+    private var cancelledTask: Task<Void, Never>?
 
     public init(
         delaysMs: [Int] = InterruptionResumeRetrier.defaultDelaysMs,
@@ -80,12 +82,13 @@ public final class InterruptionResumeRetrier {
 
     public func cancel() {
         task?.cancel()
+        if let task { cancelledTask = task }
         task = nil
     }
 
     /// Returns once a running retry has finished or been cancelled. For tests.
     public func waitUntilIdle() async {
-        await task?.value
+        await (task ?? cancelledTask)?.value
     }
 
     /// The error's text with its domain and code, so an export says why iOS refused (#2183).

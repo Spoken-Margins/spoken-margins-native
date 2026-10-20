@@ -64,11 +64,14 @@ extension Gate1AppModel {
     private func retryMediaResumeAfterInterruption(after error: Error, engine: SessionEngine) {
         let sessionId = snapshot.sessionId
         let targetId = snapshot.targetId
+        // Where it paused. A seek, skip, or a Play and Pause by the listener moves this, and then the item is theirs.
+        let pausedAtMs = snapshot.currentMediaTimeMs
         mediaInterruptionResumeRetrier.begin(
             after: error,
             stillWaiting: { [weak self] in
                 guard let self else { return false }
                 return snapshot.status == .paused && snapshot.sessionId == sessionId && snapshot.targetId == targetId
+                    && snapshot.currentMediaTimeMs == pausedAtMs && !snapshot.isRecording
             },
             attempt: { [weak self] in
                 guard let self else { return }
