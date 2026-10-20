@@ -749,6 +749,23 @@ class LaneSimTests(unittest.TestCase):
         self.assertIn('memory pressure stayed above normal', why)
         self.assertTrue(lane_slots.second_slot_status(now=1000 + 4 * self.HOUR + 1)[0])
 
+    def test_a_switch_off_by_hand_written_before_the_expiry_never_expires(self):
+        # The old `lane-sim-boot --second-slot off` wrote the same one-line shape, marked by its reason (#2158 audit).
+        off = Path(self.env['SM_LANE_STATE_DIR']) / lane_slots.SECOND_SLOT_OFF
+        off.parent.mkdir(parents=True, exist_ok=True)
+        for text in ('2026-10-18T09:00:00: J5 too slow (switched off by hand)\n',
+                     '2026-10-18T09:00:00: J5 too slow (switched off by hand)  \r\n',
+                     '',  # created by hand some other way: not the old automatic writer's shape
+                     'off while I look at the J5 runs\n'):
+            with self.subTest(text=text):
+                off.write_text(text)
+                os.utime(off, (1000, 1000))
+                allowed, why = lane_slots.second_slot_status(now=1000 + 30 * 24 * self.HOUR)
+                self.assertFalse(allowed)
+                self.assertIn('by hand', why)
+                self.assertTrue(off.exists())
+                self.assertIsNone(lane_slots.second_slot_back_on_at())
+
     def test_the_announcement_says_when_an_automatic_switch_off_ends(self):
         announced = []
         with mock.patch.object(lane_sim, 'announce', side_effect=announced.append):

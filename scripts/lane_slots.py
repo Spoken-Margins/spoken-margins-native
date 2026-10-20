@@ -26,6 +26,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import time
 
@@ -139,8 +140,10 @@ def simulator_job_running():
 def _read_second_slot_off(path):
     """The switch-off record: {'since', 'until', 'reason'}; until is None when it was switched off by hand.
 
-    Files written before #2157 hold one line, "<time>: <reason>", from an automatic trip; they count
-    as tripped at the file's modification time with the base cooldown.
+    Files written before #2157 hold one line, "<time>: <reason>". Only an automatic trip expires: it counts as
+    tripped at the file's modification time with the base cooldown. The old `--second-slot off` wrote the same
+    shape with a reason ending "(switched off by hand)", and that one, or any file not in the old writer's shape,
+    stays off until switched on, as it always did.
     """
     text = path.read_text()
     try:
@@ -150,7 +153,13 @@ def _read_second_slot_off(path):
     except ValueError:
         pass
     since = path.stat().st_mtime
-    return {'since': since, 'until': since + SECOND_SLOT_COOLDOWN, 'reason': text.strip()}
+    reason = text.strip()
+    automatic = _LEGACY_LINE.match(reason) and not reason.endswith(_LEGACY_BY_HAND)
+    return {'since': since, 'until': since + SECOND_SLOT_COOLDOWN if automatic else None, 'reason': reason}
+
+
+_LEGACY_LINE = re.compile(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d: ')  # the pre-#2157 writer's "<time>: "
+_LEGACY_BY_HAND = '(switched off by hand)'
 
 
 def _clock(when):
