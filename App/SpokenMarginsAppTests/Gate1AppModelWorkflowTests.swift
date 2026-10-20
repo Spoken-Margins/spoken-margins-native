@@ -62,8 +62,35 @@ struct VoicePreferencesSnapshot {
     }
 }
 
+/// PROBE (#2104, not for merge): after each test, time two main-queue hops and print any test that leaves more
+/// than 0.3 s of main-queue work behind.
+final class MainQueueBacklogProbe: NSObject, XCTestObservation, @unchecked Sendable {
+    static let shared = MainQueueBacklogProbe()
+    private final class Flag: @unchecked Sendable { var done = false }
+
+    func testCaseDidFinish(_ testCase: XCTestCase) {
+        let start = Date()
+        let flag = Flag()
+        DispatchQueue.main.async { DispatchQueue.main.async { flag.done = true } }
+        while !flag.done, Date().timeIntervalSince(start) < 30 {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+        let elapsed = Date().timeIntervalSince(start)
+        if elapsed > 0.3 { print("PROBE backlog \(String(format: "%.2f", elapsed))s after \(testCase.name)") }
+    }
+}
+
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    private static var probeRegistered = false
+    override func setUp() {
+        super.setUp()
+        if !Self.probeRegistered {
+            Self.probeRegistered = true
+            XCTestObservationCenter.shared.addTestObserver(MainQueueBacklogProbe.shared)
+        }
+    }
+
     func testRichClipboardRestoresOnlyExplicitHTMLHeadings() {
         let plain = "Article & notes\nA paragraph.\nNext section\nMore prose."
         let html = "<h1>Article &amp; notes</h1><p>A paragraph.</p><h2><em>Next section</em></h2><p>More prose.</p>"
