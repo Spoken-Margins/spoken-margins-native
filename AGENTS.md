@@ -272,6 +272,7 @@ Apple build numbers identify uploads, not product milestones. Each replacement u
 3. Archive (`artifacts/` is git-ignored):
    `scripts/xcodebuild-lane -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -configuration Release -destination generic/platform=iOS -archivePath artifacts/SpokenMargins-<build>.xcarchive -allowProvisioningUpdates archive`
    Check the archive's `CFBundleVersion` is the new build number.
+   The signing team comes from the owner's git-ignored `Config/Local.xcconfig` in the main checkout; `scripts/xcodebuild-lane` links it into the worktree (#1841).
 4. Upload with external-review eligibility retained (`testFlightInternalTestingOnly` is false in the default plist), then assign only the authorized tester groups:
    `PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" xcodebuild -exportArchive -archivePath artifacts/SpokenMargins-<build>.xcarchive -exportOptionsPlist scripts/TestFlightUploadOptions.plist -exportPath artifacts/export-<build> -allowProvisioningUpdates`
    The PATH prefix matters: Homebrew's rsync breaks Xcode's packaging step. A warning that onnxruntime.framework has no dSYM is expected and harmless.
