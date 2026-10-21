@@ -712,6 +712,119 @@ class PhoneBuildTests(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in self.phone.iterdir()), sorted(names[2:] + ['installed.txt']))
 
 
+FAKE_HOSTED_GH = r"""#!/usr/bin/python3
+import json, os, shutil, subprocess, sys
+args = sys.argv[1:]
+with open(os.environ["FAKE_LOG"], "a") as log:
+    log.write("gh " + " ".join(args) + "\n")
+tip = os.environ["FAKE_TIP"]
+run = {"id": 77, "head_sha": tip, "head_branch": "main", "event": os.environ.get("FAKE_HOSTED_EVENT", "schedule"),
+       "conclusion": "success", "path": os.environ.get("FAKE_HOSTED_PATH", ".github/workflows/phone-build.yml"),
+       "html_url": "https://github.com/x/y/actions/runs/77"}
+if args[:1] == ["api"] and "/actions/workflows/phone-build.yml/runs" in args[1]:
+    print(json.dumps({"workflow_runs": [run]}))
+elif args[:2] == ["api", "repos/Spoken-Margins/spoken-margins-native/actions/runs/77/artifacts"]:
+    print(json.dumps({"artifacts": [{"name": "phone-build-" + tip, "expired": bool(os.environ.get("FAKE_EXPIRED")),
+                                     "created_at": "2026-10-21T12:30:00Z"}]}))
+elif args[:2] == ["run", "download"]:
+    out = args[args.index("-D") + 1]
+    os.makedirs(out)
+    shutil.copy(os.environ["FAKE_HOSTED_ZIP"], os.path.join(out, "SpokenMarginsApp.app.zip"))
+    json.dump({"sha": tip, "build_seconds": 1500}, open(os.path.join(out, "build.json"), "w"))
+    open(os.path.join(out, "build.log"), "w").write("** BUILD SUCCEEDED ** (hosted)\n")
+else:
+    sys.exit(subprocess.call([os.environ["FAKE_BASE_GH"], *args]))
+"""
+
+
+@unittest.skipUnless(shutil.which('ditto') and shutil.which('codesign'), 'needs the Mac\'s ditto and codesign')
+class HostedPhoneBuildTests(unittest.TestCase):
+    """--source hosted (#2357): the Mac takes the GitHub-hosted build instead of building."""
+    setUp_base = PhoneBuildTests.setUp
+    git = PhoneBuildTests.git
+    run_build = PhoneBuildTests.run_build
+
+    def setUp(self):
+        self.setUp_base()
+        (self.bin / 'gh').rename(self.bin / 'gh-base')
+        (self.bin / 'gh').write_text(FAKE_HOSTED_GH)
+        (self.bin / 'gh').chmod(0o755)
+        self.zip = self.make_zip(self.tip)
+        self.env.update({'SM_PHONE_SOURCE': 'hosted', 'FAKE_BASE_GH': str(self.bin / 'gh-base'),
+                         'FAKE_HOSTED_ZIP': str(self.zip)})
+
+    def make_zip(self, commit):
+        """The artifact's app: ad-hoc signed, with a profile and the commit in Info.plist."""
+        app = self.tmp / 'hosted' / commit[:7] / 'SpokenMarginsApp.app'
+        app.mkdir(parents=True)
+        shutil.copy('/usr/bin/true', app / 'SpokenMarginsApp')
+        (app / 'Info.plist').write_bytes(plistlib.dumps({
+            'CFBundleExecutable': 'SpokenMarginsApp', 'CFBundleIdentifier': 'com.example.fake',
+            'CFBundleVersion': '35', 'CFBundlePackageType': 'APPL', 'SMBuildCommit': commit}))
+        (app / 'embedded.mobileprovision').write_text('profile')
+        subprocess.check_call(['codesign', '-s', '-', '--force', str(app)], stderr=subprocess.DEVNULL)
+        archive = app.parent / 'SpokenMarginsApp.app.zip'
+        subprocess.check_call(['ditto', '-c', '-k', '--keepParent', str(app), str(archive)])
+        return archive
+
+    def test_takes_the_hosted_build_without_building_and_writes_the_installers_folder(self):
+        done = self.run_build()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        latest = (self.phone / 'latest').resolve()
+        self.assertTrue(latest.name.endswith(self.tip[:7]))
+        info = json.loads((latest / 'build.json').read_text())
+        self.assertEqual((info['sha'], info['bundle_version'], info['built_on']), (self.tip, '35', 'github-hosted'))
+        self.assertEqual(info['build_seconds'], 1500)
+        self.assertIn('built and signed on a GitHub-hosted Mac (https://github.com/x/y/actions/runs/77)', info['checks'])
+        # The installer compares built_at as a naive local time.
+        self.assertIsNone(datetime.datetime.fromisoformat(info['built_at']).tzinfo)
+        self.assertEqual(plistlib.loads((latest / 'SpokenMarginsApp.app/Info.plist').read_bytes())['SMBuildCommit'],
+                         self.tip)
+        self.assertTrue((latest / 'test-plan.md').exists())
+        self.assertIn('(hosted)', (latest / 'build.log').read_text())
+        calls = self.log.read_text()
+        self.assertIn('gh run download 77 -R Spoken-Margins/spoken-margins-native -n phone-build-' + self.tip, calls)
+        self.assertNotIn('-configuration Release', calls)  # no xcodebuild at all
+        self.assertNotIn('verify-tests.py', calls)
+
+    def test_only_the_workflows_own_schedule_or_dispatch_runs_count(self):
+        for extra in ({'FAKE_HOSTED_EVENT': 'pull_request'}, {'FAKE_HOSTED_EVENT': 'push'},
+                      {'FAKE_HOSTED_PATH': '.github/workflows/other.yml'}, {'FAKE_EXPIRED': '1'}):
+            with self.subTest(**extra):
+                done = self.run_build(**extra)
+                self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+                self.assertIn('no hosted phone build', done.stdout)
+                self.assertFalse((self.phone / 'latest').exists())
+                self.assertNotIn('run download', self.log.read_text())
+
+    def test_if_changed_does_nothing_when_latest_is_the_hosted_build(self):
+        self.assertEqual(self.run_build().returncode, 0)
+        before = self.log.read_text().count('run download')
+        done = self.run_build('--if-changed')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('latest is already the hosted build', done.stdout)
+        self.assertEqual(self.log.read_text().count('run download'), before)
+
+    def test_an_app_from_another_commit_is_refused(self):
+        self.env['FAKE_HOSTED_ZIP'] = str(self.make_zip('f' * 40))
+        done = self.run_build()
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn('the app says it was built from', done.stdout)
+        self.assertFalse((self.phone / 'latest').exists())
+        self.assertTrue(json.loads((self.phone / 'last-attempt.json').read_text())['result'].startswith('failed'))
+
+    def test_the_source_file_switches_and_the_environment_wins(self):
+        del self.env['SM_PHONE_SOURCE']
+        self.phone.mkdir()
+        (self.phone / 'source').write_text('hosted\n')
+        done = self.run_build()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('downloading the hosted phone build', done.stdout)
+        done = self.run_build(SM_PHONE_SOURCE='mac')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('-configuration Release', self.log.read_text())  # built here
+
+
 class PhoneBuildCoalescingTests(unittest.TestCase):
     def setUp(self):
         self.module = load_phone_build()

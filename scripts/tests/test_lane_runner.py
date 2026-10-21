@@ -2060,6 +2060,17 @@ class MainFlowTests(unittest.TestCase):
             self.run_main(github)
         return next(body for body in reversed(github.posted) if body.startswith('Lane report'))
 
+    def test_a_t3_on_a_checkout_left_with_lfs_pointers_is_a_runner_fault_and_starts_nothing(self):
+        # #2139: pointers from a checkout without LFS failed SupertonicSpeechTests as the PR's FAIL.
+        github = FakeGitHub(comments=[comment('/lane T3\ntests: SupertonicSpeechTests')])
+        fault = 'runner fault, not the PR (#2139): Resources/model.onnx: LFS pointer, not the model.'
+        with mock.patch.object(lane, 'ensure_lfs_files', return_value=fault), \
+                mock.patch.object(lane, 'run_t3', side_effect=AssertionError('no simulator run')):
+            self.assertEqual(self.run_main(github), 0)
+        body = next(body for body in github.posted if body.startswith('Lane report'))
+        self.assertIn('— INCONCLUSIVE', body)
+        self.assertIn('LFS pointer, not the model', body)
+
     def test_auto_fault_after_retry_reports_the_base_it_actually_tested(self):
         for throws in (False, True):
             with self.subTest(throws=throws):
