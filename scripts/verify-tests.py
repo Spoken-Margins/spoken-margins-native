@@ -55,6 +55,19 @@ BUILD_SLOT_WAIT_SECONDS = 1800
 # about twice the limit (measured: a 1G limit held it to 1.4 GB).
 COMPILATION_CACHE_LIMIT = '3G'
 
+# Settings that describe the machine or the lane job, not the code under test. A step must not inherit them:
+# with SM_TRUNK=main exported (the lane and the Mac set it after #1492), suites whose fixtures were written
+# for the default trunk failed, and every merge run came back INCONCLUSIVE.
+STEP_ENV_DROPS = ('SM_TRUNK',)
+
+
+def step_env(environ=None):
+    """The environment a test step runs in: the caller's, without STEP_ENV_DROPS."""
+    env = dict(os.environ if environ is None else environ)
+    for name in STEP_ENV_DROPS:
+        env.pop(name, None)
+    return env
+
 
 def compilation_cache_settings(root=None):
     """The build settings that turn on Xcode's compilation cache, in the lane's state folder."""
@@ -539,7 +552,7 @@ def github_glob_matches(pattern, path):
 
 def shipped_compat_needed(changed, root=None):
     """(run, reason) for the compatibility checks. changed=None means no diff information: run, as every other
-    step does, so the Test Desk's run on next's tip and an author's own --plan fast keep them."""
+    step does, so the Test Desk's run on the trunk's tip and an author's own --plan fast keep them."""
     if not changed:
         return True, 'no list of changed paths, so every step runs'
     patterns = shipped_compat_paths(root or ROOT)
@@ -612,6 +625,14 @@ HANG_PROBE_TIMING_TESTS = frozenset(f'SessionKitCoreTests/MainThreadHangProbeTes
     'testNestedLabelsReadOutermostFirstAndAnUnlabelledHangHasNone',
     'testAStoppedProbeRecordsNothingAndASecondHangAfterAFirstIsCounted',
 ))
+
+# StoreReadMeterTests skip by design (#2258): the Library list is a known-oversized read that skips with its measured
+# bytes until #2102's fix fails it on purpose, and the cost table builds the large fixtures only when asked for.
+READ_METER_SKIPS = frozenset(f'SessionKitCoreTests/StoreReadMeterTests/{test}' for test in (
+    'testTheLibraryListDoesNotDecodeEveryArticleText',
+    'testReadCostTableAtEveryScale',
+))
+CORE_ALLOWED_SKIPS = HANG_PROBE_TIMING_TESTS | READ_METER_SKIPS
 
 # Pocket's render tests need ~131 MB of git-ignored weights (research/C2/pocket/fetch_weights.sh). Without them they
 # skip with "skipped: weights not fetched", which is how the lane Mac runs them. The renderer's logic tests, with
@@ -989,7 +1010,7 @@ class Run:
             finish = xcodebuild_finish.FinishWatch() if tests and args[0] == 'xcodebuild' else None
             finish_offset = 0
             process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
-                                       start_new_session=True)
+                                       start_new_session=True, env=step_env())
             try:
                 while True:
                     if device and (report := new_crash(reports, self.crash_baseline, device)):
@@ -1063,7 +1084,7 @@ class Run:
                         if finish is not None:
                             finish = xcodebuild_finish.FinishWatch()
                         process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
-                                                   start_new_session=True)
+                                                   start_new_session=True, env=step_env())
             except (subprocess.TimeoutExpired, KeyboardInterrupt, InterruptedError, StartupStall) as stopped:
                 # A startup stall is reported as its own reason below, not as the step running out of budget.
                 entry['interrupted'] = not isinstance(stopped, StartupStall)
@@ -1409,7 +1430,7 @@ class Run:
             self.command('package-core', [*PACKAGE_RUNNER, '--core-parallel', str(xunit)],
                          timeout=PARALLEL_CORE_TIMEOUT, ceiling=PARALLEL_CORE_CEILING,
                          stall_seconds=PARALLEL_CORE_STALL_SECONDS, expected=expected, tests=True,
-                         allowed_skips=HANG_PROBE_TIMING_TESTS, record_source=lambda: xunit_records(xunit))
+                         allowed_skips=CORE_ALLOWED_SKIPS, record_source=lambda: xunit_records(xunit))
             return
         except RuntimeError as error:
             step = self.manifest['steps'][-1]
@@ -1422,7 +1443,7 @@ class Run:
             print('package-core: parallel run failed; running SessionKitCoreTests serially', flush=True)
         self.command('package-core-serial', [*PACKAGE_RUNNER, '--core-serial'],
                      timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
-                     expected=expected, tests=True, allowed_skips=HANG_PROBE_TIMING_TESTS)
+                     expected=expected, tests=True, allowed_skips=CORE_ALLOWED_SKIPS)
 
     def skip(self, name, reason=None):
         reason = reason or CODEX_SANDBOX_SKIPS[name]

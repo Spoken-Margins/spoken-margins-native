@@ -11,6 +11,8 @@ the T3 waits, its held report says what passed with which next, and the T3 PASS 
 them again unless next has since moved in ways that matter. Other runners still skip them.
 """
 import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -125,13 +127,13 @@ class AutomergeJobLeavesItToTheT3Tests(unittest.TestCase):
         self.run_auto_job(github)
         github._comments.append(runner_report('PASS', lane.identity('T3', HEAD, MERGE, ['SupertonicSpeechTests'])))
         with mock.patch.object(lane, 'run_auto', return_value=('PASS', 'x', 'host tests; builds',
-                                                               ['merged into next as abc1234'])) as auto, \
+                                                               ['merged into main as abc1234'])) as auto, \
                 mock.patch.object(lane, 'fetch_base', return_value=MERGE), mock.patch.object(lane, 'clean_tree'), \
                 mock.patch('builtins.print'), tempfile.TemporaryDirectory() as evidence:
-            released = lane.merge_after_t3(github, 5, 'next', HEAD, 'pr5-r43-auto', Path(evidence), MERGE,
+            released = lane.merge_after_t3(github, 5, 'main', HEAD, 'pr5-r43-auto', Path(evidence), MERGE,
                                            'started by the T3 PASS')
         auto.assert_called_once()
-        self.assertIn('merged into next as abc1234', released)
+        self.assertIn('merged into main as abc1234', released)
 
     def test_a_t3_request_for_an_older_head_still_gets_the_automerge_checks(self):
         older = comment(f'/lane T3\ncommit: {NEWER[:7]}\ntests: A')
@@ -146,19 +148,19 @@ class AutomergeJobLeavesItToTheT3Tests(unittest.TestCase):
 
 
 class RealGitLaneTests(unittest.TestCase):
-    """A bare origin with next, a clone the runner works in, and a PR branch with one commit (no tests of its own)."""
+    """A bare origin with main, a clone the runner works in, and a PR branch with one commit (no tests of its own)."""
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
         self.origin, self.tree, self.other, self.evidence = root / 'origin.git', root / 'tree', root / 'other', root / 'e'
-        self.git = ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'init.defaultBranch=next']
+        self.git = ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'init.defaultBranch=main']
         subprocess.run(self.git + ['init', '-q', '--bare', str(self.origin)], check=True)
         subprocess.run(self.git + ['clone', '-q', str(self.origin), str(self.other)], check=True, capture_output=True)
         self.commit(self.other, 'shared.txt', 'one\n')
         self.push_next()
-        subprocess.run(self.git + ['clone', '-q', '-b', 'next', str(self.origin), str(self.tree)], check=True)
+        subprocess.run(self.git + ['clone', '-q', '-b', 'main', str(self.origin), str(self.tree)], check=True)
         subprocess.run(self.git + ['-C', str(self.tree), 'checkout', '-q', '-b', 'pr'], check=True)
         self.commit(self.tree, 'pr.txt', 'pr\n')
         self.head = self.rev(self.tree, 'HEAD')
@@ -178,8 +180,8 @@ class RealGitLaneTests(unittest.TestCase):
         subprocess.run(self.git + ['-C', str(where), 'add', '.'], check=True)
         subprocess.run(self.git + ['-C', str(where), 'commit', '-q', '-m', name], check=True)
 
-    def push_next(self):  # someone else's merge into next
-        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', 'origin', 'HEAD:next'], check=True,
+    def push_next(self):  # someone else's merge into main
+        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', 'origin', 'HEAD:main'], check=True,
                        capture_output=True)
 
     def rev(self, where, ref):
@@ -192,11 +194,11 @@ class HeldChecksStandAfterTheT3PassTests(RealGitLaneTests):
     def held_run(self, github):
         """The build runner's automerge job while the T3 waits: its checks pass, the T3 gate holds it, and it
         posts its report as main() does."""
-        base = lane.fetch_base(self.tree, 'next')
+        base = lane.fetch_base(self.tree, 'main')
         context = lane.AutoRunContext(base)
         with mock.patch.object(lane, 'run_automerge', return_value=(
                 'PASS', 'no simulator (compile only)', 'host tests (--plan fast): passed; builds (pass)', [])) as checks:
-            verdict, where, ran, details = lane.run_auto(github, github.pull(), 5, 'next', self.head, base,
+            verdict, where, ran, details = lane.run_auto(github, github.pull(), 5, 'main', self.head, base,
                                                          self.evidence / 'held', github.comments(), context=context)
         checks.assert_called_once()
         github.comment(lane.report('pr5-r41', verdict, self.head, context.tested_base, 'auto', where, 1, ran, details,
@@ -205,12 +207,12 @@ class HeldChecksStandAfterTheT3PassTests(RealGitLaneTests):
         return base
 
     def t3_pass_then_release(self, github):
-        github._comments.append(runner_report('PASS', lane.identity('T3', self.head, self.rev(self.tree, 'origin/next'),
+        github._comments.append(runner_report('PASS', lane.identity('T3', self.head, self.rev(self.tree, 'origin/main'),
                                                                    ['SupertonicSpeechTests'])))
         with mock.patch.object(lane, 'run_automerge', return_value=(
                 'PASS', 'no simulator (compile only)', 'host tests (--plan fast): passed; builds (pass)', [])) as checks:
-            released = lane.merge_after_t3(github, 5, 'next', self.head, 'pr5-r43-auto', self.evidence / 'released',
-                                           self.rev(self.tree, 'origin/next'), 'started by the T3 PASS')
+            released = lane.merge_after_t3(github, 5, 'main', self.head, 'pr5-r43-auto', self.evidence / 'released',
+                                           self.rev(self.tree, 'origin/main'), 'started by the T3 PASS')
         return checks, released
 
     def github(self):
@@ -222,10 +224,10 @@ class HeldChecksStandAfterTheT3PassTests(RealGitLaneTests):
         checks, released = self.t3_pass_then_release(github)
         checks.assert_not_called()  # no --plan fast, no builds on the simulator runner
         self.assertIn('Lane report pr5-r43-auto — PASS', released)
-        self.assertIn(f'not re-tested: the automerge run held for T3 passed its checks with next at {tested[:7]}, '
-                      'and next hasn\'t moved since', released)
-        merged = self.rev(self.origin, 'next')
-        self.assertIn(f'merged into next as {merged[:7]}', released)
+        self.assertIn(f'not re-tested: the automerge run held for T3 passed its checks with main at {tested[:7]}, '
+                      'and main hasn\'t moved since', released)
+        merged = self.rev(self.origin, 'main')
+        self.assertIn(f'merged into main as {merged[:7]}', released)
         self.assertEqual(subprocess.check_output(['git', '-C', str(self.tree), 'rev-list', '--parents', '-n', '1',
                                                  merged], text=True).split()[1:], [tested, self.head])
         merge_check = next(body for body in github.posted if body.startswith(lane.MERGE_CHECK))
@@ -239,8 +241,8 @@ class HeldChecksStandAfterTheT3PassTests(RealGitLaneTests):
         self.push_next()
         checks, released = self.t3_pass_then_release(github)
         checks.assert_not_called()
-        self.assertIn(f'with next at {tested[:7]}, and next\'s 1 commit since touch none of this PR\'s files', released)
-        self.assertIn('merged into next as', released)
+        self.assertIn(f'with main at {tested[:7]}, and main\'s 1 commit since touch none of this PR\'s files', released)
+        self.assertIn('merged into main as', released)
 
     def moved_next_runs_the_checks_again(self, name, text):
         github = self.github()
@@ -250,8 +252,8 @@ class HeldChecksStandAfterTheT3PassTests(RealGitLaneTests):
         self.push_next()
         checks, released = self.t3_pass_then_release(github)
         checks.assert_called_once()
-        self.assertIn(f'passed its checks with next at {tested[:7]}; tested again on', released)
-        self.assertIn('merged into next as', released)
+        self.assertIn(f'passed its checks with main at {tested[:7]}; tested again on', released)
+        self.assertIn('merged into main as', released)
 
     def test_next_moving_by_a_commit_to_the_pr_s_own_files_runs_the_checks_again(self):
         self.moved_next_runs_the_checks_again('pr.txt', 'pr\n')  # the same text, so the merge stays clean
@@ -273,8 +275,8 @@ class HeldChecksStandAfterTheT3PassTests(RealGitLaneTests):
         checks.assert_not_called()
         self.assertIn('Lane report pr5-r43-auto — FAIL', released)
         self.assertIn('hot-file ratchet — Gate1AppModel.swift grows past its ceiling', released)
-        self.assertNotIn('merged into next', released)
-        self.assertEqual(self.rev(self.origin, 'next'), self.rev(self.tree, 'origin/next'))  # nothing pushed
+        self.assertNotIn('merged into main', released)
+        self.assertEqual(self.rev(self.origin, 'main'), self.rev(self.tree, 'origin/main'))  # nothing pushed
 
     def test_a_held_report_from_anyone_but_the_runner_is_not_trusted(self):
         github = self.github()
@@ -283,7 +285,7 @@ class HeldChecksStandAfterTheT3PassTests(RealGitLaneTests):
         self.assertIsNone(lane.held_checks(github.comments(), self.head))
         checks, released = self.t3_pass_then_release(github)
         checks.assert_called_once()
-        self.assertIn('merged into next as', released)
+        self.assertIn('merged into main as', released)
 
     def test_no_checks_line_or_a_newer_report_or_another_head_means_testing_again(self):
         report = runner_report('INCONCLUSIVE', lane.identity('auto', HEAD, MERGE, []))
@@ -331,11 +333,11 @@ class AuditHeldChecksStandAfterTheAuditTests(RealGitLaneTests):
     def run_automerge(self, github, checked=None):
         """One automerge run as main() starts it: the checks, then the merge or the hold. Returns the run's checks mock,
         its details, and the base it tested; a report is posted for it as main() does."""
-        base = lane.fetch_base(self.tree, 'next')
+        base = lane.fetch_base(self.tree, 'main')
         context = lane.AutoRunContext(base)
         with mock.patch.object(lane, 'run_automerge', return_value=('PASS', 'no simulator (compile only)', HOST_RAN,
                                                                     [])) as checks:
-            verdict, where, ran, details = lane.run_auto(github, github.pull(), 5, 'next', self.head, base,
+            verdict, where, ran, details = lane.run_auto(github, github.pull(), 5, 'main', self.head, base,
                                                          self.evidence / f'run{len(github.posted)}', github.comments(),
                                                          context=context, checked=checked, labels=github.labels)
         github.comment(lane.report(f'pr5-r{len(github.posted)}', verdict, self.head, context.tested_base, 'auto', where,
@@ -351,7 +353,7 @@ class AuditHeldChecksStandAfterTheAuditTests(RealGitLaneTests):
         checks, details, tested = self.run_automerge(github)
         checks.assert_called_once()  # the first run tests, and the audit holds it
         self.assertTrue(any(line.startswith('not merged by the runner: ') for line in details), details)
-        self.assertEqual(self.rev(self.origin, 'next'), tested)  # nothing was pushed
+        self.assertEqual(self.rev(self.origin, 'main'), tested)  # nothing was pushed
         github._comments.append(self.audited_head_comment())
         return github, tested
 
@@ -364,18 +366,18 @@ class AuditHeldChecksStandAfterTheAuditTests(RealGitLaneTests):
         checks.assert_not_called()  # no --plan fast
         hold_report = github.posted[0]
         self.assertIn(f'not re-tested: the automerge run held for the audit (https://example.test/1) passed its '
-                      f'checks with next at {tested[:7]}, and next hasn\'t moved since', details[0])
-        merged = self.rev(self.origin, 'next')
-        self.assertIn(f'merged into next as {merged[:7]}', details[-1])
+                      f'checks with main at {tested[:7]}, and main hasn\'t moved since', details[0])
+        merged = self.rev(self.origin, 'main')
+        self.assertIn(f'merged into main as {merged[:7]}', details[-1])
         self.assertEqual(subprocess.check_output(['git', '-C', str(self.tree), 'rev-list', '--parents', '-n', '1',
                                                  merged], text=True).split()[1:], [tested, self.head])
-        self.assertIn(f'(tested merged with next at {tested[:7]})', github.posted[-1].partition('\n')[2])
+        self.assertIn(f'(tested merged with main at {tested[:7]})', github.posted[-1].partition('\n')[2])
         self.assertIn(lane.checks_note(self.head, tested, HOST_RAN, 'no simulator (compile only)'), hold_report)
         merge_check = next(body for body in github.posted if body.startswith(lane.MERGE_CHECK))
         self.assertIn('without re-testing', merge_check)
         self.assertIn('Reuses the earlier PASS: the automerge run held for the audit (https://example.test/1)',
                       merge_check)
-        self.assertIn('next hasn\'t moved since that run', merge_check)
+        self.assertIn('main hasn\'t moved since that run', merge_check)
         self.assertNotIn('Pushing `', merge_check)  # phone-build reads that as "tested this exact commit"
 
     def test_next_moving_by_commits_that_cannot_matter_still_merges_the_earlier_pass(self):
@@ -384,13 +386,13 @@ class AuditHeldChecksStandAfterTheAuditTests(RealGitLaneTests):
         self.push_next()
         checks, details, _ = self.rearmed_run(github)
         checks.assert_not_called()
-        self.assertIn(f'with next at {tested[:7]}, and next\'s 1 commit since touch none of this PR\'s files', details[0])
-        self.assertIn('merged into next as', details[-1])
+        self.assertIn(f'with main at {tested[:7]}, and main\'s 1 commit since touch none of this PR\'s files', details[0])
+        self.assertIn('merged into main as', details[-1])
         merge_check = next(body for body in github.posted if body.startswith(lane.MERGE_CHECK))
         self.assertIn('Reuses the earlier PASS', merge_check)
         self.assertIn('touch none of this PR\'s files and no build inputs', merge_check)
-        # the report names the next the checks ran with, not the newer one it merged onto
-        self.assertIn(f'(tested merged with next at {tested[:7]})', github.posted[-1].partition('\n')[2])
+        # the report names the trunk tip the checks ran with, not the newer one it merged onto
+        self.assertIn(f'(tested merged with main at {tested[:7]})', github.posted[-1].partition('\n')[2])
 
     def moved_next_runs_the_checks_again(self, name, text):
         github, tested = self.held_then_audited()
@@ -399,8 +401,8 @@ class AuditHeldChecksStandAfterTheAuditTests(RealGitLaneTests):
         self.push_next()
         checks, details, _ = self.rearmed_run(github)
         checks.assert_called_once()
-        self.assertIn(f'passed its checks with next at {tested[:7]}; tested again on', details[1])
-        self.assertIn('merged into next as', details[-1])
+        self.assertIn(f'passed its checks with main at {tested[:7]}; tested again on', details[1])
+        self.assertIn('merged into main as', details[-1])
         merge_check = next(body for body in github.posted if body.startswith(lane.MERGE_CHECK))
         self.assertNotIn('Reuses the earlier PASS', merge_check)
 
@@ -413,8 +415,8 @@ class AuditHeldChecksStandAfterTheAuditTests(RealGitLaneTests):
     def test_the_audit_hold_alone_never_merges(self):
         github = self.github()
         checks, details, tested = self.run_automerge(github)
-        self.assertEqual(self.rev(self.origin, 'next'), tested)
-        self.assertNotIn('merged into next', '\n'.join(details))
+        self.assertEqual(self.rev(self.origin, 'main'), tested)
+        self.assertNotIn('merged into main', '\n'.join(details))
 
     def test_a_push_refused_after_a_reused_pass_is_re_merged_as_reused(self):
         github, tested = self.held_then_audited()
@@ -424,17 +426,17 @@ class AuditHeldChecksStandAfterTheAuditTests(RealGitLaneTests):
 
         def push(tree, sha, base):
             calls.append(sha)
-            if len(calls) == 1:  # next moves just before the push
+            if len(calls) == 1:  # main moves just before the push
                 self.push_next()
-                return False, '! [rejected] next -> next (fetch first)'
+                return False, '! [rejected] main -> main (fetch first)'
             return original(tree, sha, base)
         with mock.patch.object(lane, 'push_merge', side_effect=push):
             checks, details, _ = self.rearmed_run(github)
         checks.assert_not_called()
         self.assertEqual(len(calls), 2)
-        self.assertIn('merged into next as', details[-1])
-        self.assertIn('the push to next was refused', details[1])
-        self.assertIn(f'not re-tested: next\'s 1 commit since the tested {tested[:7]}', details[1])
+        self.assertIn('merged into main as', details[-1])
+        self.assertIn('the push to main was refused', details[1])
+        self.assertIn(f'not re-tested: main\'s 1 commit since the tested {tested[:7]}', details[1])
         merge_checks = [body for body in github.posted if body.startswith(lane.MERGE_CHECK)]
         self.assertEqual(len(merge_checks), 2)  # one per push attempt, each saying it reuses the earlier PASS
         self.assertTrue(all('Reuses the earlier PASS' in body for body in merge_checks), merge_checks)
@@ -446,16 +448,16 @@ class AuditHeldChecksStandAfterTheAuditTests(RealGitLaneTests):
 
         def push(tree, sha, base):
             calls.append(sha)
-            if len(calls) == 1:  # next moves onto a build input just before the push
+            if len(calls) == 1:  # main moves onto a build input just before the push
                 (self.other / 'scripts').mkdir(exist_ok=True)
                 self.commit(self.other, 'scripts/verify-tests.py', 'print(1)\n')
                 self.push_next()
-                return False, '! [rejected] next -> next (fetch first)'
+                return False, '! [rejected] main -> main (fetch first)'
             return original(tree, sha, base)
         with mock.patch.object(lane, 'push_merge', side_effect=push):
             checks, details, _ = self.rearmed_run(github)
-        checks.assert_called_once()  # tested again on the newest next
-        self.assertIn('merged into next as', details[-1])
+        checks.assert_called_once()  # tested again on the newest main
+        self.assertIn('merged into main as', details[-1])
         merge_checks = [body for body in github.posted if body.startswith(lane.MERGE_CHECK)]
         self.assertIn('Reuses the earlier PASS', merge_checks[0])
         self.assertNotIn('Reuses the earlier PASS', merge_checks[1])
@@ -474,7 +476,7 @@ class AuditHeldChecksStandAfterTheAuditTests(RealGitLaneTests):
         checks.assert_not_called()
         self.assertTrue(github.posted[-1].startswith('Lane report pr5-r1 — FAIL'), github.posted[-1])
         self.assertIn('hot-file ratchet — Gate1AppModel.swift grows past its ceiling', details[-1])
-        self.assertEqual(self.rev(self.origin, 'next'), tested)  # nothing pushed
+        self.assertEqual(self.rev(self.origin, 'main'), tested)  # nothing pushed
 
     def test_a_reused_run_held_again_still_reuses_the_original_pass_after_the_audit(self):
         github = self.github()
@@ -483,11 +485,11 @@ class AuditHeldChecksStandAfterTheAuditTests(RealGitLaneTests):
         checks, details, _ = self.rearmed_run(github)  # re-armed too early: still no audit
         checks.assert_not_called()
         self.assertTrue(any(line.startswith('not merged by the runner: ') for line in details), details)
-        self.assertEqual(lane.audit_held_checks(github.comments(), self.head)['next'], tested)  # not the newer next
+        self.assertEqual(lane.audit_held_checks(github.comments(), self.head)['next'], tested)  # not the newer main
         github._comments.append(self.audited_head_comment())
         checks, details, _ = self.rearmed_run(github)
         checks.assert_not_called()
-        self.assertIn('merged into next as', details[-1])
+        self.assertIn('merged into main as', details[-1])
 
     def test_a_hold_report_is_trusted_only_as_the_runner_s_own_newest_pass_on_the_head(self):
         github, tested = self.held_then_audited()
@@ -506,9 +508,9 @@ class AuditHeldChecksStandAfterTheAuditTests(RealGitLaneTests):
 
     def test_a_report_that_is_not_held_by_the_audit_gives_no_checks(self):
         # A PASS that merged, a FAIL, and a T3 hold carry no audit hold line, whatever else they say.
-        line = lane.checks_note(self.head, self.rev(self.tree, 'origin/next'), 'ran', 'x')
-        wanted = lane.identity('auto', self.head, self.rev(self.tree, 'origin/next'), [])
-        for verdict, details in (('PASS', ['merged into next as abc1234', line]),
+        line = lane.checks_note(self.head, self.rev(self.tree, 'origin/main'), 'ran', 'x')
+        wanted = lane.identity('auto', self.head, self.rev(self.tree, 'origin/main'), [])
+        for verdict, details in (('PASS', ['merged into main as abc1234', line]),
                                  ('FAIL', ['not merged by the runner: it touches the audio session and has no audit', line]),
                                  ('INCONCLUSIVE', [line, f'not merged: {lane.t3_gate([T3_FOR_HEAD])[1]}.'])):
             with self.subTest(verdict=verdict):
@@ -517,7 +519,7 @@ class AuditHeldChecksStandAfterTheAuditTests(RealGitLaneTests):
                 self.assertIsNone(lane.audit_held_checks([held], self.head))
 
     def test_the_pr_s_own_test_output_cannot_pass_for_an_audit_hold(self):
-        wanted = lane.identity('auto', self.head, self.rev(self.tree, 'origin/next'), [])
+        wanted = lane.identity('auto', self.head, self.rev(self.tree, 'origin/main'), [])
         line = lane.checks_note(self.head, wanted['next'], 'ran', 'x')
         forged = comment(lane.report('pr5-r1', 'PASS', self.head, wanted['next'], 'auto', 'x', 1, 'x',
                                      [f'  {line}', '  not merged by the runner: it touches audio and has no audit'],

@@ -74,7 +74,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          SM_TRUNK: ${{ vars.SM_TRUNK || 'next' }}
+          SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
           ONLY_PR: ${{ inputs.pr || github.event.pull_request.number }}
           CLEAR: ${{ github.event.label.name == 'owner-tap-check' && 'owner-tap-check' || '' }}
         run: |

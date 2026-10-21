@@ -4,7 +4,7 @@
 
 1. **Finished worktrees**, removed whole with `git worktree remove` (never `--force`, so git itself refuses a worktree with changes, untracked files or a lock). A worktree qualifies only when all of these hold:
    - it sits in a checkout's `.claude/worktrees/` folder or is a Codex worktree in `~/.codex/worktrees/<id>/` (or directly in `~/.codex/worktrees/`) (worktrees elsewhere, such as `~/SpokenMarginsOps`, are only listed). Codex worktrees follow the same rules as Claude's (owner, 2026-10-19), and the emptied `<id>/` folder goes too;
-   - it is clean and its HEAD is already in `origin/next`;
+   - it is clean and its HEAD is already in `origin/main`;
    - it is idle as in step 2, and no live Claude Code session has its working folder there;
    - nothing in it changed in the last 24 hours;
    - its ignored files are all ones that rebuild: `.build` and `.swiftpm` folders, `__pycache__`, `.DS_Store`, the `.venv` and `node_modules` links, and `.claude/settings.local.json`. A worktree holding `artifacts/` or anything else ignored is kept and listed.
@@ -26,7 +26,7 @@
 
 ## Ready-made simulator builds (not in the order)
 
-`~/SpokenMarginsOps/sim-builds` holds the integration run's last two simulator apps of `next`'s tip, about 690 MB each on 2026-10-18 (1.4 GB in all), for desks to install instead of building (`scripts/sim_builds.py`). It sits outside the relief order on purpose: it caps itself at two builds, copies nothing below 10 GB free, and deleting it only makes the next desk build for 5 to 10 minutes. Relief never touches it. By hand it is the first thing safe to delete, before step 1; the next integration run refills it.
+`~/SpokenMarginsOps/sim-builds` holds the integration run's last two simulator apps of `main`'s tip, about 690 MB each on 2026-10-18 (1.4 GB in all), for desks to install instead of building (`scripts/sim_builds.py`). It sits outside the relief order on purpose: it caps itself at two builds, copies nothing below 10 GB free, and deleting it only makes the next desk build for 5 to 10 minutes. Relief never touches it. By hand it is the first thing safe to delete, before step 1; the next integration run refills it.
 
 ## The lane folder (every run)
 

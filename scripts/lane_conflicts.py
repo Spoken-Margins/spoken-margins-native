@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Hosted merge-conflict check for armed PRs, before they wait for a Mac (#683).
 
-A conflict with `next` is otherwise found only when the PR's job reaches a Mac runner: #604 passed T2, waited
+A conflict with the base branch is otherwise found only when the PR's job reaches a Mac runner: #604 passed T2, waited
 three hours in the queue, then ended in a 0-second job saying "does not merge cleanly into next". This script
 runs on the VPS runner (.github/workflows/lane-conflicts.yml). For every open PR into the base branch that
 carries `automerge` or `lane:queued`, it tries `git merge --no-commit --no-ff` of the PR head onto the base tip

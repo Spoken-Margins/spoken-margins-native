@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mechanical Claude audit for Spoken Margins PRs into `next`.
+"""Mechanical Claude audit for Spoken Margins PRs into the trunk (`main`).
 
 Since 2026-10-09 (#1195) the audit runs on headless Claude, read-only, not on Codex; the
 script keeps its old name so the loaded launchd job and its log files carry on. The gating
@@ -7,7 +7,7 @@ is plain code, so an idle run makes a handful of `gh` calls and nothing else: no
 no model call.
 
 A PR is audited when all of these hold:
-  * it is open, not a draft, and targets `next`;
+  * it is open, not a draft, and targets the trunk (`main`);
   * no audit comment (a headless Claude heading or a legacy Codex heading,
     the lane runner's own match) names its current head sha7;
   * the newest "Lane report ... — PASS/FAIL" comment is PASS for the current head, or the PR is one only

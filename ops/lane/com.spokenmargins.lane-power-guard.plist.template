@@ -3,7 +3,7 @@
 <!--
   Lane power guard (#762): every 15 seconds, pause idle lane runners while the Mac is on battery or
   its lid is closed, and start them again on power (ops/lane/README.md). Not installed by the PR.
-  It runs the main checkout's copy, which the hourly Mac tick fast-forwards to origin/next.
+  It runs the main checkout's copy, which the hourly Mac tick fast-forwards to origin/main.
 -->
 <plist version="1.0">
 <dict>
