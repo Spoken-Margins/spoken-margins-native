@@ -93,7 +93,7 @@ import lane_inherited_holds as inherited
 # Configuration
 # ---------------------------------------------------------------------------
 
-REPO = "uncomposed/spoken-margins-native"
+REPO = "Spoken-Margins/spoken-margins-native"
 BASE_BRANCH = trunk_branch()
 AUTOMERGE = "automerge"
 HERE = Path(__file__).resolve().parent

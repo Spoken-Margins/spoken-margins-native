@@ -48,7 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import comment_trust  # noqa: E402  (#1822: a stranger's /lane T4 request is not a request)
 
 ROOT = Path(__file__).resolve().parents[1]
-REPO = os.environ.get('SM_DESK_REPO', 'uncomposed/spoken-margins-native')
+REPO = os.environ.get('SM_DESK_REPO', 'Spoken-Margins/spoken-margins-native')
 GH = shlex.split(os.environ.get('SM_DESK_GH', 'gh'))
 OUT_DIR = Path(os.environ.get('SM_DESK_OUT') or Path.home() / 'SpokenMarginsOps' / 'desk-batches')
 

@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 import sm_paths  # noqa: E402
 from trunk import trunk_branch  # noqa: E402  (#1492: the branch it tests)
 
-REPO = os.environ.get('SM_INTEGRATION_REPO', 'uncomposed/spoken-margins-native')
+REPO = os.environ.get('SM_INTEGRATION_REPO', 'Spoken-Margins/spoken-margins-native')
 REPO_ROOT = sm_paths.repo(__file__)                      # the public checkout it tests (SM_REPO)
 HOME_DIR = Path(os.environ.get('SM_INTEGRATION_HOME') or sm_paths.state_dir('integration-run'))
 BASE_BRANCH = trunk_branch()

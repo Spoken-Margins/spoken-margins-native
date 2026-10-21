@@ -16,10 +16,13 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE = Path.home() / 'SpokenMarginsOps' / 'integration-precheck' / 'state.json'
-REPO = 'uncomposed/spoken-margins-native'
-OWNER = 'uncomposed'
+REPO = 'Spoken-Margins/spoken-margins-native'
+OWNER_LOGIN = 'uncomposed'  # the owner's GitHub login, not the repo's owner (#2169)
 PROMPT_MARKER = '[SM-INTEGRATION-PRECHECK]'
-LEGACY_TASK_PREFIX = 'You are the Spoken Margins integration run, for the repo uncomposed/spoken-margins-native'
+LEGACY_TASK_PREFIXES = tuple(
+    f'You are the Spoken Margins integration run, for the repo {repo}'
+    for repo in ('uncomposed/spoken-margins-native', REPO)
+)
 
 
 def parse_time(value: str) -> dt.datetime:
@@ -73,7 +76,7 @@ def skip_head(comment: dict) -> str | None:
 
 
 def trusted(comment: dict) -> bool:
-    return (comment.get('user') or {}).get('login', '').casefold() == OWNER.casefold()
+    return (comment.get('user') or {}).get('login', '').casefold() == OWNER_LOGIN.casefold()
 
 
 def report_author(comment: dict) -> bool:
@@ -245,7 +248,7 @@ def hook_target(payload: dict) -> bool:
     if not isinstance(prompt, str):
         return False
     text = prompt.lstrip('\ufeff \t\r\n')
-    return text.startswith(PROMPT_MARKER) or text.startswith(LEGACY_TASK_PREFIX)
+    return text.startswith(PROMPT_MARKER) or text.startswith(LEGACY_TASK_PREFIXES)
 
 
 def hook_output(decision: Decision) -> dict:
