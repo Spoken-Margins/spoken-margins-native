@@ -50,7 +50,7 @@ class InputsChangedTests(unittest.TestCase):
         (self.root / RESOLVED).write_text('swift-crypto pins\n')
         message = self.message(before)
         self.assertIn(f'Inputs changed during fast verification: {RESOLVED}.', message)
-        self.assertIn('git checkout origin/next -- Packages/SessionKit/Package.resolved', message)
+        self.assertIn('git checkout origin/main -- Packages/SessionKit/Package.resolved', message)
 
     def test_the_hint_is_only_for_package_resolved(self):
         before = verification.input_digests()

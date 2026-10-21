@@ -8,7 +8,7 @@
 
 Exit 1 when there is no matching build. The builds come from the integration run (scripts/sim_builds.py).
 While it runs on a GitHub-hosted Mac (LANE_HOSTED_APP), nothing lands here by itself: with no local build of
-the commit asked for (or, with no --for, none of origin/next's tip as last fetched), this downloads the hosted
+the commit asked for (or, with no --for, none of the trunk's tip as last fetched), this downloads the hosted
 run's `sim-app-<sha>` artifact with gh (about 290 MB zipped, 690 MB installed on 2026-10-18; kept 2 days) and keeps it like a local one.
 Install one with: xcrun simctl install <udid> "$(scripts/sim-build-latest | head -1)"
 """

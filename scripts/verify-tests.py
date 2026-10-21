@@ -552,7 +552,7 @@ def github_glob_matches(pattern, path):
 
 def shipped_compat_needed(changed, root=None):
     """(run, reason) for the compatibility checks. changed=None means no diff information: run, as every other
-    step does, so the Test Desk's run on next's tip and an author's own --plan fast keep them."""
+    step does, so the Test Desk's run on the trunk's tip and an author's own --plan fast keep them."""
     if not changed:
         return True, 'no list of changed paths, so every step runs'
     patterns = shipped_compat_paths(root or ROOT)

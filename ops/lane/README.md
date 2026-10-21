@@ -114,7 +114,7 @@ python3 ~/Documents/GitHub/spoken-margins-native/ops/lane/sm_lane_power_guard.py
 
 ## Install
 
-The PR doesn't install it. After it merges into `next` and the main checkout has it:
+The PR doesn't install it. After it merges into `main` and the main checkout has it:
 
 ```zsh
 mkdir -p ~/SpokenMarginsOps/lane-power-guard

@@ -73,7 +73,7 @@ FIXTURE = json.loads(r"""
 
 
 def pr(**kw):
-    base = {"number": 366, "headRefOid": HEAD, "isDraft": False, "baseRefName": "next",
+    base = {"number": 366, "headRefOid": HEAD, "isDraft": False, "baseRefName": "main",
             "title": "Take the rendered speech cache out of the ledger", "body": "Closes #313.",
             "closingIssuesReferences": []}
     base.update(kw)

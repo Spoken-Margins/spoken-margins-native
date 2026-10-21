@@ -50,8 +50,8 @@ jobs:
   check:
     # Only same-repo PRs that carry a lane label (and, on a label event, only when it is one of the two).
     if: >-
-      (github.event_name != 'push' || github.ref_name == (vars.SM_TRUNK || 'next')) &&
-      (github.event_name != 'pull_request' || (github.event.pull_request.base.ref == (vars.SM_TRUNK || 'next') || startsWith(github.event.pull_request.base.ref, 'lane-check/'))) &&
+      (github.event_name != 'push' || github.ref_name == (vars.SM_TRUNK || 'main')) &&
+      (github.event_name != 'pull_request' || (github.event.pull_request.base.ref == (vars.SM_TRUNK || 'main') || startsWith(github.event.pull_request.base.ref, 'lane-check/'))) &&
       (github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
        (contains(github.event.pull_request.labels.*.name, 'automerge') ||
@@ -74,7 +74,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          BASE_REF: ${{ github.event.pull_request.base.ref || vars.SM_TRUNK || 'next' }}
+          BASE_REF: ${{ github.event.pull_request.base.ref || vars.SM_TRUNK || 'main' }}
           # Only a manual dispatch narrows the check. Every PR event sweeps all armed PRs, because a waiting run
           # for one PR can replace another's under the single concurrency group.
           ONLY_PR: ${{ inputs.pr }}
