@@ -613,6 +613,14 @@ HANG_PROBE_TIMING_TESTS = frozenset(f'SessionKitCoreTests/MainThreadHangProbeTes
     'testAStoppedProbeRecordsNothingAndASecondHangAfterAFirstIsCounted',
 ))
 
+# StoreReadMeterTests skip by design (#2258): the Library list is a known-oversized read that skips with its measured
+# bytes until #2102's fix fails it on purpose, and the cost table builds the large fixtures only when asked for.
+READ_METER_SKIPS = frozenset(f'SessionKitCoreTests/StoreReadMeterTests/{test}' for test in (
+    'testTheLibraryListDoesNotDecodeEveryArticleText',
+    'testReadCostTableAtEveryScale',
+))
+CORE_ALLOWED_SKIPS = HANG_PROBE_TIMING_TESTS | READ_METER_SKIPS
+
 # Pocket's render tests need ~131 MB of git-ignored weights (research/C2/pocket/fetch_weights.sh). Without them they
 # skip with "skipped: weights not fetched", which is how the lane Mac runs them. The renderer's logic tests, with
 # their own fixtures, still run everywhere.
@@ -1409,7 +1417,7 @@ class Run:
             self.command('package-core', [*PACKAGE_RUNNER, '--core-parallel', str(xunit)],
                          timeout=PARALLEL_CORE_TIMEOUT, ceiling=PARALLEL_CORE_CEILING,
                          stall_seconds=PARALLEL_CORE_STALL_SECONDS, expected=expected, tests=True,
-                         allowed_skips=HANG_PROBE_TIMING_TESTS, record_source=lambda: xunit_records(xunit))
+                         allowed_skips=CORE_ALLOWED_SKIPS, record_source=lambda: xunit_records(xunit))
             return
         except RuntimeError as error:
             step = self.manifest['steps'][-1]
@@ -1422,7 +1430,7 @@ class Run:
             print('package-core: parallel run failed; running SessionKitCoreTests serially', flush=True)
         self.command('package-core-serial', [*PACKAGE_RUNNER, '--core-serial'],
                      timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
-                     expected=expected, tests=True, allowed_skips=HANG_PROBE_TIMING_TESTS)
+                     expected=expected, tests=True, allowed_skips=CORE_ALLOWED_SKIPS)
 
     def skip(self, name, reason=None):
         reason = reason or CODEX_SANDBOX_SKIPS[name]
