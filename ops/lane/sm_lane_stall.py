@@ -31,7 +31,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 import comment_trust  # noqa: E402  (#1822: a stranger's fake lane report must not hide a stall)
 
-DEFAULT_REPO = 'uncomposed/spoken-margins-native'
+DEFAULT_REPO = 'Spoken-Margins/spoken-margins-native'
 WORKFLOW = 'lane.yml'
 REPORT = re.compile(r'^(```text\r?\n)?Lane report')
 # Waiting on a runner (queued), on the per-PR concurrency group (pending), or running.

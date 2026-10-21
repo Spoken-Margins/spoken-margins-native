@@ -125,7 +125,7 @@ class FakeGh:
         self.next_pr = max(self.next_pr, number) + 1
         pr = {'number': number, 'title': f'PR for {branch}', 'body': '', 'state': 'OPEN', 'isDraft': False,
               'baseRefName': 'next', 'headRefName': branch, 'headRefOid': head,
-              'headRepository': {'name': 'spoken-margins-native'}, 'headRepositoryOwner': {'login': 'uncomposed'},
+              'headRepository': {'name': 'spoken-margins-native'}, 'headRepositoryOwner': {'login': 'Spoken-Margins'},
               'isCrossRepository': False, 'files': [], 'comments': [], 'createdAt': iso(NOW),
               'labels': [{'name': n} for n in labels], 'url': f'https://github.com/x/pull/{number}'}
         pr.update(kw)
@@ -440,7 +440,7 @@ class FakePR:
     def detail(number, labels=(), handing_at=None, head='a' * 40, files=(), comments=()):
         out = {'number': number, 'state': 'OPEN', 'isDraft': False, 'baseRefName': 'next',
                'headRefName': f'ws/{number}-x', 'headRefOid': head, 'isCrossRepository': False,
-               'headRepository': {'name': 'spoken-margins-native'}, 'headRepositoryOwner': {'login': 'uncomposed'},
+               'headRepository': {'name': 'spoken-margins-native'}, 'headRepositoryOwner': {'login': 'Spoken-Margins'},
                'labels': [{'name': n} for n in labels], 'files': [{'path': f} for f in files],
                'comments': list(comments), 'createdAt': ago(days=1), 'body': 'Closes #7'}
         if handing_at:

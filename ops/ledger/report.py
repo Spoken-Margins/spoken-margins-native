@@ -16,7 +16,7 @@ import claude_sessions
 import comment_trust  # #1822: only trusted authors' comments count as a confirmed fix
 import usage
 
-REPO = 'uncomposed/spoken-margins-native'
+REPO = 'Spoken-Margins/spoken-margins-native'
 
 
 def parse_time(value: str) -> dt.datetime:

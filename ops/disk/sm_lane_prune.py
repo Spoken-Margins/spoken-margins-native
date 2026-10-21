@@ -59,7 +59,7 @@ ACTIVE_WINDOW = 3600
 
 TOMBSTONE = '.deleting-'
 REQUEST_ID = re.compile(r'^pr(\d+)-r(\d+)(?:-a\d+)?(?:-auto)?$')
-DEFAULT_REPO = 'uncomposed/spoken-margins-native'
+DEFAULT_REPO = 'Spoken-Margins/spoken-margins-native'
 
 
 def real(path) -> Path:

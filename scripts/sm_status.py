@@ -35,7 +35,7 @@ Flags (`!!` red, `!` look) mark what a reply must not hide:
 It only reads GitHub (GET requests) and keeps no state. Needs GH_TOKEN or GITHUB_TOKEN (or `gh auth token`).
 Exit codes: 0 snapshot printed, 2 GitHub unreachable or unreadable (nothing partial is shown as a status).
 
-Environment: SM_STATUS_REPO (default uncomposed/spoken-margins-native).
+Environment: SM_STATUS_REPO (default Spoken-Margins/spoken-margins-native).
 """
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ import comment_trust  # noqa: E402  (#1822: who may be believed)
 import merge_audit  # noqa: E402  (the lane's report and audit formats live there; reused so they can't drift)
 from trunk import trunk_branch  # noqa: E402  (#1492: the branch whose PRs it lists)
 
-REPO = os.environ.get('SM_STATUS_REPO', 'uncomposed/spoken-margins-native')
+REPO = os.environ.get('SM_STATUS_REPO', 'Spoken-Margins/spoken-margins-native')
 BASE = trunk_branch()
 API = 'https://api.github.com'
 
