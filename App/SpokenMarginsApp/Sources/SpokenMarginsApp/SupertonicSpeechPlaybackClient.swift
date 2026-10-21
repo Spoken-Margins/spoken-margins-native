@@ -786,7 +786,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         let choice = SavedVoiceRunRule.choice(inSavedRun: false, atSeam: true, savedRun: run, reachesEnd: reachesEnd,
                                               playbackRate: state.rate)
-        guard choice == .savedSupertonic, choice != .savedSupertonic else { return false }
+        guard choice == .savedSupertonic else { return false }
         return lock.withLock {
             guard generation == request.generation else { return false }
             savedRunGeneration = request.generation
@@ -2880,7 +2880,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         guard let snapshot else { return }
         // Every chunk is ready, but one is a stand-in: report it, without an assembled file (#363).
-        guard let preparedAudioDirectory, let onPreparedAudio, lock.withLock({ standInOffsets.isEmpty || true }) else {
+        guard let preparedAudioDirectory, let onPreparedAudio, lock.withLock({ standInOffsets.isEmpty }) else {
             reportGenerationState(.ready)
             return
         }
