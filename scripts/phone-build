@@ -99,7 +99,7 @@ from trunk import trunk_branch  # noqa: E402  (#1492: the branch it builds)
 
 REPO = 'Spoken-Margins/spoken-margins-native'
 # Issue and PR links written before the move to the org (#2169) still name the old owner.
-REPO_LINK = r'(?:Spoken-Margins|uncomposed)/spoken-margins-native'
+REPO_LINK = r'(?i:spoken-margins|uncomposed)/spoken-margins-native'  # GitHub URLs ignore case
 BRANCH = trunk_branch()
 REPORTS_ISSUE = 184      # where the integration run and the Test Desk post their lane reports
 DISK_FLOOR_GB = 10

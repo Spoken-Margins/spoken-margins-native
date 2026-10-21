@@ -1505,6 +1505,8 @@ class PlanGroupingTests(unittest.TestCase):
             ('once #547 merges, play it', set(), set(), pr('MERGED'), True),  # merged after this build
             ('once #547 merges, play it', set(), set(), pr('CLOSED'), False),
             ('after https://github.com/uncomposed/spoken-margins-native/issues/547 lands', set(), set(), issue(), True),
+            ('after https://github.com/Spoken-Margins/spoken-margins-native/issues/547 lands', set(), set(), issue(), True),
+            ('after https://github.com/spoken-margins/spoken-margins-native/issues/547 lands', set(), set(), issue(), True),
             ('after #547 is on the phone, play it', set(), set(), None, False),  # GitHub didn't say: keep the check
             ('Build 29 still plays it; tap item 547', set(), set(), issue(), False),
         ]
