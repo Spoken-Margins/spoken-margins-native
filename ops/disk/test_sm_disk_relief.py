@@ -2,6 +2,8 @@
 
 Run: python3 -m unittest ops/disk/test_sm_disk_relief.py
 """
+import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 import fcntl
 import json
 import os

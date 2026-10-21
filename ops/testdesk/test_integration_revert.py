@@ -1,3 +1,5 @@
+import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 import contextlib
 import json
 from pathlib import Path

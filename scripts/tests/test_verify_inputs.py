@@ -4,6 +4,8 @@
 thousands of hashed files had changed. The cause was Packages/SessionKit/Package.resolved: the branch had
 committed the copy SwiftPM writes on Linux, and the Mac's `swift build` rewrote it mid-run.
 """
+import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 import importlib.util
 import subprocess
 import sys

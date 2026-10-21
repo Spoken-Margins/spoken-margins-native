@@ -55,6 +55,19 @@ BUILD_SLOT_WAIT_SECONDS = 1800
 # about twice the limit (measured: a 1G limit held it to 1.4 GB).
 COMPILATION_CACHE_LIMIT = '3G'
 
+# Settings that describe the machine or the lane job, not the code under test. A step must not inherit them:
+# with SM_TRUNK=main exported (the lane and the Mac set it after #1492), suites whose fixtures were written
+# for the default trunk failed, and every merge run came back INCONCLUSIVE.
+STEP_ENV_DROPS = ('SM_TRUNK',)
+
+
+def step_env(environ=None):
+    """The environment a test step runs in: the caller's, without STEP_ENV_DROPS."""
+    env = dict(os.environ if environ is None else environ)
+    for name in STEP_ENV_DROPS:
+        env.pop(name, None)
+    return env
+
 
 def compilation_cache_settings(root=None):
     """The build settings that turn on Xcode's compilation cache, in the lane's state folder."""
@@ -997,7 +1010,7 @@ class Run:
             finish = xcodebuild_finish.FinishWatch() if tests and args[0] == 'xcodebuild' else None
             finish_offset = 0
             process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
-                                       start_new_session=True)
+                                       start_new_session=True, env=step_env())
             try:
                 while True:
                     if device and (report := new_crash(reports, self.crash_baseline, device)):
@@ -1071,7 +1084,7 @@ class Run:
                         if finish is not None:
                             finish = xcodebuild_finish.FinishWatch()
                         process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
-                                                   start_new_session=True)
+                                                   start_new_session=True, env=step_env())
             except (subprocess.TimeoutExpired, KeyboardInterrupt, InterruptedError, StartupStall) as stopped:
                 # A startup stall is reported as its own reason below, not as the step running out of budget.
                 entry['interrupted'] = not isinstance(stopped, StartupStall)

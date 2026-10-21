@@ -5,6 +5,8 @@ Run: /usr/bin/python3 -m unittest ops/codex/test_sm_codex_audit.py
 The comment fixtures are shaped like GitHub's REST issue comments and copy the
 real first lines seen on PRs #344, #366, #374 and #418 on 2026-09-30.
 """
+import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 
 import ast
 import importlib.util

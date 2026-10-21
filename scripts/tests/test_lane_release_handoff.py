@@ -9,6 +9,8 @@ that merges.
 """
 from __future__ import annotations
 
+import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 import datetime
 import json
 import os
