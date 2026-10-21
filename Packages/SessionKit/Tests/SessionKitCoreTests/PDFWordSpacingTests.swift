@@ -67,6 +67,19 @@ final class PDFWordSpacingTests: XCTestCase {
         let glued = spaced + Array(repeating: "standardtoolfordescribingwhichoccupationsAIislikelytoaffect", count: 3)
         XCTAssertTrue(spacer.isGlued(glued))
         XCTAssertFalse(spacer.isGlued([]))
+        // A methods section's primers and chemicals are long runs too (C1 corpus, PMC10950207
+        // and PMC10777729), but no glued prose: no common word in them.
+        let methods = Array(repeating: "Human GAPDH ACAACTTTGGTATCGTGGAAGG GCCATCACGCCACAGTTTC", count: 6)
+            + Array(repeating: "5´-ATTCTTTTACGGCGGATGTG-3′ (forward) in tetramethylbenzidine substrate", count: 6)
+            + Array(repeating: "Hypocholesterolemic and antioxidative effects of naringenin", count: 6)
+        XCTAssertFalse(spacer.isGlued(methods))
+    }
+
+    func testBiologyTermsKeepTheirCase() throws {
+        let spacer = try kittenSpacer()
+        for line in ["a microRNA-375 sponge", "Circular RNAs (circRNAs) act as microRNA (miRNA) sponges", "targeted by miR-375"] {
+            XCTAssertEqual(spacer.respaced(line), line)
+        }
     }
 
     func testWordsThePaperPrintsAloneWinTies() throws {

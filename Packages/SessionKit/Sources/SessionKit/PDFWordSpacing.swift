@@ -57,20 +57,22 @@ public struct PDFWordSpacer {
     public static let gluedRunLength = 18
 
     /// Whether the document's text lost its word spaces: at least three lines, and at
-    /// least one in two hundred, hold a long letter run that splits cleanly into words.
+    /// least one in a hundred, hold a long letter run that splits cleanly into words.
     public func isGlued(_ lines: [String]) -> Bool {
         let nonEmpty = lines.filter { !$0.isEmpty }
         guard !nonEmpty.isEmpty else { return false }
         var glued = 0
         for line in nonEmpty where looksGlued(line) {
             glued += 1
-            if glued >= 3 && glued * 200 >= nonEmpty.count { return true }
+            if glued >= 3 && glued * 100 >= nonEmpty.count { return true }
         }
         return false
     }
 
-    /// Whether this line holds a run of `gluedRunLength` or more letters that is not
-    /// a word and splits into three or more listed words, none of them unknown.
+    /// Whether this line holds a run of `gluedRunLength` or more lower-case letters that
+    /// is not a word and splits into three or more listed words, one of them common:
+    /// glued prose has "for" and "the"; a primer ("AAGCTTGGCTGATG") or a chemical
+    /// ("tetramethylbenzidine") doesn't.
     public func looksGlued(_ line: String) -> Bool {
         let characters = Array(line)
         var start = 0
@@ -82,8 +84,10 @@ public struct PDFWordSpacer {
                 // Hard case cues first, as `respaced` does: "occupationsAIislikely".
                 for piece in caseRuns(characters, start..<end) where piece.count >= Self.gluedRunLength {
                     let run = Array(characters[piece])
-                    if !isWord(run), let pieces = segmentation(run), pieces.count >= 3,
-                       pieces.allSatisfy({ isWord(Array(run[$0])) || isAcronym(Array(run[$0])) }) {
+                    guard run.dropFirst().allSatisfy(\.isLowercase), !isWord(run),
+                          let pieces = segmentation(run), pieces.count >= 3 else { continue }
+                    let words = pieces.map { Array(run[$0]) }
+                    if words.allSatisfy(isWord), words.contains(where: { Self.commonWords.contains(Self.key($0)) }) {
                         return true
                     }
                 }
@@ -205,8 +209,9 @@ public struct PDFWordSpacer {
             let before = characters[index - 1], here = characters[index]
             let next: Character? = index + 1 < token.upperBound ? characters[index + 1] : nil
             switch (before, here) {
-            case let (a, b) where a.isLowercase && b.isUppercase:
-                // "andChen" and "InProceedings" split; "iPhone", "McDonald", "LaTeX" and "PhD" keep their case.
+            case let (a, b) where a.isLowercase && b.isUppercase && Self.startsWordOrAcronymAndWord(characters, at: index, before: token.upperBound):
+                // "andChen" and "InProceedings" split; "iPhone", "McDonald", "LaTeX", "PhD",
+                // "microRNA" and "circRNAs" keep their case.
                 let run = letterRun(endingAt: index - 1)
                 let lowerTail = run.reversed().prefix(while: \.isLowercase).count
                 let isShortCapitalised = run.first?.isUppercase == true && run.count == lowerTail + 1 && lowerTail <= 2
@@ -255,6 +260,18 @@ public struct PDFWordSpacer {
         return offsets
     }
 
+    /// The capital at `index` starts a capitalised word ("Chen"), or an upper-case run
+    /// with a word after it ("AIislikely"), not a run that ends the token ("RNA", "RNAs").
+    private static func startsWordOrAcronymAndWord(_ characters: [Character], at index: Int, before end: Int) -> Bool {
+        var next = index + 1
+        guard next < end else { return false }
+        if characters[next].isLowercase { return true }
+        while next < end, characters[next].isUppercase { next += 1 }
+        var lower = 0
+        while next + lower < end, characters[next + lower].isLowercase { lower += 1 }
+        return lower >= 2
+    }
+
     private static let unitWords: Set<String> = [
         "min", "mins", "sec", "secs", "hrs", "khz", "mhz", "ghz", "kbps", "mbps", "gbps", "mph", "kph", "bpm", "rpm",
         "nm", "mm", "cm", "km", "mg", "kg", "ml", "th", "st", "nd", "rd", "pts", "px"
@@ -281,7 +298,9 @@ public struct PDFWordSpacer {
     /// Offsets inside one letter run where the word list puts a space.
     private func wordOffsets(_ characters: [Character], _ run: Range<Int>, wholeToken: Bool = false) -> [Int] {
         let letters = Array(characters[run])
-        guard letters.count >= 2, !isWord(letters), !isAcronym(letters),
+        // An acronym's plural ("RNAs", "PDFs") is one word.
+        let isAcronymPlural = letters.count >= 3 && letters.last == "s" && isAcronym(Array(letters.dropLast()))
+        guard letters.count >= 2, !isWord(letters), !isAcronym(letters), !isAcronymPlural,
               let pieces = segmentation(letters), pieces.count >= 2 else { return [] }
         // A capitalised word ("Goldfarb", "Tonetti") is most likely a name: split it only
         // into known words, one of them common ("Theresults"), unless the run is long. A
