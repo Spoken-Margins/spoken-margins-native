@@ -164,6 +164,58 @@ class HostedChecksStandTests(unittest.TestCase):
                     for name, plan in checks.items()}, ''
         return read
 
+    def test_it_waits_for_checks_still_running_then_takes_them(self):
+        # The first lane runs after the switch went on found the hosted checks still running and ran the whole
+        # --plan fast on the Mac (#1389). Inside a lane job the runner now waits for them.
+        head, tested, tree = self.pr()
+        passed = self.records(head, tested, tree)
+        reads, slept, now = [], [], [0.0]
+
+        def running_twice(github, h, checks):
+            reads.append(checks)
+            if len(reads) <= 4:  # two polls, each reading the hosted pair then the VPS pair
+                return None, f'"{next(iter(checks))}" had not finished on {h[:7]}'
+            return passed(github, h, checks)
+
+        def sleep(seconds):
+            slept.append(seconds)
+            now[0] += seconds
+        found, why = lane.hosted_fast_checks(None, self.tree, 'main', head, tested, env={**ON, 'GITHUB_ACTIONS': 'true'},
+                                             records=running_twice, clock=lambda: now[0], sleep=sleep,
+                                             out=io.StringIO())
+        self.assertEqual(why, '')
+        self.assertEqual(set(found), set(lane.HOSTED_FAST_CHECKS))
+        self.assertEqual(slept, [lane.HOSTED_FAST_POLL] * 2)
+
+    def test_the_wait_is_bounded_and_skipped_outside_a_lane_job(self):
+        head, tested, _ = self.pr()
+
+        def running(github, h, checks):
+            return None, f'"{next(iter(checks))}" had not finished on {h[:7]}'
+        for env, polls in (({**ON, 'GITHUB_ACTIONS': 'true'}, lane.HOSTED_FAST_WAIT // lane.HOSTED_FAST_POLL), (ON, 0)):
+            with self.subTest(env):
+                slept, now = [], [0.0]
+
+                def sleep(seconds):
+                    slept.append(seconds)
+                    now[0] += seconds
+                found, why = lane.hosted_fast_checks(None, self.tree, 'main', head, tested, env=env, records=running,
+                                                     clock=lambda: now[0], sleep=sleep, out=io.StringIO())
+                self.assertIsNone(found)
+                self.assertIn('had not finished', why)
+                self.assertEqual(len(slept), polls)
+
+    def test_a_failed_or_missing_check_is_not_waited_for(self):
+        head, tested, _ = self.pr()
+        slept = []
+        for why in ('"hosted fast: portable" ended failure on abc1234', 'no "vps fast: portable" check ran'):
+            found, said = lane.hosted_fast_checks(None, self.tree, 'main', head, tested,
+                                                  env={**ON, 'GITHUB_ACTIONS': 'true'},
+                                                  records=lambda github, h, checks, why=why: (None, why),
+                                                  sleep=slept.append, out=io.StringIO())
+            self.assertIsNone(found)
+        self.assertEqual(slept, [])
+
     def test_off_reads_only_the_vps_checks(self):
         head, tested, tree = self.pr()
         for env in ({}, {'LANE_HOSTED_FAST': ''}, {'LANE_HOSTED_FAST': 'off'}, {'LANE_HOSTED_FAST': 'yes'}):
