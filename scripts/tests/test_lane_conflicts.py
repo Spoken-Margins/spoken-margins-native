@@ -435,7 +435,7 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_it_runs_on_the_vps_from_the_base_branch_and_cannot_push(self):
         text = self.workflow.read_text()
         self.assertIn('runs-on: [self-hosted, Linux, sm-vps]', text)
-        self.assertIn("ref: ${{ github.event.pull_request.base.ref || 'next' }}", text)
+        self.assertIn("ref: ${{ github.event.pull_request.base.ref || vars.SM_TRUNK || 'main' }}", text)
         self.assertIn('persist-credentials: false', text)
         self.assertIn('contents: read', text)
         self.assertNotIn('contents: write', text)
