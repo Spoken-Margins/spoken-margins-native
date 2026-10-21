@@ -235,9 +235,10 @@ final class SkimBridgeControllerTests: XCTestCase {
         controller.perform(direction: .forward)
         controller.perform(direction: .forward)
         XCTAssertEqual(host.records.map { $0["outcome"] }, ["preparing_summary", "already_preparing"])
-        XCTAssertEqual(host.prepared.count, 1, "the second press does not prepare it again")
         XCTAssertTrue(host.log.contains("succeeded:Still preparing the scene summary."))
         try await waitForRecords(host, count: 3)
+        // The preparation runs in a task, so it is counted only once that task has run and settled.
+        XCTAssertEqual(host.prepared.count, 1, "the second press does not prepare it again")
     }
 
     /// Prepared, but a Margin's voice took the listener's ear meanwhile: the summary must not start over it.
