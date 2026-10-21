@@ -42,6 +42,7 @@ class WhatCountsAsMainThread(unittest.TestCase):
         cases = {
             'task detached': MODEL % '    func f() { Task.detached { _ = try? store?.listItems() } }',
             'detached with priority': MODEL % '    func f() { Task.detached(priority: .utility) { _ = try? store?.listItems() } }',
+            'detached result assigned to a local': MODEL % '    func f() async throws {\n        let n = try await Task.detached(priority: .utility) { try store?.listItems().count }.value\n        _ = n\n    }',
             'nonisolated async func': MODEL % '    nonisolated func f() async { _ = try? store?.listItems() }',
             'global dispatch queue': MODEL % '    func f() { DispatchQueue.global().async { _ = try? store?.listItems() } }',
             'task group child': MODEL % '    func f() async { await withTaskGroup(of: Int.self) { g in g.addTask { _ = try? store?.listItems(); return 1 } } }',
@@ -112,6 +113,48 @@ class HelpersAndLoops(unittest.TestCase):
     def test_a_variable_receiver_is_not_guessed(self):
         rows = scan(Loader=self.HELPER, Model=MODEL % '    func f(_ s: SQLiteSessionStore, thing: Other) { _ = thing.load(store: s) }')
         self.assertEqual(rows, [])
+
+    def test_a_variable_receiver_picks_its_declared_type_not_the_first_file(self):
+        # The audit on 6655e67: `engine.pause()` took the first type containing "engine", so an app file sorting
+        # ahead of SessionEngine stole the call and hid SessionEngine's reads.
+        kitten = 'final class KittenEngine {\n    func pause() { }\n}\n'
+        session = 'final class SessionEngine {\n    var store: SQLiteSessionStore?\n    func pause() { _ = try? store?.listItems() }\n}\n'
+        model = '@MainActor\nfinal class Model {\n    var engine: SessionEngine?\n    func f() { engine?.pause() }\n}\n'
+        rows = scan(AKitten=kitten, Session=session, Model=model)
+        self.assertEqual([r['api'] for r in rows if r['file'].endswith('Model.swift')], ['via SessionEngine.pause'])
+
+    def test_an_ambiguous_variable_receiver_is_skipped_and_counted(self):
+        kitten = 'final class KittenEngine {\n    var store: SQLiteSessionStore?\n    func pause() { _ = try? store?.listItems() }\n}\n'
+        session = 'final class SessionEngine {\n    var store: SQLiteSessionStore?\n    func pause() { _ = try? store?.listItems() }\n}\n'
+        model = '@MainActor\nfinal class Model {\n    func f(engine: AnyObject) { (engine as! SessionEngine).pause(); run(engine) }\n    func g() { let engine = make(); engine.pause() }\n}\n'
+        files = [(f'App/X/Sources/{n}.swift', s) for n, s in (('AKitten', kitten), ('Session', session), ('Model', model))]
+        rows, skipped = mtr.scan(files, APIS)
+        self.assertEqual([r['api'] for r in rows if r['file'].endswith('Model.swift')], [])
+        self.assertEqual(skipped['ambiguous-callee'], 1)
+
+    def test_a_local_reused_for_two_types_takes_the_nearest_declaration(self):
+        # Gate1AppModel+ImportInbox declares `let handoffStore = try resolved…HandoffStore()` twice, for two types.
+        link = 'final class SourceLinkHandoffStore {\n    func pendingPayloadIDs() throws -> [String] { try FileManager.default.contentsOfDirectory(atPath: "a") }\n}\n'
+        text = 'final class BrowserTextHandoffStore {\n    func pendingPayloadIDs() throws -> [String] { [] }\n}\n'
+        model = ('@MainActor\nfinal class Model {\n    func f() throws {\n'
+                 '        let handoffStore = try resolvedBrowserTextHandoffStore()\n        _ = try handoffStore.pendingPayloadIDs()\n'
+                 '        let other = 1\n    }\n    func g() throws {\n'
+                 '        let handoffStore = try resolvedSourceLinkHandoffStore()\n        _ = try handoffStore.pendingPayloadIDs()\n    }\n}\n')
+        rows = scan(ABrowser=text, Link=link, Model=model)
+        self.assertEqual([(r['function'], r['api']) for r in rows if r['file'].endswith('Model.swift')],
+                         [('Model.g', 'via SourceLinkHandoffStore.pendingPayloadIDs')])
+
+    def test_a_receiver_annotated_with_a_protocol_is_not_guessed(self):
+        impl = 'final class SupertonicSpeechClient {\n    func play() { _ = try? Data(contentsOf: URL(fileURLWithPath: "a")) }\n}\n'
+        model = '@MainActor\nfinal class Model {\n    let speech: SpeechClient\n    func f() { speech.play() }\n}\n'
+        self.assertEqual([r for r in scan(Impl=impl, Model=model) if r['file'].endswith('Model.swift')], [])
+
+    def test_a_variable_receiver_named_like_the_type_picks_that_type(self):
+        kitten = 'final class KittenSessionEngine {\n    func pause() { }\n}\n'
+        session = 'final class SessionEngine {\n    var store: SQLiteSessionStore?\n    func pause() { _ = try? store?.listItems() }\n}\n'
+        model = '@MainActor\nfinal class Model {\n    func f() { let sessionEngine = make(); sessionEngine.pause() }\n}\n'
+        rows = scan(AKitten=kitten, Session=session, Model=model)
+        self.assertEqual([r['api'] for r in rows if r['file'].endswith('Model.swift')], ['via SessionEngine.pause'])
 
     def test_loops_are_marked(self):
         body = ('    func f(_ ids: [String]) {\n        for id in ids { _ = try? store?.loadItem(id: id) }\n'
@@ -222,6 +265,14 @@ class TheRatchet(unittest.TestCase):
         self.run_main('--accept', 'existing')
         self.write('    func reload() { _ = try? store?.loadItem(id: "a"); _ = try? store?.loadItem(id: "b") }')
         self.assertEqual(self.run_main()[0], 1)
+
+    def test_a_second_call_can_be_accepted_and_keeps_both_reasons(self):
+        self.run_main('--accept', 'existing')
+        self.write('    func reload() { _ = try? store?.loadItem(id: "a"); _ = try? store?.loadItem(id: "b") }')
+        self.run_main('--accept', 'the second one too')
+        self.assertEqual(self.run_main()[0], 0)
+        [entry] = json.loads(self.baseline.read_text())['entries']
+        self.assertEqual((entry['count'], entry['reason']), (2, 'existing; the second one too'))
 
     def test_update_never_adds_a_row(self):
         self.run_main('--accept', 'existing')

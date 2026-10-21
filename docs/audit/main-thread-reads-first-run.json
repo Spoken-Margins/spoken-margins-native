@@ -2,37 +2,37 @@
  "version": 1,
  "ref": "worktree",
  "summary": {
-  "rows": 891,
+  "rows": 878,
   "by_class": {
    "file-io": 163,
-   "av-sync": 57,
-   "unlabelled-main-task": 115,
-   "store-heavy-decode": 233,
-   "store-write": 139,
+   "av-sync": 38,
+   "unlabelled-main-task": 124,
+   "store-heavy-decode": 231,
+   "store-write": 138,
    "store-whole-table-read": 79,
    "store-read": 105
   },
   "by_area": {
-   "groundwork": 249,
-   "pass-it-on": 63,
-   "answer-it": 113,
-   "hear-it-well": 279,
-   "get-it-in": 187
+   "groundwork": 252,
+   "pass-it-on": 60,
+   "answer-it": 110,
+   "hear-it-well": 265,
+   "get-it-in": 191
   },
   "by_class_and_area": {
-   "av-sync | answer-it": 12,
+   "av-sync | answer-it": 9,
    "av-sync | groundwork": 4,
-   "av-sync | hear-it-well": 38,
+   "av-sync | hear-it-well": 22,
    "av-sync | pass-it-on": 3,
-   "file-io | answer-it": 32,
-   "file-io | get-it-in": 36,
-   "file-io | groundwork": 31,
-   "file-io | hear-it-well": 49,
+   "file-io | answer-it": 33,
+   "file-io | get-it-in": 40,
+   "file-io | groundwork": 32,
+   "file-io | hear-it-well": 43,
    "file-io | pass-it-on": 15,
-   "store-heavy-decode | answer-it": 27,
+   "store-heavy-decode | answer-it": 26,
    "store-heavy-decode | get-it-in": 28,
    "store-heavy-decode | groundwork": 84,
-   "store-heavy-decode | hear-it-well": 74,
+   "store-heavy-decode | hear-it-well": 73,
    "store-heavy-decode | pass-it-on": 20,
    "store-read | answer-it": 15,
    "store-read | get-it-in": 27,
@@ -42,23 +42,24 @@
    "store-whole-table-read | answer-it": 5,
    "store-whole-table-read | get-it-in": 20,
    "store-whole-table-read | groundwork": 17,
-   "store-whole-table-read | hear-it-well": 34,
-   "store-whole-table-read | pass-it-on": 3,
+   "store-whole-table-read | hear-it-well": 35,
+   "store-whole-table-read | pass-it-on": 2,
    "store-write | answer-it": 9,
    "store-write | get-it-in": 39,
    "store-write | groundwork": 43,
    "store-write | hear-it-well": 43,
-   "store-write | pass-it-on": 5,
+   "store-write | pass-it-on": 4,
    "unlabelled-main-task | answer-it": 13,
    "unlabelled-main-task | get-it-in": 37,
-   "unlabelled-main-task | groundwork": 24,
-   "unlabelled-main-task | hear-it-well": 33,
-   "unlabelled-main-task | pass-it-on": 8
+   "unlabelled-main-task | groundwork": 26,
+   "unlabelled-main-task | hear-it-well": 41,
+   "unlabelled-main-task | pass-it-on": 7
   },
-  "in_loop": 68,
+  "in_loop": 86,
   "debug_only_not_counted": 0,
   "skipped": {
-   "unresolved-callee": 7038
+   "unresolved-callee": 6998,
+   "ambiguous-callee": 48
   }
  },
  "rows": [
@@ -130,24 +131,6 @@
    "detail": [
     "via Build23SharingCoordinator.currentDraftFingerprint"
    ]
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Build23SharingSeams.swift",
-   "line": 611,
-   "function": "Build23SharingCoordinator.preview",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "pass-it-on",
-   "api": "via Build23SharingCoordinator.roundTrippedPreview",
-   "class": "file-io",
-   "detail": [
-    "Data(contentsOf:)",
-    "SHA256",
-    "copy/move/removeItem",
-    "write(to:)"
-   ],
-   "kind": "helper"
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Build23SharingSeams.swift",
@@ -510,21 +493,6 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/EpisodeMapPreparer.swift",
-   "line": 203,
-   "function": "EpisodeMapPreparer.digest",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via PodcastAnchorEvidenceGenerator.exactEditionSHA256",
-   "class": "file-io",
-   "detail": [
-    "FileHandle"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/EpisodeMapPreparer.swift",
    "line": 263,
    "function": "EpisodeMapPreparer.run",
    "api": "Data(contentsOf:)",
@@ -850,6 +818,22 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceReactionsScreen.swift",
+   "line": 111,
+   "function": "ReactionsViewModel.configure",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "groundwork",
+   "api": "via ReactionSummaryStore.load",
+   "class": "file-io",
+   "detail": [
+    "Data(contentsOf:)",
+    "SHA256"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceReactionsScreen.swift",
    "line": 112,
    "function": "ReactionsViewModel.configure",
    "in_loop": false,
@@ -866,15 +850,16 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceReactionsScreen.swift",
-   "line": 256,
-   "function": "ExperienceReactionsScreen.summaryBlock",
+   "line": 114,
+   "function": "ReactionsViewModel.configure",
    "in_loop": false,
    "labelled": false,
    "debug": false,
    "area": "groundwork",
-   "api": "via StoredReactionSummary.isStale",
+   "api": "via ReactionSummaryStore.load",
    "class": "file-io",
    "detail": [
+    "Data(contentsOf:)",
     "SHA256"
    ],
    "kind": "helper"
@@ -1096,52 +1081,6 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+AudioClients.swift",
-   "line": 29,
-   "function": "Gate1AppModel.configureAudioPlaybackPolicy",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via PreparedAudioPlaybackClient.setMixesWithOtherAudio",
-   "class": "av-sync",
-   "detail": [
-    "AVAudioSession.setActive"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+AudioClients.swift",
-   "line": 30,
-   "function": "Gate1AppModel.configureAudioPlaybackPolicy",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via PreparedAudioPlaybackClient.setLowersBackgroundAudio",
-   "class": "av-sync",
-   "detail": [
-    "AVAudioSession.setActive"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+AudioClients.swift",
-   "line": 58,
-   "function": "Gate1AppModel.signatureTask",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via SupertonicRenderIdentity.current",
-   "class": "file-io",
-   "detail": [
-    "Data(contentsOf:)",
-    "SHA256"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+AudioClients.swift",
    "line": 73,
    "function": "Gate1AppModel.makeSpeechPlaybackClient",
    "in_loop": false,
@@ -1216,8 +1155,83 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+AudioClients.swift",
+   "line": 157,
+   "function": "Gate1AppModel.makeSpeechPlaybackClient",
+   "api": "Task {}",
+   "class": "unlabelled-main-task",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "kind": "task",
+   "area": "hear-it-well",
+   "detail": [
+    "via Gate1AppModel.recordSupertonicFallbackEvent"
+   ]
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+AudioClients.swift",
+   "line": 191,
+   "function": "Gate1AppModel.makeSpeechPlaybackClient",
+   "api": "Task {}",
+   "class": "unlabelled-main-task",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "kind": "task",
+   "area": "hear-it-well",
+   "detail": [
+    "via Gate1AppModel.reportBundledVoiceTookOver"
+   ]
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+AudioClients.swift",
+   "line": 199,
+   "function": "Gate1AppModel.makeSpeechPlaybackClient",
+   "api": "Task {}",
+   "class": "unlabelled-main-task",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "kind": "task",
+   "area": "hear-it-well",
+   "detail": [
+    "via Gate1AppModel.recordDeveloperDiagnostic"
+   ]
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+AudioClients.swift",
+   "line": 200,
+   "function": "Gate1AppModel.makeSpeechPlaybackClient",
+   "api": "Task {}",
+   "class": "unlabelled-main-task",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "kind": "task",
+   "area": "hear-it-well",
+   "detail": [
+    "via Gate1AppModel.recordDeveloperDiagnostic"
+   ]
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+AudioClients.swift",
+   "line": 201,
+   "function": "Gate1AppModel.makeSpeechPlaybackClient",
+   "api": "Task {}",
+   "class": "unlabelled-main-task",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "kind": "task",
+   "area": "hear-it-well",
+   "detail": [
+    "via Gate1AppModel.recordDeveloperDiagnostic"
+   ]
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+AudioClients.swift",
    "line": 323,
-   "function": "Gate1AppModel.client",
+   "function": "Gate1AppModel.makeMediaPlaybackClient",
    "api": "Task {}",
    "class": "unlabelled-main-task",
    "in_loop": false,
@@ -1247,6 +1261,21 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+AudioClients.swift",
+   "line": 340,
+   "function": "Gate1AppModel.makeMediaPlaybackClient",
+   "api": "Task {}",
+   "class": "unlabelled-main-task",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "kind": "task",
+   "area": "hear-it-well",
+   "detail": [
+    "via Gate1AppModel.recordDeveloperDiagnostic"
+   ]
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+AudioClients.swift",
    "line": 346,
    "function": "Gate1AppModel.makeMediaPlaybackClient",
    "api": "Task {}",
@@ -1258,6 +1287,21 @@
    "area": "hear-it-well",
    "detail": [
     "via Gate1AppModel.handleHeardSourceWindow"
+   ]
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+AudioClients.swift",
+   "line": 349,
+   "function": "Gate1AppModel.makeMediaPlaybackClient",
+   "api": "Task {}",
+   "class": "unlabelled-main-task",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "kind": "task",
+   "area": "hear-it-well",
+   "detail": [
+    "via Gate1AppModel.recordDeveloperDiagnostic"
    ]
   },
   {
@@ -1274,6 +1318,21 @@
    "detail": [
     "via Gate1AppModel.handlePostResumePodcastEvidence"
    ]
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+BatchExportSelection.swift",
+   "line": 16,
+   "function": "Gate1AppModel.openBatchExport",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "pass-it-on",
+   "api": "via SessionShareFiles.discard",
+   "class": "file-io",
+   "detail": [
+    "copy/move/removeItem"
+   ],
+   "kind": "helper"
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+ChapterNavigation.swift",
@@ -1311,9 +1370,6 @@
    "api": "via SessionEngine.playSourceFromBeginning",
    "class": "store-heavy-decode",
    "detail": [
-    "Data(contentsOf:)",
-    "contentsOfDirectory",
-    "copy/move/removeItem",
     "store.loadAIJobs",
     "store.loadInterjections",
     "store.loadItem",
@@ -1325,8 +1381,8 @@
     "store.saveItem",
     "store.savePreparedAudioManifest",
     "store.saveSession",
-    "store.transcriptTimelineStamp",
-    "write(to:)"
+    "store.saveTranscriptTimeline",
+    "store.transcriptTimelineStamp"
    ],
    "kind": "helper"
   },
@@ -1366,9 +1422,6 @@
    "api": "via SessionEngine.startSession",
    "class": "store-heavy-decode",
    "detail": [
-    "Data(contentsOf:)",
-    "contentsOfDirectory",
-    "copy/move/removeItem",
     "store.loadAIJobs",
     "store.loadInterjections",
     "store.loadItem",
@@ -1381,8 +1434,8 @@
     "store.saveItem",
     "store.savePreparedAudioManifest",
     "store.saveSession",
-    "store.transcriptTimelineStamp",
-    "write(to:)"
+    "store.saveTranscriptTimeline",
+    "store.transcriptTimelineStamp"
    ],
    "kind": "helper"
   },
@@ -1491,24 +1544,19 @@
    "area": "groundwork"
   },
   {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+DiagnosticsExport.swift",
-   "line": 19,
-   "function": "Gate1AppModel.outcome",
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+EngineInstall.swift",
+   "line": 27,
+   "function": "Gate1AppModel.installEngine",
+   "api": "Task {}",
+   "class": "unlabelled-main-task",
    "in_loop": false,
    "labelled": false,
    "debug": false,
-   "area": "pass-it-on",
-   "api": "via DiagnosticsExportInputs.writeFile",
-   "class": "store-whole-table-read",
+   "kind": "task",
+   "area": "hear-it-well",
    "detail": [
-    "SHA256",
-    "contentsOfDirectory",
-    "copy/move/removeItem",
-    "store.loadInterjections",
-    "store.loadSessions",
-    "write(to:)"
-   ],
-   "kind": "helper"
+    "via Gate1AppModel.recordDeveloperDiagnostic"
+   ]
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+EngineInstall.swift",
@@ -1626,10 +1674,10 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+EpisodeMapPreparation.swift",
    "line": 186,
-   "function": "Gate1AppModel.candidates",
+   "function": "Gate1AppModel.submitAutomaticEpisodeMapPreparationIfNeeded",
    "api": "store.loadEditionFingerprintSpine",
    "class": "store-heavy-decode",
-   "in_loop": false,
+   "in_loop": true,
    "labelled": false,
    "debug": false,
    "kind": "direct",
@@ -1638,10 +1686,10 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+EpisodeMapPreparation.swift",
    "line": 187,
-   "function": "Gate1AppModel.candidates",
+   "function": "Gate1AppModel.submitAutomaticEpisodeMapPreparationIfNeeded",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
-   "in_loop": false,
+   "in_loop": true,
    "labelled": false,
    "debug": false,
    "kind": "direct",
@@ -1720,13 +1768,9 @@
    "debug": false,
    "area": "pass-it-on",
    "api": "via SessionShareFiles.build",
-   "class": "store-write",
+   "class": "file-io",
    "detail": [
-    "contentsOfDirectory",
     "copy/move/removeItem",
-    "store.reset",
-    "store.savePodcastDownload",
-    "store.seed",
     "write(to:)"
    ],
    "kind": "helper"
@@ -1734,7 +1778,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+Export.swift",
    "line": 97,
-   "function": "Gate1AppModel.files",
+   "function": "Gate1AppModel.prepareSelectedSessionsForSharing",
    "in_loop": false,
    "labelled": false,
    "debug": false,
@@ -1758,36 +1802,6 @@
     "store.transcriptTimelineStamp"
    ],
    "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+Export.swift",
-   "line": 117,
-   "function": "Gate1AppModel.batchShareSheetFinished",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "pass-it-on",
-   "api": "via SessionShareFiles.discard",
-   "class": "file-io",
-   "detail": [
-    "copy/move/removeItem"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+Export.swift",
-   "line": 134,
-   "function": "Gate1AppModel.batchShareSheetDismissed",
-   "api": "Task {}",
-   "class": "unlabelled-main-task",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "kind": "task",
-   "area": "pass-it-on",
-   "detail": [
-    "via Gate1AppModel.batchShareSheetFinished"
-   ]
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+Export.swift",
@@ -1907,6 +1921,7 @@
    "detail": [
     "via Gate1AppModel.loadItemDetail",
     "via Gate1AppModel.loadLibraryRows",
+    "via Gate1AppModel.reportAddedToLibrary",
     "via Gate1AppModel.requireLocalSourceImporter",
     "via Gate1AppModel.scheduleTextAudioPrewarmIfNeeded"
    ]
@@ -1926,6 +1941,7 @@
     "via Gate1AppModel.loadItemDetail",
     "via Gate1AppModel.loadLibraryRows",
     "via Gate1AppModel.refreshSpokenMarginsPackageImportAfterAddingSource",
+    "via Gate1AppModel.reportAddedToLibrary",
     "via Gate1AppModel.requireLocalSourceImporter"
    ]
   },
@@ -2186,6 +2202,7 @@
    "detail": [
     "store.loadFeedSubscriptions",
     "store.loadItem",
+    "store.loadSourceSuggestionDecision",
     "store.saveSourceSuggestionDecision"
    ]
   },
@@ -2228,7 +2245,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+FollowedSources.swift",
    "line": 270,
-   "function": "Gate1AppModel.eligible",
+   "function": "Gate1AppModel.offerFollowSuggestionIfEligible",
    "api": "store.loadSourceSuggestionDecision",
    "class": "store-read",
    "in_loop": false,
@@ -2333,7 +2350,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+FollowedSources.swift",
    "line": 348,
-   "function": "Gate1AppModel.decisions",
+   "function": "Gate1AppModel.persistSourceFollowSuggestionDecision",
    "api": "store.loadSourceSuggestionDecision",
    "class": "store-read",
    "in_loop": false,
@@ -2396,7 +2413,6 @@
     "store.loadFeedSubscriptions",
     "store.loadPublisherAudio",
     "store.savePublisherAudio",
-    "via FollowedArticleImport.handoff",
     "via Gate1AppModel.importBrowserTextInBackground",
     "via Gate1AppModel.importBrowserTextItem",
     "via Gate1AppModel.importSourceLinkInBackground",
@@ -2506,7 +2522,8 @@
    "area": "get-it-in",
    "detail": [
     "via Gate1AppModel.performFollowedSourceRefresh",
-    "via Gate1AppModel.reloadFollowedSourceEntries"
+    "via Gate1AppModel.reloadFollowedSourceEntries",
+    "via Gate1AppModel.undoClearedFollowedSourceEntries"
    ]
   },
   {
@@ -2558,7 +2575,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+ImportInbox.swift",
    "line": 122,
-   "function": "Gate1AppModel.report",
+   "function": "Gate1AppModel.importPendingHandoffsAsync",
    "in_loop": false,
    "labelled": false,
    "debug": false,
@@ -2603,83 +2620,6 @@
    "kind": "helper"
   },
   {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+ImportInbox.swift",
-   "line": 137,
-   "function": "Gate1AppModel.importPendingHandoffsAsync",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "get-it-in",
-   "api": "via SourceLinkHandoffStore.pendingPayloadIDs",
-   "class": "file-io",
-   "detail": [
-    "contentsOfDirectory"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+ImportInbox.swift",
-   "line": 141,
-   "function": "Gate1AppModel.importPendingHandoffsAsync",
-   "in_loop": true,
-   "labelled": false,
-   "debug": false,
-   "area": "get-it-in",
-   "api": "via SourceLinkHandoffStore.handoff",
-   "class": "file-io",
-   "detail": [
-    "Data(contentsOf:)"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+ImportInbox.swift",
-   "line": 143,
-   "function": "Gate1AppModel.importPendingHandoffsAsync",
-   "in_loop": true,
-   "labelled": false,
-   "debug": false,
-   "area": "get-it-in",
-   "api": "via SourceLinkHandoffStore.deletePayload",
-   "class": "file-io",
-   "detail": [
-    "copy/move/removeItem"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+ImportInbox.swift",
-   "line": 146,
-   "function": "Gate1AppModel.importPendingHandoffsAsync",
-   "in_loop": true,
-   "labelled": false,
-   "debug": false,
-   "area": "get-it-in",
-   "api": "via SourceLinkHandoffStore.deletePayload",
-   "class": "file-io",
-   "detail": [
-    "copy/move/removeItem"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+ImportInbox.swift",
-   "line": 154,
-   "function": "Gate1AppModel.importPendingHandoffsAsync",
-   "in_loop": true,
-   "labelled": false,
-   "debug": false,
-   "area": "get-it-in",
-   "api": "via SourceLinkHandoffStore.quarantine",
-   "class": "file-io",
-   "detail": [
-    "Data(contentsOf:)",
-    "copy/move/removeItem",
-    "write(to:)"
-   ],
-   "kind": "helper"
-  },
-  {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+KittenVoice.swift",
    "line": 27,
    "function": "Gate1AppModel.previewKittenVoice",
@@ -2697,7 +2637,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+LibraryAudioPass.swift",
    "line": 34,
-   "function": "Gate1AppModel.progressToken",
+   "function": "Gate1AppModel.performBackgroundPreparationPass",
    "api": "store.loadAudioPreparationJobs",
    "class": "store-whole-table-read",
    "in_loop": false,
@@ -2709,7 +2649,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+LibraryAudioPass.swift",
    "line": 35,
-   "function": "Gate1AppModel.progressToken",
+   "function": "Gate1AppModel.performBackgroundPreparationPass",
    "api": "store.loadEpisodeMapPreparationJobs",
    "class": "store-whole-table-read",
    "in_loop": false,
@@ -2793,7 +2733,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+LibraryAudioPass.swift",
    "line": 137,
-   "function": "Gate1AppModel.hasMoreMatchingJobs",
+   "function": "Gate1AppModel.preparationPassInTurn",
    "api": "store.loadAudioPreparationJobs",
    "class": "store-whole-table-read",
    "in_loop": false,
@@ -2837,22 +2777,6 @@
    "debug": false,
    "kind": "direct",
    "area": "hear-it-well"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+LibraryAudioPass.swift",
-   "line": 162,
-   "function": "Gate1AppModel.signature",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via SupertonicRenderIdentity.make",
-   "class": "file-io",
-   "detail": [
-    "Data(contentsOf:)",
-    "SHA256"
-   ],
-   "kind": "helper"
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+LibraryAudioPass.swift",
@@ -2961,7 +2885,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+LibraryAudioPass.swift",
    "line": 254,
-   "function": "Gate1AppModel.needsAssembly",
+   "function": "Gate1AppModel.preparationPassInTurn",
    "api": "store.loadAudioPreparationJobs",
    "class": "store-whole-table-read",
    "in_loop": false,
@@ -2973,7 +2897,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+LibraryAudioPass.swift",
    "line": 260,
-   "function": "Gate1AppModel.needsAssembly",
+   "function": "Gate1AppModel.preparationPassInTurn",
    "api": "store.saveAudioPreparationJob",
    "class": "store-write",
    "in_loop": false,
@@ -2985,7 +2909,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+LibraryAudioPass.swift",
    "line": 268,
-   "function": "Gate1AppModel.needsAssembly",
+   "function": "Gate1AppModel.preparationPassInTurn",
    "api": "store.saveAudioPreparationJob",
    "class": "store-write",
    "in_loop": false,
@@ -2997,7 +2921,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+LibraryAudioPass.swift",
    "line": 270,
-   "function": "Gate1AppModel.needsAssembly",
+   "function": "Gate1AppModel.preparationPassInTurn",
    "api": "store.deleteAudioPreparationJob",
    "class": "store-write",
    "in_loop": false,
@@ -3009,7 +2933,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+LibraryAudioPass.swift",
    "line": 274,
-   "function": "Gate1AppModel.needsAssembly",
+   "function": "Gate1AppModel.preparationPassInTurn",
    "api": "store.saveAudioPreparationJob",
    "class": "store-write",
    "in_loop": false,
@@ -3021,7 +2945,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+LibraryAudioPass.swift",
    "line": 277,
-   "function": "Gate1AppModel.needsAssembly",
+   "function": "Gate1AppModel.preparationPassInTurn",
    "api": "store.saveAudioPreparationJob",
    "class": "store-write",
    "in_loop": false,
@@ -3239,22 +3163,6 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+LibraryAudioQueue.swift",
-   "line": 116,
-   "function": "Gate1AppModel.signature",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via SupertonicRenderIdentity.make",
-   "class": "file-io",
-   "detail": [
-    "Data(contentsOf:)",
-    "SHA256"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+LibraryAudioQueue.swift",
    "line": 129,
    "function": "Gate1AppModel.enqueueStartupAudioPreparation",
    "in_loop": false,
@@ -3469,22 +3377,6 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+LibraryAudioQueue.swift",
-   "line": 349,
-   "function": "Gate1AppModel.signature",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via SupertonicRenderIdentity.make",
-   "class": "file-io",
-   "detail": [
-    "Data(contentsOf:)",
-    "SHA256"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+LibraryAudioQueue.swift",
    "line": 368,
    "function": "Gate1AppModel.enqueueExplicitAudioPreparation",
    "in_loop": false,
@@ -3499,22 +3391,6 @@
     "store.loadItem",
     "store.loadPreparedAudioManifest",
     "store.saveAudioPreparationJob"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+LibraryAudioQueue.swift",
-   "line": 391,
-   "function": "Gate1AppModel.signature",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via SupertonicRenderIdentity.make",
-   "class": "file-io",
-   "detail": [
-    "Data(contentsOf:)",
-    "SHA256"
    ],
    "kind": "helper"
   },
@@ -3587,8 +3463,11 @@
    "api": "via UITestingLaunchSeedWriter.importCoopLayerIfRequested",
    "class": "store-read",
    "detail": [
+    "contentsOfDirectory",
+    "copy/move/removeItem",
     "store.importCommentaryLayer",
-    "store.loadImportedCommentaryLayer"
+    "store.loadImportedCommentaryLayer",
+    "write(to:)"
    ],
    "kind": "helper"
   },
@@ -4079,8 +3958,7 @@
     "store.saveInterjection",
     "store.saveItem",
     "store.saveSession",
-    "store.transcriptTimelineStamp",
-    "write(to:)"
+    "store.transcriptTimelineStamp"
    ],
    "kind": "helper"
   },
@@ -4312,10 +4190,10 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginCuration.swift",
    "line": 131,
-   "function": "Gate1AppModel.candidates",
+   "function": "Gate1AppModel.setInterjectionStarredForSharing",
    "api": "store.loadInterjections",
    "class": "store-read",
-   "in_loop": false,
+   "in_loop": true,
    "labelled": false,
    "debug": false,
    "kind": "direct",
@@ -4360,10 +4238,10 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginCuration.swift",
    "line": 169,
-   "function": "Gate1AppModel.candidates",
+   "function": "Gate1AppModel.setInterjectionPrivateSharingNote",
    "api": "store.loadInterjections",
    "class": "store-read",
-   "in_loop": false,
+   "in_loop": true,
    "labelled": false,
    "debug": false,
    "kind": "direct",
@@ -4450,6 +4328,38 @@
    "kind": "helper"
   },
   {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginLeveling.swift",
+   "line": 21,
+   "function": "Gate1AppModel.leveledMarginURL",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "answer-it",
+   "api": "via LeveledMarginCache.readyCopy",
+   "class": "file-io",
+   "detail": [
+    "FileHandle",
+    "contentsOfDirectory"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginLeveling.swift",
+   "line": 54,
+   "function": "Gate1AppModel.leveledVoiceURL",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "answer-it",
+   "api": "via LeveledMarginCache.readyCopy",
+   "class": "file-io",
+   "detail": [
+    "FileHandle",
+    "contentsOfDirectory"
+   ],
+   "kind": "helper"
+  },
+  {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginMarkdownShare.swift",
    "line": 11,
    "function": "Gate1AppModel.marginMarkdownFileURL",
@@ -4480,8 +4390,8 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginMarkdownShare.swift",
    "line": 12,
-   "function": "Gate1AppModel.file",
-   "in_loop": false,
+   "function": "Gate1AppModel.marginMarkdownFileURL",
+   "in_loop": true,
    "labelled": false,
    "debug": false,
    "area": "answer-it",
@@ -4523,10 +4433,10 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginVoiceHold.swift",
    "line": 108,
-   "function": "Gate1AppModel.margin",
+   "function": "Gate1AppModel.handOffPlayingMarginToRecording",
    "api": "store.loadInterjections",
    "class": "store-read",
-   "in_loop": false,
+   "in_loop": true,
    "labelled": false,
    "debug": false,
    "kind": "direct",
@@ -4658,126 +4568,6 @@
    "area": "answer-it"
   },
   {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MixWithOtherAudio.swift",
-   "line": 48,
-   "function": "Gate1AppModel.setMixesWithOtherAudio",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via PreparedAudioPlaybackClient.setMixesWithOtherAudio",
-   "class": "av-sync",
-   "detail": [
-    "AVAudioSession.setActive"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MixWithOtherAudio.swift",
-   "line": 51,
-   "function": "Gate1AppModel.setMixesWithOtherAudio",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via PreparedAudioPlaybackClient.setLowersBackgroundAudio",
-   "class": "av-sync",
-   "detail": [
-    "AVAudioSession.setActive"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MixWithOtherAudio.swift",
-   "line": 52,
-   "function": "Gate1AppModel.setMixesWithOtherAudio",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via PreparedAudioPlaybackClient.setMixesWithOtherAudio",
-   "class": "av-sync",
-   "detail": [
-    "AVAudioSession.setActive"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MixWithOtherAudio.swift",
-   "line": 64,
-   "function": "Gate1AppModel.setMixesWithOtherAudio",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via PreparedAudioPlaybackClient.setMixesWithOtherAudio",
-   "class": "av-sync",
-   "detail": [
-    "AVAudioSession.setActive"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MixWithOtherAudio.swift",
-   "line": 71,
-   "function": "Gate1AppModel.setMixesWithOtherAudio",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via PreparedAudioPlaybackClient.setMixesWithOtherAudio",
-   "class": "av-sync",
-   "detail": [
-    "AVAudioSession.setActive"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MixWithOtherAudio.swift",
-   "line": 72,
-   "function": "Gate1AppModel.setMixesWithOtherAudio",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via PreparedAudioPlaybackClient.setLowersBackgroundAudio",
-   "class": "av-sync",
-   "detail": [
-    "AVAudioSession.setActive"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MixWithOtherAudio.swift",
-   "line": 83,
-   "function": "Gate1AppModel.setLowersBackgroundAudio",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via PreparedAudioPlaybackClient.setLowersBackgroundAudio",
-   "class": "av-sync",
-   "detail": [
-    "AVAudioSession.setActive"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MixWithOtherAudio.swift",
-   "line": 86,
-   "function": "Gate1AppModel.setLowersBackgroundAudio",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via PreparedAudioPlaybackClient.setLowersBackgroundAudio",
-   "class": "av-sync",
-   "detail": [
-    "AVAudioSession.setActive"
-   ],
-   "kind": "helper"
-  },
-  {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+NarrationOwnership.swift",
    "line": 31,
    "function": "Gate1AppModel.reconcileNarrationOwnership",
@@ -4830,7 +4620,6 @@
    "kind": "task",
    "area": "hear-it-well",
    "detail": [
-    "via MarginOutputCoordinator.retry",
     "via SupertonicSpeechPlaybackClient.retryOnDeviceRendering"
    ]
   },
@@ -4845,6 +4634,7 @@
    "api": "via SupertonicSpeechPlaybackClient.retryOnDeviceRendering",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -4877,14 +4667,119 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+Onboarding.swift",
    "line": 74,
-   "function": "Gate1AppModel.hasSavedInterjection",
+   "function": "Gate1AppModel.reconcileOnboardingEvidence",
    "api": "store.loadInterjections",
    "class": "store-read",
-   "in_loop": false,
+   "in_loop": true,
    "labelled": false,
    "debug": false,
    "kind": "direct",
    "area": "get-it-in"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+PackageImport.swift",
+   "line": 23,
+   "function": "Gate1AppModel.consumePendingSpokenMarginsPackageHandoffs",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "get-it-in",
+   "api": "via SpokenMarginsPackageHandoffStore.pendingPayloadIDs",
+   "class": "file-io",
+   "detail": [
+    "contentsOfDirectory"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+PackageImport.swift",
+   "line": 28,
+   "function": "Gate1AppModel.consumePendingSpokenMarginsPackageHandoffs",
+   "in_loop": true,
+   "labelled": false,
+   "debug": false,
+   "area": "get-it-in",
+   "api": "via SpokenMarginsPackageHandoffStore.deletePackage",
+   "class": "file-io",
+   "detail": [
+    "copy/move/removeItem"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+PackageImport.swift",
+   "line": 42,
+   "function": "Gate1AppModel.consumePendingSpokenMarginsPackageHandoffs",
+   "in_loop": true,
+   "labelled": false,
+   "debug": false,
+   "area": "get-it-in",
+   "api": "via SpokenMarginsPackageHandoffStore.deletePackage",
+   "class": "file-io",
+   "detail": [
+    "copy/move/removeItem"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+PackageImport.swift",
+   "line": 54,
+   "function": "Gate1AppModel.consumePendingSpokenMarginsPackageHandoffs",
+   "in_loop": true,
+   "labelled": false,
+   "debug": false,
+   "area": "get-it-in",
+   "api": "via SpokenMarginsPackageHandoffStore.deletePackage",
+   "class": "file-io",
+   "detail": [
+    "copy/move/removeItem"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+PackageImport.swift",
+   "line": 58,
+   "function": "Gate1AppModel.consumePendingSpokenMarginsPackageHandoffs",
+   "in_loop": true,
+   "labelled": false,
+   "debug": false,
+   "area": "get-it-in",
+   "api": "via SpokenMarginsPackageHandoffStore.deletePackage",
+   "class": "file-io",
+   "detail": [
+    "copy/move/removeItem"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+PackageImport.swift",
+   "line": 65,
+   "function": "Gate1AppModel.consumePendingSpokenMarginsPackageHandoffs",
+   "in_loop": true,
+   "labelled": false,
+   "debug": false,
+   "area": "get-it-in",
+   "api": "via SpokenMarginsPackageHandoffStore.deletePackage",
+   "class": "file-io",
+   "detail": [
+    "copy/move/removeItem"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+PackageImport.swift",
+   "line": 68,
+   "function": "Gate1AppModel.consumePendingSpokenMarginsPackageHandoffs",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "get-it-in",
+   "api": "via SpokenMarginsPackageHandoffStore.pendingPayloadIDs",
+   "class": "file-io",
+   "detail": [
+    "contentsOfDirectory"
+   ],
+   "kind": "helper"
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+PackageImport.swift",
@@ -4992,7 +4887,8 @@
    "kind": "task",
    "area": "get-it-in",
    "detail": [
-    "via Gate1AppModel.prepareSummaryBridgeAsset"
+    "via Gate1AppModel.prepareSummaryBridgeAsset",
+    "via Gate1AppModel.updateSkimAvailability"
    ]
   },
   {
@@ -5018,6 +4914,21 @@
    "debug": false,
    "kind": "direct",
    "area": "groundwork"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+PermanentDeleteFiles.swift",
+   "line": 27,
+   "function": "Gate1AppModel.removeMarginRecordings",
+   "in_loop": true,
+   "labelled": false,
+   "debug": false,
+   "area": "groundwork",
+   "api": "via LeveledMarginCache.removeCopies",
+   "class": "file-io",
+   "detail": [
+    "FileHandle"
+   ],
+   "kind": "helper"
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+PermanentDeleteFiles.swift",
@@ -5072,6 +4983,7 @@
    "api": "via SupertonicSpeechPlaybackClient.stopOnDeviceRenderingAndUseSystemSpeech",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -5373,7 +5285,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+PodcastDownloadStatus.swift",
    "line": 16,
-   "function": "Gate1AppModel.isRemoteStream",
+   "function": "Gate1AppModel.selectedPodcastDownloadState",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
    "in_loop": false,
@@ -5722,36 +5634,6 @@
    "area": "answer-it"
   },
   {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+RemotePDF.swift",
-   "line": 33,
-   "function": "Gate1AppModel.extracted",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "get-it-in",
-   "api": "via NativePDFDocumentExtractor.extractStructured",
-   "class": "file-io",
-   "detail": [
-    "SHA256"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+RemotePDF.swift",
-   "line": 61,
-   "function": "Gate1AppModel.extracted",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "get-it-in",
-   "api": "via NativePDFDocumentExtractor.extractStructured",
-   "class": "file-io",
-   "detail": [
-    "SHA256"
-   ],
-   "kind": "helper"
-  },
-  {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+RemoteProvider.swift",
    "line": 10,
    "function": "Gate1AppModel.recoverInterruptedAIJobs",
@@ -5831,8 +5713,7 @@
     "via Gate1AppModel.syncPlaybackProgressBeforeGeneratedTurnDecision",
     "via SessionEngine.activateStreamingTurn",
     "via SessionEngine.aiJobCompleted",
-    "via SessionEngine.aiStreamDelta",
-    "via StreamingSpeechQueue.enqueue"
+    "via SessionEngine.aiStreamDelta"
    ]
   },
   {
@@ -5945,9 +5826,12 @@
     "store.loadAIJobs",
     "store.loadInterjections",
     "store.loadItem",
+    "store.loadSession",
     "store.loadTranscriptTimeline",
     "store.loadTurns",
-    "store.transcriptTimelineStamp"
+    "store.saveTurn",
+    "store.transcriptTimelineStamp",
+    "store.updateAIJob"
    ],
    "kind": "helper"
   },
@@ -6625,42 +6509,7 @@
    "api": "via SessionEngine.importSourceLink",
    "class": "store-heavy-decode",
    "detail": [
-    "Data(contentsOf:)",
     "SHA256",
-    "copy/move/removeItem",
-    "store.loadAIJobs",
-    "store.loadInterjections",
-    "store.loadItem",
-    "store.loadListeningMap",
-    "store.loadPublisherAudio",
-    "store.loadSession",
-    "store.loadTranscriptTimeline",
-    "store.loadTurns",
-    "store.removeCommunityMap",
-    "store.saveItem",
-    "store.saveListeningMap",
-    "store.saveSession",
-    "store.saveTranscriptTimeline",
-    "store.transcriptTimelineStamp",
-    "write(to:)"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+SourceLinkForeground.swift",
-   "line": 203,
-   "function": "Gate1AppModel.importResolvedSourceLink",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "get-it-in",
-   "api": "via SessionEngine.importResolvedSourceLink",
-   "class": "store-heavy-decode",
-   "detail": [
-    "Data(contentsOf:)",
-    "SHA256",
-    "contentsOfDirectory",
-    "copy/move/removeItem",
     "store.loadAIJobs",
     "store.loadInterjections",
     "store.loadItem",
@@ -6676,8 +6525,38 @@
     "store.savePreparedAudioManifest",
     "store.saveSession",
     "store.saveTranscriptTimeline",
-    "store.transcriptTimelineStamp",
-    "write(to:)"
+    "store.transcriptTimelineStamp"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+SourceLinkForeground.swift",
+   "line": 203,
+   "function": "Gate1AppModel.importResolvedSourceLink",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "get-it-in",
+   "api": "via SessionEngine.importResolvedSourceLink",
+   "class": "store-heavy-decode",
+   "detail": [
+    "SHA256",
+    "store.loadAIJobs",
+    "store.loadInterjections",
+    "store.loadItem",
+    "store.loadListeningMap",
+    "store.loadPreparedAudioManifests",
+    "store.loadPublisherAudio",
+    "store.loadSession",
+    "store.loadTranscriptTimeline",
+    "store.loadTurns",
+    "store.removeCommunityMap",
+    "store.saveItem",
+    "store.saveListeningMap",
+    "store.savePreparedAudioManifest",
+    "store.saveSession",
+    "store.saveTranscriptTimeline",
+    "store.transcriptTimelineStamp"
    ],
    "kind": "helper"
   },
@@ -6710,6 +6589,23 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+SourceWindowContext.swift",
+   "line": 34,
+   "function": "Gate1AppModel.handleHeardSourceWindow",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "get-it-in",
+   "api": "via HeardSourceWindowFiles.store",
+   "class": "file-io",
+   "detail": [
+    "contentsOfDirectory",
+    "copy/move/removeItem",
+    "write(to:)"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+SourceWindowContext.swift",
    "line": 42,
    "function": "Gate1AppModel.handleHeardSourceWindow",
    "api": "store.loadInterjections",
@@ -6719,6 +6615,21 @@
    "debug": false,
    "kind": "direct",
    "area": "get-it-in"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+SourceWindowContext.swift",
+   "line": 45,
+   "function": "Gate1AppModel.handleHeardSourceWindow",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "get-it-in",
+   "api": "via HeardSourceWindowFiles.discard",
+   "class": "file-io",
+   "detail": [
+    "copy/move/removeItem"
+   ],
+   "kind": "helper"
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+SourceWindowContext.swift",
@@ -6924,6 +6835,21 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+SourceWindowContext.swift",
+   "line": 155,
+   "function": "Gate1AppModel.scheduleSourceWindowContextIfNeeded",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "get-it-in",
+   "api": "via HeardSourceWindowFiles.discard",
+   "class": "file-io",
+   "detail": [
+    "copy/move/removeItem"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+SourceWindowContext.swift",
    "line": 187,
    "function": "Gate1AppModel.scheduleSourceWindowContextIfNeeded",
    "in_loop": false,
@@ -6953,6 +6879,21 @@
     "store.loadInterjections",
     "store.loadSession",
     "store.saveInterjection"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+SourceWindowContext.swift",
+   "line": 229,
+   "function": "Gate1AppModel.scheduleSourceWindowContextIfNeeded",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "get-it-in",
+   "api": "via HeardSourceWindowFiles.discard",
+   "class": "file-io",
+   "detail": [
+    "copy/move/removeItem"
    ],
    "kind": "helper"
   },
@@ -7572,9 +7513,6 @@
    "api": "via SessionEngine.startSession",
    "class": "store-heavy-decode",
    "detail": [
-    "Data(contentsOf:)",
-    "contentsOfDirectory",
-    "copy/move/removeItem",
     "store.loadAIJobs",
     "store.loadInterjections",
     "store.loadItem",
@@ -7587,8 +7525,8 @@
     "store.saveItem",
     "store.savePreparedAudioManifest",
     "store.saveSession",
-    "store.transcriptTimelineStamp",
-    "write(to:)"
+    "store.saveTranscriptTimeline",
+    "store.transcriptTimelineStamp"
    ],
    "kind": "helper"
   },
@@ -7622,7 +7560,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+TermsGate.swift",
    "line": 12,
-   "function": "Gate1AppModel.itemId",
+   "function": "Gate1AppModel.requireTermsDecisionBeforePlayback",
    "api": "store.loadSession",
    "class": "store-read",
    "in_loop": false,
@@ -7634,10 +7572,10 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+TermsGate.swift",
    "line": 14,
-   "function": "Gate1AppModel.item",
+   "function": "Gate1AppModel.requireTermsDecisionBeforePlayback",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
-   "in_loop": false,
+   "in_loop": true,
    "labelled": false,
    "debug": false,
    "kind": "direct",
@@ -7807,10 +7745,10 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+TrashUndo.swift",
    "line": 137,
-   "function": "Gate1AppModel.items",
+   "function": "Gate1AppModel.permanentlyDeleteRecentlyDeletedItems",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
-   "in_loop": false,
+   "in_loop": true,
    "labelled": false,
    "debug": false,
    "kind": "direct",
@@ -7819,10 +7757,10 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+TrashUndo.swift",
    "line": 143,
-   "function": "Gate1AppModel.recordings",
+   "function": "Gate1AppModel.permanentlyDeleteRecentlyDeletedItems",
    "api": "store.loadInterjections",
    "class": "store-read",
-   "in_loop": false,
+   "in_loop": true,
    "labelled": false,
    "debug": false,
    "kind": "direct",
@@ -7831,10 +7769,10 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+TrashUndo.swift",
    "line": 144,
-   "function": "Gate1AppModel.quarantinedRecordings",
+   "function": "Gate1AppModel.permanentlyDeleteRecentlyDeletedItems",
    "api": "store.quarantinedMarginAudioPaths",
    "class": "store-read",
-   "in_loop": false,
+   "in_loop": true,
    "labelled": false,
    "debug": false,
    "kind": "direct",
@@ -8065,7 +8003,7 @@
    "labelled": false,
    "debug": false,
    "area": "answer-it",
-   "api": "via RecordingDraftJournal.remove",
+   "api": "via WrittenMarginDraftJournal.remove",
    "class": "file-io",
    "detail": [
     "copy/move/removeItem"
@@ -8080,7 +8018,7 @@
    "labelled": false,
    "debug": false,
    "area": "answer-it",
-   "api": "via RecordingDraftJournal.load",
+   "api": "via WrittenMarginDraftJournal.load",
    "class": "file-io",
    "detail": [
     "Data(contentsOf:)",
@@ -8348,7 +8286,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
    "line": 1189,
-   "function": "Gate1AppModel.entries",
+   "function": "Gate1AppModel.refreshMarginRows",
    "api": "store.loadListeningMap",
    "class": "store-heavy-decode",
    "in_loop": false,
@@ -8462,14 +8400,14 @@
    "debug": false,
    "area": "groundwork",
    "api": "via SessionEngine.importBrowserText",
-   "class": "store-heavy-decode",
+   "class": "store-whole-table-read",
    "detail": [
-    "Data(contentsOf:)",
     "SHA256",
-    "contentsOfDirectory",
-    "copy/move/removeItem",
     "store.applyStructuredDocumentUpgrade",
+    "store.deleteAudioPreparationJob",
+    "store.deletePreparedAudioManifest",
     "store.loadAIJobs",
+    "store.loadAudioPreparationJobs",
     "store.loadImportedCommentaryLayers",
     "store.loadInterjections",
     "store.loadItem",
@@ -8486,8 +8424,8 @@
     "store.savePreparedAudioManifest",
     "store.saveSession",
     "store.saveStructuredDocument",
-    "store.transcriptTimelineStamp",
-    "write(to:)"
+    "store.saveTranscriptTimeline",
+    "store.transcriptTimelineStamp"
    ],
    "kind": "helper"
   },
@@ -8502,9 +8440,6 @@
    "api": "via SessionEngine.startSession",
    "class": "store-heavy-decode",
    "detail": [
-    "Data(contentsOf:)",
-    "contentsOfDirectory",
-    "copy/move/removeItem",
     "store.loadAIJobs",
     "store.loadInterjections",
     "store.loadItem",
@@ -8517,8 +8452,8 @@
     "store.saveItem",
     "store.savePreparedAudioManifest",
     "store.saveSession",
-    "store.transcriptTimelineStamp",
-    "write(to:)"
+    "store.saveTranscriptTimeline",
+    "store.transcriptTimelineStamp"
    ],
    "kind": "helper"
   },
@@ -9038,9 +8973,6 @@
    "api": "via SessionEngine.playSourceFromBeginning",
    "class": "store-heavy-decode",
    "detail": [
-    "Data(contentsOf:)",
-    "contentsOfDirectory",
-    "copy/move/removeItem",
     "store.loadAIJobs",
     "store.loadInterjections",
     "store.loadItem",
@@ -9052,8 +8984,8 @@
     "store.saveItem",
     "store.savePreparedAudioManifest",
     "store.saveSession",
-    "store.transcriptTimelineStamp",
-    "write(to:)"
+    "store.saveTranscriptTimeline",
+    "store.transcriptTimelineStamp"
    ],
    "kind": "helper"
   },
@@ -9198,16 +9130,31 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2363,
+   "line": 2359,
    "function": "Gate1AppModel.handleIncomingURL",
    "in_loop": false,
    "labelled": false,
    "debug": false,
    "area": "groundwork",
-   "api": "via SourceLinkHandoffStore.deletePayload",
+   "api": "via Gate5BrowserTextHandoffURL.handoff",
    "class": "file-io",
    "detail": [
-    "copy/move/removeItem"
+    "Data(contentsOf:)"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
+   "line": 2366,
+   "function": "Gate1AppModel.handleIncomingURL",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "groundwork",
+   "api": "via Gate5BrowserTextHandoffURL.handoff",
+   "class": "file-io",
+   "detail": [
+    "Data(contentsOf:)"
    ],
    "kind": "helper"
   },
@@ -9526,6 +9473,7 @@
     "store.loadAIJobs",
     "store.loadInterjections",
     "store.loadItem",
+    "store.loadListeningMap",
     "store.loadPreparedAudioManifests",
     "store.loadSession",
     "store.loadTranscriptTimeline",
@@ -9534,6 +9482,7 @@
     "store.saveItem",
     "store.savePreparedAudioManifest",
     "store.saveSession",
+    "store.saveTranscriptTimeline",
     "store.transcriptTimelineStamp"
    ],
    "kind": "helper"
@@ -9705,6 +9654,22 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
+   "line": 3227,
+   "function": "Gate1AppModel.scheduleSourceTranscriptImportIfAvailable",
+   "api": "Task {}",
+   "class": "unlabelled-main-task",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "kind": "task",
+   "area": "groundwork",
+   "detail": [
+    "via Gate1AppModel.attachSourceTranscriptTimeline",
+    "via Gate1AppModel.fetchTranscriptLink"
+   ]
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
    "line": 3263,
    "function": "Gate1AppModel.fetchTranscriptLink",
    "api": "Data(contentsOf:)",
@@ -9828,7 +9793,9 @@
    "class": "store-heavy-decode",
    "detail": [
     "store.loadCanonicalSource",
+    "store.loadImportedCommentaryInterjections",
     "store.loadImportedCommentaryLayers",
+    "store.loadInterjections",
     "store.loadItem",
     "store.loadListeningMap",
     "store.loadPortableListeningMapProposals",
@@ -9837,6 +9804,7 @@
     "store.loadStructuredDocument",
     "store.loadTranscriptTimeline",
     "store.loadTranscriptTimelineSummary",
+    "store.loadTurns",
     "store.saveListeningMap"
    ],
    "kind": "helper"
@@ -10001,6 +9969,37 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate2CompactControlController.swift",
+   "line": 418,
+   "function": "Gate2CompactControlController.dispatch",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "groundwork",
+   "api": "via CompactControlDispatcher.dispatch",
+   "class": "store-heavy-decode",
+   "detail": [
+    "copy/move/removeItem",
+    "store.loadAIJobs",
+    "store.loadInterjections",
+    "store.loadItem",
+    "store.loadListeningMap",
+    "store.loadPreparedAudioManifests",
+    "store.loadSession",
+    "store.loadTranscriptTimeline",
+    "store.loadTurns",
+    "store.saveAIJob",
+    "store.saveInterjection",
+    "store.saveItem",
+    "store.savePreparedAudioManifest",
+    "store.saveSession",
+    "store.saveTurn",
+    "store.saveWatchSyncEvent",
+    "store.transcriptTimelineStamp"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate2CompactControlController.swift",
    "line": 509,
    "function": "Gate2CompactControlController.startBackgroundWatchIfNeeded",
    "api": "Task {}",
@@ -10017,6 +10016,25 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate2CompactControlController.swift",
+   "line": 576,
+   "function": "Gate2CompactControlController.currentSnapshot",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "groundwork",
+   "api": "via CompactControlDispatcher.snapshot",
+   "class": "store-heavy-decode",
+   "detail": [
+    "store.loadInterjections",
+    "store.loadItem",
+    "store.loadListeningMap",
+    "store.loadSession",
+    "store.loadTurns"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate2CompactControlController.swift",
    "line": 654,
    "function": "Gate2CompactControlController.scheduleIdleDeadlineCheck",
    "api": "Task {}",
@@ -10029,21 +10047,6 @@
    "detail": [
     "via Gate2CompactControlController.publishCurrentSnapshot"
    ]
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate2CompactControlController.swift",
-   "line": 1194,
-   "function": "Gate2LiveSpeechNowPlayingController.publish",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "groundwork",
-   "api": "via ReadwiseSentLedger.write",
-   "class": "file-io",
-   "detail": [
-    "write(to:)"
-   ],
-   "kind": "helper"
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate2CompactControlController.swift",
@@ -10291,7 +10294,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/ImportedPodcastPlacementCoordinator.swift",
    "line": 167,
-   "function": "ImportedPodcastPlacementCoordinator.work",
+   "function": "ImportedPodcastPlacementCoordinator.resolve",
    "api": "store.loadImportedCommentaryInterjections",
    "class": "store-read",
    "in_loop": false,
@@ -10318,7 +10321,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/ImportedPodcastPlacementCoordinator.swift",
    "line": 182,
-   "function": "ImportedPodcastPlacementCoordinator.isCurrent",
+   "function": "ImportedPodcastPlacementCoordinator.resolve",
    "api": "store.invalidateImportedPodcastPlacements",
    "class": "store-write",
    "in_loop": false,
@@ -10330,7 +10333,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/ImportedPodcastPlacementCoordinator.swift",
    "line": 195,
-   "function": "ImportedPodcastPlacementCoordinator.evidence",
+   "function": "ImportedPodcastPlacementCoordinator.resolve",
    "api": "Data(contentsOf:)",
    "class": "file-io",
    "in_loop": true,
@@ -10466,6 +10469,7 @@
    "api": "via MarginOutputMigration.loadOrMigrate",
    "class": "file-io",
    "detail": [
+    "Data(contentsOf:)",
     "write(to:)"
    ],
    "kind": "helper"
@@ -10559,21 +10563,6 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/MarginVoicePlayer.swift",
-   "line": 127,
-   "function": "MarginVoicePlayer.setOwnPaused",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "answer-it",
-   "api": "via AVPlayerStreamPlaybackClient.pause",
-   "class": "av-sync",
-   "detail": [
-    "audioMix/tap"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/MarginVoicePlayer.swift",
    "line": 132,
    "function": "MarginVoicePlayer.setOwnPaused",
    "api": "AVAudioSession.setActive",
@@ -10595,21 +10584,6 @@
    "debug": false,
    "kind": "direct",
    "area": "answer-it"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/MarginVoicePlayer.swift",
-   "line": 221,
-   "function": "MarginVoicePlayer.setSharedPaused",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "answer-it",
-   "api": "via AVPlayerStreamPlaybackClient.pause",
-   "class": "av-sync",
-   "detail": [
-    "audioMix/tap"
-   ],
-   "kind": "helper"
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/MarginVoicePlayer.swift",
@@ -11383,61 +11357,6 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/ReadwiseHighlightSync.swift",
-   "line": 109,
-   "function": "ReadwiseHighlightSync.work",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "groundwork",
-   "api": "via ReadwiseHighlightGatherer.highlights",
-   "class": "store-heavy-decode",
-   "detail": [
-    "store.loadAIJobs",
-    "store.loadCanonicalSource",
-    "store.loadImportedCommentaryLayers",
-    "store.loadInterjections",
-    "store.loadItem",
-    "store.loadListeningMap",
-    "store.loadPortableListeningMapProposals",
-    "store.loadResolvedListeningMapProjection",
-    "store.loadSession",
-    "store.loadTranscriptTimeline",
-    "store.loadTurns",
-    "store.saveItem",
-    "store.saveSession",
-    "store.transcriptTimelineStamp"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/ReadwiseHighlightSync.swift",
-   "line": 110,
-   "function": "ReadwiseHighlightSync.work",
-   "api": "store.loadSessions",
-   "class": "store-whole-table-read",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "kind": "direct",
-   "area": "groundwork"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/ReadwiseHighlightSync.swift",
-   "line": 110,
-   "function": "ReadwiseHighlightSync.work",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "groundwork",
-   "api": "via ReadwiseSentLedger.sentKeys",
-   "class": "file-io",
-   "detail": [
-    "Data(contentsOf:)"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/ReadwiseHighlightSync.swift",
    "line": 124,
    "function": "ReadwiseHighlightSync.sendPass",
    "in_loop": false,
@@ -11450,6 +11369,21 @@
     "Data(contentsOf:)"
    ],
    "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SettingsScreen.swift",
+   "line": 401,
+   "function": "SettingsScreen.body",
+   "api": "Task {}",
+   "class": "unlabelled-main-task",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "kind": "task",
+   "area": "groundwork",
+   "detail": [
+    "via Gate1AppModel.prepareDiagnosticsExportFileURL"
+   ]
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/ShareLinkOpener.swift",
@@ -11590,36 +11524,6 @@
    "area": "hear-it-well"
   },
   {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SkimBridgeController.swift",
-   "line": 273,
-   "function": "SkimBridgeController.setPaused",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via AVPlayerStreamPlaybackClient.pause",
-   "class": "av-sync",
-   "detail": [
-    "audioMix/tap"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SkimBridgeController.swift",
-   "line": 316,
-   "function": "SkimBridgeController.stopPlayback",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via AVPlayerStreamPlaybackClient.pause",
-   "class": "av-sync",
-   "detail": [
-    "audioMix/tap"
-   ],
-   "kind": "helper"
-  },
-  {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SpokenMarginsApp.swift",
    "line": 110,
    "function": "SpokenMarginsApp.init",
@@ -11679,7 +11583,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SpokenMarginsPackageImportCoordinator.swift",
    "line": 162,
-   "function": "SpokenMarginsPackageImportCoordinator.duplicateCheck",
+   "function": "SpokenMarginsPackageImportCoordinator.stage",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
    "in_loop": false,
@@ -11784,10 +11688,10 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SpokenMarginsPackageImportCoordinator.swift",
    "line": 317,
-   "function": "SpokenMarginsPackageImportCoordinator.item",
+   "function": "SpokenMarginsPackageImportCoordinator.confirm",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
-   "in_loop": false,
+   "in_loop": true,
    "labelled": false,
    "debug": false,
    "kind": "direct",
@@ -11796,8 +11700,8 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SpokenMarginsPackageImportCoordinator.swift",
    "line": 319,
-   "function": "SpokenMarginsPackageImportCoordinator.localItem",
-   "in_loop": false,
+   "function": "SpokenMarginsPackageImportCoordinator.confirm",
+   "in_loop": true,
    "labelled": false,
    "debug": false,
    "area": "answer-it",
@@ -11831,6 +11735,7 @@
    "api": "via SpokenMarginsPackageImporter.repairAssociation",
    "class": "store-read",
    "detail": [
+    "SHA256",
     "store.loadImportedCommentaryInterjections",
     "store.saveImportedCommentaryInterjection",
     "store.saveImportedCommentaryLayer"
@@ -11848,26 +11753,12 @@
    "api": "via SpokenMarginsPackageImporter.importPackage",
    "class": "store-read",
    "detail": [
+    "SHA256",
     "store.importCommentaryLayer",
     "store.loadImportedCommentaryInterjections",
     "store.loadImportedCommentaryLayer",
     "store.loadImportedCommentaryLayers",
     "store.saveImportedCommentaryInterjection"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SpokenMarginsPackageImportCoordinator.swift",
-   "line": 388,
-   "function": "SpokenMarginsPackageImportCoordinator.actualDigest",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "answer-it",
-   "api": "via PodcastAnchorEvidenceGenerator.exactEditionSHA256",
-   "class": "file-io",
-   "detail": [
-    "FileHandle"
    ],
    "kind": "helper"
   },
@@ -11994,23 +11885,6 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SpokenMarginsPackageImportCoordinator.swift",
-   "line": 545,
-   "function": "SpokenMarginsPackageImportCoordinator.plan",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "answer-it",
-   "api": "via SharedTextListeningMapImporter.plan",
-   "class": "store-heavy-decode",
-   "detail": [
-    "SHA256",
-    "store.loadListeningMap",
-    "store.loadPortableListeningMapProposals"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SpokenMarginsPackageImportCoordinator.swift",
    "line": 549,
    "function": "SpokenMarginsPackageImportCoordinator.confirmListeningMap",
    "in_loop": false,
@@ -12056,10 +11930,10 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicDownloadNotice.swift",
    "line": 90,
-   "function": "SupertonicDownloadNoticeCard.downloadSize",
+   "function": "SupertonicDownloadNoticeCard",
    "api": "Data(contentsOf:)",
    "class": "file-io",
-   "in_loop": false,
+   "in_loop": true,
    "labelled": false,
    "debug": false,
    "kind": "direct",
@@ -12079,8 +11953,40 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift",
+   "line": 1591,
+   "function": "SupertonicSpeechPlaybackClient.enqueueRender",
+   "api": "Task {}",
+   "class": "unlabelled-main-task",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "kind": "task",
+   "area": "hear-it-well",
+   "detail": [
+    "via SupertonicSpeechPlaybackClient.renderFailed"
+   ]
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift",
+   "line": 1609,
+   "function": "SupertonicSpeechPlaybackClient.enqueueRender",
+   "in_loop": true,
+   "labelled": false,
+   "debug": false,
+   "area": "hear-it-well",
+   "api": "via SupertonicSpeechPlaybackClient.renderFailed",
+   "class": "file-io",
+   "detail": [
+    "AVAudioFile",
+    "AVAudioSession.setActive",
+    "copy/move/removeItem"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift",
    "line": 1681,
-   "function": "SupertonicSpeechPlaybackClient.task",
+   "function": "SupertonicSpeechPlaybackClient.enqueueRender",
    "in_loop": false,
    "labelled": false,
    "debug": false,
@@ -12088,6 +11994,7 @@
    "api": "via SupertonicSpeechPlaybackClient.renderFailed",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -12096,7 +12003,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift",
    "line": 1751,
-   "function": "SupertonicSpeechPlaybackClient.task",
+   "function": "SupertonicSpeechPlaybackClient.enqueueRender",
    "in_loop": false,
    "labelled": false,
    "debug": false,
@@ -12104,6 +12011,7 @@
    "api": "via SupertonicSpeechPlaybackClient.renderFailed",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -12112,7 +12020,7 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift",
    "line": 1773,
-   "function": "SupertonicSpeechPlaybackClient.task",
+   "function": "SupertonicSpeechPlaybackClient.enqueueRender",
    "in_loop": false,
    "labelled": false,
    "debug": false,
@@ -12120,6 +12028,7 @@
    "api": "via SupertonicSpeechPlaybackClient.renderFailed",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -12136,6 +12045,7 @@
    "api": "via SupertonicSpeechPlaybackClient.playRenderedAudio",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -12152,6 +12062,24 @@
    "api": "via SupertonicSpeechPlaybackClient.queueNextChunkIfWanted",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
+    "AVAudioSession.setActive",
+    "copy/move/removeItem"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift",
+   "line": 1895,
+   "function": "SupertonicSpeechPlaybackClient.renderCompleted",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "hear-it-well",
+   "api": "via SupertonicSpeechPlaybackClient.enqueueRender",
+   "class": "file-io",
+   "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -12183,6 +12111,7 @@
    "api": "via SupertonicSpeechPlaybackClient.startPlayer",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -12215,6 +12144,7 @@
    "api": "via SupertonicSpeechPlaybackClient.reseatStalledPlayer",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -12231,6 +12161,7 @@
    "api": "via SupertonicSpeechPlaybackClient.markMediaServicesReset",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -12262,6 +12193,7 @@
    "api": "via SupertonicSpeechPlaybackClient.reseatStalledPlayer",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -12278,6 +12210,7 @@
    "api": "via SupertonicSpeechPlaybackClient.currentCharOffset",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -12294,6 +12227,7 @@
    "api": "via SupertonicSpeechPlaybackClient.currentRecoveryCharOffset",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -12310,6 +12244,7 @@
    "api": "via SupertonicSpeechPlaybackClient.activateSystemFallback",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -12326,6 +12261,7 @@
    "api": "via SupertonicSpeechPlaybackClient.finishSystemFallback",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -12342,6 +12278,24 @@
    "api": "via SupertonicSpeechPlaybackClient.returnToChosenVoice",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
+    "AVAudioSession.setActive",
+    "copy/move/removeItem"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift",
+   "line": 2677,
+   "function": "SupertonicSpeechPlaybackClient.settleHandOver",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "hear-it-well",
+   "api": "via SupertonicSpeechPlaybackClient.restartRenderQueueBehindKeptChunk",
+   "class": "file-io",
+   "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -12388,6 +12342,7 @@
    "api": "via SupertonicSpeechPlaybackClient.playbackItemFailed",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -12419,6 +12374,7 @@
    "api": "via SupertonicSpeechPlaybackClient.playbackItemFailed",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -12435,6 +12391,7 @@
    "api": "via SupertonicSpeechPlaybackClient.queueNextChunkIfWanted",
    "class": "file-io",
    "detail": [
+    "AVAudioFile",
     "AVAudioSession.setActive",
     "copy/move/removeItem"
    ],
@@ -12443,10 +12400,10 @@
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/VoiceDownloadsModel.swift",
    "line": 64,
-   "function": "VoiceDownloadsModel.snapshot",
+   "function": "VoiceDownloadsModel.make",
    "api": "Data(contentsOf:)",
    "class": "file-io",
-   "in_loop": false,
+   "in_loop": true,
    "labelled": false,
    "debug": false,
    "kind": "direct",
@@ -12609,8 +12566,8 @@
   {
    "file": "App/SpokenMarginsWatch/Sources/SpokenMarginsWatch/WatchOfflineModels.swift",
    "line": 143,
-   "function": "WatchOfflineLibraryModel.merged",
-   "in_loop": false,
+   "function": "WatchOfflineLibraryModel.mergePackageRows",
+   "in_loop": true,
    "labelled": false,
    "debug": false,
    "area": "hear-it-well",
@@ -12663,6 +12620,30 @@
    "class": "file-io",
    "detail": [
     "write(to:)"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsWatch/Sources/SpokenMarginsWatch/WatchOfflineModels.swift",
+   "line": 261,
+   "function": "WatchLocalPlaybackModel.clearActivePackage",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "hear-it-well",
+   "api": "via SessionEngine.stopPlayback",
+   "class": "store-heavy-decode",
+   "detail": [
+    "store.loadAIJobs",
+    "store.loadInterjections",
+    "store.loadItem",
+    "store.loadSession",
+    "store.loadTranscriptTimeline",
+    "store.loadTurns",
+    "store.saveInterjection",
+    "store.saveItem",
+    "store.saveSession",
+    "store.transcriptTimelineStamp"
    ],
    "kind": "helper"
   },
@@ -12844,8 +12825,7 @@
     "store.saveInterjection",
     "store.saveItem",
     "store.saveSession",
-    "store.transcriptTimelineStamp",
-    "write(to:)"
+    "store.transcriptTimelineStamp"
    ],
    "kind": "helper"
   },
@@ -13019,28 +12999,6 @@
   },
   {
    "file": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift",
-   "line": 960,
-   "function": "SessionEngine.planned",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via StructuredUpgradeJob.plan",
-   "class": "store-heavy-decode",
-   "detail": [
-    "SHA256",
-    "store.loadImportedCommentaryLayers",
-    "store.loadInterjections",
-    "store.loadItem",
-    "store.loadListeningMap",
-    "store.loadSessions",
-    "store.loadStructuredDocument",
-    "store.loadTranscriptTimeline"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift",
    "line": 964,
    "function": "SessionEngine.importBrowserTextInBackgroundOffMain",
    "in_loop": false,
@@ -13048,16 +13006,9 @@
    "debug": false,
    "area": "hear-it-well",
    "api": "via StructuredUpgradeJob.apply",
-   "class": "store-heavy-decode",
+   "class": "store-write",
    "detail": [
-    "store.applyStructuredDocumentUpgrade",
-    "store.loadImportedCommentaryLayers",
-    "store.loadInterjections",
-    "store.loadItem",
-    "store.loadListeningMap",
-    "store.loadSessions",
-    "store.loadStructuredDocument",
-    "store.loadTranscriptTimeline"
+    "store.applyStructuredDocumentUpgrade"
    ],
    "kind": "helper"
   },
@@ -13120,75 +13071,15 @@
    "debug": false,
    "area": "hear-it-well",
    "api": "via SessionEngine.saveStructuredDocument",
-   "class": "store-write",
+   "class": "store-whole-table-read",
    "detail": [
+    "store.deleteAudioPreparationJob",
+    "store.deletePreparedAudioManifest",
+    "store.loadAudioPreparationJobs",
+    "store.loadItem",
+    "store.loadPreparedAudioManifests",
+    "store.loadStructuredDocument",
     "store.saveStructuredDocument"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "Packages/SessionKit/Sources/SessionKit/StreamingSpeechQueue.swift",
-   "line": 51,
-   "function": "StreamingSpeechQueue.currentPresentationOffset",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via SupertonicSpeechPlaybackClient.currentCharOffset",
-   "class": "file-io",
-   "detail": [
-    "AVAudioSession.setActive",
-    "copy/move/removeItem"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "Packages/SessionKit/Sources/SessionKit/StreamingSpeechQueue.swift",
-   "line": 55,
-   "function": "StreamingSpeechQueue.currentRecoveryOffset",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via SupertonicSpeechPlaybackClient.currentRecoveryCharOffset",
-   "class": "file-io",
-   "detail": [
-    "AVAudioSession.setActive",
-    "copy/move/removeItem"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "Packages/SessionKit/Sources/SessionKit/StreamingSpeechQueue.swift",
-   "line": 135,
-   "function": "StreamingSpeechQueue.startWorkerIfNeeded",
-   "api": "Task {}",
-   "class": "unlabelled-main-task",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "kind": "task",
-   "area": "hear-it-well",
-   "detail": [
-    "via StreamingSpeechQueue.startWorkerIfNeeded",
-    "via SupertonicSpeechPlaybackClient.play"
-   ]
-  },
-  {
-   "file": "Packages/SessionKit/Sources/SessionKit/StreamingSpeechQueue.swift",
-   "line": 146,
-   "function": "StreamingSpeechQueue.startWorkerIfNeeded",
-   "in_loop": true,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via SupertonicSpeechPlaybackClient.play",
-   "class": "file-io",
-   "detail": [
-    "AVAudioFile",
-    "AVAudioSession.setActive",
-    "audioMix/tap",
-    "copy/move/removeItem"
    ],
    "kind": "helper"
   },
@@ -13215,7 +13106,7 @@
    "labelled": false,
    "debug": false,
    "area": "answer-it",
-   "api": "via RecordingDraftJournal.remove",
+   "api": "via WrittenMarginDraftJournal.remove",
    "class": "file-io",
    "detail": [
     "copy/move/removeItem"
@@ -13230,40 +13121,11 @@
    "labelled": false,
    "debug": false,
    "area": "answer-it",
-   "api": "via RecordingDraftJournal.write",
+   "api": "via WrittenMarginDraftJournal.write",
    "class": "file-io",
    "detail": [
+    "copy/move/removeItem",
     "write(to:)"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift",
-   "line": 2043,
-   "function": "AVPlayerStreamPlaybackClient.play",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via AVPlayerStreamPlaybackClient.finishMediaSeek",
-   "class": "av-sync",
-   "detail": [
-    "audioMix/tap"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift",
-   "line": 2111,
-   "function": "AVPlayerStreamPlaybackClient.requestMediaSeek",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via AVPlayerStreamPlaybackClient.finishMediaSeek",
-   "class": "av-sync",
-   "detail": [
-    "audioMix/tap"
    ],
    "kind": "helper"
   },
@@ -13333,36 +13195,6 @@
    "debug": false,
    "area": "hear-it-well",
    "api": "via AVPlayerStreamPlaybackClient.removePostResumeEvidenceTap",
-   "class": "av-sync",
-   "detail": [
-    "audioMix/tap"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift",
-   "line": 2532,
-   "function": "AVPlayerStreamPlaybackClient.recoverFrozenClock",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via AVPlayerStreamPlaybackClient.finishMediaSeek",
-   "class": "av-sync",
-   "detail": [
-    "audioMix/tap"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift",
-   "line": 2630,
-   "function": "AVPlayerStreamPlaybackClient.finishMediaSeek",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "hear-it-well",
-   "api": "via AVPlayerStreamPlaybackClient.finishMediaSeek",
    "class": "av-sync",
    "detail": [
     "audioMix/tap"
@@ -13486,7 +13318,7 @@
   {
    "file": "Packages/SessionKit/Sources/SessionKitAudio/MarginMomentConductor.swift",
    "line": 173,
-   "function": "MarginMomentConductor.delegate",
+   "function": "MarginMomentConductor.playVoice",
    "api": "Task {}",
    "class": "unlabelled-main-task",
    "in_loop": false,
@@ -13527,22 +13359,6 @@
    "detail": [
     "via MarginMomentConductor.setVoicePaused"
    ]
-  },
-  {
-   "file": "Packages/SessionKit/Sources/SessionKitAudio/MarginMomentConductor.swift",
-   "line": 221,
-   "function": "MarginMomentConductor.beginVoice",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "answer-it",
-   "api": "via AVPlayerStreamPlaybackClient.play",
-   "class": "av-sync",
-   "detail": [
-    "AVAudioSession.setActive",
-    "audioMix/tap"
-   ],
-   "kind": "helper"
   },
   {
    "file": "Packages/SessionKit/Sources/SessionKitAudio/MarginMomentConductor.swift",

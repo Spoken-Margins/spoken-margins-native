@@ -31,8 +31,10 @@ Known blind spots (each is a heuristic, not a proof; the baseline holds the know
   plus an API name read from SQLiteSessionStore's own public functions. `$0.loadItem()`, a store passed under another
   name, or a protocol wrapper is missed.
 - A closure handed to an unknown API keeps the enclosing isolation, so a completion handler that really runs on a
-  background queue is over-flagged. A callee found by receiver name alone is used only when its name is unique
-  among helpers; ambiguous names are skipped (counted in --summary).
+  background queue is over-flagged. A callee on a variable (`engine.pause()`) is looked up by the variable's
+  declared type (`var engine: SessionEngine?` or a parameter, in the file or the enclosing type's files), else a type
+  named like it (`sessionEngine` -> SessionEngine, `engine` -> …Engine), else a type containing its name. When the
+  first tier that matches still names two types, the call is skipped as `ambiguous-callee` (counted in --summary).
 - Cost is never judged: `loadItem(id:)` of a short note and of a 1 MB book are the same row. Ranking is step 4
   (#2260) and the read meter is step 2 (#2258).
 - Nothing here can see that a caller uses a title where the callee decodes the whole text (see #2102). The class
@@ -245,7 +247,8 @@ def classify(header: str, after: str) -> Scope:
             scope.iso = 'main'
         return scope
     m = VAR_DECL.match(h)
-    if m:
+    # `let n = try await Task.detached { … }.value` is a closure in an initialiser, not a computed property
+    if m and not re.match(r'^' + MODIFIERS + r'(?:var|let)\s+\w+\s*(?::[^={]*)?=(?!=)', h):
         scope.kind, scope.name = 'var', m.group(1)
         if 'MainActor' in attrs:
             scope.iso = 'main'
@@ -476,6 +479,53 @@ def scan(files, apis):
                 if ctx in ('main', 'caller'):
                     funcs[s.name].append((fs.rel, next((x.name for x in reversed(stack[:-1]) if x.kind == 'type'), None), ctx))
 
+    type_files = defaultdict(set)     # type name -> files that declare or extend it
+    for fs in scans:
+        for s in fs.scopes:
+            if s.kind == 'type':
+                type_files[s.name].add(fs.rel)
+    decl_rx = re.compile(r'(?:\b(?:let|var)\s+|[(,]\s*(?:\w+\s+)?)(\w+)\s*(?::\s*\[?([A-Z]\w*)|=(?!=)\s*([^\n;{]*))')
+    decl_cache = {}
+
+    def declarations(rel, var):
+        """Where `var` is declared in a file: [(position, annotated type or None, initialiser text or None)]."""
+        if rel not in decl_cache:
+            index = defaultdict(list)
+            for m in decl_rx.finditer(by_rel[rel].text):
+                index[m.group(1)].append((m.start(), m.group(2), m.group(3)))
+            decl_cache[rel] = index
+        return decl_cache[rel].get(var, [])
+
+    def declared(rel, here, pos, var):
+        """What `var` was declared as: the nearest declaration above the call in this file (a local, a parameter or
+        a property), else a property in another file of the enclosing type. Returns (annotated types, initialisers)."""
+        before = [d for d in declarations(rel, var) if d[0] < pos]
+        found = before[-1:] or [d for r in sorted(type_files.get(here, set()) - {rel}) for d in declarations(r, var)]
+        return {t for _, t, _ in found if t}, [i for _, t, i in found if not t and i]
+
+    def pick_by_variable(cands, rel, here, pos, var):
+        """The callee of `var.name(` when the receiver is a variable: its annotated type (`var engine:
+        SessionEngine?`), else the type its initialiser names (`let s = try resolvedSourceLinkHandoffStore()`), else a
+        type named like it (`sessionEngine` -> SessionEngine, `engine` -> …Engine), else a type containing it. A tier
+        that still names two types is ambiguous and returns None, never the first file's."""
+        typed = [c for c in cands if c[1]]
+        annotated, inits = declared(rel, here, pos, var)
+        if annotated:  # the type is known; a protocol or a type with no such helper is not guessed past
+            return [c for c in typed if c[1] in annotated]
+        named = [c for c in typed if any(c[1] in i for i in inits)]
+        longest = max((len(c[1]) for c in named), default=0)
+        cap = var[:1].upper() + var[1:]
+        tiers = [
+            [c for c in named if len(c[1]) == longest],
+            [c for c in typed if c[1] == cap],
+            [c for c in typed if c[1].endswith(cap)],
+            [c for c in typed if len(var) > 2 and var.lower() in c[1].lower()],
+        ]
+        for tier in tiers:
+            if tier:
+                return tier if len({c[1] for c in tier}) == 1 else None
+        return []
+
     rows, skipped = [], Counter()
     direct = defaultdict(set)         # function key -> {(class, api)} read on the thread that runs it
     calls = defaultdict(list)         # function key -> [callee keys]
@@ -521,7 +571,10 @@ def scan(files, apis):
                 if q[:1].isupper() or q == here:
                     picked = [c for c in cands if c[1] == q]
                 else:  # a variable: `engine.run` is a SessionEngine's when the name says so, else it is not guessed
-                    picked = [c for c in cands if c[1] and len(q) > 2 and q.lower() in c[1].lower()]
+                    picked = pick_by_variable(cands, fs.rel, here, m.start(), q)
+                    if picked is None:
+                        skipped['ambiguous-callee'] += 1
+                        continue
             else:
                 picked = [c for c in cands if c[1] == here] or [c for c in cands if c[1] is None]
             if not picked:
@@ -686,7 +739,9 @@ def main(argv=None, root: Path = ROOT):
         entries = []
         for key, n in current.items():
             old = baseline.get(key)
-            if old:
+            if old and args.accept and n > old['count']:  # one more call of a baselined read, accepted on its own reason
+                entries.append({**old, 'count': n, 'reason': f"{old['reason']}; {args.accept}"})
+            elif old:
                 entries.append({**old, 'count': min(n, old['count'])})
             elif args.accept:
                 entries.append({'file': key[0], 'function': key[1], 'api': key[2], 'class': key[3], 'count': n,
