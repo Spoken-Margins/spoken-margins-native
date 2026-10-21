@@ -200,16 +200,20 @@ enum PDFStructuredTextExtractor {
     /// v1 is `markdown(from:)`, which stays as it is for items imported under it.
     static let structuredExtractionVersion = 2
 
-    static func structuredDocument(from url: URL) throws -> StructuredDocument {
+    static func structuredDocument(from url: URL, wordListURL: URL? = bundledWordListURL) throws -> StructuredDocument {
         guard let document = PDFDocument(url: url) else {
             throw ExtractionError.unreadableDocument
         }
-        return try structuredDocument(from: document)
+        return try structuredDocument(from: document, wordListURL: wordListURL)
     }
 
-    static func structuredDocument(from document: PDFDocument, sourceSHA256: String? = nil) throws -> StructuredDocument {
+    static func structuredDocument(
+        from document: PDFDocument,
+        sourceSHA256: String? = nil,
+        wordListURL: URL? = bundledWordListURL
+    ) throws -> StructuredDocument {
         StructuredDocumentBuilder.build(
-            lines: try structuredLines(from: document),
+            lines: try structuredLines(from: document, wordListURL: wordListURL),
             engine: "pdfkit_baseline",
             version: structuredExtractionVersion,
             pageCount: document.pageCount,
@@ -249,7 +253,7 @@ enum PDFStructuredTextExtractor {
     /// except margin stamps (`isSideStamp`): what v1 cut (running heads, contents
     /// pages, the reference list) is labelled, and the speech path decides what is
     /// heard (I14).
-    static func structuredLines(from document: PDFDocument) throws -> [StructuredDocumentLine] {
+    static func structuredLines(from document: PDFDocument, wordListURL: URL? = bundledWordListURL) throws -> [StructuredDocumentLine] {
         // Merged PDFs can carry a bookmark per source file ("main.pdf"): not a heading (#355).
         let outline = outlineHeadings(in: document).filter {
             $0.title.range(of: #"\.pdf$"#, options: [.regularExpression, .caseInsensitive]) == nil
@@ -265,6 +269,7 @@ enum PDFStructuredTextExtractor {
                 !isSideStamp($0.text, bounds: $0.bounds, pageBox: pageBox)
             })
         }
+        respaceGluedText(&pages, wordListURL: wordListURL)
         let allLines = pages.flatMap { $0 }
         guard allLines.contains(where: { !$0.text.isEmpty }) else {
             throw ExtractionError.noExtractableText
@@ -486,6 +491,37 @@ enum PDFStructuredTextExtractor {
         let words = isWord(Array(Set(candidates.map(\.word))))
         for candidate in candidates where words.contains(candidate.word) {
             lines[candidate.index].endsWithSoftHyphen = true
+        }
+    }
+
+    /// The bundled Kitten lexicon, the word list the glued-text spacer splits with.
+    static var bundledWordListURL: URL? {
+        Bundle.main.resourceURL?.appendingPathComponent("Kitten/lexicon.tsv")
+    }
+
+    /// Puts back word spaces a PDF's text layer lost ("Amodelofbottleneck pressure"), before
+    /// any rule reads the lines: the citation, footnote and heading rules all need them (#2370).
+    /// Only a document `PDFWordSpacer.isGlued` flags changes, and the word list is opened only
+    /// when some line holds a long letter run. Superscript ranges move with the text.
+    private static func respaceGluedText(_ pages: inout [[TextLine]], wordListURL: URL?) {
+        let run = "\\p{L}{\(PDFWordSpacer.gluedRunLength),}"
+        guard pages.contains(where: { $0.contains { $0.text.range(of: run, options: .regularExpression) != nil } }),
+              let wordListURL, let wordList = try? SortedWordList(contentsOf: wordListURL) else { return }
+        let texts = pages.flatMap { $0.map(\.text) }
+        let spacer = PDFWordSpacer(isWord: wordList.contains, context: texts)
+        guard spacer.isGlued(texts) else { return }
+        var previous = ""
+        for pageIndex in pages.indices {
+            for lineIndex in pages[pageIndex].indices {
+                let line = pages[pageIndex][lineIndex]
+                // The start of a word the line before broke with a hyphen ("Nev-").
+                let carried = previous.hasSuffix("-") ? String(previous.dropLast().reversed().prefix(while: \.isLetter).reversed()) : ""
+                previous = line.text
+                let insertions = spacer.spaceInsertions(in: line.text, protected: line.superscripts, carried: carried)
+                guard !insertions.isEmpty else { continue }
+                pages[pageIndex][lineIndex].text = PDFWordSpacer.applying(insertions, to: line.text)
+                pages[pageIndex][lineIndex].superscripts = line.superscripts.map { PDFWordSpacer.shifted($0, by: insertions) }
+            }
         }
     }
 

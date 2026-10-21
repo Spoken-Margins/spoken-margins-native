@@ -1,0 +1,538 @@
+import Foundation
+
+/// Puts back the word spaces a PDF's text layer lost (#2370). Some LaTeX fonts (TeX
+/// Gyre Pagella, Type 1) carry no space glyph: a word gap is only a shift in position,
+/// and PDFKit misses it on tightly set lines, so "standard tool for describing" comes
+/// out "standardtoolfordescribing". Glyph positions don't help (PDFKit's character
+/// bounds are spread across the line), so the spacer works on the text alone: hard
+/// cues first ("andChen", "Chen,2025", "affect(Webb"), then the letter runs that are
+/// not words are split with a word list, preferring the fewest and most common words.
+///
+/// It only runs on a document that `isGlued` says lost its spaces, so a correctly
+/// spaced PDF never changes. Names and jargon not in the list are left whole.
+public struct PDFWordSpacer {
+    private let lookUp: (String) -> Bool
+    private let cache = LookupCache()
+    /// How often each word stands alone, spaced, in the document: the word list has no
+    /// frequencies, and a word the paper itself prints spaced ("instead", "Autor") is
+    /// the likelier reading of a glued run.
+    private let documentCounts: [String: Int]
+
+    /// `isWord` answers for one lower-case word (the app passes the bundled Kitten
+    /// lexicon, `SortedWordList`). Capitalised and upper-case forms are looked up too.
+    /// `context` is the document's lines, for `documentCounts`.
+    public init(isWord: @escaping (String) -> Bool, context: [String] = []) {
+        lookUp = isWord
+        var counts: [String: Int] = [:]
+        for line in context {
+            for token in line.split(whereSeparator: \.isWhitespace) {
+                var word = token.drop { !$0.isLetter }
+                while let last = word.last, !last.isLetter { word = word.dropLast() }
+                if word.hasSuffix("’s") || word.hasSuffix("'s") { word = word.dropLast(2) }
+                guard word.count >= 2 || word == "a" || word == "A" || word == "I", word.allSatisfy(\.isLetter) else { continue }
+                counts[Self.key(Array(word)), default: 0] += 1
+            }
+        }
+        documentCounts = counts
+        tokenCount = max(1_000, Double(counts.values.reduce(0, +)))
+    }
+
+    private let tokenCount: Double
+
+    private final class LookupCache: @unchecked Sendable {
+        var words: [String: Bool] = [:]
+        var documentWords: [String: Bool] = [:]
+        var costs: [String: Double] = [:]
+    }
+
+    private func isListed(_ word: String) -> Bool {
+        if let known = cache.words[word] { return known }
+        let known = lookUp(word)
+        cache.words[word] = known
+        return known
+    }
+
+    /// A letter run this long that is not a word is the sign of a glued line.
+    public static let gluedRunLength = 18
+
+    /// Whether the document's text lost its word spaces: at least three lines, and at
+    /// least one in two hundred, hold a long letter run that splits cleanly into words.
+    public func isGlued(_ lines: [String]) -> Bool {
+        let nonEmpty = lines.filter { !$0.isEmpty }
+        guard !nonEmpty.isEmpty else { return false }
+        var glued = 0
+        for line in nonEmpty where looksGlued(line) {
+            glued += 1
+            if glued >= 3 && glued * 200 >= nonEmpty.count { return true }
+        }
+        return false
+    }
+
+    /// Whether this line holds a run of `gluedRunLength` or more letters that is not
+    /// a word and splits into three or more listed words, none of them unknown.
+    public func looksGlued(_ line: String) -> Bool {
+        let characters = Array(line)
+        var start = 0
+        while start < characters.count {
+            guard characters[start].isLetter else { start += 1; continue }
+            var end = start
+            while end < characters.count, characters[end].isLetter { end += 1 }
+            if end - start >= Self.gluedRunLength {
+                // Hard case cues first, as `respaced` does: "occupationsAIislikely".
+                for piece in caseRuns(characters, start..<end) where piece.count >= Self.gluedRunLength {
+                    let run = Array(characters[piece])
+                    if !isWord(run), let pieces = segmentation(run), pieces.count >= 3,
+                       pieces.allSatisfy({ isWord(Array(run[$0])) || isAcronym(Array(run[$0])) }) {
+                        return true
+                    }
+                }
+            }
+            start = end
+        }
+        return false
+    }
+
+    /// The line with its word spaces put back.
+    public func respaced(_ line: String) -> String {
+        Self.applying(spaceInsertions(in: line), to: line)
+    }
+
+    /// Character offsets of `line` that a space goes in front of. Offsets inside a
+    /// `protected` range (a superscript marker) are never used; the offset just after
+    /// one is, when a letter follows it. `carried` is the start of a word the line before
+    /// broke with a hyphen ("Nev" of "Nev-"), so "ertheless" isn't read "er the less".
+    public func spaceInsertions(in line: String, protected: [Range<Int>] = [], carried: String = "") -> [Int] {
+        let characters = Array(line)
+        var insertions = Set<Int>()
+        func isProtected(_ offset: Int) -> Bool {
+            protected.contains { $0.lowerBound < offset && offset < $0.upperBound }
+        }
+        var tokenStart = 0
+        while tokenStart < characters.count {
+            guard !characters[tokenStart].isWhitespace else { tokenStart += 1; continue }
+            var tokenEnd = tokenStart
+            while tokenEnd < characters.count, !characters[tokenEnd].isWhitespace { tokenEnd += 1 }
+            defer { tokenStart = tokenEnd }
+            let token = tokenStart..<tokenEnd
+            guard !Self.isAddressLike(String(characters[token])) else { continue }
+            for offset in hardCueOffsets(characters, token) { insertions.insert(offset) }
+            for range in protected where range.upperBound < tokenEnd && range.upperBound > tokenStart
+                && characters[range.upperBound].isLetter {
+                insertions.insert(range.upperBound)
+            }
+            // The letter runs left between cues, split with the word list.
+            var bounds = insertions.filter { token.contains($0) }.sorted()
+            bounds.insert(tokenStart, at: 0)
+            bounds.append(tokenEnd)
+            for (lower, upper) in zip(bounds, bounds.dropFirst()) {
+                var start = lower
+                while start < upper {
+                    guard characters[start].isLetter else { start += 1; continue }
+                    var end = start
+                    while end < upper, characters[end].isLetter || isInnerApostrophe(characters, end, upper) { end += 1 }
+                    if start == 0, !carried.isEmpty {
+                        let joined = Array(carried) + characters[start..<end]
+                        for offset in wordOffsets(joined, 0..<joined.count) where offset > carried.count {
+                            insertions.insert(offset - carried.count)
+                        }
+                    } else {
+                        // A run that is the whole token is a word PDFKit spaced itself ("Levanon,").
+                        let isWholeToken = characters[token].filter(\.isLetter).count == end - start
+                        for offset in wordOffsets(characters, start..<end, wholeToken: isWholeToken) { insertions.insert(offset) }
+                    }
+                    start = end
+                }
+            }
+        }
+        return insertions.filter { !isProtected($0) && $0 > 0 && $0 < characters.count }.sorted()
+    }
+
+    /// `line` with a space in front of each offset (offsets are inside tokens, so never
+    /// next to a space; `shifted` counts every one).
+    public static func applying(_ insertions: [Int], to line: String) -> String {
+        guard !insertions.isEmpty else { return line }
+        var output = ""
+        let marks = Set(insertions)
+        for (offset, character) in line.enumerated() {
+            if marks.contains(offset) { output.append(" ") }
+            output.append(character)
+        }
+        return output
+    }
+
+    /// Moves a character range of the original line onto the respaced line.
+    public static func shifted(_ range: Range<Int>, by insertions: [Int]) -> Range<Int> {
+        let lower = range.lowerBound + insertions.filter { $0 <= range.lowerBound }.count
+        let upper = range.upperBound + insertions.filter { $0 < range.upperBound }.count
+        return lower..<max(lower, upper)
+    }
+
+    // MARK: - Hard cues
+
+    /// URLs, e-mail addresses, DOIs and identifiers keep their text exactly. A "/" or "="
+    /// alone doesn't make one: "Career/TechnicalEducation", "(1/𝜎−1/𝜌)Δlnthe".
+    static func isAddressLike(_ token: String) -> Bool {
+        let lower = token.lowercased()
+        return lower.contains("://") || lower.contains("www.") || lower.contains("@")
+            || lower.contains("\\") || lower.contains("_") || lower.contains("doi:") || lower.hasPrefix("10.")
+            || lower.range(of: #"\.(com|org|net|edu|gov|io|ai|uk|de)\b"#, options: .regularExpression) != nil
+    }
+
+    private func hardCueOffsets(_ characters: [Character], _ token: Range<Int>) -> [Int] {
+        var offsets: [Int] = []
+        func letterRun(endingAt index: Int) -> ArraySlice<Character> {
+            var start = index
+            while start > token.lowerBound, characters[start - 1].isLetter { start -= 1 }
+            return characters[start...index]
+        }
+        func letterRunLength(startingAt index: Int) -> Int {
+            var end = index
+            while end < token.upperBound, characters[end].isLetter { end += 1 }
+            return end - index
+        }
+        // "Kwaetal.," is "Kwa et al.,".
+        var etAl = token.lowerBound + 2
+        while etAl + 4 <= token.upperBound {
+            if String(characters[etAl..<(etAl + 4)]) == "etal", characters[etAl - 1].isLetter, characters[etAl - 2].isLetter,
+               etAl + 4 == token.upperBound || !characters[etAl + 4].isLetter {
+                offsets.append(etAl)
+                offsets.append(etAl + 2)
+            }
+            etAl += 1
+        }
+        for index in token.dropFirst() {
+            let before = characters[index - 1], here = characters[index]
+            let next: Character? = index + 1 < token.upperBound ? characters[index + 1] : nil
+            switch (before, here) {
+            case let (a, b) where a.isLowercase && b.isUppercase:
+                // "andChen" and "InProceedings" split; "iPhone", "McDonald", "LaTeX" and "PhD" keep their case.
+                let run = letterRun(endingAt: index - 1)
+                let lowerTail = run.reversed().prefix(while: \.isLowercase).count
+                let isShortCapitalised = run.first?.isUppercase == true && run.count == lowerTail + 1 && lowerTail <= 2
+                // The word since the last capital: "In" of "InProceedings", "Te" of "LaTeX".
+                let word = Array(run.suffix(run.count > lowerTail ? lowerTail + 1 : lowerTail))
+                if lowerTail >= 2 && !isShortCapitalised || word.count >= 2 && isWord(word) { offsets.append(index) }
+            case let (a, b) where (a == "," || a == ";") && (b.isLetter || b == "("):
+                offsets.append(index)
+            case let (a, b) where (a == "," || a == ";") && b.isNumber && index >= token.lowerBound + 2
+                && (characters[index - 2].isLetter || characters[index - 2] == "."):
+                // "Chen,2025" and "al.,2025" split; "1,000" doesn't.
+                offsets.append(index)
+            case let (a, b) where a == ":" && b.isLetter:
+                offsets.append(index)
+            case let (a, b) where (a == ")" || a == "]") && b.isLetter:
+                offsets.append(index)
+            case let (a, b) where (a == "”" || a == "\"") && b.isLetter && index >= token.lowerBound + 2
+                && (characters[index - 2].isLetter || ".,!?".contains(characters[index - 2])):
+                // A closing quote: "Work.”InProceedings".
+                offsets.append(index)
+            case let (a, b) where a == "." && b == "(":
+                offsets.append(index)
+            case let (a, b) where a == "." && b.isUppercase && next?.isLowercase == true:
+                // "affect.The" splits; "U.S." and "e.g." don't.
+                if index - 2 >= token.lowerBound, characters[index - 2].isLetter, letterRun(endingAt: index - 2).count >= 2 {
+                    offsets.append(index)
+                }
+            case let (a, b) where b == "(" && a.isLetter:
+                // "affect(Webb" splits; "f(x)" doesn't.
+                if letterRun(endingAt: index - 1).count >= 2 { offsets.append(index) }
+            case let (a, b) where a.isLetter && b.isNumber:
+                // "and2025" splits; "x1", "CO2" and "GPT-4" don't.
+                if letterRun(endingAt: index - 1).count >= 3, letterRun(endingAt: index - 1).contains(where: \.isLowercase) {
+                    offsets.append(index)
+                }
+            case let (a, b) where a.isNumber && b.isLetter:
+                // "2019Baumol" and "1992and" split; "2026a", "20th", "10ms" don't.
+                let length = letterRunLength(startingAt: index)
+                if b.isUppercase ? length >= 2 : length >= 3 && !Self.unitWords.contains(String(characters[index..<(index + length)]).lowercased()) {
+                    offsets.append(index)
+                }
+            default:
+                break
+            }
+        }
+        return offsets
+    }
+
+    private static let unitWords: Set<String> = [
+        "min", "mins", "sec", "secs", "hrs", "khz", "mhz", "ghz", "kbps", "mbps", "gbps", "mph", "kph", "bpm", "rpm",
+        "nm", "mm", "cm", "km", "mg", "kg", "ml", "th", "st", "nd", "rd", "pts", "px"
+    ]
+
+    private func isInnerApostrophe(_ characters: [Character], _ index: Int, _ upper: Int) -> Bool {
+        (characters[index] == "'" || characters[index] == "’") && index > 0 && characters[index - 1].isLetter
+            && index + 1 < upper && characters[index + 1].isLetter
+    }
+
+    /// Splits a run at its case changes that are hard cues ("occupationsAI"), so the
+    /// glued test sees the same pieces `respaced` splits with the word list.
+    private func caseRuns(_ characters: [Character], _ run: Range<Int>) -> [Range<Int>] {
+        let cuts = hardCueOffsets(characters, run)
+        var pieces: [Range<Int>] = []
+        var start = run.lowerBound
+        for cut in cuts { pieces.append(start..<cut); start = cut }
+        pieces.append(start..<run.upperBound)
+        return pieces
+    }
+
+    // MARK: - Word list
+
+    /// Offsets inside one letter run where the word list puts a space.
+    private func wordOffsets(_ characters: [Character], _ run: Range<Int>, wholeToken: Bool = false) -> [Int] {
+        let letters = Array(characters[run])
+        guard letters.count >= 2, !isWord(letters), !isAcronym(letters),
+              let pieces = segmentation(letters), pieces.count >= 2 else { return [] }
+        // A capitalised word ("Goldfarb", "Tonetti") is most likely a name: split it only
+        // into known words, one of them common ("Theresults"), unless the run is long. A
+        // two-letter common word counts first before longer or common words ("Inthe",
+        // "Inaddition") or, inside a glued token, after longer words ("theValueofWork"),
+        // so "Daron", "Atalay" and "Levanon" stay whole.
+        let isCapitalised = letters.first?.isUppercase == true && letters.dropFirst().allSatisfy { !$0.isUppercase }
+        if isCapitalised, letters.count < 14 {
+            let words = pieces.map { Array(letters[$0]) }
+            let allKnown = words.allSatisfy { isWord($0) || isDocumentWord(Self.key($0)) }
+            let hasCommon = words.enumerated().contains { index, word in
+                Self.commonWords.contains(Self.key(word)) && (word.count >= 3
+                    || index == 0 && word.count == 2 && words.dropFirst().allSatisfy { Self.commonWords.contains(Self.key($0)) || $0.count >= 5 }
+                    || !wholeToken && words.allSatisfy { $0 == word || $0.count >= 4 })
+            }
+            guard allKnown, hasCommon else { return [] }
+        }
+        return pieces.dropFirst().map { run.lowerBound + $0.lowerBound }
+    }
+
+    /// The cheapest split of `letters` into words, or nil when keeping it whole is cheapest.
+    func segmentation(_ letters: [Character]) -> [Range<Int>]? {
+        let count = letters.count
+        guard count >= 2 else { return nil }
+        let maxPiece = 24
+        var best = [Double](repeating: .infinity, count: count + 1)
+        var back = [Int](repeating: -1, count: count + 1)
+        best[0] = 0
+        let cases = Cases(letters)
+        for end in 1...count {
+            for start in max(0, end - maxPiece)..<end where best[start] < .infinity {
+                let cost = best[start] + pieceCost(letters, start..<end, cases)
+                if cost < best[end] { best[end] = cost; back[end] = start }
+            }
+        }
+        var pieces: [Range<Int>] = []
+        var end = count
+        while end > 0 {
+            let start = back[end]
+            guard start >= 0 else { return nil }
+            pieces.insert(start..<end, at: 0)
+            end = start
+        }
+        guard pieces.count >= 2, best[count] < unknownCost(count) else { return nil }
+        return pieces
+    }
+
+    /// Each letter's case, worked out once per run: the segmentation asks for every piece.
+    private struct Cases {
+        let isLetter: [Bool], isUpper: [Bool], isLower: [Bool]
+
+        init(_ letters: [Character]) {
+            isLetter = letters.map(\.isLetter)
+            isUpper = letters.map(\.isUppercase)
+            isLower = letters.map(\.isLowercase)
+        }
+    }
+
+    private func pieceCost(_ letters: [Character], _ range: Range<Int>, _ cases: Cases) -> Double {
+        // Case must read as one word: lower case, upper case, or capitalised at the
+        // start of the run or after an upper-case piece ("AIis", "PDFThe").
+        guard cases.isLetter[range.lowerBound] else { return .infinity }
+        let cased = range.filter { cases.isLetter[$0] }
+        let isLower = cased.allSatisfy { cases.isLower[$0] }
+        let isUpper = cased.allSatisfy { cases.isUpper[$0] }
+        let isCapitalised = cases.isUpper[range.lowerBound] && cased.dropFirst().allSatisfy { cases.isLower[$0] }
+        let afterUpper = range.lowerBound == 0 || cases.isUpper[range.lowerBound - 1]
+        guard isLower || isUpper || (isCapitalised && afterUpper) else { return .infinity }
+        let printed = String(letters[range])
+        if let known = cache.costs[printed] { return known }
+        let cost = wordCost(Array(letters[range]), isLower: isLower, isUpper: isUpper)
+        cache.costs[printed] = cost
+        return cost
+    }
+
+    private func wordCost(_ piece: [Character], isLower: Bool, isUpper: Bool) -> Double {
+        // A unigram cost, log2(tokens / expected count): the count is how often the paper
+        // prints the word alone, plus a prior from the word list for words it never does.
+        let key = Self.key(piece)
+        let seen = Double(isLower && isGluedFragment(key) ? 0 : documentCounts[key] ?? 0)
+        func cost(prior: Double) -> Double { log2(tokenCount / (seen + prior)) }
+        if isUpper, piece.count >= 2 {
+            guard isAcronym(piece) else { return .infinity }
+            return cost(prior: isWord(piece) ? 0.5 : 0.2)
+        }
+        if isWord(piece) {
+            if Self.commonWords.contains(key) { return cost(prior: 4) }
+            // Short rare entries ("ratu", "res") lose to one longer word.
+            return cost(prior: piece.count == 3 ? 0.02 : piece.count == 4 ? 0.05 : 0.1)
+        }
+        if let stem = possessiveStem(piece) {
+            let stemKey = Self.key(stem)
+            if isWord(stem) || isDocumentWord(stemKey) { return log2(tokenCount / (Double(documentCounts[stemKey] ?? 0) + 0.1)) }
+        }
+        // A name or term the list lacks but the paper prints alone at least three times.
+        if isDocumentWord(key) { return cost(prior: 0) }
+        return unknownCost(piece.count)
+    }
+
+    /// A short entry that is two common words run together ("ison", "isa"): its count
+    /// in a glued document comes from glued text, not from the word.
+    private func isGluedFragment(_ key: String) -> Bool {
+        guard key.count >= 3, key.count <= 6, !Self.commonWords.contains(key) else { return false }
+        return (1..<key.count).contains { cut in
+            Self.commonWords.contains(String(key.prefix(cut))) && Self.commonWords.contains(String(key.dropFirst(cut)))
+        }
+    }
+
+    /// Printed alone at least three times, and not just a glued run the paper repeats
+    /// ("bottleneckpressure"): it doesn't split wholly into listed words.
+    private func isDocumentWord(_ key: String) -> Bool {
+        guard key.count >= 3, (documentCounts[key] ?? 0) >= 3 else { return false }
+        if let known = cache.documentWords[key] { return known }
+        let letters = Array(key)
+        var covered = [Bool](repeating: false, count: letters.count + 1)
+        covered[0] = true
+        for end in 1...letters.count {
+            // A first piece of three or more letters: "infeasible" isn't "in feasible".
+            for start in max(0, end - 24)..<end where covered[start] && end - start < letters.count && (start > 0 || end >= 3) {
+                if isWord(Array(letters[start..<end])) { covered[end] = true; break }
+            }
+        }
+        let known = !covered[letters.count]
+        cache.documentWords[key] = known
+        return known
+    }
+
+    /// An unknown piece costs more than any listed word, and three more bits a letter (English runs about two), so a
+    /// long unknown run reads as several words but a name keeps its pieces' cost above it.
+    private func unknownCost(_ length: Int) -> Double {
+        log2(tokenCount / 0.01) + 3 * Double(length)
+    }
+
+    /// A listed word with a regular ending the list leaves out: "literatures",
+    /// "computerisation" (British "-isation" as "-ization").
+    private func isInflected(_ piece: [Character]) -> Bool {
+        let key = Self.key(piece)
+        guard key.count >= 5, piece.allSatisfy(\.isLetter) else { return false }
+        for (suffix, replacements) in Self.endings where key.hasSuffix(suffix) {
+            let stem = String(key.dropLast(suffix.count))
+            guard stem.count >= 3 else { continue }
+            if replacements.contains(where: { isListed(stem + $0) }) { return true }
+        }
+        return false
+    }
+
+    private static let endings: [(String, [String])] = [
+        ("isations", ["izations", "ization"]), ("isation", ["ization"]), ("ised", ["ized", "ize"]), ("ising", ["izing", "ize"]),
+        ("ises", ["izes", "ize"]), ("ise", ["ize"]), ("bility", ["ble"]), ("ness", [""]), ("ies", ["y"]), ("ied", ["y"]), ("ings", ["ing", ""]), ("ing", ["", "e"]),
+        ("es", [""]), ("s", [""]), ("ed", ["", "e"]), ("ly", [""]), ("ers", ["er", "e"]), ("er", ["", "e"])
+    ]
+
+    private func possessiveStem(_ piece: [Character]) -> [Character]? {
+        guard piece.count >= 3, piece.last == "s" || piece.last == "S",
+              piece[piece.count - 2] == "'" || piece[piece.count - 2] == "’" else { return nil }
+        return Array(piece.dropLast(2))
+    }
+
+    private func isAcronym(_ piece: [Character]) -> Bool {
+        piece.count >= 2 && piece.count <= 8 && piece.allSatisfy(\.isUppercase)
+    }
+
+    /// Listed, with one- and two-letter entries limited to real English words: the
+    /// lexicon also lists letters and abbreviations ("b", "ek", "ou").
+    func isWord(_ piece: [Character]) -> Bool {
+        let key = Self.key(piece)
+        guard !key.isEmpty else { return false }
+        if key.count <= 2 {
+            if key == "i" { return piece == ["I"] }
+            return Self.shortWords.contains(key)
+        }
+        if isListed(key) { return true }
+        if key.count >= 5, isInflected(piece) { return true }
+        // A capitalised or upper-case entry ("Chen", "AI"): look it up as printed too.
+        let printed = String(piece).precomposedStringWithCompatibilityMapping
+        return printed != key && isListed(printed)
+    }
+
+    /// Lower case with ligatures unfolded ("ﬁnd" → "find") and curly apostrophes straightened.
+    static func key(_ piece: [Character]) -> String {
+        if piece.allSatisfy(\.isASCII) { return String(piece).lowercased() }
+        return String(piece).precomposedStringWithCompatibilityMapping.lowercased().replacingOccurrences(of: "’", with: "'")
+    }
+
+    private static let shortWords: Set<String> = [
+        "a", "i", "am", "an", "as", "at", "be", "by", "do", "go", "he", "if", "in", "is", "it", "me", "my",
+        "no", "of", "oh", "on", "or", "ox", "so", "to", "up", "us", "we", "vs"
+    ]
+
+    /// The commonest English words, which win ties ("is the" over "ist he").
+    static let commonWords: Set<String> = [
+        "a", "about", "above", "across", "after", "again", "against", "all", "almost", "along", "already", "also",
+        "although", "always", "among", "an", "and", "another", "any", "are", "around", "as", "at", "away", "back",
+        "be", "because", "become", "been", "before", "being", "below", "best", "better", "between", "both", "but",
+        "by", "can", "cannot", "case", "could", "data", "did", "do", "does", "done", "down", "during", "each",
+        "early", "either", "end", "enough", "even", "every", "example", "fact", "far", "few", "first", "for",
+        "found", "from", "full", "further", "general", "get", "given", "go", "good", "great", "had", "has", "have",
+        "he", "her", "here", "high", "him", "his", "how", "however", "i", "if", "important", "in", "into", "is",
+        "it", "its", "itself", "just", "know", "large", "last", "least", "less", "level", "like", "long", "low",
+        "made", "make", "many", "may", "me", "might", "more", "most", "much", "must", "my", "need", "never", "new",
+        "next", "no", "not", "now", "number", "of", "off", "often", "on", "once", "one", "only", "or", "order",
+        "other", "others", "our", "out", "over", "own", "part", "people", "per", "place", "point", "rather",
+        "same", "see", "set", "several", "share", "she", "should", "show", "shows", "since", "small", "so", "some",
+        "something", "still", "such", "take", "than", "that", "the", "their", "them", "themselves", "then",
+        "there", "therefore", "these", "they", "this", "those", "though", "three", "through", "thus", "time", "to",
+        "too", "toward", "two", "under", "until", "up", "upon", "us", "use", "used", "using", "very", "was", "way",
+        "we", "well", "were", "what", "when", "where", "whether", "which", "while", "who", "whose", "why", "will",
+        "with", "within", "without", "work", "would", "year", "years", "yet", "you", "your"
+    ]
+}
+
+/// A sorted word list read in place: one `word` or `word<TAB>anything` line per entry,
+/// sorted by the word's UTF-8 bytes, as the bundled Kitten lexicon is. The file is
+/// memory-mapped and binary-searched, so it never becomes a set in memory.
+public final class SortedWordList: @unchecked Sendable {
+    private let data: Data
+
+    public init(contentsOf url: URL) throws {
+        data = try Data(contentsOf: url, options: .alwaysMapped)
+    }
+
+    public func contains(_ word: String) -> Bool {
+        let key = Array(word.utf8)
+        guard !key.isEmpty else { return false }
+        return data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> Bool in
+            let newline = UInt8(ascii: "\n"), tab = UInt8(ascii: "\t")
+            var low = 0, high = bytes.count
+            while low < high {
+                let middle = low + (high - low) / 2
+                var lineStart = middle
+                while lineStart > low, bytes[lineStart - 1] != newline { lineStart -= 1 }
+                var lineEnd = middle
+                while lineEnd < bytes.count, bytes[lineEnd] != newline { lineEnd += 1 }
+                var keyEnd = lineStart
+                while keyEnd < lineEnd, bytes[keyEnd] != tab { keyEnd += 1 }
+                var index = lineStart, other = 0
+                var order = ComparisonResult.orderedSame
+                while index < keyEnd, other < key.count {
+                    if bytes[index] != key[other] { order = bytes[index] < key[other] ? .orderedAscending : .orderedDescending; break }
+                    index += 1
+                    other += 1
+                }
+                if order == .orderedSame, !(index == keyEnd && other == key.count) {
+                    order = index == keyEnd ? .orderedAscending : .orderedDescending
+                }
+                switch order {
+                case .orderedSame: return true
+                case .orderedAscending: low = lineEnd + 1
+                case .orderedDescending: high = lineStart
+                }
+            }
+            return false
+        }
+    }
+}
