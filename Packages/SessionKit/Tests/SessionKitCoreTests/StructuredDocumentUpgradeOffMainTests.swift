@@ -59,19 +59,27 @@ final class StructuredDocumentUpgradeOffMainTests: XCTestCase {
         XCTAssertEqual(try offMain.stored(), try sync.stored())
     }
 
-    /// A main-actor task queued before the import runs while the upgrade is away from the main actor. If the plan
-    /// and the write ran inline, the import would never suspend and the task could only run after it returned.
+    /// While the upgrade is planned, the main actor is free. Through the engine's seam, the plan's task queues a
+    /// main-actor task that opens a semaphore, then waits on it. Off the main actor that task runs and the wait ends.
+    /// If the plan held the main actor, the task could not run until the wait timed out, so a failure means only
+    /// that (#2384: the old test raced an unstructured main-actor task against the import and failed spuriously).
     @MainActor
     func testTheMainActorRunsWhileTheUpgradeIsPlanned() async throws {
         let fixture = try makeFixture()
         try fixture.addReadingSession()
-        let probe = MainActorProbe()
-        Task { @MainActor in probe.ran = true }
+        let engine = fixture.engine
+        let probe = PlanProbe()
+        defer { engine.whileStructuredUpgradeIsPlannedForTesting = nil }
+        engine.whileStructuredUpgradeIsPlannedForTesting = {
+            Task { @MainActor in probe.mainActorRan.signal() }
+            probe.mainActorRanDuringPlan = probe.mainActorRan.wait(timeout: .now() + 10) == .success
+            probe.planRan = true
+        }
 
         _ = try await fixture.reimportOffMain()
-        let ranBeforeImportReturned = probe.ran
 
-        XCTAssertTrue(ranBeforeImportReturned, "the upgrade held the main actor until it finished")
+        XCTAssertTrue(probe.planRan, "fixture check: the re-import planned an upgrade")
+        XCTAssertTrue(probe.mainActorRanDuringPlan, "the upgrade plan held the main actor: a main-actor task could not run for 10 s while it planned")
         XCTAssertEqual(try fixture.store.listItems().count, 1, "and the upgrade did happen")
     }
 
@@ -241,7 +249,9 @@ final class StructuredDocumentUpgradeOffMainTests: XCTestCase {
     }
 }
 
-@MainActor
-private final class MainActorProbe {
-    var ran = false
+/// Shared by the plan's task and the test; the plan's task writes the flags before the import returns.
+private final class PlanProbe: @unchecked Sendable {
+    let mainActorRan = DispatchSemaphore(value: 0)
+    var mainActorRanDuringPlan = false
+    var planRan = false
 }
