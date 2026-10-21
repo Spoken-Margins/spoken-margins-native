@@ -93,6 +93,15 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         // #2184: reloading the item (a pause, a saved position, a Margin) leaves the map alone, so Skim keeps what it loaded.
         for _ in 0..<3 { model.refreshSelectedItem(); model.snapshot.currentMediaTimeMs = model.snapshot.currentMediaTimeMs }
         XCTAssertEqual(model.skimResourceLoadCount, loadedResources, "Item reloads must reuse the loaded map and asset metadata")
+        // #2255: reopening the playing mapped item, every summary saved, used to reload Skim once per scene and once more
+        // on the main thread; a 77-minute episode froze for 20 s. The pass now reads once, off main, and Skim keeps what it has.
+        model.openItem(id: item.id)
+        XCTAssertNotNil(model.preparingLocalAudioMapItems[item.id], "precondition: reopening starts a summary pass")
+        for _ in 0..<250 where model.preparingLocalAudioMapItems[item.id] != nil { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertNil(model.preparingLocalAudioMapItems[item.id], "the summary pass must finish")
+        XCTAssertEqual(model.diagnostics["localAudioSkim:\(item.id)"], "ready")
+        XCTAssertEqual(model.skimResourceLoadCount, loadedResources, "Reopening with every summary saved must not reload Skim's map and assets")
+        XCTAssertTrue(model.snapshot.canSkimForward)
         // Next chapter reads the summary of the chapter being left, then lands at the next chapter;
         // a second press skips the summary instead of queueing another (#569).
         XCTAssertEqual(model.nextPlaybackMediaChapter?.startMs, 5_000)

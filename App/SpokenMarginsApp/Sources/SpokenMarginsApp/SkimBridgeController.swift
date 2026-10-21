@@ -122,6 +122,18 @@ final class SkimBridgeController {
         resourceContext = nil
     }
 
+    /// A summary pass over `itemId` found these summary assets saved. Skim reloads its map and assets only when what it
+    /// loaded for that item lacks one of them (#2255): every open used to reload them, on the main thread. Summaries
+    /// that failed to prepare are offered again either way, as reopening the item always did.
+    func summaryAssetsSaved(itemId: String, assetIDs: Set<String>) {
+        failedSummaryAssetIDs = []
+        if let context = resourceContext, context.itemId == itemId,
+           !assetIDs.isSubset(of: Set(context.assets.lazy.filter { $0.integrity == .valid }.map(\.id))) {
+            resourceContext = nil
+        }
+        updateAvailability(refreshResources: false)
+    }
+
     func updateAvailability(refreshResources: Bool = true) {
         if refreshResources { resourceContext = nil; failedSummaryAssetIDs = [] }
         guard !isUpdatingAvailability, let host else { return }
@@ -166,15 +178,17 @@ final class SkimBridgeController {
             #if DEBUG
             resourceLoadCount += 1
             #endif
-            let projection = try? store.loadResolvedListeningMapProjection(itemId: source.itemId)
-            resourceContext = SkimResourceContext(
-                itemId: source.itemId,
-                projection: projection,
-                proposal: SharedListeningMapPlacement.proposal(
-                    for: projection, committed: (try? store.loadPortableListeningMapProposals(itemId: source.itemId)) ?? [],
-                    layers: (try? store.loadImportedCommentaryLayers(itemId: source.itemId)) ?? []),
-                assets: (try? store.loadOwnedOfflineAssets()) ?? []
-            )
+            resourceContext = MainThreadOperationLabels.shared.scoped("skim.loadResources") {
+                let projection = try? store.loadResolvedListeningMapProjection(itemId: source.itemId)
+                return SkimResourceContext(
+                    itemId: source.itemId,
+                    projection: projection,
+                    proposal: SharedListeningMapPlacement.proposal(
+                        for: projection, committed: (try? store.loadPortableListeningMapProposals(itemId: source.itemId)) ?? [],
+                        layers: (try? store.loadImportedCommentaryLayers(itemId: source.itemId)) ?? []),
+                    assets: (try? store.loadOwnedOfflineAssets()) ?? []
+                )
+            }
         }
         return resourceContext
     }
