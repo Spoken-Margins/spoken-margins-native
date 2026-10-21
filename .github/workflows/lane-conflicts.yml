@@ -15,11 +15,12 @@
 # `pull_request` runs are built from the PR's merge ref, which GitHub does not create for a PR that already
 # conflicts, so those PRs are found by the sweep instead.
 #
-# The script is taken from the base branch's live tip (SM_TRUNK, default main, on push and dispatch) with no credentials kept, and
-# reads the PR head as git data only, never running it. GitHub builds a pull_request run's workflow file from the PR's merge ref, so a
-# same-repo PR that edits this file runs its own copy; only collaborators can open those (forks are skipped
-# below), and pull_request_target is no help because main carries no workflows. One check at a time; a newer
-# waiting one replaces an older waiting one, which is safe because every run sweeps all armed PRs.
+# The script is taken from the base branch's live tip (SM_TRUNK, default main, on push and dispatch) with no
+# credentials kept, and reads the PR head as git data only, never running it. GitHub builds a pull_request run's
+# workflow file from the PR's merge ref, so a same-repo PR that edits this file runs its own copy; only
+# collaborators can open those (forks are skipped below), and pull_request_target is no help because main carries no
+# workflows. One check at a time; a newer waiting one replaces an older waiting one, which is safe because every run
+# sweeps all armed PRs.
 name: lane-conflicts
 
 on:
