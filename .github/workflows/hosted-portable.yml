@@ -52,12 +52,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      # pip's and npm's download caches, keyed on the lock files (#1389).
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
       # research/B4/server's tests; its go.mod names the version.
       - uses: actions/setup-go@v5
         with:
@@ -111,6 +115,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
       # The package's build folder: dependency checkouts (onnxruntime's binary framework is the big one) and their
       # products. Our own sources are always newer than the restored objects, so only the dependencies are reused.
       - uses: actions/cache@v4
