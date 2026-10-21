@@ -4,6 +4,8 @@ No network, no real Claude, no real gh. `claude` is a fake binary (a script in a
 worker really launches, with the prompt on stdin, and git is real: an origin repo and a clone in a temp
 folder. Only `gh` is a fake, one object holding the issues and PRs.
 """
+import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 import contextlib
 import datetime as dt
 import io

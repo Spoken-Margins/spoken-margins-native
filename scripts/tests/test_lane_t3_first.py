@@ -11,6 +11,8 @@ the T3 waits, its held report says what passed with which next, and the T3 PASS 
 them again unless next has since moved in ways that matter. Other runners still skip them.
 """
 import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
+import os
 from pathlib import Path
 import subprocess
 import sys

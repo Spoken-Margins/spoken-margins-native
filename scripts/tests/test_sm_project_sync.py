@@ -1,4 +1,6 @@
 """Project synchronization regression: exercise the dispatcher command, not a label mirror."""
+import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 import importlib.util
 import unittest
 from pathlib import Path

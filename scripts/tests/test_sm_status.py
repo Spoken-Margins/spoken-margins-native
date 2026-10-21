@@ -5,6 +5,8 @@ Nothing here touches the network. The PR bundles in scripts/fixtures/sm_status/ 
 #1595 (a PASS on an older head, lane and .github changes), #1590 (PASS on the head, clean audit), #1596 (T3 PASS,
 no audit yet) and #1568. The other cases are those bundles, or small hand-built ones, changed one fact at a time.
 """
+import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 import contextlib
 import copy
 import datetime as dt
