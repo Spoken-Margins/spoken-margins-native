@@ -39,6 +39,9 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     /// answering from it never waits behind a write holding `connectionLock`.
     private let transcriptSummaryLock = NSLock()
     private var transcriptSummaryByItem: [String: (stamp: String, summary: TranscriptTimelineSummary)] = [:]
+    private let anchorContextLock = NSLock()
+    private var anchorContextByItem: [String: (stamp: String, contexts: [Int: SourceAnchorContext?])] = [:]
+    private var anchorTimelineDecodeCount = 0
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     /// How often each item was written or deleted through this connection, for `itemRevision(id:)`.
@@ -837,6 +840,32 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return summary
     }
 
+    /// The words around each media time, for Margins placed by media time (#2102). Naming the words needs the full
+    /// timeline (thousands of segments, several MB of JSON), and every refresh of the Item screen asked for it again, so a
+    /// mapped episode with a spoken Margin held the main thread for each tap. The answers are kept per timeline record
+    /// (the same stamp as the summary) and the timeline is only decoded for times not answered yet. A time with no
+    /// passage is kept as nil so it isn't asked again either.
+    public func resolveSourceAnchorContexts(itemId: String, mediaTimesMs: Set<Int>) throws -> [Int: SourceAnchorContext?] {
+        guard !mediaTimesMs.isEmpty, let stamp = try transcriptTimelineStamp(itemId: itemId) else {
+            anchorContextLock.withLock { _ = anchorContextByItem.removeValue(forKey: itemId) }
+            return [:]
+        }
+        var known: [Int: SourceAnchorContext?] = anchorContextLock.withLock {
+            anchorContextByItem[itemId].flatMap { $0.stamp == stamp ? $0.contexts : nil } ?? [:]
+        }
+        let missing = mediaTimesMs.filter { known.index(forKey: $0) == nil }
+        if !missing.isEmpty {
+            guard let timeline = try loadTranscriptTimeline(itemId: itemId)?.timeline else { return [:] }
+            anchorContextLock.withLock { anchorTimelineDecodeCount += 1 }
+            for ms in missing { known[ms] = .some(SourceAnchorContextResolver.resolve(mediaTimeMs: ms, timeline: timeline)) }
+            anchorContextLock.withLock { anchorContextByItem[itemId] = (stamp: stamp, contexts: known) }
+        }
+        return known.filter { mediaTimesMs.contains($0.key) }
+    }
+
+    /// How many times `resolveSourceAnchorContexts` decoded a whole timeline. A test reads it to prove a repeat refresh doesn't.
+    public var anchorTimelineDecodes: Int { anchorContextLock.withLock { anchorTimelineDecodeCount } }
+
     /// Only the chapters of an item's source transcript timeline (#777). Empty when there is no timeline.
     public func loadTranscriptTimelineChapters(itemId: String) throws -> [MediaTimelineChapter] {
         try loadTranscriptTimelineSummary(itemId: itemId)?.chapters ?? []
@@ -1175,6 +1204,59 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     public func listItems(includeDeleted: Bool = false) throws -> [Item] {
         let items: [Item] = try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at DESC, id;", ["item"])
         return includeDeleted ? items : items.filter { $0.deletedAt == nil }
+    }
+
+    /// How much of an item's text the summary read looks at to tell whether there is any besides whitespace.
+    private static let summaryTextHeadLength = 512
+
+    /// The Library list's read (#2102): every item in `listItems`' order, without its `text` or `documentStructure`.
+    /// SQLite cuts those two out of each payload, so the several MB of an article or book are never copied or decoded.
+    /// The text's length is counted in Unicode scalars, which is how SQLite counts; it differs from Swift's character
+    /// count only for text with combining marks or joined emoji, and only feeds the listening-time estimate. A payload
+    /// that can't be cut or decoded sends the whole read the full way, which sets the broken record aside as before.
+    public func listItemSummaries(includeDeleted: Bool = false) throws -> [LibraryItemSummary] {
+        var rows: [(payload: String, head: String?, length: Int?)] = []
+        var needsFullRead = false
+        try withReadConnection { connection in
+            var statement: OpaquePointer?
+            let sql = """
+                SELECT CASE WHEN json_valid(payload) THEN json_remove(payload, '$.text', '$.documentStructure') END,
+                       substr(CASE WHEN json_valid(payload) THEN json_extract(payload, '$.text') END, 1, \(Self.summaryTextHeadLength)),
+                       CASE WHEN json_valid(payload) THEN length(json_extract(payload, '$.text')) END
+                FROM records WHERE kind = 'item' ORDER BY updated_at DESC, id;
+                """
+            guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_item_summaries")
+            }
+            defer { sqlite3_finalize(statement) }
+            while true {
+                let step = sqlite3_step(statement)
+                if step == SQLITE_DONE { return }
+                guard step == SQLITE_ROW else { throw SessionKitError.persistenceFailed("step_item_summaries") }
+                guard let raw = sqlite3_column_text(statement, 0) else { needsFullRead = true; continue }
+                let head = sqlite3_column_text(statement, 1).map { String(cString: $0) }
+                let length = sqlite3_column_type(statement, 2) == SQLITE_NULL ? nil : Int(sqlite3_column_int64(statement, 2))
+                rows.append((payload: String(cString: raw), head: head, length: length))
+            }
+        }
+        var summaries: [LibraryItemSummary] = []
+        for row in rows {
+            guard !needsFullRead, let data = row.payload.data(using: .utf8),
+                  let item = try? decoder.decode(Item.self, from: data) else { needsFullRead = true; break }
+            var hasText = row.head?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            if !hasText, (row.length ?? 0) > Self.summaryTextHeadLength {
+                // Whitespace for the first stretch, then maybe words: only this rare item is read whole.
+                hasText = (try? loadItem(id: item.id))?.hasListenableText ?? false
+            }
+            summaries.append(LibraryItemSummary(
+                id: item.id, title: item.title, mediaType: item.mediaType, status: item.status,
+                externalReference: item.externalReference, externalReferenceType: item.externalReferenceType,
+                media: item.media, deletedAt: item.deletedAt, author: item.author, sourceTitle: item.sourceTitle,
+                sourceURL: item.sourceURL, createdAt: item.createdAt, sourceCompletedAt: item.sourceCompletedAt,
+                hasListenableText: hasText, textCharacterCount: row.length))
+        }
+        if needsFullRead { return try listItems(includeDeleted: includeDeleted).map(LibraryItemSummary.init) }
+        return includeDeleted ? summaries : summaries.filter { $0.deletedAt == nil }
     }
 
     public func listDeletedItems() throws -> [Item] {
