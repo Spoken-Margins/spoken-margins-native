@@ -225,7 +225,20 @@ public struct PDFWordSpacer {
                 // The word since the last capital: "In" of "InProceedings", "Te" of "LaTeX".
                 let word = Array(run.suffix(run.count > lowerTail ? lowerTail + 1 : lowerTail))
                 if lowerTail >= 2 && !isShortCapitalised || word.count >= 2 && isWord(word) { offsets.append(index) }
-            case let (a, b) where (a == "," || a == ";") && (b.isLetter || b == "("):
+            case let (a, b) where (a == "s" || a == "S") && b.isUppercase && index >= token.lowerBound + 3
+                && (characters[index - 2] == "’" || characters[index - 2] == "'") && characters[index - 3].isLetter:
+                // A possessive: "occupation’sAI-infeasible", "occupation’sO*NET".
+                offsets.append(index)
+            case let (a, b) where Self.isMathLetter(a) != Self.isMathLetter(b) && a.isLetter && b.isLetter:
+                // Math italic against prose: "𝜌butcanfailwhen𝜌", "𝑡inoccupation".
+                offsets.append(index)
+            case let (a, b) where (a == "," || a == ";") && (b.isLetter || b == "(" || b == "“"):
+                offsets.append(index)
+            case let (a, b) where a == "." && (b == "“" || b.isNumber) && index >= token.lowerBound + 3
+                && characters[index - 2].isLetter && characters[index - 3].isLetter:
+                // "Wang.2026.“Generative" in a reference; "e.g.2" and "v1.2" don't split.
+                offsets.append(index)
+            case let (a, b) where a == "." && b == "“" && index >= token.lowerBound + 2 && characters[index - 2].isNumber:
                 offsets.append(index)
             case let (a, b) where (a == "," || a == ";") && b.isNumber && index >= token.lowerBound + 2
                 && (characters[index - 2].isLetter || characters[index - 2] == "."):
@@ -281,8 +294,11 @@ public struct PDFWordSpacer {
         if characters[next].isLowercase { return true }
         var start = index
         while start > token.lowerBound, characters[start - 1].isLowercase { start -= 1 }
+        // The word before may be capitalised: "GenerativeAIandthe".
+        if start > token.lowerBound, characters[start - 1].isUppercase { start -= 1 }
         let before = Array(characters[start..<index])
         guard before.count >= 2, (2...min(before.count, 12)).contains(where: { isWord(Array(before.suffix($0))) }) else { return false }
+        if characters[start].isUppercase { start += 1 }
         if characters[next] == "*" || characters[next] == "&" { return true }
         while next < token.upperBound, characters[next].isUppercase { next += 1 }
         guard next - index >= 2 else { return false }
@@ -290,6 +306,11 @@ public struct PDFWordSpacer {
         while next + lower < token.upperBound, characters[next + lower].isLowercase { lower += 1 }
         let term = Self.key(Array(characters[start..<(next + min(lower, 1))]))
         return (documentCounts[term] ?? 0) < 2
+    }
+
+    /// A letter from Unicode's mathematical alphanumerics (𝜌, 𝐸, 𝑡), which LaTeX math sets.
+    static func isMathLetter(_ character: Character) -> Bool {
+        character.unicodeScalars.first.map { (0x1D400...0x1D7FF).contains($0.value) } ?? false
     }
 
     private static let unitWords: Set<String> = [
@@ -464,7 +485,17 @@ public struct PDFWordSpacer {
                 if isWord(Array(letters[start..<end])) { covered[end] = true; break }
             }
         }
-        let known = !covered[letters.count]
+        // A phrase glued the same way every time ("attheendof", eight times in table notes)
+        // splits into three or more words once two-letter function words count.
+        var pieces = [Int](repeating: 0, count: letters.count + 1)
+        for end in 1...letters.count {
+            for start in max(0, end - 24)..<end where start == 0 || pieces[start] > 0 {
+                let piece = String(letters[start..<end])
+                let fits = end - start >= 3 ? isWord(Array(piece)) : Self.functionWords.contains(piece)
+                if fits, end - start < letters.count { pieces[end] = max(pieces[end], pieces[start] + 1) }
+            }
+        }
+        let known = !covered[letters.count] && pieces[letters.count] < 3
         cache.documentWords[key] = known
         return known
     }
@@ -532,6 +563,10 @@ public struct PDFWordSpacer {
         "a", "i", "am", "an", "as", "at", "be", "by", "do", "go", "he", "if", "in", "is", "it", "me", "my",
         "no", "of", "oh", "on", "or", "ox", "so", "to", "up", "us", "we", "vs"
     ]
+
+    /// Two-letter words glued prose is full of; "us" and "so" are left out, so "prolixus"
+    /// stays a name.
+    private static let functionWords: Set<String> = ["of", "to", "in", "at", "is", "on", "an", "as", "by", "or", "it", "be", "we"]
 
     /// The commonest English words, which win ties ("is the" over "ist he").
     static let commonWords: Set<String> = [

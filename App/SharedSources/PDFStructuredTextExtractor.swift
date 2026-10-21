@@ -511,11 +511,13 @@ enum PDFStructuredTextExtractor {
         let spacer = PDFWordSpacer(isWord: wordList.contains, context: texts)
         guard spacer.isGlued(texts) else { return }
         // A word broken by a line-end hyphen is split whole: its start on the line before
-        // ("Nev-") and its end on the line after ("tised" of "adver-").
+        // ("Nev-") and its end on the line after ("tised" of "adver-"). The line before is
+        // read respaced, so its last word is "AI" of "Of all AI-", not "OfallAI".
         let positions = pages.indices.flatMap { page in pages[page].indices.map { (page, $0) } }
+        var previous = ""
         for (position, (pageIndex, lineIndex)) in positions.enumerated() {
             let line = pages[pageIndex][lineIndex]
-            let previous = position > 0 ? texts[position - 1] : ""
+            defer { previous = pages[pageIndex][lineIndex].text }
             let carried = previous.hasSuffix("-") ? String(previous.dropLast().reversed().prefix(while: \.isLetter).reversed()) : ""
             let next = position + 1 < texts.count ? texts[position + 1] : ""
             let continued = line.text.hasSuffix("-") ? String(next.prefix(while: \.isLowercase)) : ""
