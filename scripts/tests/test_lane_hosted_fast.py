@@ -143,17 +143,17 @@ class HostedChecksStandTests(unittest.TestCase):
         path = self.other / name
         path.parent.mkdir(parents=True, exist_ok=True)
         self.commit(self.other, name, text)
-        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', 'origin', 'HEAD:next'], check=True)
-        return lane.fetch_base(self.tree, 'next')
+        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', 'origin', 'HEAD:main'], check=True)
+        return lane.fetch_base(self.tree, 'main')
 
     def pr(self):
         self.commit(self.tree, 'pr.txt', 'pr\n')
         head = self.rev(self.tree, 'HEAD')
-        tested = lane.fetch_base(self.tree, 'next')
+        tested = lane.fetch_base(self.tree, 'main')
         return head, tested, lane.merged_tree(self.tree, tested, head)
 
     def stands(self, head, base_sha, records, env=ON):
-        return lane.hosted_fast_checks(None, self.tree, 'next', head, base_sha, env=env, records=records)
+        return lane.hosted_fast_checks(None, self.tree, 'main', head, base_sha, env=env, records=records)
 
     def records(self, head, base, tree, only=None):
         """A records reader whose checks all passed and recorded <tree>; with <only>, just that set of checks."""
@@ -173,7 +173,7 @@ class HostedChecksStandTests(unittest.TestCase):
                 def missing(github, h, checks):
                     reads.append(checks)
                     return None, 'no "vps fast: portable" check ran'
-                found, why = lane.hosted_fast_checks(None, self.tree, 'next', head, tested, env=env, records=missing)
+                found, why = lane.hosted_fast_checks(None, self.tree, 'main', head, tested, env=env, records=missing)
                 self.assertEqual((found, why), (None, 'no "vps fast: portable" check ran'))
                 self.assertEqual(reads, [lane.VPS_FAST_CHECKS])
 
@@ -208,7 +208,7 @@ class HostedChecksStandTests(unittest.TestCase):
         self.assertEqual(why, '')
         self.assertEqual(set(found), set(lane.HOSTED_FAST_CHECKS))
         # The tree the runner's own merge commit holds is the one the hosted job reported.
-        sha, _ = lane.build_merge_commit(self.tree, 'next', head, 5, 'A change')
+        sha, _ = lane.build_merge_commit(self.tree, 'main', head, 5, 'A change')
         self.assertEqual(self.rev(self.tree, sha + '^{tree}'), tree)
 
     def test_a_tree_that_is_not_this_merge_is_refused(self):
@@ -235,7 +235,7 @@ class HostedChecksStandTests(unittest.TestCase):
                 newest = self.move_next(path)
                 found, why = self.stands(head, newest, self.records(head, tested, tree))
                 self.assertIsNone(found)
-                self.assertIn(f'tested it on next at {tested[:7]}', why)
+                self.assertIn(f'tested it on main at {tested[:7]}', why)
 
     def test_a_record_naming_a_next_the_runner_does_not_have_falls_back(self):
         head, tested, tree = self.pr()
@@ -248,7 +248,7 @@ class HostedChecksStandTests(unittest.TestCase):
 
         def broken(github, h, checks):
             raise subprocess.CalledProcessError(1, ['gh', 'api'])
-        found, why = lane.hosted_fast_checks(None, self.tree, 'next', head, tested, env=ON, records=broken)
+        found, why = lane.hosted_fast_checks(None, self.tree, 'main', head, tested, env=ON, records=broken)
         self.assertIsNone(found)
         self.assertIn('could not read the fast checks off the Mac', why)
 

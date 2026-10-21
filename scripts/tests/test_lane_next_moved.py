@@ -28,7 +28,7 @@ class RealGit(unittest.TestCase):
         path.write_text(text)
         subprocess.run(self.git + ['-C', str(self.other), 'add', '.'], check=True)
         subprocess.run(self.git + ['-C', str(self.other), 'commit', '-q', '-m', subject or f'Change {name}'], check=True)
-        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', 'origin', 'HEAD:next'], check=True)
+        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', 'origin', 'HEAD:main'], check=True)
 
     def pr_head(self, *names):
         for name in names:
@@ -40,12 +40,12 @@ class RealGit(unittest.TestCase):
 
 class UntestedMovesTests(RealGit):
     def moves(self, head, tested):
-        new = lane.fetch_base(self.tree, 'next')
+        new = lane.fetch_base(self.tree, 'main')
         return lane.untested_moves(self.tree, tested, new, head)
 
     def test_commits_touching_other_files_are_listed_and_can_be_skipped(self):
         head = self.pr_head('App/Feature.swift')
-        tested = lane.fetch_base(self.tree, 'next')
+        tested = lane.fetch_base(self.tree, 'main')
         self.move_next('App/Other.swift', subject='Merge pull request #7: Other')
         self.move_next('docs/notes.md', subject='Merge pull request #8: Notes')
         commits, why = self.moves(head, tested)
@@ -55,7 +55,7 @@ class UntestedMovesTests(RealGit):
 
     def test_a_commit_touching_one_of_the_pr_s_files_needs_a_re_test(self):
         head = self.pr_head('App/Feature.swift', 'App/Shared.swift')
-        tested = lane.fetch_base(self.tree, 'next')
+        tested = lane.fetch_base(self.tree, 'main')
         self.move_next('App/Unrelated.swift')
         self.move_next('App/Shared.swift', text='next side\n')
         commits, why = self.moves(head, tested)
@@ -67,7 +67,7 @@ class UntestedMovesTests(RealGit):
         # same set. Here the last commit only adds a doc, and next changes the file the first commit touched.
         self.pr_head('App/Sharing.swift')
         head = self.pr_head('docs/notes.md')
-        tested = lane.fetch_base(self.tree, 'next')
+        tested = lane.fetch_base(self.tree, 'main')
         self.move_next('App/Sharing.swift', text='next side\n')
         commits, why = self.moves(head, tested)
         self.assertIsNone(commits)
@@ -85,7 +85,7 @@ class UntestedMovesTests(RealGit):
             with self.subTest(name=name):
                 self.assertFalse(lane.is_build_input(name), name)
         head = self.pr_head('App/Feature.swift')
-        tested = lane.fetch_base(self.tree, 'next')
+        tested = lane.fetch_base(self.tree, 'main')
         self.move_next('project.yml')
         commits, why = self.moves(head, tested)
         self.assertIsNone(commits)
@@ -94,10 +94,10 @@ class UntestedMovesTests(RealGit):
     def test_a_next_that_no_longer_contains_the_tested_commit_needs_a_re_test(self):
         head = self.pr_head('App/Feature.swift')
         self.move_next('App/Other.swift')
-        tested = lane.fetch_base(self.tree, 'next')
+        tested = lane.fetch_base(self.tree, 'main')
         subprocess.run(self.git + ['-C', str(self.other), 'reset', '-q', '--hard', 'HEAD~1'], check=True)
         self.commit(self.other, 'Rewritten.swift', 'x\n')
-        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', '-f', 'origin', 'HEAD:next'], check=True)
+        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', '-f', 'origin', 'HEAD:main'], check=True)
         commits, why = self.moves(head, tested)
         self.assertIsNone(commits)
         self.assertIn('no longer contains', why)
@@ -105,15 +105,15 @@ class UntestedMovesTests(RealGit):
     def test_a_merge_on_next_counts_every_file_it_brought_in(self):
         # next's history is merge commits; the files a merge brought in count, not just its own diff.
         head = self.pr_head('App/Feature.swift')
-        tested = lane.fetch_base(self.tree, 'next')
+        tested = lane.fetch_base(self.tree, 'main')
         subprocess.run(self.git + ['-C', str(self.other), 'checkout', '-q', '-b', 'side'], check=True)
         (self.other / 'project.yml').write_text('side\n')
         subprocess.run(self.git + ['-C', str(self.other), 'add', '.'], check=True)
         subprocess.run(self.git + ['-C', str(self.other), 'commit', '-q', '-m', 'side'], check=True)
-        subprocess.run(self.git + ['-C', str(self.other), 'checkout', '-q', 'next'], check=True)
+        subprocess.run(self.git + ['-C', str(self.other), 'checkout', '-q', 'main'], check=True)
         subprocess.run(self.git + ['-C', str(self.other), 'merge', '-q', '--no-ff', '-m', 'Merge pull request #9: Side',
                                    'side'], check=True)
-        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', 'origin', 'HEAD:next'], check=True)
+        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', 'origin', 'HEAD:main'], check=True)
         commits, why = self.moves(head, tested)
         self.assertIsNone(commits)
         self.assertIn('project.yml', why)
@@ -123,11 +123,11 @@ class ScriptsTheChecksDontReadTests(RealGit):
     """#1208: a lane tool on next that a PR's checks never read doesn't make the PR test again."""
 
     def moves(self, head, tested):
-        return lane.untested_moves(self.tree, tested, lane.fetch_base(self.tree, 'next'), head)
+        return lane.untested_moves(self.tree, tested, lane.fetch_base(self.tree, 'main'), head)
 
     def test_a_lane_tool_the_pr_s_checks_never_read_is_skipped(self):
         head = self.pr_head('App/Feature.swift', 'Packages/SessionKit/Sources/SessionKit/Feature.swift')
-        tested = lane.fetch_base(self.tree, 'next')
+        tested = lane.fetch_base(self.tree, 'main')
         self.move_next('scripts/phone-build', subject='Merge pull request #7: Phone builds')
         self.move_next('scripts/tests/test_phone_build.py', subject='Merge pull request #8: Phone build tests')
         self.move_next('scripts/lane_dedupe.py', subject='Merge pull request #9: Dedupe')
@@ -142,7 +142,7 @@ class ScriptsTheChecksDontReadTests(RealGit):
             with self.subTest(name=name):
                 self.setUp()
                 head = self.pr_head('App/Feature.swift')
-                tested = lane.fetch_base(self.tree, 'next')
+                tested = lane.fetch_base(self.tree, 'main')
                 self.move_next(name, text=f'{name} changed\n')
                 commits, why = self.moves(head, tested)
                 self.assertIsNone(commits)
@@ -154,7 +154,7 @@ class ScriptsTheChecksDontReadTests(RealGit):
             with self.subTest(mine=mine):
                 self.setUp()  # a fresh origin and PR each time, so only this path is the PR's
                 head = self.pr_head(mine)
-                tested = lane.fetch_base(self.tree, 'next')
+                tested = lane.fetch_base(self.tree, 'main')
                 self.move_next('scripts/phone-build', text=f'for {mine}\n')
                 commits, why = self.moves(head, tested)
                 self.assertIsNone(commits)
@@ -162,12 +162,12 @@ class ScriptsTheChecksDontReadTests(RealGit):
 
     def test_a_pr_that_moves_a_script_out_of_scripts_still_counts_as_a_lane_change(self):
         self.move_next('scripts/old_tool.py', text='old\n')
-        subprocess.run(self.git + ['-C', str(self.tree), 'pull', '-q', '--no-rebase', 'origin', 'next'], check=True)
+        subprocess.run(self.git + ['-C', str(self.tree), 'pull', '-q', '--no-rebase', 'origin', 'main'], check=True)
         (self.tree / 'tools').mkdir()
         subprocess.run(self.git + ['-C', str(self.tree), 'mv', 'scripts/old_tool.py', 'tools/old_tool.py'], check=True)
         subprocess.run(self.git + ['-C', str(self.tree), 'commit', '-q', '-m', 'Move the tool'], check=True)
         head = self.rev(self.tree, 'HEAD')
-        tested = lane.fetch_base(self.tree, 'next')
+        tested = lane.fetch_base(self.tree, 'main')
         self.move_next('scripts/phone-build')
         commits, why = self.moves(head, tested)
         self.assertIsNone(commits)
@@ -176,7 +176,7 @@ class ScriptsTheChecksDontReadTests(RealGit):
 
     def test_a_lane_change_with_a_quoted_name_still_counts(self):
         head = self.pr_head('scripts/tests/test_caf\u00e9.py')
-        tested = lane.fetch_base(self.tree, 'next')
+        tested = lane.fetch_base(self.tree, 'main')
         self.move_next('scripts/phone-build')
         commits, why = self.moves(head, tested)
         self.assertIsNone(commits)
@@ -184,12 +184,12 @@ class ScriptsTheChecksDontReadTests(RealGit):
 
     def test_a_file_next_renames_is_still_the_pr_s_file(self):
         self.move_next('App/Old.swift', text='old\n')
-        subprocess.run(self.git + ['-C', str(self.tree), 'pull', '-q', '--no-rebase', 'origin', 'next'], check=True)
+        subprocess.run(self.git + ['-C', str(self.tree), 'pull', '-q', '--no-rebase', 'origin', 'main'], check=True)
         head = self.pr_head('App/Old.swift')
-        tested = lane.fetch_base(self.tree, 'next')
+        tested = lane.fetch_base(self.tree, 'main')
         subprocess.run(self.git + ['-C', str(self.other), 'mv', 'App/Old.swift', 'App/New.swift'], check=True)
         subprocess.run(self.git + ['-C', str(self.other), 'commit', '-q', '-m', 'Rename'], check=True)
-        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', 'origin', 'HEAD:next'], check=True)
+        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', 'origin', 'HEAD:main'], check=True)
         commits, why = self.moves(head, tested)
         self.assertIsNone(commits)
         self.assertIn('App/Old.swift', why)
@@ -286,7 +286,7 @@ class RunAutoAfterNextMovedTests(RealGit):
 
     def run_auto(self, move):
         head = self.pr_head('App/Feature.swift')
-        base_sha = lane.fetch_base(self.tree, 'next')
+        base_sha = lane.fetch_base(self.tree, 'main')
         real_push, pushes = lane.push_merge, []
 
         def push(tree, sha, base):
@@ -305,7 +305,7 @@ class RunAutoAfterNextMovedTests(RealGit):
                 mock.patch.object(lane, 'inherited_check', return_value=lambda comments: []), \
                 mock.patch.object(lane, 'run_automerge',
                                   return_value=('PASS', 'no simulator (compile only)', 'host tests; builds', [])) as tests:
-            result = lane.run_auto(github, {'title': 'Feature'}, 5, 'next', head, base_sha, Path(evidence), [])
+            result = lane.run_auto(github, {'title': 'Feature'}, 5, 'main', head, base_sha, Path(evidence), [])
         return result, tests, github, head, pushes
 
     def test_next_moving_elsewhere_lands_the_re_merge_without_testing_again(self):
@@ -314,7 +314,7 @@ class RunAutoAfterNextMovedTests(RealGit):
         self.assertEqual(verdict, 'PASS')
         self.assertEqual(tests.call_count, 1)
         self.assertEqual(len(pushes), 2)
-        landed = self.rev(self.origin, 'next')
+        landed = self.rev(self.origin, 'main')
         self.assertEqual(landed, pushes[1])
         parents = subprocess.check_output(['git', '-C', str(self.tree), 'rev-list', '--parents', '-n', '1', landed],
                                           text=True).split()[1:]
@@ -322,7 +322,7 @@ class RunAutoAfterNextMovedTests(RealGit):
         text = '\n'.join(details)
         self.assertIn('not re-tested', text)
         self.assertIn('Merge pull request #7: Other', text)
-        self.assertTrue(details[-1].startswith(f'merged into next as {landed[:7]}'), details)
+        self.assertTrue(details[-1].startswith(f'merged into main as {landed[:7]}'), details)
         # The second merge check satisfies the merge audit but doesn't tell phone-build the tip was tested.
         second = github.posted[-1]
         import merge_audit
