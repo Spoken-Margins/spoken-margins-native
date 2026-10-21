@@ -24,6 +24,11 @@ final class SharedLinkVoiceover {
     /// True once per item and launch (and again after a failed lookup), so opening an item can't repeat a lookup.
     func mayLookUp(itemId: String) -> Bool { !settled.contains(itemId) }
 
+    /// Marks the item as looked up before any lookup task starts, and says whether this caller may start one.
+    /// A clip made during playback opens its item (#1437), which also asks for a lookup; claiming at once, not
+    /// inside the task, keeps that to one page fetch (Claude audit on 34af58c).
+    func claim(itemId: String) -> Bool { settled.insert(itemId).inserted }
+
     init(fetchPage: @escaping FetchPage = SharedLinkVoiceover.fetchFromNetwork) {
         self.fetchPage = fetchPage
     }
@@ -43,7 +48,6 @@ final class SharedLinkVoiceover {
         transcriber: any SourceTranscriptionClient,
         report: @escaping @MainActor (String) -> Void
     ) async {
-        settled.insert(itemId)
         let note: @MainActor (String) -> Void = { [weak self] status in
             guard let self else { return }
             if status.hasPrefix("failed:") { settled.remove(itemId) }
