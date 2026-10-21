@@ -940,9 +940,15 @@ enum PDFStructuredTextExtractor {
         func digits(_ text: String) -> String {
             String(text.map { superscriptDigits[$0] ?? $0 })
         }
-        // Markers the body sets as superscripts on this page: "1", "12", "†", "a".
+        func isSmall(_ line: TextLine) -> Bool {
+            line.mainPointSize > 0 && line.mainPointSize < bodySize - 0.5
+        }
+        // Markers the body sets as superscripts on this page: "1", "12", "†", "a". Any line
+        // not in small type counts: PDFKit can report a page's body a point above the
+        // document's body size (TeX Gyre Pagella, 10.9 pt read as 11.8 to 12.1), and a
+        // near-exact match then found no markers at all (#2370).
         var bodyMarkers = Set<String>()
-        for line in lines where abs(line.mainPointSize - bodySize) < 0.6 {
+        for line in lines where !isSmall(line) {
             let characters = Array(line.text)
             for range in line.superscripts where range.lowerBound >= 0 && range.upperBound <= characters.count {
                 let label = digits(String(characters[range]))
@@ -954,9 +960,6 @@ enum PDFStructuredTextExtractor {
         guard !bodyMarkers.isEmpty else { return [] }
         let bottom = pageBox.minY + pageBox.height * 0.4
         let continuationBottom = pageBox.minY + pageBox.height * 0.45
-        func isSmall(_ line: TextLine) -> Bool {
-            line.mainPointSize > 0 && line.mainPointSize < bodySize - 0.5
-        }
         var result = Set<Int>()
         var index = 0
         while index < lines.count {
