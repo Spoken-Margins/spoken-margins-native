@@ -239,7 +239,8 @@ final class Gate1AppModel: ObservableObject {
             if selectedItem.id == snapshot.itemId { activePlaybackDetail = selectedItem }
             else if oldValue.id == snapshot.itemId { activePlaybackDetail = oldValue }
             if oldValue.id != selectedItem.id { selectedListeningEdition = try? ListeningEditionStore.application().load(itemID: selectedItem.id) }
-            backgroundRefresh.selectionWasAssigned(); skimBridge.invalidateResources(); selectedItemStreamFlag.invalidate()
+            backgroundRefresh.selectionWasAssigned()
+            skimBridge.itemDetailChanged(from: SkimResourceKey(oldValue), to: SkimResourceKey(selectedItem)); selectedItemStreamFlag.invalidate()
             prepareLeveledMargins(from: oldValue)
             if oldValue.id != selectedItem.id || oldValue.externalReference != selectedItem.externalReference {
                 storedSourceFollowSuggestionCandidates = []
@@ -765,12 +766,12 @@ final class Gate1AppModel: ObservableObject {
             defaults.removeObject(forKey: Self.supertonicVoicePendingTermsKey)
             return
         }
-        if ttsVoiceSelection.supertonicVoice != nil {
+        if ttsVoiceSelection.isOnDeviceVoice {
             pendingTermsVoiceSelection = ttsVoiceSelection
             defaults.set(ttsVoiceSelection.rawValue, forKey: Self.supertonicVoicePendingTermsKey)
         } else if let rawValue = defaults.string(forKey: Self.supertonicVoicePendingTermsKey),
                   let pendingVoice = AppTTSVoiceSelection(rawValue: rawValue),
-                  pendingVoice.supertonicVoice != nil {
+                  pendingVoice.isOnDeviceVoice {
             pendingTermsVoiceSelection = pendingVoice
         }
         guard pendingTermsVoiceSelection != nil else { return }
@@ -1062,7 +1063,7 @@ final class Gate1AppModel: ObservableObject {
         listeningSignals.endListening()
     }
 
-    func syncPlaybackProgressForLifecycle() {
+    func syncPlaybackProgressForLifecycle(refreshingItem: Bool = true) {
         guard snapshot.status.isPlaybackActive, let engine else { return }
         do {
             synchronizeStreamingSpeechAnchorIfNeeded()
@@ -1084,7 +1085,7 @@ final class Gate1AppModel: ObservableObject {
             if completedCurrentAudio && !playedPendingTurn {
                 closeCompletedSessionIfReady()
             }
-            refreshSelectedItem()
+            if refreshingItem || completedCurrentAudio { refreshSelectedItem() }
             diagnostics["playbackLifecycleSync"] = "saved"
         } catch {
             diagnostics["playbackLifecycleSyncError"] = String(describing: error)
@@ -1100,7 +1101,7 @@ final class Gate1AppModel: ObservableObject {
         if entersBackground { narrationStartupProtection.appEnteredBackground(); hangTelemetry.setForeground(false) }; reconcileNarrationOwnership(trigger: entersBackground ? "background" : "inactive")
         marginOutput.finishBeforeBackground(); readwiseHighlightSync.stop()
         OnDeviceVoiceGovernor.app.setAppBackgrounded(true) // every on-device voice is paced while away (#1679)
-        syncPlaybackProgressForLifecycle()
+        syncPlaybackProgressForLifecycle(refreshingItem: false) // saves the position; re-reading the item decoded a mapped transcript on main as iOS waited, unseen (#2184)
         refreshLockScreenSurfacesForLifecycle()
         scheduleAutomaticAudioPreparationIfNeeded()
     }
@@ -1431,7 +1432,7 @@ final class Gate1AppModel: ObservableObject {
     func handleApplicationWillTerminate() {
         stopImportedCommentaryPlayback(resumeSource: false)
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
-        syncPlaybackProgressForLifecycle()
+        syncPlaybackProgressForLifecycle(refreshingItem: false) // the item isn't shown again; iOS gives this a deadline (#2184)
         narrationStartupProtection.stop()
         gate2CompactControls.endLiveActivities()
     }
@@ -1563,7 +1564,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Supertonic renders the narration on the phone, so its start has no audio keeping a backgrounded app alive.
     private func narrationRendersOnDevice(itemId: String) -> Bool {
-        ttsVoiceSelection.supertonicVoice != nil && !playsPublisherAudio(itemId: itemId)
+        ttsVoiceSelection.isOnDeviceVoice && !playsPublisherAudio(itemId: itemId)
             && (try? store?.loadItem(id: itemId))?.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
@@ -2106,7 +2107,7 @@ final class Gate1AppModel: ObservableObject {
                     return
                 }
                 guard hasAcceptedCurrentTerms, ttsVoiceSelection.supertonicVoice != nil else {
-                    reportWarning("Choose a bundled voice and accept its terms before preparing this item offline.")
+                    reportWarning("Offline preparation needs James or Lily, with the Terms accepted.")
                     return
                 }
                 Task { [weak self] in
@@ -2710,7 +2711,7 @@ final class Gate1AppModel: ObservableObject {
     private var frontierPublicationKey: String?
     var renderedFractionForPlayback: Double? {
         guard frontierPublicationKey == renderFrontierKey else { return nil }
-        if ttsVoiceSelection.supertonicVoice != nil,
+        if ttsVoiceSelection.isOnDeviceVoice,
            snapshot.targetType == TargetType.itemTextTTS.rawValue,
            onDeviceSpeechGenerationProgress.totalChunks > 0 {
             return Double(onDeviceSpeechGenerationProgress.percent) / 100
@@ -3146,7 +3147,7 @@ final class Gate1AppModel: ObservableObject {
     @discardableResult
     func sanitizeTTSMode() -> Bool {
         let priorMode = ttsMode
-        if ttsVoiceSelection.supertonicVoice != nil, !hasAcceptedCurrentTerms {
+        if ttsVoiceSelection.isOnDeviceVoice, !hasAcceptedCurrentTerms {
             ttsVoiceSelection = .system
         }
         synchronizeTTSModeFromSelection()

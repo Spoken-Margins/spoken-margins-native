@@ -92,8 +92,11 @@ final class SkimBridgeController {
     var audioTransportRate: Float? { player?.rate }
     #endif
 
-    /// Every way to an item, and every explicit refresh, drops the loaded map and asset metadata (#954).
-    func invalidateResources() {
+    /// The selected item was reassigned. Only a change to what Skim resolves against, on the item it loaded for, drops
+    /// the loaded map and asset metadata (#2184): every reload used to, so each tap re-read them on the main thread.
+    /// Arriving at the loaded item counts as a change, so opening it reads them once. Explicit refreshes still drop them (#954).
+    func itemDetailChanged(from old: SkimResourceKey, to new: SkimResourceKey) {
+        guard old != new, resourceContext?.itemId == new.itemId else { return }
         resourceContext = nil
     }
 

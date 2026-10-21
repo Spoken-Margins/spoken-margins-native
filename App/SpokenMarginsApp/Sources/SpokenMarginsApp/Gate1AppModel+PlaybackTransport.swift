@@ -184,7 +184,7 @@ extension Gate1AppModel {
         guard !isMediaPlaybackSnapshot else {
             return
         }
-        if ttsVoiceSelection.supertonicVoice != nil, audioPlaybackClientOverride == nil {
+        if ttsVoiceSelection.isOnDeviceVoice, audioPlaybackClientOverride == nil {
             applySupertonicPlaybackRate()
             return
         }
@@ -226,7 +226,7 @@ extension Gate1AppModel {
                 : try engine.setPlaybackRate(mediaPlaybackRate)
         case TargetType.itemTextTTS.rawValue,
              TargetType.assistantTurnTTS.rawValue,
-             TargetType.summaryTurnTTS.rawValue where ttsVoiceSelection.supertonicVoice != nil:
+             TargetType.summaryTurnTTS.rawValue where ttsVoiceSelection.isOnDeviceVoice:
             let transportRate = speechPlaybackRateMultiplier
             return started.playbackRate == transportRate
                 ? started
