@@ -79,6 +79,9 @@ permissions:
   issues: write
   # read: the automerge runs read the hosted fast checks' results on the PR's head (#1389).
   checks: read
+  # write: after pushing the trunk's new tip, the automerge and release runs start hosted-integration.yml on it
+  # (lane-runner.py dispatch_hosted_integration); without it GitHub answers 403.
+  actions: write
 
 jobs:
   route:
