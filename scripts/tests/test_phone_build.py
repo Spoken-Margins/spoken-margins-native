@@ -1484,6 +1484,7 @@ class PlanGroupingTests(unittest.TestCase):
                 ('Open <https://arxiv.org/pdf/2608.09666> in Safari, Share, Spoken Margins.', None),
                 ('Open https://example.org/book.epub in Safari.', None),
                 ('import a PDF once https://github.com/uncomposed/spoken-margins-native/issues/547 lands', 'PDF'),
+                ('import a PDF once https://GitHub.com/Spoken-Margins/Spoken-Margins-Native/pull/547 lands', 'PDF'),
                 ('Play a podcast and tap Add Margin.', None),
                 ('Read the PDFKit-backed reader page; nothing to import.', None),  # a word, not a file
                 ('', None),
@@ -1523,6 +1524,7 @@ class PlanGroupingTests(unittest.TestCase):
             ('after https://github.com/uncomposed/spoken-margins-native/issues/547 lands', set(), set(), issue(), True),
             ('after https://github.com/Spoken-Margins/spoken-margins-native/issues/547 lands', set(), set(), issue(), True),
             ('after https://github.com/spoken-margins/spoken-margins-native/issues/547 lands', set(), set(), issue(), True),
+            ('after https://GitHub.com/SPOKEN-MARGINS/Spoken-Margins-Native/issues/547 lands', set(), set(), issue(), True),
             ('after #547 is on the phone, play it', set(), set(), None, False),  # GitHub didn't say: keep the check
             ('Build 29 still plays it; tap item 547', set(), set(), issue(), False),
         ]
