@@ -28,6 +28,7 @@ final class PDFWordSpacingTests: XCTestCase {
         XCTAssertEqual(spacer.respaced("AIuse(Tomlinsonetal.,2025)."), "AI use (Tomlinson et al., 2025).")
         XCTAssertEqual(spacer.respaced("Career/TechnicalEducationTeachers"), "Career/Technical Education Teachers")
         XCTAssertEqual(spacer.respaced("Work.”InProceedingsofthe"), "Work.” In Proceedings of the")
+        XCTAssertEqual(spacer.respaced("postinglinesarematchedtoO*NET tasks"), "posting lines are matched to O*NET tasks")
     }
 
     func testNeighbouringInputsStayAsTheyAre() throws {
@@ -57,6 +58,9 @@ final class PDFWordSpacingTests: XCTestCase {
         let line = "erthelessaccount for a small share"
         XCTAssertEqual(PDFWordSpacer.applying(spacer.spaceInsertions(in: line, carried: "Nev"), to: line),
                        "ertheless account for a small share")
+        let broken = "compareseachmajoroccupationgroup’sshareofadver-"
+        XCTAssertEqual(PDFWordSpacer.applying(spacer.spaceInsertions(in: broken, continued: "tised"), to: broken),
+                       "compares each major occupation group’s share of adver-")
     }
 
     func testOnlyADocumentThatLostItsSpacesIsGlued() throws {
@@ -76,10 +80,23 @@ final class PDFWordSpacingTests: XCTestCase {
     }
 
     func testBiologyTermsKeepTheirCase() throws {
-        let spacer = try kittenSpacer()
-        for line in ["a microRNA-375 sponge", "Circular RNAs (circRNAs) act as microRNA (miRNA) sponges", "targeted by miR-375"] {
+        // Terms the paper prints alone keep their case; an acronym after a word splits ("forAI").
+        let context = Array(repeating: "microRNA miRNA circRNAs lncRNA microRNA miRNA", count: 2)
+        let spacer = try kittenSpacer(context: context)
+        XCTAssertEqual(spacer.respaced("showingthatforanAI-infeasible task"), "showing that for an AI-infeasible task")
+        for line in ["a microRNA-375 sponge", "Circular RNAs (circRNAs) act as microRNA (miRNA) sponges", "targeted by miR-375",
+                     "receptor OAα1 and circ0051246", "in MALAT1 lncRNA, G-quadruplex structures", "© The Author(s) 2023",
+                     "alternative splicing and chromatin orga-"] {
             XCTAssertEqual(spacer.respaced(line), line)
         }
+        // A species name the paper prints alone stays whole; glued to a word, it splits off (PMC10756544).
+        // PMC11314421 prints "lncRNAs" alone; glued to "can", it splits off whole.
+        let terms = Array(repeating: "the lncRNAs and lncRNAs", count: 2)
+        XCTAssertEqual(try kittenSpacer(context: terms).respaced("cellular compartments, lncRNAscanfunctionasdecoysfor"),
+                       "cellular compartments, lncRNAs can function as decoys for")
+        let species = Array(repeating: "in Rhodnius prolixus females", count: 6)
+        XCTAssertEqual(try kittenSpacer(context: species).respaced("R. prolixus and R. prolixusreproduction"),
+                       "R. prolixus and R. prolixus reproduction")
     }
 
     func testWordsThePaperPrintsAloneWinTies() throws {

@@ -510,18 +510,19 @@ enum PDFStructuredTextExtractor {
         let texts = pages.flatMap { $0.map(\.text) }
         let spacer = PDFWordSpacer(isWord: wordList.contains, context: texts)
         guard spacer.isGlued(texts) else { return }
-        var previous = ""
-        for pageIndex in pages.indices {
-            for lineIndex in pages[pageIndex].indices {
-                let line = pages[pageIndex][lineIndex]
-                // The start of a word the line before broke with a hyphen ("Nev-").
-                let carried = previous.hasSuffix("-") ? String(previous.dropLast().reversed().prefix(while: \.isLetter).reversed()) : ""
-                previous = line.text
-                let insertions = spacer.spaceInsertions(in: line.text, protected: line.superscripts, carried: carried)
-                guard !insertions.isEmpty else { continue }
-                pages[pageIndex][lineIndex].text = PDFWordSpacer.applying(insertions, to: line.text)
-                pages[pageIndex][lineIndex].superscripts = line.superscripts.map { PDFWordSpacer.shifted($0, by: insertions) }
-            }
+        // A word broken by a line-end hyphen is split whole: its start on the line before
+        // ("Nev-") and its end on the line after ("tised" of "adver-").
+        let positions = pages.indices.flatMap { page in pages[page].indices.map { (page, $0) } }
+        for (position, (pageIndex, lineIndex)) in positions.enumerated() {
+            let line = pages[pageIndex][lineIndex]
+            let previous = position > 0 ? texts[position - 1] : ""
+            let carried = previous.hasSuffix("-") ? String(previous.dropLast().reversed().prefix(while: \.isLetter).reversed()) : ""
+            let next = position + 1 < texts.count ? texts[position + 1] : ""
+            let continued = line.text.hasSuffix("-") ? String(next.prefix(while: \.isLowercase)) : ""
+            let insertions = spacer.spaceInsertions(in: line.text, protected: line.superscripts, carried: carried, continued: continued)
+            guard !insertions.isEmpty else { continue }
+            pages[pageIndex][lineIndex].text = PDFWordSpacer.applying(insertions, to: line.text)
+            pages[pageIndex][lineIndex].superscripts = line.superscripts.map { PDFWordSpacer.shifted($0, by: insertions) }
         }
     }
 

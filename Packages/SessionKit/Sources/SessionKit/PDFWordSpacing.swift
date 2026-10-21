@@ -104,9 +104,10 @@ public struct PDFWordSpacer {
 
     /// Character offsets of `line` that a space goes in front of. Offsets inside or in
     /// front of a `protected` range (a superscript marker, "economy¹") are never used;
-    /// the offset just after one is, when a letter follows it. `carried` is the start of a word the line before
-    /// broke with a hyphen ("Nev" of "Nev-"), so "ertheless" isn't read "er the less".
-    public func spaceInsertions(in line: String, protected: [Range<Int>] = [], carried: String = "") -> [Int] {
+    /// the offset just after one is, when a letter follows it. A word broken by a line-end
+    /// hyphen is split whole: `carried` is its start on the line before ("Nev" of "Nev-",
+    /// so "ertheless" isn't "er the less"), `continued` its end on the next ("tised" of "adver-").
+    public func spaceInsertions(in line: String, protected: [Range<Int>] = [], carried: String = "", continued: String = "") -> [Int] {
         let characters = Array(line)
         var insertions = Set<Int>()
         func isProtected(_ offset: Int) -> Bool {
@@ -135,7 +136,13 @@ public struct PDFWordSpacer {
                     guard characters[start].isLetter else { start += 1; continue }
                     var end = start
                     while end < upper, characters[end].isLetter || isInnerApostrophe(characters, end, upper) { end += 1 }
-                    if start == 0, !carried.isEmpty {
+                    if end == characters.count - 1, characters[end] == "-" {
+                        // Without the line after, the broken word's first half is left as it is.
+                        let joined = Array(characters[start..<end]) + Array(continued)
+                        for offset in continued.isEmpty ? [] : wordOffsets(joined, 0..<joined.count) where offset < end - start {
+                            insertions.insert(start + offset)
+                        }
+                    } else if start == 0, !carried.isEmpty {
                         let joined = Array(carried) + characters[start..<end]
                         for offset in wordOffsets(joined, 0..<joined.count) where offset > carried.count {
                             insertions.insert(offset - carried.count)
@@ -209,7 +216,7 @@ public struct PDFWordSpacer {
             let before = characters[index - 1], here = characters[index]
             let next: Character? = index + 1 < token.upperBound ? characters[index + 1] : nil
             switch (before, here) {
-            case let (a, b) where a.isLowercase && b.isUppercase && Self.startsWordOrAcronymAndWord(characters, at: index, before: token.upperBound):
+            case let (a, b) where a.isLowercase && b.isUppercase && startsWord(characters, at: index, in: token):
                 // "andChen" and "InProceedings" split; "iPhone", "McDonald", "LaTeX", "PhD",
                 // "microRNA" and "circRNAs" keep their case.
                 let run = letterRun(endingAt: index - 1)
@@ -240,11 +247,15 @@ public struct PDFWordSpacer {
                     offsets.append(index)
                 }
             case let (a, b) where b == "(" && a.isLetter:
-                // "affect(Webb" splits; "f(x)" doesn't.
-                if letterRun(endingAt: index - 1).count >= 2 { offsets.append(index) }
+                // "affect(Webb" splits; "f(x)" and "Author(s)" don't.
+                var close = index + 1
+                while close < token.upperBound, characters[close].isLetter { close += 1 }
+                let isSuffix = close < token.upperBound && characters[close] == ")" && close - index - 1 <= 2
+                if letterRun(endingAt: index - 1).count >= 2, !isSuffix { offsets.append(index) }
             case let (a, b) where a.isLetter && b.isNumber:
-                // "and2025" splits; "x1", "CO2" and "GPT-4" don't.
-                if letterRun(endingAt: index - 1).count >= 3, letterRun(endingAt: index - 1).contains(where: \.isLowercase) {
+                // "and2025" and "Table1" split; "x1", "CO2", "OAα1" and "circ0051246" don't.
+                let run = Array(letterRun(endingAt: index - 1))
+                if run.count >= 3, run.contains(where: \.isLowercase), isWord(run) {
                     offsets.append(index)
                 }
             case let (a, b) where a.isNumber && b.isLetter:
@@ -260,16 +271,25 @@ public struct PDFWordSpacer {
         return offsets
     }
 
-    /// The capital at `index` starts a capitalised word ("Chen"), or an upper-case run
-    /// with a word after it ("AIislikely"), not a run that ends the token ("RNA", "RNAs").
-    private static func startsWordOrAcronymAndWord(_ characters: [Character], at index: Int, before end: Int) -> Bool {
+    /// The capital at `index` starts a capitalised word ("Chen"), or an acronym after
+    /// lower case that ends in a word ("forAI-infeasible", "occupationsAIislikely",
+    /// "toO*NET"), but not an acronym in a term ("lncRNAs", "miRNA") or one the paper
+    /// prints alone ("microRNA").
+    private func startsWord(_ characters: [Character], at index: Int, in token: Range<Int>) -> Bool {
         var next = index + 1
-        guard next < end else { return false }
+        guard next < token.upperBound else { return false }
         if characters[next].isLowercase { return true }
-        while next < end, characters[next].isUppercase { next += 1 }
+        var start = index
+        while start > token.lowerBound, characters[start - 1].isLowercase { start -= 1 }
+        let before = Array(characters[start..<index])
+        guard before.count >= 2, (2...min(before.count, 12)).contains(where: { isWord(Array(before.suffix($0))) }) else { return false }
+        if characters[next] == "*" || characters[next] == "&" { return true }
+        while next < token.upperBound, characters[next].isUppercase { next += 1 }
+        guard next - index >= 2 else { return false }
         var lower = 0
-        while next + lower < end, characters[next + lower].isLowercase { lower += 1 }
-        return lower >= 2
+        while next + lower < token.upperBound, characters[next + lower].isLowercase { lower += 1 }
+        let term = Self.key(Array(characters[start..<(next + min(lower, 1))]))
+        return (documentCounts[term] ?? 0) < 2
     }
 
     private static let unitWords: Set<String> = [
@@ -368,7 +388,24 @@ public struct PDFWordSpacer {
         let isUpper = cased.allSatisfy { cases.isUpper[$0] }
         let isCapitalised = cases.isUpper[range.lowerBound] && cased.dropFirst().allSatisfy { cases.isLower[$0] }
         let afterUpper = range.lowerBound == 0 || cases.isUpper[range.lowerBound - 1]
-        guard isLower || isUpper || (isCapitalised && afterUpper) else { return .infinity }
+        // A case change the hard cues kept ("lncRNA", "microRNA") isn't a word break either.
+        let afterLower = range.lowerBound > 0 && cases.isLower[range.lowerBound - 1]
+        // A term of lower case then capitals ("lncRNAs", "miRNA") is one piece.
+        let firstUpper = cased.firstIndex { cases.isUpper[$0] } ?? cased.count
+        let tail = cased[firstUpper...].filter { !cases.isUpper[$0] }
+        let isTerm = !afterLower && firstUpper > 0 && cases.isLower[cased[0]] && cased.count - firstUpper - tail.count >= 2
+            && cased[..<firstUpper].allSatisfy { cases.isLower[$0] } && (tail.isEmpty || tail == [cased.last!] && letters[cased.last!] == "s")
+        if isTerm {
+            let printed = String(letters[range])
+            let seen = Double(documentCounts[Self.key(Array(letters[range]))] ?? 0)
+            return seen >= 2 ? log2(tokenCount / seen) : unknownCost(printed.count)
+        }
+        guard isLower || isUpper && !afterLower || (isCapitalised && afterUpper) else { return .infinity }
+        // "A" or "I" cut from an acronym ("AI" as "A I") isn't a word.
+        if range.count == 1, isUpper, range.lowerBound > 0 && cases.isUpper[range.lowerBound - 1]
+            || range.upperBound < letters.count && cases.isUpper[range.upperBound] {
+            return .infinity
+        }
         let printed = String(letters[range])
         if let known = cache.costs[printed] { return known }
         let cost = wordCost(Array(letters[range]), isLower: isLower, isUpper: isUpper)
@@ -378,25 +415,29 @@ public struct PDFWordSpacer {
 
     private func wordCost(_ piece: [Character], isLower: Bool, isUpper: Bool) -> Double {
         // A unigram cost, log2(tokens / expected count): the count is how often the paper
-        // prints the word alone, plus a prior from the word list for words it never does.
+        // prints the word alone, plus a prior rate from the word list for words it never does.
         let key = Self.key(piece)
         let seen = Double(isLower && isGluedFragment(key) ? 0 : documentCounts[key] ?? 0)
-        func cost(prior: Double) -> Double { log2(tokenCount / (seen + prior)) }
+        func cost(rate: Double) -> Double { log2(tokenCount / (seen + tokenCount * rate)) }
         if isUpper, piece.count >= 2 {
             guard isAcronym(piece) else { return .infinity }
-            return cost(prior: isWord(piece) ? 0.5 : 0.2)
+            return cost(rate: isWord(piece) ? 1e-5 : 4e-6)
         }
         if isWord(piece) {
-            if Self.commonWords.contains(key) { return cost(prior: 4) }
-            // Short rare entries ("ratu", "res") lose to one longer word.
-            return cost(prior: piece.count == 3 ? 0.02 : piece.count == 4 ? 0.05 : 0.1)
+            if Self.commonWords.contains(key) { return cost(rate: 6e-3) }
+            // Short rare entries ("ratu", "res", "qua dru") lose to one longer word, even unknown,
+            // and a form the list only implies ("rematched") to one it lists ("are matched").
+            let implied = !isListed(key) && piece.count >= 5
+            return cost(rate: piece.count == 3 ? 5e-7 : piece.count == 4 ? 2e-6 : implied ? 4e-6 : 1e-5)
         }
         if let stem = possessiveStem(piece) {
             let stemKey = Self.key(stem)
-            if isWord(stem) || isDocumentWord(stemKey) { return log2(tokenCount / (Double(documentCounts[stemKey] ?? 0) + 0.1)) }
+            if isWord(stem) || isDocumentWord(stemKey) {
+                return log2(tokenCount / (Double(documentCounts[stemKey] ?? 0) + tokenCount * 1e-5))
+            }
         }
         // A name or term the list lacks but the paper prints alone at least three times.
-        if isDocumentWord(key) { return cost(prior: 0) }
+        if isDocumentWord(key) { return cost(rate: 0) }
         return unknownCost(piece.count)
     }
 
@@ -418,8 +459,8 @@ public struct PDFWordSpacer {
         var covered = [Bool](repeating: false, count: letters.count + 1)
         covered[0] = true
         for end in 1...letters.count {
-            // A first piece of three or more letters: "infeasible" isn't "in feasible".
-            for start in max(0, end - 24)..<end where covered[start] && end - start < letters.count && (start > 0 || end >= 3) {
+            // Pieces of three or more letters: "infeasible" isn't "in feasible", nor "prolixus" "prolix us".
+            for start in max(0, end - 24)..<end where covered[start] && end - start < letters.count && end - start >= 3 {
                 if isWord(Array(letters[start..<end])) { covered[end] = true; break }
             }
         }
@@ -431,7 +472,9 @@ public struct PDFWordSpacer {
     /// An unknown piece costs more than any listed word, and three more bits a letter (English runs about two), so a
     /// long unknown run reads as several words but a name keeps its pieces' cost above it.
     private func unknownCost(_ length: Int) -> Double {
-        log2(tokenCount / 0.01) + 3 * Double(length)
+        // A stray unknown letter or two ("quadruple x") is never a word of glued prose.
+        guard length >= 3 else { return .infinity }
+        return log2(1e7) + 3 * Double(length)
     }
 
     /// A listed word with a regular ending the list leaves out: "literatures",
