@@ -15,7 +15,7 @@
 # `pull_request` runs are built from the PR's merge ref, which GitHub does not create for a PR that already
 # conflicts, so those PRs are found by the sweep instead.
 #
-# The script is taken from the base branch's live tip (next on push and dispatch) with no credentials kept, and
+# The script is taken from the base branch's live tip (SM_TRUNK, default main, on push and dispatch) with no credentials kept, and
 # reads the PR head as git data only, never running it. GitHub builds a pull_request run's workflow file from the PR's merge ref, so a
 # same-repo PR that edits this file runs its own copy; only collaborators can open those (forks are skipped
 # below), and pull_request_target is no help because main carries no workflows. One check at a time; a newer
@@ -66,7 +66,7 @@ jobs:
           # Policy and code from the base branch's live tip, never PR code. Not `base.sha`: that is the commit
           # GitHub recorded when the PR was opened or last retargeted, and a PR older than #1964 would check out
           # a tree with no scripts/lane_conflicts.py (#2043).
-          ref: ${{ github.event.pull_request.base.ref || 'next' }}
+          ref: ${{ github.event.pull_request.base.ref || vars.SM_TRUNK || 'main' }}
           persist-credentials: false
           sparse-checkout: |
             scripts/lane_conflicts.py
