@@ -32,7 +32,8 @@ class LaneConflictsWorkflowTests(unittest.TestCase):
         self.assertNotIn('base.sha', ref)
         self.assertNotIn('github.sha', ref)
         self.assertIn('github.event.pull_request.base.ref', ref)
-        self.assertIn("'next'", ref, 'push and dispatch events have no pull_request, so they use next')
+        # Push and dispatch events have no pull_request, so they use the trunk, as BASE_REF does (#1492).
+        self.assertIn("vars.SM_TRUNK || 'main'", ref)
 
     def run_sweep(self, scripts):
         with tempfile.TemporaryDirectory() as root:

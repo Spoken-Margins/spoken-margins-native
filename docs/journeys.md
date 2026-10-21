@@ -138,8 +138,10 @@ Every server feature (server config, share links, Listening Maps, the bridge and
    - Pass: both show on the item.
 3. Export a `.spokenmargins` packet and import it on a second simulator. While the Test Desk has only one simulator slot, reinstall the app on the same simulator and import it there.
    - Pass: the item and its Margins arrive, and each Margin opens at its passage.
-4. While an item plays, open a share link: `xcrun simctl openurl <udid> https://spokenmargins.proximitytoprogress.com/l/<32 lowercase hex characters>`. The app still recognises the real host and fetches the packet from the swapped one. If Safari opens instead of the app, the universal link didn't route on this simulator: report that, and don't count it as a pass or a fail. (The app has no way to create a share link yet, only to open one.) Then play a podcast episode, which asks for its Listening Map.
+4. While an item plays, open a share link: `xcrun simctl openurl <udid> 'https://spokenmargins.proximitytoprogress.com/l/0123456789abcdef0123456789abcdef#AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'`. The app still recognises the real host and fetches the packet from the swapped one. Keep the `#` part: a link without its key fails as damaged before the app asks the server, so it would never test the network. If Safari opens instead of the app, the universal link didn't route on this simulator: report that, and don't count it as a pass or a fail. (The app has no way to create a share link yet, only to open one.) Then play a podcast episode, which asks for its Listening Map.
    - Pass: the share link shows an error, the map is quietly absent, and playback keeps going.
+
+The script `J10OfflineJourneyUITests` runs part of this with the host swapped: it plays a seeded article and an imported PDF with the iOS voice, records a spoken and a written Margin on the article, builds and verifies the packet up to the import review, and opens step 4's share link. Importing an article yourself, Kitten, the second simulator and the Listening Map stay with this agent run, and a script pass never stands in for it.
 
 ## Writing scripted journeys
 
