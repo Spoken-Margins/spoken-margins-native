@@ -105,7 +105,6 @@ final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
         let rendered = try await render(text: text, voice: voice, language: language, speed: speed, synthesisSteps: synthesisSteps)
         do {
             let kept = try await keep(rendered)
-            await discardGeneratedAudio(at: rendered.audioURL)
             return kept
         } catch {
             await discardGeneratedAudio(at: rendered.audioURL)
