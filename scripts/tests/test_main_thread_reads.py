@@ -307,7 +307,8 @@ class TheRepository(unittest.TestCase):
         base = mtr.load_baseline(ROOT / mtr.BASELINE)
         functions = {(k[1], k[2]) for k in base}
         for name in (('Gate1AppModel.refreshMarginRows', 'store.listItems'),
-                     ('Gate1AppModel.refreshAudioPreparationPresentation', 'store.listItems'),
+                     # #2102 swapped the full items for summaries here; it is still a whole-table read on main
+                     ('Gate1AppModel.refreshAudioPreparationPresentation', 'store.listItemSummaries'),
                      ('SkimBridgeController.resolvedPlan', 'store.loadOwnedOfflineAssets'),
                      ('Gate1AppModel.prepareSummaryBridgeAsset', 'store.loadOwnedOfflineAssets'),
                      ('Gate1AppModel.prepareImportedLocalAudioBridges', 'Task {}')):

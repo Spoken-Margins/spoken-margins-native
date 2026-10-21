@@ -2,18 +2,18 @@
  "version": 1,
  "ref": "worktree",
  "summary": {
-  "rows": 878,
+  "rows": 882,
   "by_class": {
    "file-io": 163,
    "av-sync": 38,
-   "unlabelled-main-task": 124,
+   "unlabelled-main-task": 126,
    "store-heavy-decode": 231,
    "store-write": 138,
-   "store-whole-table-read": 79,
-   "store-read": 105
+   "store-whole-table-read": 80,
+   "store-read": 106
   },
   "by_area": {
-   "groundwork": 252,
+   "groundwork": 256,
    "pass-it-on": 60,
    "answer-it": 110,
    "hear-it-well": 265,
@@ -36,12 +36,12 @@
    "store-heavy-decode | pass-it-on": 20,
    "store-read | answer-it": 15,
    "store-read | get-it-in": 27,
-   "store-read | groundwork": 46,
+   "store-read | groundwork": 47,
    "store-read | hear-it-well": 8,
    "store-read | pass-it-on": 9,
    "store-whole-table-read | answer-it": 5,
    "store-whole-table-read | get-it-in": 20,
-   "store-whole-table-read | groundwork": 17,
+   "store-whole-table-read | groundwork": 18,
    "store-whole-table-read | hear-it-well": 35,
    "store-whole-table-read | pass-it-on": 2,
    "store-write | answer-it": 9,
@@ -51,14 +51,14 @@
    "store-write | pass-it-on": 4,
    "unlabelled-main-task | answer-it": 13,
    "unlabelled-main-task | get-it-in": 37,
-   "unlabelled-main-task | groundwork": 26,
+   "unlabelled-main-task | groundwork": 28,
    "unlabelled-main-task | hear-it-well": 41,
    "unlabelled-main-task | pass-it-on": 7
   },
   "in_loop": 86,
   "debug_only_not_counted": 0,
   "skipped": {
-   "unresolved-callee": 6998,
+   "unresolved-callee": 7008,
    "ambiguous-callee": 48
   }
  },
@@ -1318,6 +1318,105 @@
    "detail": [
     "via Gate1AppModel.handlePostResumePodcastEvidence"
    ]
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+BackgroundRefresh.swift",
+   "line": 59,
+   "function": "Gate1AppModel.refreshSelectedItemInBackground",
+   "api": "Task {}",
+   "class": "unlabelled-main-task",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "kind": "task",
+   "area": "groundwork",
+   "detail": [
+    "via Gate1AppModel.offerFollowSuggestionIfEligible"
+   ]
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+BackgroundRefresh.swift",
+   "line": 87,
+   "function": "Gate1AppModel.refreshLibraryRowsInBackground",
+   "api": "Task {}",
+   "class": "unlabelled-main-task",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "kind": "task",
+   "area": "groundwork",
+   "detail": [
+    "via Gate1AppModel.refreshAudioPreparationPresentation"
+   ]
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+BackgroundRefresh.swift",
+   "line": 123,
+   "function": "Gate1AppModel.loadItemDetail",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "groundwork",
+   "api": "via ItemDetailLoader.load",
+   "class": "store-heavy-decode",
+   "detail": [
+    "store.loadCanonicalSource",
+    "store.loadImportedCommentaryInterjections",
+    "store.loadImportedCommentaryLayers",
+    "store.loadInterjections",
+    "store.loadItem",
+    "store.loadListeningMap",
+    "store.loadPortableListeningMapProposals",
+    "store.loadResolvedListeningMapProjection",
+    "store.loadSessions",
+    "store.loadStructuredDocument",
+    "store.loadTranscriptTimelineSummary",
+    "store.loadTurns",
+    "store.saveListeningMap"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+BackgroundRefresh.swift",
+   "line": 130,
+   "function": "Gate1AppModel.loadLibraryRows",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "groundwork",
+   "api": "via LibraryReadSnapshot.read",
+   "class": "store-whole-table-read",
+   "detail": [
+    "store.listItemSummaries",
+    "store.loadAudioPreparationJobs",
+    "store.loadPodcastDownloads",
+    "store.loadPreparedAudioManifests",
+    "store.loadSessions",
+    "store.loadSharedMarginTallies",
+    "store.loadStructuredDocumentItemIds"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+BackgroundRefresh.swift",
+   "line": 134,
+   "function": "Gate1AppModel.refreshLibraryRows",
+   "in_loop": false,
+   "labelled": true,
+   "debug": false,
+   "area": "groundwork",
+   "api": "via LibraryReadSnapshot.read",
+   "class": "store-whole-table-read",
+   "detail": [
+    "store.listItemSummaries",
+    "store.loadAudioPreparationJobs",
+    "store.loadPodcastDownloads",
+    "store.loadPreparedAudioManifests",
+    "store.loadSessions",
+    "store.loadSharedMarginTallies",
+    "store.loadStructuredDocumentItemIds"
+   ],
+   "kind": "helper"
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+BatchExportSelection.swift",
@@ -3211,7 +3310,7 @@
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+LibraryAudioQueue.swift",
    "line": 208,
    "function": "Gate1AppModel.refreshAudioPreparationPresentation",
-   "api": "store.listItems",
+   "api": "store.listItemSummaries",
    "class": "store-whole-table-read",
    "in_loop": false,
    "labelled": false,
@@ -4595,7 +4694,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+Navigation.swift",
-   "line": 96,
+   "line": 91,
    "function": "Gate1AppModel.openPlayback",
    "api": "Task {}",
    "class": "unlabelled-main-task",
@@ -7186,7 +7285,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+SpeechSettings.swift",
-   "line": 187,
+   "line": 188,
    "function": "Gate1AppModel.previewSupertonicVoice",
    "api": "Task {}",
    "class": "unlabelled-main-task",
@@ -7196,12 +7295,13 @@
    "kind": "task",
    "area": "hear-it-well",
    "detail": [
-    "via Gate1AppModel.playSupertonicPreview"
+    "via Gate1AppModel.playSupertonicPreview",
+    "via Gate1AppModel.previewSpeech"
    ]
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+SpeechSettings.swift",
-   "line": 348,
+   "line": 384,
    "function": "Gate1AppModel.playSupertonicPreview",
    "api": "AVAudioSession.setActive",
    "class": "av-sync",
@@ -7213,7 +7313,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+SpeechSettings.swift",
-   "line": 350,
+   "line": 386,
    "function": "Gate1AppModel.playSupertonicPreview",
    "api": "AVAudioPlayer",
    "class": "av-sync",
@@ -8103,7 +8203,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 678,
+   "line": 680,
    "function": "Gate1AppModel.init",
    "in_loop": false,
    "labelled": false,
@@ -8118,7 +8218,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 812,
+   "line": 814,
    "function": "Gate1AppModel.acceptCurrentTermsAndEnableOnDeviceVoice",
    "in_loop": false,
    "labelled": false,
@@ -8142,7 +8242,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 839,
+   "line": 841,
    "function": "Gate1AppModel.continuePlaybackAfterTerms",
    "api": "store.loadSession",
    "class": "store-read",
@@ -8154,7 +8254,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 885,
+   "line": 887,
    "function": "Gate1AppModel.canGenerateListeningMap",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
@@ -8166,7 +8266,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 902,
+   "line": 904,
    "function": "Gate1AppModel.listeningMapGenerationAvailabilityDescription",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
@@ -8178,7 +8278,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1008,
+   "line": 1010,
    "function": "Gate1AppModel.startPlaybackProgressTicker",
    "api": "Task {}",
    "class": "unlabelled-main-task",
@@ -8193,7 +8293,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1027,
+   "line": 1029,
    "function": "Gate1AppModel.tickPlaybackProgress",
    "in_loop": false,
    "labelled": false,
@@ -8219,7 +8319,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1071,
+   "line": 1073,
    "function": "Gate1AppModel.syncPlaybackProgressForLifecycle",
    "in_loop": false,
    "labelled": false,
@@ -8245,7 +8345,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1153,
+   "line": 1155,
    "function": "Gate1AppModel.offlineStorageBudgetChanged",
    "api": "Task {}",
    "class": "unlabelled-main-task",
@@ -8261,7 +8361,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1157,
+   "line": 1159,
    "function": "Gate1AppModel.offlineStorageBudgetChanged",
    "api": "store.saveOfflineStorageBudget",
    "class": "store-write",
@@ -8273,7 +8373,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1189,
+   "line": 1191,
    "function": "Gate1AppModel.refreshMarginRows",
    "api": "store.listItems",
    "class": "store-whole-table-read",
@@ -8285,7 +8385,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1189,
+   "line": 1191,
    "function": "Gate1AppModel.refreshMarginRows",
    "api": "store.loadListeningMap",
    "class": "store-heavy-decode",
@@ -8297,7 +8397,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1189,
+   "line": 1191,
    "function": "Gate1AppModel.refreshMarginRows",
    "api": "store.loadSessions",
    "class": "store-whole-table-read",
@@ -8309,7 +8409,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1189,
+   "line": 1191,
    "function": "Gate1AppModel.refreshMarginRows",
    "api": "store.loadTranscriptTimelineChapters",
    "class": "store-read",
@@ -8321,7 +8421,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1190,
+   "line": 1192,
    "function": "Gate1AppModel.refreshMarginRows",
    "api": "store.loadInterjections",
    "class": "store-read",
@@ -8333,7 +8433,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1191,
+   "line": 1193,
    "function": "Gate1AppModel.refreshMarginRows",
    "api": "store.loadImportedCommentaryLayers",
    "class": "store-whole-table-read",
@@ -8345,7 +8445,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1192,
+   "line": 1194,
    "function": "Gate1AppModel.refreshMarginRows",
    "api": "store.loadImportedCommentaryInterjections",
    "class": "store-read",
@@ -8357,20 +8457,8 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1257,
+   "line": 1259,
    "function": "Gate1AppModel.openMarginInTimeline",
-   "api": "store.loadSession",
-   "class": "store-read",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "kind": "direct",
-   "area": "groundwork"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1274,
-   "function": "Gate1AppModel.playMarginMoment",
    "api": "store.loadSession",
    "class": "store-read",
    "in_loop": false,
@@ -8383,6 +8471,18 @@
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
    "line": 1276,
    "function": "Gate1AppModel.playMarginMoment",
+   "api": "store.loadSession",
+   "class": "store-read",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "kind": "direct",
+   "area": "groundwork"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
+   "line": 1278,
+   "function": "Gate1AppModel.playMarginMoment",
    "api": "store.loadInterjections",
    "class": "store-read",
    "in_loop": false,
@@ -8393,7 +8493,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1503,
+   "line": 1505,
    "function": "Gate1AppModel.importBrowserTextItem",
    "in_loop": false,
    "labelled": false,
@@ -8431,7 +8531,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1539,
+   "line": 1541,
    "function": "Gate1AppModel.start",
    "in_loop": false,
    "labelled": false,
@@ -8459,7 +8559,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1566,
+   "line": 1568,
    "function": "Gate1AppModel.narrationRendersOnDevice",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
@@ -8471,7 +8571,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1621,
+   "line": 1623,
    "function": "Gate1AppModel.pause",
    "in_loop": false,
    "labelled": false,
@@ -8495,7 +8595,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1663,
+   "line": 1665,
    "function": "Gate1AppModel.startSleepTimerTicker",
    "api": "Task {}",
    "class": "unlabelled-main-task",
@@ -8510,7 +8610,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1693,
+   "line": 1695,
    "function": "Gate1AppModel.stopOnDeviceSpeechGeneration",
    "in_loop": false,
    "labelled": false,
@@ -8536,7 +8636,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1712,
+   "line": 1714,
    "function": "Gate1AppModel.stopOnDeviceSpeechGeneration",
    "in_loop": false,
    "labelled": false,
@@ -8562,7 +8662,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1755,
+   "line": 1757,
    "function": "Gate1AppModel.resumePlayback",
    "in_loop": false,
    "labelled": false,
@@ -8587,7 +8687,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1768,
+   "line": 1770,
    "function": "Gate1AppModel.generateListeningMap",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
@@ -8599,7 +8699,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1817,
+   "line": 1819,
    "function": "Gate1AppModel.generateListeningMap",
    "api": "Task {}",
    "class": "unlabelled-main-task",
@@ -8614,7 +8714,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1826,
+   "line": 1828,
    "function": "Gate1AppModel.generateProviderListeningMap",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
@@ -8626,7 +8726,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1854,
+   "line": 1856,
    "function": "Gate1AppModel.saveProviderListeningMapResponse",
    "in_loop": false,
    "labelled": false,
@@ -8650,7 +8750,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1856,
+   "line": 1858,
    "function": "Gate1AppModel.saveProviderListeningMapResponse",
    "api": "store.saveListeningMap",
    "class": "store-write",
@@ -8662,7 +8762,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1859,
+   "line": 1861,
    "function": "Gate1AppModel.saveProviderListeningMapResponse",
    "api": "store.saveItem",
    "class": "store-write",
@@ -8674,7 +8774,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1869,
+   "line": 1871,
    "function": "Gate1AppModel.generateLocalListeningMap",
    "in_loop": false,
    "labelled": false,
@@ -8699,7 +8799,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1883,
+   "line": 1885,
    "function": "Gate1AppModel.sharedListeningMapRefusal",
    "api": "store.loadImportedCommentaryLayers",
    "class": "store-read",
@@ -8711,7 +8811,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1890,
+   "line": 1892,
    "function": "Gate1AppModel.listenerHasListeningMap",
    "api": "store.loadPortableListeningMapProposals",
    "class": "store-heavy-decode",
@@ -8723,7 +8823,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1891,
+   "line": 1893,
    "function": "Gate1AppModel.listenerHasListeningMap",
    "api": "store.loadTranscriptTimelineChapters",
    "class": "store-read",
@@ -8735,7 +8835,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1899,
+   "line": 1901,
    "function": "Gate1AppModel.applyListeningMapJSON",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
@@ -8747,7 +8847,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1902,
+   "line": 1904,
    "function": "Gate1AppModel.applyListeningMapJSON",
    "in_loop": false,
    "labelled": false,
@@ -8771,7 +8871,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1904,
+   "line": 1906,
    "function": "Gate1AppModel.applyListeningMapJSON",
    "api": "store.saveListeningMap",
    "class": "store-write",
@@ -8783,7 +8883,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1907,
+   "line": 1909,
    "function": "Gate1AppModel.applyListeningMapJSON",
    "api": "store.saveItem",
    "class": "store-write",
@@ -8795,7 +8895,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 1971,
+   "line": 1973,
    "function": "Gate1AppModel.startItem",
    "api": "store.loadSessions",
    "class": "store-read",
@@ -8807,7 +8907,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2019,
+   "line": 2021,
    "function": "Gate1AppModel.openSession",
    "in_loop": false,
    "labelled": false,
@@ -8831,7 +8931,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2021,
+   "line": 2023,
    "function": "Gate1AppModel.openSession",
    "in_loop": false,
    "labelled": false,
@@ -8859,7 +8959,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2052,
+   "line": 2054,
    "function": "Gate1AppModel.resumeSession",
    "in_loop": false,
    "labelled": false,
@@ -8883,7 +8983,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2054,
+   "line": 2056,
    "function": "Gate1AppModel.resumeSession",
    "in_loop": false,
    "labelled": false,
@@ -8913,6 +9013,18 @@
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
    "line": 2058,
    "function": "Gate1AppModel.resumeSession",
+   "api": "store.loadSession",
+   "class": "store-read",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "kind": "direct",
+   "area": "groundwork"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
+   "line": 2061,
+   "function": "Gate1AppModel.resumeSession",
    "in_loop": false,
    "labelled": false,
    "debug": false,
@@ -8939,7 +9051,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2061,
+   "line": 2064,
    "function": "Gate1AppModel.resumeSession",
    "in_loop": false,
    "labelled": false,
@@ -8964,7 +9076,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2065,
+   "line": 2068,
    "function": "Gate1AppModel.resumeSession",
    "in_loop": false,
    "labelled": false,
@@ -8991,7 +9103,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2081,
+   "line": 2084,
    "function": "Gate1AppModel.prioritizeOfflinePreparation",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
@@ -9003,7 +9115,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2110,
+   "line": 2113,
    "function": "Gate1AppModel.prioritizeOfflinePreparation",
    "api": "Task {}",
    "class": "unlabelled-main-task",
@@ -9018,7 +9130,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2166,
+   "line": 2169,
    "function": "Gate1AppModel.jumpToTurnChapter",
    "in_loop": false,
    "labelled": false,
@@ -9044,7 +9156,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2186,
+   "line": 2189,
    "function": "Gate1AppModel.playTurn",
    "in_loop": false,
    "labelled": false,
@@ -9070,7 +9182,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2279,
+   "line": 2282,
    "function": "Gate1AppModel.refreshDiagnostics",
    "in_loop": false,
    "labelled": false,
@@ -9080,21 +9192,6 @@
    "class": "store-read",
    "detail": [
     "store.loadAIJobs"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2334,
-   "function": "Gate1AppModel.handleIncomingURL",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "groundwork",
-   "api": "via SourceLinkHandoffURL.handoff",
-   "class": "file-io",
-   "detail": [
-    "Data(contentsOf:)"
    ],
    "kind": "helper"
   },
@@ -9115,7 +9212,22 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2339,
+   "line": 2340,
+   "function": "Gate1AppModel.handleIncomingURL",
+   "in_loop": false,
+   "labelled": false,
+   "debug": false,
+   "area": "groundwork",
+   "api": "via SourceLinkHandoffURL.handoff",
+   "class": "file-io",
+   "detail": [
+    "Data(contentsOf:)"
+   ],
+   "kind": "helper"
+  },
+  {
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
+   "line": 2342,
    "function": "Gate1AppModel.handleIncomingURL",
    "api": "Task {}",
    "class": "unlabelled-main-task",
@@ -9130,7 +9242,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2359,
+   "line": 2362,
    "function": "Gate1AppModel.handleIncomingURL",
    "in_loop": false,
    "labelled": false,
@@ -9145,7 +9257,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2366,
+   "line": 2369,
    "function": "Gate1AppModel.handleIncomingURL",
    "in_loop": false,
    "labelled": false,
@@ -9160,7 +9272,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2677,
+   "line": 2680,
    "function": "Gate1AppModel.synchronizeStreamingSpeechAnchorIfNeeded",
    "in_loop": false,
    "labelled": false,
@@ -9183,7 +9295,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2691,
+   "line": 2694,
    "function": "Gate1AppModel.applyStreamingSpeechObservation",
    "in_loop": false,
    "labelled": false,
@@ -9206,7 +9318,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2696,
+   "line": 2699,
    "function": "Gate1AppModel.applyStreamingSpeechObservation",
    "in_loop": false,
    "labelled": false,
@@ -9229,7 +9341,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2740,
+   "line": 2743,
    "function": "Gate1AppModel.observeRenderedFrontier",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
@@ -9241,7 +9353,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2742,
+   "line": 2745,
    "function": "Gate1AppModel.observeRenderedFrontier",
    "api": "store.loadCanonicalSource",
    "class": "store-read",
@@ -9253,7 +9365,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2743,
+   "line": 2746,
    "function": "Gate1AppModel.observeRenderedFrontier",
    "api": "store.loadPreparedAudioManifests",
    "class": "store-heavy-decode",
@@ -9265,7 +9377,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2761,
+   "line": 2764,
    "function": "Gate1AppModel.activateListeningEditionAudio",
    "api": "store.savePortableListeningMapProposal",
    "class": "store-write",
@@ -9277,7 +9389,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2762,
+   "line": 2765,
    "function": "Gate1AppModel.activateListeningEditionAudio",
    "api": "store.saveResolvedListeningMapProjection",
    "class": "store-write",
@@ -9289,7 +9401,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2776,
+   "line": 2779,
    "function": "Gate1AppModel.importListeningEditionFile",
    "api": "Data(contentsOf:)",
    "class": "file-io",
@@ -9301,7 +9413,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2783,
+   "line": 2786,
    "function": "Gate1AppModel.importReadLaterDocument",
    "api": "Task {}",
    "class": "unlabelled-main-task",
@@ -9320,7 +9432,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2793,
+   "line": 2796,
    "function": "Gate1AppModel.importReadLaterDocument",
    "in_loop": false,
    "labelled": false,
@@ -9335,7 +9447,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2794,
+   "line": 2797,
    "function": "Gate1AppModel.importReadLaterDocument",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
@@ -9347,7 +9459,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2806,
+   "line": 2809,
    "function": "Gate1AppModel.importReadLaterDocument",
    "in_loop": false,
    "labelled": false,
@@ -9362,7 +9474,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2808,
+   "line": 2811,
    "function": "Gate1AppModel.importReadLaterDocument",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
@@ -9374,7 +9486,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2859,
+   "line": 2862,
    "function": "Gate1AppModel.previewSpeech",
    "api": "AVAudioSession.setActive",
    "class": "av-sync",
@@ -9386,7 +9498,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2908,
+   "line": 2911,
    "function": "Gate1AppModel.latestPendingSummaryTurnId",
    "api": "store.loadTurns",
    "class": "store-read",
@@ -9398,7 +9510,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 2939,
+   "line": 2942,
    "function": "Gate1AppModel.rebuildEngineForCurrentSettings",
    "in_loop": false,
    "labelled": false,
@@ -9422,7 +9534,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3013,
+   "line": 3016,
    "function": "Gate1AppModel.prewarmTextAudioForOnDeviceVoice",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
@@ -9434,7 +9546,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3015,
+   "line": 3018,
    "function": "Gate1AppModel.prewarmTextAudioForOnDeviceVoice",
    "api": "store.loadSessions",
    "class": "store-read",
@@ -9446,7 +9558,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3028,
+   "line": 3031,
    "function": "Gate1AppModel.prewarmTextAudioForOnDeviceVoice",
    "api": "Task {}",
    "class": "unlabelled-main-task",
@@ -9461,7 +9573,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3069,
+   "line": 3072,
    "function": "Gate1AppModel.attachPreparedTextAudio",
    "in_loop": false,
    "labelled": false,
@@ -9489,7 +9601,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3122,
+   "line": 3125,
    "function": "Gate1AppModel.removeEpisodeMapArtifacts",
    "api": "copy/move/removeItem",
    "class": "file-io",
@@ -9501,7 +9613,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3125,
+   "line": 3128,
    "function": "Gate1AppModel.removeEpisodeMapArtifacts",
    "api": "store.loadEpisodeMapPreparationJobs",
    "class": "store-whole-table-read",
@@ -9513,7 +9625,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3126,
+   "line": 3129,
    "function": "Gate1AppModel.removeEpisodeMapArtifacts",
    "api": "store.deleteEpisodeMapPreparationJob",
    "class": "store-write",
@@ -9525,7 +9637,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3132,
+   "line": 3135,
    "function": "Gate1AppModel.purgeExpiredEpisodeMapPreparationJobs",
    "api": "store.loadEpisodeMapPreparationJobs",
    "class": "store-whole-table-read",
@@ -9537,7 +9649,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3135,
+   "line": 3138,
    "function": "Gate1AppModel.purgeExpiredEpisodeMapPreparationJobs",
    "api": "store.loadEditionFingerprintSpine",
    "class": "store-heavy-decode",
@@ -9549,7 +9661,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3138,
+   "line": 3141,
    "function": "Gate1AppModel.purgeExpiredEpisodeMapPreparationJobs",
    "api": "copy/move/removeItem",
    "class": "file-io",
@@ -9561,7 +9673,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3140,
+   "line": 3143,
    "function": "Gate1AppModel.purgeExpiredEpisodeMapPreparationJobs",
    "api": "store.deleteEpisodeMapPreparationJob",
    "class": "store-write",
@@ -9573,28 +9685,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3157,
-   "function": "Gate1AppModel.loadLibraryRows",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "groundwork",
-   "api": "via LibraryReadSnapshot.read",
-   "class": "store-whole-table-read",
-   "detail": [
-    "store.listItems",
-    "store.loadAudioPreparationJobs",
-    "store.loadPodcastDownloads",
-    "store.loadPreparedAudioManifests",
-    "store.loadSessions",
-    "store.loadSharedMarginTallies",
-    "store.loadStructuredDocumentItemIds"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3176,
+   "line": 3175,
    "function": "Gate1AppModel.refreshBatchExportRows",
    "api": "store.listItems",
    "class": "store-whole-table-read",
@@ -9606,7 +9697,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3177,
+   "line": 3176,
    "function": "Gate1AppModel.refreshBatchExportRows",
    "api": "store.loadSessions",
    "class": "store-whole-table-read",
@@ -9618,7 +9709,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3179,
+   "line": 3178,
    "function": "Gate1AppModel.refreshBatchExportRows",
    "api": "store.loadInterjections",
    "class": "store-read",
@@ -9630,7 +9721,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3193,
+   "line": 3192,
    "function": "Gate1AppModel.loadDeletedLibraryRows",
    "api": "store.listDeletedItems",
    "class": "store-whole-table-read",
@@ -9642,7 +9733,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3218,
+   "line": 3211,
    "function": "Gate1AppModel.scheduleSourceTranscriptImportIfAvailable",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
@@ -9654,7 +9745,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3227,
+   "line": 3220,
    "function": "Gate1AppModel.scheduleSourceTranscriptImportIfAvailable",
    "api": "Task {}",
    "class": "unlabelled-main-task",
@@ -9670,7 +9761,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3263,
+   "line": 3256,
    "function": "Gate1AppModel.fetchTranscriptLink",
    "api": "Data(contentsOf:)",
    "class": "file-io",
@@ -9682,7 +9773,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3297,
+   "line": 3290,
    "function": "Gate1AppModel.scheduleFullSourceTranscriptionForListeningMap",
    "api": "Task {}",
    "class": "unlabelled-main-task",
@@ -9697,7 +9788,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3332,
+   "line": 3325,
    "function": "Gate1AppModel.attachSourceTranscriptTimeline",
    "in_loop": false,
    "labelled": false,
@@ -9723,7 +9814,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3406,
+   "line": 3399,
    "function": "Gate1AppModel.setImportedCommentaryAutoPlayEnabled",
    "api": "store.loadImportedCommentaryLayer",
    "class": "store-read",
@@ -9735,7 +9826,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3408,
+   "line": 3401,
    "function": "Gate1AppModel.setImportedCommentaryAutoPlayEnabled",
    "api": "store.saveImportedCommentaryLayer",
    "class": "store-write",
@@ -9747,7 +9838,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3425,
+   "line": 3418,
    "function": "Gate1AppModel.updateImportedCommentaryLayer",
    "api": "store.loadImportedCommentaryLayer",
    "class": "store-read",
@@ -9759,7 +9850,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3427,
+   "line": 3420,
    "function": "Gate1AppModel.updateImportedCommentaryLayer",
    "api": "store.saveImportedCommentaryLayer",
    "class": "store-write",
@@ -9771,7 +9862,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3440,
+   "line": 3433,
    "function": "Gate1AppModel.interjectionAudioEvidence",
    "api": "AVAudioFile",
    "class": "av-sync",
@@ -9783,35 +9874,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3581,
-   "function": "Gate1AppModel.loadItemDetail",
-   "in_loop": false,
-   "labelled": false,
-   "debug": false,
-   "area": "groundwork",
-   "api": "via ItemDetailLoader.load",
-   "class": "store-heavy-decode",
-   "detail": [
-    "store.loadCanonicalSource",
-    "store.loadImportedCommentaryInterjections",
-    "store.loadImportedCommentaryLayers",
-    "store.loadInterjections",
-    "store.loadItem",
-    "store.loadListeningMap",
-    "store.loadPortableListeningMapProposals",
-    "store.loadResolvedListeningMapProjection",
-    "store.loadSessions",
-    "store.loadStructuredDocument",
-    "store.loadTranscriptTimeline",
-    "store.loadTranscriptTimelineSummary",
-    "store.loadTurns",
-    "store.saveListeningMap"
-   ],
-   "kind": "helper"
-  },
-  {
-   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3590,
+   "line": 3567,
    "function": "Gate1AppModel.requireStore",
    "api": "SQLiteSessionStore.init",
    "class": "store-read",
@@ -9823,7 +9886,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3610,
+   "line": 3587,
    "function": "Gate1AppModel.configureOfflineServices",
    "api": "Task {}",
    "class": "unlabelled-main-task",
@@ -9840,7 +9903,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3611,
+   "line": 3588,
    "function": "Gate1AppModel.configureOfflineServices",
    "api": "store.saveOfflineStorageBudget",
    "class": "store-write",
@@ -9852,7 +9915,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3638,
+   "line": 3615,
    "function": "Gate1AppModel.refreshGuidedOnboardingContent",
    "api": "store.loadItem",
    "class": "store-heavy-decode",
@@ -9864,7 +9927,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3646,
+   "line": 3623,
    "function": "Gate1AppModel.refreshGuidedOnboardingContent",
    "api": "store.saveItem",
    "class": "store-write",
@@ -9876,7 +9939,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3647,
+   "line": 3624,
    "function": "Gate1AppModel.refreshGuidedOnboardingContent",
    "api": "store.saveAudioAsset",
    "class": "store-write",
@@ -9888,7 +9951,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3655,
+   "line": 3632,
    "function": "Gate1AppModel.refreshGuidedOnboardingContent",
    "api": "store.saveTranscriptTimeline",
    "class": "store-write",
@@ -9900,7 +9963,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3673,
+   "line": 3650,
    "function": "Gate1AppModel.refreshGuidedOnboardingContent",
    "in_loop": false,
    "labelled": false,
@@ -9924,7 +9987,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3718,
+   "line": 3695,
    "function": "Gate1AppModel.loadFixtureItem",
    "in_loop": false,
    "labelled": false,
@@ -9939,7 +10002,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3725,
+   "line": 3702,
    "function": "Gate1AppModel.loadFixtureMap",
    "in_loop": false,
    "labelled": false,
@@ -9954,7 +10017,7 @@
   },
   {
    "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift",
-   "line": 3732,
+   "line": 3709,
    "function": "Gate1AppModel.loadProfile",
    "in_loop": false,
    "labelled": false,
