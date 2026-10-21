@@ -404,6 +404,26 @@ final class SharedLinkVoiceoverTests: XCTestCase {
         post["audio_items"] = items
     }
 
+    /// #810: a clipped page imports with no network, so the lookup after it must fail quietly offline and must
+    /// not be taken for an answer about the post.
+    func testOfflineLookupFailsWithoutAnAnswerAboutThePost() async {
+        let outcome = await SharedPostVoiceoverLookup.find(
+            sharedURL: substackPost, articleURL: substackPost.absoluteString, itemId: "item", fetched: nil,
+            fetchPage: { _ in throw URLError(.notConnectedToInternet) }
+        )
+        guard case .failed = outcome else { return XCTFail("expected a failed lookup, got \(outcome)") }
+    }
+
+    func testOnlyAMissingConnectionCountsAsOffline() {
+        let offline: [URLError.Code] = [.notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotConnectToHost,
+                                         .cannotFindHost, .dnsLookupFailed, .dataNotAllowed, .internationalRoamingOff, .callIsActive]
+        for code in offline { XCTAssertTrue(OfflineFailure.isConnectivity(URLError(code)), "\(code)") }
+        let verdicts: [URLError.Code] = [.badServerResponse, .fileDoesNotExist, .cannotDecodeContentData, .secureConnectionFailed,
+                                          .dataLengthExceedsMaximum, .cancelled]
+        for code in verdicts { XCTAssertFalse(OfflineFailure.isConnectivity(URLError(code)), "\(code)") }
+        XCTAssertFalse(OfflineFailure.isConnectivity(CocoaError(.fileNoSuchFile)))
+    }
+
     private let substackShare = URL(string: "https://open.substack.com/pub/captured/p/voiceover")!
     private let substackPost = URL(string: "https://captured.substack.com/p/voiceover")!
 

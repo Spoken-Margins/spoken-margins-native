@@ -17,6 +17,12 @@ final class SharedLinkVoiceover {
     var fetchPage: FetchPage
     /// Each recently shared item's latest outcome, so a later share doesn't hide an earlier post's.
     private var log = SharedPostVoiceoverLog()
+    /// Items looked up (or being looked up) in this launch. A failed lookup leaves it, so reconnecting and
+    /// opening the item tries again.
+    private var settled = Set<String>()
+
+    /// True once per item and launch (and again after a failed lookup), so opening an item can't repeat a lookup.
+    func mayLookUp(itemId: String) -> Bool { !settled.contains(itemId) }
 
     init(fetchPage: @escaping FetchPage = SharedLinkVoiceover.fetchFromNetwork) {
         self.fetchPage = fetchPage
@@ -37,8 +43,10 @@ final class SharedLinkVoiceover {
         transcriber: any SourceTranscriptionClient,
         report: @escaping @MainActor (String) -> Void
     ) async {
+        settled.insert(itemId)
         let note: @MainActor (String) -> Void = { [weak self] status in
             guard let self else { return }
+            if status.hasPrefix("failed:") { settled.remove(itemId) }
             log.record(status, for: itemId)
             report(log.summary)
         }

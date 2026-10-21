@@ -82,6 +82,33 @@ final class SourceLinkShareFallbackTests: XCTestCase {
         XCTAssertEqual(try database.loadItem(id: id).mediaType, "text", "it is still an article")
     }
 
+    /// #810: a page clipped from Safari imports from its own text, so clipping works in airplane mode. The voiceover
+    /// lookup comes after, and fails quietly offline. Opening the article once there is a connection finds it.
+    func testClippedPageImportsOfflineAndFindsItsVoiceoverWhenOpenedOnline() async throws {
+        let (model, _, databaseURL) = try makeVoiceoverShareModel(requests: RequestedURLs(), postPageHasVoiceover: false)
+        var continuation = BrowserTextContinuation()
+        continuation.startSession = false
+        let clip = BrowserTextHandoff(
+            captureMode: .readablePage,
+            source: BrowserTextSource(url: Self.postURL, title: Self.postTitle),
+            text: "# \(Self.postTitle)\n\nThe number of reported incidents involving AI agents keeps climbing.",
+            requestedContinuation: continuation
+        )
+
+        XCTAssertTrue(model.importClippedPage(clip))
+        try await waitFor("offline lookup") { model.diagnostics["sharedLinkVoiceover"]?.contains(": failed:") == true }
+        let database = try SQLiteSessionStore(path: databaseURL.path)
+        let id = try XCTUnwrap(model.libraryItems.first { $0.title == Self.postTitle }?.id, "the clip is imported with no network")
+        XCTAssertNil(try database.loadPublisherAudio(itemId: id))
+
+        model.sharedLinkVoiceover.fetchPage = { url in
+            (html: "<html><head>" + SourceLinkShareFallbackTests.preloadsScript(canonicalURL: Self.postURL) + "</head></html>", finalURL: url)
+        }
+        model.openItem(id: id)
+        try await waitFor("voiceover record") { (try? database.loadPublisherAudio(itemId: id)) != nil }
+        XCTAssertEqual(try database.loadPublisherAudio(itemId: id)?.audioURL, "https://recordings.example/voiceover.mp3")
+    }
+
     /// The post page has no voiceover: the article is imported as before, with no record, and the lookup
     /// doesn't fetch the page a second time to find that out.
     func testSharedSubstackPostWithoutAVoiceoverIsStillAnArticle() async throws {
