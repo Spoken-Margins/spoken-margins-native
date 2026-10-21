@@ -289,7 +289,8 @@ public enum StructuredDocumentBuilder {
         // ("2019, 2024", "2026a"), several works apart by ";" (#2370). A PDF that lost its
         // spaces prints "Chen,2025", so the comma before a year needs no space.
         let name = #"(?:(?:van|von|de|der|den|du|da|di|le|la)\s+)*\p{Lu}[\p{L}'’\-]+"#
-        let authors = #"\#(name)(?:,\s*\#(name))*(?:,?\s+(?:and|&)\s+\#(name))?(?:,?\s+et\s+al\.)?"#
+        // A list of names ends in "and" or "&", so "(Paris, France, 2019)" stays prose.
+        let authors = #"\#(name)(?:(?:,\s*\#(name))*,?\s+(?:and|&)\s+\#(name))?(?:,?\s+et\s+al\.)?"#
         let years = #"(?:19|20)[0-9]{2}[a-z]?(?:\s*,\s*(?:19|20)[0-9]{2}[a-z]?)*"#
         let work = #"(?:(?:see|e\.g\.,?|cf\.)\s*)?\#(authors)(?:,\s*|\s+)\#(years)"#
         let authorYear = #"\(\#(work)(?:\s*;\s*(?:\#(work)|\#(years)))*\)"#

@@ -39,6 +39,7 @@ public struct PDFWordSpacer {
 
     private let tokenCount: Double
 
+    /// Mutable, so one spacer serves one extraction on one thread.
     private final class LookupCache: @unchecked Sendable {
         var words: [String: Bool] = [:]
         var documentWords: [String: Bool] = [:]
@@ -97,15 +98,15 @@ public struct PDFWordSpacer {
         Self.applying(spaceInsertions(in: line), to: line)
     }
 
-    /// Character offsets of `line` that a space goes in front of. Offsets inside a
-    /// `protected` range (a superscript marker) are never used; the offset just after
-    /// one is, when a letter follows it. `carried` is the start of a word the line before
+    /// Character offsets of `line` that a space goes in front of. Offsets inside or in
+    /// front of a `protected` range (a superscript marker, "economy¹") are never used;
+    /// the offset just after one is, when a letter follows it. `carried` is the start of a word the line before
     /// broke with a hyphen ("Nev" of "Nev-"), so "ertheless" isn't read "er the less".
     public func spaceInsertions(in line: String, protected: [Range<Int>] = [], carried: String = "") -> [Int] {
         let characters = Array(line)
         var insertions = Set<Int>()
         func isProtected(_ offset: Int) -> Bool {
-            protected.contains { $0.lowerBound < offset && offset < $0.upperBound }
+            protected.contains { $0.lowerBound <= offset && offset < $0.upperBound }
         }
         var tokenStart = 0
         while tokenStart < characters.count {

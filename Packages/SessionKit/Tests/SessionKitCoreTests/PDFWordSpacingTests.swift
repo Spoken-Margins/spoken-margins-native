@@ -87,6 +87,10 @@ final class PDFWordSpacingTests: XCTestCase {
         XCTAssertEqual(spaced, "speeding them up.1 Averaged")
         let marker = PDFWordSpacer.shifted(15..<16, by: insertions)
         XCTAssertEqual(String(Array(spaced)[marker]), "1")
+        // No space goes in front of a marker set on a word: "economy¹", not "economy 1".
+        let onWord = "theeconomy1Averaged"
+        let onWordInsertions = spacer.spaceInsertions(in: onWord, protected: [10..<11])
+        XCTAssertFalse(onWordInsertions.contains(10))
     }
 
     func testAnyWordListWorks() {

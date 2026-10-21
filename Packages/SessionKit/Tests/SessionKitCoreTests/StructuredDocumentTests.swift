@@ -216,6 +216,8 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(citationLabels(["We tested (1) speed and (2) accuracy."], references: numberedReferences), [])
         XCTAssertEqual(citationLabels(["In 2019 (2) groups met."], references: nil), [])
         XCTAssertEqual(citationLabels(["Sales rose (Table 2, 2019) and fell (in 2020)."], references: nil), [])
+        XCTAssertEqual(citationLabels(["The summit (Paris, France, 2019) met."], references: nil), [])
+        XCTAssertEqual(citationLabels(["As shown (Smith, Jones, & Lee, 2019)."], references: nil), ["(Smith, Jones, & Lee, 2019)"])
     }
 
     private func citationLabels(_ body: [String], references: [String]?) -> [String] {
