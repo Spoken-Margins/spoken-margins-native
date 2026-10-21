@@ -145,7 +145,6 @@ extension Gate1AppModel {
                 } catch Gate5BrowserTextHandoffStoreError.invalidPayload {
                     try? handoffStore.deletePayload(payloadID: payloadID)
                     diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "deleted_invalid_payload"
-                    failedSharedArticles += 1 // MUTATION (intended to fail)
                 } catch Gate5BrowserTextHandoffStoreError.missingPayload {
                     diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "missing"
                 } catch {
