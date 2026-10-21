@@ -7,6 +7,29 @@ import SessionKitAudio
 /// the Library and item refreshes had no such check in a test, so a slow read could overwrite a newer screen.
 @MainActor
 final class BackgroundRefreshGateTests: XCTestCase {
+    private var priorTermsVersion: Any?
+    private var priorTermsDate: Any?
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        // The lane wipes the app's data, and this class runs first, so no earlier test had accepted the terms. The
+        // first playback then waited for the terms decision and started no session.
+        priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
+        priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
+        SpokenMarginsTerms.recordAcceptance()
+    }
+
+    override func tearDownWithError() throws {
+        for (value, key) in [(priorTermsVersion, SpokenMarginsTerms.acceptanceVersionKey), (priorTermsDate, SpokenMarginsTerms.acceptanceDateKey)] {
+            if let value {
+                UserDefaults.standard.set(value, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+        try super.tearDownWithError()
+    }
+
     func testANewerReloadOvertakesTheOneInFlight() {
         let gate = BackgroundRefreshGate()
         let first = gate.beginItem()
