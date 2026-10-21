@@ -105,6 +105,7 @@ jobs:
           sparse-checkout: |
             scripts/owner_tap_alert.py
             scripts/comment_trust.py
+            scripts/trunk.py
           sparse-checkout-cone-mode: false
       - name: Alert the owner if this PR is ready for his merge tap
         env:
