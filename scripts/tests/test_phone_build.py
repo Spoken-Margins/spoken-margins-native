@@ -330,6 +330,12 @@ FAKE_NOTIFY = '''#!/bin/sh
 echo "notify $*" >> "$FAKE_LOG"
 '''
 
+# Off the Mac only (#2268): stand-ins for the two macOS tools phone-build itself runs after the Release build.
+MAC_TOOL_STUBS = {
+    'codesign': '#!/bin/sh\nexit 0\n',  # the fake xcodebuild's ad-hoc signature and phone-build's --verify
+    'ditto': '#!/bin/sh\nexec cp -R "$1" "$2"\n',  # phone-build's one use: copy the .app to a new path
+}
+
 FAKE_GH = r'''#!/usr/bin/python3
 import json, os, sys
 args = sys.argv[1:]
@@ -421,6 +427,16 @@ class PhoneBuildTests(unittest.TestCase):
                     'SM_LANE_MEMORY_PRESSURE': '1', 'FAKE_LOG': str(self.log), 'FAKE_TIP': self.tip,
                     'FAKE_PLIST_KEY': '1', 'SM_PHONE_NOTIFY': str(self.bin / 'notify'),
                     'SM_PHONE_ICLOUD': str(self.tmp / 'icloud' / 'plans')}
+        missing = [tool for tool in MAC_TOOL_STUBS if shutil.which(tool) is None]
+        if missing:
+            # On the VPS's fast-portable run (Linux) there is no codesign or ditto. Stubs let the tests about what
+            # the build decides run anywhere; on the Mac the real tools still sign, verify and copy the app.
+            tools = self.tmp / 'mac-tools'
+            tools.mkdir()
+            for tool in missing:
+                (tools / tool).write_text(MAC_TOOL_STUBS[tool])
+                (tools / tool).chmod(0o755)
+            self.env['PATH'] = f'{tools}{os.pathsep}{os.environ.get("PATH", "")}'
 
     def git(self, *args):
         return subprocess.run(['git', *args], cwd=str(self.repo), check=True, capture_output=True,
