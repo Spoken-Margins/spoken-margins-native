@@ -2,7 +2,7 @@
 """Build next's tip for the owner's iPhone, ready for the Desktop installer (#384).
 
 Usage:
-  scripts/phone-build                 build the trunk's tip now (origin/next until #1492 moves it)
+  scripts/phone-build                 build the trunk's tip now (origin/main)
   scripts/phone-build --commit <sha>  build that commit instead
   scripts/phone-build --if-changed    coalesce changed tips to hourly (or sooner after integration PASS)
   scripts/phone-build --plan-only     rewrite latest's test-plan.md against the build installed now

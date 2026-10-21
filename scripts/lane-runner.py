@@ -680,7 +680,7 @@ def t3_scope(tree: Path, base: str, evidence: Path) -> tuple[list[str], list[str
 
 
 def hot_file_violations(tree: Path, base: str, labels) -> list[str]:
-    """next's hot-file ratchet on the tree's HEAD (none until the ratchet is on next)."""
+    """The base branch's hot-file ratchet on the tree's HEAD (none until the ratchet is on that branch)."""
     ratchet = base_policy(tree, base, 'scripts/hot_file_ratchet.py')
     return ratchet.violations(tree, f'origin/{base}', 'HEAD', labels) if ratchet else []
 

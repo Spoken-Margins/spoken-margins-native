@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  The rolling phone build's poll (#384, #1329): every 10 minutes, check next's tip. scripts/phone-build
+  The rolling phone build's poll (#384, #1329): every 10 minutes, check the trunk's tip. scripts/phone-build
   coalesces changed tips to at most one start per hour, or sooner after an integration PASS. Owner
   requests that leave out the if-changed flag build immediately. The script keeps its Release cache and handles
   one build at a time, memory/disk guards, test evidence and failed-tip suppression. Not installed by the PR.
@@ -12,7 +12,7 @@
   Remove:
     the same script with its remove option (see docs/scheduled-jobs.md)
 
-  It runs the main checkout's copy, which the hourly Mac tick fast-forwards to origin/next. A
+  It runs the main checkout's copy, which the hourly Mac tick fast-forwards to origin/main. A
   LaunchAgent runs in the owner's login session, so signing can use his login keychain.
 -->
 <plist version="1.0">
