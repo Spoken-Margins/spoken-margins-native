@@ -2362,12 +2362,12 @@ final class Gate1AppModel: ObservableObject {
                     let handoff = try Gate5BrowserTextHandoffURL.handoff(from: url, store: handoffStore)
                     // With something in Now Playing the import still shows its item and never touches playback (#1437).
                     let hadSession = hasActiveSession
-                    if importBrowserText(handoff) {
+                    if importClippedPage(handoff) {
                         try? handoffStore.deletePayload(payloadID: payloadID)
                         if hadSession { diagnostics["lastBrowserTextPayloadCleanup"] = "imported_without_session_replacement" }
                     }
                 } else if let handoff = Gate5BrowserTextHandoffURL.handoff(from: url) {
-                    importBrowserText(handoff)
+                    importClippedPage(handoff)
                 } else {
                     reportFailure("Unsupported browser text URL.")
                 }
