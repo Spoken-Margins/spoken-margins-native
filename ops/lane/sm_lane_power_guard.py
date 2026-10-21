@@ -20,7 +20,7 @@ Every 15 seconds this checks the power source and the lid:
   exits, then check again at once so the runner is paused before it takes the next queued job. On
   battery with the lid open that keeps idle sleep away; caffeinate can't keep a closed lid awake.
 
-It finds the runners from their launchd plists (actions.runner.uncomposed-spoken-margins-native.*)
+It finds the runners from their launchd plists (actions.runner.<owner>-spoken-margins-native.*)
 in ~/Library/LaunchAgents. It logs only changes, to ~/SpokenMarginsOps/lane-power-guard/log.txt.
 `--dry-run` prints what it would do and changes nothing.
 
@@ -48,6 +48,8 @@ import sm_paths  # noqa: E402
 HOME = Path.home()
 LAUNCH_AGENTS = HOME / 'Library' / 'LaunchAgents'
 RUNNER_PREFIX = 'actions.runner.uncomposed-spoken-margins-native.'
+# A runner registered again after the move to the org (#2169) gets the org's prefix.
+RUNNER_PREFIXES = (RUNNER_PREFIX, 'actions.runner.Spoken-Margins-spoken-margins-native.')
 STATE_DIR = sm_paths.state_dir('lane-power-guard', home=HOME)
 LOG = STATE_DIR / 'log.txt'
 PAUSED = STATE_DIR / 'paused'  # one runner label per line: the runners this guard stopped
@@ -69,7 +71,10 @@ class Runner:
 
     @property
     def name(self) -> str:
-        return self.label[len(RUNNER_PREFIX):] if self.label.startswith(RUNNER_PREFIX) else self.label
+        for prefix in RUNNER_PREFIXES:
+            if self.label.startswith(prefix):
+                return self.label[len(prefix):]
+        return self.label
 
 
 @dataclass(frozen=True)
@@ -160,7 +165,7 @@ def run(cmd: List[str]) -> str:
 
 def find_runners(uid: int) -> List[Runner]:
     runners = []
-    for plist in sorted(LAUNCH_AGENTS.glob(RUNNER_PREFIX + '*.plist')):
+    for plist in sorted(p for prefix in RUNNER_PREFIXES for p in LAUNCH_AGENTS.glob(prefix + '*.plist')):
         try:
             with plist.open('rb') as handle:
                 data = plistlib.load(handle)

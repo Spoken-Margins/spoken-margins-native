@@ -30,7 +30,7 @@ Turn it off by deleting either secret; remove it by deleting the two `lane-open-
 ## Check what it would do
 
 ```zsh
-GH_REPO=uncomposed/spoken-margins-native RUNNERS_TOKEN=$(gh auth token) SM_LANE_OPEN_URL=x SM_LANE_OPEN_TOKEN=x python3 ops/lane/sm_lane_open.py --dry-run
+GH_REPO=Spoken-Margins/spoken-margins-native RUNNERS_TOKEN=$(gh auth token) SM_LANE_OPEN_URL=x SM_LANE_OPEN_TOKEN=x python3 ops/lane/sm_lane_open.py --dry-run
 ```
 
 It prints the decision and sends and writes nothing.
@@ -77,7 +77,7 @@ Paste this into `~/.claude/scheduled-tasks/sm-mac-tick/SKILL.md`, right after st
 `scripts/owner_tap_alert.py` pushes the owner's phone (a `github-actions[bot]` comment that @mentions him) when a PR only he can merge is ready for his tap. It runs in the last job of `linux-t1.yml` and `shipped-build-compat.yml`, so it decides as a PR's checks finish. The audit script asks for a check after auditing such a PR, by re-adding the `owner-tap-check` label, whose labeled run in `owner-tap-alert.yml` posts as the bot. A lane run that finishes last starts nothing, so this tick step is an optional backstop. On the Mac, `gh` is the owner, whose comment would notify nobody, so the step only re-adds the label on PRs that are ready and not yet alerted. To add it, paste this after step 2a:
 
 ```text
-2c. OWNER-TAP ALERT. Run `cd ~/Documents/GitHub/spoken-margins-native && GH_REPO=uncomposed/spoken-margins-native python3 scripts/owner_tap_alert.py --via-label owner-tap-check` and keep going. For each PR ready for the owner's merge tap and not yet alerted on its head, it re-adds the `owner-tap-check` label, and GitHub Actions posts the alert. Running it every tick never repeats an alert. If it prints "skipped", note that line in this tick's #337 comment.
+2c. OWNER-TAP ALERT. Run `cd ~/Documents/GitHub/spoken-margins-native && GH_REPO=Spoken-Margins/spoken-margins-native python3 scripts/owner_tap_alert.py --via-label owner-tap-check` and keep going. For each PR ready for the owner's merge tap and not yet alerted on its head, it re-adds the `owner-tap-check` label, and GitHub Actions posts the alert. Running it every tick never repeats an alert. If it prints "skipped", note that line in this tick's #337 comment.
 ```
 
 ## Tests

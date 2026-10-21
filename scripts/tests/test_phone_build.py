@@ -1084,7 +1084,7 @@ class VerdictTests(unittest.TestCase):
 
     def test_the_integration_report_on_184_for_the_commit_is_found(self):
         self.assertEqual(self.module.latest_verdict('828597e7' + '0' * 32), 'Lane report integration-828597e — PASS')
-        self.assertEqual(self.calls[0][1], 'repos/uncomposed/spoken-margins-native/issues/184/comments')
+        self.assertEqual(self.calls[0][1], 'repos/Spoken-Margins/spoken-margins-native/issues/184/comments')
 
     def test_a_report_for_another_commit_is_not_found(self):
         self.assertIsNone(self.module.latest_verdict('1234567' + '0' * 33))
@@ -1740,7 +1740,7 @@ class PlanGroupingTests(unittest.TestCase):
         still = plan.split('## Still waiting on your check')[1]
         self.assertIn('2. **Waiting 180** (found on your phone)\n   - Check: on a freshly added article with '
                       'Supertonic, record a Margin, then a second one', still)
-        self.assertIn('[issue #180](https://example/issue/180), [PR #257](https://github.com/uncomposed/'
+        self.assertIn('[issue #180](https://example/issue/180), [PR #257](https://github.com/Spoken-Margins/'
                       'spoken-margins-native/pull/257)', still)
         self.assertIn("3. **Waiting 158**\n   - Check: open a podcast's Timeline and tap someone's shared Margin.",
                       still)

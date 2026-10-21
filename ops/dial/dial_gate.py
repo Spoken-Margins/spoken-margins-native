@@ -38,7 +38,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-REPO = os.environ.get('SM_DIAL_REPO', 'uncomposed/spoken-margins-native')
+REPO = os.environ.get('SM_DIAL_REPO', 'Spoken-Margins/spoken-margins-native')
 DIAL_ISSUE = int(os.environ.get('SM_DIAL_ISSUE', '589'))
 STATUS_ISSUE = int(os.environ.get('SM_DIAL_STATUS_ISSUE', '337'))
 CONFIG_DIR = Path(os.environ.get('SM_DIAL_CONFIG', '/etc/sm-dial'))

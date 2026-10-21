@@ -35,7 +35,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-DEFAULT_REPO = 'uncomposed/spoken-margins-native'
+DEFAULT_REPO = 'Spoken-Margins/spoken-margins-native'
 LANE_LABELS = ('sm-lane', 'sm-lane-build', 'sm-lane-priority')
 WAITING = ('queued',)     # `pending` waits on its PR's concurrency group, not on a runner
 ACTIVE_RUNS = ('queued', 'in_progress', 'pending', 'waiting')

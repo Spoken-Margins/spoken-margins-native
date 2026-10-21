@@ -41,12 +41,7 @@ extension Gate1AppModel {
                 try Task.checkCancellation()
                 guard let self, self.screen == .home,
                       self.libraryPresentationRevision == revision else { return }
-                let rows = LibraryRowBuilder.rows(from: data, context: self.startupAudioContext)
-                if self.libraryItems != rows { self.libraryItems = rows }
-                self.recentlyDeletedItems = data.items.filter { $0.deletedAt != nil }
-                    .sorted { ($0.deletedAt ?? .distantPast) > ($1.deletedAt ?? .distantPast) }.map {
-                    LibraryItemRow(id: $0.id, title: $0.title, status: "Recently deleted", canDelete: true)
-                }
+                self.publishLibrary(data)
             } catch is CancellationError {
             } catch {
                 self?.diagnostics["homeLibraryRefreshError"] = String(describing: error)

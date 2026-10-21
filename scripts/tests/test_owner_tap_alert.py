@@ -198,11 +198,11 @@ class CheckPr(unittest.TestCase):
         self.assertEqual(len(api.posted), 1)
         self.assertEqual(api.labels, [('remove', 7, 'owner-tap-check')])
 
-    def test_mention_defaults_to_the_repository_owner(self):
-        api = FakeApi()
+    def test_mention_defaults_to_the_owner_login_not_the_org(self):
+        api = FakeApi()  # the repo's owner is the Spoken-Margins org after #2169; the owner is a person
         with mock.patch.object(alert, 'GitHubApi', return_value=api), contextlib.redirect_stdout(io.StringIO()):
-            alert.main(['--repo', REPO, '--pr', '7'])
-        self.assertTrue(api.posted[0][1].startswith('@owner '))
+            alert.main(['--repo', 'Spoken-Margins/spoken-margins-native', '--pr', '7'])
+        self.assertTrue(api.posted[0][1].startswith('@uncomposed '))
 
     def test_mention_must_be_a_plain_login(self):
         with mock.patch.dict('os.environ', {'GH_REPO': REPO}), self.assertRaises(SystemExit), \

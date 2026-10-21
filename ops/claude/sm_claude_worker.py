@@ -70,7 +70,7 @@ from trunk import trunk_branch  # noqa: E402  (#1492: the branch its PRs go into
 # Configuration
 # ---------------------------------------------------------------------------
 
-REPO = os.environ.get('SM_CLAUDE_WORKER_REPO', 'uncomposed/spoken-margins-native')
+REPO = os.environ.get('SM_CLAUDE_WORKER_REPO', 'Spoken-Margins/spoken-margins-native')
 DIAL_ISSUE = int(os.environ.get('SM_DIAL_ISSUE', '589'))
 STATUS_ISSUE = int(os.environ.get('SM_DIAL_STATUS_ISSUE', '337'))
 BASE_BRANCH = trunk_branch()

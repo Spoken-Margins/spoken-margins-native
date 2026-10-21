@@ -13,6 +13,11 @@ enum SupertonicModelNotDownloaded {
     /// The code logged when Kitten takes over for this reason, in place of a hot or pressed phone's.
     static let fallbackCode = "supertonic_not_downloaded"
 
+    /// The status line when "Try App Voice" plays Kitten's sample for James or Lily (#2219).
+    static func previewMessage(voiceName: String) -> String {
+        "\(voiceName) needs the Supertonic download, so this sample is Kitten, the voice reading to you now. Download Supertonic in Settings › Voices."
+    }
+
     /// Once the model is there, the phone's heat, memory and power decide, as always.
     static let governorAllowsRendering: @Sendable () -> Bool = { OnDeviceVoiceGovernor.app.supertonicRenderingBlock() == nil }
 }

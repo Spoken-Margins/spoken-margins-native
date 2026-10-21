@@ -205,7 +205,7 @@ extension Gate1AppModel {
         announceNewCompletions: Bool = false,
         now: Date = Date()
     ) throws {
-        let itemsById = Dictionary(uniqueKeysWithValues: try store.listItems().map { ($0.id, $0) })
+        let itemsById = Dictionary(uniqueKeysWithValues: try store.listItemSummaries().map { ($0.id, $0) })
         let manifests = try store.loadPreparedAudioManifests()
         let manifestsById = Dictionary(uniqueKeysWithValues: manifests.map { ($0.id, $0) })
         let activeItemId = activePlaybackItemId

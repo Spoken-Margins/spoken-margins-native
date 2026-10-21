@@ -2,7 +2,7 @@ import Foundation
 
 /// Everything the item screen shows for one item, prepared off the store so rendering never reads it.
 /// Lives in SessionKit so `ItemDetailLoader` can be host-tested (moved from the app target, #318).
-public struct ItemDetailState {
+public struct ItemDetailState: Equatable, Sendable {
     public var id = ""
     public var title = ""
     public var status = ""
@@ -96,7 +96,7 @@ public struct ItemDetailState {
     }
 }
 
-public struct SessionPresentation: Identifiable {
+public struct SessionPresentation: Identifiable, Equatable, Sendable {
     public let session: Session
     public let interjectionCount: Int
     public let interjectionPreview: String?

@@ -34,7 +34,7 @@ LATEST = 'latest'
 SHA_RE = re.compile(r'[0-9a-f]{40}')
 ARTIFACT_PREFIX = 'sim-app-'         # hosted-integration.yml: sim-app-<full sha>
 PACKED_APP = APP_NAME + '.zip'       # ditto's zip inside the artifact: upload-artifact drops modes and symlinks
-REPO = os.environ.get('SM_INTEGRATION_REPO', 'uncomposed/spoken-margins-native')
+REPO = os.environ.get('SM_INTEGRATION_REPO', 'Spoken-Margins/spoken-margins-native')
 
 
 def root() -> Path:
