@@ -8,8 +8,9 @@
 # the BlackHole virtual audio output installed: what neither of the others runs (SessionKitTests and
 # SessionKitTraceTests, which need a sound output, the shipped-build compatibility checks, and the runner and ops
 # tests that drive Apple tools). With all three passed on the merge commit, the lane's automerge job runs on hosted
-# Linux, tests nothing itself and merges, so merging takes no Mac. The repository variable LANE_HOSTED_MAC_REST
-# set to `off` skips this job, and the automerge job goes back to the build Mac and runs fast-mac-rest there.
+# Linux, tests nothing itself and merges, so merging takes no Mac. On a PR it runs only with the repository variable
+# LANE_HOSTED_MAC_REST `on` as well (a rollout guard like LANE_HOSTED_FAST); unset, the automerge job stays on the
+# build Mac and runs fast-mac-rest there. A dispatch always runs it, so it can be proved before the switch goes on.
 #
 # Per PR, only once the lane takes hosted results (#1389): the pull_request trigger is here, but both jobs are
 # skipped, and cost nothing, until the repository variable LANE_HOSTED_FAST is `on`. The private repo's free
@@ -32,7 +33,7 @@ on:
     inputs:
       base:
         # #2459: the hosted automerge job dispatches this on a PR's branch when the PR's own checks tested an older
-        # base that has since moved in ways that matter (lane-runner.py hosted_rest_rerun). Each job then tests the
+        # base that has since moved in ways that matter (lane-runner.py hosted_rest_checks). Each job then tests the
         # dispatched commit merged onto the base's tip, with the base as parent 1 as in GitHub's merge commit, and
         # records it as for a PR. Empty: test the dispatched commit as it is, and record nothing.
         description: 'Test the commit merged onto this base branch (e.g. main) and record it for the lane'
@@ -196,23 +197,23 @@ jobs:
 
   mac-rest:
     # #2459: --plan fast-mac-rest, which the lane's automerge job used to run on the owner's build Mac (about 8 minutes
-    # a PR, behind a queue of up to 21 jobs on 2026-10-22). Same PRs and paths as the two jobs above. The repository
-    # variable LANE_HOSTED_MAC_REST set to `off` skips it; lane.yml then routes the automerge job back to the Mac.
+    # a PR, behind a queue of up to 21 jobs on 2026-10-22). Same PRs and paths as the two jobs above, once
+    # LANE_HOSTED_MAC_REST is `on` too; lane.yml then routes the automerge job to hosted Linux.
+    # Not yet on (2026-10-22): on this image (macOS 27; run 39831658469) 996 of 998 tests passed, but two depend on the
+    # OS: SystemNarrationRateTests heard Samantha at 0.5x as 0.63x (its rate table was measured on macOS 26, the lane
+    # Mac's), and RealSpeechTranscriberTests skipped, with no en_US SpeechTranscriber model. macos-26 matches the lane
+    # Mac's OS but has no Xcode 27, and Xcode 26.6 does not compile SessionKit's tests (run 39836269608). #2469 tracks it.
     name: 'hosted fast: Mac rest'
     if: >-
-      vars.LANE_HOSTED_MAC_REST != 'off' &&
-      (github.event_name != 'pull_request' ||
-       (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on'))
-    # macOS 26, the lane Mac's macOS (26.6), not the xcode-27 image's macOS 27: these tests render and time real
-    # system voices and speech, which change with the OS. On xcode-27 (run 39831658469, 2026-10-22) 996 of 998 passed,
-    # but Samantha at 0.5x was heard at 0.63x (SystemNarrationRateTests; its rate table was measured on macOS 26) and
-    # SpeechTranscriber had no en_US model. macos-26 has no Xcode 27, so this builds SessionKit with its default Xcode
-    # 26.6; the `sessionkit` job above still builds it, and runs SessionKitCoreTests, with Xcode 27.
-    runs-on: macos-26
+      github.event_name != 'pull_request' ||
+      ((github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on') &&
+       vars.LANE_HOSTED_MAC_REST == 'on')
+    runs-on: xcode-27
     # SessionKit's build (cached dependencies), its two serial targets, and the compatibility checks when the diff
     # reaches them (the lane's own budget for those is 40 minutes).
     timeout-minutes: 60
     env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
       HOMEBREW_NO_AUTO_UPDATE: 1
       HOMEBREW_NO_INSTALL_CLEANUP: 1
     steps:
@@ -260,8 +261,8 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: Packages/SessionKit/.build
-          key: sessionkit-macos26-xcode26.6-${{ hashFiles('Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved') }}
-          restore-keys: sessionkit-macos26-xcode26.6-
+          key: sessionkit-macos-xcode27.0-${{ hashFiles('Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: sessionkit-macos-xcode27.0-
       - name: Python tools
         run: bash scripts/bootstrap-python-tools.sh
       # Hosted Macs have no audio hardware, and AVPlayer's clock does not move without a running output (#909).
@@ -309,7 +310,7 @@ jobs:
         if: always()
         run: |
           seconds=$(( $(date +%s) - STARTED ))
-          echo "hosted fast Mac rest took ${seconds}s on macos-26." | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "hosted fast Mac rest took ${seconds}s on xcode-27." | tee -a "$GITHUB_STEP_SUMMARY"
 
   owner-tap-alert:
     # When the jobs above finish, tell the owner's phone if this PR now waits only for his merge tap (#2047, #2442):

@@ -430,9 +430,9 @@ class WorkflowTests(unittest.TestCase):
     def test_both_jobs_run_on_a_pr_only_from_this_repo_and_only_with_the_switch_on(self):
         guard = ("(github.event.pull_request.head.repo.full_name == github.repository && "
                  f"vars.{lane.HOSTED_FAST_SWITCH} == 'on')")
-        # The pair, and the Mac-rest check (#2459), which LANE_HOSTED_MAC_REST=off also skips.
+        # The pair, and the Mac-rest check (#2459), which runs on a PR only with LANE_HOSTED_MAC_REST `on` too.
         self.assertEqual(self.hosted.count(guard), len(lane.HOSTED_FAST_CHECKS) + len(lane.HOSTED_REST_CHECK))
-        self.assertIn(f"vars.{lane.HOSTED_REST_SWITCH} != 'off' &&", self.hosted)
+        self.assertIn(f"vars.{lane.HOSTED_REST_SWITCH} == 'on')", self.hosted)
         self.assertNotIn('pull_request_target:', self.hosted)
 
     def test_no_workflow_runs_on_the_vps_test_runner_and_only_the_lane_open_pings_on_the_vps(self):

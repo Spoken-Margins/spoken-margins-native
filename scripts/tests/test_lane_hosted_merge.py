@@ -16,7 +16,7 @@ import test_test_scope as scope_tests
 FakeGitHub, HEAD, MERGE, lane, comment = (runner_tests.FakeGitHub, runner_tests.HEAD, runner_tests.MERGE,
                                           runner_tests.lane, runner_tests.comment)
 scope = scope_tests.scope
-ON = {'LANE_HOSTED_FAST': 'on'}
+ON = {'LANE_HOSTED_FAST': 'on', 'LANE_HOSTED_MAC_REST': 'on'}
 CHECKS = {**lane.HOSTED_FAST_CHECKS, **lane.HOSTED_REST_CHECK}
 STOOD = {name: {'plan': plan, 'tree': 'a' * 40, 'base': MERGE, 'head': HEAD, 'url': f'https://example.test/{plan}',
                 'runner': 'GitHub-hosted'} for name, plan in CHECKS.items()}
@@ -48,14 +48,14 @@ class RoutingTests(unittest.TestCase):
         self.assertNotIn('self-hosted', routed['automerge'])
 
     def test_the_switches_keep_todays_mac_route(self):
-        for env in ({}, {'LANE_HOSTED_FAST': 'off'}, {**ON, 'LANE_HOSTED_MAC_REST': 'off'},
-                    {**ON, 'LANE_HOSTED_MAC_REST': ' OFF '}):
+        for env in ({}, {'LANE_HOSTED_FAST': 'on'}, {**ON, 'LANE_HOSTED_FAST': 'off'},
+                    {**ON, 'LANE_HOSTED_MAC_REST': 'off'}, {**ON, 'LANE_HOSTED_MAC_REST': 'yes'}):
             with self.subTest(env=env):
                 self.assertEqual(scope.hosted_merge_routing(dict(self.MAC), env), self.MAC)
 
     def test_the_route_and_the_runner_read_the_switches_the_same_way(self):
-        for env in ({}, ON, {**ON, 'LANE_HOSTED_MAC_REST': 'off'}, {**ON, 'LANE_HOSTED_MAC_REST': 'on'},
-                    {'LANE_HOSTED_MAC_REST': 'on'}):
+        for env in ({}, ON, {**ON, 'LANE_HOSTED_MAC_REST': 'off'}, {**ON, 'LANE_HOSTED_MAC_REST': ' On '},
+                    {'LANE_HOSTED_MAC_REST': 'on'}, {'LANE_HOSTED_FAST': 'on'}):
             with self.subTest(env=env):
                 hosted = scope.hosted_merge_routing(dict(self.MAC), env)['automerge'] == ['ubuntu-latest']
                 self.assertEqual(hosted, lane.hosted_rest_on(env))
@@ -125,6 +125,65 @@ class HostedRestChecksTests(unittest.TestCase):
             found, why = lane.hosted_rest_checks(FakeGitHub(), Path('.'), 'main', HEAD, MERGE, alive=lambda: None,
                                                  dispatch=lambda: '', env=ON)
         self.assertIsNone(found)
+
+
+class AllChecks:
+    """GitHub's check-run and annotation reads for any of the three hosted checks (test_lane_hosted_fast's FakeChecks
+    knows only the pair)."""
+
+    def __init__(self, records):
+        self.repo, self.records = 'o/r', records  # check name -> (plan, tree, base, head), or absent: no run
+
+    def api(self, path):
+        names = list(CHECKS)
+        if '/annotations' in path:
+            plan, tree, base, head = self.records[names[int(path.split('/')[-2])]]
+            return runner_tests.json.dumps([{'title': lane.HOSTED_TESTED_TITLE, 'annotation_level': 'notice',
+                                             'message': f'plan={plan} tree={tree} parents={base} {head}'}])
+        name = next(n for n in names if 'check_name=' + lane.urllib.parse.quote(n, safe='') + '&' in path)
+        if name not in self.records:
+            return runner_tests.json.dumps({'check_runs': []})
+        return runner_tests.json.dumps({'check_runs': [{
+            'id': names.index(name), 'status': 'completed', 'conclusion': 'success', 'app': {'slug': 'github-actions'},
+            'started_at': '2026-10-22T10:00:00Z', 'html_url': f'https://example.test/{names.index(name)}'}]})
+
+
+class MacRestIsAHardConditionTests(unittest.TestCase):
+    """The merge never goes ahead without the Mac-rest check's record on this head and this merge tree: moving those
+    tests after the merge would break the owner's 2026-10-21 rule that every test blocks a merge. Read through the
+    real hosted_fast_records and tree match, not a stand-in."""
+    TREE = 'e' * 40
+
+    def stands(self, records):
+        with mock.patch.object(lane, 'merged_tree', return_value=self.TREE):
+            return lane.hosted_rest_checks(AllChecks(records), Path('.'), 'main', HEAD, MERGE, alive=lambda: None,
+                                           dispatch=lambda: 'no dispatch here', env=ON, wait=0)
+
+    def all_three(self, **changes):
+        records = {name: (plan, self.TREE, MERGE, HEAD) for name, plan in CHECKS.items()}
+        records.update(changes)
+        return records
+
+    def test_all_three_on_this_head_and_tree_stand(self):
+        found, why = self.stands(self.all_three())
+        self.assertEqual(set(found or {}), set(CHECKS), why)
+
+    def test_the_hosted_pair_alone_never_stands(self):
+        records = self.all_three()
+        del records['hosted fast: Mac rest']
+        found, why = self.stands(records)
+        self.assertIsNone(found)
+        self.assertIn('Mac rest', why)
+
+    def test_a_mac_rest_record_for_another_head_tree_or_plan_never_stands(self):
+        rest = 'hosted fast: Mac rest'
+        for name, record in (('another head', ('fast-mac-rest', self.TREE, MERGE, 'b' * 40)),
+                             ('another tree', ('fast-mac-rest', 'f' * 40, MERGE, HEAD)),
+                             ('another plan', ('fast-portable', self.TREE, MERGE, HEAD))):
+            with self.subTest(name):
+                found, why = self.stands(self.all_three(**{rest: record}))
+                self.assertIsNone(found)
+                self.assertIn(rest, why)
 
 
 class HostedRunAutoTests(unittest.TestCase):

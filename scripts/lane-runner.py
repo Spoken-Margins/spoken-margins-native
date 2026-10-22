@@ -64,8 +64,8 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   run takes them for the portable steps and SessionKitCoreTests and runs only --plan fast-mac-rest on the Mac.
   Anything short of that, and with the variable unset, it runs the whole --plan fast as before. (The VPS's
   linux-t1.yml pair, read from #2160 until the flip, was retired in #2442.)
-- Merging off the Mac (#2459), with LANE_HOSTED_FAST `on` and LANE_HOSTED_MAC_REST not `off`: hosted-portable.yml
-  also runs --plan fast-mac-rest on a GitHub-hosted Mac, and test-scope.py routes every automerge job to hosted
+- Merging off the Mac (#2459), with LANE_HOSTED_FAST and LANE_HOSTED_MAC_REST both `on` (a rollout guard, off until
+  the hosted Mac-rest check passes on the hosted image): hosted-portable.yml also runs --plan fast-mac-rest on a GitHub-hosted Mac, and test-scope.py routes every automerge job to hosted
   Linux (--hosted). There a PR held for T3 is reported held in seconds, testing nothing. Otherwise the job waits,
   on Linux, for all three hosted checks to pass on this head merged onto next, dispatches them once more when next
   has since moved in ways that matter, and merges on them, running no test itself. A hosted check that failed is
@@ -921,7 +921,7 @@ HOSTED_FAST_SWITCH = 'LANE_HOSTED_FAST'
 HOSTED_FAST_CHECKS = {'hosted fast: portable': 'fast-portable',
                       'hosted fast: SessionKit core': 'fast-hosted-sessionkit'}
 # #2459: the third hosted check, --plan fast-mac-rest on a GitHub-hosted Mac (hosted-portable.yml `mac-rest`). With
-# it, the automerge job runs on hosted Linux and runs no test itself. `off` sends merging back to the build Mac.
+# it, the automerge job runs on hosted Linux and runs no test itself. Anything but `on` keeps merging on the build Mac.
 HOSTED_REST_SWITCH = 'LANE_HOSTED_MAC_REST'
 HOSTED_REST_CHECK = {'hosted fast: Mac rest': 'fast-mac-rest'}
 HOSTED_TESTED_TITLE = 'lane-hosted-tested'
@@ -934,9 +934,9 @@ def hosted_fast_on(env=None) -> bool:
 
 def hosted_rest_on(env=None) -> bool:
     """Whether merging runs off the Mac on all three hosted checks (#2459): the hosted fast pair is on, and
-    LANE_HOSTED_MAC_REST is not `off`. test-scope.py's hosted_merge_routing reads the same two variables."""
+    LANE_HOSTED_MAC_REST is `on`. test-scope.py's hosted_merge_routing reads the same two variables."""
     env = os.environ if env is None else env
-    return hosted_fast_on(env) and env.get(HOSTED_REST_SWITCH, '').strip().lower() != 'off'
+    return hosted_fast_on(env) and env.get(HOSTED_REST_SWITCH, '').strip().lower() == 'on'
 
 
 def hosted_tested(annotations: list[dict]) -> dict | None:
