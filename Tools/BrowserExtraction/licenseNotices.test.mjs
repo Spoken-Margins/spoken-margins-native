@@ -7,6 +7,8 @@ import { build } from "esbuild";
 import { BUNDLES, LICENSE_DIRECTORIES, esbuildOptions } from "./bundleConfig.mjs";
 import {
   NOTICES_FILE_NAME,
+  PREBUNDLED_MARKERS,
+  PREBUNDLED_PACKAGES,
   bundledPackages,
   missingNotices,
   readPackage,
@@ -65,4 +67,33 @@ test("a dependency nobody accounted for, or a package with no license file, fail
   writePackage("inlined", {}, null);
   assert.deepEqual(unaccountedDependencies(["host"], root), ["host -> inlined"]);
   assert.throws(() => readPackage("inlined", root), /no license file/);
+});
+
+test("a prebundled package's notice names the host that inlined it, never the node_modules copy's version", async () => {
+  const notices = renderNotices(await shippedBundles());
+  const hostVersion = readPackage("defuddle").version;
+  for (const [host, inlined] of Object.entries(PREBUNDLED_PACKAGES)) {
+    for (const name of inlined) {
+      const info = readPackage(name);
+      assert.ok(
+        notices.includes(`${name} (${info.license}), inlined in ${host} ${readPackage(host).version}`),
+        `${name} must be headed as inlined in ${host}`
+      );
+      assert.ok(!notices.includes(`${name} ${info.version} (`), `${name} ${info.version} would claim a version the bundle may not contain`);
+    }
+  }
+  assert.ok(fs.readFileSync(BUNDLES[0].outfile, "utf8").slice(0, 200).includes(`Bundled Defuddle ${hostVersion};`));
+});
+
+test("code inlined by defuddle carries the fix marker that the installed copy has", async () => {
+  const shipped = await shippedBundles();
+  const withDefuddle = BUNDLES.filter((configuration, index) => shipped[index].packages.includes("defuddle"));
+  assert.ok(withDefuddle.length >= 2);
+  for (const [name, { marker, reason }] of Object.entries(PREBUNDLED_MARKERS)) {
+    const installed = fs.readdirSync(`node_modules/${name}/lib`).map((file) => fs.readFileSync(`node_modules/${name}/lib/${file}`, "utf8")).join("\n");
+    assert.ok(installed.includes(marker), `installed ${name} lacks ${marker} (${reason})`);
+    for (const configuration of withDefuddle) {
+      assert.ok(fs.readFileSync(configuration.outfile, "utf8").includes(marker), `${configuration.outfile} still carries unfixed ${name} code (${reason})`);
+    }
+  }
 });

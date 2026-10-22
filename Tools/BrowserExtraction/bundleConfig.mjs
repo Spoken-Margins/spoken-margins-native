@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs";
+
+const DEFUDDLE_VERSION = JSON.parse(readFileSync("node_modules/defuddle/package.json", "utf8")).version;
+
 export const BUNDLES = [
   {
     entryPoints: ["Tools/BrowserExtraction/browserTextCapture.entry.mjs"],
@@ -33,6 +37,6 @@ export function esbuildOptions(configuration) {
     sourcemap: false,
     legalComments: "none",
     metafile: true,
-    banner: { js: configuration.banner || "/* Bundled Defuddle 0.19.1; see Defuddle-LICENSE.txt */" }
+    banner: { js: configuration.banner || `/* Bundled Defuddle ${DEFUDDLE_VERSION}; see Defuddle-LICENSE.txt */` }
   };
 }

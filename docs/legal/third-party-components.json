@@ -66,7 +66,7 @@
     {
       "id": "defuddle",
       "name": "Defuddle",
-      "version": "0.19.1",
+      "version": "0.19.5",
       "license": "MIT",
       "distribution": "bundled",
       "by": "Steph Ango",
@@ -89,7 +89,7 @@
     {
       "id": "turndown",
       "name": "turndown",
-      "version": "7.2.4",
+      "version": "inlined in defuddle 0.19.5",
       "license": "MIT",
       "distribution": "bundled",
       "by": "Dom Christie",
@@ -106,7 +106,7 @@
     {
       "id": "temml",
       "name": "temml",
-      "version": "0.13.3",
+      "version": "inlined in defuddle 0.19.5",
       "license": "MIT",
       "distribution": "bundled",
       "by": "Ron Kok",
@@ -123,7 +123,7 @@
     {
       "id": "mathml-to-latex",
       "name": "mathml-to-latex",
-      "version": "1.8.0",
+      "version": "inlined in defuddle 0.19.5",
       "license": "MIT",
       "distribution": "bundled",
       "by": "Alexandre Nunes",
@@ -140,7 +140,7 @@
     {
       "id": "xmldom",
       "name": "@xmldom/xmldom",
-      "version": "0.9.10",
+      "version": "inlined in defuddle 0.19.5",
       "license": "MIT",
       "distribution": "bundled",
       "by": "Christopher J. Brody and contributors",

@@ -90,8 +90,8 @@ class ThirdPartyNoticesTests(unittest.TestCase):
         root = self.tree()
         notes = root / 'App/SharedResources/BundledJavaScript-NOTICES.txt'
         text = notes.read_text()
-        notes.write_text(text.replace('turndown 7.2.4 (MIT)', 'turndown 7.3.0 (MIT)'))
-        self.assertProblem(root, 'turndown: App/SharedResources/BundledJavaScript-NOTICES.txt says 7.3.0')
+        notes.write_text(text.replace('turndown (MIT), inlined in defuddle 0.19.5', 'turndown (MIT), inlined in defuddle 0.20.0'))
+        self.assertProblem(root, 'turndown: App/SharedResources/BundledJavaScript-NOTICES.txt says inlined in defuddle 0.20.0')
         notes.write_text(text + '\n' + '=' * 72 + '\nnew-lib 1.0.0 (MIT)\n' + '=' * 72 + '\n')
         self.assertProblem(root, 'new-lib 1.0.0 is compiled into the page-reading scripts')
 

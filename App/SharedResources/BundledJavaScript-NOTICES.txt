@@ -8,7 +8,7 @@ SourceLinkPreprocessor.js: @xmldom/xmldom, defuddle, mathml-to-latex, temml, tur
 popup.js: no third-party packages
 
 ========================================================================
-@xmldom/xmldom 0.9.12 (MIT)
+@xmldom/xmldom (MIT), inlined in defuddle 0.19.5
 ========================================================================
 
 Copyright 2019 - present Christopher J. Brody and other contributors, as listed in: https://github.com/xmldom/xmldom/graphs/contributors
@@ -21,7 +21,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ========================================================================
-defuddle 0.19.1 (MIT)
+defuddle 0.19.5 (MIT)
 ========================================================================
 
 MIT License
@@ -47,7 +47,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-mathml-to-latex 1.8.0 (MIT)
+mathml-to-latex (MIT), inlined in defuddle 0.19.5
 ========================================================================
 
 MIT License
@@ -73,7 +73,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-temml 0.13.3 (MIT)
+temml (MIT), inlined in defuddle 0.19.5
 ========================================================================
 
 The MIT License (MIT)
@@ -99,7 +99,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-turndown 7.2.4 (MIT)
+turndown (MIT), inlined in defuddle 0.19.5
 ========================================================================
 
 MIT License

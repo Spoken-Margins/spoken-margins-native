@@ -10,6 +10,16 @@ export const PREBUNDLED_PACKAGES = {
   defuddle: ["turndown", "temml", "mathml-to-latex", "@xmldom/xmldom"]
 };
 
+// The code inside defuddle's prebuilt file is whatever defuddle's own build
+// installed, which the copy in node_modules/<name> need not match. The notices
+// must not claim that copy's version, so a prebundled package is headed
+// "inlined in defuddle X". Each one also has a marker string that exists only in
+// fixed releases; the notices test requires it in the installed copy and in the
+// shipped bundle, so a bump that fixes one and not the other fails.
+export const PREBUNDLED_MARKERS = {
+  "@xmldom/xmldom": { marker: "_nsIndex", reason: "0.9.12 attribute index; 0.9.10 has known advisories" }
+};
+
 // Dependencies of shipped packages that are not compiled into any bundle.
 // A dependency that is neither shipped nor listed here fails the notices test,
 // so a package upgrade that inlines something new can't ship without a notice.
@@ -80,7 +90,15 @@ export function unaccountedDependencies(packageNames, root = "node_modules") {
   return gaps;
 }
 
-function packageHeading(info) {
+function hostOf(name) {
+  return Object.entries(PREBUNDLED_PACKAGES).find(([, inlined]) => inlined.includes(name))?.[0] || null;
+}
+
+function packageHeading(info, root = "node_modules") {
+  const host = hostOf(info.name);
+  if (host) {
+    return `${info.name} (${info.license}), inlined in ${host} ${readPackage(host, root).version}`;
+  }
   return `${info.name} ${info.version} (${info.license})`;
 }
 
@@ -104,7 +122,7 @@ export function renderNotices(bundles, root = "node_modules") {
   const allNames = [...new Set(bundles.flatMap((bundle) => bundle.packages))].sort();
   for (const name of allNames) {
     const info = readPackage(name, root);
-    lines.push("", rule, packageHeading(info), rule, "", info.licenseText);
+    lines.push("", rule, packageHeading(info, root), rule, "", info.licenseText);
   }
   return `${lines.join("\n")}\n`;
 }
@@ -113,6 +131,6 @@ export function renderNotices(bundles, root = "node_modules") {
 export function missingNotices(noticesText, packageNames, root = "node_modules") {
   return packageNames.filter((name) => {
     const info = readPackage(name, root);
-    return !noticesText.includes(packageHeading(info)) || !noticesText.includes(info.licenseText);
+    return !noticesText.includes(packageHeading(info, root)) || !noticesText.includes(info.licenseText);
   });
 }

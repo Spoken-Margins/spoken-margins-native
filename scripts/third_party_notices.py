@@ -127,8 +127,13 @@ def pip_requirements(root):
 
 def bundled_js_packages(root):
     """{name: (version, license)} from the headings of BundledJavaScript-NOTICES.txt."""
+    text = (root / BUNDLED_JS_NOTICES).read_text()
     heading = re.compile(r'^={20,}\n(\S+) (\S+) \(([^)]+)\)\n={20,}$', re.M)
-    return {name: (version, licence) for name, version, licence in heading.findall((root / BUNDLED_JS_NOTICES).read_text())}
+    found = {name: (version, licence) for name, version, licence in heading.findall(text)}
+    # A package that another one ships inlined has no version of its own: "name (MIT), inlined in host 1.2.3".
+    inlined = re.compile(r'^={20,}\n(\S+) \(([^)]+)\), (inlined in \S+ \S+)\n={20,}$', re.M)
+    found.update({name: (version, licence) for name, licence, version in inlined.findall(text)})
+    return found
 
 
 def resource_folders(root):

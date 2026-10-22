@@ -131,7 +131,7 @@ function buildPayload(globalRef, documentRef, captureMode, contentFormat, text, 
     createdAt: new Date().toISOString(),
     metadata: {
       extractor: metadata.extractor || "defuddle",
-      extractorVersion: metadata.extractorVersion || "0.19.1",
+      extractorVersion: metadata.extractorVersion || "0.19.5",
       networkFallback: false,
       userAgent: globalRef.navigator ? globalRef.navigator.userAgent : null,
       ...(metadata.extractionError ? { extractionError: metadata.extractionError } : {})

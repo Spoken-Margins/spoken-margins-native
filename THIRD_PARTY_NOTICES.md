@@ -27,7 +27,7 @@ Runs the voice models on the phone. ONNX Runtime's own third-party components (M
 
 Reads and writes .spokenmargins packets.
 
-### Defuddle 0.19.1
+### Defuddle 0.19.5
 
 - Licence: MIT
 - From: Steph Ango
@@ -37,7 +37,7 @@ Reads and writes .spokenmargins packets.
 
 Reads web pages. Compiled into browserTextCapture.js and SourceLinkPreprocessor.js for the app, the Safari extension and the Share extension. The Share extension carries identical copies of the two notice files (checked).
 
-### turndown 7.2.4
+### turndown inlined in defuddle 0.19.5
 
 - Licence: MIT
 - From: Dom Christie
@@ -46,7 +46,7 @@ Reads web pages. Compiled into browserTextCapture.js and SourceLinkPreprocessor.
 
 Compiled into Defuddle's bundle.
 
-### temml 0.13.3
+### temml inlined in defuddle 0.19.5
 
 - Licence: MIT
 - From: Ron Kok
@@ -55,7 +55,7 @@ Compiled into Defuddle's bundle.
 
 Compiled into Defuddle's bundle.
 
-### mathml-to-latex 1.8.0
+### mathml-to-latex inlined in defuddle 0.19.5
 
 - Licence: MIT
 - From: Alexandre Nunes
@@ -64,7 +64,7 @@ Compiled into Defuddle's bundle.
 
 Compiled into Defuddle's bundle.
 
-### @xmldom/xmldom 0.9.10
+### @xmldom/xmldom inlined in defuddle 0.19.5
 
 - Licence: MIT
 - From: Christopher J. Brody and contributors
