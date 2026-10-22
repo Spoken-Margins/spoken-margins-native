@@ -54,8 +54,8 @@ Times are UTC unless a zone is named. "Pause" is the way to stop that one job wi
 | Job | Schedule | Reads | Writes | Config owner | Pause |
 |---|---|---|---|---|---|
 | `sm-dial-gate.timer` and `.service` (`ops/dial/`) | `OnCalendar=*:2/15` with up to 60 s of random delay, plus a 3-hour fallback wake-up | The Dial boxes on #589, the tick on #337, the ready queue, claim and stop notes | One status comment on #589; a fire to the Dial relay | Owner, with the Dial boxes | Set Mode to Off on #589, or (my suggestion, not in the repo's README) `systemctl disable --now sm-dial-gate.timer` |
-| Runner `sm-vps` (service name not in repo) | Always on | Queued jobs | Runs `route`, `lane-open-*` and `merge-audit` jobs | Owner | Stop the runner service |
-| Runner `sm-vps-t1` (not in repo; its user and memory limits are only described in the header comment of `linux-t1.yml`) | Always on, one job at a time | PR head | `linux-t1` result | Owner | Stop the runner service |
+| Runner `sm-vps` (service name not in repo) | Always on | Queued jobs | Runs the two `lane-open-*` jobs (every other former VPS job moved to GitHub-hosted `ubuntu-latest`, #2442) | Owner | Stop the runner service |
+| Runner `sm-vps-t1` (not in repo) | Always on, but no CI job targets it since #2442 | Nothing | Nothing | Owner | Stop the runner service (nothing depends on it) |
 | `smserver.service` (`research/B4/deploy/`) | Always on, restarts on failure | Requests, `/etc/smserver/maps.env` | Share links, maps, attestation, an hourly request summary to its own journal namespace | Owner | `systemctl stop smserver` |
 | VPS crontab | Not checked | | | | The repo contains no cron entries |
 
@@ -64,7 +64,7 @@ Times are UTC unless a zone is named. "Pause" is the way to stop that one job wi
 | Workflow | Trigger | Runs on | Does |
 |---|---|---|---|
 | `lane.yml` | `pull_request` into `next` or `lane-check/**` (labels `lane:queued`, `automerge`); `workflow_dispatch` from the lane job after a T3 PASS | `route`, `lane-open-*` on `sm-vps`; `lane`, `automerge`, `release` on the Mac | Tests the PR, merges `automerge` PRs on PASS, pings the Dial when a runner is idle |
-| `linux-t1.yml` | `pull_request` into `next` | `sm-vps-t1` | SessionKit's Foundation-only tests on Linux |
+| `hosted-portable.yml` | `pull_request` into `main` | GitHub-hosted `ubuntu-latest` | The portable fast checks, then the `owner-tap-alert` job (`linux-t1.yml` was retired in #2442) |
 | `shipped-build-compat.yml` | `pull_request` into `next` touching persistence, sharing or stored types | Mac `sm-lane` | Build 29 can still open the database this PR writes |
 | `verify-tests.py` step `shipped-compat` (#1899) | Every automerge run of `--plan fast` or `--plan fast-mac-rest` whose diff matches that workflow's `paths` | Mac `sm-lane` | The same two checks, inside the plan the runner merges on, because a required check can't stand on the merge commit the runner pushes |
 | `merge-audit.yml` | `push` to `next` | `sm-vps` | Labels merges that skipped the merge check |
@@ -127,7 +127,7 @@ The owner wants the repo public for unlimited GitHub Actions runners. That is hi
 
 - It exposes all 785 branches, 17 tags, every issue and every comment, not only `next`. The provisioning profiles and device identifiers stay reachable in history unless history is rewritten.
 - Rewriting history (`git filter-repo` on `artifacts/`) changes every commit hash. Lane reports, audit comments (`Claude audit on <sha7>`), `Closes` links, `testflight/*` tags and the merge-audit rule all name hashes. Open PR branches would have to be rebased by hand.
-- **Self-hosted runners and fork PRs.** On a public repo anyone can open a fork PR. `lane.yml` and `shipped-build-compat.yml` already skip fork PRs (`head.repo.full_name == github.repository`). `linux-t1.yml` and `merge-audit.yml` do not, and `linux-t1` would run a stranger's code on the VPS. Before going public: set "Require approval for all outside collaborators" for fork PR workflows, and add the same same-repo guard to `linux-t1.yml`. The VPS runner user (`smt1`, no docker group, memory caps) limits the damage but the guard is the real fix. A change to `.github/` is the owner's tap.
+- **Self-hosted runners and fork PRs.** On a public repo anyone can open a fork PR. `lane.yml` and `shipped-build-compat.yml` already skip fork PRs (`head.repo.full_name == github.repository`). At the time of writing, `linux-t1.yml` and `merge-audit.yml` did not, and `linux-t1` would have run a stranger's code on the VPS. Since #2442 `linux-t1.yml` is gone and only the two `lane-open-*` jobs still run on `sm-vps`, each behind the same-repo guard. Before going public: set "Require approval for all outside collaborators" for fork PR workflows. A change to `.github/` is the owner's tap.
 
 ### What public runners would and wouldn't replace
 
@@ -135,7 +135,7 @@ Whether GitHub's free hosted runners for public repos include enough macOS capac
 
 | Job today | On a public hosted runner |
 |---|---|
-| `linux-t1` (VPS), `merge-audit`, `route`, `lane-open-*` | Replaced with no loss. These are plain Linux jobs that moved to the VPS only because the free minutes ran out on 2026-10-07 (#1023). |
+| `linux-t1` (VPS), `merge-audit`, `route`, `lane-open-*` | Replaced with no loss. These are plain Linux jobs that moved to the VPS only because the free minutes ran out on 2026-10-07 (#1023). Done in #2442 for all but the two `lane-open-*` jobs, which share a ping-limit state file and stay on `sm-vps`. |
 | Host tests (`--plan fast`) and the app build for the simulator and device | Likely, on a hosted macOS runner: no simulator audio, no owner machine. Slower than the Mac and with no warm build cache. |
 | T3 app-hosted tests and the integration run (`--plan app`) | Possible on a hosted macOS runner's simulator, but the lane's one-simulator rules and its audio-device handling (#1556) were built around the owner's Mac. |
 | T4 and T5 journeys (iOS simulator tool), the phone build, the owner's phone check, signing, TestFlight upload | Not replaceable. They need the owner's Mac, his login keychain and his phone. |

@@ -191,7 +191,7 @@ class CandidateFilter(unittest.TestCase):
         self.assertEqual(A.risky_areas(["App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackScreen.swift"]), [])
 
     LANE_PATHS = [
-        ".github/workflows/lane.yml", ".github/workflows/linux-t1.yml", "scripts/lane-runner.py",
+        ".github/workflows/lane.yml", ".github/workflows/hosted-portable.yml", "scripts/lane-runner.py",
         "scripts/lane_sim.py", "scripts/lane_slots.py", "scripts/lane_guard.py", "scripts/lane-sim-boot",
         "scripts/xcodebuild-lane", "scripts/host-test-lane", "scripts/install-lane-guard.py",
         "scripts/test-scope.py", "scripts/hot_file_ratchet.py", "scripts/merge_audit.py",
@@ -830,7 +830,7 @@ class OwnerTapAlertDispatch(unittest.TestCase):
 
 class OwnerTapPrAudit(unittest.TestCase):
     """A PR only the owner merges is never armed, so it gets no lane report; its finished checks stand in (#2052)."""
-    TAP_FILES = [{"filename": ".github/workflows/linux-t1.yml", "additions": 3, "deletions": 1}]
+    TAP_FILES = [{"filename": ".github/workflows/hosted-portable.yml", "additions": 3, "deletions": 1}]
     APP_FILES = [{"filename": "docs/x.md", "additions": 3, "deletions": 1}]
     OLD_LANE = {"created_at": "2026-10-09T10:00:00Z",
                 "body": "Lane report pr366-r1 — PASS | commit 13b6e29 (tested merged with next at 77b3426)"}

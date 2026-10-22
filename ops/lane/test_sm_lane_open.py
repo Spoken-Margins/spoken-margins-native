@@ -80,7 +80,7 @@ class Matching(unittest.TestCase):
         labels = ['self-hosted', 'macOS', 'sm-lane']
         waiting = o.waiting_jobs([job('lane', 'in_progress', labels), job('lane', 'completed', labels),
                                   job('lane', 'pending', labels), job('route', 'queued', ['self-hosted', 'Linux', 'sm-vps']),
-                                  job('sessionkit-core', 'queued', ['sm-vps-t1']),
+                                  job('lane-open-lane', 'queued', ['sm-vps']),
                                   job('automerge', 'queued', labels)])
         self.assertEqual(len(waiting), 1)
 
