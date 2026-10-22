@@ -166,6 +166,7 @@
 				Gate2CompactCommandURL.swift,
 				Gate2LiveActivityAttributes.swift,
 				Gate2LiveActivityIntents.swift,
+				LiveSessionActivity.swift,
 			);
 			target = 1D8893BE578C4DB95B466E90 /* SpokenMarginsShareExtension */;
 		};

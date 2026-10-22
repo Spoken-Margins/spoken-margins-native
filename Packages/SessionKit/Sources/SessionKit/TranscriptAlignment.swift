@@ -226,14 +226,20 @@ public enum LiveSessionText {
             text += "\n\n"
             let offset = text.count
             var line = "\(clock(margin.sessionOffsetMs)) into the session"
-            if let position = LiveSessionPositionMap.position(at: margin.markedAt, in: session) {
-                line += ", at \(position.label)"
-            }
+            let estimate = LiveSessionPositionMap.position(at: margin.markedAt, in: session)
+            if let estimate { line += ", at \(estimate.label)" }
+            if let listener = margin.listenerPositionMs { line += ", you set \(clock(listener))" }
             if let note = margin.whereNote?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
                 line += ", \(note) or so"
             }
             text += line + "."
-            placed.append(LiveSessionAlignment.Placed(id: margin.id, text: margin.savedText, offsetMs: margin.sessionOffsetMs, charOffset: offset))
+            var entry = LiveSessionAlignment.Placed(id: margin.id, text: margin.savedText, offsetMs: margin.sessionOffsetMs, charOffset: offset)
+            entry.estimateMs = estimate?.ms
+            entry.listenerMs = margin.listenerPositionMs
+            let best = LiveSessionAlignment.best(estimateMs: estimate?.ms ?? margin.sessionOffsetMs, listenerMs: margin.listenerPositionMs, matchMs: nil)
+            entry.offsetMs = best.offsetMs
+            entry.source = best.source
+            placed.append(entry)
         }
         return Built(text: text, placed: placed)
     }

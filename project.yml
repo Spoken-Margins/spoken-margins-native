@@ -223,6 +223,7 @@ targets:
           - Gate2CompactCommandURL.swift
           - Gate2LiveActivityAttributes.swift
           - Gate2LiveActivityIntents.swift
+          - LiveSessionActivity.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.share
