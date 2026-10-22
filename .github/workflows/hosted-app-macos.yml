@@ -94,29 +94,21 @@ jobs:
       - name: Start the clock
         run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
 
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # The lane's own selection rule (verify-tests.py t3_selection, through scripts/hosted_t3_check.py): only
+      # class and method names, each of which must name tests in the plan. A misspelled name fails here, before
+      # the build, instead of running nothing (#2138).
       - name: Check the tests input
         id: tests
         env:
           TESTS: ${{ inputs.tests }}
+          PLAN: ${{ inputs.plan || 'AppBehavior' }}
         run: |
-          # Only class and method names reach xcodebuild: each entry is Class or Class/method.
-          selectors=()
-          IFS=',' read -ra entries <<< "$TESTS"
-          for raw in "${entries[@]}"; do
-            entry=$(echo "$raw" | xargs)
-            [ -z "$entry" ] && continue
-            if ! [[ "$entry" =~ ^[A-Za-z_][A-Za-z0-9_]*(/[A-Za-z_][A-Za-z0-9_]*(\(\))?)?$ ]]; then
-              echo "::error::Not a test class or Class/method: '$entry'"
-              exit 1
-            fi
-            selectors+=("-only-testing:SpokenMarginsAppTests/$entry")
-          done
-          echo "count=${#selectors[@]}" >> "$GITHUB_OUTPUT"
-          printf '%s\n' "${selectors[@]}" > "$RUNNER_TEMP/selectors.txt"
-
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+          python3 scripts/hosted_t3_check.py select --tests "$TESTS" --plan "$PLAN" --out "$RUNNER_TEMP"
+          echo "count=$(grep -c . "$RUNNER_TEMP/selectors.txt" || true)" >> "$GITHUB_OUTPUT"
 
       # The voice models are LFS files (about 200 MB) that the app bundles. Cache them so every run doesn't
       # spend that from the LFS bandwidth quota.
@@ -266,6 +258,7 @@ jobs:
             break
           done
           echo "BUNDLE=$bundle" >> "$GITHUB_ENV"
+          echo "TESTS_LOG=$log" >> "$GITHUB_ENV"
           exit "$status"
 
       # After T2, whatever T3 did: the build's caches are worth keeping even when a test fails. A key that already
@@ -289,21 +282,16 @@ jobs:
           path: ${{ env.CAS }}
           key: xcode-cas-27.0-${{ github.run_id }}
 
-      - name: T3 - test counts
-        if: always() && env.BUNDLE != ''
+      # Passes only when every requested test completed and passed: a missing, skipped or failed test, a test
+      # outside the request, or a run that completed nothing fails (#2138), by verify-tests.py's reconcile. It runs
+      # whenever tests were requested, so a T3 step that never wrote a bundle or log fails here too.
+      - name: T3 - check every requested test ran and passed
+        if: always() && steps.tests.outputs.count != '0' && steps.tests.outputs.count != ''
         run: |
-          xcrun xcresulttool get test-results summary --path "$BUNDLE" --compact > "$RESULTS/summary.json"
-          python3 - "$RESULTS/summary.json" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
-          import json, sys
-          s = json.load(open(sys.argv[1]))
-          total = s.get('totalTestCount', 0)
-          print(f"T3: {s.get('result')}, {total} tests: {s.get('passedTests', 0)} passed, "
-                f"{s.get('failedTests', 0)} failed, {s.get('skippedTests', 0)} skipped.")
-          for failure in s.get('testFailures', [])[:20]:
-              print(f"- {failure.get('testIdentifierString') or failure.get('testName')}: {failure.get('failureText', '')[:200]}")
-          # A named test that ran nothing is a failure, as in verify-tests.py.
-          sys.exit(1 if total == 0 else 0)
-          PY
+          set -o pipefail
+          python3 scripts/hosted_t3_check.py reconcile --expected "$RUNNER_TEMP/expected.json" \
+            --log "${TESTS_LOG:-$RESULTS/tests-1.log}" --bundle "${BUNDLE:-$RESULTS/tests-1.xcresult}" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Shut down the simulator
         if: always() && env.UDID != ''
@@ -316,7 +304,6 @@ jobs:
           name: hosted-app-macos-${{ github.run_id }}
           path: |
             .build/hosted-results/*.log
-            .build/hosted-results/summary.json
           if-no-files-found: ignore
           retention-days: 7
 
