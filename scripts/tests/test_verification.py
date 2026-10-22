@@ -407,6 +407,26 @@ class VerificationTests(unittest.TestCase):
                     run.host_steps()
             return run.manifest, str(raised.exception)
 
+    def test_runner_tests_goes_on_past_its_budget_while_it_prints_in_every_plan(self):
+        # #2483: at about 2100 tests the step passes 600 s beside a simulator job and was killed with no results.
+        for plan, portable in (('fast-portable', True), ('fast', False)):
+            with self.subTest(plan), tempfile.TemporaryDirectory() as temporary:
+                run = verification.Run(Path(temporary) / 'run', plan)
+                calls = []
+                with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
+                        patch.object(run, 'ops_steps'), patch.object(run, 'package_steps'), \
+                        patch.object(verification.host_audio, 'audio_output',
+                                     return_value={'usable': True, 'why': 'test'}), \
+                        patch.object(verification, 'swift_tests', return_value=set()), \
+                        patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                    run.host_steps(portable=portable)
+                runner = [kw for name, kw in calls if name == 'runner-tests']
+                self.assertTrue(runner, 'the plan ran no runner-tests step')
+                for kw in runner:
+                    self.assertEqual(kw['timeout'], verification.RUNNER_TESTS_TIMEOUT)
+                    self.assertGreater(kw['ceiling'], kw['timeout'])
+                    self.assertEqual(kw['stall_seconds'], verification.RUNNER_TESTS_STALL_SECONDS)
+
     def test_real_player_failures_with_no_sound_output_are_a_lane_fault(self):
         # #909: the same real-player tests failed for every PR while the lane Mac's lid was closed.
         player = ['SessionKitTests/RealPlayerMarginMomentTests/testMarginPlays',
