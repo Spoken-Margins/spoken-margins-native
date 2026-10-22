@@ -200,6 +200,27 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(element("provider.apiKey.field").exists)
     }
 
+    /// #1935: at AX5 the banner gives its message the full width and puts Undo on its own row, 44 pt tall.
+    func testFeedbackBannerPutsItsButtonsOnTheirOwnRowAtAccessibilitySizes() throws {
+        app.terminate()
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        app.launch()
+        let row = app.buttons["library.row.item-pill"]
+        XCTAssertTrue(row.waitForExistence(timeout: 8))
+        row.press(forDuration: 0.8)
+        app.buttons["Mark Complete"].tap()
+        let undo = element("completion.undo.button")
+        XCTAssertTrue(undo.waitForExistence(timeout: 4))
+        let banner = element("app.feedback.banner")
+        XCTAssertTrue(banner.exists)
+        let window = app.windows.firstMatch.frame
+        XCTAssertGreaterThanOrEqual(undo.frame.minY, banner.frame.maxY - 1, "Undo still sits beside the message")
+        XCTAssertGreaterThanOrEqual(undo.frame.height, 44, "Undo is under 44 pt")
+        XCTAssertLessThanOrEqual(undo.frame.maxX, window.maxX + 1, "Undo runs off the right edge")
+        XCTAssertGreaterThan(banner.frame.width, window.width * 0.6, "The message is squeezed beside the buttons")
+        captureScreen(named: "feedback-banner-accessibility")
+    }
+
     func testLibraryUnfinishedCompletionUndoAndSearchDiscovery() throws {
         app.terminate()
         app.launch()
