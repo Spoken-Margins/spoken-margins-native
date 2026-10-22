@@ -551,6 +551,7 @@ final class Gate1AppModel: ObservableObject {
     lazy var episodeMapPreparer = EpisodeMapPreparer(host: self) // private episode map preparation: task, status, pending request (#957)
     var backgroundPreparationPlanner = BackgroundPreparationPlanner()
     var sourceImportTask: Task<Void, Never>?
+    var offlineServicesStartupTasks: [Task<Void, Never>] = [] // `startOfflineServices`; cancelled with the model (#2195)
     var liveSpeechFallbackItemIds: Set<String> = []
     var suppressedAutomaticAudioPreparationItemIds = Set(
         UserDefaults.standard.stringArray(forKey: Gate1AppModel.suppressedAudioPreparationItemIdsKey) ?? []
@@ -995,6 +996,7 @@ final class Gate1AppModel: ObservableObject {
         sourceImportTask?.cancel()
         importedCommentaryAutoPlayTask?.cancel()
         bulkSharePreparationTask?.cancel()
+        offlineServicesStartupTasks.forEach { $0.cancel() }
     }
 
     private func reconcilePlaybackProgressTicker() {
@@ -3584,28 +3586,10 @@ final class Gate1AppModel: ObservableObject {
             directory: support.appending(path: "GuidedOnboarding", directoryHint: .isDirectory),
             ledger: ledger
         )
-        Task {
-            try? store.saveOfflineStorageBudget(OfflineStorageBudget(
-                limitBytes: Int64(self.offlineStorageLimitGB) * OfflineStorageBudget.bytesPerGigabyte
-            ))
-            try? await ledger.adoptExistingAssets()
-            let residualOverage = try? await ledger.enforceBudget()
-            let reconciled = await ledger.lastReconciliation?.summary ?? "failed"
-            let ledgerBytes = try? await ledger.inventoryBytes()
-            let filesystemBytes = await ledger.directFilesystemBytes()
-            await MainActor.run { [weak self] in
-                self?.diagnostics["offlineLedgerReconciled"] = reconciled
-                self?.diagnostics["offlineLedgerBytes"] = "\(ledgerBytes ?? 0)"
-                self?.diagnostics["offlineFilesystemBytes"] = "\(filesystemBytes)"
-                self?.diagnostics["offlineResidualOverageBytes"] = "\(residualOverage ?? 0)"
-                self?.tryRefreshOfflineStorageUsage()
-            }
-            await self.performFollowedSourceRefresh(force: false)
-            await self.refreshGuidedOnboardingContent()
-        }
+        startOfflineServices(store: store, ledger: ledger)
     }
 
-    private func refreshGuidedOnboardingContent() async {
+    func refreshGuidedOnboardingContent() async {
         guard !UserDefaults.standard.bool(forKey: Self.guidedOnboardingTombstoneKey),
               let coordinator = guidedOnboardingCoordinator,
               let store else { return }
