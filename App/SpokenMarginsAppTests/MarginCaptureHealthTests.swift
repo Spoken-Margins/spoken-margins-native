@@ -54,6 +54,8 @@ final class MarginCaptureHealthTests: XCTestCase {
         private(set) var restartCount = 0
         private(set) var finishCount = 0
         private(set) var cancelCount = 0
+        /// How much audio the recorder had taken in each time it was told the ready cue began (#1594).
+        private(set) var readyCueStartedAtMs: [Int] = []
 
         init(capturedMs: Int) { self.capturedMs = capturedMs }
 
@@ -63,6 +65,7 @@ final class MarginCaptureHealthTests: XCTestCase {
             return audioRef ?? "interjections/scripted.m4a"
         }
         func cancelRecording() throws { cancelCount += 1 }
+        func noteReadyCuePlayed(atRecordedMs recordedMs: Int) { readyCueStartedAtMs.append(recordedMs) }
         func captureReading() -> RecordingCaptureReading? {
             stopped
                 ? RecordingCaptureReading(recorderRunning: false, capturedMs: 0)
@@ -126,14 +129,15 @@ final class MarginCaptureHealthTests: XCTestCase {
     @MainActor
     private final class SpyReadyCue: MarginReadyCuePlaying {
         private(set) var cueCount = 0
+        var result = "played"
         func playReadyCue() -> String {
             cueCount += 1
-            return "played"
+            return result
         }
     }
 
     /// #1594: a slow start (Bluetooth) is silent until audio really arrives, then sounds the cue exactly once.
-    func testTheReadyCueSoundsOnceAfterAudioArrivesAndNotBefore() {
+    func testTheReadyCueSoundsOnceAfterAudioArrivesAndNotBefore() throws {
         let recorder = ScriptedRecordingClient(capturedMs: 0)
         let cue = SpyReadyCue()
         let harness = Harness(recorder: recorder, readyCue: cue)
@@ -148,15 +152,33 @@ final class MarginCaptureHealthTests: XCTestCase {
         XCTAssertEqual(harness.model.recordingCaptureHealth, .capturing)
         XCTAssertEqual(cue.cueCount, 1, "one cue however many polls follow")
         XCTAssertEqual(harness.model.diagnostics["lastVoiceCapture"]?.contains("readyCue=played"), true)
+        XCTAssertEqual(recorder.readyCueStartedAtMs.count, 1, "the recorder is told once where the cue began, so saving can drop it")
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(recorder.readyCueStartedAtMs.first), MarginCaptureTimings.firstAudioMs)
+    }
+
+    /// A cue that did not sound cannot be in the file, so nothing is trimmed from the saved Margin.
+    func testTheRecorderIsNotToldAboutACueThatDidNotSound() {
+        let recorder = ScriptedRecordingClient(capturedMs: 300)
+        recorder.growsWithTime = true
+        let cue = SpyReadyCue()
+        cue.result = "skipped:session_not_recording"
+        let harness = Harness(recorder: recorder, readyCue: cue)
+
+        harness.run(seconds: 3)
+
+        XCTAssertEqual(cue.cueCount, 1)
+        XCTAssertEqual(recorder.readyCueStartedAtMs, [])
     }
 
     func testNoReadyCueWhenTheMicrophoneTakesInNothing() {
         let cue = SpyReadyCue()
-        let harness = Harness(recorder: ScriptedRecordingClient(capturedMs: 22), readyCue: cue)
+        let recorder = ScriptedRecordingClient(capturedMs: 22)
+        let harness = Harness(recorder: recorder, readyCue: cue)
 
         harness.run(seconds: 10)
 
         XCTAssertEqual(cue.cueCount, 0, "a failed start must not say the microphone is ready")
+        XCTAssertEqual(recorder.readyCueStartedAtMs, [])
     }
 
     func testNoReadyCueWhenTheMarginIsCancelledBeforeAudioArrives() {
@@ -170,6 +192,7 @@ final class MarginCaptureHealthTests: XCTestCase {
         harness.run(seconds: 2)
 
         XCTAssertEqual(cue.cueCount, 0)
+        XCTAssertEqual(recorder.readyCueStartedAtMs, [])
     }
 
     func testARecorderThatTakesInNothingIsNeverShownAsRecordingAndIsTriedAgain() {

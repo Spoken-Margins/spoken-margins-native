@@ -28,7 +28,8 @@ extension Gate1AppModel {
         captureWatcher.start(
             reading: { [weak self] in self?.engine?.recordingCaptureReading() },
             restart: { [weak self] in try self?.engine?.restartRecordingCapture() },
-            changed: { [weak self] health, restarts in self?.captureHealthChanged(health, restarts: restarts) }
+            changed: { [weak self] health, restarts in self?.captureHealthChanged(health, restarts: restarts) },
+            cuePlayed: { [weak self] recordedMs in self?.engine?.recordingReadyCuePlayed(atRecordedMs: recordedMs) }
         )
     }
 

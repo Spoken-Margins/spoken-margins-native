@@ -30,6 +30,21 @@ public enum MarginReadyCue {
     }
 }
 
+/// How much of the start of a recording the ready cue can reach (#1594).
+///
+/// On the built-in speaker the recorder is running when the cue plays, with no echo cancellation, so the cue
+/// bleeds into the file. The saved Margin starts after it: everything up to the cue, the cue and a short tail
+/// is dropped when the recording is saved. The listener speaks only after hearing the cue, so no words go with it.
+public enum MarginReadyCueTrim {
+    /// Slack after the cue for the speaker's output delay, the microphone's input delay and the cue's decay in the room.
+    public static let tailMs = 60
+
+    /// Milliseconds to drop from the start of the file, given how much the recorder had taken in when the cue began.
+    public static func leadingMs(cueStartedAtRecordedMs: Int) -> Int {
+        max(0, cueStartedAtRecordedMs) + Int((MarginReadyCue.totalSeconds * 1_000).rounded(.up)) + tailMs
+    }
+}
+
 /// Decides when the ready cue sounds: once per recording, and only after the recorder has really taken
 /// audio in (#1594).
 ///

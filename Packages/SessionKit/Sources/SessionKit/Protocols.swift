@@ -446,12 +446,15 @@ public protocol RecordingClient {
     func recordingInProgressRef() -> String?
     /// Evidence from the closed recording, retained through save retries; nil when unsupported.
     func finalizedRecordingIntegrity() -> FinalizedRecordingIntegrity?
+    /// The ready cue (#1594) began playing while the recorder had taken in `recordedMs`. The saved file starts after it.
+    func noteReadyCuePlayed(atRecordedMs recordedMs: Int)
 }
 
 extension RecordingClient {
     public func recordingInProgressRef() -> String? { nil }
     public func finalizedRecordingIntegrity() -> FinalizedRecordingIntegrity? { nil }
     public func captureReading() -> RecordingCaptureReading? { nil }
+    public func noteReadyCuePlayed(atRecordedMs recordedMs: Int) {}
     public func restartCapture() throws {
         throw SessionKitError.persistenceFailed("recording_restart_unsupported")
     }

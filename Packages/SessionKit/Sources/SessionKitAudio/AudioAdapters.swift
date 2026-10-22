@@ -3432,6 +3432,9 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
     /// A Margin is being captured: from `beginRecording` until it is finished or cancelled.
     private var isCaptureActive = false
     private var captureRestarts = 0
+    /// How much of the start of the current file to drop at save, because the ready cue (#1594) played into it.
+    /// Nil when no cue played. A restart starts a new file, which the cue never reached.
+    private var readyCueLeadingTrimMs: Int?
     /// The most `currentTime` the current recorder has shown. A stopped `AVAudioRecorder` reads 0, but
     /// the audio it took in is still in its file.
     private var capturedHighWaterMs = 0
@@ -3567,6 +3570,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         recorderDelegate = delegate
         capturedHighWaterMs = 0
         stoppedMeasurement = nil
+        readyCueLeadingTrimMs = nil
         return (recorder, url)
     }
 
@@ -3782,6 +3786,13 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
 
     public func finalizedRecordingIntegrity() -> FinalizedRecordingIntegrity? { finalizedIntegrity }
 
+    public func noteReadyCuePlayed(atRecordedMs recordedMs: Int) {
+        #if canImport(AVFoundation)
+        guard isCaptureActive else { return }
+        readyCueLeadingTrimMs = MarginReadyCueTrim.leadingMs(cueStartedAtRecordedMs: recordedMs)
+        #endif
+    }
+
     public func finishRecording(audioRef: String?) throws -> String {
         #if canImport(AVFoundation)
         guard let recorder, let currentURL else {
@@ -3790,7 +3801,18 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         }
         let reportedMs = max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded()))
         isCaptureActive = false
-        finalizedIntegrity = RecordingFileFinalizer.finish(url: currentURL, reportedMs: reportedMs) { recorder.stop() }
+        var integrity = RecordingFileFinalizer.finish(url: currentURL, reportedMs: reportedMs) { recorder.stop() }
+        if let leadingMs = readyCueLeadingTrimMs {
+            // The cue can have bled into the start of the file from the speaker (#1594). The recorder is closed, so
+            // trim the file now; the integrity check then compares what is left with what the clock says is left.
+            let outcome = RecordingLeadingTrim.trim(url: currentURL, leadingMs: leadingMs)
+            if case .trimmed(let removedMs) = outcome {
+                integrity = RecordingFileFinalizer.finish(url: currentURL, reportedMs: reportedMs - removedMs, stop: {})
+            }
+            integrity.readyCueTrim = outcome.diagnosticName
+            readyCueLeadingTrimMs = nil
+        }
+        finalizedIntegrity = integrity
         recorderDelegate = nil
         self.recorder = nil
         self.currentURL = nil
@@ -3812,6 +3834,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         finalizedIntegrity = nil
         let url = currentURL
         isCaptureActive = false
+        readyCueLeadingTrimMs = nil
         recorderDelegate = nil
         recorder?.stop()
         recorder?.deleteRecording()
