@@ -421,7 +421,7 @@ class WorkflowTests(unittest.TestCase):
         cls.lane_yml = (ROOT / '.github/workflows/lane.yml').read_text()
 
     def test_each_required_check_is_a_job_name_that_records_its_plan(self):
-        for name, plan in lane.HOSTED_FAST_CHECKS.items():
+        for name, plan in {**lane.HOSTED_FAST_CHECKS, **lane.HOSTED_REST_CHECK}.items():
             with self.subTest(name):
                 self.assertIn(f"name: '{name}'", self.hosted)
                 self.assertIn(f'::notice title={lane.HOSTED_TESTED_TITLE}::plan={plan} tree=', self.hosted)
@@ -430,7 +430,9 @@ class WorkflowTests(unittest.TestCase):
     def test_both_jobs_run_on_a_pr_only_from_this_repo_and_only_with_the_switch_on(self):
         guard = ("(github.event.pull_request.head.repo.full_name == github.repository && "
                  f"vars.{lane.HOSTED_FAST_SWITCH} == 'on')")
-        self.assertEqual(self.hosted.count(guard), len(lane.HOSTED_FAST_CHECKS))
+        # The pair, and the Mac-rest check (#2459), which LANE_HOSTED_MAC_REST=off also skips.
+        self.assertEqual(self.hosted.count(guard), len(lane.HOSTED_FAST_CHECKS) + len(lane.HOSTED_REST_CHECK))
+        self.assertIn(f"vars.{lane.HOSTED_REST_SWITCH} != 'off' &&", self.hosted)
         self.assertNotIn('pull_request_target:', self.hosted)
 
     def test_no_workflow_runs_on_the_vps_test_runner_and_only_the_lane_open_pings_on_the_vps(self):
@@ -448,7 +450,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(on_vps, {'lane.yml': ['lane-open-lane', 'lane-open-automerge']})
 
     def test_the_lane_hands_the_switch_to_the_automerge_and_release_runs_and_may_read_checks(self):
-        self.assertEqual(self.lane_yml.count(f'{lane.HOSTED_FAST_SWITCH}: ${{{{ vars.{lane.HOSTED_FAST_SWITCH} }}}}'), 2)
+        # The route job (hosted_merge_routing), the lane job (a T3 PASS merging on the hosted checks), the automerge
+        # job, its automerge-mac fallback and the release job (#2459).
+        for switch in (lane.HOSTED_FAST_SWITCH, lane.HOSTED_REST_SWITCH):
+            self.assertEqual(self.lane_yml.count(f'{switch}: ${{{{ vars.{switch} }}}}'), 5, switch)
         self.assertIn('  checks: read\n', self.lane_yml)
 
 
