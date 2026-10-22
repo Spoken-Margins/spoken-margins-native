@@ -110,8 +110,10 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # Policy and code from the base, never PR code with the runner-discovery token.
-          ref: ${{ github.event.pull_request.base.sha }}
+          # Policy and code from the base branch's tip, never PR code with the runner-discovery token. Not
+          # pull_request.base.sha: a PR's recorded base only moves when the PR does, so a label event on an older PR
+          # routed with stale rules (2026-10-22: #2454 kept the pre-#2458 Mac route after #2458 merged).
+          ref: ${{ github.event.pull_request.base.ref }}
           persist-credentials: false
           # No LFS downloads or history needed to classify infrastructure paths.
           sparse-checkout: |
