@@ -360,7 +360,10 @@ public final class SessionEngine {
         // An episode that ended as the call came in is finished, not replayed from its tail (#2097).
         if rewindMs > 0, !startsInTheLastInstantOfMedia(session) {
             forgetBackTapLanding()
-            session = mediaSession(session, movedTo: pause.mediaTimeMs - rewindMs)
+            // Never into a chapter the listener skipped: a tap on chapter 3 followed by a call must not resume in chapter 2.
+            let timeline = currentWatchPackage?.timeline ?? sourceTranscriptTimeline(for: session)
+            let chapterStartMs = timeline.flatMap { mediaChapter(at: pause.mediaTimeMs, timeline: $0)?.startMs } ?? 0
+            session = mediaSession(session, movedTo: max(chapterStartMs, pause.mediaTimeMs - rewindMs))
             currentSession = session
             try persistSession(session)
             protectPlaybackPosition(for: session)

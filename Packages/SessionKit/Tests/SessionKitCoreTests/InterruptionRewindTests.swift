@@ -155,6 +155,40 @@ final class InterruptionRewindTests: XCTestCase {
         XCTAssertEqual(audio.events, ["play@594000"], "the retry plays from the stepped-back place, not further back")
     }
 
+    func testTheStepStopsAtTheChapterTheListenerWasIn() throws {
+        // #1975: they tapped chapter 2 (10:00), heard a second of it, and the call came. Resuming at 9:54 would play
+        // the end of chapter 1, which they chose to skip.
+        let audio = Podcast()
+        let clock = Clock()
+        let repository = InMemorySessionRepository(items: [episode.id: episode])
+        try repository.saveTranscriptTimeline(SourceTranscriptTimeline(
+            id: "timeline-episode", itemId: episode.id, createdAt: clock.date,
+            timeline: TranscriptTimeline(
+                segments: [
+                    MediaTimelineSegment(id: "s1", startMs: 0, endMs: 600_000, text: "First part."),
+                    MediaTimelineSegment(id: "s2", startMs: 600_000, endMs: Self.durationMs, text: "Second part."),
+                ],
+                chapters: [
+                    MediaTimelineChapter(id: "ch-1", title: "One", startMs: 0, transcriptSegmentId: "s1"),
+                    MediaTimelineChapter(id: "ch-2", title: "Two", startMs: 600_000, transcriptSegmentId: "s2"),
+                ],
+                durationMs: Self.durationMs
+            )
+        ))
+        let engine = SessionEngine(
+            profile: profile, repository: repository, audio: audio, recorder: Recorder(), now: { clock.date }
+        )
+        _ = try engine.startSession(itemId: episode.id)
+        audio.mediaTimeMs = 601_000
+        _ = try engine.reconcileSystemInitiatedPause()
+        audio.events.removeAll()
+        clock.date.addTimeInterval(60)
+
+        _ = try engine.resumePlaybackAfterInterruption()
+
+        XCTAssertEqual(audio.events, ["play@600000"], "6 s back would be 595000, in the chapter they skipped")
+    }
+
     func testAnEpisodeThatEndedAsTheCallCameInFinishesInsteadOfReplayingItsTail() throws {
         let (engine, audio, clock) = try interrupted(at: Self.durationMs - 100)
         clock.date.addTimeInterval(60)
