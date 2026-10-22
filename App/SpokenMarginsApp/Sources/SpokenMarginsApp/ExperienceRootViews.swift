@@ -23,7 +23,7 @@ struct ExperienceRootTabs: View {
 
     var body: some View {
         TabView(selection: rootSelection) {
-            MiniPlayerDock(showsMiniPlayer: showsMiniPlayer) { ExperienceLibraryScreen(addSourceRoute: addSourceRoute) }
+            MiniPlayerDock(showsMiniPlayer: showsMiniPlayer) { ExperienceLibraryScreen(addSourceRoute: addSourceRoute, scrollMemory: $navigation.libraryScroll) }
                 .tabItem {
                     Label("Library", systemImage: AppRoot.library.systemImage)
                         .accessibilityIdentifier("navigation.tab.library")

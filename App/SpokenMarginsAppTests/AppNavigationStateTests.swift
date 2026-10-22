@@ -31,6 +31,22 @@ final class AppNavigationStateTests: XCTestCase {
         XCTAssertEqual(navigation.followingScroll.restoreTarget(in: ["a", "c"]), "c")
     }
 
+    /// #2395: the Library list keeps its place across opening an item, apart from Following's.
+    func testLibraryKeepsItsPlaceAcrossOpeningAnItem() {
+        var navigation = AppNavigationState()
+        XCTAssertEqual(navigation.libraryScroll, FollowingScrollMemory())
+
+        navigation.libraryScroll = FollowingScrollMemory(topEntryId: "c", order: ["a", "b", "c", "d"])
+        navigation.push(.item("c"), recordingIsLocked: false)
+        navigation.select(.sources, recordingIsLocked: false)
+        navigation.select(.library, recordingIsLocked: false)
+
+        XCTAssertEqual(navigation.libraryScroll.restoreTarget(in: ["a", "b", "c", "d", "e"]), "c")
+        XCTAssertEqual(navigation.libraryScroll.restoreTarget(in: ["a", "b", "d"]), "d", "the item just finished or deleted: the next row down")
+        XCTAssertNil(navigation.libraryScroll.restoreTarget(in: []))
+        XCTAssertEqual(navigation.followingScroll, FollowingScrollMemory(), "Following's place is its own")
+    }
+
     func testExplicitRootPushDoesNotChangeTheSelectedRoot() {
         var navigation = AppNavigationState()
         navigation.select(.sources, recordingIsLocked: false)
