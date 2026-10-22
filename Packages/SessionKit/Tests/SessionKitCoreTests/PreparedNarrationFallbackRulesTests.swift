@@ -109,7 +109,7 @@ final class PreparedNarrationFallbackRulesTests: XCTestCase {
         XCTAssertEqual(start(9, text), 7, "inside the second word")
         XCTAssertEqual(start(13, text), 13, "on the second of two spaces")
         XCTAssertEqual(start(15, text), 14, "on the last letter of a short word")
-        XCTAssertEqual(start(17, text), 17, "on a newline")
+        XCTAssertEqual(start(17, text), 17, "just after a newline")
         XCTAssertEqual(start(21, text), 17, "inside a hyphenated word, which stays whole")
         XCTAssertEqual(start(28, text), 27, "inside a word with an apostrophe")
         XCTAssertEqual(start(text.count, text), text.count, "at the end")
@@ -122,8 +122,12 @@ final class PreparedNarrationFallbackRulesTests: XCTestCase {
         XCTAssertEqual(start(11, "a 👩‍👩‍👧 café ünï"), 9, "inside \"ünï\"")
         XCTAssertEqual(start(1, "e\u{301}clair"), 0, "a combining mark is one character with its letter")
         XCTAssertEqual(start(3, "e\u{301}clair"), 0, "inside a word whose first character has a combining mark")
+        XCTAssertEqual(start(7, "end.Next one"), 4, "a sentence-ending mark ends the word before it")
+        XCTAssertEqual(start(2, "我喜欢听文章 and more"), 2, "Chinese has no spaces to snap to")
+        XCTAssertEqual(start(3, "こんにちは world"), 3, "Japanese kana is left as it is")
+        XCTAssertEqual(start(8, "Hi. Mr.Smith"), 7, "an abbreviation's mark ends the word, which only costs a short back-up")
         // A run without whitespace longer than the cap is left where it is.
-        let url = "go https://example.com/" + String(repeating: "a", count: 200)
+        let url = "go https://example/" + String(repeating: "a", count: 200)
         XCTAssertEqual(start(150, url), 150, "inside a very long run")
         XCTAssertEqual(start(40, url), 3, "inside a long run that is still under the cap")
     }

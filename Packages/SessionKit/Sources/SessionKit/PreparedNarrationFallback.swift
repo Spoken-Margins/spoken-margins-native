@@ -82,18 +82,27 @@ public enum PreparedNarrationFallback {
     /// data) has no word start worth the re-reading, so its offset stays where it is.
     private static let longestWordBackedUpThrough = 64
 
+    private static let sentenceEnders: Set<Character> = [".", "!", "?", "…", "。", "！", "？"]
+
+    private static func isWrittenWithoutSpaces(_ character: Character) -> Bool {
+        character.unicodeScalars.contains { scalar in
+            scalar.properties.isIdeographic || (0x3040...0x30FF).contains(scalar.value) || (0x0E00...0x0EFF).contains(scalar.value)
+        }
+    }
+
     /// `offset` moved back to the start of the word it falls inside, so speech begins on a whole word.
     /// An offset already at a word start, on whitespace, at the end or past it is returned as it is. A word
     /// is a run of non-whitespace characters, offsets count characters (as `String.count` does), and
-    /// punctuation stays with its word.
+    /// punctuation stays with its word. A sentence-ending mark also ends the word before it (`end.Next`), and
+    /// a script written without spaces (Chinese, Japanese, Thai) has no words to snap to, so it is left as it is.
     public static func wordStart(atOrBefore offset: Int, in text: String) -> Int {
         guard offset > 0, offset < text.count else { return offset }
         var index = text.index(text.startIndex, offsetBy: offset)
-        guard !text[index].isWhitespace else { return offset }
+        guard !text[index].isWhitespace, !isWrittenWithoutSpaces(text[index]) else { return offset }
         var start = offset
         while start > 0 {
             let previous = text.index(before: index)
-            if text[previous].isWhitespace { return start }
+            if text[previous].isWhitespace || sentenceEnders.contains(text[previous]) { return start }
             guard offset - start < longestWordBackedUpThrough else { return offset }
             index = previous
             start -= 1
