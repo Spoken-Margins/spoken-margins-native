@@ -17,6 +17,7 @@ FakeGitHub, HEAD, MERGE, lane, comment = (runner_tests.FakeGitHub, runner_tests.
                                           runner_tests.lane, runner_tests.comment)
 scope = scope_tests.scope
 ON = {'LANE_HOSTED_FAST': 'on', 'LANE_HOSTED_MAC_REST': 'on'}
+PAIR_ONLY = {'LANE_HOSTED_FAST': 'on'}  # today's switches until #2469: the hosted pair, Mac rest on the build Mac
 CHECKS = {**lane.HOSTED_FAST_CHECKS, **lane.HOSTED_REST_CHECK}
 STOOD = {name: {'plan': plan, 'tree': 'a' * 40, 'base': MERGE, 'head': HEAD, 'url': f'https://example.test/{plan}',
                 'runner': 'GitHub-hosted'} for name, plan in CHECKS.items()}
@@ -47,26 +48,35 @@ class RoutingTests(unittest.TestCase):
         # Never the priority runner (#2147) or any Mac: the automerge job asks for no self-hosted label at all.
         self.assertNotIn('self-hosted', routed['automerge'])
 
+    def test_the_hosted_pair_alone_sends_the_automerge_job_to_hosted_linux_first(self):
+        # Before: with LANE_HOSTED_MAC_REST off, every automerge job queued for the build Mac, where 12 in two days
+        # took 155 Mac-minutes only to report "held for T3", and 11 more idled over 5 minutes for the pair.
+        for env in (PAIR_ONLY, {**ON, 'LANE_HOSTED_MAC_REST': 'off'}, {**ON, 'LANE_HOSTED_MAC_REST': 'yes'}):
+            with self.subTest(env=env):
+                routed = scope.hosted_merge_routing(dict(self.MAC), env)
+                self.assertEqual(routed['automerge'], ['ubuntu-latest'])
+                self.assertEqual(routed['lane'], self.MAC['lane'])
+
     def test_the_switches_keep_todays_mac_route(self):
-        for env in ({}, {'LANE_HOSTED_FAST': 'on'}, {**ON, 'LANE_HOSTED_FAST': 'off'},
-                    {**ON, 'LANE_HOSTED_MAC_REST': 'off'}, {**ON, 'LANE_HOSTED_MAC_REST': 'yes'}):
+        for env in ({}, {**ON, 'LANE_HOSTED_FAST': 'off'}, {'LANE_HOSTED_MAC_REST': 'on'}):
             with self.subTest(env=env):
                 self.assertEqual(scope.hosted_merge_routing(dict(self.MAC), env), self.MAC)
 
     def test_the_route_and_the_runner_read_the_switches_the_same_way(self):
-        for env in ({}, ON, {**ON, 'LANE_HOSTED_MAC_REST': 'off'}, {**ON, 'LANE_HOSTED_MAC_REST': ' On '},
-                    {'LANE_HOSTED_MAC_REST': 'on'}, {'LANE_HOSTED_FAST': 'on'}):
+        for env in ({}, ON, {**ON, 'LANE_HOSTED_MAC_REST': 'off'}, {**ON, 'LANE_HOSTED_FAST': ' On '},
+                    {'LANE_HOSTED_MAC_REST': 'on'}, PAIR_ONLY, {'LANE_HOSTED_FAST': 'off'}):
             with self.subTest(env=env):
                 hosted = scope.hosted_merge_routing(dict(self.MAC), env)['automerge'] == ['ubuntu-latest']
-                self.assertEqual(hosted, lane.hosted_rest_on(env))
+                self.assertEqual(hosted, lane.hosted_fast_on(env))
 
 
 class HostedRestChecksTests(unittest.TestCase):
-    def wait(self, answers, alive=lambda: None, dispatch_result='', wait=3600):
+    def wait(self, answers, alive=lambda: None, dispatch_result='', wait=3600, checks=None):
         """hosted_rest_checks over a scripted sequence of (found, why) answers, on a fake clock."""
         answers, clock, dispatched = list(answers), Clock(), []
         def once(*args, **kwargs):
-            self.assertEqual(set(args[-1]), set(CHECKS))  # all three checks, the Mac rest among them
+            # all three checks, the Mac rest among them, unless the caller asked for the pair alone
+            self.assertEqual(set(args[-1]), set(CHECKS if checks is None else checks))
             return answers.pop(0) if len(answers) > 1 else answers[0]
         def dispatch():
             dispatched.append(clock.now)
@@ -74,8 +84,16 @@ class HostedRestChecksTests(unittest.TestCase):
         with mock.patch.object(lane, '_hosted_fast_checks_once', side_effect=once):
             result = lane.hosted_rest_checks(FakeGitHub(), Path('.'), 'main', HEAD, MERGE, alive=alive,
                                              dispatch=dispatch, env=ON, wait=wait, poll=30, clock=clock,
-                                             sleep=clock.sleep, out=open('/dev/null', 'w'))
+                                             sleep=clock.sleep, out=open('/dev/null', 'w'),
+                                             **({} if checks is None else {'checks': checks}))
         return result, clock.now, dispatched
+
+    def test_it_can_wait_for_the_hosted_pair_alone(self):
+        pair = {name: STOOD[name] for name in lane.HOSTED_FAST_CHECKS}
+        running = f'"hosted fast: portable" {lane.NOT_FINISHED} on {HEAD[:7]}'
+        (found, why), waited, _ = self.wait([(None, running)] * 4 + [(pair, '')], checks=lane.HOSTED_FAST_CHECKS)
+        self.assertEqual(found, pair)
+        self.assertEqual(waited, 4 * 30)
 
     def test_it_waits_on_linux_for_a_running_check_and_takes_all_three(self):
         (found, why), waited, dispatched = self.wait([(None, RUNNING)] * 20 + [(STOOD, '')])
@@ -189,10 +207,11 @@ class MacRestIsAHardConditionTests(unittest.TestCase):
 class HostedRunAutoTests(unittest.TestCase):
     T3_ASKED = comment('/lane T3\ncommit: ' + HEAD[:7] + '\ntests: SourceLinkImportTests')
 
-    def run_auto(self, comments=(), found=(STOOD, ''), paths=('Packages/SessionKit/Sources/SessionKit/A.swift',)):
+    def run_auto(self, comments=(), found=(STOOD, ''), paths=('Packages/SessionKit/Sources/SessionKit/A.swift',),
+                 env=ON):
         github = FakeGitHub(labels=('automerge',), comments=comments)
         with tempfile.TemporaryDirectory() as temporary, \
-                mock.patch.dict(lane.os.environ, ON), \
+                mock.patch.dict(lane.os.environ, env), \
                 mock.patch.object(lane, 'TESTED_RECORD', Path(temporary) / 'tested.json'), \
                 mock.patch.object(lane, 'build_merge_commit', return_value=(MERGE, [])), \
                 mock.patch.object(lane, 'base_policy', return_value=scope), \
@@ -240,6 +259,39 @@ class HostedRunAutoTests(unittest.TestCase):
         (verdict, where, ran, details), github, wait, push = self.run_auto(found=(None, FAILED))
         self.assertEqual(verdict, 'FAIL')
         push.assert_not_called()
+
+    def test_with_mac_rest_off_a_pr_held_for_t3_is_reported_held_on_linux(self):
+        # Before: "The current diff requires the Mac", and the build Mac ran its host tests only to report held.
+        with mock.patch.dict(lane.os.environ, {'LANE_HOSTED_MAC_REST': ''}):
+            (verdict, where, ran, details), github, wait, push = self.run_auto([self.T3_ASKED], env=PAIR_ONLY)
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertTrue(any(lane.PENDING_T3_HOLD.match(line) for line in details), details)
+        self.assertEqual((where, ran), ('hosted Linux runner', 'nothing'))
+        wait.assert_not_called()
+        push.assert_not_called()
+
+    def test_with_mac_rest_off_the_mac_gets_the_run_only_after_the_pair_passed(self):
+        pair = {name: STOOD[name] for name in lane.HOSTED_FAST_CHECKS}
+        with mock.patch.dict(lane.os.environ, {'LANE_HOSTED_MAC_REST': ''}):
+            (verdict, where, ran, details), github, wait, push = self.run_auto(found=(pair, ''), env=PAIR_ONLY)
+        self.assertEqual(verdict, lane.NEEDS_MAC)
+        self.assertEqual(wait.call_args.kwargs.get('checks'), lane.HOSTED_FAST_CHECKS)  # never the Mac-rest check
+        self.assertTrue(any('fast-mac-rest' in line for line in details), details)
+        push.assert_not_called()
+        self.assertEqual(github.posted, [])
+
+    def test_with_mac_rest_off_a_failed_pair_is_the_prs_fail_and_takes_no_mac(self):
+        failed = f'"hosted fast: portable" ended failure on {HEAD[:7]}'
+        with mock.patch.dict(lane.os.environ, {'LANE_HOSTED_MAC_REST': ''}):
+            (verdict, *_), github, wait, push = self.run_auto(found=(None, failed), env=PAIR_ONLY)
+        self.assertEqual(verdict, 'FAIL')
+        push.assert_not_called()
+
+    def test_with_mac_rest_off_a_pair_it_cannot_get_goes_to_the_mac(self):
+        with mock.patch.dict(lane.os.environ, {'LANE_HOSTED_MAC_REST': ''}):
+            (verdict, *_), github, wait, push = self.run_auto(found=(None, MISSING), env=PAIR_ONLY)
+        self.assertEqual(verdict, lane.NEEDS_MAC)
+        self.assertEqual(github.posted, [])
 
     def test_ops_and_docs_diffs_still_test_themselves_on_linux(self):
         github = FakeGitHub(labels=('automerge',))

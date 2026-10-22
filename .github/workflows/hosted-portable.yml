@@ -9,8 +9,8 @@
 # SessionKitTraceTests, which need a sound output, the shipped-build compatibility checks, and the runner and ops
 # tests that drive Apple tools). With all three passed on the merge commit, the lane's automerge job runs on hosted
 # Linux, tests nothing itself and merges, so merging takes no Mac. On a PR it runs only with the repository variable
-# LANE_HOSTED_MAC_REST `on` as well (a rollout guard like LANE_HOSTED_FAST); unset, the automerge job stays on the
-# build Mac and runs fast-mac-rest there. A dispatch always runs it, so it can be proved before the switch goes on.
+# LANE_HOSTED_MAC_REST `on` as well (a rollout guard like LANE_HOSTED_FAST); unset, the automerge job waits on hosted
+# Linux for the two jobs above, then hands the run to the build Mac, which runs fast-mac-rest there. A dispatch always runs it, so it can be proved before the switch goes on.
 #
 # Per PR, only once the lane takes hosted results (#1389): the pull_request trigger is here, but both jobs are
 # skipped, and cost nothing, until the repository variable LANE_HOSTED_FAST is `on`. The private repo's free

@@ -135,8 +135,8 @@ jobs:
         env:
           # #1389 phase 2: `on` sends the lane job (T2/T3) to a GitHub-hosted Mac (test-scope.py hosted_app_routing).
           LANE_HOSTED_APP: ${{ vars.LANE_HOSTED_APP }}
-          # #2459: with LANE_HOSTED_FAST and LANE_HOSTED_MAC_REST both `on`, every automerge job goes to hosted
-          # Linux and merges on the three hosted checks (test-scope.py hosted_merge_routing).
+          # #2459: with LANE_HOSTED_FAST `on`, every automerge job starts on hosted Linux (test-scope.py
+          # hosted_merge_routing); with LANE_HOSTED_MAC_REST `on` too it merges there on the three hosted checks.
           LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
           LANE_HOSTED_MAC_REST: ${{ vars.LANE_HOSTED_MAC_REST }}
         run: |
@@ -330,10 +330,12 @@ jobs:
   automerge:
     needs: route
     # T0 and ops plus docs run on a GitHub-hosted Linux runner (#861; the VPS runner sm-vps-t1 until #2442).
-    # #2459: with LANE_HOSTED_FAST and LANE_HOSTED_MAC_REST both `on`, every other diff runs there too: it
-    # merges on the three hosted checks (hosted-portable.yml) and runs no test, and a PR held for T3 is reported held
-    # in seconds. When the checks can't be had it posts nothing and sets needs_mac, and automerge-mac below runs it on
-    # the build Mac the old way. With LANE_HOSTED_MAC_REST unset (today), those diffs stay on the Mac as before.
+    # #2459: with LANE_HOSTED_FAST `on`, every other diff starts there too, and a PR held for T3 is reported held in
+    # seconds, taking no Mac. Otherwise it waits there for the hosted checks (hosted-portable.yml) on the head; a failed
+    # one is the PR's FAIL. With LANE_HOSTED_MAC_REST `on` too it merges on all three and runs no test. With it off
+    # (until #2469), once the pair has finished it posts nothing and sets needs_mac, and automerge-mac below runs
+    # --plan fast-mac-rest on the build Mac and merges, so the Mac never idles waiting for the pair. The same hand-off
+    # happens when the checks can't be had. With LANE_HOSTED_FAST unset, those diffs stay on the Mac as before.
     # A routing failure leaves the normal Mac default below. Explicit lane requests always stay on Mac.
     # The build-only runner waits for room first (lane-runner.py, wait_for_room_to_test_on_host).
     if: >-
@@ -421,9 +423,10 @@ jobs:
           retention-days: 7
 
   automerge-mac:
-    # #2459 fallback: the hosted automerge job above could not get the three hosted checks for this head (one missing,
-    # cancelled or never recorded, or next kept moving under them) and posted nothing. This runs the automerge run
-    # the old way, on the build Mac with its room rules: the hosted pair if it stands, and --plan fast-mac-rest here.
+    # #2459: the hosted automerge job above handed this run over and posted nothing: with LANE_HOSTED_MAC_REST off,
+    # because the hosted pair passed on this head; or because the hosted checks could not be had (one missing,
+    # cancelled or never recorded, or next kept moving under them). This runs the automerge run the old way, on the
+    # build Mac with its room rules: the hosted pair if it stands, and --plan fast-mac-rest here.
     # It asks for sm-lane-build only, never the priority runner (#2147) or the simulator runner.
     needs: [route, automerge]
     if: >-

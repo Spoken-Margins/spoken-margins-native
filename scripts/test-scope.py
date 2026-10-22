@@ -300,13 +300,14 @@ def hosted_app_routing(result, env=None):
 
 
 def hosted_merge_routing(result, env=None):
-    """#2459: every automerge job on a GitHub-hosted Linux runner once all three thirds of the fast plan run as hosted
-    checks (hosted-portable.yml): LANE_HOSTED_FAST and LANE_HOSTED_MAC_REST both `on`, the rule lane-runner.py's
-    hosted_rest_on reads. There it merges on those checks and runs no test (T0 and ops diffs test themselves, as
-    before), so merging takes no Mac. The lane job keeps its route. Anything else leaves <result> as it is."""
+    """#2459: every automerge job starts on a GitHub-hosted Linux runner once the hosted fast pair runs
+    (LANE_HOSTED_FAST `on`, the rule lane-runner.py's hosted_fast_on reads). There a PR held for T3 is reported held
+    without a Mac, and the job waits for the hosted checks: with LANE_HOSTED_MAC_REST `on` too it merges on all
+    three and runs no test; without it, it hands the run to the build Mac (lane.yml's automerge-mac) only once the
+    pair has finished. T0 and ops diffs test themselves, as before. The lane job keeps its route. Anything else
+    leaves <result> as it is."""
     env = os.environ if env is None else env
-    if env.get('LANE_HOSTED_FAST', '').strip().lower() != 'on' \
-            or env.get('LANE_HOSTED_MAC_REST', '').strip().lower() != 'on':
+    if env.get('LANE_HOSTED_FAST', '').strip().lower() != 'on':
         return result
     return dict(result, automerge=list(HOSTED_RUNNER))
 
