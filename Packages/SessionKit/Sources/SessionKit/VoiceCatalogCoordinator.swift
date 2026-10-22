@@ -138,6 +138,8 @@ public actor VoiceCatalogCoordinator {
     private let configuration: Configuration
     private let fetcher: VoiceCatalogFetching
     private let installer: VoiceModelInstaller
+    /// What the catalog and the installer did, for Diagnostics (#2224).
+    public nonisolated let log: VoiceDownloadLog
     private let repository: (any OfflineStorageRepository & Sendable)?
     private let now: @Sendable () -> Date
     private var catalog: VerifiedVoiceModelCatalog?
@@ -151,11 +153,16 @@ public actor VoiceCatalogCoordinator {
         transport: VoiceModelTransport = URLSessionVoiceModelTransport(),
         installerConfiguration: VoiceModelInstaller.Configuration = VoiceModelInstaller.Configuration(),
         repository: (any OfflineStorageRepository & Sendable)?,
+        log: VoiceDownloadLog? = nil,
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.supportDirectory = supportDirectory
         self.configuration = configuration
         self.fetcher = fetcher
+        let log = log ?? VoiceDownloadLog(fileURL: Self.downloadLogURL(supportDirectory: supportDirectory))
+        self.log = log
+        var installerConfiguration = installerConfiguration
+        if installerConfiguration.log == nil { installerConfiguration.log = log }
         self.installer = VoiceModelInstaller(
             root: Self.voicesRoot(supportDirectory: supportDirectory),
             transport: transport,
@@ -183,6 +190,11 @@ public actor VoiceCatalogCoordinator {
         let installer = VoiceModelInstaller(root: voicesRoot(supportDirectory: supportDirectory))
         guard let version = installer.installedVersions(voiceId: voiceId).last else { return nil }
         return installer.installedFolder(voiceId: voiceId, version: version)
+    }
+
+    /// Where the download log is kept, for the Diagnostics export to read without a coordinator.
+    public static func downloadLogURL(supportDirectory: URL) -> URL {
+        VoiceDownloadLog.fileURL(stateFolder: supportDirectory.appending(path: stateFolderName, directoryHint: .isDirectory))
     }
 
     private var stateFolder: URL { supportDirectory.appending(path: Self.stateFolderName, directoryHint: .isDirectory) }
@@ -223,15 +235,22 @@ public actor VoiceCatalogCoordinator {
     @discardableResult
     public func refresh() async -> VoiceCatalogError? {
         loadIfNeeded()
-        guard let catalogURL = configuration.catalogURL else { return nil }
+        guard let catalogURL = configuration.catalogURL else {
+            log.record("catalog.fetch_skipped", ["reason": "no catalog address", "source": sourceName])
+            return nil
+        }
+        log.record("catalog.fetch", ["host": VoiceDownloadLog.host(of: catalogURL.absoluteString)])
         let data: Data
         do {
             data = try await fetcher.fetchEnvelope(from: catalogURL)
         } catch let error as VoiceCatalogError {
+            log.record("catalog.fetch_failed", ["reason": Self.reason(for: error), "source": sourceName])
             return error
         } catch {
+            log.record("catalog.fetch_failed", ["reason": Self.fetchFailureReason(error), "source": sourceName])
             return .malformedEnvelope
         }
+        log.record("catalog.fetched", ["bytes": String(data.count)])
         let lastAccepted: Int? = if case .verified(let version) = source { version } else { nil }
         do {
             let verified = try VoiceModelCatalogVerifier.verify(
@@ -243,28 +262,76 @@ public actor VoiceCatalogCoordinator {
             source = .verified(catalogVersion: verified.catalogVersion)
             try? createStateFolder()
             try? data.write(to: cachedEnvelopeURL, options: .atomic)
+            log.record("catalog.signature_verified", [
+                "keyId": verified.keyId, "catalogVersion": String(verified.catalogVersion), "voices": String(verified.voices.count)
+            ])
             return nil
         } catch let error as VoiceCatalogError {
+            log.record("catalog.signature_rejected", ["reason": Self.reason(for: error), "kept": sourceName])
             return error
         } catch {
+            log.record("catalog.signature_rejected", ["reason": "malformed", "kept": sourceName])
             return .malformedEnvelope
         }
+    }
+
+    /// Which catalog stands, in the words the log uses.
+    private var sourceName: String {
+        switch source {
+        case .verified(let version): "signed catalog \(version)"
+        case .bundledSnapshot: "bundled snapshot"
+        case .none: "none"
+        }
+    }
+
+    static func reason(for error: VoiceCatalogError) -> String {
+        switch error {
+        case .oversized: "too large"
+        case .malformedEnvelope: "malformed envelope"
+        case .unsupportedEnvelopeVersion(let version): "unsupported envelope version \(version)"
+        case .unsupportedAlgorithm(let name): "unsupported algorithm \(name)"
+        case .unknownKey(let keyId): "unknown key \(keyId)"
+        case .badSignature: "bad signature"
+        case .malformedPayload: "malformed payload"
+        case .unsupportedSchemaVersion(let version): "unsupported schema version \(version)"
+        case .invalidCatalogVersion: "invalid catalog version"
+        case .invalidIssuedAt: "invalid issue date"
+        case .rollback(let last, let offered): "rollback: offered \(offered), already accepted \(last)"
+        case .duplicateVoiceID(let id): "duplicate voice id \(id)"
+        }
+    }
+
+    private static func fetchFailureReason(_ error: Error) -> String {
+        if let urlError = error as? URLError { return "network error \(urlError.code.rawValue)" }
+        return "fetch failed"
     }
 
     private func loadIfNeeded() {
         guard !loaded else { return }
         loaded = true
-        if let data = try? Data(contentsOf: cachedEnvelopeURL),
-           let verified = try? VoiceModelCatalogVerifier.verify(envelopeData: data, trustedKeys: configuration.trustedKeys) {
-            catalog = verified
-            source = .verified(catalogVersion: verified.catalogVersion)
-            return
+        if let data = try? Data(contentsOf: cachedEnvelopeURL) {
+            do {
+                let verified = try VoiceModelCatalogVerifier.verify(envelopeData: data, trustedKeys: configuration.trustedKeys)
+                catalog = verified
+                source = .verified(catalogVersion: verified.catalogVersion)
+                log.record("catalog.loaded", [
+                    "source": "signed catalog kept", "keyId": verified.keyId,
+                    "catalogVersion": String(verified.catalogVersion), "voices": String(verified.voices.count)
+                ])
+                return
+            } catch {
+                let reason = (error as? VoiceCatalogError).map(Self.reason(for:)) ?? "unreadable"
+                log.record("catalog.kept_rejected", ["reason": reason])
+            }
         }
         if let snapshot = configuration.bundledSnapshot,
            let decoded = try? VoiceModelCatalog.decode(snapshot),
            let screened = try? VoiceModelCatalogVerifier.screen(decoded) {
             catalog = screened
             source = .bundledSnapshot
+            log.record("catalog.loaded", ["source": "bundled snapshot", "voices": String(screened.voices.count)])
+        } else {
+            log.record("catalog.loaded", ["source": "none", "bundledSnapshot": configuration.bundledSnapshot == nil ? "missing" : "unreadable"])
         }
     }
 
@@ -318,11 +385,16 @@ public actor VoiceCatalogCoordinator {
         progress: (@Sendable (VoiceModelInstallProgress) -> Void)? = nil
     ) async throws -> URL {
         guard let row = rows().first(where: { $0.id == voiceId }), row.isOffered, !row.entry.bundled else {
+            log.record("install.refused", ["voice": voiceId, "reason": "not offered", "source": sourceName])
             throw VoiceCatalogCoordinatorError.voiceNotOffered(voiceId)
         }
         guard row.licensesNeedingAgreement.isEmpty else {
+            log.record("install.refused", ["voice": voiceId, "reason": "licence not agreed", "licenses": row.licensesNeedingAgreement.map(\.id).joined(separator: ",")])
             throw VoiceCatalogCoordinatorError.agreementNeeded(licenseIds: row.licensesNeedingAgreement.map(\.id))
         }
+        log.record("install.started", [
+            "voice": voiceId, "version": row.entry.version, "bytesToDownload": String(row.entry.downloadByteCount)
+        ])
         // The entry's own mapping carries every way a file arrives: downloaded, written from text the
         // catalog carries, or taken from an archive. Rebuilding it here from `sources` alone dropped the
         // last two, and Supertonic's notices have no source, so every install failed (#2055 audit).
@@ -335,20 +407,34 @@ public actor VoiceCatalogCoordinator {
                 archives: row.entry.installArchives,
                 progress: progress
             )
+        } catch is CancellationError {
+            log.record("install.cancelled", ["voice": voiceId])
+            throw CancellationError()
         } catch let error as VoiceModelInstallError {
+            log.record("install.failed", Self.failureFields(for: error).merging(["voice": voiceId]) { $1 })
             throw VoiceCatalogCoordinatorError.install(error)
+        } catch {
+            log.record("install.failed", ["voice": voiceId, "kind": "other"])
+            throw error
         }
+        let bytesOnDisk = Self.byteCount(of: folder)
+        log.record("install.finished", ["voice": voiceId, "version": row.entry.version, "bytesOnDisk": String(bytesOnDisk)])
         recordInLedger(voiceId: voiceId, folder: folder)
         return folder
     }
 
     /// Deletes this voice's files and its Storage row. Other voices, and bundled ones, are untouched.
     public func remove(voiceId: String) async throws {
+        let bytesFreed = installer.installedVersions(voiceId: voiceId)
+            .compactMap { installer.installedFolder(voiceId: voiceId, version: $0) }
+            .reduce(Int64(0)) { $0 + Self.byteCount(of: $1) }
         do {
             try await installer.remove(voiceId: voiceId)
         } catch let error as VoiceModelInstallError {
+            log.record("remove.failed", Self.failureFields(for: error).merging(["voice": voiceId]) { $1 })
             throw VoiceCatalogCoordinatorError.install(error)
         }
+        log.record("remove.done", ["voice": voiceId, "bytesFreed": String(bytesFreed)])
         try? repository?.deleteOwnedOfflineAsset(id: Self.ledgerAssetId(voiceId: voiceId))
     }
 
@@ -382,6 +468,19 @@ public actor VoiceCatalogCoordinator {
     }
 
     // MARK: Words
+
+    /// The installer's errors as log fields: a kind, and the numbers or names that explain it.
+    static func failureFields(for error: VoiceModelInstallError) -> [String: String] {
+        switch error {
+        case .invalidRequest(let reason): ["kind": "invalid request", "reason": reason]
+        case .insufficientSpace(let needed, let available):
+            ["kind": "not enough space", "neededBytes": String(needed), "availableBytes": String(available)]
+        case .downloadFailed(let path, let problem): ["kind": "download failed", "file": path, "reason": problem]
+        case .checksumMismatch(let path): ["kind": "checksum mismatch", "file": path]
+        case .busy: ["kind": "already running"]
+        case .storageFailed(let reason): ["kind": "storage failed", "reason": reason]
+        }
+    }
 
     /// The installer's errors in the words the Voices screen shows.
     public static func plainWords(for error: VoiceModelInstallError) -> String {

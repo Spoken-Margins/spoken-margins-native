@@ -349,6 +349,138 @@ final class VoiceCatalogCoordinatorTests: XCTestCase {
         XCTAssertEqual(afterRemove, [], "withdrawn and not installed: nothing to show")
     }
 
+    // MARK: Diagnostics log (#2224)
+
+    private func logged(_ voices: VoiceCatalogCoordinator) -> [VoiceDownloadLog.Event] { voices.log.snapshot }
+
+    func testTheCatalogPathIsLoggedFromTheSnapshotThroughASignedFetch() async throws {
+        let voices = try coordinator(fetcher: FixedFetcher(try envelope(version: 3, voices: [entry()])), snapshot: [entry(), kitten])
+        _ = await voices.rows()
+        _ = await voices.refresh()
+        let events = logged(voices)
+        XCTAssertEqual(events.map(\.kind), ["catalog.loaded", "catalog.fetch", "catalog.fetched", "catalog.signature_verified"])
+        XCTAssertEqual(events[0].fields["source"], "bundled snapshot")
+        XCTAssertEqual(events[0].fields["voices"], "2")
+        XCTAssertEqual(events[1].fields["host"], "voices.example", "the address is reduced to its host")
+        XCTAssertNotNil(events[2].fields["bytes"].flatMap(Int.init))
+        XCTAssertEqual(events[3].fields, ["keyId": "test", "catalogVersion": "3", "voices": "1"])
+    }
+
+    func testAKeptCatalogIsLoggedWithItsKeyAndVersionOnTheNextLaunch() async throws {
+        let first = try coordinator(fetcher: FixedFetcher(try envelope(version: 4, voices: [entry()])))
+        _ = await first.refresh()
+        let next = try coordinator(snapshot: [kitten])
+        _ = await next.rows()
+        let loaded = try XCTUnwrap(logged(next).last { $0.kind == "catalog.loaded" })
+        XCTAssertEqual(loaded.fields, ["source": "signed catalog kept", "keyId": "test", "catalogVersion": "4", "voices": "1"])
+        XCTAssertEqual(logged(next).first?.kind, "catalog.loaded", "the earlier launch's events are still ahead of it")
+    }
+
+    func testASkippedFetchSaysWhy() async throws {
+        let voices = try coordinator(catalogURL: nil, snapshot: [entry()])
+        _ = await voices.refresh()
+        let skipped = try XCTUnwrap(logged(voices).first { $0.kind == "catalog.fetch_skipped" })
+        XCTAssertEqual(skipped.fields, ["reason": "no catalog address", "source": "bundled snapshot"])
+        XCTAssertFalse(logged(voices).contains { $0.kind == "catalog.fetch" })
+    }
+
+    func testAFailedFetchAndARejectedCatalogAreLoggedAndSayWhichCatalogStayed() async throws {
+        let good = try coordinator(fetcher: FixedFetcher(try envelope(version: 5, voices: [entry()])))
+        _ = await good.refresh()
+
+        let offline = try coordinator(fetcher: FixedFetcher(nil))
+        _ = await offline.refresh()
+        let failedFetch = try XCTUnwrap(logged(offline).last { $0.kind == "catalog.fetch_failed" })
+        XCTAssertEqual(failedFetch.fields["reason"], "network error \(URLError.notConnectedToInternet.rawValue)")
+        XCTAssertEqual(failedFetch.fields["source"], "signed catalog 5")
+
+        let replayed = try coordinator(fetcher: FixedFetcher(try envelope(version: 4, voices: [])))
+        _ = await replayed.refresh()
+        let rolledBack = try XCTUnwrap(logged(replayed).last { $0.kind == "catalog.signature_rejected" })
+        XCTAssertEqual(rolledBack.fields, ["reason": "rollback: offered 4, already accepted 5", "kept": "signed catalog 5"])
+
+        let tampered = try coordinator(fetcher: FixedFetcher(Data("not a catalog".utf8)))
+        _ = await tampered.refresh()
+        let malformed = try XCTUnwrap(logged(tampered).last { $0.kind == "catalog.signature_rejected" })
+        XCTAssertEqual(malformed.fields["reason"], "malformed envelope")
+    }
+
+    func testAnInstallIsLoggedFromStartToFinishAndARemoveSaysWhatItFreed() async throws {
+        let voices = try coordinator(snapshot: [entry(), kitten])
+        try await voices.agree(to: entry().licenses)
+        try await voices.install(voiceId: "neural-1")
+        let total = files.values.reduce(0) { $0 + $1.count }
+        try await voices.remove(voiceId: "neural-1")
+
+        let events = logged(voices)
+        let kinds = events.map(\.kind)
+        XCTAssertEqual(kinds.first, "catalog.loaded")
+        XCTAssertEqual(kinds.filter { $0 == "install.started" }.count, 1)
+        let started = try XCTUnwrap(events.first { $0.kind == "install.started" })
+        XCTAssertEqual(started.fields["voice"], "neural-1")
+        XCTAssertEqual(started.fields["version"], "3cadd1e+int8-2026-05-11")
+        XCTAssertEqual(started.fields["bytesToDownload"], String(total))
+        let downloaded = events.filter { $0.kind == "file.download" }.compactMap { $0.fields["file"] }
+        XCTAssertEqual(downloaded.sorted(), files.keys.sorted(), "each file's start is logged, by its catalog path and host")
+        XCTAssertTrue(events.filter { $0.kind == "file.done" }.allSatisfy { $0.fields["host"] == "voices.example" })
+        let finished = try XCTUnwrap(events.first { $0.kind == "install.finished" })
+        XCTAssertEqual(finished.fields["bytesOnDisk"], String(total))
+        let removed = try XCTUnwrap(events.last)
+        XCTAssertEqual(removed.kind, "remove.done")
+        XCTAssertEqual(removed.fields["bytesFreed"], String(total))
+        let order = ["install.started", "file.download", "file.done", "install.finished", "remove.done"]
+        XCTAssertEqual(kinds.filter(order.contains).first, "install.started")
+        XCTAssertEqual(kinds.last, "remove.done")
+    }
+
+    func testARefusedInstallIsLoggedBeforeAnyByteMoves() async throws {
+        let voices = try coordinator(snapshot: [entry(), kitten])
+        do {
+            try await voices.install(voiceId: "neural-1")
+            XCTFail("installed without agreeing to the licence")
+        } catch VoiceCatalogCoordinatorError.agreementNeeded {}
+        do {
+            try await voices.install(voiceId: "nope")
+            XCTFail("installed a voice the catalog doesn't have")
+        } catch VoiceCatalogCoordinatorError.voiceNotOffered {}
+        let refused = logged(voices).filter { $0.kind == "install.refused" }
+        XCTAssertEqual(refused.map { $0.fields["reason"] }, ["licence not agreed", "not offered"])
+        XCTAssertEqual(refused.first?.fields["licenses"], "model")
+        XCTAssertFalse(logged(voices).contains { $0.kind == "install.started" || $0.kind == "file.download" })
+    }
+
+    func testAFailedInstallLogsItsReasonAndNoAddress() async throws {
+        let voices = try coordinator(snapshot: [entry(restricted: false)], served: [:])
+        do {
+            try await voices.install(voiceId: "neural-1")
+            XCTFail("installed from a server with nothing on it")
+        } catch VoiceCatalogCoordinatorError.install {}
+        let failed = try XCTUnwrap(logged(voices).last { $0.kind == "install.failed" })
+        XCTAssertEqual(failed.fields["kind"], "download failed")
+        XCTAssertEqual(failed.fields["voice"], "neural-1")
+        XCTAssertEqual(failed.fields["reason"], "the server answered HTTP 404")
+        let all = try String(contentsOf: VoiceCatalogCoordinator.downloadLogURL(supportDirectory: root), encoding: .utf8)
+        XCTAssertFalse(all.contains("https://"), "only hosts are logged, never a whole address")
+        XCTAssertFalse(all.contains(root.path), "no file-system path is logged")
+    }
+
+    func testNotEnoughSpaceIsLoggedWithTheNumbers() async throws {
+        let voices = try coordinator(snapshot: [entry(restricted: false)], availableBytes: 10)
+        _ = try? await voices.install(voiceId: "neural-1")
+        let failed = try XCTUnwrap(logged(voices).last { $0.kind == "install.failed" })
+        XCTAssertEqual(failed.fields["kind"], "not enough space")
+        XCTAssertEqual(failed.fields["availableBytes"], "10")
+    }
+
+    func testACancelledInstallIsLoggedAsCancelled() async throws {
+        let voices = try coordinator(snapshot: [entry(restricted: false)], transport: StallingTransport())
+        let task = Task { try await voices.install(voiceId: "neural-1") }
+        try await Task.sleep(for: .milliseconds(200))
+        task.cancel()
+        _ = try? await task.value
+        XCTAssertTrue(logged(voices).contains { $0.kind == "install.cancelled" }, logged(voices).map(\.kind).joined(separator: ","))
+    }
+
     func testVersionFolderNames() {
         XCTAssertEqual(VoiceCatalogCoordinator.folderName(forVersion: "0.8 fp32, revision 7a1db64"), "0.8_fp32__revision_7a1db64")
         XCTAssertEqual(VoiceCatalogCoordinator.folderName(forVersion: "..hidden"), "v..hidden")
@@ -448,5 +580,18 @@ private struct MemoryTransport: VoiceModelTransport {
         let head = offset > 0 ? VoiceModelResponseHead(statusCode: 206, contentRangeStart: offset) : VoiceModelResponseHead(statusCode: 200)
         guard try onHead(head) else { return }
         try onChunk(data.subdata(in: offset..<data.count))
+    }
+}
+
+/// Never delivers a byte, until the task is cancelled.
+private struct StallingTransport: VoiceModelTransport {
+    func fetch(
+        _ url: URL,
+        from offset: Int,
+        onHead: @escaping @Sendable (VoiceModelResponseHead) throws -> Bool,
+        onChunk: @escaping @Sendable (Data) throws -> Void
+    ) async throws {
+        _ = try onHead(VoiceModelResponseHead(statusCode: 200))
+        try await Task.sleep(for: .seconds(60))
     }
 }

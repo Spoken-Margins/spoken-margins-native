@@ -137,19 +137,23 @@ public actor VoiceModelInstaller {
         public var availableCapacity: @Sendable (URL) -> Int64?
         /// Opens the archives some voices' files are taken from.
         public var decompressor: any VoiceModelArchiveDecompressor
+        /// Where each file's start, retries and finish are recorded for Diagnostics (#2224). Nil: not recorded.
+        public var log: VoiceDownloadLog?
 
         public init(
             marginBytes: Int64 = 50_000_000,
             attemptsPerSource: Int = 3,
             retryDelay: Duration = .seconds(1),
             availableCapacity: @escaping @Sendable (URL) -> Int64? = VoiceModelInstaller.volumeAvailableBytes,
-            decompressor: any VoiceModelArchiveDecompressor = BZip2ArchiveDecompressor()
+            decompressor: any VoiceModelArchiveDecompressor = BZip2ArchiveDecompressor(),
+            log: VoiceDownloadLog? = nil
         ) {
             self.marginBytes = marginBytes
             self.attemptsPerSource = attemptsPerSource
             self.retryDelay = retryDelay
             self.availableCapacity = availableCapacity
             self.decompressor = decompressor
+            self.log = log
         }
     }
 
@@ -306,6 +310,7 @@ public actor VoiceModelInstaller {
         if Self.sizeOfFile(at: finalURL) == Int64(file.byteCount) {
             if try Self.sha256(of: finalURL) == file.sha256 {
                 tracker.complete(Int64(file.byteCount))
+                configuration.log?.record("file.in_place", ["file": file.path, "bytes": String(file.byteCount)])
                 return
             }
         }
@@ -320,6 +325,7 @@ public actor VoiceModelInstaller {
         for source in file.sources {
             guard let url = Self.usableURL(source) else {
                 lastProblem = "\(source) is not a usable address"
+                configuration.log?.record("file.source_failed", ["file": file.path, "host": VoiceDownloadLog.host(of: source), "reason": "not a usable address"])
                 continue
             }
             var attempt = 0
@@ -333,18 +339,29 @@ public actor VoiceModelInstaller {
                     try removeIfPresent(finalURL)
                     try FileManager.default.moveItem(at: partialURL, to: finalURL)
                     tracker.complete(Int64(file.byteCount))
+                    configuration.log?.record("file.done", ["file": file.path, "bytes": String(file.byteCount), "host": VoiceDownloadLog.host(of: source), "attempt": String(attempt)])
                     return
                 } catch SourceProblem.transient(let reason) {
                     lastProblem = reason
-                    if configuration.attemptsPerSource > attempt, configuration.retryDelay > .zero {
+                    let willRetry = configuration.attemptsPerSource > attempt
+                    configuration.log?.record("file.attempt_failed", [
+                        "file": file.path, "host": VoiceDownloadLog.host(of: source), "attempt": String(attempt),
+                        "reason": reason, "willRetry": willRetry ? "yes" : "no, next source"
+                    ])
+                    if willRetry, configuration.retryDelay > .zero {
                         try await Task.sleep(for: configuration.retryDelay)
                     }
                 } catch SourceProblem.unusable(let reason) {
                     lastProblem = reason
+                    configuration.log?.record("file.source_failed", ["file": file.path, "host": VoiceDownloadLog.host(of: source), "reason": reason])
                     break sourceLoop
                 } catch SourceProblem.wrongChecksum {
                     try removeIfPresent(partialURL)
                     tracker.set(0)
+                    configuration.log?.record("file.checksum_mismatch", [
+                        "file": file.path, "host": VoiceDownloadLog.host(of: source),
+                        "continuedPartial": continuedPartial ? "yes" : "no"
+                    ])
                     if continuedPartial, !cleanStartSpent {
                         cleanStartSpent = true
                         attempt -= 1
@@ -388,6 +405,12 @@ public actor VoiceModelInstaller {
         }
         defer { sink.close() }
         tracker.set(offset)
+        let log = configuration.log
+        let hadPartial = offset > 0
+        log?.record("file.download", [
+            "file": file.path, "host": VoiceDownloadLog.host(of: url.absoluteString), "bytes": String(byteCount),
+            "resumedFromBytes": String(offset)
+        ])
 
         do {
             try await transport.fetch(
@@ -401,12 +424,14 @@ public actor VoiceModelInstaller {
                         return true
                     case 200:
                         // The server ignored the range and is sending the whole file.
+                        if hadPartial { log?.record("file.restarted", ["file": file.path, "reason": "the server ignored the resume point"]) }
                         try sink.restartFromZero()
                         tracker.set(0)
                         return true
                     case 408, 429, 500...599:
                         throw SourceProblem.transient("the server answered HTTP \(head.statusCode)")
                     case 416:
+                        log?.record("file.restarted", ["file": file.path, "reason": "the server rejected the resume point"])
                         try sink.restartFromZero()
                         tracker.set(0)
                         throw SourceProblem.transient("the server rejected the resume point")

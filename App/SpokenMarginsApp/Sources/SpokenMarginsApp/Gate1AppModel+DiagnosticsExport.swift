@@ -38,6 +38,10 @@ struct DiagnosticsExportInputs: Sendable {
     let live: [String: String]
     let store: SQLiteSessionStore?
     let fixed: DiagnosticsExport.Fixed
+    /// The voice download log (#2224). Read from its file, so a download from an earlier launch is in the export.
+    /// Settings › Voices may never have been opened this launch, so there is no log object to ask.
+    var voiceDownloadLogFile: URL? = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        .map { VoiceCatalogCoordinator.downloadLogURL(supportDirectory: $0) }
 
     func writeFile() throws -> URL {
         var stored: [String: String] = [:]
@@ -46,6 +50,9 @@ struct DiagnosticsExportInputs: Sendable {
                 sessions: (try? store.loadSessions()) ?? [],
                 interjections: { try store.loadInterjections(sessionId: $0) }
             )
+        }
+        if let voiceDownloadLogFile, let log = VoiceDownloadLog.exportJSON(fileURL: voiceDownloadLogFile) {
+            stored["voiceDownloads"] = log
         }
         let text = try DiagnosticsExport.jsonText(DiagnosticsExport.entries(live: live, stored: stored, fixed: fixed))
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Diagnostics", isDirectory: true)

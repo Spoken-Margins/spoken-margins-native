@@ -365,6 +365,30 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNotEqual(model.feedbackEvent?.kind, .error)
     }
 
+    /// #2224: the export carries the voice download log from its file, so a download from an earlier launch shows.
+    func testDiagnosticsExportCarriesTheVoiceDownloadLogFromItsFile() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("voice-log-export-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let logFile = VoiceDownloadLog.fileURL(stateFolder: folder)
+        VoiceDownloadLog(fileURL: logFile).record("install.finished", ["voice": "supertonic-3", "bytesOnDisk": "1234"])
+        let fixed = DiagnosticsExport.Fixed(
+            developerBuild: "test", developerRecording: nil, playbackEvents: nil, exportedAt: Date(),
+            playbackStatus: "idle", sessionPhase: "idle", targetType: nil, pendingAIJobs: 0
+        )
+
+        let withLog = try DiagnosticsExportInputs(live: [:], store: nil, fixed: fixed, voiceDownloadLogFile: logFile).writeFile()
+        defer { try? FileManager.default.removeItem(at: withLog) }
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: withLog)) as? [String: String])
+        let log = try XCTUnwrap(payload["voiceDownloads"])
+        XCTAssertTrue(log.contains("install.finished"))
+        XCTAssertTrue(log.contains("\"bytesOnDisk\":\"1234\""))
+
+        let withoutLog = try DiagnosticsExportInputs(live: [:], store: nil, fixed: fixed, voiceDownloadLogFile: folder.appendingPathComponent("none.json")).writeFile()
+        defer { try? FileManager.default.removeItem(at: withoutLog) }
+        let bare = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: withoutLog)) as? [String: String])
+        XCTAssertNil(bare["voiceDownloads"], "no log, no key")
+    }
+
     /// #1191: Share Diagnostics builds the file off the main actor so the button can show a spinner. The file
     /// carries the same safe payload as the synchronous export.
     func testPrepareDiagnosticsExportFileURLBuildsTheSafeFile() async throws {
