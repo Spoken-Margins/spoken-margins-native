@@ -68,10 +68,27 @@ extension Gate1AppModel {
     /// `usesKitten` is read once by the caller, so an ID and the voice that renders under it can't disagree if the
     /// Supertonic download lands or is removed in between.
     private func summaryBridgeAssetID(itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String?, usesKitten: Bool) -> String {
+        Self.summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: sceneId, suppliedAssetId: suppliedAssetId,
+                                  voiceKey: currentSummaryBridgeVoiceKey(usesKitten: usesKitten))
+    }
+
+    /// The asset ID of each scene's summary for one item, with the voice read once, so a pass can name a long map's
+    /// summaries off the main thread (#2255).
+    func summaryBridgeAssetIDs(itemId: String) -> @Sendable (_ proposalId: String, _ scene: PortableListeningMapScene) -> String {
+        let voiceKey = currentSummaryBridgeVoiceKey(usesKitten: summaryBridgeUsesKitten)
+        return { proposalId, scene in
+            Gate1AppModel.summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id,
+                                               suppliedAssetId: scene.summaryAssetId, voiceKey: voiceKey)
+        }
+    }
+
+    private nonisolated static func summaryBridgeAssetID(
+        itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String?, voiceKey: String
+    ) -> String {
         // An id the name cut would change carries a hash of the whole id, so two ids can't share a file (#1120).
         SummaryBridgeAssetNaming.assetID(
             itemId: itemId, proposalId: proposalId, sceneId: sceneId, suppliedAssetId: suppliedAssetId,
-            generatedVoiceKey: suppliedAssetId == nil ? currentSummaryBridgeVoiceKey(usesKitten: usesKitten) : ""
+            generatedVoiceKey: suppliedAssetId == nil ? voiceKey : ""
         )
     }
 
@@ -90,11 +107,15 @@ extension Gate1AppModel {
         let legacyID = scene.summaryAssetId.flatMap {
             SummaryBridgeAssetNaming.legacyAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id, suppliedAssetId: $0)
         }
-        let storedAssets = try store.loadOwnedOfflineAssets()
-        for id in [assetID] + (legacyID.map { [$0] } ?? []) {
-            if let existing = storedAssets.first(where: { $0.id == id && $0.integrity == .valid }),
-               resolvedApplicationSupportAssetURL(for: existing.relativePath) != nil { return existing }
-        }
+        // The whole asset table, read off the main thread (#2255).
+        let saved = try await Task.detached(priority: .userInitiated) { () throws -> OwnedOfflineAsset? in
+            let assets = try store.loadOwnedOfflineAssets()
+            for id in [assetID] + (legacyID.map { [$0] } ?? []) {
+                if let found = assets.first(where: { $0.id == id && $0.integrity == .valid }) { return found }
+            }
+            return nil
+        }.value
+        if let existing = saved, resolvedApplicationSupportAssetURL(for: existing.relativePath) != nil { return existing }
         // An authored voice is part of the imported experience, not a request
         // to silently synthesize replacement speech in the current system voice.
         guard scene.summaryAssetId == nil else { return nil }

@@ -1,0 +1,282 @@
+# The rolling phone build on a GitHub-hosted Mac (#2357, part of #1389): the Release app for the owner's iPhone,
+# built from main as scripts/phone-build builds it on his Mac, so the Mac needn't be awake at 8 am. Owner,
+# 2026-10-21, asked "May phone builds sign on GitHub with an App Store Connect API key kept in a GitHub
+# environment that only runs from main?": "yes to 1".
+#
+# Signing, with the API key alone and no certificate leaving his Mac: Apple's cloud-managed certificates sign
+# only for distribution, never a development build. A development build on a fresh runner would make a new
+# certificate each run and lose its private key with the runner, until Apple's certificate cap stops all
+# signing. So the app is archived with a local placeholder signature (`-`, which keeps its entitlements) and
+# then exported as an ad hoc build: a distribution method that installs on the team's registered devices,
+# his phone included. The export runs with -allowProvisioningUpdates and the API key, so Apple's cloud-managed
+# Apple Distribution certificate signs it and Xcode makes or refreshes the ad hoc profiles. Same bundle IDs,
+# team and app group as his Mac's build, so installing over it keeps his Library.
+#
+# Output: an artifact `phone-build-<sha>` holding SpokenMarginsApp.app.zip (ditto, so the signature survives)
+# and build.json, kept 7 days. On the Mac, `scripts/phone-build --source hosted` downloads it into
+# ~/SpokenMargins-phone and writes the test plan, so the Install Spoken Margins on iPhone shortcut is unchanged.
+# Nothing here uploads: TestFlight happens only when the owner says "upload". The build number is project.yml's.
+#
+# Trust: only main is built. Triggers are the schedule (always main) and workflow_dispatch. Both jobs run in the
+# `phone-build` environment, whose deployment rule admits main only, and refuse any other ref themselves.
+# There is no pull_request, pull_request_target, issue_comment or workflow_run trigger, and there must never be:
+# that would hand the signing key to code nobody reviewed.
+#
+# Secrets (environment `phone-build`): ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8, an App Store Connect team API key
+# with the Admin role (cloud signing refuses lower roles). Until all three are set, a scheduled run skips with a
+# notice and a hand-started one fails saying what's missing. The team ID is read from
+# scripts/TestFlightUploadOptions.plist, where it is already public.
+#
+# Schedule: 12:00 and 21:30 UTC, i.e. 7:00 and 16:30 Central in summer time (6:00 and 15:30 in winter), so a
+# build is ready before the daily plan's 8:00 and 17:00 Central slots (docs/workstreams/daily-phone-plan.md).
+# A tip that already has an unexpired hosted build is not built again unless `force` is set.
+name: phone-build
+
+on:
+  schedule:
+    - cron: '0 12 * * *'
+    - cron: '30 21 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Build even if this commit already has a hosted phone build'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: phone-build
+  cancel-in-progress: false
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: phone-build
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+    steps:
+      - name: Decide whether to build
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          FORCE: ${{ inputs.force }}
+          EVENT: ${{ github.event_name }}
+          HAS_KEY_ID: ${{ secrets.ASC_KEY_ID != '' }}
+          HAS_ISSUER: ${{ secrets.ASC_ISSUER_ID != '' }}
+          HAS_P8: ${{ secrets.ASC_KEY_P8 != '' }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::Phone builds come from main only, not $REF."
+            exit 1
+          fi
+          missing=""
+          [ "$HAS_KEY_ID" = "true" ] || missing="$missing ASC_KEY_ID"
+          [ "$HAS_ISSUER" = "true" ] || missing="$missing ASC_ISSUER_ID"
+          [ "$HAS_P8" = "true" ] || missing="$missing ASC_KEY_P8"
+          if [ -n "$missing" ]; then
+            if [ "$EVENT" = "schedule" ]; then
+              echo "::notice::The phone-build environment has no$missing yet; skipping (#2357)."
+              echo "build=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::The phone-build environment is missing:$missing (#2357)."
+            exit 1
+          fi
+          count=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=phone-build-$SHA" \
+            --jq '[.artifacts[] | select(.expired | not)] | length')
+          if [ "$count" != "0" ] && [ "$FORCE" != "true" ]; then
+            echo "main's tip ${SHA:0:7} already has a hosted phone build; nothing to do." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true' && github.ref == 'refs/heads/main'
+    runs-on: xcode-27
+    environment: phone-build
+    # The dry run's Release build took 465 s with cold caches; the export adds a few minutes.
+    timeout-minutes: 90
+    env:
+      DERIVED: ${{ github.workspace }}/.build/phone-dd
+      CAS: ${{ github.workspace }}/.build/compilation-cache
+      SPM: ${{ github.workspace }}/.build/spm
+      OUT: ${{ github.workspace }}/.build/phone-out
+      APP_NAME: SpokenMarginsApp.app
+    steps:
+      - name: Check the ref
+        run: |
+          [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::main only"; exit 1; }
+          echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Kitten's model files are LFS objects the app bundles. Keys carry a phone- prefix so this signing job
+      # restores only caches it wrote itself.
+      - name: List LFS objects
+        run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
+      - uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: phone-lfs-${{ hashFiles('.build/lfs-ids.txt') }}
+          restore-keys: phone-lfs-
+      - name: Fetch LFS files
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.SPM }}
+          key: phone-spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: phone-spm-
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.CAS }}
+          key: phone-cas-27.0-${{ github.run_id }}
+          restore-keys: phone-cas-27.0-
+
+      # The team the TestFlight upload already names, into the file the Mac reads it from (#1841).
+      - name: Signing team
+        run: |
+          team=$(/usr/libexec/PlistBuddy -c 'Print :teamID' scripts/TestFlightUploadOptions.plist)
+          [[ "$team" =~ ^[A-Z0-9]{10}$ ]] || { echo "::error::No team ID in scripts/TestFlightUploadOptions.plist"; exit 1; }
+          printf 'DEVELOPMENT_TEAM = %s\n' "$team" > Config/Local.xcconfig
+          echo "TEAM=$team" >> "$GITHUB_ENV"
+
+      # Signed with `-` (no certificate, no profile), which still embeds each target's entitlements, so the
+      # ad hoc export below keeps the app group and associated domains.
+      - name: Archive the Release app
+        run: |
+          mkdir -p "$OUT"
+          root="$GITHUB_WORKSPACE"
+          started=$(date +%s)
+          set -o pipefail
+          xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath "$DERIVED" -clonedSourcePackagesDirPath "$SPM" \
+            -archivePath "$OUT/SpokenMargins.xcarchive" \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES PROVISIONING_PROFILE_SPECIFIER= \
+            COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_CAS_PATH="$CAS" COMPILATION_CACHE_LIMIT_SIZE=1G \
+            SWIFT_ENABLE_PREFIX_MAPPING=YES SWIFT_ENABLE_PROJECT_PREFIX_MAPPING=YES \
+            CLANG_ENABLE_PREFIX_MAPPING=YES CLANG_ENABLE_PROJECT_PREFIX_MAPPING=YES \
+            SWIFT_OTHER_PREFIX_MAPPINGS="\"$root=/^tree\"" CLANG_OTHER_PREFIX_MAPPINGS="\"$root=/^tree\"" \
+            "SM_BUILD_COMMIT=$GITHUB_SHA" archive 2>&1 | tee "$OUT/build.log" | grep -E 'error:|ARCHIVE|cacheable tasks' || true
+          grep -q 'ARCHIVE SUCCEEDED' "$OUT/build.log"
+          echo "BUILD_SECONDS=$(( $(date +%s) - started ))" >> "$GITHUB_ENV"
+
+      - name: Check the archived entitlements
+        run: |
+          app="$OUT/SpokenMargins.xcarchive/Products/Applications/$APP_NAME"
+          codesign -d --entitlements :- "$app" 2>/dev/null > "$OUT/entitlements.plist"
+          grep -q 'group.com.spokenmargins.native' "$OUT/entitlements.plist" \
+            || { echo "::error::The archived app lost its app group entitlement; the export would drop the Library's container."; exit 1; }
+          for appex in "$app"/PlugIns/*.appex; do
+            codesign -d --entitlements :- "$appex" 2>/dev/null | grep -q 'group.com.spokenmargins.native' \
+              || { echo "::error::$(basename "$appex") lost its app group entitlement."; exit 1; }
+          done
+
+      - name: Export the ad hoc build, cloud-signed
+        env:
+          P8: ${{ secrets.ASC_KEY_P8 }}
+          KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          umask 077
+          printf '%s\n' "$P8" > "$RUNNER_TEMP/AuthKey.p8"
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>release-testing</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>teamID</key><string>$TEAM</string>
+            <key>thinning</key><string>&lt;none&gt;</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          EOF
+          set -o pipefail
+          # Homebrew's rsync breaks Xcode's packaging step (AGENTS.md, Releasing a build).
+          PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" xcodebuild -exportArchive \
+            -archivePath "$OUT/SpokenMargins.xcarchive" -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$OUT/export" -allowProvisioningUpdates -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" \
+            -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER" 2>&1 | tee "$OUT/export.log" | grep -E 'error:|EXPORT' || true
+          grep -q 'EXPORT SUCCEEDED' "$OUT/export.log"
+          rm -f "$RUNNER_TEMP/AuthKey.p8"
+          ipa=$(ls "$OUT"/export/*.ipa | head -1)
+          ditto -x -k "$ipa" "$OUT/ipa"
+          echo "APP=$OUT/ipa/Payload/$APP_NAME" >> "$GITHUB_ENV"
+
+      # The same checks scripts/phone-build makes before a build reaches the installer.
+      - name: Check the app
+        run: |
+          [ -f "$APP/embedded.mobileprovision" ] || { echo "::error::$APP_NAME has no provisioning profile; a phone would refuse it."; exit 1; }
+          codesign --verify --strict "$APP"
+          commit=$(/usr/libexec/PlistBuddy -c 'Print :SMBuildCommit' "$APP/Info.plist" 2>/dev/null || true)
+          [ -z "$commit" ] || [ "$commit" = "$GITHUB_SHA" ] || { echo "::error::The app says it was built from $commit, not $GITHUB_SHA."; exit 1; }
+          codesign -d --entitlements :- "$APP" 2>/dev/null | grep -q 'group.com.spokenmargins.native' \
+            || { echo "::error::The exported app has no app group entitlement."; exit 1; }
+          security cms -D -i "$APP/embedded.mobileprovision" > "$OUT/profile.plist"
+          echo "Profile: $(/usr/libexec/PlistBuddy -c 'Print :Name' "$OUT/profile.plist"), $(/usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "$OUT/profile.plist" | grep -c -- '-') devices, expires $(/usr/libexec/PlistBuddy -c 'Print :ExpirationDate' "$OUT/profile.plist")" | tee -a "$GITHUB_STEP_SUMMARY"
+          codesign -dvv "$APP" 2>&1 | grep '^Authority=' | head -1 | tee -a "$GITHUB_STEP_SUMMARY"
+          rm "$OUT/profile.plist"
+          echo "COMMIT_IN_APP=$commit" >> "$GITHUB_ENV"
+
+      - name: Package
+        run: |
+          ditto -c -k --keepParent "$APP" "$OUT/$APP_NAME.zip"
+          cat "$OUT/export.log" >> "$OUT/build.log"
+          python3 - <<'PY'
+          import datetime, json, os, plistlib, subprocess
+          sha = os.environ['GITHUB_SHA']
+          app = os.environ['APP']
+          info = plistlib.load(open(os.path.join(app, 'Info.plist'), 'rb'))
+          size = int(subprocess.check_output(['du', '-sk', app]).split()[0]) * 1024
+          details = {
+              'sha': sha, 'sha7': sha[:7],
+              'subject': subprocess.check_output(['git', 'log', '-1', '--format=%s', sha], text=True).strip(),
+              'built_at': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'),
+              'build_seconds': int(os.environ['BUILD_SECONDS']), 'app': os.environ['APP_NAME'], 'app_bytes': size,
+              'bundle_version': info.get('CFBundleVersion'), 'commit_in_app': os.environ.get('COMMIT_IN_APP') or None,
+              'built_on': 'github-hosted', 'signing': 'ad hoc, cloud-managed Apple Distribution',
+              'run_id': int(os.environ['GITHUB_RUN_ID']),
+              'run_url': f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+          }
+          open(os.path.join(os.environ['OUT'], 'build.json'), 'w').write(json.dumps(details, indent=2) + '\n')
+          print(f"Build {details['bundle_version']} from {sha[:7]}, {size / 1e6:.0f} MB, built in {details['build_seconds']} s.")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phone-build-${{ github.sha }}
+          path: |
+            .build/phone-out/SpokenMarginsApp.app.zip
+            .build/phone-out/build.json
+            .build/phone-out/build.log
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove the signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8" Config/Local.xcconfig
+
+      - name: Report time
+        if: always()
+        run: |
+          [ -n "${STARTED:-}" ] || exit 0
+          echo "phone-build took $(( $(date +%s) - STARTED ))s on xcode-27 (Xcode 27.0)." | tee -a "$GITHUB_STEP_SUMMARY"

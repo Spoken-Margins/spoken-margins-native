@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A live snapshot of the open PRs into `next` for status replies (#1597). Stdlib, Python 3.9+. Read-only.
+"""A live snapshot of the open PRs into the trunk (`main`) for status replies (#1597). Stdlib, Python 3.9+. Read-only.
 
 Owner rule 2026-10-14 (AGENTS.md "Check before you report"): any status line, and any "armed", "merged" or
 "nothing needs you", rests on a live read of the PR's head checks, latest lane report, audit and mergeable state.
@@ -555,7 +555,7 @@ def analyse(bundle: dict, classify=None) -> dict:
 
 def snapshot(api, now: dt.datetime | None = None, only: list[int] | None = None, classify=None,
              workers: int = 6, sleep=time.sleep) -> dict:
-    """Read every open PR into `next` and judge it. Raises GitHubError when the PR list itself can't be read."""
+    """Read every open PR into the trunk and judge it. Raises GitHubError when the PR list itself can't be read."""
     now = now or dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
     summaries = api.pages(f'pulls?state=open&base={BASE}&sort=created&direction=asc')
     missing = []

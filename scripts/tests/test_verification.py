@@ -25,6 +25,19 @@ spec.loader.exec_module(verification)
 
 
 class VerificationTests(unittest.TestCase):
+    def test_a_step_does_not_inherit_the_trunk_setting(self):
+        # #1492: the lane and the Mac export SM_TRUNK=main; suites written for the default trunk failed under it.
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {'SM_TRUNK': 'main', 'KEEP': '1'}):
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            with patch.object(verification, 'build_slot', return_value=contextlib.nullcontext()), \
+                    patch.object(verification.subprocess, 'Popen') as process:
+                process.return_value.wait.return_value = 0
+                run.command('probe', ['true'])
+            env = process.call_args.kwargs['env']
+            self.assertNotIn('SM_TRUNK', env)
+            self.assertEqual(env['KEEP'], '1')
+            self.assertEqual(os.environ['SM_TRUNK'], 'main')  # the caller's own environment is left alone
+
     def test_test_without_building_does_not_take_a_build_slot(self):
         # #1330: even an empty test run used to queue behind compilers and hold their slot.
         with tempfile.TemporaryDirectory() as temporary:

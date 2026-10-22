@@ -252,11 +252,12 @@ struct PlaybackScreen: View {
                 forward: model.chapterRowForwardControl,
                 skimBackwardTitle: model.skimBackwardTitle,
                 skimForwardTitle: model.skimForwardTitle,
+                skimForwardUnavailable: model.skimBridge.forwardUnavailableReason,
                 skimLocked: model.snapshot.isRecording,
                 waitingText: model.snapshot.status == .starting
                     ? PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot) : nil,
                 showItem: model.openCurrentPlaybackItem,
-                nextChapter: model.jumpToNextChapter,
+                nextChapter: model.nextChapterFromChapterRow,
                 skimBackward: model.skimBackward,
                 skimForward: model.skimForward
             )

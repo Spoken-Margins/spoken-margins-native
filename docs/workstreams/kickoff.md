@@ -9,10 +9,9 @@ You own stream <ID> of Spoken Margins. Read AGENTS.md, docs/workstreams/README.m
 docs/workstreams/streams/<ID>-*.md, and only the seams in docs/workstreams/interfaces.md
 that the brief names.
 
-Branch: ws/<id>-<milestone> from origin/next, a new one for each PR, or from
-origin/claude/project-planning-voice-notes-neoatx if next doesn't exist yet. Merge origin/next in at least daily once it exists. Cloud
-research code and fixtures go under research/<id>/. Open a draft PR into next once it
-exists, and put lane requests on that PR.
+Branch: ws/<id>-<milestone> from origin/main, a new one for each PR. Merge origin/main in
+at least daily. Cloud research code and fixtures go under research/<id>/. Open a draft PR
+into main, and put lane requests on that PR.
 
 On the Mac, after claiming an issue or releasing its claim, you may run
 `python3 scripts/sm_project_sync.py --apply --issue <issue-number>` to update its project card.
@@ -63,8 +62,8 @@ Retired on 2026-09-29. A long-lived triage desk re-read a large context on every
 | Merge finished work | The lane runner merges `automerge` PRs it passes. After a T3 PASS on a PR held for T3, it re-runs the automerge checks on a fresh merge commit and merges on PASS (#421). It never merges an audio, persistence, packet or lane diff without a clean Codex audit of its head commit; lane changes no longer wait for the owner (2026-10-01). |
 | Lane FAILs on armed PRs | The project's hourly dispatcher. A FAIL on the PR's own code goes to whoever is free. A lane fault gets one more run (a new `/lane T3` comment with the same `tests:` line plus `lane:queued` for an INCONCLUSIVE T3, or `automerge` removed and re-added for a host-test or build fault), and becomes an issue labelled `ready` and `regression` only if it fails the same way again. After a clean Codex audit on a held PR, it removes and re-adds `automerge`, because a comment starts no run. The thread that armed the PR has already moved on. |
 | Audits of sharing, persistence, audio and lane changes | A scheduled script on the Mac (launchd, no Claude session) that calls headless Claude read-only (#1195), posting **Claude audit on `<sha7>`** on the PR. Older PRs may carry **Codex audit (Astra) on `<sha7>`**, which the runner still counts |
-| Test next's tip | The standing Test Desk, in a loop: on each new tip, the app tests, then the screen tour and the journeys, reported on #184. On a real FAIL it reverts the culprit merge and files the re-land issue. The scheduled `SM integration run` is its understudy and runs only when the desk has posted nothing on #184 for three hours ([test-lane.md](test-lane.md), Starting the Test Desk). |
-| A live read behind every status line ("Check before you report", owner 2026-10-14) | The coordinator and any thread, in the same turn as the line: `scripts/sm_status.py` (#1597) prints one line per open PR into `next` with its head, the lane's verdict **on that head** ("none on head" when the only reports are on older commits), the audit on that head, the mergeable state, the labels that matter and the linked issue, and flags red-on-head, conflict, a T3 hold, an INCONCLUSIVE, a blocking audit and an armed PR with no `/lane T3` request. `--json` is for scripts. It only reads GitHub, so it runs from a cloud container (needs `GH_TOKEN`). Say what it showed; a thread's last report is not evidence. |
+| Test main's tip | The standing Test Desk, in a loop: on each new tip, the app tests, then the screen tour and the journeys, reported on #184. On a real FAIL it reverts the culprit merge and files the re-land issue. The scheduled `SM integration run` is its understudy and runs only when the desk has posted nothing on #184 for three hours ([test-lane.md](test-lane.md), Starting the Test Desk). |
+| A live read behind every status line ("Check before you report", owner 2026-10-14) | The coordinator and any thread, in the same turn as the line: `scripts/sm_status.py` (#1597) prints one line per open PR into `main` with its head, the lane's verdict **on that head** ("none on head" when the only reports are on older commits), the audit on that head, the mergeable state, the labels that matter and the linked issue, and flags red-on-head, conflict, a T3 hold, an INCONCLUSIVE, a blocking audit and an armed PR with no `/lane T3` request. `--json` is for scripts. It only reads GitHub, so it runs from a cloud container (needs `GH_TOKEN`). Say what it showed; a thread's last report is not evidence. |
 | Find idle capacity and stuck work on every coordinator wake (owner 2026-10-14) | The coordinator, before it replies to an owner message, a Dial fire or the hourly dispatch: `python3 scripts/sm_sweep.py` (#1598) prints an action list from live GitHub reads: free Claude slots against the Dial (Codex workers counted apart), the Mac idle beside Mac-only `ready` issues, `in-progress` claims with no comment, open PR, `ws/<n>-` commit or new label in 6 hours, armed PRs red on their head, `/lane T4` requests (or the tick's `Test Desk: GO`) waiting over an hour with no Test Desk seen, and `needs-mac` PRs the finisher hasn't touched in an hour. `--apply` releases the stale claims (remove `in-progress`, add `ready`, say why; the housekeeping call of 2026-10-14) and does nothing else; every other line is the coordinator's to act on. It reads GitHub, not sessions, so confirm a Test Desk or thread is really idle before starting a second. Uses `scripts/sm_status.py` for the PR facts. |
 | Keep project 6 in sync with workflow evidence (#1621) | The Claude Mac worker's existing 10-minute tick runs `python3 scripts/sm_project_sync.py --apply` at most once an hour, whatever the Dial says, and the worker syncs its own issue's card after each claim and stop note. The cloud dispatch can't: the user project's API answers its token with 403. The pass reconciles missing issue cards as well as Status and Check health, adds no timer or worker, and writes nothing when nothing changed. Run it without `--apply` to see the proposed changes and reasons. Unknown reads are reported (exit 2) and leave those cards unchanged. |
 | Check that the scheduled tasks ran | The project's daily routine reads #337 for a missing or stalled tick. The owner starts an ops desk session only when something is wrong. |
@@ -79,7 +78,7 @@ Once the repository is public, anyone can open an issue or comment. Every script
 
 The merge-check comment keeps its old first line, **Merge check (triage desk) on `<sha7>`**. The lane runner writes it and `scripts/merge_audit.py` looks for that exact text, so don't reword it.
 
-`scripts/merge_audit.py` labels `merge-audit` on any PR merged into `next` without that comment, unless it was a hand merge that met the hand-merge rule before the merge: the newest lane report on the head (and the newest T3 report, if any) says PASS, and the newest Codex or Claude audit naming the head says "No blocking findings" (#742). Its comment says what was missing. The daily routine checks open flags; one the owner merged himself gets the label removed with a comment saying so.
+`scripts/merge_audit.py` labels `merge-audit` on any PR merged into `main` without that comment, unless it was a hand merge that met the hand-merge rule before the merge: the newest lane report on the head (and the newest T3 report, if any) says PASS, and the newest Codex or Claude audit naming the head says "No blocking findings" (#742). Its comment says what was missing. The daily routine checks open flags; one the owner merged himself gets the label removed with a comment saying so.
 
 ## Model and effort
 
@@ -92,7 +91,7 @@ The merge-check comment keeps its old first line, **Merge check (triage desk) on
 
 **Cloud streams** (A3, G2, and the research and server milestones of B3, B4, C1, C2, E1 and E3):
 
-- Start from the Claude app → Code → new session on `uncomposed/spoken-margins-native` (add `uncomposed/digest` for D3). Paste the kickoff.
+- Start from the Claude app → Code → new session on `Spoken-Margins/spoken-margins-native` (add `uncomposed/digest` for D3). Paste the kickoff.
 - Cloud sessions can't reach the Mac's simulators, and can't build the iOS app. A brief marks any step that needs a Mac with **(Mac)**. That step runs in a Mac session, or through the lane as a request on the PR. The cloud agent finishes everything else and says what's waiting.
 
 **Mac streams**:
@@ -105,7 +104,7 @@ The merge-check comment keeps its old first line, **Merge check (triage desk) on
   ```
 
   Each session started from the phone gets its own git worktree ([docs](https://code.claude.com/docs/en/remote-control)). Capacity 4 is three streams plus the Test Desk. The Mac must stay awake (for example `caffeinate -dims` in another terminal).
-- Worktrees are created under `.claude/worktrees/`. By default they start from `main`. With the Mac's main checkout on `next` and `"worktree": {"baseRef": "head"}` in `~/.claude/settings.json` (README → Owner setup), they start from `next`. The kickoff's first step then creates `ws/<id>`.
+- Worktrees are created under `.claude/worktrees/`. By default they start from `main`, the trunk since 2026-10-20 (`next` is frozen). The kickoff's first step then creates `ws/<id>`.
 - Each worktree uses its own DerivedData (`-derivedDataPath .build/dd` inside the worktree). A1 `lane` makes this the default through its build wrapper.
 
 **Talking between sessions**:

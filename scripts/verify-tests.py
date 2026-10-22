@@ -55,6 +55,19 @@ BUILD_SLOT_WAIT_SECONDS = 1800
 # about twice the limit (measured: a 1G limit held it to 1.4 GB).
 COMPILATION_CACHE_LIMIT = '3G'
 
+# Settings that describe the machine or the lane job, not the code under test. A step must not inherit them:
+# with SM_TRUNK=main exported (the lane and the Mac set it after #1492), suites whose fixtures were written
+# for the default trunk failed, and every merge run came back INCONCLUSIVE.
+STEP_ENV_DROPS = ('SM_TRUNK',)
+
+
+def step_env(environ=None):
+    """The environment a test step runs in: the caller's, without STEP_ENV_DROPS."""
+    env = dict(os.environ if environ is None else environ)
+    for name in STEP_ENV_DROPS:
+        env.pop(name, None)
+    return env
+
 
 def compilation_cache_settings(root=None):
     """The build settings that turn on Xcode's compilation cache, in the lane's state folder."""
@@ -129,6 +142,24 @@ def narrow_selectors(selectors, planned, available):
         else:
             narrowed.extend(test for test in covered if test in planned)
     return narrowed
+
+
+def t3_selection(only, plan_name, root=None):
+    """The -only-testing selectors for a T3 request of `only` (Class or Class/method) in a test plan, the plan's
+    tests, and the tests the run must complete. A selector that names nothing in the plan is refused, so a
+    misspelled name fails before anything builds instead of running nothing (#2138). Shared with the hosted Mac
+    (scripts/hosted_t3_check.py), so both judge a T3 by one rule."""
+    root = ROOT if root is None else root
+    selectors = [s if s.startswith((f'{APP_TEST_TARGET}/', f'{UI_TEST_TARGET}/')) else f'{APP_TEST_TARGET}/{s}'
+                 for s in only]
+    planned = plan_tests(root, plan_name)
+    unmatched = [s for s in selectors if not any(selected(test, s) for test in planned)]
+    if unmatched:
+        raise RuntimeError(f'Not in the {plan_name} test plan: {", ".join(unmatched)}')
+    selectors = narrow_selectors(selectors, planned,
+                                 {f'{APP_TEST_TARGET}/{test}' for test in target_tests(root, APP_TEST_TARGET)})
+    expected = {test for test in planned if not selectors or any(selected(test, s) for s in selectors)}
+    return selectors, planned, expected
 
 
 def dedicated_simulator(devices, ios=None):
@@ -539,7 +570,7 @@ def github_glob_matches(pattern, path):
 
 def shipped_compat_needed(changed, root=None):
     """(run, reason) for the compatibility checks. changed=None means no diff information: run, as every other
-    step does, so the Test Desk's run on next's tip and an author's own --plan fast keep them."""
+    step does, so the Test Desk's run on the trunk's tip and an author's own --plan fast keep them."""
     if not changed:
         return True, 'no list of changed paths, so every step runs'
     patterns = shipped_compat_paths(root or ROOT)
@@ -997,7 +1028,7 @@ class Run:
             finish = xcodebuild_finish.FinishWatch() if tests and args[0] == 'xcodebuild' else None
             finish_offset = 0
             process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
-                                       start_new_session=True)
+                                       start_new_session=True, env=step_env())
             try:
                 while True:
                     if device and (report := new_crash(reports, self.crash_baseline, device)):
@@ -1071,7 +1102,7 @@ class Run:
                         if finish is not None:
                             finish = xcodebuild_finish.FinishWatch()
                         process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
-                                                   start_new_session=True)
+                                                   start_new_session=True, env=step_env())
             except (subprocess.TimeoutExpired, KeyboardInterrupt, InterruptedError, StartupStall) as stopped:
                 # A startup stall is reported as its own reason below, not as the step running out of budget.
                 entry['interrupted'] = not isinstance(stopped, StartupStall)
@@ -1543,14 +1574,7 @@ class Run:
             raise RuntimeError('Inputs changed before Xcode verification')
         scheme, name, timeout = PLANS[plan]
         # T3 runs a few test classes or methods of a plan. Each selector must name tests in the plan.
-        selectors = [s if s.startswith((f'{APP_TEST_TARGET}/', f'{UI_TEST_TARGET}/')) else f'{APP_TEST_TARGET}/{s}'
-                     for s in only]
-        planned = plan_tests(ROOT, name)
-        unmatched = [s for s in selectors if not any(selected(test, s) for test in planned)]
-        if unmatched:
-            raise RuntimeError(f'Not in the {name} test plan: {", ".join(unmatched)}')
-        selectors = narrow_selectors(selectors, planned,
-                                     {f'{APP_TEST_TARGET}/{test}' for test in target_tests(ROOT, APP_TEST_TARGET)})
+        selectors, planned, expected = t3_selection(only, name)
         if selectors:
             self.manifest['only_testing'] = selectors
         if any(test.endswith(SUPERTONIC_APP_MODEL_TEST)
@@ -1613,7 +1637,6 @@ class Run:
                 bundle_id = plistlib.loads((app / 'Info.plist').read_bytes())['CFBundleIdentifier']
                 subprocess.run(['xcrun', 'simctl', 'uninstall', chosen['udid'], bundle_id],
                                cwd=ROOT, capture_output=True, timeout=60)
-            expected = {test for test in planned if not selectors or any(selected(test, s) for s in selectors)}
             on_probation = None if probation is None else {
                 test for test in expected if any(selected(test, s) for s in probation)}
             result_bundle = self.output / 'tests.xcresult'

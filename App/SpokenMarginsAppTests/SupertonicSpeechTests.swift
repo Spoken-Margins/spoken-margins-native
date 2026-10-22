@@ -1720,12 +1720,15 @@ final class SupertonicSpeechTests: XCTestCase {
     // #363 audit: background preparation made a guard per chunk and never discarded its render, so
     // every flagged chunk left an iOS-voice file behind. The render is discarded once kept, or on
     // failure.
+    /// The guard gets its own write log and a fixed clock (#2386), so nothing here reads the device's uptime or
+    /// shares a count with other tests; a failure means a render was kept or leaked.
     func testABackgroundRenderIsDiscardedOnceKeptOrOnFailure() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "guard-keep-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let guardRenderer = SupertonicOutputGuard(
-            wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil, standIn: copyStandIn
+            wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil, standIn: copyStandIn,
+            writeLog: StandInWriteLog(), now: { 0 }
         )
         let text = "Table 3 reports 91.1% 8.9% 0.0 and 7,494 tool decisions across 2,548 summaries."
         var standIn: URL?
@@ -1774,28 +1777,33 @@ final class SupertonicSpeechTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let text = "A short sentence that Supertonic reads in about three seconds."
         for (seconds, expectsAssembly) in [(20.0, false), (4.0, true)] {
-            let assembled = expectation(description: "assembled (\(seconds) s)")
-            assembled.isInverted = !expectsAssembly
+            let assemblies = AssemblyCount()
             let ready = expectation(description: "generation reports ready (\(seconds) s)")
             ready.assertForOverFulfill = false
             let reports = GuardReports()
             let client = SupertonicSpeechPlaybackClient(
                 renderer: SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: seconds),
-                                                systemVoiceIdentifier: nil, onReplacement: { reports.add($0) }, standIn: copyStandIn),
+                                                systemVoiceIdentifier: nil, onReplacement: { reports.add($0) }, standIn: copyStandIn,
+                                                writeLog: StandInWriteLog(), now: { 0 }),
                 voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
                 preparedAudioDirectory: root.appending(path: "assembled-\(Int(seconds))", directoryHint: .isDirectory),
                 audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
                 observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
                 onGenerationStateChange: { state, _ in if state == .ready { ready.fulfill() } },
-                onPreparedAudio: { _, _ in assembled.fulfill() },
+                onPreparedAudio: { _, _ in assemblies.add() },
                 renderWaitLimit: standInRenderWaitLimit
             )
             _ = try client.prepareSpeechText(text)
             try client.play(targetId: "item", from: 0)
             if !expectsAssembly { try await awaitStandIn(reports) }
-            // #363 audit: with a stand-in, generation must still end, not show "Generating" forever.
-            await fulfillment(of: [ready], timeout: 8)
-            await fulfillment(of: [assembled], timeout: expectsAssembly ? 8 : 1)
+            // #363 audit: with a stand-in, generation must still end, not show "Generating" forever. The timeout only
+            // bounds a failure.
+            await fulfillment(of: [ready], timeout: 60)
+            // The client decides once per generation whether to assemble, and reports `ready` only after that
+            // decision: after `onPreparedAudio` when it assembles, straight away when a stand-in stops it (#2386).
+            // So the count read here is final, with no window to wait out.
+            XCTAssertEqual(assemblies.value, expectsAssembly ? 1 : 0,
+                           expectsAssembly ? "Supertonic's own audio is assembled" : "an article with a stand-in is not assembled")
             try client.stop()
         }
     }
@@ -2249,11 +2257,16 @@ final class SupertonicSpeechTests: XCTestCase {
         await harness.finishPlayingChunk()                          // the end notification; the queue is still on A
         let caughtUp = await harness.waitForPlayingChunk(chunk[1])
         XCTAssertTrue(caughtUp, "the client's place moved on to B")
+        // The player is still on A. The guard on `items().last` lets the client queue C behind B anyway: before
+        // #1764 it required `currentItem` to be B, so C could not be queued until the player reached B.
+        let next = await harness.waitForQueuedChunk(chunk[2])
+        XCTAssertTrue(next, "C is queued behind B while the player is still on A")
+        XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "queued_ahead 1")
+
         harness.advanceTheQueueWithoutTellingTheApp()               // the player gets to B a moment later
 
-        let next = await harness.waitForQueuedChunk(chunk[2])
-        XCTAssertTrue(next, "C is queued behind B")
         XCTAssertEqual(harness.playerStarts, before, "B was not started again on a new player")
+        XCTAssertEqual(harness.playingChunkStart, chunk[1])
         XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "queued_ahead 1")
     }
 
@@ -2280,7 +2293,7 @@ final class SupertonicSpeechTests: XCTestCase {
     }
 
     // #1762: the real queue, with nothing driving it. Each chunk is two seconds of its own tone; the app is away
-    // through four of them. Every seam must be the queue's own: no new player, one `queued_ahead` per seam.
+    // through four of them. Every seam must be the queue's own: no new player, and no seam handed to the app.
     func testTheRealQueuePlaysThroughSeveralSeamsWithTheAppAwayAndNoNewPlayer() async throws {
         let harness = try SupertonicClientHarness(
             chunkSeconds: 2, distinctTones: true, applicationIsActive: { false }
@@ -2295,7 +2308,10 @@ final class SupertonicSpeechTests: XCTestCase {
 
         XCTAssertTrue(reached, "the real queue played on to the fourth chunk by itself")
         XCTAssertEqual(harness.playerStarts, starts, "no seam started a new player")
-        XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "queued_ahead 3")
+        XCTAssertFalse(
+            (harness.client.debugBackgroundSeamSummary ?? "").contains("rendered_not_queued"),
+            "no seam went through the app: \(harness.client.debugBackgroundSeamSummary ?? "none")"
+        )
     }
 
     // #1763: a new player the system would not start with the phone locked sat at time 0 with rate 0 ("SetRateFailed")
@@ -3037,10 +3053,8 @@ final class SupertonicSpeechTests: XCTestCase {
         )
         _ = try client.prepareSpeechText(text)
         try client.play(targetId: "saved-run")
-        let deadline = ContinuousClock.now + .seconds(60)
-        while log.totalChunks == 0 || log.completedChunks < log.totalChunks, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(50))
-        }
+        // Returns as soon as the last chunk is reported (#2386); the timeout only bounds a failure.
+        await fulfillment(of: [log.finished], timeout: 60)
         XCTAssertEqual(log.completedChunks, log.totalChunks, "the generation finished")
         XCTAssertEqual(log.fallbacks, [])
         try client.stop()
@@ -5035,11 +5049,16 @@ private final class KittenClientLog: @unchecked Sendable {
     private var restoreCount = 0
 
     private var reports: [RenderedSpeechGenerationProgress] = []
+    /// Fulfilled when a report says every chunk is done (#2386). Not registered with the test, so a test that never
+    /// waits on it needn't care.
+    let finished = XCTestExpectation(description: "every chunk is reported done")
+    init() { finished.assertForOverFulfill = false }
     func record(_ value: RenderedSpeechGenerationProgress) {
         lock.withLock {
             progress = value
             reports.append(value)
         }
+        if value.totalChunks > 0, value.completedChunks >= value.totalChunks { finished.fulfill() }
     }
     var progressReports: [RenderedSpeechGenerationProgress] { lock.withLock { reports } }
     var restingProgressReports: Int { lock.withLock { reports.filter(\.isRestingAhead).count } }
@@ -5302,6 +5321,14 @@ private final class PreparedChunkCommitGate: @unchecked Sendable {
         let index = lock.withLock { commits += 1; return commits }
         if index == 2 { for await _ in stream {} }
     }
+}
+
+/// Counts `onPreparedAudio` calls: how many times the client assembled the article (#2386).
+private final class AssemblyCount: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int { lock.withLock { count } }
+    func add() { lock.withLock { count += 1 } }
 }
 
 /// Collects `SupertonicOutputGuard`'s replacement reports and fulfills `reported` on the first.

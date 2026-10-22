@@ -1,7 +1,8 @@
 #!/bin/sh
 # Copies the app's current PDF extractor, speech normalizer and I13 model
 # (StructuredDocument.swift: builder and I14 projection), bibliography extractor and
-# wrapped-heading rule (PDFWrappedHeading.swift) into the CLI.
+# wrapped-heading rule (PDFWrappedHeading.swift) and glued-text spacer
+# (PDFWordSpacing.swift) into the CLI.
 #
 # The extractor imports UIKit only for UIFont; on macOS the same PDFKit calls
 # return NSFont, so the copy imports AppKit and UIKitShim.swift maps the one
@@ -20,12 +21,14 @@ normalizer="$repo/Packages/SessionKit/Sources/SessionKit/SpeechTextNormalizer.sw
 structured="$repo/Packages/SessionKit/Sources/SessionKit/StructuredDocument.swift"
 bibliography="$repo/Packages/SessionKit/Sources/SessionKit/BibliographicReferenceExtractor.swift"
 wrappedHeading="$repo/Packages/SessionKit/Sources/SessionKit/PDFWrappedHeading.swift"
+wordSpacing="$repo/Packages/SessionKit/Sources/SessionKit/PDFWordSpacing.swift"
 
 sed -e 's/^import UIKit$/import AppKit/' -e '/^import SessionKit$/d' "$extractor" > "$out/PDFStructuredTextExtractor.swift"
 cp "$normalizer" "$out/SpeechTextNormalizer.swift"
 cp "$structured" "$out/StructuredDocument.swift"
 cp "$bibliography" "$out/BibliographicReferenceExtractor.swift"
 cp "$wrappedHeading" "$out/PDFWrappedHeading.swift"
+cp "$wordSpacing" "$out/PDFWordSpacing.swift"
 
 # Fingerprint what was copied, so every output says which extractor made it.
 commit=$(git -C "$repo" rev-parse --short HEAD)

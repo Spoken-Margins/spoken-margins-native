@@ -4,7 +4,7 @@
   Disk relief: every 15 minutes, check free space; below 50 GiB free, free space until 70 GiB
   (ops/disk/README.md). The lane folder's size cap and evidence age-out run every time. Not installed
   by the PR. Install steps are in the README.
-  It runs the main checkout's copy, which the hourly Mac tick fast-forwards to origin/next.
+  It runs the main checkout's copy, which the hourly Mac tick fast-forwards to origin/main.
 -->
 <plist version="1.0">
 <dict>
