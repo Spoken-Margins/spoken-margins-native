@@ -19,6 +19,8 @@ final class MarginCaptureWatcher {
     private var reading: () -> RecordingCaptureReading? = { nil }
     private var restart: () throws -> Void = {}
     private var changed: HealthChange = { _, _ in }
+    private var holdRecorder: () -> Void = {}
+    private var releaseRecorder: (_ afterSeconds: TimeInterval) -> Void = { _ in }
     private var pollTask: Task<Void, Never>?
     private var lastReported: (health: MarginCaptureSupervisor.Health, restarts: Int, keepable: Bool)?
     private let autoPoll: Bool
@@ -26,6 +28,10 @@ final class MarginCaptureWatcher {
     private var lastRouteChangeAtMs: Int?
     private var routeObserver: NSObjectProtocol?
     private let notificationCenter: NotificationCenter
+    private let readyCue: MarginReadyCuePlaying
+    private var readyCueGate = MarginReadyCueGate()
+    /// What the ready cue did for this recording ("played", "skipped:..."), nil until capture is verified (#1594).
+    private(set) var readyCueResult: String?
     /// Milliseconds on a clock that only moves forward. Tests replace it.
     var nowMs: () -> Int
 
@@ -33,10 +39,12 @@ final class MarginCaptureWatcher {
     init(
         autoPoll: Bool = true,
         notificationCenter: NotificationCenter = .default,
+        readyCue: MarginReadyCuePlaying = MarginReadyCuePlayer(),
         nowMs: @escaping () -> Int = { Int((ProcessInfo.processInfo.systemUptime * 1_000).rounded()) }
     ) {
         self.autoPoll = autoPoll
         self.notificationCenter = notificationCenter
+        self.readyCue = readyCue
         self.nowMs = nowMs
     }
 
@@ -61,17 +69,23 @@ final class MarginCaptureWatcher {
     func start(
         reading: @escaping () -> RecordingCaptureReading?,
         restart: @escaping () throws -> Void,
-        changed: @escaping HealthChange
+        changed: @escaping HealthChange,
+        holdRecorder: @escaping () -> Void = {},
+        releaseRecorder: @escaping (_ afterSeconds: TimeInterval) -> Void = { _ in }
     ) {
         stop()
         self.reading = reading
         self.restart = restart
         self.changed = changed
+        self.holdRecorder = holdRecorder
+        self.releaseRecorder = releaseRecorder
         startedAtMs = nowMs()
         supervisor = MarginCaptureSupervisor(beganAtMs: startedAtMs)
         lastReported = nil
         finalRecorded = false
         lastRouteChangeAtMs = nil
+        readyCueGate = MarginReadyCueGate()
+        readyCueResult = nil
         observeRouteChanges()
         tick()
         guard autoPoll else { return }
@@ -92,7 +106,20 @@ final class MarginCaptureWatcher {
             restartNow(&current)
         }
         supervisor = current
+        cueIfCaptureVerified(current)
         report()
+    }
+
+    /// The ready cue (#1594): once per recording, and only after the recorder has really taken audio in, so the
+    /// listener hears it exactly when speaking is safe. It sounds before `changed` runs, so the diagnostics line
+    /// written for that health change can say what it did. The recorder is held still while the cue plays, because on
+    /// the built-in speaker it would hear the cue and the cue would open the saved Margin.
+    private func cueIfCaptureVerified(_ current: MarginCaptureSupervisor) {
+        guard readyCueGate.shouldCue(health: current.health, capturedMs: current.capturedMs) else { return }
+        holdRecorder()
+        let result = readyCue.playReadyCue()
+        readyCueResult = result
+        releaseRecorder(result == "played" ? MarginReadyCueHold.seconds : 0)
     }
 
     /// The listener asked to try again after the capture failed: restart now, then judge afresh.
@@ -112,6 +139,7 @@ final class MarginCaptureWatcher {
         current.listenerRetry(nowMs: nowMs())
         restartNow(&current)
         supervisor = current
+        cueIfCaptureVerified(current)
         report()
         return true
     }
@@ -172,6 +200,8 @@ final class MarginCaptureWatcher {
         reading = { nil }
         restart = {}
         changed = { _, _ in }
+        holdRecorder = {}
+        releaseRecorder = { _ in }
     }
 
     private func report() {
