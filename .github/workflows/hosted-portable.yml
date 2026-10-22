@@ -152,3 +152,45 @@ jobs:
         run: |
           seconds=$(( $(date +%s) - STARTED ))
           echo "hosted fast SessionKit core took ${seconds}s on xcode-27." | tee -a "$GITHUB_STEP_SUMMARY"
+
+  owner-tap-alert:
+    # When both jobs above finish, tell the owner's phone if this PR now waits only for his merge tap (#2047, #2442):
+    # scripts/owner_tap_alert.py posts one github-actions[bot] comment that @mentions him, once per head, when the
+    # PR touches .github/ or scripts/lane-runner.py and is ready. It moved here from linux-t1.yml (retired, #2442),
+    # whose one VPS runner held it in a queue for an hour or more. With LANE_HOSTED_FAST off the two jobs above are
+    # skipped and this runs at once; another workflow's alert job or the owner-tap-check label then decides. It runs
+    # on its own GitHub-hosted machine, apart from the jobs that run PR code. The script comes from the PR's base with
+    # no credentials kept, never from the PR, and this is the only job here whose token may comment. A base that
+    # doesn't have the script yet skips quietly. Pull requests from this repository only.
+    name: owner-tap-alert
+    needs: [portable, sessionkit]
+    if: always() && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write
+      checks: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/owner_tap_alert.py
+            scripts/comment_trust.py
+            scripts/trunk.py
+          sparse-checkout-cone-mode: false
+      - name: Alert the owner if this PR is ready for his merge tap
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ ! -f scripts/owner_tap_alert.py ]; then
+            echo "The base has no scripts/owner_tap_alert.py yet; nothing to check."
+            exit 0
+          fi
+          python3 scripts/owner_tap_alert.py --pr "$PR"

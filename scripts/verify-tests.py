@@ -144,6 +144,24 @@ def narrow_selectors(selectors, planned, available):
     return narrowed
 
 
+def t3_selection(only, plan_name, root=None):
+    """The -only-testing selectors for a T3 request of `only` (Class or Class/method) in a test plan, the plan's
+    tests, and the tests the run must complete. A selector that names nothing in the plan is refused, so a
+    misspelled name fails before anything builds instead of running nothing (#2138). Shared with the hosted Mac
+    (scripts/hosted_t3_check.py), so both judge a T3 by one rule."""
+    root = ROOT if root is None else root
+    selectors = [s if s.startswith((f'{APP_TEST_TARGET}/', f'{UI_TEST_TARGET}/')) else f'{APP_TEST_TARGET}/{s}'
+                 for s in only]
+    planned = plan_tests(root, plan_name)
+    unmatched = [s for s in selectors if not any(selected(test, s) for test in planned)]
+    if unmatched:
+        raise RuntimeError(f'Not in the {plan_name} test plan: {", ".join(unmatched)}')
+    selectors = narrow_selectors(selectors, planned,
+                                 {f'{APP_TEST_TARGET}/{test}' for test in target_tests(root, APP_TEST_TARGET)})
+    expected = {test for test in planned if not selectors or any(selected(test, s) for s in selectors)}
+    return selectors, planned, expected
+
+
 def dedicated_simulator(devices, ios=None):
     """App-hosted tests write into the app's container, so they never share the journey simulator (#164).
 
@@ -1556,14 +1574,7 @@ class Run:
             raise RuntimeError('Inputs changed before Xcode verification')
         scheme, name, timeout = PLANS[plan]
         # T3 runs a few test classes or methods of a plan. Each selector must name tests in the plan.
-        selectors = [s if s.startswith((f'{APP_TEST_TARGET}/', f'{UI_TEST_TARGET}/')) else f'{APP_TEST_TARGET}/{s}'
-                     for s in only]
-        planned = plan_tests(ROOT, name)
-        unmatched = [s for s in selectors if not any(selected(test, s) for test in planned)]
-        if unmatched:
-            raise RuntimeError(f'Not in the {name} test plan: {", ".join(unmatched)}')
-        selectors = narrow_selectors(selectors, planned,
-                                     {f'{APP_TEST_TARGET}/{test}' for test in target_tests(ROOT, APP_TEST_TARGET)})
+        selectors, planned, expected = t3_selection(only, name)
         if selectors:
             self.manifest['only_testing'] = selectors
         if any(test.endswith(SUPERTONIC_APP_MODEL_TEST)
@@ -1626,7 +1637,6 @@ class Run:
                 bundle_id = plistlib.loads((app / 'Info.plist').read_bytes())['CFBundleIdentifier']
                 subprocess.run(['xcrun', 'simctl', 'uninstall', chosen['udid'], bundle_id],
                                cwd=ROOT, capture_output=True, timeout=60)
-            expected = {test for test in planned if not selectors or any(selected(test, s) for s in selectors)}
             on_probation = None if probation is None else {
                 test for test in expected if any(selected(test, s) for s in probation)}
             result_bundle = self.output / 'tests.xcresult'
