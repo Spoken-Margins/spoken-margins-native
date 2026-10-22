@@ -109,11 +109,22 @@ public struct LiveSessionMargin: Codable, Equatable, Sendable, Identifiable {
     /// A source position the listener slid to by hand while taking the Margin. It is never moved
     /// automatically; a transcript anchor that disagrees is only offered as a suggestion.
     public var listenerPositionMs: Int?
+    /// A spoken Margin's recording (#2487), named the way the app's Margin recorder names it
+    /// ("SpokenMargins/interjections/…"). `text` then holds its on-device transcript, empty until it is transcribed.
+    /// Nil for a written Margin or a Mark. Optional, so a session saved by an earlier build still reads.
+    public var audioPath: String?
+    /// How long the spoken Margin is.
+    public var durationMs: Int?
+    /// Where it was spoken: "phone" or "watch". Nil for a written Margin or a Mark.
+    public var spokenOn: String?
 
     public init(
         id: String, text: String, markedAt: Date, sessionOffsetMs: Int = 0, whereNote: String? = nil, isBlindMark: Bool = false,
-        listenerPositionMs: Int? = nil
+        listenerPositionMs: Int? = nil, audioPath: String? = nil, durationMs: Int? = nil, spokenOn: String? = nil
     ) {
+        self.audioPath = audioPath
+        self.durationMs = durationMs
+        self.spokenOn = spokenOn
         self.listenerPositionMs = listenerPositionMs
         self.id = id
         self.text = text
@@ -126,7 +137,16 @@ public struct LiveSessionMargin: Codable, Equatable, Sendable, Identifiable {
     /// What the saved Margin says: the listener's words, or "Mark" for a blind mark left blank.
     public var savedText: String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Mark" : trimmed
+        guard trimmed.isEmpty else { return trimmed }
+        return isSpoken ? "Spoken Margin" : "Mark"
+    }
+
+    public var isSpoken: Bool { audioPath != nil }
+
+    /// The spoken Margin's transcript, when it has one.
+    public var spokenTranscript: String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return isSpoken && !trimmed.isEmpty ? trimmed : nil
     }
 }
 
@@ -231,6 +251,9 @@ public enum LiveSessionAlignment {
         public var matchText: String?
         public var matchSpeaker: String?
         public var matchScore: Double?
+        /// A spoken Margin's recording and transcript (#2487); the placer writes it as a spoken Margin.
+        public var audioPath: String?
+        public var transcript: String?
 
         public init(id: String, text: String, offsetMs: Int, clamp: Clamp? = nil, charOffset: Int? = nil) {
             self.id = id
@@ -277,7 +300,10 @@ public enum LiveSessionAlignment {
                     offset = durationMs - 1
                     clamp = .afterEnd
                 }
-                return Placed(id: margin.id, text: margin.savedText, offsetMs: offset, clamp: clamp)
+                var placed = Placed(id: margin.id, text: margin.savedText, offsetMs: offset, clamp: clamp)
+                placed.audioPath = margin.audioPath
+                placed.transcript = margin.spokenTranscript
+                return placed
             }
     }
 }

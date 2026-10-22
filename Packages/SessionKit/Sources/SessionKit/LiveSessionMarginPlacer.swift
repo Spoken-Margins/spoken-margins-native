@@ -8,6 +8,11 @@ import Foundation
 /// with a second engine (no audio, no recorder), the way `StoredSessionMargin` does for a shortcut: it moves the
 /// saved place to each Margin's time, writes the Margin there, and leaves the place at the start. Packets,
 /// exports and the player treat the result like any audio item's Margins, and no storage changes.
+///
+/// A spoken Margin (#2487: said on the phone or the Watch during the session) goes through the engine's own spoken
+/// path, `beginInterjection` and `finishInterjection`, with a recorder that hands back the file already recorded.
+/// It is stored like any spoken Margin, with its transcript when the session already has one; without one it waits
+/// for the app's ordinary Margin transcription.
 public enum LiveSessionMarginPlacer {
     public enum Failure: Error, Equatable {
         case itemNotFound
@@ -51,6 +56,18 @@ public enum LiveSessionMarginPlacer {
             repository: repository,
             now: now
         )
+        let spokenEngine = written.contains { $0.audioPath != nil } ? PrerecordedMarginRecorder() : nil
+        let spoken = spokenEngine.map { recorder in
+            SessionEngine(
+                profile: RuntimeCapabilityProfile(
+                    id: "live-session-spoken-margin", displayName: "Live session spoken Margin",
+                    capabilities: ["interjection": ["record_audio"]]
+                ),
+                repository: repository,
+                recorder: recorder,
+                now: now
+            )
+        }
         var saved: [Interjection] = []
         for margin in written {
             let time = durationMs.map { min(max(0, margin.offsetMs), max(0, $0 - 1)) } ?? max(0, margin.offsetMs)
@@ -61,6 +78,12 @@ public enum LiveSessionMarginPlacer {
                 current.position = Position(charOffset: 0, mediaTimeMs: time)
             }
             try repository.saveSession(current)
+            if let audioPath = margin.audioPath, let spoken, let recorder = spokenEngine {
+                if let interjection = try placeSpoken(margin, audioPath: audioPath, sessionId: session.id, engine: spoken, recorder: recorder, repository: repository) {
+                    saved.append(interjection)
+                }
+                continue
+            }
             try engine.inspectSession(sessionId: session.id)
             let capture = try engine.beginWrittenInterjection()
             do {
@@ -82,4 +105,45 @@ public enum LiveSessionMarginPlacer {
         }
         return saved
     }
+
+    private static func placeSpoken(
+        _ margin: LiveSessionAlignment.Placed,
+        audioPath: String,
+        sessionId: String,
+        engine: SessionEngine,
+        recorder: PrerecordedMarginRecorder,
+        repository: SessionRepository
+    ) throws -> Interjection? {
+        recorder.audioPath = audioPath
+        try engine.inspectSession(sessionId: sessionId)
+        let before = Set(try repository.loadInterjections(sessionId: sessionId).map(\.id))
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: audioPath, resumesSource: false)
+        guard var interjection = try repository.loadInterjections(sessionId: sessionId)
+            .first(where: { !before.contains($0.id) && $0.audioPath == audioPath }) else { return nil }
+        if let transcript = margin.transcript {
+            interjection.transcript = transcript
+            interjection.displayText = transcript
+            interjection.transcriptionStatus = "transcribed"
+            try repository.saveInterjection(interjection)
+        }
+        return interjection
+    }
+}
+
+/// The recorder for a spoken Margin that was recorded before it is placed: it records nothing and returns the
+/// file it was given.
+final class PrerecordedMarginRecorder: RecordingClient, @unchecked Sendable {
+    var audioPath: String?
+
+    func beginRecording() throws {
+        guard audioPath != nil else { throw SessionKitError.invalidCommandForState("prerecorded_margin_missing") }
+    }
+
+    func finishRecording(audioRef: String?) throws -> String {
+        guard let path = audioRef ?? audioPath else { throw SessionKitError.invalidCommandForState("prerecorded_margin_missing") }
+        return path
+    }
+
+    func cancelRecording() throws {}
 }
