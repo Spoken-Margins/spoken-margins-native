@@ -64,6 +64,7 @@ final class PDFWordSpacingTests: XCTestCase {
         XCTAssertEqual(try kittenSpacer(context: Array(repeating: "B. subtilis", count: 4)).respaced("Here,Bacillussubtilisis Bacillus subtilis"),
                        "Here, Bacillus subtilis is Bacillus subtilis")
         XCTAssertEqual(spacer.respaced("theMWDsinthesample"), "the MWDs in the sample")
+        XCTAssertEqual(spacer.respaced("meetsBGI’sinternalhigh-confidence threshold"), "meets BGI’s internal high-confidence threshold")
         XCTAssertEqual(spacer.respaced("nonmetal, acetal, Sheetal and H2SO4 in 2019Baumol, Kwaetal.,2025"),
                        "nonmetal, acetal, Sheetal and H2SO4 in 2019 Baumol, Kwa et al., 2025")
         // E-mail addresses are not glued prose.

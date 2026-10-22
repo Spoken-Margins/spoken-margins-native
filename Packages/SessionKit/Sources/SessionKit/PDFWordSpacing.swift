@@ -457,10 +457,12 @@ public struct PDFWordSpacer {
             let seen = Double(documentCounts[Self.key(Array(letters[range]))] ?? 0)
             return seen >= 2 ? log2(tokenCount / seen) : unknownCost(printed.count)
         }
-        // An acronym's plural ("MWDs") is one piece, so "theMWDsinthesample" isn't "MWD sin".
+        // An acronym's plural or possessive ("MWDs", "BGI’s") is one piece, so
+        // "theMWDsinthesample" isn't "MWD sin".
         if range.count >= 3, !afterLower, letters[range.upperBound - 1] == "s",
            cased.dropLast().allSatisfy({ cases.isUpper[$0] }) {
-            return wordCost(Array(letters[range.dropLast()]), isLower: false, isUpper: true)
+            let stem = Array(letters[range.dropLast()])
+            return wordCost(stem.last == "’" || stem.last == "'" ? Array(stem.dropLast()) : stem, isLower: false, isUpper: true)
         }
         guard isLower || isUpper && !afterLower || (isCapitalised && afterUpper) else { return .infinity }
         // "A" or "I" cut from an acronym ("AI" as "A I") isn't a word.
