@@ -36,3 +36,6 @@ artifacts/
 
 # Scratch output; never tracked (#1383).
 /tmp/
+
+# The signing team for device builds; Config/Local.xcconfig.example says what goes in it (#1841).
+Config/Local.xcconfig

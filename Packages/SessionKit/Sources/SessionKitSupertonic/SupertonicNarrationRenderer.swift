@@ -103,7 +103,7 @@ public enum SupertonicNarrationError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .missingAsset(let name):
-            return "Bundled Supertonic asset is missing: \(name)."
+            return "Supertonic isn’t downloaded (\(name) is missing). Download it in Settings › Voices."
         case .emptyText:
             return "The text to speak is empty."
         case .invalidSynthesisSteps(let steps):

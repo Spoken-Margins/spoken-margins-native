@@ -22,12 +22,12 @@ Install git-lfs and turn it on once, before cloning:
 
 ```sh
 git lfs install
-git clone https://github.com/uncomposed/spoken-margins-native.git
+git clone https://github.com/Spoken-Margins/spoken-margins-native.git
 cd spoken-margins-native
 git lfs pull
 ```
 
-If you cloned first, `git lfs pull` fills in the model files afterwards. Without it the files under `App/SpokenMarginsApp/Resources/Supertonic/onnx/` and `App/SpokenMarginsApp/Resources/Kitten/` are tiny text stubs, and `scripts/validate-contracts.py` fails on them.
+If you cloned first, `git lfs pull` fills in the model files afterwards. Without it the files under `App/SpokenMarginsApp/Resources/Kitten/` are tiny text stubs, and the app's bundled Kitten voice won't load. Supertonic's model isn't in the repository: listeners download it in Settings › Voices, and `scripts/voice-catalog fetch supertonic-3-int8` puts a copy in `artifacts/` for the tests that render with it (#1820).
 
 ## Python tools and contract checks
 
@@ -82,13 +82,14 @@ The hosted CI job's device build uses the same scheme and `CODE_SIGNING_ALLOWED=
 
 ## Run on your own iPhone
 
-`project.yml` names the owner's Apple developer team and bundle identifiers, so a device build with your team needs more than a team override. Until the team moves to a local config (#1841), do all of this on your own copy:
+The signing team is not in the repository. A device build reads it from `Config/Local.xcconfig`, which is git-ignored:
 
-1. In `project.yml`, replace `DEVELOPMENT_TEAM` and every `com.spokenmargins.native` bundle identifier (app, widget, Safari extension, share extension) with your own, and the App Group `group.com.spokenmargins.native` in every file that names it. List them with `grep -rl group.com.spokenmargins.native App`; they are the `.entitlements` files and some Swift files.
-2. Remove the `applinks:` associated domain from the app's entitlements. Universal links belong to the owner's domain.
-3. Run `xcodegen generate`, open `SpokenMarginsNative.xcodeproj` in Xcode, pick your iPhone and run.
+1. Copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig` and put your team ID on its `DEVELOPMENT_TEAM` line.
+2. The bundle identifiers are still the owner's, and your team can't sign them. In `project.yml`, replace every `com.spokenmargins.native` bundle identifier (app, widget, Safari extension, share extension) with your own, and the App Group `group.com.spokenmargins.native` in every file that names it. List them with `grep -rl group.com.spokenmargins.native App`; they are the `.entitlements` files and some Swift files.
+3. Remove the `applinks:` associated domain from the app's entitlements. Universal links belong to the owner's domain.
+4. Run `xcodegen generate`, open `SpokenMarginsNative.xcodeproj` in Xcode, pick your iPhone and run.
 
-Do not commit those edits to a pull request.
+Do not commit the edits in steps 2 and 3 to a pull request.
 
 ## What does not run without the owner's services
 

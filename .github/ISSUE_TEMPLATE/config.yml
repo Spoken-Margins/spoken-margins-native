@@ -1,8 +1,8 @@
 blank_issues_enabled: true
 contact_links:
   - name: Report a security vulnerability
-    url: https://github.com/uncomposed/spoken-margins-native/security/policy
+    url: https://github.com/Spoken-Margins/spoken-margins-native/security/policy
     about: Please don't open a public issue for a vulnerability. Follow the security policy instead.
   - name: Before you open a pull request
-    url: https://github.com/uncomposed/spoken-margins-native/blob/main/CONTRIBUTING.md#who-can-open-pull-requests
+    url: https://github.com/Spoken-Margins/spoken-margins-native/blob/main/CONTRIBUTING.md#who-can-open-pull-requests
     about: For now only collaborators open pull requests. Ideas and bug reports from anyone belong in issues.

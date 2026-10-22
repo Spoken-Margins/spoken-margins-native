@@ -90,6 +90,18 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let loadedResources = model.skimResourceLoadCount
         for _ in 0..<40 { model.snapshot.currentMediaTimeMs = model.snapshot.currentMediaTimeMs }
         XCTAssertEqual(model.skimResourceLoadCount, loadedResources, "Progress updates must reuse the loaded map and asset metadata")
+        // #2184: reloading the item (a pause, a saved position, a Margin) leaves the map alone, so Skim keeps what it loaded.
+        for _ in 0..<3 { model.refreshSelectedItem(); model.snapshot.currentMediaTimeMs = model.snapshot.currentMediaTimeMs }
+        XCTAssertEqual(model.skimResourceLoadCount, loadedResources, "Item reloads must reuse the loaded map and asset metadata")
+        // #2255: reopening the playing mapped item, every summary saved, used to reload Skim once per scene and once more
+        // on the main thread; a 77-minute episode froze for 20 s. The pass now reads once, off main, and Skim keeps what it has.
+        model.openItem(id: item.id)
+        XCTAssertNotNil(model.preparingLocalAudioMapItems[item.id], "precondition: reopening starts a summary pass")
+        for _ in 0..<250 where model.preparingLocalAudioMapItems[item.id] != nil { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertNil(model.preparingLocalAudioMapItems[item.id], "the summary pass must finish")
+        XCTAssertEqual(model.diagnostics["localAudioSkim:\(item.id)"], "ready")
+        XCTAssertEqual(model.skimResourceLoadCount, loadedResources, "Reopening with every summary saved must not reload Skim's map and assets")
+        XCTAssertTrue(model.snapshot.canSkimForward)
         // Next chapter reads the summary of the chapter being left, then lands at the next chapter;
         // a second press skips the summary instead of queueing another (#569).
         XCTAssertEqual(model.nextPlaybackMediaChapter?.startMs, 5_000)
@@ -217,6 +229,39 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         XCTAssertEqual(model.skimForwardDestinationMs, 5_000)
         model.skimForward()
         XCTAssertEqual(model.snapshot.skimBridgeState?.destinationMediaTimeMs, 5_000, "Skim heads for the friend's next scene")
+        model.pause()
+    }
+
+    /// #2185: on a mapped episode whose summary audio was gone (never rendered, or rendered in a voice since changed),
+    /// Skim was not offered: the slot silently became Next chapter and a Live Activity Skim did nothing. A scene with a
+    /// summary is skimmable now: the press prepares the summary in the current voice, then plays it, and logs both.
+    func testSkimPreparesAMissingSummaryInTheCurrentVoiceThenPlaysIt() async throws {
+        let fixture = try await importSharedPodcastMap(senderEdition: .sameAsRecipient, listenerMap: .none, summaries: true)
+        defer { fixture.cleanup() }
+        let model = fixture.model
+        model.openItem(id: fixture.itemId)
+        func bridges() -> [OwnedOfflineAsset] {
+            ((try? fixture.store.loadOwnedOfflineAssets()) ?? [])
+                .filter { $0.itemId == fixture.itemId && $0.category == .summaryBridge && $0.integrity == .valid }
+        }
+        for _ in 0..<500 where bridges().count < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(bridges().count, 2, "precondition: the placement rendered both summaries")
+        model.startItem(id: fixture.itemId)
+        let player = try XCTUnwrap(fixture.sourcePlayer)
+        _ = try await waitForSourceProgress(model: model, player: player, toMs: 200)
+        // The summaries' audio is gone, as after a voice change: the map stays, the audio doesn't.
+        for asset in bridges() { try fixture.store.deleteOwnedOfflineAsset(id: asset.id) }
+        model.updateSkimAvailability()
+        XCTAssertTrue(model.snapshot.canSkimForward, "a scene with a summary can be skimmed before its audio exists")
+        XCTAssertTrue(model.showsSkimRow)
+        XCTAssertEqual(model.chapterRowForwardControl, .skim, "the slot stays Skim, not a silent Next chapter")
+
+        model.skimForward()
+        for _ in 0..<500 where model.snapshot.skimBridgeState == nil { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(model.snapshot.skimBridgeState?.destinationMediaTimeMs, 5_000, "the prepared summary plays, heading for the next scene")
+        XCTAssertGreaterThanOrEqual(bridges().count, 1, "the summary was prepared again, in the current voice")
+        let outcomes = model.playbackEventRecording.events.filter { $0.kind == "skim.press" }.compactMap { $0.fields["outcome"] }
+        XCTAssertEqual(Array(outcomes.suffix(2)), ["preparing_summary", "played_summary"])
         model.pause()
     }
 

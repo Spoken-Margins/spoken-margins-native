@@ -25,7 +25,9 @@ name: linux-t1
 
 on:
   pull_request:
-    branches: [next]
+    branches: [next, main]  # either trunk (#1492); the checks read the PR's own base
+    # Docs-only PRs are T0 (scripts/test-scope.py): the lane runs nothing for them and never waits for these checks.
+    paths-ignore: ['**/*.md', 'docs/**', 'research/**', 'Design/**', 'references/**', 'Site/**', 'Contracts/docs/**']
 
 permissions:
   contents: read
@@ -128,6 +130,7 @@ jobs:
           sparse-checkout: |
             scripts/owner_tap_alert.py
             scripts/comment_trust.py
+            scripts/trunk.py
           sparse-checkout-cone-mode: false
       - name: Alert the owner if this PR is ready for his merge tap
         env:

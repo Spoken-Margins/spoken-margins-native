@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Hosted merge-conflict check for armed PRs, before they wait for a Mac (#683).
 
-A conflict with `next` is otherwise found only when the PR's job reaches a Mac runner: #604 passed T2, waited
+A conflict with the base branch is otherwise found only when the PR's job reaches a Mac runner: #604 passed T2, waited
 three hours in the queue, then ended in a 0-second job saying "does not merge cleanly into next". This script
 runs on the VPS runner (.github/workflows/lane-conflicts.yml). For every open PR into the base branch that
 carries `automerge` or `lane:queued`, it tries `git merge --no-commit --no-ff` of the PR head onto the base tip
@@ -262,12 +262,15 @@ def sweep(api, remote, base, workdir, token=None, only=None, log=print):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('--repo', default=os.environ.get('GH_REPO'), help='OWNER/NAME')
-    parser.add_argument('--base', default='next')
+    parser.add_argument('--base', help='the base branch (default: the trunk)')
     parser.add_argument('--pr', type=int, help='check only this PR')
     parser.add_argument('--remote', help='clone URL (default: the repository on the GitHub server)')
     parser.add_argument('--workdir', default=os.environ.get('SM_LANE_CONFLICTS_DIR')
                         or str(Path.home() / '.cache' / 'sm-lane-conflicts'))
     args = parser.parse_args(argv)
+    if args.base is None:  # #1492: the trunk (scripts/trunk.py)
+        from trunk import trunk_branch
+        args.base = trunk_branch()
     if not args.repo:
         parser.error('--repo or GH_REPO is required')
     remote = args.remote or f'{os.environ.get("GITHUB_SERVER_URL", "https://github.com")}/{args.repo}.git'

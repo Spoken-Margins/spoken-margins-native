@@ -25,7 +25,7 @@ name: owner-tap-alert
 
 on:
   pull_request:
-    branches: [next]
+    branches: [next, main]  # either trunk (#1492); the checks read the PR's own base
     # Not opened or synchronize: the head's checks have only just started, and their own last job decides.
     types: [reopened, ready_for_review, labeled]
     paths: ['.github/**', 'scripts/lane-runner.py']
@@ -33,7 +33,7 @@ on:
   workflow_dispatch:
     inputs:
       pr:
-        description: 'Check only this PR (default: every open PR into next)'
+        description: 'Check only this PR (default: every open PR into the trunk)'
         required: false
         type: string
 
@@ -68,11 +68,13 @@ jobs:
           sparse-checkout: |
             scripts/owner_tap_alert.py
             scripts/comment_trust.py
+            scripts/trunk.py
           sparse-checkout-cone-mode: false
       - name: Alert the owner about PRs ready for his merge tap
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
           ONLY_PR: ${{ inputs.pr || github.event.pull_request.number }}
           CLEAR: ${{ github.event.label.name == 'owner-tap-check' && 'owner-tap-check' || '' }}
         run: |

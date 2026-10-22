@@ -22,7 +22,7 @@
         "AudioLoopbackPlaybackTests",
         "MediaPlaybackInterruptionTests",
         "MixedPlaybackAudioSessionTests",
-        "SupertonicSpeechTests/testBundledRendererSynthesizesJamesAndLilyAndReusesSessions()"
+        "SupertonicSpeechTests/testDownloadedRendererSynthesizesJamesAndLilyAndReusesSessions()"
       ],
       "parallelizable": false
     }

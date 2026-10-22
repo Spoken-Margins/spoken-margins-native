@@ -24,7 +24,8 @@ name: hosted-integration
 
 on:
   push:
-    branches: [next]
+    # Both trunks (#1492); the job runs only for the one SM_TRUNK names.
+    branches: [next, main]
   workflow_dispatch:
 
 permissions:
@@ -44,8 +45,8 @@ env:
 
 jobs:
   integration:
-    name: 'integration run on next'
-    if: vars.LANE_HOSTED_APP == 'on'
+    name: 'integration run on ${{ github.ref_name }}'
+    if: vars.LANE_HOSTED_APP == 'on' && github.ref_name == (vars.SM_TRUNK || 'main')
     runs-on: xcode-27
     # The Mac takes about 18 min; hosted builds are 2-3.5x slower (hosted-app-macos.yml), plus re-runs and journeys.
     timeout-minutes: 150
@@ -95,6 +96,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SM_INTEGRATION_IOS: '27'
+          SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
           SHA: ${{ github.sha }}
         run: python3 ops/testdesk/sm_integration_run.py --hosted --sha "$SHA"
 

@@ -8,7 +8,7 @@
 
 Exit 1 when there is no matching build. The builds come from the integration run (scripts/sim_builds.py).
 While it runs on a GitHub-hosted Mac (LANE_HOSTED_APP), nothing lands here by itself: with no local build of
-the commit asked for (or, with no --for, none of origin/next's tip as last fetched), this downloads the hosted
+the commit asked for (or, with no --for, none of the trunk's tip as last fetched), this downloads the hosted
 run's `sim-app-<sha>` artifact with gh (about 290 MB zipped, 690 MB installed on 2026-10-18; kept 2 days) and keeps it like a local one.
 Install one with: xcrun simctl install <udid> "$(scripts/sim-build-latest | head -1)"
 """
@@ -23,6 +23,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sim_builds  # noqa: E402
+from trunk import trunk_branch  # noqa: E402  (#1492)
 
 
 def behind(sha: str, branch: str, cwd: Path) -> int | None:
@@ -67,14 +68,14 @@ def main(argv=None) -> int:
         if args.sha and not build:
             build = download(folder, args.sha)
         elif not args.sha:
-            head = tip('next', Path.cwd())
+            head = tip(trunk_branch(), Path.cwd())
             if head and not (build and build['sha'] == head):
                 build = download(folder, head) or build or download(folder, None)
     if not build:
         what = f'commit {args.sha}' if args.sha else 'any commit'
         print(f'No ready-made simulator build of {what} in {folder}; build it yourself.', file=sys.stderr)
         return 1
-    lag = behind(build['sha'], build.get('branch', 'next'), Path.cwd())
+    lag = behind(build['sha'], build.get('branch') or trunk_branch(), Path.cwd())
     if args.json:
         print(json.dumps({'app': build['app'], 'sha': build['sha'], 'branch': build.get('branch'),
                           'built_at': build.get('built_at'), 'size_bytes': build.get('size_bytes'),
@@ -83,7 +84,7 @@ def main(argv=None) -> int:
     print(build['app'])
     print(build['sha'])
     if lag is not None:
-        print(f"{lag} commit(s) behind origin/{build.get('branch', 'next')} as last fetched here", file=sys.stderr)
+        print(f"{lag} commit(s) behind origin/{build.get('branch') or trunk_branch()} as last fetched here", file=sys.stderr)
     return 0
 
 

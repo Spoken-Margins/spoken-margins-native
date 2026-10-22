@@ -521,6 +521,17 @@ class ReleasingClaims(unittest.TestCase):
         comment = next(w[2]['body'] for w in writes if w[1].endswith('/comments'))
         self.assertIn('Not set back to `ready`', comment)
 
+    def test_a_validation_hold_label_also_keeps_a_released_claim_off_ready(self):
+        for hold in ('validate-by-use', 'agent-verify', 'status: needs-human-validation'):
+            with self.subTest(hold=hold):
+                router = Router()
+                router.on(r'^issues/60/comments\?since', [])
+                router.on(r'^issues/60$', {'number': 60, 'state': 'open',
+                                           'labels': [{'name': 'in-progress'}, {'name': hold}]})
+                self.assertEqual(sweep.release(router, issue(60, ['in-progress', hold]), 'test', NOW), 'released')
+                self.assertNotIn(('POST', 'issues/60/labels', {'labels': ['ready']}), router.writes)
+                self.assertIn(('DELETE', 'issues/60/labels/in-progress', None), router.writes)
+
     def test_a_comment_that_arrives_before_the_write_stops_the_release(self):
         self.router.on(r'^issues/50/comments\?since', [note(50, 'back at it', at(minutes=1))])
         _, text = self.run_main('--apply')

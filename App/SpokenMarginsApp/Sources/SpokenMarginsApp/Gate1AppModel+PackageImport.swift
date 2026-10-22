@@ -19,6 +19,7 @@ extension Gate1AppModel {
         appVersion: String = KeptPackageNotices.currentAppVersion,
         now: Date = Date()
     ) throws {
+        packageImport.sweepOrphanedFoldersOnce()
         let payloadIDs = try packageStore.pendingPayloadIDs()
         diagnostics["pendingSpokenMarginsPackages"] = "\(payloadIDs.count)"
         for payloadID in payloadIDs where spokenMarginsPackageImportReview == nil {
@@ -157,32 +158,72 @@ extension Gate1AppModel {
         }
     }
 
+    /// Prepares the summary audio Skim plays for each scene of a mapped item; every open runs it. The map and the saved
+    /// summaries are read once, off the main thread, and only scenes whose summary isn't saved are prepared (#2255).
+    /// This used to read the whole asset table and reload Skim once per scene on the main thread, even with every
+    /// summary saved, and a 77-minute episode froze the app for 20 s on open.
     func prepareImportedLocalAudioBridges(itemId: String) {
-        guard let store, let item = try? store.loadItem(id: itemId),
-              item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream || item.media?.sourceType == .generatedTTSPrerendered,
-              let projection = try? store.loadResolvedListeningMapProjection(itemId: itemId),
-              let proposals = try? store.loadPortableListeningMapProposals(itemId: itemId),
-              let proposal = proposals.first(where: { $0.id == projection.proposalId }),
-              preparingLocalAudioMapItems.insert(itemId).inserted else { return }
+        guard let store else { return }
+        // A call while a pass runs (the map was just placed, say) is kept, and runs once that pass ends.
+        guard preparingLocalAudioMapItems[itemId] == nil else { preparingLocalAudioMapItems[itemId] = true; return }
+        preparingLocalAudioMapItems[itemId] = false
+        let assetID = summaryBridgeAssetIDs(itemId: itemId)
+        let supportDirectory = try? applicationSupportDirectory()
         Task { @MainActor [weak self] in
+            let plan = await Task.detached(priority: .userInitiated) {
+                () -> (proposal: PortableListeningMapProposalArtifact, needed: [PortableListeningMapScene], saved: Set<String>)? in
+                guard let inventory = try? Gate1AppModel.localAudioBridgeInventory(itemId: itemId, store: store) else { return nil }
+                let proposalId = inventory.proposal.id
+                let needed = inventory.scenesNeedingAudio(assetID: { assetID(proposalId, $0) }, fileExists: {
+                    Gate1AppModel.resolvedApplicationSupportAssetURL(for: $0, applicationSupportDirectory: supportDirectory) != nil
+                })
+                let neededIDs = Set(needed.map(\.id))
+                let saved = inventory.proposal.scenes.filter { $0.eligibility == .eligible && !neededIDs.contains($0.id) }
+                return (inventory.proposal, needed, Set(saved.map { assetID(proposalId, $0) }))
+            }.value
             guard let self else { return }
-            defer { self.preparingLocalAudioMapItems.remove(itemId) }
+            defer {
+                if self.preparingLocalAudioMapItems.removeValue(forKey: itemId) == true { self.prepareImportedLocalAudioBridges(itemId: itemId) }
+            }
+            guard let plan else { return }
+            let (proposal, needed) = (plan.proposal, plan.needed)
+            var savedAssetIDs = plan.saved
             do {
-                for scene in proposal.scenes where scene.eligibility == .eligible {
+                for scene in needed {
                     try Task.checkCancellation()
-                    guard try await self.prepareSummaryBridgeAsset(
+                    guard let asset = try await self.prepareSummaryBridgeAsset(
                         itemId: itemId, proposalId: proposal.id, scene: scene, store: store
-                    ) != nil else {
+                    ) else {
                         throw SessionKitError.persistenceFailed("Summary audio was not prepared")
                     }
-                    self.updateSkimAvailability()
+                    savedAssetIDs.insert(asset.id)
+                    // A summary was just saved; Skim can play it now instead of after the whole pass.
+                    self.hangTelemetry.labels.scoped("localAudioBridges.skim") { self.updateSkimAvailability() }
                 }
                 self.diagnostics["localAudioSkim:\(itemId)"] = "ready"
             } catch {
                 self.diagnostics["localAudioSkim:\(itemId)"] = "failed:\(error.localizedDescription)"
                 self.reportWarning("Some Skim summaries are not ready. Reopen the item to retry, or reimport the package to restore its supplied voices.")
             }
+            // A pass that stops early may still have adopted supplied summaries; Skim reads what was committed (#2184),
+            // and reloads only when what it loaded lacks one of them.
+            self.hangTelemetry.labels.scoped("localAudioBridges.skim") {
+                self.skimBridge.summaryAssetsSaved(itemId: itemId, assetIDs: savedAssetIDs)
+            }
         }
+    }
+
+    /// The map of a media item and its saved summary assets, read once; nil when it isn't media or has no placed map.
+    nonisolated static func localAudioBridgeInventory(itemId: String, store: SQLiteSessionStore) throws -> SummaryBridgeInventory? {
+        let sourceType = try store.loadItem(id: itemId).media?.sourceType
+        guard sourceType == .nativeMediaFile || sourceType == .remoteStream || sourceType == .generatedTTSPrerendered else { return nil }
+        return try SummaryBridgeInventory.read(
+            loadProposal: {
+                guard let projection = try store.loadResolvedListeningMapProjection(itemId: itemId) else { return nil }
+                return try store.loadPortableListeningMapProposals(itemId: itemId).first(where: { $0.id == projection.proposalId })
+            },
+            loadAssets: { try store.loadOwnedOfflineAssets() }
+        )
     }
 
     func acquirePodcastForImportedPackage(_ item: SharedItemIdentity) async throws -> String {

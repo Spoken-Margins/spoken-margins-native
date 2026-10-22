@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test each new tip of origin/next with --plan app, unattended and without a model (#1178).
+"""Test each new tip of the trunk (origin/main) with --plan app, unattended and without a model (#1178).
 
 Stdlib only, Python 3.9+. launchd ticks every 10 minutes. A tip is tested once, by whoever
 reports first on #184, when the Mac has room and no lane app tests are waiting for the simulator. Failing tests are re-run twice on the same build
@@ -27,11 +27,12 @@ from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 import sm_paths  # noqa: E402
+from trunk import trunk_branch  # noqa: E402  (#1492: the branch it tests)
 
-REPO = os.environ.get('SM_INTEGRATION_REPO', 'uncomposed/spoken-margins-native')
+REPO = os.environ.get('SM_INTEGRATION_REPO', 'Spoken-Margins/spoken-margins-native')
 REPO_ROOT = sm_paths.repo(__file__)                      # the public checkout it tests (SM_REPO)
 HOME_DIR = Path(os.environ.get('SM_INTEGRATION_HOME') or sm_paths.state_dir('integration-run'))
-BASE_BRANCH = 'next'
+BASE_BRANCH = trunk_branch()
 REPORT_ISSUE = 184
 RUN_BY = 'integration script'
 HOSTED_RUN_BY = 'hosted integration'   # hosted-integration.yml on a GitHub-hosted Mac (#1389)
@@ -421,7 +422,7 @@ def diagnoses(answer: Optional[dict], failed: list[str]) -> list[dict]:
 
 def diagnosis_prompt(sha: str, failed: list[str], suspects: list[str], evidence: Path) -> str:
     return '\n'.join([
-        'You are diagnosing confirmed test failures on the merged tip of `next` for Spoken Margins.',
+        'You are diagnosing confirmed test failures on the merged tip of the trunk (`main`) for Spoken Margins.',
         'Read AGENTS.md first. You are read-only: read the failing tests, the code they exercise and the',
         f'evidence logs under {evidence} (xcode-tests.log in each plan folder). Each test below failed in',
         f'the first run and in {RERUNS} re-runs on the same build, so treat it as real, not flaky.',
@@ -1189,7 +1190,7 @@ def main(argv=None) -> int:
     ap.add_argument('--dry-run', action='store_true', help='print the decision; run no tests and change nothing')
     ap.add_argument('--hosted', action='store_true',
                     help='test this checkout once on a GitHub-hosted Mac and post the report (hosted-integration.yml)')
-    ap.add_argument('--sha', help="with --hosted: the full SHA of next's tip, which this checkout must be at")
+    ap.add_argument('--sha', help="with --hosted: the full SHA of the trunk's tip, which this checkout must be at")
     args = ap.parse_args(argv)
     if args.hosted:
         if not re.fullmatch(r'[0-9a-f]{40}', args.sha or ''):

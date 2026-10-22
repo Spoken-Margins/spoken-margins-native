@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A live snapshot of the open PRs into `next` for status replies (#1597). Stdlib, Python 3.9+. Read-only.
+"""A live snapshot of the open PRs into the trunk (`main`) for status replies (#1597). Stdlib, Python 3.9+. Read-only.
 
 Owner rule 2026-10-14 (AGENTS.md "Check before you report"): any status line, and any "armed", "merged" or
 "nothing needs you", rests on a live read of the PR's head checks, latest lane report, audit and mergeable state.
@@ -35,7 +35,7 @@ Flags (`!!` red, `!` look) mark what a reply must not hide:
 It only reads GitHub (GET requests) and keeps no state. Needs GH_TOKEN or GITHUB_TOKEN (or `gh auth token`).
 Exit codes: 0 snapshot printed, 2 GitHub unreachable or unreadable (nothing partial is shown as a status).
 
-Environment: SM_STATUS_REPO (default uncomposed/spoken-margins-native).
+Environment: SM_STATUS_REPO (default Spoken-Margins/spoken-margins-native).
 """
 from __future__ import annotations
 
@@ -61,9 +61,10 @@ PUBLIC = sm_paths.repo(__file__)  # the public checkout (SM_REPO): test-scope.py
 sys.path.insert(0, str(PUBLIC / 'scripts'))
 import comment_trust  # noqa: E402  (#1822: who may be believed)
 import merge_audit  # noqa: E402  (the lane's report and audit formats live there; reused so they can't drift)
+from trunk import trunk_branch  # noqa: E402  (#1492: the branch whose PRs it lists)
 
-REPO = os.environ.get('SM_STATUS_REPO', 'uncomposed/spoken-margins-native')
-BASE = 'next'
+REPO = os.environ.get('SM_STATUS_REPO', 'Spoken-Margins/spoken-margins-native')
+BASE = trunk_branch()
 API = 'https://api.github.com'
 
 LANE_BOT = merge_audit.LANE_BOT
@@ -554,7 +555,7 @@ def analyse(bundle: dict, classify=None) -> dict:
 
 def snapshot(api, now: dt.datetime | None = None, only: list[int] | None = None, classify=None,
              workers: int = 6, sleep=time.sleep) -> dict:
-    """Read every open PR into `next` and judge it. Raises GitHubError when the PR list itself can't be read."""
+    """Read every open PR into the trunk and judge it. Raises GitHubError when the PR list itself can't be read."""
     now = now or dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
     summaries = api.pages(f'pulls?state=open&base={BASE}&sort=created&direction=asc')
     missing = []

@@ -9,6 +9,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -32,7 +33,7 @@ verification = load('verification', 'verify-tests.py')
 supertonic = load('validate_supertonic_assets', 'validate-supertonic-assets.py')
 
 FAST_PLAN_METHODS = ('fast', 'portable', 'hosted_sessionkit', 'mac_rest', 'host_steps', 'package_steps', 'package_core',
-                     'shipped_compat',
+                     'shipped_compat', 'hot_file_ratchet',
                      'ops_steps')
 
 
@@ -152,6 +153,43 @@ class PortableStepTable(unittest.TestCase):
             self.assertNotEqual(failing.returncode, 0)  # a test that is not listed still fails the step
 
 
+class SupertonicModelSkips(unittest.TestCase):
+    """#1820: the package step allows exactly the tests that read Supertonic's downloaded model to skip."""
+
+    def test_the_allowed_skips_are_exactly_the_tests_that_read_the_model(self):
+        tests = ROOT / 'Packages/SessionKit/Tests/SessionKitTests'
+        readers = set()
+        for path in tests.glob('*.swift'):
+            text = path.read_text()
+            for match in re.finditer(r'func (test\w+)\(\)[^{]*\{', text):
+                body = text[match.end():text.find('\n    }\n', match.end())]
+                # Through the assets helper, or straight from the fetched folder (TestInputs.supertonicModel()).
+                if 'SupertonicTestModel.assets()' in body or 'supertonicModel()' in body:
+                    readers.add(f'SessionKitTests/{path.stem}/{match.group(1)}')
+        self.assertTrue(readers)
+        self.assertEqual(readers, set(verification.SUPERTONIC_MODEL_TESTS))
+
+
+class SupertonicAppModelTest(unittest.TestCase):
+    """#1820: the adapters plan fetches the model for the one app test that runs it, so that test can't skip there."""
+
+    def test_the_fetched_model_is_for_a_test_the_adapters_plan_runs_and_the_app_plan_skips(self):
+        from test_inventory import plan_tests
+        test = f'SpokenMarginsAppTests/{verification.SUPERTONIC_APP_MODEL_TEST}'
+        self.assertIn(test, plan_tests(ROOT, 'AudioAdapters'))
+        self.assertNotIn(test, plan_tests(ROOT, 'AppBehavior'))
+        source = (ROOT / 'App/SpokenMarginsAppTests/SupertonicSpeechTests.swift').read_text()
+        method = verification.SUPERTONIC_APP_MODEL_TEST.split('/')[1]
+        body = source[source.index(f'func {method}('):]
+        self.assertIn('SupertonicTestAssets.realModel()', body[:body.index('\n    }\n')])
+
+    def test_the_voice_fetched_is_a_downloadable_voice_in_the_catalog(self):
+        sources = json.loads((ROOT / 'Contracts/voice-models/sources.json').read_text())
+        voice = next(v for v in sources['voices'] if v['id'] == verification.SUPERTONIC_MODEL_VOICE)
+        self.assertFalse(voice.get('bundled'))
+        self.assertTrue(voice['files'])
+
+
 class LfsPointerCheck(unittest.TestCase):
     OID = 'ab' * 32
 
@@ -193,6 +231,39 @@ class LfsPointerCheck(unittest.TestCase):
                 code, _, err = self.validate({'a.onnx': (content, 1000, self.OID)}, allow=True)
                 self.assertEqual(code, 1)
                 self.assertIn('pointer ', err)
+
+    def test_a_downloaded_model_file_must_not_be_in_the_tree(self):
+        """#1820: Supertonic's model is a download. The manifest keeps its hashes; the file itself must stay out."""
+        import hashlib
+        body = b'model bytes'
+        digest = hashlib.sha256(body).hexdigest()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'kept.txt').write_bytes(body)
+            entries = [{'path': 'kept.txt', 'bytes': len(body), 'sha256': digest, 'provenance': 'p'},
+                       {'path': 'onnx/model.onnx', 'bytes': len(body), 'sha256': digest, 'provenance': 'p', 'downloaded': True}]
+            manifest = root / 'asset-manifest.json'
+            manifest.write_text(json.dumps({
+                'modelRevision': '3cadd1ee6394adea1bd021217a0e650ede09a323',
+                'quantizedArchive': {'sha256': '82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427'},
+                'provenance': {'p': {'source': 's', 'version': 'v'}}, 'files': entries}))
+
+            def run():
+                out, err = io.StringIO(), io.StringIO()
+                with patch.object(supertonic, 'ASSET_ROOT', root), patch.object(supertonic, 'MANIFEST_PATH', manifest), \
+                        patch.object(sys, 'argv', ['validate-supertonic-assets.py']), \
+                        contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    code = supertonic.main()
+                return code, out.getvalue(), err.getvalue()
+
+            code, out, _ = run()
+            self.assertEqual(code, 0)
+            self.assertIn('1 model files are downloads', out)
+            (root / 'onnx').mkdir()
+            (root / 'onnx' / 'model.onnx').write_bytes(body)
+            code, _, err = run()
+            self.assertEqual(code, 1)
+            self.assertIn('downloaded file is in the tree: onnx/model.onnx', err)
 
     def test_real_files_are_still_hashed_and_a_big_file_is_never_a_pointer(self):
         import hashlib

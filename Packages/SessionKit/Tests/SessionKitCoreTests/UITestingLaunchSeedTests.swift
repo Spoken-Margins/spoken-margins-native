@@ -5,6 +5,7 @@ import XCTest
 final class UITestingLaunchSeedTests: XCTestCase {
     private let everySeedVariable = [
         "SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY": "1",
+        "SPOKEN_MARGINS_UI_TEST_COOP": "1",
         "SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT": "Some text.",
         "SPOKEN_MARGINS_UI_TEST_PODCAST": "1",
         "SPOKEN_MARGINS_UI_TEST_PDF": "1",
@@ -18,8 +19,10 @@ final class UITestingLaunchSeedTests: XCTestCase {
             XCTAssertNil(seed.item, key)
             XCTAssertNil(seed.podcastDownload(bytesWritten: 1), key)
             XCTAssertFalse(seed.seedsGeneratedTimeline, key)
+            XCTAssertFalse(UITestingLaunchSeed.importsCoopLayer(arguments: ["SpokenMarginsApp"], environment: [key: value]), key)
         }
         XCTAssertEqual(UITestingLaunchSeed(arguments: ["SpokenMarginsApp"], environment: everySeedVariable), .none)
+        XCTAssertFalse(UITestingLaunchSeed.importsCoopLayer(arguments: ["SpokenMarginsApp"], environment: everySeedVariable))
     }
 
     func testAUITestLaunchWithNoSeedVariablesKeepsTheFixtureArticle() {
@@ -115,5 +118,36 @@ final class UITestingLaunchSeedTests: XCTestCase {
         XCTAssertTrue(UITestingLaunchSeed.offlinePodcast(title: "t", durationSeconds: 10).writesLibrary)
         XCTAssertFalse(UITestingLaunchSeed(arguments: ["SpokenMarginsApp"], environment: everySeedVariable).writesLibrary)
         XCTAssertFalse(UITestingLaunchSeed(arguments: ["--ui-testing"], environment: ["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY": "1"]).writesLibrary)
+    }
+
+    // The co-op journey (#474): a relaunch that keeps the Library and adds one friend's Margin.
+
+    func testTheCoopLayerComesOnlyWithAKeptLibraryAndTheCoopSwitch() {
+        let keep = "SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY", coop = "SPOKEN_MARGINS_UI_TEST_COOP"
+        func imports(_ arguments: [String], _ environment: [String: String]) -> Bool {
+            UITestingLaunchSeed.importsCoopLayer(arguments: arguments, environment: environment)
+        }
+        XCTAssertTrue(imports(["--ui-testing"], [keep: "1", coop: "1"]))
+        XCTAssertFalse(imports(["--ui-testing"], [coop: "1"]), "Without a kept Library the first launch seeds the episode itself")
+        XCTAssertFalse(imports(["--ui-testing"], [keep: "1"]))
+        XCTAssertFalse(imports(["--ui-testing"], [keep: "1", coop: "0"]))
+        XCTAssertFalse(imports([], [keep: "1", coop: "1"]), "A normal launch never imports anything")
+        XCTAssertEqual(UITestingLaunchSeed(arguments: ["--ui-testing"], environment: [keep: "1", coop: "1"]), .keepLibrary)
+    }
+
+    func testTheCoopMarginIsOneNewVoiceMarginReviewCanOffer() throws {
+        let layer = UITestingLaunchSeed.coopLayer(importedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        let margin = UITestingLaunchSeed.coopInterjection(
+            audioPath: "SpokenMargins/interjections/ui-test-coop.m4a", createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        XCTAssertEqual(layer.itemId, UITestingLaunchSeed.podcastItemId, "It must sit on the episode the first launch seeded")
+        let entries = SharedMarginReview.entries(layers: [layer], records: [layer.id: [margin]])
+        let entry = try XCTUnwrap(entries.first, "The seeded Margin is not offered by Review new Margins")
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entry.senderLabel, UITestingLaunchSeed.coopSenderLabel)
+        XCTAssertEqual(entry.mediaTimeMs, UITestingLaunchSeed.coopMarginMediaTimeMs)
+        XCTAssertFalse(entry.isApproximate)
+        XCTAssertEqual(SharedMarginReview.offerMessage(for: entries),
+                       "1 new Margin from Sam. Hear it in place first, then carry on from where you were.")
     }
 }

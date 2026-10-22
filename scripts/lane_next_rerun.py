@@ -33,7 +33,8 @@ REAL_PLAYER_TEST = re.compile(r'/(?:RealPlayer[A-Z]\w*Tests|StreamSeekLifecycleT
 RERUN_TIMEOUT = 600  # one limit for the whole re-run: an incremental SessionKit build of next plus the tests
 MARK = 'LANE-NEXT-RERUN '
 ISSUE_LABELS = ['ready', 'priority', 'bug', 'regression']
-MILESTONE = 'Solid Ground'
+MILESTONE = 'Open Source: after the flip'  # Solid Ground is closed; a pipeline fault goes here (owner, 2026-10-19)
+BULK_LIMIT = 5  # more failing tests than this at once is the Mac or the tree, not that many broken tests
 FAILS_ON_NEXT = 'fails on next'  # how the report line starts; lane-runner.py's auto-revert reads it
 
 # Run inside the PR's venv Python, in the tree, on next's code: one result per requested name.
@@ -211,6 +212,8 @@ def report_broken_on_next(api, repo: str, tests: list[str], sha: str, pr: int, r
         milestone = next((m['number'] for m in milestones if m.get('title') == MILESTONE), None)
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
         pass
+    if len(tests) > BULK_LIMIT:
+        return _report_bulk(api, repo, tests, sha, pr, request_id, log_path, open_issues, milestone)
     lines = []
     for test in tests:
         slash, dot = _issue_key(test)
@@ -243,6 +246,36 @@ def report_broken_on_next(api, repo: str, tests: list[str], sha: str, pr: int, r
         except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as error:
             lines.append(f'{test}: not reported ({error!r})')
     return lines
+
+
+def _report_bulk(api, repo, tests, sha, pr, request_id, log_path, open_issues, milestone) -> list[str]:
+    """One issue for a run where more than BULK_LIMIT tests fail on plain next: 66 per-test issues on 2026-10-21
+    were one fault. A later bulk run comments on the open one."""
+    title = 'Host tests fail on next: many at once'
+    listing = '\n'.join(f'- `{test}`' for test in tests)
+    existing = next((issue for issue in open_issues if issue.get('title', '') == title), None)
+    try:
+        if existing:
+            api(f'repos/{repo}/issues/{existing["number"]}/comments', '-f',
+                f'body={len(tests)} tests failed on plain next `{sha[:7]}` again, in the lane re-run for #{pr} '
+                f'({request_id}). Log on the Mac: `{log_path}`.\n\n_Posted by the lane runner (scripts/lane_next_rerun.py)._')
+            return [f'{len(tests)} tests fail on next: already open as #{existing["number"]}; commented']
+        body = (f'**Outcome.** The {len(tests)} tests below pass on the trunk again, so they stop failing unrelated PRs.\n\n'
+                f'**Evidence.** They failed in the lane run {request_id} on #{pr}, and on plain `next` at `{sha[:7]}` on the '
+                f'same Mac. That many at once points at the Mac or the checkout, not at that many broken tests. '
+                f'Log on the Mac: `{log_path}`.\n\n{listing}\n\n'
+                '**Done when**\n1. The cause is named.\n2. They pass on the trunk in a lane run.\n\n'
+                '**Must not break.** Don\'t skip or quarantine the tests to make them pass.\n\n'
+                '**Tier.** T1.\n\n---\n_Filed by the lane runner (scripts/lane_next_rerun.py, #1204)._')
+        args = [f'repos/{repo}/issues', '-f', f'title={title}', '-f', f'body={body}']
+        for label in ISSUE_LABELS:
+            args += ['-f', f'labels[]={label}']
+        if milestone is not None:
+            args += ['-F', f'milestone={milestone}']
+        filed = json.loads(api(*args))
+        return [f'{len(tests)} tests fail on next: filed #{filed["number"]} as one issue']
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as error:
+        return [f'{len(tests)} tests fail on next: not reported ({error!r})']
 
 
 def recheck(tree: Path, base_sha: str, evidence: Path, details: list[str], api, repo: str, pr: int,
