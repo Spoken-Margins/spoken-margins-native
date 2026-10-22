@@ -874,7 +874,7 @@ final class Gate1FlowUITests: XCTestCase {
         note.tap()
         XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["Remember the amber doorway."].exists)
-        XCTAssertFalse(app.buttons["Play Margin"].exists)
+        XCTAssertFalse(app.buttons["Hear my recording"].exists)
         let copy = app.buttons["Copy with Context"]
         XCTAssertTrue(copy.waitForExistence(timeout: 3))
         captureScreen(named: "margin-detail-before-quick-tap")
