@@ -440,6 +440,27 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertEqual(PDFStructuredTextExtractor.itemTitle(for: pdf, structured: document), v1Title)
     }
 
+    func testAPDFWithAnOutlineKeepsItsPrintedTitleNotTheFirstSectionBookmark() throws {
+        // #2062: arXiv 1706.03762 (bookmarks "1 Introduction", ...) imported as "1 Introduction".
+        let pdf = try XCTUnwrap(PDFDocument(data: titlePagePDF([("Attention Is All You Need", 60)])))
+        let root = PDFOutline()
+        for (index, label) in ["1 Introduction", "2 Background"].enumerated() {
+            let entry = PDFOutline()
+            entry.label = label
+            entry.destination = PDFDestination(page: try XCTUnwrap(pdf.page(at: 1)), at: CGPoint(x: 60, y: 700 - CGFloat(index) * 100))
+            root.insertChild(entry, at: index)
+        }
+        pdf.outlineRoot = root
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        XCTAssertEqual(PDFStructuredTextExtractor.itemTitle(for: pdf, structured: document), "Attention Is All You Need")
+
+        // A placeholder metadata title is not the title either.
+        pdf.documentAttributes = [PDFDocumentAttribute.titleAttribute: "Microsoft Word - x.docx"]
+        let withPlaceholder = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        XCTAssertEqual(PDFStructuredTextExtractor.itemTitle(for: pdf, structured: withPlaceholder), "Attention Is All You Need")
+        XCTAssertFalse(withPlaceholder.text.contains("Microsoft Word"), "and it is not read aloud")
+    }
+
     func testV2StartsTheChaptersAtAnAbstractLabelSetInBodyType() throws {
         // The real paper sets "Abstract" in 12 pt regular, so it is not a heading by its type.
         // The chapter list started with "Front Matter", holding the title page and the abstract.
