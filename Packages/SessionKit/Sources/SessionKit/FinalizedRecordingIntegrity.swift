@@ -6,13 +6,10 @@ public struct FinalizedRecordingIntegrity: Equatable, Sendable {
     public let reportedMs: Int
     /// Nil means the file could not be measured, not that it contains no speech.
     public let fileMs: Int?
-    /// What saving did about the ready cue (#1594): "trimmed:<ms>" or "skipped:<why>". Nil when no cue played.
-    public var readyCueTrim: String?
 
-    public init(reportedMs: Int, fileMs: Int?, readyCueTrim: String? = nil) {
+    public init(reportedMs: Int, fileMs: Int?) {
         self.reportedMs = max(0, reportedMs)
         self.fileMs = fileMs.map { max(0, $0) }
-        self.readyCueTrim = readyCueTrim
     }
 
     public var needsWarning: Bool {
@@ -27,9 +24,7 @@ public struct FinalizedRecordingIntegrity: Equatable, Sendable {
     }
 
     public var diagnosticFields: [String: String] {
-        var fields = ["reportedMs": String(reportedMs), "fileMs": fileMs.map(String.init) ?? "unknown",
-                      "integrity": fileMs == nil ? "unverified" : needsWarning ? "cut_short" : "consistent"]
-        if let readyCueTrim { fields["readyCueTrim"] = readyCueTrim }
-        return fields
+        ["reportedMs": String(reportedMs), "fileMs": fileMs.map(String.init) ?? "unknown",
+         "integrity": fileMs == nil ? "unverified" : needsWarning ? "cut_short" : "consistent"]
     }
 }

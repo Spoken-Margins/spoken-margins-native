@@ -1607,10 +1607,15 @@ public final class SessionEngine {
         return reading
     }
 
-    /// The ready cue began playing with `recordedMs` of audio taken in (#1594): the saved Margin will start after it.
-    public func recordingReadyCuePlayed(atRecordedMs recordedMs: Int) {
+    /// The ready cue is about to play (#1594): the recorder stops taking audio in, so the cue is not in the saved Margin.
+    public func pauseRecordingForReadyCue() {
         guard currentSession?.phase == .recordingInterjection else { return }
-        recorder.noteReadyCuePlayed(atRecordedMs: recordedMs)
+        recorder.pauseForReadyCue()
+    }
+
+    /// The cue has started, or did not play (0 seconds): the recorder listens again after `seconds`.
+    public func resumeRecordingAfterReadyCue(after seconds: TimeInterval) {
+        recorder.resumeAfterReadyCue(after: seconds)
     }
 
     /// Starts a new recorder after one that never got audio; the session stays in `recordingInterjection`.

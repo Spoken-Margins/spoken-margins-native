@@ -19,7 +19,8 @@ final class MarginCaptureWatcher {
     private var reading: () -> RecordingCaptureReading? = { nil }
     private var restart: () throws -> Void = {}
     private var changed: HealthChange = { _, _ in }
-    private var cuePlayed: (_ recordedMs: Int) -> Void = { _ in }
+    private var holdRecorder: () -> Void = {}
+    private var releaseRecorder: (_ afterSeconds: TimeInterval) -> Void = { _ in }
     private var pollTask: Task<Void, Never>?
     private var lastReported: (health: MarginCaptureSupervisor.Health, restarts: Int, keepable: Bool)?
     private let autoPoll: Bool
@@ -69,13 +70,15 @@ final class MarginCaptureWatcher {
         reading: @escaping () -> RecordingCaptureReading?,
         restart: @escaping () throws -> Void,
         changed: @escaping HealthChange,
-        cuePlayed: @escaping (_ recordedMs: Int) -> Void = { _ in }
+        holdRecorder: @escaping () -> Void = {},
+        releaseRecorder: @escaping (_ afterSeconds: TimeInterval) -> Void = { _ in }
     ) {
         stop()
         self.reading = reading
         self.restart = restart
         self.changed = changed
-        self.cuePlayed = cuePlayed
+        self.holdRecorder = holdRecorder
+        self.releaseRecorder = releaseRecorder
         startedAtMs = nowMs()
         supervisor = MarginCaptureSupervisor(beganAtMs: startedAtMs)
         lastReported = nil
@@ -109,13 +112,14 @@ final class MarginCaptureWatcher {
 
     /// The ready cue (#1594): once per recording, and only after the recorder has really taken audio in, so the
     /// listener hears it exactly when speaking is safe. It sounds before `changed` runs, so the diagnostics line
-    /// written for that health change can say what it did. The recorder is told where the cue began, because on the
-    /// built-in speaker the cue bleeds into the file and saving drops the start of it.
+    /// written for that health change can say what it did. The recorder is held still while the cue plays, because on
+    /// the built-in speaker it would hear the cue and the cue would open the saved Margin.
     private func cueIfCaptureVerified(_ current: MarginCaptureSupervisor) {
         guard readyCueGate.shouldCue(health: current.health, capturedMs: current.capturedMs) else { return }
+        holdRecorder()
         let result = readyCue.playReadyCue()
         readyCueResult = result
-        if result == "played" { cuePlayed(current.capturedMs) }
+        releaseRecorder(result == "played" ? MarginReadyCueHold.seconds : 0)
     }
 
     /// The listener asked to try again after the capture failed: restart now, then judge afresh.
@@ -196,7 +200,8 @@ final class MarginCaptureWatcher {
         reading = { nil }
         restart = {}
         changed = { _, _ in }
-        cuePlayed = { _ in }
+        holdRecorder = {}
+        releaseRecorder = { _ in }
     }
 
     private func report() {

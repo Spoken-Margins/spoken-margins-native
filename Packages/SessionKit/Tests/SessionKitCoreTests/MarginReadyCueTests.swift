@@ -106,24 +106,9 @@ final class MarginReadyCueTests: XCTestCase {
         XCTAssertNotEqual(MarginReadyCue.wavData(), SharedMarginCue.doubleChimeWAVData())
     }
 
-    func testTheTrimDropsEverythingUpToTheEndOfTheCuePlusATail() {
-        let cueStartedAtMs = 120
-        let trimMs = MarginReadyCueTrim.leadingMs(cueStartedAtRecordedMs: cueStartedAtMs)
-        let cueEndsAtMs = Double(cueStartedAtMs) + MarginReadyCue.totalSeconds * 1_000
-        XCTAssertGreaterThanOrEqual(Double(trimMs), cueEndsAtMs + Double(MarginReadyCueTrim.tailMs),
-                                    "the whole cue and its tail are gone from the saved Margin")
-        XCTAssertEqual(trimMs, 120 + 180 + 60)
-        XCTAssertLessThan(trimMs - cueStartedAtMs, 300, "a listener who speaks right after the cue loses nothing")
-    }
-
-    func testTheTrimNeverReachesBackwards() {
-        XCTAssertEqual(MarginReadyCueTrim.leadingMs(cueStartedAtRecordedMs: -50), MarginReadyCueTrim.leadingMs(cueStartedAtRecordedMs: 0))
-    }
-
-    func testTheSaveDiagnosticsNameWhatTheCueTrimDid() {
-        XCTAssertNil(FinalizedRecordingIntegrity(reportedMs: 5_000, fileMs: 5_000).diagnosticFields["readyCueTrim"])
-        let trimmed = FinalizedRecordingIntegrity(reportedMs: 4_660, fileMs: 4_640, readyCueTrim: "trimmed:340ms")
-        XCTAssertEqual(trimmed.diagnosticFields["readyCueTrim"], "trimmed:340ms")
-        XCTAssertEqual(trimmed.diagnosticFields["integrity"], "consistent")
+    func testTheRecorderIsHeldForTheWholeCueAndATail() {
+        XCTAssertGreaterThanOrEqual(MarginReadyCueHold.seconds, MarginReadyCue.totalSeconds + MarginReadyCueHold.tailSeconds)
+        XCTAssertGreaterThan(MarginReadyCueHold.tailSeconds, 0, "the speaker and microphone delays outlast the cue itself")
+        XCTAssertLessThan(MarginReadyCueHold.seconds, 0.3, "a listener who speaks right after the cue loses nothing")
     }
 }
