@@ -24,12 +24,13 @@ It looks for eight things:
   6. `needs-mac` PRs with no finisher comment or commit for an hour after the hand-off
   7. open issues with no milestone, however old (2026-10-16: the daily triage looked only at issues filed since its
      last run, so 136 piled up unseen); the daily routine milestones and labels every one
-  8. ready issues whose fix already merged (2026-10-22): a `Closes #N` PR is merged into the trunk, no open PR
-     touches the issue and no claim is recent, so the issue only waits on validation and shouldn't be picked up
+  8. ready issues whose fix already merged (2026-10-22): a `Closes`, `Fixes` or `Resolves #N` PR is merged into the
+     trunk, no open PR touches the issue and no claim is recent
 
---apply also releases those (rule 8): it removes `ready` and `in-progress`, adds `agent-verify` unless the issue
-has `validate-by-use` or `agent-verify`, moves it to the VALIDATION_MILESTONE and comments once. It never closes
-the issue or removes `found-on-phone`, `priority` or `needs-human-validation`.
+--apply also closes those (rule 8), commenting once and removing only `ready` and `in-progress`. Every other label,
+including `found-on-phone`, `needs-human-validation`, `agent-verify`, `validate-by-use` and `priority`, stays on the
+closed issue, and a failed validation reopens it with `regression` (owner, 2026-10-22). Readers of validation work
+must therefore read closed issues too (#2448).
 
 --apply releases a stale claim by removing `in-progress`, adding `ready` (unless the issue is `blocked`,
 `needs-owner`, `deferred`, `validate-by-use`, `agent-verify` or `status: needs-human-validation`) and commenting why. It re-reads the issue's comments just before writing and does
@@ -77,8 +78,6 @@ OUTSIDE_LABEL = 'needs-triage-review'          # an issue by an untrusted author
 HOLD_LABELS = {'blocked', 'needs-owner', 'deferred', 'validate-by-use', 'agent-verify',
                'status: needs-human-validation'}   # a released claim isn't made `ready` with one of these
 DEAD = ('mac-tick-stale',)
-VALIDATION_MILESTONE = 'Co-op Experience'     # where fixes that only wait on validation sit (2026-10-17 call); one place to change
-VALIDATION_LABELS = {'validate-by-use', 'agent-verify'}
 MERGED_PR_PAGES = 3                            # the newest 300 closed PRs into the trunk are as far back as a fix is looked for
 
 RED, LOOK = sm_status.RED, sm_status.LOOK
@@ -215,14 +214,14 @@ def release_note(issue, why, window=STALE_AFTER):
             f'claim it again.')
 
 
-def merged_fix_note(pr_number, merged_at, labels):
-    return (f'Released by scripts/sm_sweep.py: fix merged in #{pr_number} on {merged_at[:10]}; waiting on validation '
-            f'(2026-10-17 call). Switch to validate-by-use if only everyday use can show it.'
-            + ('' if set(labels) & VALIDATION_LABELS else ' Defaulted to `agent-verify`.'))
+def merged_fix_note(pr_number, merged_at):
+    return (f'Closed by scripts/sm_sweep.py: fix merged in #{pr_number} on {merged_at[:10]}. Validation labels stay on; '
+            'a failed check reopens it (2026-10-22 call).')
 
 
 def release_merged_fix(api, row, now, window=STALE_AFTER):
-    """Take one ready issue whose fix merged off the queue. Re-reads the issue and its comments first; never raises."""
+    """Close one ready issue whose fix merged, keeping its labels but `ready` and `in-progress`. Re-reads the issue
+    and its comments first; never raises."""
     number = row['number']
     try:
         since = (now - window).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -232,19 +231,12 @@ def release_merged_fix(api, row, now, window=STALE_AFTER):
         names = {label['name'] for label in current.get('labels', [])}
         if current.get('state') != 'open' or 'ready' not in names:
             return 'skipped: no longer an open ready issue'
-        milestone = next((m['number'] for m in api.pages('milestones?state=open')
-                          if m.get('title') == VALIDATION_MILESTONE), None)
-        if milestone is None:
-            return f'error: no open milestone named {VALIDATION_MILESTONE!r}'
-        # `ready` comes off last, so a failed step leaves the issue for the next sweep to retry
-        if not names & VALIDATION_LABELS:
-            api.post(f'issues/{number}/labels', {'labels': ['agent-verify']})
-        api.patch(f'issues/{number}', {'milestone': milestone})
-        api.post(f'issues/{number}/comments', {'body': merged_fix_note(row['pr'], row['merged_at'], names)})
+        api.post(f'issues/{number}/comments', {'body': merged_fix_note(row['pr'], row['merged_at'])})
+        api.patch(f'issues/{number}', {'state': 'closed', 'state_reason': 'completed'})
         if 'in-progress' in names:
             api.delete(f'issues/{number}/labels/in-progress')
         api.delete(f'issues/{number}/labels/ready')
-        return 'released'
+        return 'closed'
     except sm_status.GitHubError as error:
         return f'error: {error}'
 
@@ -450,8 +442,7 @@ def decide(facts, window=STALE_AFTER):
 
     for fix in facts.get('merged_fixes') or []:
         act('fix-merged', LOOK, f'#{fix["number"]} {fix["title"][:60]}: fix merged in #{fix["pr"]} on '
-            f'{fix["merged_at"][:10]} and the issue is still `ready`; move it off the queue to {VALIDATION_MILESTONE} '
-            'as `agent-verify`', issues=[fix['number']], fix=fix)
+            f'{fix["merged_at"][:10]} and the issue is still `ready`; close it, keeping its validation labels', issues=[fix['number']], fix=fix)
 
     for claim in claims:
         if claim['state'] == 'stale':
@@ -521,7 +512,7 @@ def as_json(facts, actions, slot):
 
 def main(argv=None, api=None, now=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
-    parser.add_argument('--apply', action='store_true', help='release stale claims and ready issues whose fix merged (the only writes)')
+    parser.add_argument('--apply', action='store_true', help='release stale claims and close ready issues whose fix merged (the only writes)')
     parser.add_argument('--json', action='store_true', help='print the actions as JSON')
     parser.add_argument('--status-json', metavar='FILE', help='a saved `sm_status.py --json` output; - is stdin')
     parser.add_argument('--repo', default=sm_status.REPO)
