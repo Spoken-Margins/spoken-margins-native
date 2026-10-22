@@ -793,16 +793,16 @@ class VerificationTests(unittest.TestCase):
 
     def test_a_hung_host_test_step_samples_its_xctest_names_the_test_and_leaves_no_stray(self):
         # #1956: SwiftPM starts xctest in a process group of its own. The step's stop left it running under launchd,
-        # and the report named no test. Here a stand-in "xctest" (the Python interpreter under that name) in its own
-        # session hangs after its test starts.
+        # and the report named no test. Here a stand-in "xctest" in its own
+        # session hangs after its test starts. It is /bin/sleep run under the name xctest (argv[0]), which is what `ps`
+        # shows: a symlink to Python would not do, since the framework Python re-executes itself under Python.app.
         with tempfile.TemporaryDirectory() as temporary:
             tools = Path(temporary) / 'toolchain'
             tools.mkdir()
-            (tools / 'xctest').symlink_to(os.path.realpath(sys.executable))
             pid_file = Path(temporary) / 'xctest.pid'
             script = ('import subprocess, sys, time\n'
                       'print("Test Case \'-[SessionKitTests.RealPlayerMarginMomentTests testHangs]\' started.", flush=True)\n'
-                      f'child = subprocess.Popen([{str(tools / "xctest")!r}, "-c", "import time; time.sleep(120)"], '
+                      f'child = subprocess.Popen([{str(tools / "xctest")!r}, "120"], executable="/bin/sleep", '
                       'start_new_session=True)\n'
                       f'open({str(pid_file)!r}, "w").write(str(child.pid))\n'
                       'child.wait()\n')
