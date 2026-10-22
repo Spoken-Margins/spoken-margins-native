@@ -530,6 +530,19 @@ class Ops:
             raise RuntimeError(f'{" ".join(map(str, cmd[:4]))} failed: {(res.stderr or res.stdout)[-400:]}')
         return res
 
+    def clear_scratch_worktree(self, wt: Path) -> None:
+        """Take away this job's scratch worktree, however it was left. `git worktree remove` refuses a folder it
+        has no registration for ("is not a working tree"), which an interrupted tick or a pruned registration
+        leaves behind; the folder is then deleted by hand, and a registration with no folder is pruned, so the
+        next `worktree add` finds neither (#2397)."""
+        if wt.exists():
+            removed = self.run(['git', 'worktree', 'remove', '--force', str(wt)], cwd=self.repo_root)
+            if removed.returncode:
+                self.log('worktree removal failed: ' + (removed.stderr or removed.stdout)[:300])
+                if wt.parent == self.home:  # only the scratch folder this job made, never a path from elsewhere
+                    shutil.rmtree(wt)
+        self.must(['git', 'worktree', 'prune'])
+
     def gh_json(self, args: list):
         return json.loads(self.must(['gh', *args]).stdout or 'null')
 
@@ -971,8 +984,7 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
         added = False
         result = summarize({'error': 'run stopped before completion'})
         try:
-            if wt.exists():  # only this job's scratch worktree, left by an interrupted tick
-                ops.must(['git', 'worktree', 'remove', '--force', str(wt)])
+            ops.clear_scratch_worktree(wt)  # whatever an interrupted tick left of this job's scratch worktree
             ops.must(['git', 'worktree', 'add', '--detach', str(wt), sha])
             added = True
             ops.must(['scripts/setup-worktree.sh'], cwd=wt)
@@ -1027,9 +1039,10 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
             return result['verdict']
         finally:
             if added or wt.exists():
-                removed = ops.run(['git', 'worktree', 'remove', '--force', str(wt)], cwd=ops.repo_root)
-                if removed.returncode:
-                    ops.log('worktree removal failed: ' + removed.stderr[:300])
+                try:
+                    ops.clear_scratch_worktree(wt)
+                except Exception as error:  # noqa: BLE001 - the report and state are already written
+                    ops.log('worktree removal failed: ' + str(error)[:300])
             prune_evidence(evidence_root)
 
 
@@ -1100,8 +1113,7 @@ def defer_to_hosted(ops: Ops, state: dict, path: Path, comments: list[dict], rep
         say(f'handling the hosted FAIL on {sha7}: {", ".join(failed)}')
         added, confirm, error, culprit = False, 'unknown', '', None
         try:
-            if wt.exists():
-                ops.must(['git', 'worktree', 'remove', '--force', str(wt)])
+            ops.clear_scratch_worktree(wt)  # whatever an interrupted tick left of this job's scratch worktree
             ops.must(['git', 'worktree', 'add', '--detach', str(wt), sha])
             added = True
             ops.must(['scripts/setup-worktree.sh'], cwd=wt)
@@ -1139,9 +1151,10 @@ def defer_to_hosted(ops: Ops, state: dict, path: Path, comments: list[dict], rep
             handled[sha7] = record
             save_state(path, state)
             if added or wt.exists():
-                removed = ops.run(['git', 'worktree', 'remove', '--force', str(wt)], cwd=ops.repo_root)
-                if removed.returncode:
-                    ops.log('worktree removal failed: ' + removed.stderr[:300])
+                try:
+                    ops.clear_scratch_worktree(wt)
+                except Exception as error:  # noqa: BLE001 - the report and state are already written
+                    ops.log('worktree removal failed: ' + str(error)[:300])
             prune_evidence(evidence_root)
 
 
