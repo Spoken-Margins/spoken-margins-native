@@ -73,20 +73,23 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// fails the test that left it; the target is under 0.3 s, and the lane log names any test above that.
     override func setUp() {
         super.setUp()
-        let inherited = Self.drainMainQueue() // work an earlier class left behind isn't this test's
+        let inherited = Self.drainMainQueue(label: "before \(name)") // work an earlier class left behind isn't this test's
         if inherited > 0.3 { print("Main-queue backlog \(String(format: "%.2f", inherited)) s before \(name) (#2195)") }
     }
 
     override func tearDown() {
-        let elapsed = Self.drainMainQueue()
+        let elapsed = Self.drainMainQueue(label: "after \(name)")
         if elapsed > 0.3 { print("Main-queue backlog \(String(format: "%.2f", elapsed)) s after \(name) (#2195)") }
         XCTAssertLessThan(elapsed, 1.0, "this test left a second or more of blocking main-queue work behind (#2195)")
         super.tearDown()
     }
 
     /// Spins the main run loop until two main-queue hops complete (at most 30 s) and returns how long that took.
-    private static func drainMainQueue() -> TimeInterval {
+    /// Past half a second it prints the main thread's stack, so the lane log shows what the backlog is.
+    private static func drainMainQueue(label: String) -> TimeInterval {
         let start = Date()
+        let watch = MainThreadStallWatch(label: label)
+        defer { watch.finish() }
         let drained = MainQueueDrainFlag()
         DispatchQueue.main.async { DispatchQueue.main.async { drained.done = true } }
         while !drained.done, Date().timeIntervalSince(start) < 30 {
@@ -2802,6 +2805,17 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(startup.isEmpty)
         XCTAssertNil(dropped, "nothing queued may keep a dropped model alive")
         XCTAssertTrue(startup.allSatisfy(\.isCancelled), "the model's deinit cancels its startup")
+    }
+
+    /// #2195: every model a test built published Live Activity cards through the real ActivityKit. Those calls wait
+    /// on a system daemon from the main thread, and on a loaded Mac they left 1 to 2.5 s of main-queue work behind
+    /// tests that never touch a card. Under unit tests the default system shows no card and calls nothing.
+    func testAModelUnderUnitTestsMakesNoActivityKitCalls() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+
+        XCTAssertEqual(model.gate2CompactControls.diagnostics()["gate2LiveActivity"], "disabled")
     }
 
     func testExplicitOfflinePreparationJobsSortAheadOfAutomaticWork() {
