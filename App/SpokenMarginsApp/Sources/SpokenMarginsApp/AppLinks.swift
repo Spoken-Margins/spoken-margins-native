@@ -1,4 +1,5 @@
 import Foundation
+import SessionKit
 
 enum AppLinks {
     static var privacy: URL {
