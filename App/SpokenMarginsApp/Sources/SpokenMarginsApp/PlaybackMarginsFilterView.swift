@@ -12,11 +12,17 @@ struct PlaybackMarginsFilterView: View {
         layout {
             ForEach(PlaybackMarginsList.Filter.allCases, id: \.self) { option in
                 Button { selection = option } label: {
-                    Text(option.title)
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(selection == option ? .white.opacity(0.18) : .clear,
-                                    in: RoundedRectangle(cornerRadius: 10))
+                    // Selected is told by a checkmark as well as a fill that reaches 3:1 against the tray (#1923).
+                    HStack(spacing: 4) {
+                        if selection == option {
+                            Image(systemName: "checkmark").font(.caption.weight(.bold))
+                        }
+                        Text(option.title)
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(selection == option ? .white.opacity(0.40) : .clear,
+                                in: RoundedRectangle(cornerRadius: 10))
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.white)
