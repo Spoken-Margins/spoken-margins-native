@@ -1224,6 +1224,18 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return includeDeleted ? items : items.filter { $0.deletedAt == nil }
     }
 
+    /// The items whose `externalReference` is exactly `address`, deleted ones included. SQLite looks for the address's
+    /// stored spelling in each payload as plain text first, so only the few items that name it are decoded; the
+    /// reference is compared again after decoding, so a longer address that contains this one never matches.
+    public func listItems(withExternalReference address: String) throws -> [Item] {
+        guard let needle = (try? encoder.encode(address)).flatMap({ String(data: $0, encoding: .utf8) }) else { return [] }
+        let items: [Item] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? AND instr(payload, ?) > 0 ORDER BY updated_at DESC, id;",
+            ["item", needle]
+        )
+        return items.filter { $0.externalReference == address }
+    }
+
     /// How much of an item's text the summary read looks at to tell whether there is any besides whitespace.
     private static let summaryTextHeadLength = 512
 
@@ -1897,6 +1909,7 @@ private struct ImportedWatchSyncEvent: Codable {
 }
 
 extension SQLiteSessionStore: ItemRevisionReading {}
+extension SQLiteSessionStore: ItemAddressLookup {}
 
 /// I13 documents live in the existing records table as kind
 /// "structured_document", one row per item and extraction version. No table or

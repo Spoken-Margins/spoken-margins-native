@@ -4393,6 +4393,12 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
         var itemId = handoff.itemId ?? browserTextItemId(title: idTitle, url: handoff.source.url)
+        // A web or share-sheet PDF's id is a slug of its title and address. When a better title is read from
+        // the same PDF (#2062), re-importing it must still find the item it already made (#556).
+        if handoff.itemId == nil, isPDF, try existingItem(id: itemId) == nil,
+           let sameAddress = try existingPDFItemId(atHTTPSAddress: handoff.source.url) {
+            itemId = sameAddress
+        }
         if handoff.itemId == nil, handoff.captureMode == .readablePage || isPDF {
             // A corrected extraction (or a new PDF extractor) must not move existing
             // Margin anchors. Retain the original edition and give changed text its
@@ -4455,6 +4461,26 @@ public final class SessionEngine {
             documentStructure: handoff.documentStructure
         )
         return .records(item, deterministicMap, document)
+    }
+
+    /// The id of the PDF already imported from this https address. A listener's own copy comes before one in Recently
+    /// Deleted, and the oldest before a newer one. A later edition has `-edition-` and a SHA-256 at the end of its id;
+    /// editions are made from the original, never from each other, so only an original is a match.
+    private func existingPDFItemId(atHTTPSAddress address: String) throws -> String? {
+        guard URLComponents(string: address)?.scheme?.lowercased() == "https" else { return nil }
+        let sameAddress: [Item]
+        if let lookup = repository as? any ItemAddressLookup {
+            sameAddress = try lookup.listItems(withExternalReference: address)
+        } else {
+            sameAddress = try repository.listItems(includeDeleted: true).filter { $0.externalReference == address }
+        }
+        return sameAddress
+            .filter { $0.mediaType == "pdf" && $0.id.hasPrefix("item-browser-") && $0.id.range(of: #"-edition-[0-9a-f]{64}$"#, options: .regularExpression) == nil }
+            .min { lhs, rhs in
+                if (lhs.deletedAt == nil) != (rhs.deletedAt == nil) { return lhs.deletedAt == nil }
+                let (l, r) = (lhs.createdAt ?? .distantFuture, rhs.createdAt ?? .distantFuture)
+                return l != r ? l < r : lhs.id < rhs.id
+            }?.id
     }
 
     private func existingItem(id: String) throws -> Item? {
