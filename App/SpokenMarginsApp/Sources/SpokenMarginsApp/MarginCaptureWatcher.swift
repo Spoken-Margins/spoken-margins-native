@@ -129,6 +129,7 @@ final class MarginCaptureWatcher {
         current.listenerRetry(nowMs: nowMs())
         restartNow(&current)
         supervisor = current
+        cueIfCaptureVerified(current)
         report()
         return true
     }
