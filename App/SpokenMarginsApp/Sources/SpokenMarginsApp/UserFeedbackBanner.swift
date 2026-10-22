@@ -71,6 +71,7 @@ struct UserFeedbackBanner: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.feedbackDeliveryEffects) private var effects
     @Environment(\.feedbackBannerHold) private var hold
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AccessibilityFocusState private var focusedPart: Part?
     let feedback: UserFeedbackEvent
 
@@ -86,65 +87,93 @@ struct UserFeedbackBanner: View {
         ) == nil
     }
 
+    /// At accessibility sizes the message gets the full width and the buttons move to their own row (#1935).
+    private var largeText: Bool { dynamicTypeSize.isAccessibilitySize }
+
     var body: some View {
-        HStack(spacing: 10) {
+        bannerLayout
+            .padding(12)
+            .foregroundStyle(AppColors.text)
+            .background(.regularMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(AppColors.border))
+            .padding(.top, 44)
+            .allowsHitTesting(feedback.kind == .error || feedback.action != nil || staysUntilDismissed)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in hold?.setTouched(true) }
+                    .onEnded { _ in hold?.setTouched(false) }
+            )
+            .onChange(of: focusedPart) { _, part in hold?.setFocused(part != nil) }
+            .onDisappear { hold?.reset() }
+    }
+
+    @ViewBuilder
+    private var bannerLayout: some View {
+        if largeText {
+            VStack(alignment: .leading, spacing: 8) {
+                messageRow
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) { buttons }
+                    VStack(alignment: .leading, spacing: 4) { buttons }
+                }
+            }
+        } else {
             HStack(spacing: 10) {
-                Image(systemName: iconName)
-                    .foregroundStyle(iconColor)
-                Text(feedback.message)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(feedback.kind == .error ? 6 : 3)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 8)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityFocused($focusedPart, equals: .message)
-            .accessibilityIdentifier("app.feedback.banner")
-            if let action = feedback.action {
-                Button(action.title) {
-                    model.dismissFeedback(id: feedback.id)
-                    action.perform()
-                }
-                .filledActionButton()
-                .frame(minHeight: 44)
-                .accessibilityLabel(action.accessibilityLabel)
-                .accessibilityFocused($focusedPart, equals: .action)
-                .accessibilityIdentifier(action.identifier)
-            }
-            if feedback.kind == .error, let retry = feedback.retry {
-                Button("Retry") {
-                    model.dismissFeedback(id: feedback.id)
-                    retry.action()
-                }
-                .buttonStyle(.bordered)
-                .tint(AppColors.evergreen)
-                .accessibilityIdentifier("app.feedback.retry")
-            }
-            if feedback.kind == .error || staysUntilDismissed {
-                Button {
-                    model.dismissFeedback(id: feedback.id)
-                } label: {
-                    TapTargetIcon(systemName: "xmark")
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Dismiss")
-                .accessibilityIdentifier("app.feedback.dismiss")
+                messageRow
+                buttons
             }
         }
-        .padding(12)
-        .foregroundStyle(AppColors.text)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(AppColors.border))
-        .padding(.top, 44)
-        .allowsHitTesting(feedback.kind == .error || feedback.action != nil || staysUntilDismissed)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in hold?.setTouched(true) }
-                .onEnded { _ in hold?.setTouched(false) }
-        )
-        .onChange(of: focusedPart) { _, part in hold?.setFocused(part != nil) }
-        .onDisappear { hold?.reset() }
+    }
+
+    private var messageRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: iconName)
+                .foregroundStyle(iconColor)
+            Text(feedback.message)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(largeText ? nil : (feedback.kind == .error ? 6 : 3))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityFocused($focusedPart, equals: .message)
+        .accessibilityIdentifier("app.feedback.banner")
+    }
+
+    @ViewBuilder
+    private var buttons: some View {
+        if let action = feedback.action {
+            Button(action.title) {
+                model.dismissFeedback(id: feedback.id)
+                action.perform()
+            }
+            .filledActionButton()
+            .frame(minHeight: 44)
+            .accessibilityLabel(action.accessibilityLabel)
+            .accessibilityFocused($focusedPart, equals: .action)
+            .accessibilityIdentifier(action.identifier)
+        }
+        if feedback.kind == .error, let retry = feedback.retry {
+            Button("Retry") {
+                model.dismissFeedback(id: feedback.id)
+                retry.action()
+            }
+            .buttonStyle(.bordered)
+            .tint(AppColors.evergreen)
+            .frame(minHeight: largeText ? 44 : nil)
+            .accessibilityIdentifier("app.feedback.retry")
+        }
+        if feedback.kind == .error || staysUntilDismissed {
+            Button {
+                model.dismissFeedback(id: feedback.id)
+            } label: {
+                TapTargetIcon(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss")
+            .accessibilityIdentifier("app.feedback.dismiss")
+        }
     }
 
     private var iconName: String {
