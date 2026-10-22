@@ -294,7 +294,7 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(post.bodyWordCount ?? 0, 700)
         XCTAssertEqual(post.audioDurationMs, 1_312_000)
         XCTAssertFalse(post.hasPublisherAudio, "length alone is ambiguous")
-        let confirmed = await coordinator.publisherAudioEntry(for: post)
+        let confirmed = await coordinator.publisherAudioEntry(for: post, trigger: .listenerAction)
         XCTAssertTrue(confirmed.hasPublisherAudio)
         XCTAssertEqual(PublisherAudioDetector.publisherAudio(for: confirmed, itemId: "item")?.audioURL, "https://cdn.voiceovers.example/post.mp3")
         XCTAssertFalse(episode.hasPublisherAudio, "an episode with short notes imports as audio, as before")
@@ -372,6 +372,41 @@ final class SourceLinkImportTests: XCTestCase {
             XCTAssertEqual(model.snapshot.sessionId, activeSession)
             XCTAssertEqual(model.selectedItem.id, openWhenFinished ? item.id : "item-pill")
         }
+    }
+
+    /// #2368: "Add every new item" imports a Substack post nobody opened. It must read the feed's text and never
+    /// load the post page, neither for the voiceover lookup nor for the article; without feed text it waits for a tap.
+    func testABackgroundSubstackImportNeverLoadsThePostPage() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let databaseURL = root.appendingPathComponent("background-substack.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let extractor = RefusingPublisherPageExtractor()
+        model.readablePageExtractor = extractor
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let subscription = FeedSubscription(id: "s", source: SourceIdentity(id: "zvi", kind: .articleFeed,
+            canonicalURL: "https://thezvi.substack.com/feed", host: "thezvi.substack.com", title: "Zvi"), lastRefreshAt: Date())
+        try store.saveFeedSubscription(subscription)
+        let body = String(repeating: "A free post, full text in the feed. ", count: 120)
+        let withBody = FeedEntry(id: "with-body", subscriptionId: "s", canonicalURL: "https://thezvi.substack.com/p/with-body",
+            title: "With body", bodyWordCount: 720, fullBody: body, publisherPlatform: "substack")
+        let withoutBody = FeedEntry(id: "no-body", subscriptionId: "s", canonicalURL: "https://thezvi.substack.com/p/no-body",
+            title: "No body", bodyWordCount: 720, publisherPlatform: "substack")
+        try store.saveFeedEntry(withBody)
+        try store.saveFeedEntry(withoutBody)
+
+        model.importFollowedSourceEntry(withoutBody, startedByListener: false)
+        model.importFollowedSourceEntry(withBody, startedByListener: false)
+        try await waitFor("background feed-text import") {
+            (try? store.loadFeedEntries(subscriptionId: "s").first { $0.id == "with-body" }?.state) == .imported
+        }
+        let row = try XCTUnwrap(model.libraryItems.first { $0.title == withBody.title })
+        XCTAssertEqual(try store.loadItem(id: row.id).text, body.trimmingCharacters(in: .whitespacesAndNewlines))
+        XCTAssertNil(model.libraryItems.first { $0.title == withoutBody.title }, "no feed text: wait for the listener")
+        XCTAssertEqual(try store.loadFeedEntries(subscriptionId: "s").first { $0.id == "no-body" }?.state, .unseen)
+        XCTAssertEqual(extractor.calls, 0, "the post page was never loaded")
+        XCTAssertEqual(model.diagnostics["followedPublisherAudio"]?.contains("deferred_until_opened"), true)
     }
 
     func testConfirmedNarrationWithoutStoredBodyUsesTheArticleExtractor() async throws {
