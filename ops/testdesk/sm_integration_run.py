@@ -537,10 +537,11 @@ class Ops:
         next `worktree add` finds neither (#2397)."""
         if wt.exists():
             removed = self.run(['git', 'worktree', 'remove', '--force', str(wt)], cwd=self.repo_root)
-            if removed.returncode:
-                self.log('worktree removal failed: ' + (removed.stderr or removed.stdout)[:300])
-                if wt.parent == self.home:  # only the scratch folder this job made, never a path from elsewhere
-                    shutil.rmtree(wt)
+            if not removed.returncode:
+                return  # git knew it and it is gone: nothing else of the repository's worktrees is touched
+            self.log('worktree removal failed: ' + (removed.stderr or removed.stdout)[:300])
+            if wt.parent == self.home:  # only the scratch folder this job made, never a path from elsewhere
+                shutil.rmtree(wt)
         self.must(['git', 'worktree', 'prune'])
 
     def gh_json(self, args: list):
