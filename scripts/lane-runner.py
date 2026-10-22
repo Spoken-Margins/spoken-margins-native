@@ -64,6 +64,18 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   run takes them for the portable steps and SessionKitCoreTests and runs only --plan fast-mac-rest on the Mac.
   Anything short of that, and with the variable unset, it runs the whole --plan fast as before. (The VPS's
   linux-t1.yml pair, read from #2160 until the flip, was retired in #2442.)
+- Merging off the Mac (#2459), with LANE_HOSTED_FAST and LANE_HOSTED_MAC_REST both `on` (a rollout guard, off until
+  the hosted Mac-rest check passes on the hosted image): hosted-portable.yml also runs --plan fast-mac-rest on a GitHub-hosted Mac, and test-scope.py routes every automerge job to hosted
+  Linux (--hosted). There a PR held for T3 is reported held in seconds, testing nothing. Otherwise the job waits,
+  on Linux, for all three hosted checks to pass on this head merged onto next, dispatches them once more when next
+  has since moved in ways that matter, and merges on them, running no test itself. A hosted check that failed is
+  the PR's FAIL. When they can't be had (missing, cancelled, never recorded), the job posts nothing and lane.yml's
+  `automerge-mac` job runs it on the build Mac the old way. The T3 PASS's lane job merges on them too, in seconds,
+  when they stand then.
+  With LANE_HOSTED_FAST `on` and LANE_HOSTED_MAC_REST not, every automerge job still starts on hosted Linux: a PR
+  held for T3 is reported held there in seconds, and otherwise the job waits there for the hosted pair on this head.
+  A failed one is the PR's FAIL; once both passed (or can't be had) it hands the run to `automerge-mac`, which runs
+  --plan fast-mac-rest (or the whole --plan fast) and merges, so the build Mac never idles waiting for the pair.
 - Hosted T2 and T3 (#1389 phase 2), only with the LANE_HOSTED_APP repository variable `on` (the same kind of rollout
   guard): test-scope.py routes the lane job to a GitHub-hosted Mac, and lane.yml sets SM_LANE_GITHUB_HOSTED=1 there,
   with the lane state and evidence folders in the job's own temporary folder. This script runs as on the Mac: the
@@ -912,12 +924,23 @@ HOSTED_FAST_SWITCH = 'LANE_HOSTED_FAST'
 # check run name (the job's `name:` in hosted-portable.yml) -> the verify-tests.py plan it ran
 HOSTED_FAST_CHECKS = {'hosted fast: portable': 'fast-portable',
                       'hosted fast: SessionKit core': 'fast-hosted-sessionkit'}
+# #2459: the third hosted check, --plan fast-mac-rest on a GitHub-hosted Mac (hosted-portable.yml `mac-rest`). With
+# it, the automerge job runs on hosted Linux and runs no test itself. Anything but `on` keeps merging on the build Mac.
+HOSTED_REST_SWITCH = 'LANE_HOSTED_MAC_REST'
+HOSTED_REST_CHECK = {'hosted fast: Mac rest': 'fast-mac-rest'}
 HOSTED_TESTED_TITLE = 'lane-hosted-tested'
 HOSTED_TESTED = re.compile(r'^plan=(\S+) tree=([0-9a-f]{40}) parents=([0-9a-f]{40}) ([0-9a-f]{40})\s*$')
 
 
 def hosted_fast_on(env=None) -> bool:
     return (os.environ if env is None else env).get(HOSTED_FAST_SWITCH, '').strip().lower() == 'on'
+
+
+def hosted_rest_on(env=None) -> bool:
+    """Whether merging runs off the Mac on all three hosted checks (#2459): the hosted fast pair is on, and
+    LANE_HOSTED_MAC_REST is `on`. test-scope.py's hosted_merge_routing reads the same two variables."""
+    env = os.environ if env is None else env
+    return hosted_fast_on(env) and env.get(HOSTED_REST_SWITCH, '').strip().lower() == 'on'
 
 
 def hosted_tested(annotations: list[dict]) -> dict | None:
@@ -972,7 +995,8 @@ NOT_FINISHED = 'had not finished'
 
 def hosted_fast_checks(github, tree: Path, base: str, head: str, base_sha: str, env=None,
                        records=hosted_fast_records, wait: float | None = None, poll: float = HOSTED_FAST_POLL,
-                       clock=time.monotonic, sleep=time.sleep, out=sys.stdout) -> tuple[dict | None, str]:
+                       clock=time.monotonic, sleep=time.sleep, out=sys.stdout,
+                       checks: dict = HOSTED_FAST_CHECKS) -> tuple[dict | None, str]:
     """(the fast checks off the Mac that stand for <head> merged onto <base> at <base_sha>, '') or (None, why the Mac
     runs the whole --plan fast). While none stands and one of them is still running, it waits up to <wait> seconds
     (HOSTED_FAST_WAIT inside a lane job, else none, so tests and local runs never sleep)."""
@@ -981,7 +1005,7 @@ def hosted_fast_checks(github, tree: Path, base: str, head: str, base_sha: str, 
         wait = HOSTED_FAST_WAIT if env.get('GITHUB_ACTIONS') == 'true' else 0
     deadline = clock() + wait
     while True:
-        found, why = _hosted_fast_checks_once(github, tree, base, head, base_sha, env, records)
+        found, why = _hosted_fast_checks_once(github, tree, base, head, base_sha, env, records, checks)
         if found is not None or NOT_FINISHED not in why or clock() + poll > deadline:
             return found, why
         print(f'[lane] waiting for the fast checks off the Mac: {why}', file=out, flush=True)
@@ -989,7 +1013,7 @@ def hosted_fast_checks(github, tree: Path, base: str, head: str, base_sha: str, 
 
 
 def _hosted_fast_checks_once(github, tree: Path, base: str, head: str, base_sha: str, env,
-                             records) -> tuple[dict | None, str]:
+                             records, checks: dict = HOSTED_FAST_CHECKS) -> tuple[dict | None, str]:
     """The GitHub-hosted pair, with the switch on; each record says which runner ('runner').
 
     A run stands when it tested exactly <head> merged onto some next (its merge tree matches the one this
@@ -997,7 +1021,7 @@ def _hosted_fast_checks_once(github, tree: Path, base: str, head: str, base_sha:
     the rule a held PASS meets after next moves (untested_moves)."""
     if not hosted_fast_on(env):
         return None, f'the hosted fast checks are off ({HOSTED_FAST_SWITCH} is not `on`)'
-    found, why = _fast_checks_stand(github, tree, base, head, base_sha, records, HOSTED_FAST_CHECKS)
+    found, why = _fast_checks_stand(github, tree, base, head, base_sha, records, checks)
     if found is None:
         return None, why
     return {name: {**record, 'runner': 'GitHub-hosted'} for name, record in found.items()}, ''
@@ -1026,6 +1050,9 @@ def _fast_checks_stand(github, tree: Path, base: str, head: str, base_sha: str, 
 def hosted_fast_ran(found: dict) -> str:
     bases = sorted({record['base'][:7] for record in found.values()})
     where = sorted({record.get('runner', 'GitHub-hosted') for record in found.values()})
+    if set(HOSTED_REST_CHECK) <= set(found):
+        return (f'host tests ({" and ".join(where)}: --plan fast-portable, SessionKitCoreTests and --plan fast-mac-rest '
+                f'with next at {", ".join(bases)}; none on the Mac)')
     return (f'host tests ({" and ".join(where)}: --plan fast-portable and SessionKitCoreTests with next at {", ".join(bases)}; '
             'Mac: --plan fast-mac-rest)')
 
@@ -1039,6 +1066,101 @@ def hosted_fast_lines(found: dict) -> list[str]:
         lines.append(f'{record.get("runner", "GitHub-hosted")} check "{name}": PASS on this head merged with next at {record["base"][:7]} '
                      f'(tree {record["tree"][:7]}){since}. {record.get("url", "")}'.rstrip())
     return lines
+
+
+# #2459: how long the hosted automerge job waits for the three hosted checks. It waits on GitHub-hosted Linux, which
+# the public repo doesn't pay for and which holds no Mac, so the wait is long enough for the Mac-rest check to queue
+# behind the free plan's 5 concurrent hosted Macs and run (about 8 minutes of tests on the build Mac).
+HOSTED_REST_WAIT = 60 * 60
+# A check run GitHub hasn't created yet looks like a check that never ran. Right after a push the hosted checks can
+# be a few seconds behind the automerge job, so a missing one is waited for this long before the job gives up on it.
+HOSTED_MISSING_GRACE = 5 * 60
+HOSTED_FAILED = re.compile(r'" ended (failure|timed_out) on ')
+HOSTED_MISSING = re.compile(r'^no ".+" check ran on ')
+# What _fast_checks_stand says when a check passed on an older next whose commits since can matter.
+HOSTED_STALE = re.compile(r'" tested (a tree that is not|it on .+ and .+ since: )')
+HOSTED_WORKFLOW = 'hosted-portable.yml'
+HOSTED_REDISPATCHES = 3  # fresh runs per job when next keeps moving under them; then the Mac fallback takes it
+NEEDS_MAC = 'NEEDS_MAC'  # the hosted automerge job's cue to hand the run to lane.yml's automerge-mac job
+MOVED_ON = 'stopped waiting for the hosted checks: '
+
+
+def pr_moved_on(github, head: str) -> str | None:
+    """Why a run waiting on <head> should stop (the PR moved on, lost automerge or closed: a newer run or nobody
+    wants this one), or None. A failed read is no reason to stop."""
+    try:
+        now = github.pull()
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    if now.get('state', 'open') != 'open':
+        return f'{MOVED_ON}the PR is {now.get("state")}'
+    if now['head']['sha'] != head:
+        return f'{MOVED_ON}the PR moved on to {now["head"]["sha"][:7]}, whose own run tests it'
+    if AUTOMERGE not in {label['name'] for label in now.get('labels', [])}:
+        return f'{MOVED_ON}the automerge label is gone'
+    return None
+
+
+def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, alive, dispatch, env=None,
+                       records=hosted_fast_records, wait: float | None = None, poll: float = HOSTED_FAST_POLL,
+                       grace: float = HOSTED_MISSING_GRACE, clock=time.monotonic, sleep=time.sleep,
+                       out=sys.stdout, checks: dict | None = None) -> tuple[dict | None, str]:
+    """(all three hosted checks standing for <head> merged onto <base> at <base_sha>, '') or (None, why not), for the
+    hosted automerge job (#2459). It never runs a test. While a check is still running, or missing within <grace>,
+    it waits, up to <wait> seconds (HOSTED_REST_WAIT in a lane job, else none). When one passed on an older next that
+    has since moved in ways that matter, it calls dispatch() (up to HOSTED_REDISPATCHES times: a fresh run of hosted-portable.yml on the PR's
+    branch, merged onto <base>) and waits for that. alive() names why to stop (the PR moved on, say) or is falsy.
+    checks: the checks to wait for, all three by default; the hosted pair alone (HOSTED_FAST_CHECKS) when the hosted
+    job only waits for them before handing the run to the build Mac (LANE_HOSTED_MAC_REST off)."""
+    env = os.environ if env is None else env
+    if wait is None:
+        wait = HOSTED_REST_WAIT if env.get('GITHUB_ACTIONS') == 'true' else 0
+    checks = {**HOSTED_FAST_CHECKS, **HOSTED_REST_CHECK} if checks is None else checks
+    started = clock()
+    deadline = started + wait
+    dispatches, dispatched_at, running_seen = 0, started, False
+    while True:
+        stop = alive()
+        if stop:
+            return None, stop
+        found, why = _hosted_fast_checks_once(github, tree, base, head, base_sha, env, records, checks)
+        if found is not None or HOSTED_FAILED.search(why):
+            return found, why
+        if NOT_FINISHED in why:
+            running_seen = True
+        elif HOSTED_STALE.search(why):
+            # First time, or the run started again finished and next had moved again meanwhile.
+            if dispatches == 0 or running_seen:
+                if dispatches >= HOSTED_REDISPATCHES:
+                    return None, f'{why} (after {dispatches} fresh runs)'
+                problem = dispatch()
+                if problem:
+                    return None, f'{why}; running them again on {base} failed: {problem}'
+                dispatches, dispatched_at, running_seen = dispatches + 1, clock(), False
+                print(f'[lane] {why}; started them again on the newest {base}', file=out, flush=True)
+            elif clock() - dispatched_at > grace:
+                return None, f'{why}; the run started again {duration(clock() - dispatched_at)} ago has not shown up'
+        elif not (HOSTED_MISSING.search(why) and clock() - started < grace):
+            return None, why
+        if clock() + poll > deadline:
+            return None, f'{why} (waited {duration(clock() - started)})'
+        print(f'[lane] waiting for the hosted checks: {why}', file=out, flush=True)
+        sleep(poll)
+
+
+def hosted_checks_missing(why: str, fallback: str = NEEDS_MAC) -> tuple[str, str, str, list[str]]:
+    """What a run that merges on the hosted checks returns when they don't stand: FAIL when one failed on this head
+    (the PR's code, as the Mac's own run would have shown), else <fallback> with why."""
+    if HOSTED_FAILED.search(why):
+        return 'FAIL', 'hosted checks', 'hosted fast checks: failed', [
+            f'not merged: {why}. Its log is in the PR\'s checks; fix it and push.']
+    return fallback, 'hosted Linux runner', 'nothing', [f'the hosted checks do not stand: {why}']
+
+
+def hosted_rest_ran(evidence: Path, changed=None) -> tuple[str, list[str]]:
+    """run_automerge's mac_rest when the hosted Mac-rest check passed: nothing runs here; hosted_fast_lines says
+    which check ran it."""
+    return 'PASS', []
 
 
 AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
@@ -1494,12 +1616,21 @@ def checks_stand(checked: dict | None, base_sha: str, head: str) -> bool:
 def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, evidence: Path,
              comments: list[dict], labels=(), attempts: int = MERGE_ATTEMPTS,
              context: AutoRunContext | None = None,
-             checked: dict | None = None, hosted: bool = False) -> tuple[str, str, str, list[str]]:
+             checked: dict | None = None, hosted: bool = False, rest_hosted: bool = False,
+             rest_wait: float | None = None) -> tuple[str, str, str, list[str]]:
     """The automerge run: test the merge commit, and push it to <base> on PASS unless something blocks it.
 
     checked: the checks the automerge run held for T3 (held_checks) or for the audit (audit_held_checks) on this
     head passed. They stand, as after a refused push, when next's commits since touch none of the PR's files and no
     build inputs its checks read (#834, #1461); otherwise this run tests again.
+
+    hosted: the hosted Linux job. A T0 or ops diff runs its tests here; any other runs on the three hosted checks
+    (hosted_rest_on, #2459), as rest_hosted asks anywhere: a PR held for T3 is reported held before any wait, and
+    otherwise the run waits for the checks (hosted_rest_checks, up to <rest_wait>) and runs no test itself. When they
+    can't be had, the hosted job returns NEEDS_MAC and any other run INCONCLUSIVE; a failed one is a FAIL.
+    With only LANE_HOSTED_FAST on, the hosted job does the same up to the merge, on the hosted pair alone: held for
+    T3 is reported held, a failed check is the FAIL, and once the pair passed on this head (or can't be had) it
+    returns NEEDS_MAC, so the build Mac runs --plan fast-mac-rest and merges without idling for the pair.
     """
     notes: list[str] = []
     tested_base, skipped = None, None  # the next the last test ran on; next's commits since, when they can't matter
@@ -1531,25 +1662,54 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             return 'INCONCLUSIVE', 'no simulator', 'nothing', notes + [
                 f'The PR does not merge cleanly into {base} ({base_sha[:7]}): {", ".join(conflicts[:10])}. '
                 f'Merge {base} into your branch and push; the automerge label runs it again.']
+        rest = rest_hosted  # merge on the three hosted checks, testing nothing here (#2459)
+        pair = False  # wait here for the hosted pair, then hand the run to the build Mac (#2459, Mac rest off)
         if hosted:
             # Recheck with the current base's policy on every merge attempt, including reused checks.
             policy = base_policy(ROOT, base, 'scripts/test-scope.py')
             if not policy.hosted_automerge(diff_scope(ROOT, base)):
-                return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', [
-                    'The current diff requires the Mac; remove and re-add automerge to route it again.']
+                if hosted_rest_on():
+                    rest = True
+                elif hosted_fast_on():
+                    pair = True
+                else:
+                    return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', [
+                        'The current diff requires the Mac; remove and re-add automerge to route it again.']
         if skipped is None:
+            if rest or pair:
+                held = t3_gate(comments) if attempt == 1 else None
+                if held:  # the lane job that reports the T3 PASS merges it (merge_after_t3): nothing to test here
+                    return held[0], 'hosted Linux runner', 'nothing', notes + [
+                        f'not merged: {held[1]}.',
+                        'This run tested nothing and took no Mac: the T3 PASS\'s merge runs the host tests then, '
+                        'or merges on the hosted checks that stand for this head.']
+                found, why = hosted_rest_checks(github, ROOT, base, head, base_sha, wait=rest_wait,
+                                                alive=lambda: pr_moved_on(github, head),
+                                                dispatch=lambda: github.dispatch_hosted_checks(pull['head']['ref'],
+                                                                                               base),
+                                                **({'checks': HOSTED_FAST_CHECKS} if pair else {}))
+                if why.startswith(MOVED_ON):
+                    return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', notes + [f'not merged: {why}']
+                if not found:
+                    return hosted_checks_missing(why, NEEDS_MAC if hosted else 'INCONCLUSIVE')
+                if pair:  # the build Mac takes the hosted pair's PASS and runs only --plan fast-mac-rest
+                    return NEEDS_MAC, 'hosted Linux runner', 'nothing', notes + [
+                        f'the hosted fast pair passed on {head[:7]} with {base} at '
+                        f'{", ".join(sorted({record["base"][:7] for record in found.values()}))}; the build Mac runs '
+                        '--plan fast-mac-rest and merges']
             tried.mkdir(parents=True, exist_ok=True)
-            warm = 'no Mac build folders needed' if hosted else host_build_folders(ROOT)
+            warm = 'no Mac build folders needed' if hosted or rest else host_build_folders(ROOT)
             scope = diff_scope(ROOT, base)
             (tried / 'scope.json').write_text(json.dumps(scope, indent=2))
-            found, why = (None, '') if hosted else hosted_fast_checks(github, ROOT, base, head, base_sha)
-            if why:
+            if not rest:
+                found, why = (None, '') if hosted else hosted_fast_checks(github, ROOT, base, head, base_sha)
+            if why and not rest:
                 notes.append(f'the whole --plan fast ran on the Mac: {why}')
             verdict, where, ran, checks = run_automerge(
                 scope, tried, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)),
                 changed=lambda: changed_paths_for_tests(ROOT, base),
-                recheck=recheck_on_base(github, base_sha), **({'hosted': True} if hosted else {}),
-                **({'hosted_fast': found} if found else {}))
+                recheck=recheck_on_base(github, base_sha), **({'hosted': True} if hosted and not rest else {}),
+                **({'hosted_fast': found} if found else {}), **({'mac_rest': hosted_rest_ran} if rest else {}))
             tested = f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR); {warm}'
             if verdict != 'PASS':
                 return verdict, where, ran, [tested] + notes + checks
@@ -1654,7 +1814,7 @@ def handed_off_note(head: str, why: str, reason: str, where: str, now=None) -> s
 
 
 def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evidence: Path, base_sha: str,
-                   why: str, hand_off=None, room=None) -> str | None:
+                   why: str, hand_off=None, room=None, hosted: bool = False) -> str | None:
     """After a T3 PASS on <head>: the automerge run the T3 gate held, run here in the lane job (#421).
 
     When that held run passed its host tests (held_checks), they aren't run again here unless next
@@ -1666,6 +1826,8 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
     hand-off fails, this job tests as before.
     room: the release run passes the build runner's room wait (wait_for_room_to_test_on_host); it is called only
     when the checks have to run.
+    #2459: when the three hosted checks stand for this head right now (hosted_rest_on), nothing is handed off or
+    tested: the merge runs on them, in seconds, wherever this is. hosted: the hosted Linux automerge job calls it.
 
     Only for a PR that is still open on <head> with the automerge label, whose newest automerge report
     was held by the T3 gate, and that the gate no longer holds. It runs here rather than by re-adding the
@@ -1689,7 +1851,15 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
         clean_tree(ROOT)  # the T3 ran in this tree; the merge commit checks out next over it
         base_sha = fetch_base(ROOT, base)
         remember_tested(base, base_sha)
-        reason = retest_reason(checked, base_sha, head) if hand_off or room else None
+        reason = retest_reason(checked, base_sha, head) if hand_off or room or hosted else None
+        rest = False
+        if reason and hosted_rest_on():
+            found, _ = hosted_rest_checks(github, ROOT, base, head, base_sha, alive=lambda: None,
+                                          dispatch=lambda: 'not from here', wait=0)
+            rest = found is not None
+            reason = None if rest else reason
+        if reason and hosted:  # the hosted job never runs the Mac's host tests: the Mac's release run does
+            hand_off = hand_off or (lambda: github.hand_off_release(base, head, ''))
         handed = None
         if reason and hand_off:
             try:
@@ -1720,7 +1890,11 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
             details = [f'{no_room}. Remove and re-add automerge to run it again.']
         else:
             verdict, where, ran, details = run_auto(github, pull, pr, base, head, base_sha, evidence, comments,
-                                                   labels, context=context, checked=checked)
+                                                   labels, context=context, checked=checked,
+                                                   **({'rest_hosted': True, 'rest_wait': 0} if rest else {}),
+                                                   **({'hosted': True} if hosted and not rest else {}))
+            if verdict == NEEDS_MAC:  # the hand-off to the Mac's release run failed above; no Mac here
+                verdict, details = 'INCONCLUSIVE', details + ['Remove and re-add automerge to run it again.']
     except Exception as error:  # noqa: BLE001 - any lane fault is reported, never silent
         verdict, where, ran = 'INCONCLUSIVE', 'lane error', 'nothing'
         details = [f'The lane itself failed: {error!r}. evidence: {evidence}. Remove and re-add automerge to '
@@ -2459,6 +2633,17 @@ class GitHub:
         server = os.environ.get('GITHUB_SERVER_URL', 'https://github.com')
         return f'{server}/{self.repo}/actions/workflows/{LANE_WORKFLOW}?query=event%3Aworkflow_dispatch'
 
+    def dispatch_hosted_checks(self, branch: str, base: str) -> str:
+        """Run hosted-portable.yml again on the PR's <branch>, merged onto <base>'s tip (#2459), and return '' or why
+        it could not. Its check runs land on the branch's head, where hosted_fast_records reads the newest. A
+        branch whose hosted-portable.yml has no `base` input is refused by GitHub, so nothing runs untested there."""
+        try:
+            self.api('-X', 'POST', f'repos/{self.repo}/actions/workflows/{HOSTED_WORKFLOW}/dispatches',
+                     '-f', f'ref={branch}', '-f', f'inputs[base]={base}')
+        except (OSError, subprocess.SubprocessError) as error:
+            return str(error).strip()[:200] or repr(error)
+        return ''
+
 
 # ---- Auto-revert of a lane change that broke the lane (owner rule 2026-10-01) ---------------------
 
@@ -3032,16 +3217,18 @@ def main(argv=None) -> int:
         """Release a held automerge run (#421), and return its report if it posted one. Never changes this
         job's result, which is already reported. The lane job off the build runner hands the run's checks to a
         build runner when they have to run (#1209), and returns the hand-off note."""
-        if args.hosted:
+        if args.hosted and not hosted_rest_on():
             return None  # the Mac lane job owns T3 release; never run its host suite on Linux
         hand_off = None
         if explicit and os.environ.get('SM_LANE_RUNNER_ROLE') != 'build':  # a /lane job, not an automerge run
             def hand_off():
                 return github.hand_off_release(args.base, head, t3_report)
         try:
-            link_tools(tools_source())  # the identical-request path returns before the job links them
+            if not args.hosted:
+                link_tools(tools_source())  # the identical-request path returns before the job links them
             return merge_after_t3(github, args.pr, args.base, head, f'{request_id}-auto',
-                                  evidence.parent / f'{request_id}-auto', base_sha, why, hand_off=hand_off)
+                                  evidence.parent / f'{request_id}-auto', base_sha, why, hand_off=hand_off,
+                                  **({'hosted': True} if args.hosted else {}))
         except Exception as error:  # noqa: BLE001 - reported on the PR when GitHub can be reached
             print(f'The automerge run after the T3 PASS stopped: {error!r}')
             try:
@@ -3107,6 +3294,12 @@ def main(argv=None) -> int:
             verdict, where, ran, details = run_auto(github, pull, args.pr, args.base, head, base_sha, evidence,
                                                     comments, labels, context=context,
                                                     checked=audit_checked, **({'hosted': True} if args.hosted else {}))
+            if verdict == NEEDS_MAC:  # no report here: lane.yml's automerge-mac job runs it on the build Mac (#2459)
+                print(f'Handing this automerge run to the build Mac: {"; ".join(details)}', flush=True)
+                if os.environ.get('GITHUB_OUTPUT'):
+                    with open(os.environ['GITHUB_OUTPUT'], 'a') as handle:
+                        handle.write('needs_mac=true\n')
+                return 0
             details = ([beside] if beside else []) + details
             crashes = 'none'
         elif conflicts:

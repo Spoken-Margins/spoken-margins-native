@@ -299,6 +299,19 @@ def hosted_app_routing(result, env=None):
     return dict(result, lane=list(HOSTED_APP_RUNNER))
 
 
+def hosted_merge_routing(result, env=None):
+    """#2459: every automerge job starts on a GitHub-hosted Linux runner once the hosted fast pair runs
+    (LANE_HOSTED_FAST `on`, the rule lane-runner.py's hosted_fast_on reads). There a PR held for T3 is reported held
+    without a Mac, and the job waits for the hosted checks: with LANE_HOSTED_MAC_REST `on` too it merges on all
+    three and runs no test; without it, it hands the run to the build Mac (lane.yml's automerge-mac) only once the
+    pair has finished. T0 and ops diffs test themselves, as before. The lane job keeps its route. Anything else
+    leaves <result> as it is."""
+    env = os.environ if env is None else env
+    if env.get('LANE_HOSTED_FAST', '').strip().lower() != 'on':
+        return result
+    return dict(result, automerge=list(HOSTED_RUNNER))
+
+
 # Ops folders whose tests skip themselves on Linux (ops/power's amph is AppleScript): a pass there proves nothing.
 MAC_ONLY_OPS = ('ops/power/',)
 
@@ -439,7 +452,7 @@ def main(argv=None):
             result = runner_routing(event['pull_request'], files, runners)
         except (OSError, ValueError, KeyError, TypeError):
             result = runner_routing({}, [], [])
-        print(json.dumps(hosted_app_routing(result)))
+        print(json.dumps(hosted_merge_routing(hosted_app_routing(result))))
         return 0
     if not args.files and args.base is None:  # #1492: the trunk (scripts/trunk.py)
         from trunk import trunk_ref
