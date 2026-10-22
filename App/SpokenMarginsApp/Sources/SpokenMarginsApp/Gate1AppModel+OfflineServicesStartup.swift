@@ -21,15 +21,24 @@ extension Gate1AppModel {
             let reconciled = await ledger.lastReconciliation?.summary ?? "failed"
             let ledgerBytes = try? await ledger.inventoryBytes()
             let filesystemBytes = await ledger.directFilesystemBytes()
-            guard let self, !Task.isCancelled else { return }
-            diagnostics["offlineLedgerReconciled"] = reconciled
-            diagnostics["offlineLedgerBytes"] = "\(ledgerBytes ?? 0)"
-            diagnostics["offlineFilesystemBytes"] = "\(filesystemBytes)"
-            diagnostics["offlineResidualOverageBytes"] = "\(residualOverage ?? 0)"
-            tryRefreshOfflineStorageUsage()
-            await performFollowedSourceRefresh(force: false)
+            // From here `self` is taken afresh after every await; the scoped `model` ends with its block.
+            do {
+                guard !Task.isCancelled, let model = self else { return }
+                model.diagnostics["offlineLedgerReconciled"] = reconciled
+                model.diagnostics["offlineLedgerBytes"] = "\(ledgerBytes ?? 0)"
+                model.diagnostics["offlineFilesystemBytes"] = "\(filesystemBytes)"
+                model.diagnostics["offlineResidualOverageBytes"] = "\(residualOverage ?? 0)"
+                model.tryRefreshOfflineStorageUsage()
+                await model.performFollowedSourceRefresh(force: false)
+            }
+            guard !Task.isCancelled,
+                  !UserDefaults.standard.bool(forKey: Gate1AppModel.guidedOnboardingTombstoneKey),
+                  let coordinator = self?.guidedOnboardingCoordinator,
+                  self?.store != nil else { return }
+            let refreshed: Result<GuidedOnboardingPayload, Error>
+            do { refreshed = .success(try await coordinator.refresh()) } catch { refreshed = .failure(error) }
             guard !Task.isCancelled else { return }
-            await refreshGuidedOnboardingContent()
+            self?.applyGuidedOnboardingRefresh(refreshed)
         })
     }
 }

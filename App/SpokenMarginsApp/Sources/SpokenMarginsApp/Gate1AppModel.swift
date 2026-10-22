@@ -508,7 +508,7 @@ final class Gate1AppModel: ObservableObject {
     var sourceSuggestionChecks: Set<String> = []
     var followDiscoveries: [String: Task<[SourceCandidateEvidence], Error>] = [:]
     @Published var followOffers: [String: FollowOffer] = [:]
-    private var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
+    var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
     private let recordingClientOverride: RecordingClient?
     let microphoneAccess: MarginMicrophoneAccess
     let sourceTranscriptionClient: SourceTranscriptionClient
@@ -3587,59 +3587,6 @@ final class Gate1AppModel: ObservableObject {
             ledger: ledger
         )
         startOfflineServices(store: store, ledger: ledger)
-    }
-
-    func refreshGuidedOnboardingContent() async {
-        guard !UserDefaults.standard.bool(forKey: Self.guidedOnboardingTombstoneKey),
-              let coordinator = guidedOnboardingCoordinator,
-              let store else { return }
-        do {
-            let payload = try await coordinator.refresh()
-            let priorChecksum = UserDefaults.standard.string(forKey: "guidedOnboardingAudioChecksum")
-            var item = (try? store.loadItem(id: Self.guidedOnboardingItemId)) ?? Self.makeBundledGuidedOnboardingItem()
-            item.title = payload.manifest.title
-            item.sourceTitle = "Spoken Margins"
-            item.media = ItemMedia(
-                sourceType: .nativeMediaFile,
-                url: payload.audioURL.absoluteString,
-                nativeMediaId: "guided-onboarding-audio"
-            )
-            try store.saveItem(item)
-            try store.saveAudioAsset(AudioAsset(
-                id: "guided-onboarding-audio",
-                itemId: item.id,
-                audioSourceType: .nativeMediaFile,
-                availability: .localPhone,
-                url: payload.audioURL.absoluteString,
-                title: payload.manifest.title
-            ))
-            try store.saveTranscriptTimeline(SourceTranscriptTimeline(
-                id: "timeline-guided-onboarding",
-                itemId: item.id,
-                createdAt: Date(),
-                timeline: TranscriptTimeline(
-                    segments: [],
-                    chapters: [
-                        MediaTimelineChapter(
-                            id: "guided-onboarding-core-loop",
-                            title: "The Core Loop",
-                            startMs: 0,
-                            transcriptSegmentId: "guided-onboarding-core-loop"
-                        )
-                    ]
-                )
-            ))
-            UserDefaults.standard.set(payload.manifest.audioChecksumSHA256, forKey: "guidedOnboardingAudioChecksum")
-            if payload.audioChanged, priorChecksum != nil, snapshot.itemId == item.id {
-                _ = try? engine?.stopPlayback()
-                snapshot = SessionSnapshot()
-                diagnostics["guidedOnboardingProgress"] = "reset_for_audio_change"
-            }
-            try refreshLibraryRows(store: store)
-            diagnostics["guidedOnboardingRemote"] = "ready:v\(payload.manifest.contentVersion)"
-        } catch {
-            diagnostics["guidedOnboardingRemote"] = "fallback:\(String(describing: type(of: error)))"
-        }
     }
 
     var followCandidateDiscoveryHandler: ((Item, URL) async throws -> [SourceCandidateEvidence])?

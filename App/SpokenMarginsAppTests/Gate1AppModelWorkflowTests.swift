@@ -73,7 +73,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// fails the test that left it; the target is under 0.3 s, and the lane log names any test above that.
     override func setUp() {
         super.setUp()
-        _ = Self.drainMainQueue() // work an earlier class left behind isn't this test's
+        let inherited = Self.drainMainQueue() // work an earlier class left behind isn't this test's
+        if inherited > 0.3 { print("Main-queue backlog \(String(format: "%.2f", inherited)) s before \(name) (#2195)") }
     }
 
     override func tearDown() {
@@ -2783,7 +2784,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
     /// #2195: the offline-services startup held its model strongly, so a dropped model lived on and its SQLite
     /// calls ran later on the main thread, during whatever came next. Each could wait out the 1 s busy timeout.
-    func testDroppedModelIsReleasedAndItsOfflineServicesStartupNeverRuns() throws {
+    func testDroppedModelIsReleasedAndItsOfflineServicesStartupIsCancelled() throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "dropped-model-startup-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
