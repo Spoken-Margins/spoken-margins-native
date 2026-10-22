@@ -528,8 +528,12 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           # Base-branch code only, written under another name first so a failed download leaves nothing to run.
-          gh api -H 'Accept: application/vnd.github.raw' "repos/$GH_REPO/contents/scripts/lane-runner.py?ref=$BASE_REF" \
-            > "$RUNNER_TEMP/lane-runner.py.part" && mv "$RUNNER_TEMP/lane-runner.py.part" "$RUNNER_TEMP/lane-runner.py"
+          if ! gh api -H 'Accept: application/vnd.github.raw' "repos/$GH_REPO/contents/scripts/lane-runner.py?ref=$BASE_REF" \
+              > "$RUNNER_TEMP/lane-runner.py.part"; then
+            echo "::error::Could not download lane-runner.py from $BASE_REF; the lost lane job on this PR was not reported."
+            exit 1
+          fi
+          mv "$RUNNER_TEMP/lane-runner.py.part" "$RUNNER_TEMP/lane-runner.py"
           if ! grep -q -e '--lost' "$RUNNER_TEMP/lane-runner.py"; then
             echo '::warning::The base branch'"'"'s lane-runner.py has no --lost yet; nothing reported.'
             exit 0

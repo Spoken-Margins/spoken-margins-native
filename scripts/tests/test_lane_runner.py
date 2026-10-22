@@ -111,10 +111,26 @@ class LostLaneJobTests(unittest.TestCase):
         self.assertEqual(github.posted, [])
         self.assertEqual(github.labels, {'lane:done'})
 
+    def test_a_request_the_lane_job_answered_as_identical_changes_nothing(self):
+        # "Lane: identical T3 request ... already reported (FAIL)" turns the job red but answers the request.
+        identical = comment(f'Lane: identical T3 request for {HEAD[:7]} already reported (FAIL): https://example.test/r'
+                            f'\n{lane.NOTE}', login='github-actions[bot]')
+        github = FakeGitHub(labels=('lane:done',), comments=[comment(self.T3), identical])
+        self.lost(github)
+        self.assertEqual((github.posted, github.label_changes), ([], []))
+
+    def test_a_closed_pr_is_left_alone(self):
+        github = FakeGitHub(comments=[comment(self.T3)])
+        pull = github.pull
+        github.pull = lambda: {**pull(), 'state': 'closed'}
+        self.lost(github)
+        self.assertEqual((github.posted, github.label_changes), ([], []))
+
     def test_a_waiting_test_desk_request_keeps_lane_queued(self):
         github = FakeGitHub(labels=('lane:queued',), comments=[comment(self.T3), comment('/lane T4\nrun: J1\n')])
         self.lost(github)
         self.assertIn('lane:queued', github.labels)
+        self.assertEqual(len(github.posted), 1)
 
 
 class ClaudeAuditGateTests(unittest.TestCase):

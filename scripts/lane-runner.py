@@ -2871,6 +2871,7 @@ def report_lost(github: GitHub, pr: int, run_id: str, attempt: str | None, event
             print(f'This run already reported ({comment.get("html_url")}); nothing to add.')
             return 0
     request, desk_waiting = pending_requests(comments)
+    changed = False
     if request is not None and request['tier'] in RUNNER_TIERS:
         details = [f'{LOST_REASON}. Run {run_url} (attempt {attempt or "1"}) has no steps or log to read; the Mac '
                    "runner's _diag logs for that time say why. No test ran. To try again, comment the same "
@@ -2878,14 +2879,18 @@ def report_lost(github: GitHub, pr: int, run_id: str, attempt: str | None, event
         github.comment(report(name, 'INCONCLUSIVE', event_head, 'unknown', request['tier'], 'no runner', 0,
                               'nothing', details, 'none', 'none', NOT_VERIFIED,
                               identity(request['tier'], event_head, '', request['tests']), '', base))
+        changed = True
     else:
         print('No unanswered T2/T3 request; only the labels come off.')
     labels = {label['name'] for label in pull.get('labels', [])}
     if RUNNING in labels:
         github.relabel(RUNNING, None)
+        changed = True
     if not desk_waiting and QUEUED in labels:
         github.relabel(QUEUED, None)
-    github.relabel(DONE, DONE)  # the Hourly dispatch wakes on lane:done's
+        changed = True
+    if changed:  # nothing posted and no label left: the lane job had already answered; don't wake the dispatcher
+        github.relabel(DONE, DONE)  # the Hourly dispatch wakes on lane:done's
     return 0
 
 
