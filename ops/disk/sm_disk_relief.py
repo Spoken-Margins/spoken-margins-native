@@ -8,7 +8,7 @@ as soon as free space reaches 70 GiB. Steps 1 to 5 only delete things that rebui
 so they run whether or not the external drive is plugged in; only step 6 needs the drives.
 
 1. Finished worktrees: inside a checkout's `.claude/worktrees/` or in ~/.codex/worktrees, clean, HEAD already in
-   origin/next, idle, untouched for 24 hours, no live Claude Code session working there, and
+   origin/main, idle, untouched for 24 hours, no live Claude Code session working there, and
    holding no ignored files except regenerable ones (`.build/`, `.venv`, `node_modules`, ...).
    Removed with `git worktree remove`, which refuses dirty or locked worktrees.
 2. Regenerable build caches in idle worktrees of this repo, Codex's included: `.build/dd`, `.build/verification`
@@ -952,7 +952,7 @@ def plan_moves(cfg: Config, machine: Machine, procs: List[Proc], protected: List
 
 
 def is_stale(machine: Machine, tree: Path) -> bool:
-    """Clean (no changes, no untracked files) and HEAD already in the trunk (origin/next until #1492 moves it)."""
+    """Clean (no changes, no untracked files) and HEAD already in the trunk (origin/main)."""
     code, status = machine.git(tree, 'status', '--porcelain')
     if code != 0 or status.strip():
         return False

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The lane's deterministic tiers: run a T2 or T3 request from a PR and post the report.
 
-Run by .github/workflows/lane.yml on the Mac, or, for T0/ops-only automerge, on the VPS Linux runner (--hosted, #861).
+Run by .github/workflows/lane.yml on the Mac, or, for T0/ops-only automerge, on a GitHub-hosted Linux runner (--hosted, #861, #2442).
 The workflow checks out the PR's
 head in --tree and runs this script as taken from the base branch (next); the script merges the
 newest next into the tree itself, so a report tests the PR against the current next even when
@@ -62,9 +62,8 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   public): when both hosted-portable.yml jobs passed on the PR's head and recorded a merge tree that matches this
   head merged onto the next they tested, and next's commits since can't matter (untested_moves), the automerge
   run takes them for the portable steps and SessionKitCoreTests and runs only --plan fast-mac-rest on the Mac.
-  Anything short of that, and with the variable unset, it runs the whole --plan fast as before.
-  Until the repo is public (#2160), the same rule takes the two VPS checks in linux-t1.yml instead: `vps fast:
-  portable` (--plan fast-portable) and `sessionkit-core` (SessionKitCoreTests on Linux), with no switch.
+  Anything short of that, and with the variable unset, it runs the whole --plan fast as before. (The VPS's
+  linux-t1.yml pair, read from #2160 until the flip, was retired in #2442.)
 - Hosted T2 and T3 (#1389 phase 2), only with the LANE_HOSTED_APP repository variable `on` (the same kind of rollout
   guard): test-scope.py routes the lane job to a GitHub-hosted Mac, and lane.yml sets SM_LANE_GITHUB_HOSTED=1 there,
   with the lane state and evidence folders in the job's own temporary folder. This script runs as on the Mac: the
@@ -328,7 +327,7 @@ def report(request_id: str, verdict: str, head: str, base: str, tier: str, where
            ran: str, details: list[str], crashes: str, evidence: str, not_verified: str, wanted: dict,
            cc: str = '', base_name: str | None = None, hosted: bool = False) -> str:
     base_name = base_name or trunk()
-    location = ('on the VPS runner' if hosted else
+    location = ('on a GitHub-hosted Linux runner' if hosted else
                 'on a GitHub-hosted Mac; the run\'s `lane-evidence` artifact keeps it for 7 days' if github_hosted()
                 else 'on the Mac')
     lines = [f'Lane report {request_id} — {verdict}',
@@ -680,7 +679,7 @@ def t3_scope(tree: Path, base: str, evidence: Path) -> tuple[list[str], list[str
 
 
 def hot_file_violations(tree: Path, base: str, labels) -> list[str]:
-    """next's hot-file ratchet on the tree's HEAD (none until the ratchet is on next)."""
+    """The base branch's hot-file ratchet on the tree's HEAD (none until the ratchet is on that branch)."""
     ratchet = base_policy(tree, base, 'scripts/hot_file_ratchet.py')
     return ratchet.violations(tree, f'origin/{base}', 'HEAD', labels) if ratchet else []
 
@@ -726,6 +725,10 @@ def run_mac_rest(evidence: Path, runner=run_bounded, changed: list[str] | None =
 
 
 def run_host_plan(plan: str, evidence: Path, runner, changed: list[str] | None) -> tuple[str, list[str]]:
+    if runner is run_bounded:  # a real run; tests hand in their own runner, and test the guard on its own
+        pointers = ensure_lfs_files(ROOT)
+        if pointers:
+            return 'INCONCLUSIVE', [pointers]
     python = ROOT / '.venv/bin/python'
     output, log_path = evidence / 'fast', evidence / 'verify-fast.log'
     command = [str(python if python.exists() else sys.executable), 'scripts/verify-tests.py', '--plan', plan,
@@ -750,6 +753,65 @@ def run_host_plan(plan: str, evidence: Path, runner, changed: list[str] | None) 
                         str(note) for note in manifest.get('notes', [])]
     return 'FAIL', [f'host tests (--plan {plan}) — expected: verified. observed: exit {code}. evidence: {log_path}',
                     *[f'  {line}' for line in first_errors(log_path)]]
+
+
+# ---- Git LFS files in the checkout (#2139) ------------------------------------------------------
+# A checkout made without LFS (shipped-build-compat.yml's, on 2026-10-19) writes each model as a 132-byte pointer, and
+# the lane's own `lfs: true` checkout never rewrites a file whose blob is unchanged, so the pointer stays. The tests
+# then failed deep inside a voice test (`Protobuf parsing failed`) as if the PR had broken it. Before any host test,
+# build or simulator run, every LFS file must be its content: a pointer is restored from the checkout's LFS cache
+# (`git lfs checkout`, no download), and one that stays a pointer is a runner fault, not a FAIL.
+
+LFS_POINTER_HEADER = b'version https://git-lfs.github.com/spec/v1\n'
+LFS_POINTER_NOTE = 'LFS pointer, not the model'
+LFS_STEP = 'LFS files'
+
+
+def lfs_pointer_files(tree: Path) -> list[str]:
+    """The tree's Git LFS files (filter=lfs in .gitattributes) that are pointer files, not their content."""
+    listed = subprocess.run(['git', '-C', str(tree), 'ls-files', '-z', '--', ':(attr:filter=lfs)'],
+                            capture_output=True)
+    if listed.returncode != 0:  # not a checkout: nothing here to check
+        return []
+    pointers = []
+    for name in sorted(filter(None, listed.stdout.decode('utf-8', 'surrogateescape').split('\0'))):
+        try:
+            with (tree / name).open('rb') as handle:  # LFS pointers are under 1024 bytes
+                head = handle.read(1025)
+        except OSError:
+            continue
+        if len(head) <= 1024 and head.startswith(LFS_POINTER_HEADER):
+            pointers.append(name)
+    return pointers
+
+
+def ensure_lfs_files(tree: Path, run=subprocess.run) -> str | None:
+    """Make every LFS file in the tree its content. Returns None when they are (after a repair, if one was needed),
+    else the report line naming each file still a pointer. A job that skips LFS on purpose (GIT_LFS_SKIP_SMUDGE=1,
+    the hosted T0/ops automerge job's) is not checked."""
+    if os.environ.get('GIT_LFS_SKIP_SMUDGE', '').strip().lower() in ('1', 't', 'true', 'y', 'yes', 'on'):  # as git-lfs reads it
+        return None
+    started = time.monotonic()
+    pointers = lfs_pointer_files(tree)
+    if not pointers:
+        note_step(LFS_STEP, 'PASS', time.monotonic() - started)
+        return None
+    print(f'[lane] {len(pointers)} LFS pointer file(s) in the checkout; restoring them from its LFS cache: '
+          + ', '.join(pointers), flush=True)
+    restored = run(['git', '-C', str(tree), 'lfs', 'checkout', *pointers], capture_output=True, text=True)
+    left = [name for name in lfs_pointer_files(tree) if name in pointers]
+    if not left:
+        print(f'[lane] git lfs checkout restored {len(pointers)} file(s).', flush=True)
+        # A runner fault in the ledger's terms: the checkout was wrong, not the PR. Repairs in a row raise its fault
+        # alarm, as something keeps writing pointers. No repair or stop in 60 days says the guard is waste.
+        note_step(LFS_STEP, 'REPAIRED', time.monotonic() - started)
+        return None
+    note_step(LFS_STEP, 'INCONCLUSIVE', time.monotonic() - started)
+    said = (restored.stderr or restored.stdout or '').strip().splitlines()
+    return (f'runner fault, not the PR (#2139): {"; ".join(f"{name}: {LFS_POINTER_NOTE}" for name in left)}. '
+            f'`git lfs checkout` could not restore {"it" if len(left) == 1 else "them"} from this checkout\'s LFS '
+            f'cache (exit {restored.returncode}{": " + said[-1] if said else ""}). Run `git lfs pull` in the runner\'s '
+            'checkout, then run the lane again; nothing was built or tested.')
 
 
 NO_APP_BUILD_PER_PR = ('no app build per PR (owner, 2026-10-09): the author builds both targets before pushing, '
@@ -821,7 +883,7 @@ def run_automerge(scope: dict, evidence: Path, fast=run_fast,
             'nothing here reaches the host tests or the app (docs or research notes only)']
     if hosted:
         verdict, more = run_ops(evidence)
-        return verdict, 'VPS runner', 'ops folder tests: ' + verdict.lower(), details + more
+        return verdict, 'hosted Linux runner', 'ops folder tests: ' + verdict.lower(), details + more
     if hosted_fast:
         label = hosted_fast_ran(hosted_fast)
         details += hosted_fast_lines(hosted_fast)
@@ -850,11 +912,6 @@ HOSTED_FAST_SWITCH = 'LANE_HOSTED_FAST'
 # check run name (the job's `name:` in hosted-portable.yml) -> the verify-tests.py plan it ran
 HOSTED_FAST_CHECKS = {'hosted fast: portable': 'fast-portable',
                       'hosted fast: SessionKit core': 'fast-hosted-sessionkit'}
-# The bridge until then (#2160): the same two halves on the owner's VPS runner sm-vps-t1 (linux-t1.yml), on the same
-# merge commit, with no switch. Its SessionKitCoreTests run on Linux, which leaves out the few Darwin-only core tests
-# (3,281 there against about 3,290 on the Mac on 2026-10-19); every whole --plan fast on the Mac (a fallback, a T3
-# release) still runs them. Missing, failed or for another tree, the Mac runs the whole --plan fast as before.
-VPS_FAST_CHECKS = {'vps fast: portable': 'fast-portable', 'sessionkit-core': 'linux-sessionkit-core'}
 HOSTED_TESTED_TITLE = 'lane-hosted-tested'
 HOSTED_TESTED = re.compile(r'^plan=(\S+) tree=([0-9a-f]{40}) parents=([0-9a-f]{40}) ([0-9a-f]{40})\s*$')
 
@@ -887,7 +944,7 @@ def hosted_fast_records(github, head: str, checks: dict = HOSTED_FAST_CHECKS) ->
             return None, f'no "{name}" check ran on {head[:7]}'
         run = max(runs, key=lambda run: (run.get('started_at') or '', run.get('id') or 0))
         if run.get('status') != 'completed':
-            return None, f'"{name}" had not finished on {head[:7]}'
+            return None, f'"{name}" {NOT_FINISHED} on {head[:7]}'
         if run.get('conclusion') != 'success':
             return None, f'"{name}" ended {run.get("conclusion")} on {head[:7]}'
         record = hosted_tested(json.loads(github.api(f'repos/{github.repo}/check-runs/{run["id"]}/annotations')))
@@ -904,23 +961,46 @@ def merged_tree(tree: Path, base: str, head: str) -> str | None:
     return done.stdout.split('\n', 1)[0].strip() if done.returncode == 0 else None
 
 
+# How long the automerge run waits for fast checks off the Mac that are still running on this head (#1389). A PR is
+# usually armed the moment it is pushed, so its hosted checks (about 6 minutes) were still running when the Mac
+# reached them: the first two lane runs after LANE_HOSTED_FAST went on (39661421482, 39667637891) ran the whole
+# --plan fast on the Mac for that reason alone. Waiting costs the Mac nothing but an idle job.
+HOSTED_FAST_WAIT = 15 * 60
+HOSTED_FAST_POLL = 30
+NOT_FINISHED = 'had not finished'
+
+
 def hosted_fast_checks(github, tree: Path, base: str, head: str, base_sha: str, env=None,
-                       records=hosted_fast_records) -> tuple[dict | None, str]:
+                       records=hosted_fast_records, wait: float | None = None, poll: float = HOSTED_FAST_POLL,
+                       clock=time.monotonic, sleep=time.sleep, out=sys.stdout) -> tuple[dict | None, str]:
     """(the fast checks off the Mac that stand for <head> merged onto <base> at <base_sha>, '') or (None, why the Mac
-    runs the whole --plan fast). The GitHub-hosted pair (with the switch on), else the VPS pair (#2160); each record
-    says which ('runner').
+    runs the whole --plan fast). While none stands and one of them is still running, it waits up to <wait> seconds
+    (HOSTED_FAST_WAIT inside a lane job, else none, so tests and local runs never sleep)."""
+    env = os.environ if env is None else env
+    if wait is None:
+        wait = HOSTED_FAST_WAIT if env.get('GITHUB_ACTIONS') == 'true' else 0
+    deadline = clock() + wait
+    while True:
+        found, why = _hosted_fast_checks_once(github, tree, base, head, base_sha, env, records)
+        if found is not None or NOT_FINISHED not in why or clock() + poll > deadline:
+            return found, why
+        print(f'[lane] waiting for the fast checks off the Mac: {why}', file=out, flush=True)
+        sleep(poll)
+
+
+def _hosted_fast_checks_once(github, tree: Path, base: str, head: str, base_sha: str, env,
+                             records) -> tuple[dict | None, str]:
+    """The GitHub-hosted pair, with the switch on; each record says which runner ('runner').
 
     A run stands when it tested exactly <head> merged onto some next (its merge tree matches the one this
     runner computes for that next), and that next is <base_sha> or next's commits since can't change what it showed:
     the rule a held PASS meets after next moves (untested_moves)."""
-    sources = ([('GitHub-hosted', HOSTED_FAST_CHECKS)] if hosted_fast_on(env) else []) + [('VPS', VPS_FAST_CHECKS)]
-    reasons = []
-    for runner, checks in sources:
-        found, why = _fast_checks_stand(github, tree, base, head, base_sha, records, checks)
-        if found is not None:
-            return {name: {**record, 'runner': runner} for name, record in found.items()}, ''
-        reasons.append(why)
-    return None, '; '.join(reasons)
+    if not hosted_fast_on(env):
+        return None, f'the hosted fast checks are off ({HOSTED_FAST_SWITCH} is not `on`)'
+    found, why = _fast_checks_stand(github, tree, base, head, base_sha, records, HOSTED_FAST_CHECKS)
+    if found is None:
+        return None, why
+    return {name: {**record, 'runner': 'GitHub-hosted'} for name, record in found.items()}, ''
 
 
 def _fast_checks_stand(github, tree: Path, base: str, head: str, base_sha: str, records,
@@ -946,8 +1026,7 @@ def _fast_checks_stand(github, tree: Path, base: str, head: str, base_sha: str, 
 def hosted_fast_ran(found: dict) -> str:
     bases = sorted({record['base'][:7] for record in found.values()})
     where = sorted({record.get('runner', 'GitHub-hosted') for record in found.values()})
-    core = 'SessionKitCoreTests on Linux' if where == ['VPS'] else 'SessionKitCoreTests'
-    return (f'host tests ({" and ".join(where)}: --plan fast-portable and {core} with next at {", ".join(bases)}; '
+    return (f'host tests ({" and ".join(where)}: --plan fast-portable and SessionKitCoreTests with next at {", ".join(bases)}; '
             'Mac: --plan fast-mac-rest)')
 
 
@@ -1456,7 +1535,7 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             # Recheck with the current base's policy on every merge attempt, including reused checks.
             policy = base_policy(ROOT, base, 'scripts/test-scope.py')
             if not policy.hosted_automerge(diff_scope(ROOT, base)):
-                return 'INCONCLUSIVE', 'VPS runner', 'nothing', [
+                return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', [
                     'The current diff requires the Mac; remove and re-add automerge to route it again.']
         if skipped is None:
             tried.mkdir(parents=True, exist_ok=True)
@@ -2755,6 +2834,57 @@ def cleanup(github: GitHub, run_url: str, mode: str = 'any', hosted: bool = Fals
     return 0
 
 
+LOST_REASON = ('The lane job ended without running or reporting: its runner was lost, or the job was cancelled or '
+               'killed before its first step (GitHub shows "The self-hosted runner lost communication with the server" '
+               'for a runner that stopped answering)')
+
+
+def report_lost(github: GitHub, pr: int, run_id: str, attempt: str | None, event_head: str, base: str,
+                run_url: str) -> int:
+    """Answer a /lane request whose lane job ended with no report and no tidy-up of its own (#2174).
+
+    A job whose runner is lost runs no step, so neither its Verdict nor its tidy step can speak and the PR keeps
+    lane:queued with the request unanswered. lane.yml's `lane-lost` job, on a runner that is not the lane's, runs
+    this after the lane job failed or was cancelled. It posts an INCONCLUSIVE report for the pending T2/T3 request,
+    naming the run, and frees the labels as cleanup() does. The report names no tested commit, so the auto-revert
+    never counts it against a lane change. Does nothing when the lane job reported or tidied up, the PR moved on,
+    or there is no unanswered request.
+    """
+    pull = github.pull()
+    if pull.get('state', 'open') != 'open' or pull['head']['sha'] != event_head:
+        print('The PR moved on or closed; nothing to report.')
+        return 0
+    comments = github.comments()
+    name = request_name(pr, run_id, attempt)
+    for comment in comments:
+        body = comment.get('body') or ''
+        if body.startswith(f'Lane report {name} ') or f'Lane: the runner stopped before reporting ({run_url})' in body:
+            print(f'This run already reported ({comment.get("html_url")}); nothing to add.')
+            return 0
+    request, desk_waiting = pending_requests(comments)
+    changed = False
+    if request is not None and request['tier'] in RUNNER_TIERS:
+        details = [f'{LOST_REASON}. Run {run_url} (attempt {attempt or "1"}) has no steps or log to read; the Mac '
+                   "runner's _diag logs for that time say why. No test ran. To try again, comment the same "
+                   f'`/lane {request["tier"]}` request with the same `tests:` line and add lane:queued.']
+        github.comment(report(name, 'INCONCLUSIVE', event_head, 'unknown', request['tier'], 'no runner', 0,
+                              'nothing', details, 'none', 'none', NOT_VERIFIED,
+                              identity(request['tier'], event_head, '', request['tests']), '', base))
+        changed = True
+    else:
+        print('No unanswered T2/T3 request; only the labels come off.')
+    labels = {label['name'] for label in pull.get('labels', [])}
+    if RUNNING in labels:
+        github.relabel(RUNNING, None)
+        changed = True
+    if not desk_waiting and QUEUED in labels:
+        github.relabel(QUEUED, None)
+        changed = True
+    if changed:  # nothing posted and no label left: the lane job had already answered; don't wake the dispatcher
+        github.relabel(DONE, DONE)  # the Hourly dispatch wakes on lane:done's
+    return 0
+
+
 def fetch_base(tree: Path, base: str) -> str:
     """Fetch the newest base branch into the tree and return its commit."""
     subprocess.run(git_with_token(tree) + ['fetch', '--no-tags', '--quiet', 'origin', base], check=True)
@@ -2811,6 +2941,8 @@ def main(argv=None) -> int:
     parser.add_argument('--tree', type=Path, default=ROOT, help='checkout of the PR head to test')
     parser.add_argument('--base', help='branch the PR merges into (default: the trunk, scripts/trunk.py)')
     parser.add_argument('--cleanup', action='store_true', help='tidy up after a cancelled or failed job')
+    parser.add_argument('--lost', action='store_true',
+                        help='report a lane job that ended with no report (its runner was lost); runs on another runner')
     parser.add_argument('--hosted', action='store_true', help='auto only: T0 or ops Python tests, no Mac setup')
     parser.add_argument('--mode', choices=['explicit', 'auto', 'release', 'any'], default='any',
                         help='explicit: answer /lane requests only; auto: the automerge label only; release: the '
@@ -2836,6 +2968,9 @@ def main(argv=None) -> int:
     if os.environ.get('RUNNER_TEMP'):  # one job's own folder, shared by its run and its cleanup step
         TESTED_RECORD = Path(os.environ['RUNNER_TEMP']) / \
             f'sm-lane-tested-{args.run_id}-{os.environ.get("GITHUB_RUN_ATTEMPT") or "1"}.json'
+    if args.lost:
+        return report_lost(github, args.pr, args.run_id, os.environ.get('GITHUB_RUN_ATTEMPT'), args.event_head,
+                           args.base, run_url)
     if args.cleanup:
         return cleanup(github, run_url, args.mode, hosted=args.hosted)
     STEP_RUNS.clear()
@@ -2978,6 +3113,9 @@ def main(argv=None) -> int:
             verdict, where, ran, crashes = 'INCONCLUSIVE', 'no simulator', 'nothing', 'none'
             details = [f'The PR does not merge cleanly into {args.base} ({base_sha[:7]}): {", ".join(conflicts[:10])}. '
                        f'Merge {args.base} into your branch, push, and ask again.']
+        elif pointers := ensure_lfs_files(ROOT):
+            verdict, where, ran, crashes = 'INCONCLUSIVE', 'no simulator', 'nothing', 'none'
+            details = [pointers]
         elif request['tier'] == 'T2':
             print(prune_lane_folder(evidence.parent), flush=True)
             warm = warm_build_folders(ROOT)

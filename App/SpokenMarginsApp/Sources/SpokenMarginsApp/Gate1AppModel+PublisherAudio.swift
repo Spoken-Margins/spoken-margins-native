@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitFeeds
 import SessionKitPersistence
 
 /// An article with its publisher's recording and a text-to-time map plays the recording (#547), so
@@ -21,5 +22,33 @@ extension Gate1AppModel {
     func scheduleTextAudioPrewarmIfNeeded(itemId: String) {
         guard !playsPublisherAudio(itemId: itemId) else { return }
         prewarmTextAudioForOnDeviceVoice(itemId: itemId)
+    }
+
+    /// A page clipped from Safari imports from the text it carries, with no network, so clipping works in airplane
+    /// mode. Only afterwards, in the background, is its post page asked for a voiceover (#810); offline, or on any
+    /// failure, the article stays as imported and plays on-device speech.
+    @discardableResult
+    func importClippedPage(_ handoff: BrowserTextHandoff) -> Bool {
+        guard let itemId = importBrowserTextItem(handoff) else { return false }
+        lookUpVoiceover(itemId: itemId, address: handoff.source.url, title: handoff.source.title)
+        return true
+    }
+
+    /// An article clipped or added before a voiceover could be looked up (offline, an older build, a failed fetch)
+    /// is looked up when it is opened: once per launch, and again after a failure, such as being offline.
+    func retryVoiceoverLookupIfNeeded(itemId: String) {
+        guard let store, sharedLinkVoiceover.mayLookUp(itemId: itemId),
+              let item = try? store.loadItem(id: itemId),
+              item.text?.isEmpty == false,
+              let address = item.externalReference, let url = URL(string: address),
+              PublisherNarrationEvidence.mayHaveVoiceover(url),
+              ((try? store.loadPublisherAudio(itemId: itemId)) ?? nil) == nil else { return }
+        lookUpVoiceover(itemId: itemId, address: address, title: item.title)
+    }
+
+    private func lookUpVoiceover(itemId: String, address: String, title: String) {
+        guard let url = URL(string: address), PublisherNarrationEvidence.mayHaveVoiceover(url) else { return }
+        let article = BrowserTextHandoff(captureMode: .readablePage, source: BrowserTextSource(url: address, title: title), text: "")
+        rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: FetchedPageMemo())
     }
 }

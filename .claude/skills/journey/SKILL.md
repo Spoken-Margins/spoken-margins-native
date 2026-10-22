@@ -11,7 +11,7 @@ The journeys themselves are in [docs/journeys.md](../../../docs/journeys.md), an
 
 Only the Test Desk: a Claude Code session opened on the `spoken-margins-native-test-desk` folder, the worktree next to the main checkout (in the desktop app, or a terminal `claude` started there), or a terminal session started with `SM_LANE_ROLE=test-desk`. The lane guard hook in `~/.claude/settings.json` blocks simulator commands in every other session, and `cd` into that folder doesn't count. If a simulator command is blocked here, this session wasn't opened as the Test Desk. Stop and say so; don't try to get around it.
 
-That worktree is the desk's home, not a test subject: keep it detached at `origin/next` (`git fetch` then `git checkout --detach origin/next` there) and test each request in its own worktree.
+That worktree is the desk's home, not a test subject: keep it detached at `origin/main` (`git fetch` then `git checkout --detach origin/main` there) and test each request in its own worktree.
 
 ## Setup for one request
 
@@ -22,7 +22,7 @@ The Test Desk takes **T4 and T5** requests. T2 and T3 go to the self-hosted runn
    `git worktree add --detach .claude/worktrees/lane-<id> <sha>`
 2. **Install a ready-made build when there is one; build only when there isn't.** The integration run keeps a Debug simulator build of each tip it tests, so most desk starts need no build. When it runs on a GitHub-hosted Mac (`LANE_HOSTED_APP`), `scripts/sim-build-latest` downloads that run's build with `gh` (about 290 MB, a minute or two) the first time and says so on stderr; `--no-download` skips that:
    - **A request pinned to a commit** (a PR head, a named SHA): `scripts/sim-build-latest --for <sha>`. It prints the app path, then the SHA, and exits 1 when there is no build of exactly that commit; then build.
-   - **A check of the base branch's tip** (no commit named, or "test next"): `scripts/sim-build-latest`. It also says on stderr how many commits it is behind `origin/next` as last fetched, so `git fetch origin` first. Behind 0: use it. Behind more: run `git diff --stat <its sha> origin/next -- App Packages project.yml Contracts`; if nothing the request checks changed, use it. Either way, name the SHA you installed in the report.
+   - **A check of the base branch's tip** (no commit named, or "test main"): `scripts/sim-build-latest`. It also says on stderr how many commits it is behind `origin/main` as last fetched, so `git fetch origin` first. Behind 0: use it. Behind more: run `git diff --stat <its sha> origin/main -- App Packages project.yml Contracts`; if nothing the request checks changed, use it. Either way, name the SHA you installed in the report.
    - **Otherwise, build** in the worktree with the wrapper. It queues for a Mac-wide build slot and uses `.build/dd` there:
      `scripts/xcodebuild-lane -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS Simulator' build`
      The app is then at `.build/dd/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app`.

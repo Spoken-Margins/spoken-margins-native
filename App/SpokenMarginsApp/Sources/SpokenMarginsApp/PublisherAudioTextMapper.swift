@@ -2,6 +2,7 @@ import Foundation
 import Speech
 import SessionKit
 import SessionKitAudio
+import SessionKitFeeds
 import SessionKitPersistence
 
 /// Makes the text-to-time map for an article's publisher audio, once per item, after import
@@ -55,6 +56,11 @@ enum PublisherAudioTextMapper {
                 }.value
                 updated = audio.recordingTextMap(alignment)
             } catch {
+                // No connection is not a verdict on the recording: leave the record without a status, so opening the item tries again.
+                if OfflineFailure.isConnectivity(error) {
+                    running.remove(audio.itemId)
+                    return report("waiting_for_network")
+                }
                 updated = audio.recordingTextMapFailure("failed: \(String(describing: error))")
             }
             running.remove(audio.itemId)

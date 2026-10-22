@@ -143,9 +143,9 @@ extension Gate1AppModel {
     /// A shared or pasted Substack post keeps its voiceover beside the article (#810). Runs after the import,
     /// so a slow page never holds up the share.
     func rememberSharedLinkVoiceover(sharedURL: URL, article: BrowserTextHandoff, itemId: String, fetched: FetchedPageMemo) {
-        guard let store = try? requireStore() else { return }
-        let transcriber = sourceTranscriptionClient
         let voiceover = sharedLinkVoiceover
+        guard let store = try? requireStore(), voiceover.claim(itemId: itemId) else { return }
+        let transcriber = sourceTranscriptionClient
         Task { [weak self] in
             await voiceover.remember(sharedURL: sharedURL, article: article, itemId: itemId, fetched: fetched, store: store, transcriber: transcriber) {
                 self?.diagnostics["sharedLinkVoiceover"] = $0

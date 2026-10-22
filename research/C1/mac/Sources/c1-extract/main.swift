@@ -94,6 +94,8 @@ func write(_ object: [String: Any], to url: URL) throws {
 
 let options = parseOptions()
 let manifestURL = options.root.appendingPathComponent("corpus/manifest.json")
+// The app's bundled Kitten lexicon, which the glued-text spacer splits with (#2370).
+let wordListURL = options.root.appendingPathComponent("../../App/SpokenMarginsApp/Resources/Kitten/lexicon.tsv").standardizedFileURL
 let pdfDirectory = options.root.appendingPathComponent("cache/pdf", isDirectory: true)
 let extractorName = options.v2 ? "app-v2" : "app-baseline"
 let outDirectory = options.root.appendingPathComponent("cache/candidates/\(extractorName)", isDirectory: true)
@@ -156,7 +158,7 @@ for entry in entries {
                 }
                 let v1Elapsed = milliseconds(clock.now - v1Start)
                 start = clock.now
-                let document = try PDFStructuredTextExtractor.structuredDocument(from: pdfURL)
+                let document = try PDFStructuredTextExtractor.structuredDocument(from: pdfURL, wordListURL: wordListURL)
                 let elapsed = milliseconds(clock.now - start)
                 timings.append(elapsed)
                 pairedV1Timings.append(v1Elapsed)

@@ -9,7 +9,7 @@ already above its ceiling (after a hot-file-ok) may not grow further.
 Kill rule (the desk's): if most PRs that touch these files get hot-file-ok, the ratchet is wrong
 and gets dropped.
 
-  scripts/hot_file_ratchet.py               this branch's committed files against the trunk (origin/next)
+  scripts/hot_file_ratchet.py               this branch's committed files against the trunk (origin/main)
   scripts/hot_file_ratchet.py --base REF    against another ref
 
 The lane runner runs next's copy of this check in automerge runs, before any build.

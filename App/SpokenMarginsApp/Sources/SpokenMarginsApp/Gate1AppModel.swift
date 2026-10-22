@@ -536,7 +536,7 @@ final class Gate1AppModel: ObservableObject {
         record: { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) }
     )
     #if canImport(AVFoundation)
-    var preparingLocalAudioMapItems = Set<String>()
+    var preparingLocalAudioMapItems: [String: Bool] = [:] // a summary pass in flight → another was asked for meanwhile (#2255)
     #endif
     var sharedMarginOffers = SharedMarginOfferQueue()
     var reviewPlaces = ReviewReturnPlaces() // the place a "Review new Margins" owes the listener, kept across launches (#474)
@@ -1010,7 +1010,7 @@ final class Gate1AppModel: ObservableObject {
         playbackProgressTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 500_000_000)
-                await MainActor.run { self?.tickPlaybackProgress() }
+                await MainActor.run { self?.hangTelemetry.labels.scoped("playbackTick") { self?.tickPlaybackProgress() } } // a stuck tick holds play at starting (#2255)
             }
         }
     }
@@ -1070,7 +1070,7 @@ final class Gate1AppModel: ObservableObject {
             let previousStatus = snapshot.status
             let previousTargetId = snapshot.targetId
             let updated = snapshotReflectingTextAudioPrewarmStatus(
-                try engine.syncPlaybackProgress(),
+                try hangTelemetry.labels.scoped("lifecycleSync") { try engine.syncPlaybackProgress() },
                 itemId: activeItemId
             )
             recordMediaSeekEvidence(from: engine)
@@ -2362,12 +2362,12 @@ final class Gate1AppModel: ObservableObject {
                     let handoff = try Gate5BrowserTextHandoffURL.handoff(from: url, store: handoffStore)
                     // With something in Now Playing the import still shows its item and never touches playback (#1437).
                     let hadSession = hasActiveSession
-                    if importBrowserText(handoff) {
+                    if importClippedPage(handoff) {
                         try? handoffStore.deletePayload(payloadID: payloadID)
                         if hadSession { diagnostics["lastBrowserTextPayloadCleanup"] = "imported_without_session_replacement" }
                     }
                 } else if let handoff = Gate5BrowserTextHandoffURL.handoff(from: url) {
-                    importBrowserText(handoff)
+                    importClippedPage(handoff)
                 } else {
                     reportFailure("Unsupported browser text URL.")
                 }

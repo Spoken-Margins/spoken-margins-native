@@ -1,3 +1,5 @@
+import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 import contextlib
 import json
 from pathlib import Path
@@ -186,13 +188,13 @@ def git(cwd, *args):
 
 
 class Repos:
-    """origin (bare) and a clone with next = base + a merged PR (#7) that adds lines to a hot file."""
+    """origin (bare) and a clone with main = base + a merged PR (#7) that adds lines to a hot file."""
 
     def __init__(self, tmp, conflict=False):
         self.origin, self.clone = Path(tmp) / 'origin.git', Path(tmp) / 'clone'
-        subprocess.run(['git', 'init', '--bare', '-b', 'next', str(self.origin)], check=True, capture_output=True)
+        subprocess.run(['git', 'init', '--bare', '-b', 'main', str(self.origin)], check=True, capture_output=True)
         subprocess.run(['git', 'clone', '-q', str(self.origin), str(self.clone)], check=True, capture_output=True)
-        git(self.clone, 'checkout', '-q', '-b', 'next')
+        git(self.clone, 'checkout', '-q', '-b', 'main')
         hot = self.clone / revert.HOT_FILES[0]
         hot.parent.mkdir(parents=True)
         hot.write_text('a\nb\nc\n')
@@ -203,12 +205,12 @@ class Repos:
         git(self.clone, 'checkout', '-q', '-b', 'ws/7-x')
         hot.write_text('a\nc\n')                # the PR removes a line ...
         git(self.clone, 'commit', '-q', '-am', 'PR 7 work')
-        git(self.clone, 'checkout', '-q', 'next')
+        git(self.clone, 'checkout', '-q', 'main')
         git(self.clone, 'merge', '--no-ff', '-q', '-m', 'Merge pull request #7 from uncomposed/ws/7-x', '-m', 'Shrink the model', 'ws/7-x')
         if conflict:
             hot.write_text('a\ncc\n')        # ... and a later commit edits the lines next to it
             git(self.clone, 'commit', '-q', '-am', 'later change')
-        git(self.clone, 'push', '-q', 'origin', 'next')
+        git(self.clone, 'push', '-q', 'origin', 'main')
         self.tip = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=self.clone, text=True).strip()
         self.merge = subprocess.check_output(['git', 'rev-parse', 'HEAD' if not conflict else 'HEAD~1'], cwd=self.clone,
                                              text=True).strip()
@@ -255,7 +257,7 @@ class OpenRevertTests(unittest.TestCase):
             self.assertEqual(content, 'a\nb\nc\n')
             create = next(c for c in self.calls if c[1:3] == ['pr', 'create'])
             self.assertEqual(create[create.index('--label') + 1], 'automerge,hot-file-ok')  # the revert adds a line back
-            self.assertEqual(create[create.index('--base') + 1], 'next')
+            self.assertEqual(create[create.index('--base') + 1], 'main')
             issue = next(c for c in self.calls if c[1:3] == ['issue', 'create'])
             self.assertEqual(issue[issue.index('--label') + 1], 'ready,regression')
             self.assertTrue(any(c[1:3] == ['pr', 'edit'] for c in self.calls))
@@ -309,10 +311,10 @@ class OpenRevertTests(unittest.TestCase):
             (url, why), _ = self.open(repos, tmp)   # the first revert is only pushed, not merged ...
             self.assertTrue(url)
             hot = repos.clone / revert.HOT_FILES[0]
-            git(repos.clone, 'checkout', '-q', '-B', 'next', repos.tip)
-            hot.write_text('a\nb\nc\n')              # ... so make next itself already undo it
+            git(repos.clone, 'checkout', '-q', '-B', 'main', repos.tip)
+            hot.write_text('a\nb\nc\n')              # ... so make main itself already undo it
             git(repos.clone, 'commit', '-q', '-am', 'someone reverted by hand')
-            git(repos.clone, 'push', '-q', 'origin', 'next')
+            git(repos.clone, 'push', '-q', 'origin', 'main')
             git(repos.clone, 'checkout', '-q', '--detach', repos.tip)
             self.calls.clear()
             (url, why), _ = self.open(repos, tmp)
