@@ -12,7 +12,8 @@ final class PDFTitleLineCompatibilityTests: XCTestCase {
         Item(id: id, title: title, mediaType: "pdf", text: text, externalReference: "shared-file://share-sheet/report.pdf", status: "ready")
     }
 
-    /// ACCEPTED MISS (owner decision pending). A local PDF with no https address has only its text hash to be
+    /// ACCEPTED MISS (owner, 2026-10-22, on PR #2462: "accept", for a Build 34 packet reaching the new build; a
+    /// new-build packet reaching Build 34 lands as a second copy the same way, which is not yet on record). A local PDF with no https address has only its text hash to be
     /// matched by. A packet from a Build-34 listener carries the hash of the text with the placeholder line; the
     /// new build's text lacks that line, so the packet finds no item and import adds a copy. This pins today's
     /// behaviour: if it starts matching (or a different outcome), a later change moved packet matching and the

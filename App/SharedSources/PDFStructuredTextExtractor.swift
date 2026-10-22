@@ -248,11 +248,11 @@ enum PDFStructuredTextExtractor {
         }
         // With an outline the printed title has no heading level, so the first level-1 heading is
         // the outline's "1 Introduction" (#2062): take the printed title instead.
-        let printedTitle = headingOutline(in: document).isEmpty ? nil
-            : structured.segments.first { $0.role == .title }.map(text(of:))
+        let printedTitles = headingOutline(in: document).isEmpty ? []
+            : structured.segments.filter { $0.role == .title }.map(text(of:))
         return PDFItemTitle.choose(
             metadata: (document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String).map(cleaned),
-            printedTitle: printedTitle,
+            printedTitles: printedTitles,
             firstHeading: firstHeading
         )
     }

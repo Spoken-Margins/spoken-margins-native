@@ -461,6 +461,25 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertFalse(withPlaceholder.text.contains("Microsoft Word"), "and it is not read aloud")
     }
 
+    func testAPermissionNoticeAboveAnOutlinedPDFsTitleIsNotItsTitle() throws {
+        // #2062: the real arXiv 1706.03762v7 sets Google's permission notice in 12 pt above its 17 pt title, and
+        // was titled by the notice. Same layout here: notice in display type above the title, then an outline.
+        let notice: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 12)]
+        let pdf = try XCTUnwrap(PDFDocument(data: titlePagePDF([("Attention Is All You Need", 90)], others: [
+            ("Provided proper attribution is provided, Google hereby grants permission to", CGPoint(x: 60, y: 30), notice),
+            ("reproduce the tables and figures in this paper solely for use in journalistic or", CGPoint(x: 60, y: 46), notice),
+            ("scholarly works.", CGPoint(x: 60, y: 62), notice),
+        ])))
+        let root = PDFOutline()
+        let entry = PDFOutline()
+        entry.label = "1 Introduction"
+        entry.destination = PDFDestination(page: try XCTUnwrap(pdf.page(at: 1)), at: CGPoint(x: 60, y: 700))
+        root.insertChild(entry, at: 0)
+        pdf.outlineRoot = root
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        XCTAssertEqual(PDFStructuredTextExtractor.itemTitle(for: pdf, structured: document), "Attention Is All You Need")
+    }
+
     func testV2StartsTheChaptersAtAnAbstractLabelSetInBodyType() throws {
         // The real paper sets "Abstract" in 12 pt regular, so it is not a heading by its type.
         // The chapter list started with "Front Matter", holding the title page and the abstract.
