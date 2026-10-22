@@ -144,11 +144,12 @@ def narrow_selectors(selectors, planned, available):
     return narrowed
 
 
-def t3_selection(only, plan_name, root=ROOT):
+def t3_selection(only, plan_name, root=None):
     """The -only-testing selectors for a T3 request of `only` (Class or Class/method) in a test plan, the plan's
     tests, and the tests the run must complete. A selector that names nothing in the plan is refused, so a
     misspelled name fails before anything builds instead of running nothing (#2138). Shared with the hosted Mac
     (scripts/hosted_t3_check.py), so both judge a T3 by one rule."""
+    root = ROOT if root is None else root
     selectors = [s if s.startswith((f'{APP_TEST_TARGET}/', f'{UI_TEST_TARGET}/')) else f'{APP_TEST_TARGET}/{s}'
                  for s in only]
     planned = plan_tests(root, plan_name)

@@ -42,7 +42,7 @@ def select(tests, plan, root=None):
     entries = parse_tests(tests)
     if not entries:
         return [], set()
-    selectors, _, expected = verify.t3_selection(entries, plan, root or verify.ROOT)
+    selectors, _, expected = verify.t3_selection(entries, plan, root)
     return selectors, expected
 
 
