@@ -156,15 +156,16 @@ jobs:
   owner-tap-alert:
     # When both jobs above finish, tell the owner's phone if this PR now waits only for his merge tap (#2047, #2442):
     # scripts/owner_tap_alert.py posts one github-actions[bot] comment that @mentions him, once per head, when the
-    # PR touches .github/ or scripts/lane-runner.py and is ready. It moved here from linux-t1.yml, whose VPS queue held
-    # it for an hour or more; linux-t1.yml keeps its copy for when LANE_HOSTED_FAST is off. It runs on the VPS's
-    # routing runner (sm-vps), never sm-vps-t1, so PR code and this token never share a machine. The script comes from
-    # the PR's base with no credentials kept, never from the PR, and this is the only job here whose token may
-    # comment. A base that doesn't have the script yet skips quietly. Pull requests from this repository only.
+    # PR touches .github/ or scripts/lane-runner.py and is ready. It moved here from linux-t1.yml (retired, #2442),
+    # whose one VPS runner held it in a queue for an hour or more. With LANE_HOSTED_FAST off the two jobs above are
+    # skipped and this runs at once; another workflow's alert job or the owner-tap-check label then decides. It runs
+    # on its own GitHub-hosted machine, apart from the jobs that run PR code. The script comes from the PR's base with
+    # no credentials kept, never from the PR, and this is the only job here whose token may comment. A base that
+    # doesn't have the script yet skips quietly. Pull requests from this repository only.
     name: owner-tap-alert
     needs: [portable, sessionkit]
-    if: always() && github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on'
-    runs-on: [self-hosted, Linux, sm-vps]
+    if: always() && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
