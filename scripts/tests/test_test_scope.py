@@ -453,7 +453,8 @@ class LaneRunnerRoutingTests(unittest.TestCase):
         self.assertIn('--paginate --slurp', route)
         self.assertIn('actions/runners?per_page=100', route)
         self.assertIn('pulls/$PR_NUMBER/files?per_page=100', route)
-        self.assertIn('ref: ${{ github.event.pull_request.base.sha }}', route)
+        # Routing follows the base branch's tip, not the PR's recorded base (#2459).
+        self.assertIn('ref: ${{ github.event.pull_request.base.ref }}', route)
         for job, text, normal in [('lane', mac_jobs.split('\n  automerge:\n')[0], 'sm-lane'),
                                   ('automerge', mac_jobs.split('\n  automerge:\n')[1], 'sm-lane-build')]:
             with self.subTest(job=job):
