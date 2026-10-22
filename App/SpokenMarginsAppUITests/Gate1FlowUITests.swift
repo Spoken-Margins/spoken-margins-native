@@ -919,6 +919,21 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("playback.play.button").isHittable, "Scrolling content moved playback away")
     }
 
+    /// #2056: at AX5 a Library row's title has the full width, with the play button on a line below it.
+    func testLibraryRowTitleGetsFullWidthAtAccessibilitySizes() throws {
+        app.terminate()
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        app.launch()
+        let play = scrollToElement("queue.start.item-pill")
+        XCTAssertTrue(play.isHittable)
+        let open = element("library.row.item-pill")
+        let viewport = app.windows.firstMatch.frame
+        XCTAssertGreaterThan(open.frame.width, viewport.width * 0.8, "The row's title is squeezed beside the icon and the play button")
+        XCTAssertGreaterThanOrEqual(play.frame.minY, open.frame.maxY - 1, "The play button sits below the title")
+        XCTAssertGreaterThanOrEqual(play.frame.height, 44)
+        captureScreen(named: "library-row-accessibility-size")
+    }
+
     func testRootsRemainUsableWithLargeTypeDarkContrastAndReducedMotion() throws {
         app.terminate()
         app.launchArguments += [
