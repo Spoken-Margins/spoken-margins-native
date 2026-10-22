@@ -25,7 +25,7 @@ extension Gate1AppModel {
 
     var shouldShowOnDeviceSpeechGenerationStatus: Bool {
         Self.supportsOnDeviceSpeechGenerationStatus(targetType: snapshot.targetType)
-            && ttsVoiceSelection.supertonicVoice != nil
+            && ttsVoiceSelection.isOnDeviceVoice
             && onDeviceSpeechGenerationStatus != RenderedSpeechGenerationState.inactive.rawValue
     }
 

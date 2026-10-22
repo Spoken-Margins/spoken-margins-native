@@ -122,6 +122,7 @@
 		13B8FED93087CC3C8B2ABB2B /* VoiceCatalog */ = {isa = PBXFileReference; lastKnownFileType = folder; name = VoiceCatalog; path = App/SpokenMarginsApp/Resources/VoiceCatalog; sourceTree = SOURCE_ROOT; };
 		1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "emoji-article-crash-regression.txt"; sourceTree = "<group>"; };
 		1FB65F7C5B34151CFB025D14 /* licenses */ = {isa = PBXFileReference; lastKnownFileType = folder; name = licenses; path = "Contracts/voice-models/licenses"; sourceTree = SOURCE_ROOT; };
+		36E0E49E13407DED3533C291 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 		3D2052181FEAFB56EB0856FA /* Defuddle-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Defuddle-LICENSE.txt"; sourceTree = "<group>"; };
 		45170E0354730F22BB2E258A /* SharedTextIntake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedTextIntake.swift; sourceTree = "<group>"; };
 		454A82B2CAACCCAED5C33E03 /* catalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = catalog.json; sourceTree = "<group>"; };
@@ -327,6 +328,7 @@
 				F1E5E23AB1BFC1239B25CB8D /* App/SpokenMarginsBrowserTextExtension/Sources */,
 				3E4BA5755D4CEB2C1A8B964E /* App/SpokenMarginsGate2Widget/Sources */,
 				3E62D86AB77A6BE52C64EE08 /* App/SpokenMarginsShareExtension/Sources */,
+				752B37181B93B7748210A0EC /* Config */,
 				8B9C00DF1535B22C10054D68 /* Packages */,
 				460250240FDC5A068A5D5EA9 /* Resources */,
 				F509B33704F18191A362D38D /* Resources */,
@@ -386,6 +388,14 @@
 				9AC0CEE299A474FCA1DE58BE /* popup.js */,
 			);
 			path = Scripts;
+			sourceTree = "<group>";
+		};
+		752B37181B93B7748210A0EC /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				36E0E49E13407DED3533C291 /* Signing.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 		85D23AFECFE7708A28F52B1B /* Icons */ = {
@@ -619,26 +629,19 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
-					0C1262C036365A89EA21B9E9 = {
-						DevelopmentTeam = J8SWC6J3VY;
-					};
 					13B5C8F8C12F37E6CB62E6FE = {
-						DevelopmentTeam = J8SWC6J3VY;
 						ProvisioningStyle = Automatic;
 					};
 					1D8893BE578C4DB95B466E90 = {
-						DevelopmentTeam = J8SWC6J3VY;
 						ProvisioningStyle = Automatic;
 					};
 					2C7EDF5AB45695B4BB0520A3 = {
-						DevelopmentTeam = J8SWC6J3VY;
 						ProvisioningStyle = Automatic;
 					};
 					62CEABDB2B6F38CA17ED8324 = {
 						TestTargetID = A7009410088927EF7A55F0A3;
 					};
 					A7009410088927EF7A55F0A3 = {
-						DevelopmentTeam = J8SWC6J3VY;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -854,7 +857,6 @@
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsGate2Widget/SpokenMarginsGate2Widget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 35;
-				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsGate2Widget/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -878,7 +880,6 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 35;
-				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				INFOPLIST_FILE = App/SpokenMarginsApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Spoken Margins";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
@@ -901,7 +902,6 @@
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 35;
-				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsShareExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -921,7 +921,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -941,7 +940,6 @@
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsGate2Widget/SpokenMarginsGate2Widget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 35;
-				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsGate2Widget/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -965,7 +963,6 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 35;
-				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				INFOPLIST_FILE = App/SpokenMarginsApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Spoken Margins";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
@@ -1018,6 +1015,7 @@
 		};
 		ADE243F580CD33DEF50E88E5 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 36E0E49E13407DED3533C291 /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -1085,7 +1083,6 @@
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 35;
-				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsShareExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1103,6 +1100,7 @@
 		};
 		D41D0CAA3154DCD183925C6A /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 36E0E49E13407DED3533C291 /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -1161,7 +1159,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1181,7 +1178,6 @@
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 35;
-				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsBrowserTextExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1203,7 +1199,6 @@
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 35;
-				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsBrowserTextExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (

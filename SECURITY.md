@@ -4,7 +4,7 @@
 
 Please report security problems privately. Don't open a public issue or pull request for them.
 
-1. Open https://github.com/uncomposed/spoken-margins-native/security/advisories/new (this repository's **Security** tab, then **Report a vulnerability**).
+1. Open https://github.com/Spoken-Margins/spoken-margins-native/security/advisories/new (this repository's **Security** tab, then **Report a vulnerability**).
 2. Say what you found, how to reproduce it, which build or commit you tried it on, and what an attacker could do with it.
 3. If you can, include a small proof of concept. Don't include anyone's real data.
 

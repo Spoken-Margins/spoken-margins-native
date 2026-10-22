@@ -40,6 +40,9 @@ struct PlaybackPaneSwitchView: View {
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .background(selection == pane ? .white.opacity(0.18) : .clear,
                                     in: RoundedRectangle(cornerRadius: 10))
+                        // A plain button takes taps only on what it draws, so an unselected pane was a target the
+                        // size of its word (#430). The whole slot is the target.
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.white)

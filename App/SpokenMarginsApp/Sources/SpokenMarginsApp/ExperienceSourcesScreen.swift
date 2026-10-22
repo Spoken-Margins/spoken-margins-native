@@ -586,7 +586,7 @@ struct FollowCandidateChoices: View {
     }
 }
 
-private struct SourceInboxRow: View {
+struct SourceInboxRow: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let candidate: QuickAddCandidate

@@ -27,7 +27,7 @@ extension Gate1AppModel {
         run { engine in
             snapshot = try engine.skipBack(unit: skipUnitForCurrentTarget())
             streamingSpeechQueue.relinquishToCanonicalPlayback()
-            refreshSelectedItem()
+            refreshSelectedItemAfterTransport()
             reportSuccess("Skipped back.")
         }
     }
@@ -38,7 +38,7 @@ extension Gate1AppModel {
         restoreSkimOriginBeforeCanonicalTransport()
         run { engine in
             snapshot = try engine.skipBack(unit: mediaSkipUnit(seconds: mediaSkipBackSeconds))
-            refreshSelectedItem()
+            refreshSelectedItemAfterTransport()
         }
     }
 
@@ -51,7 +51,7 @@ extension Gate1AppModel {
             let unit = skipUnitForCurrentTarget()
             snapshot = try engine.skipForward(unit: unit)
             streamingSpeechQueue.relinquishToCanonicalPlayback()
-            refreshSelectedItem()
+            refreshSelectedItemAfterTransport()
             reportSuccess("Skipped forward.")
         }
     }
@@ -62,7 +62,7 @@ extension Gate1AppModel {
         restoreSkimOriginBeforeCanonicalTransport()
         run { engine in
             snapshot = try engine.skipForward(unit: mediaSkipUnit(seconds: mediaSkipForwardSeconds))
-            refreshSelectedItem()
+            refreshSelectedItemAfterTransport()
         }
     }
 
@@ -101,7 +101,7 @@ extension Gate1AppModel {
         }
         run { engine in
             snapshot = try engine.setPlaybackRate(clamped)
-            refreshSelectedItem()
+            refreshSelectedItemAfterTransport()
             diagnostics["mediaPlaybackRate"] = String(format: "%.2f", clamped)
         }
     }
@@ -125,7 +125,7 @@ extension Gate1AppModel {
         return run { engine in
             snapshot = try seekOrStageMedia(engine, toMediaTimeMs: mediaTimeMs)
             recordMediaSeekEvidence(from: engine)
-            refreshSelectedItem()
+            refreshSelectedItemAfterTransport()
         }
     }
 
@@ -174,7 +174,7 @@ extension Gate1AppModel {
         return run { engine in
             snapshot = try engine.seekText(toCharOffset: charOffset)
             streamingSpeechQueue.relinquishToCanonicalPlayback()
-            refreshSelectedItem()
+            refreshSelectedItemAfterTransport()
         }
     }
 
@@ -184,7 +184,7 @@ extension Gate1AppModel {
         guard !isMediaPlaybackSnapshot else {
             return
         }
-        if ttsVoiceSelection.supertonicVoice != nil, audioPlaybackClientOverride == nil {
+        if ttsVoiceSelection.isOnDeviceVoice, audioPlaybackClientOverride == nil {
             applySupertonicPlaybackRate()
             return
         }
@@ -193,7 +193,7 @@ extension Gate1AppModel {
                 voiceIdentifier: speechVoiceIdentifier.isEmpty ? nil : speechVoiceIdentifier,
                 rate: Float(speechRate)
             )
-            refreshSelectedItem()
+            refreshSelectedItemAfterTransport()
             diagnostics["speechRateApplied"] = String(format: "%.2f", speechRate)
         }
     }
@@ -207,7 +207,7 @@ extension Gate1AppModel {
             )
             if let engine, hasActiveSession {
                 snapshot = try engine.setPlaybackRate(transportRate)
-                refreshSelectedItem()
+                refreshSelectedItemAfterTransport()
             }
             diagnostics["speechRateApplied"] = String(format: "%.2f", transportRate)
         } catch {
@@ -226,7 +226,7 @@ extension Gate1AppModel {
                 : try engine.setPlaybackRate(mediaPlaybackRate)
         case TargetType.itemTextTTS.rawValue,
              TargetType.assistantTurnTTS.rawValue,
-             TargetType.summaryTurnTTS.rawValue where ttsVoiceSelection.supertonicVoice != nil:
+             TargetType.summaryTurnTTS.rawValue where ttsVoiceSelection.isOnDeviceVoice:
             let transportRate = speechPlaybackRateMultiplier
             return started.playbackRate == transportRate
                 ? started

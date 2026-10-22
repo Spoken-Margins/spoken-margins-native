@@ -23,6 +23,11 @@
 name: hosted-app-macos
 
 on:
+  # T2 only on the trunk's new tips, once hosted app tests are on: GitHub lets a PR's run restore caches saved on
+  # the default branch but not another PR's, so these runs keep a warm compilation cache where every PR can read it.
+  push:
+    branches: [main]
+    paths: ['App/**', 'Packages/**', 'project.yml', 'SpokenMarginsNative.xcodeproj/**']
   workflow_dispatch:
     inputs:
       tests:
@@ -71,6 +76,7 @@ env:
 
 jobs:
   app:
+    if: github.event_name != 'push' || vars.LANE_HOSTED_APP == 'on'
     runs-on: xcode-27
     # T2 about 10 min on the benchmark's numbers, T3 up to 25 min, plus one retry of a stalled start.
     timeout-minutes: 75
@@ -112,7 +118,10 @@ jobs:
       # hashFiles reads only inside the workspace, so the id list goes under .build (git-ignored).
       - name: List LFS objects
         run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
-      - uses: actions/cache@v4
+      # Restore and save are separate steps so a failed test still saves what the build fetched and compiled: the
+      # combined action saves only when the job succeeds, and four failing trials in a row each built cold (#1389).
+      - uses: actions/cache/restore@v4
+        id: lfs-cache
         with:
           path: .git/lfs
           key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
@@ -125,13 +134,14 @@ jobs:
           auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
 
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: spm-cache
         with:
           path: ${{ env.SPM }}
           key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
           restore-keys: spm-
       # Rolling key: every run saves its cache, the next restores the newest. Xcode bounds the store itself.
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         with:
           path: ${{ env.CAS }}
           key: xcode-cas-27.0-${{ github.run_id }}
@@ -144,7 +154,27 @@ jobs:
           sysctl -n hw.ncpu hw.memsize
           df -h "$GITHUB_WORKSPACE" | tail -1
 
+      # Start the simulator now so it boots while T2 builds (#1389; boot measured 68-243 s here). Only a runtime
+      # the image already ships: a missing one fails here, and the job never downloads one (several GB).
+      - name: T3 - start booting a fresh simulator
+        if: steps.tests.outputs.count != '0'
+        env:
+          SIM_TYPE: ${{ inputs.simulator }}
+          SIM_OS: ${{ inputs.ios }}
+        run: |
+          runtime="com.apple.CoreSimulator.SimRuntime.iOS-${SIM_OS//./-}"
+          if ! xcrun simctl list runtimes available | grep -qF "$runtime"; then
+            echo "::error::iOS $SIM_OS is not on this image; pick one of these (the job never downloads a runtime):"
+            xcrun simctl list runtimes available
+            exit 1
+          fi
+          udid=$(xcrun simctl create "SM Hosted T3" "$SIM_TYPE" "$runtime")
+          echo "UDID=$udid" >> "$GITHUB_ENV"
+          echo "BOOT_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+          xcrun simctl boot "$udid"
+
       - name: T2 - build for the simulator (build-for-testing)
+        id: t2-sim
         run: |
           mkdir -p "$RESULTS"
           root="$GITHUB_WORKSPACE"
@@ -188,19 +218,14 @@ jobs:
           SwitchAudioSource -t output -s "BlackHole 2ch"
           SwitchAudioSource -t output -c | sed 's/^/Default output: /' | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - name: T3 - boot a fresh simulator
+      - name: T3 - wait for the simulator
         if: steps.tests.outputs.count != '0'
-        env:
-          SIM_TYPE: ${{ inputs.simulator }}
-          SIM_OS: ${{ inputs.ios }}
         run: |
-          runtime="com.apple.CoreSimulator.SimRuntime.iOS-${SIM_OS//./-}"
-          udid=$(xcrun simctl create "SM Hosted T3" "$SIM_TYPE" "$runtime")
-          echo "UDID=$udid" >> "$GITHUB_ENV"
-          booted=$(date +%s)
-          xcrun simctl boot "$udid"
-          xcrun simctl bootstatus "$udid" -b
-          echo "Simulator $SIM_TYPE, iOS $SIM_OS booted in $(( $(date +%s) - booted ))s." | tee -a "$GITHUB_STEP_SUMMARY"
+          waited=$(date +%s)
+          xcrun simctl bootstatus "$UDID" -b
+          now=$(date +%s)
+          echo "Simulator ready $(( now - BOOT_STARTED ))s after boot started; T3 waited $(( now - waited ))s for it." \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
       # One retry, only for a run that never started a test (the startup stall in #705). A test failure is
       # never retried.
@@ -236,6 +261,27 @@ jobs:
           done
           echo "BUNDLE=$bundle" >> "$GITHUB_ENV"
           exit "$status"
+
+      # After T2, whatever T3 did: the build's caches are worth keeping even when a test fails. A key that already
+      # exists is skipped; a run that never reached its builds has nothing worth saving.
+      - name: Save the LFS cache
+        if: always() && steps.lfs-cache.outputs.cache-hit != 'true' && steps.t2-sim.outcome != 'skipped'
+        uses: actions/cache/save@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
+      - name: Save the package cache
+        if: always() && steps.spm-cache.outputs.cache-hit != 'true' && steps.t2-sim.outcome != 'skipped'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.SPM }}
+          key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
+      - name: Save the compilation cache
+        if: always() && steps.t2-sim.outcome != 'skipped'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CAS }}
+          key: xcode-cas-27.0-${{ github.run_id }}
 
       - name: T3 - test counts
         if: always() && env.BUNDLE != ''

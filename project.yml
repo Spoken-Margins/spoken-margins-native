@@ -3,6 +3,10 @@ options:
   bundleIdPrefix: com.spokenmargins
   deploymentTarget:
     iOS: "26.0"
+# The signing team comes from the untracked Config/Local.xcconfig, through this file (#1841).
+configFiles:
+  Debug: Config/Signing.xcconfig
+  Release: Config/Signing.xcconfig
 packages:
   SessionKit:
     path: Packages/SessionKit
@@ -74,7 +78,6 @@ targets:
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsApp/SpokenMarginsApp.entitlements
         CODE_SIGN_STYLE: Automatic
         CURRENT_PROJECT_VERSION: "35"
-        DEVELOPMENT_TEAM: J8SWC6J3VY
         INFOPLIST_FILE: App/SpokenMarginsApp/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Spoken Margins
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
@@ -165,7 +168,6 @@ targets:
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsGate2Widget/SpokenMarginsGate2Widget.entitlements
         CODE_SIGN_STYLE: Automatic
         CURRENT_PROJECT_VERSION: "35"
-        DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         MARKETING_VERSION: "0.1"
         SWIFT_VERSION: "6.0"
@@ -197,7 +199,6 @@ targets:
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements
         CODE_SIGN_STYLE: Automatic
         CURRENT_PROJECT_VERSION: "35"
-        DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsBrowserTextExtension/Info.plist
         MARKETING_VERSION: "0.1"
@@ -228,7 +229,6 @@ targets:
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements
         CODE_SIGN_STYLE: Automatic
         CURRENT_PROJECT_VERSION: "35"
-        DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsShareExtension/Info.plist
         MARKETING_VERSION: "0.1"
@@ -297,7 +297,6 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-        DEVELOPMENT_TEAM: J8SWC6J3VY
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.tests
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/SpokenMarginsApp.app/SpokenMarginsApp"
         BUNDLE_LOADER: "$(TEST_HOST)"

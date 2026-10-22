@@ -1986,6 +1986,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         let traceStartedAt = ProcessInfo.processInfo.systemUptime
         let rebuildsItem = activeTargetId != targetId || activePlaybackURL != url || player == nil
         if activeTargetId != targetId || activePlaybackURL != url || player == nil {
+            let setupLabel = MainThreadOperationLabels.shared.push("avPlayer.itemSetup") // names a slow setup in a hang (#2255)
+            defer { MainThreadOperationLabels.shared.pop(setupLabel) }
             cancelPostResumeEvidenceCapture(reason: "playback_item_changed")
             removePlayerStateObserver()
             removeCompletionObserver()
@@ -2702,7 +2704,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             let install = {
                 guard let self, let item, self.player?.currentItem === item else { return }
                 MainActor.assumeIsolated {
-                    if self.installContinuousPodcastEvidenceTapIfPossible(on: item) {
+                    // Unlabeled main-thread work hid what froze a mapped episode's start (#2255).
+                    if MainThreadOperationLabels.shared.scoped("avPlayer.evidenceTap", { self.installContinuousPodcastEvidenceTapIfPossible(on: item) }) {
                         self.continuousEvidenceTapTracksObservation?.invalidate()
                         self.continuousEvidenceTapTracksObservation = nil
                     }
@@ -3063,7 +3066,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
            url.scheme?.isEmpty == false {
             info[MPNowPlayingInfoPropertyAssetURL] = url
         }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        NowPlayingInfoOwnership.shared.write(info, as: .mediaPlayer, detail: nowPlayingLedgerDetail())
         configureRemoteCommandAvailability(canSeek: durationSeconds != nil)
         #if canImport(UIKit)
         Task { @MainActor in
@@ -3073,11 +3076,19 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         #endif
     }
 
+    /// Removes this player's card. A card another writer holds (live speech, a shared Margin) stays: this player
+    /// clears on every tick while its remote commands are off, and used to take those cards down with it (#2181).
     private func clearNowPlaying() {
         #if canImport(MediaPlayer) && os(iOS)
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        NowPlayingInfoOwnership.shared.clear(as: .mediaPlayer, detail: nowPlayingLedgerDetail())
         #endif
     }
+
+    #if canImport(MediaPlayer) && os(iOS)
+    private func nowPlayingLedgerDetail() -> String {
+        "targets=\(remoteCommandTargets.count) commands=\(remoteCommandHandlingEnabled ? "on" : "off") player=\(player.map { String($0.timeControlStatus.rawValue) } ?? "none")"
+    }
+    #endif
 
     private func installRemoteCommandHandlers() {
         #if canImport(MediaPlayer) && os(iOS)

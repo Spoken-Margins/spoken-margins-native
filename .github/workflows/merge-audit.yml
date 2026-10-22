@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   audit:
-    if: github.ref_name == (vars.SM_TRUNK || 'next')
+    if: github.ref_name == (vars.SM_TRUNK || 'main')
     runs-on: [self-hosted, Linux, sm-vps]
     timeout-minutes: 5
     steps:

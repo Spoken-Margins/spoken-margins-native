@@ -239,7 +239,11 @@ final class MarginOutputCoordinator: ObservableObject {
                 destination.id, path, content.scope.rawValue, String(content.includesContext), content.text.rawValue,
                 content.shape.rawValue, String(content.itemNotesSince?.timeIntervalSince1970 ?? 0),
             ].joined(separator: "|")
-            let pass = try (planners[destination.id] ?? MarginNotePassPlanner()).plan(store: store, targetKey: key)
+            // Planning reads every transcript's size and the Margin changes across the Library: off the main actor, which
+            // only waits. It ran on main as the app left the foreground, just after a Margin was saved (#2184).
+            let planner = planners[destination.id] ?? MarginNotePassPlanner()
+            let pass = try await Task.detached(priority: .utility) { try planner.plan(store: store, targetKey: key) }.value
+            guard isCurrent(destination) else { return }
             var delivered: (noteIDs: [String], keptEditIDs: Set<String>) = ([], [])
             if pass.scope != .nothing {
                 var sessionIds: Set<String>?

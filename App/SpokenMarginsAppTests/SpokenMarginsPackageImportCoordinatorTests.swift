@@ -569,6 +569,54 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertFalse(h.forceSourceMiss, "it fires once")
     }
 
+    // MARK: Launch sweep (#2154)
+
+    func testKillAndRelaunchTwiceLeavesOneStagedCopyOfThePacket() throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
+        assertStaged(h.coordinator.stage(from: packet.url))
+        XCTAssertEqual(h.incomingFolderNames().count, 1)
+
+        // The app is killed before Import; each launch sweeps, then reopens the packet from the Share inbox.
+        for _ in 1...2 {
+            let relaunched = SpokenMarginsPackageImportCoordinator(environment: h.makeEnvironment())
+            relaunched.sweepOrphanedFoldersOnce()
+            assertStaged(relaunched.stage(from: packet.url))
+            XCTAssertEqual(h.incomingFolderNames(), [try XCTUnwrap(relaunched.review).extractionDirectory.lastPathComponent],
+                           "only the folder of the review that is showing is left")
+        }
+        XCTAssertTrue(h.diagnostics["lastIncomingPackageSweep"]?.hasPrefix("removed:1") == true)
+    }
+
+    func testTheSweepLeavesTheFoldersOfReviewsThisRunOwns() throws {
+        let h = try makeHarness()
+        let first = try h.writePacket(named: "alpha", text: Self.alphaText)
+        let second = try h.writePacket(named: "beta", text: Self.betaText)
+        assertStaged(h.coordinator.stage(from: first.url))
+        assertStaged(h.coordinator.stage(from: second.url))
+        XCTAssertEqual(h.incomingFolderNames().count, 2, "one showing, one waiting")
+
+        h.coordinator.sweepOrphanedFoldersOnce()
+
+        XCTAssertEqual(h.incomingFolderNames().count, 2)
+    }
+
+    func testTheSweepLeavesAFolderAnImportedMarginPlaysFromAndRunsOnce() throws {
+        let h = try makeHarness()
+        let used = try h.makeFolder(files: ["assets/voice.m4a"])
+        let orphan = try h.makeFolder(files: ["package.spokenmargins"])
+        try h.saveImportedMargin(playingFrom: h.incomingDirectory.appending(path: "\(used)/assets/voice.m4a").path)
+
+        h.coordinator.sweepOrphanedFoldersOnce()
+
+        XCTAssertEqual(h.incomingFolderNames(), [used])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: h.incomingDirectory.appending(path: orphan).path))
+        // A folder made after the sweep is not swept by a second call: it belongs to this run.
+        let later = try h.makeFolder(files: ["package.spokenmargins"])
+        h.coordinator.sweepOrphanedFoldersOnce()
+        XCTAssertEqual(h.incomingFolderNames(), [used, later].sorted())
+    }
+
     // MARK: Fixtures
 
     private static let alphaText = "Alpha is a short essay about listening slowly. The exact phrase to remember is quiet mornings help."
@@ -675,6 +723,28 @@ private final class ImportHarness {
         return WrittenPacket(url: url, digest: try XCTUnwrap(manifest.contentDigest))
     }
 
+    func makeFolder(files: [String]) throws -> String {
+        let name = UUID().uuidString
+        for file in files {
+            let url = incomingDirectory.appending(path: "\(name)/\(file)")
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("bytes".utf8).write(to: url)
+        }
+        return name
+    }
+
+    /// An imported friend's Margin whose recording is at `path`, saved as an import would.
+    func saveImportedMargin(playingFrom path: String) throws {
+        let date = Date(timeIntervalSince1970: 1_777_000_000)
+        try store.saveImportedCommentaryLayer(ImportedCommentaryLayer(
+            id: "layer-voice", itemId: nil, packageDigest: "digest-voice", packageId: "package-voice",
+            itemIdentity: SharedItemIdentity(itemType: .text, title: "Essay"), displayLabel: "Friend", importedAt: date))
+        try store.saveImportedCommentaryInterjection(ImportedCommentaryInterjection(
+            id: "margin-voice", layerId: "layer-voice", packageScopedId: "margin-001", createdAt: date,
+            anchorEvidence: PortableAnchorEvidence(anchorType: .text, exactText: "quiet mornings"),
+            approvedTranscript: "A voice Margin", audioPath: path, audioDurationMs: 500))
+    }
+
     func incomingFolderNames() -> [String] {
         ((try? FileManager.default.contentsOfDirectory(atPath: incomingDirectory.path)) ?? []).sorted()
     }
@@ -726,7 +796,7 @@ private final class ImportHarness {
         return WrittenPacket(url: url, digest: try XCTUnwrap(manifest.contentDigest))
     }
 
-    private func makeEnvironment() -> SpokenMarginsPackageImportCoordinator.Environment {
+    func makeEnvironment() -> SpokenMarginsPackageImportCoordinator.Environment {
         .init(
             requireStore: { [unowned self] in self.store },
             applicationSupportDirectory: { [unowned self] in self.supportDirectory },

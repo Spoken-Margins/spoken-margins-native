@@ -4,6 +4,8 @@
 thousands of hashed files had changed. The cause was Packages/SessionKit/Package.resolved: the branch had
 committed the copy SwiftPM writes on Linux, and the Mac's `swift build` rewrote it mid-run.
 """
+import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 import importlib.util
 import subprocess
 import sys
@@ -48,7 +50,7 @@ class InputsChangedTests(unittest.TestCase):
         (self.root / RESOLVED).write_text('swift-crypto pins\n')
         message = self.message(before)
         self.assertIn(f'Inputs changed during fast verification: {RESOLVED}.', message)
-        self.assertIn('git checkout origin/next -- Packages/SessionKit/Package.resolved', message)
+        self.assertIn('git checkout origin/main -- Packages/SessionKit/Package.resolved', message)
 
     def test_the_hint_is_only_for_package_resolved(self):
         before = verification.input_digests()

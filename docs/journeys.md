@@ -124,6 +124,25 @@ The owner's one-phone version, with prepared packets and an episode that shares 
 5. Repeat with three new Margins, one of them close to another. Use "Skip to the next Margin", "Play it now" and "Stop review" once each.
    - Pass: close Margins play without an extra jump back. Stop leaves the episode paused where it was. Pause and Stop behave as they do for "Play this moment".
 
+## J10 — Everything local works with the product server unreachable
+
+The offline check (#1842): no cloud is needed to listen, capture or export. Install a Debug build and launch it with the product server's host swapped for one that never resolves:
+
+`xcrun simctl launch <udid> com.spokenmargins.native -SMServerHost offline.invalid`
+
+Every server feature (server config, share links, Listening Maps, the bridge and source catalog, the guided tour) then fails as if the server were down, and the app sends the real server nothing. Release builds ignore the argument. Relaunch without it to go back to the real server.
+
+1. Import an article and a PDF; play each with Kitten and with an iOS voice.
+   - Pass: both play and the clock advances, with no wait on the network.
+2. Record a spoken and a written Margin.
+   - Pass: both show on the item.
+3. Export a `.spokenmargins` packet and import it on a second simulator. While the Test Desk has only one simulator slot, reinstall the app on the same simulator and import it there.
+   - Pass: the item and its Margins arrive, and each Margin opens at its passage.
+4. While an item plays, open a share link: `xcrun simctl openurl <udid> 'https://spokenmargins.proximitytoprogress.com/l/0123456789abcdef0123456789abcdef#AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'`. The app still recognises the real host and fetches the packet from the swapped one. Keep the `#` part: a link without its key fails as damaged before the app asks the server, so it would never test the network. If Safari opens instead of the app, the universal link didn't route on this simulator: report that, and don't count it as a pass or a fail. (The app has no way to create a share link yet, only to open one.) Then play a podcast episode, which asks for its Listening Map.
+   - Pass: the share link shows an error, the map is quietly absent, and playback keeps going.
+
+The script `J10OfflineJourneyUITests` runs part of this with the host swapped: it plays a seeded article and an imported PDF with the iOS voice, records a spoken and a written Margin on the article, builds and verifies the packet up to the import review, and opens step 4's share link. Importing an article yourself, Kitten, the second simulator and the Listening Map stay with this agent run, and a script pass never stands in for it.
+
 ## Writing scripted journeys
 
 The Test Desk keeps this guide. Threads writing a first pass follow it, and the desk corrects it when a script teaches it something.

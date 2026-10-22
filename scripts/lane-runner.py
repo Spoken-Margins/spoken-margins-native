@@ -680,7 +680,7 @@ def t3_scope(tree: Path, base: str, evidence: Path) -> tuple[list[str], list[str
 
 
 def hot_file_violations(tree: Path, base: str, labels) -> list[str]:
-    """next's hot-file ratchet on the tree's HEAD (none until the ratchet is on next)."""
+    """The base branch's hot-file ratchet on the tree's HEAD (none until the ratchet is on that branch)."""
     ratchet = base_policy(tree, base, 'scripts/hot_file_ratchet.py')
     return ratchet.violations(tree, f'origin/{base}', 'HEAD', labels) if ratchet else []
 
@@ -726,6 +726,10 @@ def run_mac_rest(evidence: Path, runner=run_bounded, changed: list[str] | None =
 
 
 def run_host_plan(plan: str, evidence: Path, runner, changed: list[str] | None) -> tuple[str, list[str]]:
+    if runner is run_bounded:  # a real run; tests hand in their own runner, and test the guard on its own
+        pointers = ensure_lfs_files(ROOT)
+        if pointers:
+            return 'INCONCLUSIVE', [pointers]
     python = ROOT / '.venv/bin/python'
     output, log_path = evidence / 'fast', evidence / 'verify-fast.log'
     command = [str(python if python.exists() else sys.executable), 'scripts/verify-tests.py', '--plan', plan,
@@ -750,6 +754,65 @@ def run_host_plan(plan: str, evidence: Path, runner, changed: list[str] | None) 
                         str(note) for note in manifest.get('notes', [])]
     return 'FAIL', [f'host tests (--plan {plan}) — expected: verified. observed: exit {code}. evidence: {log_path}',
                     *[f'  {line}' for line in first_errors(log_path)]]
+
+
+# ---- Git LFS files in the checkout (#2139) ------------------------------------------------------
+# A checkout made without LFS (shipped-build-compat.yml's, on 2026-10-19) writes each model as a 132-byte pointer, and
+# the lane's own `lfs: true` checkout never rewrites a file whose blob is unchanged, so the pointer stays. The tests
+# then failed deep inside a voice test (`Protobuf parsing failed`) as if the PR had broken it. Before any host test,
+# build or simulator run, every LFS file must be its content: a pointer is restored from the checkout's LFS cache
+# (`git lfs checkout`, no download), and one that stays a pointer is a runner fault, not a FAIL.
+
+LFS_POINTER_HEADER = b'version https://git-lfs.github.com/spec/v1\n'
+LFS_POINTER_NOTE = 'LFS pointer, not the model'
+LFS_STEP = 'LFS files'
+
+
+def lfs_pointer_files(tree: Path) -> list[str]:
+    """The tree's Git LFS files (filter=lfs in .gitattributes) that are pointer files, not their content."""
+    listed = subprocess.run(['git', '-C', str(tree), 'ls-files', '-z', '--', ':(attr:filter=lfs)'],
+                            capture_output=True)
+    if listed.returncode != 0:  # not a checkout: nothing here to check
+        return []
+    pointers = []
+    for name in sorted(filter(None, listed.stdout.decode('utf-8', 'surrogateescape').split('\0'))):
+        try:
+            with (tree / name).open('rb') as handle:  # LFS pointers are under 1024 bytes
+                head = handle.read(1025)
+        except OSError:
+            continue
+        if len(head) <= 1024 and head.startswith(LFS_POINTER_HEADER):
+            pointers.append(name)
+    return pointers
+
+
+def ensure_lfs_files(tree: Path, run=subprocess.run) -> str | None:
+    """Make every LFS file in the tree its content. Returns None when they are (after a repair, if one was needed),
+    else the report line naming each file still a pointer. A job that skips LFS on purpose (GIT_LFS_SKIP_SMUDGE=1,
+    the VPS runner's) is not checked."""
+    if os.environ.get('GIT_LFS_SKIP_SMUDGE', '').strip().lower() in ('1', 't', 'true', 'y', 'yes', 'on'):  # as git-lfs reads it
+        return None
+    started = time.monotonic()
+    pointers = lfs_pointer_files(tree)
+    if not pointers:
+        note_step(LFS_STEP, 'PASS', time.monotonic() - started)
+        return None
+    print(f'[lane] {len(pointers)} LFS pointer file(s) in the checkout; restoring them from its LFS cache: '
+          + ', '.join(pointers), flush=True)
+    restored = run(['git', '-C', str(tree), 'lfs', 'checkout', *pointers], capture_output=True, text=True)
+    left = [name for name in lfs_pointer_files(tree) if name in pointers]
+    if not left:
+        print(f'[lane] git lfs checkout restored {len(pointers)} file(s).', flush=True)
+        # A runner fault in the ledger's terms: the checkout was wrong, not the PR. Repairs in a row raise its fault
+        # alarm, as something keeps writing pointers. No repair or stop in 60 days says the guard is waste.
+        note_step(LFS_STEP, 'REPAIRED', time.monotonic() - started)
+        return None
+    note_step(LFS_STEP, 'INCONCLUSIVE', time.monotonic() - started)
+    said = (restored.stderr or restored.stdout or '').strip().splitlines()
+    return (f'runner fault, not the PR (#2139): {"; ".join(f"{name}: {LFS_POINTER_NOTE}" for name in left)}. '
+            f'`git lfs checkout` could not restore {"it" if len(left) == 1 else "them"} from this checkout\'s LFS '
+            f'cache (exit {restored.returncode}{": " + said[-1] if said else ""}). Run `git lfs pull` in the runner\'s '
+            'checkout, then run the lane again; nothing was built or tested.')
 
 
 NO_APP_BUILD_PER_PR = ('no app build per PR (owner, 2026-10-09): the author builds both targets before pushing, '
@@ -887,7 +950,7 @@ def hosted_fast_records(github, head: str, checks: dict = HOSTED_FAST_CHECKS) ->
             return None, f'no "{name}" check ran on {head[:7]}'
         run = max(runs, key=lambda run: (run.get('started_at') or '', run.get('id') or 0))
         if run.get('status') != 'completed':
-            return None, f'"{name}" had not finished on {head[:7]}'
+            return None, f'"{name}" {NOT_FINISHED} on {head[:7]}'
         if run.get('conclusion') != 'success':
             return None, f'"{name}" ended {run.get("conclusion")} on {head[:7]}'
         record = hosted_tested(json.loads(github.api(f'repos/{github.repo}/check-runs/{run["id"]}/annotations')))
@@ -904,11 +967,36 @@ def merged_tree(tree: Path, base: str, head: str) -> str | None:
     return done.stdout.split('\n', 1)[0].strip() if done.returncode == 0 else None
 
 
+# How long the automerge run waits for fast checks off the Mac that are still running on this head (#1389). A PR is
+# usually armed the moment it is pushed, so its hosted checks (about 6 minutes) were still running when the Mac
+# reached them: the first two lane runs after LANE_HOSTED_FAST went on (39661421482, 39667637891) ran the whole
+# --plan fast on the Mac for that reason alone. Waiting costs the Mac nothing but an idle job.
+HOSTED_FAST_WAIT = 15 * 60
+HOSTED_FAST_POLL = 30
+NOT_FINISHED = 'had not finished'
+
+
 def hosted_fast_checks(github, tree: Path, base: str, head: str, base_sha: str, env=None,
-                       records=hosted_fast_records) -> tuple[dict | None, str]:
+                       records=hosted_fast_records, wait: float | None = None, poll: float = HOSTED_FAST_POLL,
+                       clock=time.monotonic, sleep=time.sleep, out=sys.stdout) -> tuple[dict | None, str]:
     """(the fast checks off the Mac that stand for <head> merged onto <base> at <base_sha>, '') or (None, why the Mac
-    runs the whole --plan fast). The GitHub-hosted pair (with the switch on), else the VPS pair (#2160); each record
-    says which ('runner').
+    runs the whole --plan fast). While none stands and one of them is still running, it waits up to <wait> seconds
+    (HOSTED_FAST_WAIT inside a lane job, else none, so tests and local runs never sleep)."""
+    env = os.environ if env is None else env
+    if wait is None:
+        wait = HOSTED_FAST_WAIT if env.get('GITHUB_ACTIONS') == 'true' else 0
+    deadline = clock() + wait
+    while True:
+        found, why = _hosted_fast_checks_once(github, tree, base, head, base_sha, env, records)
+        if found is not None or NOT_FINISHED not in why or clock() + poll > deadline:
+            return found, why
+        print(f'[lane] waiting for the fast checks off the Mac: {why}', file=out, flush=True)
+        sleep(poll)
+
+
+def _hosted_fast_checks_once(github, tree: Path, base: str, head: str, base_sha: str, env,
+                             records) -> tuple[dict | None, str]:
+    """The GitHub-hosted pair (with the switch on), else the VPS pair (#2160); each record says which ('runner').
 
     A run stands when it tested exactly <head> merged onto some next (its merge tree matches the one this
     runner computes for that next), and that next is <base_sha> or next's commits since can't change what it showed:
@@ -2978,6 +3066,9 @@ def main(argv=None) -> int:
             verdict, where, ran, crashes = 'INCONCLUSIVE', 'no simulator', 'nothing', 'none'
             details = [f'The PR does not merge cleanly into {args.base} ({base_sha[:7]}): {", ".join(conflicts[:10])}. '
                        f'Merge {args.base} into your branch, push, and ask again.']
+        elif pointers := ensure_lfs_files(ROOT):
+            verdict, where, ran, crashes = 'INCONCLUSIVE', 'no simulator', 'nothing', 'none'
+            details = [pointers]
         elif request['tier'] == 'T2':
             print(prune_lane_folder(evidence.parent), flush=True)
             warm = warm_build_folders(ROOT)

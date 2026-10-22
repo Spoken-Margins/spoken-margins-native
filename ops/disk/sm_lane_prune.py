@@ -13,6 +13,8 @@ What it does, in order (the cap is LANE_CAP_BYTES, documented in docs/workstream
    `evidence/` and in `artifacts/lane/`. Never the latest run's folders for an open PR.
 3. Only while the lane folder is over the cap: idle warm-build caches, oldest first, across all checkouts.
    The newest cache of each checkout stays, and a cache a job holds (its `.lock` flock) is never touched.
+   Run before a build (the lane runner's call, and any command-line run), it also leaves room under the cap for
+   the cache that build may make (BUILD_ROOM_BYTES), so the folder stays under the cap while the build runs.
 4. Only if that is not enough: the oldest remaining evidence in the lane folder, still never the latest
    run of an open PR and never anything changed in the last hour.
 
@@ -45,6 +47,9 @@ DAY = 86400
 # bounded by Xcode), evidence and state. A warm cache that takes an app build is 3 to 4 GB.
 LANE_CAP_BYTES = 16 * GiB
 EVIDENCE_MAX_AGE = 7 * DAY
+# Room left under the cap before a build: one new app-build warm cache. Pruning only to the cap let each build
+# take the folder over it until the next run: up to 19.5 GiB on 2026-10-18 and 10-19, against the 16 GiB cap.
+BUILD_ROOM_BYTES = int(3.5 * GiB)
 # When GitHub can't be asked which PRs are open, keep the latest run of any PR seen in this long.
 UNKNOWN_OPEN_PR_KEEP = 30 * DAY
 # A checkout folder nothing in this Mac's checkouts or runners maps to, idle for this long, is dropped.
@@ -54,7 +59,7 @@ ACTIVE_WINDOW = 3600
 
 TOMBSTONE = '.deleting-'
 REQUEST_ID = re.compile(r'^pr(\d+)-r(\d+)(?:-a\d+)?(?:-auto)?$')
-DEFAULT_REPO = 'uncomposed/spoken-margins-native'
+DEFAULT_REPO = 'Spoken-Margins/spoken-margins-native'
 
 
 def real(path) -> Path:
@@ -170,6 +175,7 @@ class Plan:
     total: int = 0       # the lane folder before acting
     after: int = 0       # and what the plan leaves of it
     cap: int = LANE_CAP_BYTES
+    room: int = 0        # bytes kept free under the cap for a build about to start
     warm_dir: Optional[Path] = None
 
     @property
@@ -237,10 +243,17 @@ def protected_evidence(folders: Iterable[Path], open_prs: Optional[Set[int]], no
 
 def plan_prune(lane_dir: Path, evidence_dirs: Iterable[Path], live_trees: Optional[Iterable[Path]],
                open_prs: Optional[Set[int]], now: float, cap: int = LANE_CAP_BYTES,
-               evidence_age: float = EVIDENCE_MAX_AGE, warm_dir: Optional[Path] = None) -> Plan:
-    """What to delete, in order. live_trees are the checkouts the lane builds in; None skips step 1."""
+               evidence_age: float = EVIDENCE_MAX_AGE, warm_dir: Optional[Path] = None, room: int = 0) -> Plan:
+    """What to delete, in order. live_trees are the checkouts the lane builds in; None skips step 1. room is
+    kept free under the cap for a build about to start (steps 3 and 4 bring the folder to cap - room)."""
     warm = warm_dir or lane_dir / 'warm-build'
-    plan = Plan(cap=cap, warm_dir=warm)
+    plan = Plan(cap=cap, room=room, warm_dir=warm)
+    room = max(room, 0)  # a negative room would loosen the cap
+    plan.room = room
+    target = max(cap - room, 0)
+
+    def why() -> str:
+        return 'lane folder over its cap' if plan.total - freed > cap else 'room under the cap for a build'
     plan.total = disk_bytes(lane_dir)
     freed = 0  # bytes the plan frees inside the lane folder: only those count against the cap
     lane_prefix = str(lane_dir).rstrip('/') + '/'
@@ -297,8 +310,8 @@ def plan_prune(lane_dir: Path, evidence_dirs: Iterable[Path], live_trees: Option
             if in_lane_dir(folder):
                 freed += size
 
-    # 3. Over the cap: idle warm caches, oldest first, the newest of each checkout stays.
-    if plan.total - freed > cap:
+    # 3. Over the cap (less the room for a build): idle warm caches, oldest first, the newest of each checkout stays.
+    if plan.total - freed > target:
         spare = []
         for checkout in checkouts:
             if checkout in orphans:
@@ -310,20 +323,20 @@ def plan_prune(lane_dir: Path, evidence_dirs: Iterable[Path], live_trees: Option
                 else:
                     spare.append((mtime(cache), cache))
         for _, cache in sorted(spare):
-            if plan.total - freed <= cap:
+            if plan.total - freed <= target:
                 break
             size = disk_bytes(cache)
-            plan.items.append(Item('warm-cache', cache, size, 'idle warm build, oldest first, lane folder over its cap'))
+            plan.items.append(Item('warm-cache', cache, size, 'idle warm build, oldest first, ' + why()))
             freed += size
 
     # 4. Still over: the oldest evidence in the lane folder.
-    if plan.total - freed > cap:
+    if plan.total - freed > target:
         rest = sorted((f for f in in_lane if f not in keep and f not in old and idle(f)), key=newest_mtime)
         for folder in rest:
-            if plan.total - freed <= cap:
+            if plan.total - freed <= target:
                 break
             size = disk_bytes(folder)
-            plan.items.append(Item('evidence', folder, size, 'oldest lane evidence, lane folder over its cap'))
+            plan.items.append(Item('evidence', folder, size, 'oldest lane evidence, ' + why()))
             freed += size
 
     plan.after = plan.total - freed
@@ -405,7 +418,8 @@ def prune(plan: Plan, now: float, log: Callable[[str], None]) -> int:
     for line in plan.skipped:
         log(f'skip lane {line}')
     if freed or plan.items:
-        log(f'lane folder: {size_text(plan.total)} before, cleared {size_text(freed)}, cap {size_text(plan.cap)}')
+        room = f', room for a build {size_text(plan.room)}' if plan.room else ''
+        log(f'lane folder: {size_text(plan.total)} before, cleared {size_text(freed)}, cap {size_text(plan.cap)}{room}')
     if plan.after > plan.cap:
         log(f'lane folder still over its cap: {size_text(plan.after)} left after the plan, cap {size_text(plan.cap)}; '
             'what remains is the compilation cache, state, evidence of open PRs, busy caches and one cache per checkout')
@@ -413,7 +427,8 @@ def prune(plan: Plan, now: float, log: Callable[[str], None]) -> int:
 
 
 def describe(plan: Plan) -> List[str]:
-    out = [f'Lane folder: {size_text(plan.total)}, cap {size_text(plan.cap)}; the plan leaves {size_text(plan.after)}.']
+    room = f' less {size_text(plan.room)} of room for a build' if plan.room else ''
+    out = [f'Lane folder: {size_text(plan.total)}, cap {size_text(plan.cap)}{room}; the plan leaves {size_text(plan.after)}.']
     for i, item in enumerate(plan.items, 1):
         out.append(f'  {i:3}. {item.kind:15} {size_text(item.size):>9}  {item.path}  ({item.why})')
     for line in plan.skipped:
@@ -432,12 +447,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument('--live-tree', type=Path, action='append', default=None,
                         help='a checkout the lane builds in; with any, other checkouts\' idle caches are dropped')
     parser.add_argument('--cap-gib', type=float, default=LANE_CAP_BYTES / GiB)
+    parser.add_argument('--room-gib', type=float, default=BUILD_ROOM_BYTES / GiB,
+                        help='room to leave under the cap for a build about to start (the lane runner calls this '
+                             'before each build); 0 to prune only to the cap')
     parser.add_argument('--repo', default=DEFAULT_REPO)
     args = parser.parse_args(argv)
     now = time.time()
     evidence = [args.lane_dir / 'evidence', *args.evidence_dir]
     plan = plan_prune(args.lane_dir, evidence, args.live_tree, open_pull_requests(args.repo), now,
-                      cap=int(args.cap_gib * GiB))
+                      cap=int(args.cap_gib * GiB), room=int(args.room_gib * GiB))
     if args.dry_run:
         print('\n'.join(describe(plan)))
         return 0

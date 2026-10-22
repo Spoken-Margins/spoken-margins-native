@@ -384,3 +384,23 @@ private struct UnavailableFoundationModel: LocalFoundationModelClient {
         throw LocalFoundationModelError.unavailable("test")
     }
 }
+
+/// #2082: the phone's name check follows the scene's language, so a German summary's role nouns are not refused.
+final class ListeningMapSummaryLanguageTests: XCTestCase {
+    private let german = """
+    Der Gast erklärt, warum die Stadt in diesem Jahr so viele neue Wohnungen baut. \
+    Der Sprecher findet, dass die neuen Regeln für den Wohnungsbau sehr geholfen haben.
+    """
+
+    func testTheSceneLanguageIsRecognisedForGermanAndEnglish() {
+        XCTAssertEqual(ListeningMapSummaryValidator.transcriptLanguage(of: german), "de")
+        XCTAssertEqual(ListeningMapSummaryValidator.transcriptLanguage(of: "The mayor explains why the city is building so many new homes this year."), "en")
+    }
+
+    func testAGermanSceneKeepsASummaryWithARoleNounItNeverSays() throws {
+        let label = LocalListeningMapLabel(
+            title: "Neue Wohnungen", description: "Der Moderator lobt den Wohnungsbau der Stadt.",
+            eligibility: .eligible)
+        XCTAssertNoThrow(try ListeningMapSummaryValidator.validate(label, sourceText: german))
+    }
+}

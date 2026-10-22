@@ -46,7 +46,7 @@ final class PlaybackStartCue: ObservableObject {
 
     private var subscription: AnyCancellable?
 
-    /// `snapshots` is the model's `$snapshot`. Subscribing here rather than from a view keeps the cue working when
+    /// `snapshots` is the model's `playbackClock.snapshots`. Subscribing here rather than from a view keeps the cue working when
     /// playback starts with no window attached (a Live Activity or an intent after a background launch).
     init(
         snapshots: AnyPublisher<SessionSnapshot, Never>? = nil,
@@ -78,7 +78,7 @@ final class PlaybackStartCue: ObservableObject {
     /// The app's cue: it follows the model, checks the player before chiming, and writes through `pinned`, so
     /// Refresh Diagnostics doesn't drop the measurements (audit of #580).
     convenience init(model: Gate1AppModel, pinned: PinnedDiagnostics) {
-        self.init(snapshots: model.$snapshot.eraseToAnyPublisher(),
+        self.init(snapshots: model.playbackClock.snapshots.eraseToAnyPublisher(),
                   checkNow: { [weak model] in model?.tickPlaybackProgress() },
                   record: { key, value in pinned.set(key, value) })
     }

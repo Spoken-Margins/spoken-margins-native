@@ -15,9 +15,9 @@ public enum RecordingInputChoice: String, Equatable, Sendable {
 }
 
 public enum RecordingInputPolicy {
-    /// Whether Margins on A2DP headphones may record from the phone's microphone. Off until the owner has answered
-    /// whether the wait or the microphone distance matters more (#1506): the recorded voice is his to judge.
-    /// Turning it on is this one value and the pinned test.
+    /// Whether Margins on A2DP headphones may record from the phone's microphone. Off: on 2026-10-13 the owner chose
+    /// the headphone microphone over the shorter wait (#1506, docs/solid-ground-phone-validation.md).
+    /// Turning it on takes the owner's word again, then this one value and the pinned test.
     public static let phoneMicrophoneOnA2DPAllowed = false
 
     /// `outputPortTypes` are the raw values of the audio session's current output ports (`AVAudioSession.Port`),

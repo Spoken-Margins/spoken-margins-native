@@ -65,7 +65,7 @@ RUNNERS = (
 )
 KEEP = 100  # records kept; each is a few hundred bytes
 # A record older than this is not honored, so every Mac runs the whole package at least daily. The scheduled run on
-# next's tip is --plan app and never runs these tests, so this bounds how long an input missing from READS can hide.
+# The trunk's tip is --plan app and never runs these tests, so this bounds how long an input missing from READS can hide.
 MAX_AGE_SECONDS = 24 * 3600
 
 

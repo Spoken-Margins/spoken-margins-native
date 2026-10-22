@@ -7,13 +7,14 @@ from controlled fault-injection tests.
 
 ## The rolling phone build (#384)
 
-The newest `next` build waits on the Mac, ready for the owner's iPhone. No TestFlight, no Xcode window.
+The newest `main` build waits on the Mac, ready for the owner's iPhone. No TestFlight, no Xcode window.
 
 - **Install:** plug the iPhone in with a cable, unlock it, and double-click **Install Spoken Margins on iPhone** on the Desktop (a copy of `scripts/install-phone-build.command`). It installs over the app, so the Library stays, and it never uninstalls. Then it opens that build's `test-plan.md`: about ten minutes of checks for what changed since the last install. If the phone already has the newest build, it says so and changes nothing (type R to reinstall anyway), and says whether a newer build is being made.
 - **Knowing a build is ready:** each new build posts a Mac notification ("Spoken Margins: new phone build") with its commit and how many things to try. A signing failure posts "phone build needs you".
 - **Name the build in issues:** Settings > Version reads `0.1 (29) · 1a2b3c4`; the last part is the commit. Label phone-found issues `found-on-phone`.
 - **Where builds live:** `~/SpokenMargins-phone/`, one folder per build (`<date-time>-<sha7>`), a `latest` link, and `installed.txt` (the commit on the phone). The three newest builds are kept.
-- **Making builds:** `scripts/phone-build` builds `origin/next` (or `--commit <sha>`); `--if-changed` builds only when next moved. The trigger is `scripts/com.spokenmargins.phone-build.plist`, a LaunchAgent that runs it every 10 minutes. It skips while memory pressure isn't normal or free disk is under 10 GB plus 4 GB per running build, and it doesn't retry a commit that failed. A commit the lane runner didn't test itself gets host tests and a simulator build first.
+- **Making builds:** `scripts/phone-build` builds `origin/main` (or `--commit <sha>`); `--if-changed` builds only when main moved. The trigger is `scripts/com.spokenmargins.phone-build.plist`, a LaunchAgent that runs it every 10 minutes. It skips while memory pressure isn't normal or free disk is under 10 GB plus 4 GB per running build, and it doesn't retry a commit that failed. A commit the lane runner didn't test itself gets host tests and a simulator build first.
+- **Built on GitHub instead (#2357):** `.github/workflows/phone-build.yml` builds and signs the same app on a GitHub-hosted Mac twice a day, before the 8:00 and 17:00 Central plans, from `main` only. With the word `hosted` in `~/SpokenMargins-phone/source` (or `--source hosted`), the same LaunchAgent downloads that build instead of building, checks it as it checks its own, and writes the same folder and test plan, so the installer is unchanged. Delete the file to build on the Mac again.
 - **If signing fails:** the build prints what to click (keychain "Always Allow", Xcode > Settings > Accounts) and leaves `~/SpokenMargins-phone/last-failure.log`.
 
 Use this when installing the iOS build on a real phone and testing against the local Gemma server on the laptop.

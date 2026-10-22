@@ -98,17 +98,20 @@ public enum VoiceCatalogCoordinatorError: Error, Equatable, LocalizedError {
 
 public actor VoiceCatalogCoordinator {
     public struct Configuration: Sendable {
-        public var catalogURL: URL
+        /// Where the signed catalog is fetched from. Nil: no fetch, and the bundled snapshot (or a catalog
+        /// already kept) is all there is.
+        public var catalogURL: URL?
         public var trustedKeys: [VoiceCatalogTrustedKey]
         /// Voice ids this build has an engine for. Anything else in the catalog isn't shown.
         public var playableVoiceIds: Set<String>
-        /// The device's memory, for each voice's `minimumMemoryMegabytes`.
+        /// The device's memory as iOS reports it, for each voice's `minimumMemoryMegabytes`. Compared after
+        /// rounding to the size on the box (`nominalMemoryMegabytes`).
         public var physicalMemoryMegabytes: Int
         /// The catalog document (unsigned payload) bundled with the app, used until a signed one verifies.
         public var bundledSnapshot: Data?
 
         public init(
-            catalogURL: URL,
+            catalogURL: URL?,
             trustedKeys: [VoiceCatalogTrustedKey] = VoiceCatalogTrust.production,
             playableVoiceIds: Set<String>,
             physicalMemoryMegabytes: Int = Int(ProcessInfo.processInfo.physicalMemory / 1_048_576),
@@ -164,6 +167,12 @@ public actor VoiceCatalogCoordinator {
 
     // MARK: Where things live
 
+    /// The memory size on the box, from what iOS reports (#2055 audit 3). iOS reserves part of the RAM, so a
+    /// "4 GB" iPhone 12 reports about 3,700 MB and would fail a 4,096 MB minimum. Rounds to the nearest GB.
+    public static func nominalMemoryMegabytes(reported megabytes: Int) -> Int {
+        max(0, (megabytes + 512) / 1_024) * 1_024
+    }
+
     public static func voicesRoot(supportDirectory: URL) -> URL {
         supportDirectory.appending(path: voicesFolderName, directoryHint: .isDirectory)
     }
@@ -194,7 +203,8 @@ public actor VoiceCatalogCoordinator {
         let entries = (catalog?.voices ?? []).filter { configuration.playableVoiceIds.contains($0.id) || $0.bundled }
         return entries.compactMap { entry in
             let state = state(of: entry)
-            let offered = entry.status == .available && entry.minimumMemoryMegabytes <= configuration.physicalMemoryMegabytes
+            let offered = entry.status == .available
+                && entry.minimumMemoryMegabytes <= Self.nominalMemoryMegabytes(reported: configuration.physicalMemoryMegabytes)
             // A voice that isn't offered and isn't here has nothing to show.
             if !offered, state == .notInstalled { return nil }
             return VoiceCatalogRow(
@@ -213,9 +223,10 @@ public actor VoiceCatalogCoordinator {
     @discardableResult
     public func refresh() async -> VoiceCatalogError? {
         loadIfNeeded()
+        guard let catalogURL = configuration.catalogURL else { return nil }
         let data: Data
         do {
-            data = try await fetcher.fetchEnvelope(from: configuration.catalogURL)
+            data = try await fetcher.fetchEnvelope(from: catalogURL)
         } catch let error as VoiceCatalogError {
             return error
         } catch {
@@ -312,12 +323,18 @@ public actor VoiceCatalogCoordinator {
         guard row.licensesNeedingAgreement.isEmpty else {
             throw VoiceCatalogCoordinatorError.agreementNeeded(licenseIds: row.licensesNeedingAgreement.map(\.id))
         }
-        let files = row.entry.files.map {
-            VoiceModelInstallFile(path: $0.path, byteCount: $0.byteCount, sha256: $0.sha256, sources: $0.sources)
-        }
+        // The entry's own mapping carries every way a file arrives: downloaded, written from text the
+        // catalog carries, or taken from an archive. Rebuilding it here from `sources` alone dropped the
+        // last two, and Supertonic's notices have no source, so every install failed (#2055 audit).
         let folder: URL
         do {
-            folder = try await installer.install(voiceId: voiceId, version: Self.folderName(forVersion: row.entry.version), files: files, progress: progress)
+            folder = try await installer.install(
+                voiceId: voiceId,
+                version: Self.folderName(forVersion: row.entry.version),
+                files: row.entry.installFiles,
+                archives: row.entry.installArchives,
+                progress: progress
+            )
         } catch let error as VoiceModelInstallError {
             throw VoiceCatalogCoordinatorError.install(error)
         }
