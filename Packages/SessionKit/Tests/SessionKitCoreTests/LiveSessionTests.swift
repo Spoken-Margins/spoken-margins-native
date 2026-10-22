@@ -87,6 +87,14 @@ final class LiveSessionTests: XCTestCase {
         XCTAssertEqual(live.margins.filter(\.isBlindMark).count, 2)
     }
 
+    func testBracketSaysOnlyWhatTheListenerSaid() {
+        XCTAssertEqual(LiveSession(id: "a", startedAt: t0, startWhere: "Ch 4", endWhere: "Ch 6").bracket, "Ch 4 to Ch 6")
+        XCTAssertEqual(LiveSession(id: "a", startedAt: t0, startWhere: "p. 30").bracket, "From p. 30")
+        XCTAssertEqual(LiveSession(id: "a", startedAt: t0, endWhere: " p. 40 ").bracket, "Up to p. 40")
+        XCTAssertNil(LiveSession(id: "a", startedAt: t0, startWhere: "  ").bracket)
+        XCTAssertEqual(LiveSession(id: "a", startedAt: t0).margin(id: "m", text: "x", markedAt: t0.addingTimeInterval(2.5)).sessionOffsetMs, 2_500)
+    }
+
     func testStoreRoundTripsMillisecondTimes() throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "live-session-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -131,9 +139,20 @@ final class LiveSessionTests: XCTestCase {
         XCTAssertEqual(sessions.first?.position.mediaTimeMs, 0)
     }
 
-    func testMissingOrNonAudioItemsThrowBeforeWriting() {
-        let text = Item(id: "t", title: "Text", mediaType: "text", text: "Hi", externalReference: nil, status: "ready")
-        let repo = repository(text)
+    func testTextItemsTakeMarginsAtCharacterOffsets() throws {
+        let item = Item(id: "t", title: "Notes", mediaType: "text", text: "First line.\n\nSecond line.", externalReference: nil, status: "ready")
+        let repo = repository(item)
+        let saved = try LiveSessionMarginPlacer.place(
+            [LiveSessionAlignment.Placed(id: "a", text: "On second", offsetMs: 0, charOffset: 13)],
+            itemId: "t", repository: repo
+        )
+        XCTAssertEqual(saved.first?.anchor.startChar, 13)
+        XCTAssertNil(saved.first?.anchor.mediaTimeMs)
+    }
+
+    func testMissingOrEmptyItemsThrowBeforeWriting() {
+        let empty = Item(id: "t", title: "Empty", mediaType: "text", text: "", externalReference: nil, status: "ready")
+        let repo = repository(empty)
         XCTAssertThrowsError(try LiveSessionMarginPlacer.place([], itemId: "missing", repository: repo)) {
             XCTAssertEqual($0 as? LiveSessionMarginPlacer.Failure, .itemNotFound)
         }

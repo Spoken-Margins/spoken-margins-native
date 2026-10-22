@@ -1,20 +1,82 @@
 import Foundation
 
-/// A live session (#2481): Margins taken on a clock while something plays outside the app (a meeting, a talk,
-/// a video), with nothing recorded. Each Margin keeps the wall-clock moment it was taken. Afterwards the
-/// listener lines the session up with a recording they have (`LiveSessionAlignment`), and the Margins land on
-/// that recording as an ordinary audio item's Margins.
+/// What a live session is about (#1989, #2481): something played or read outside the app.
+public enum ElsewhereKind: String, Codable, CaseIterable, Sendable {
+    case meeting
+    case audiobook
+    case paper
+    case other
+
+    public var label: String {
+        switch self {
+        case .meeting: "Meeting"
+        case .audiobook: "Audiobook"
+        case .paper: "Paper book"
+        case .other: "Something else"
+        }
+    }
+}
+
+/// A live session (#1989, generalised in #2481): Margins taken while something plays or is read outside the
+/// app (a meeting, an audiobook in another app, a paper book), with nothing recorded. The app knows only when
+/// each Margin was taken and what the listener tells it about where they were; it never claims a position it
+/// doesn't have. A meeting can later be lined up with its transcript (`TranscriptAlignment`) or recording.
 public struct LiveSession: Codable, Equatable, Sendable {
     public var id: String
+    public var kind: ElsewhereKind
+    public var title: String
     public var startedAt: Date
     public var endedAt: Date?
+    /// "Where are you now?" as a time in the source when the session started and ended: 0:00 at the start of
+    /// an audiobook, 2:00 when the meeting clock shows two minutes. The main field; `LiveSessionPositionMap`
+    /// turns it into each Margin's approximate position.
+    public var startPositionMs: Int?
+    public var endPositionMs: Int?
+    /// "Where I am" as a chapter or page (#1989), the only option for a paper book.
+    public var startWhere: String?
+    public var endWhere: String?
     public var margins: [LiveSessionMargin]
 
-    public init(id: String, startedAt: Date, endedAt: Date? = nil, margins: [LiveSessionMargin] = []) {
+    public init(
+        id: String, kind: ElsewhereKind = .meeting, title: String = "", startedAt: Date, endedAt: Date? = nil,
+        startPositionMs: Int? = nil, endPositionMs: Int? = nil,
+        startWhere: String? = nil, endWhere: String? = nil, margins: [LiveSessionMargin] = []
+    ) {
+        self.startPositionMs = startPositionMs
+        self.endPositionMs = endPositionMs
         self.id = id
+        self.kind = kind
+        self.title = title
         self.startedAt = startedAt
         self.endedAt = endedAt
+        self.startWhere = startWhere
+        self.endWhere = endWhere
         self.margins = margins
+    }
+
+    /// A Margin taken at `markedAt`, with its offset into the session.
+    public func margin(id: String, text: String, markedAt: Date, whereNote: String? = nil, isBlindMark: Bool = false) -> LiveSessionMargin {
+        LiveSessionMargin(
+            id: id, text: text, markedAt: markedAt,
+            sessionOffsetMs: max(0, Int((markedAt.timeIntervalSince(startedAt) * 1_000).rounded())),
+            whereNote: whereNote, isBlindMark: isBlindMark
+        )
+    }
+
+    /// "Chapter 4 to Chapter 6", "From page 30", or nil: only what the listener said, never a position.
+    public var bracket: String? {
+        func trimmed(_ value: String?) -> String? {
+            guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+            return value
+        }
+        let start = trimmed(startWhere)
+        let end = trimmed(endWhere)
+        switch (start, end) {
+        case let (start?, end?): return start == end ? start : "\(start) to \(end)"
+        case let (start?, nil): return "From \(start)"
+        case let (nil, end?): return "Up to \(end)"
+        case (nil, nil): return nil
+        }
     }
 
     /// Adds blind marks (from the Lock Screen), skipping any already here, in time order.
@@ -26,7 +88,7 @@ public struct LiveSession: Codable, Equatable, Sendable {
             .filter { !known.contains($0.timeIntervalSince1970) }
             .reduce(into: [Date]()) { if !$0.contains($1) { $0.append($1) } }
         for time in fresh {
-            margins.append(LiveSessionMargin(id: "mark-\(Int(time.timeIntervalSince1970 * 1_000))", text: "", markedAt: time, isBlindMark: true))
+            margins.append(margin(id: "mark-\(Int(time.timeIntervalSince1970 * 1_000))", text: "", markedAt: time, isBlindMark: true))
         }
         margins.sort { $0.markedAt < $1.markedAt }
         return fresh.count
@@ -37,13 +99,20 @@ public struct LiveSessionMargin: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     /// Empty for a blind mark the listener hasn't written on yet.
     public var text: String
+    /// The wall-clock moment it was taken.
     public var markedAt: Date
+    /// How far into the session it was taken.
+    public var sessionOffsetMs: Int
+    /// The listener's "where I am" (chapter, page, slide), if they gave one.
+    public var whereNote: String?
     public var isBlindMark: Bool
 
-    public init(id: String, text: String, markedAt: Date, isBlindMark: Bool = false) {
+    public init(id: String, text: String, markedAt: Date, sessionOffsetMs: Int = 0, whereNote: String? = nil, isBlindMark: Bool = false) {
         self.id = id
         self.text = text
         self.markedAt = markedAt
+        self.sessionOffsetMs = sessionOffsetMs
+        self.whereNote = whereNote
         self.isBlindMark = isBlindMark
     }
 
@@ -127,12 +196,15 @@ public enum LiveSessionAlignment {
         public var offsetMs: Int
         /// Set when the Margin's own time fell outside the recording and was moved to its edge.
         public var clamp: Clamp?
+        /// Where it sits in the item's text, for an item with no audio (a transcript or session notes).
+        public var charOffset: Int?
 
-        public init(id: String, text: String, offsetMs: Int, clamp: Clamp? = nil) {
+        public init(id: String, text: String, offsetMs: Int, clamp: Clamp? = nil, charOffset: Int? = nil) {
             self.id = id
             self.text = text
             self.offsetMs = offsetMs
             self.clamp = clamp
+            self.charOffset = charOffset
         }
     }
 
