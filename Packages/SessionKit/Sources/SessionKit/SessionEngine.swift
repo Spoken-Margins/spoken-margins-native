@@ -4395,9 +4395,11 @@ public final class SessionEngine {
         var itemId = handoff.itemId ?? browserTextItemId(title: idTitle, url: handoff.source.url)
         // A web or share-sheet PDF's id is a slug of its title and address. When a better title is read from
         // the same PDF (#2062), re-importing it must still find the item it already made (#556).
+        var matchedByAddress = false
         if handoff.itemId == nil, isPDF, try existingItem(id: itemId) == nil,
            let sameAddress = try existingPDFItemId(atHTTPSAddress: handoff.source.url) {
             itemId = sameAddress
+            matchedByAddress = true
         }
         if handoff.itemId == nil, handoff.captureMode == .readablePage || isPDF {
             // A corrected extraction (or a new PDF extractor) must not move existing
@@ -4410,8 +4412,9 @@ public final class SessionEngine {
                 // C1 M3 step 5: a PDF re-imported with a newer extraction moves the
                 // existing item to it when every Margin and position lands on the same
                 // words (I13 rule 1d). Otherwise it stays, and the new text becomes
-                // its own edition as before.
-                if mode != .skip, let document, existing.deletedAt == nil, currentSession?.itemId != existing.id, currentItem?.id != existing.id,
+                // its own edition as before. An item found only by its address may be a different PDF now
+                // served there (a newsletter's "current.pdf"), so its text is never replaced in place.
+                if mode != .skip, !matchedByAddress, let document, existing.deletedAt == nil, currentSession?.itemId != existing.id, currentItem?.id != existing.id,
                    let store = repository as? any (SessionRepository & StructuredDocumentRepository) {
                     let job = StructuredUpgradeJob(repository: store, existing: existing, document: document)
                     if mode == .deferred { return .upgradeCandidate(job) }

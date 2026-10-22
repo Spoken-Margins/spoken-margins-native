@@ -98,6 +98,56 @@ final class PDFSameAddressReimportTests: XCTestCase {
         XCTAssertEqual(try store.loadItem(id: old.id).text, words)
     }
 
+    /// The app imports a PDF with a structured document, which can move an unplayed item with no Margins to new
+    /// text in place. An item found only by its address may be a different PDF now served there (a newsletter's
+    /// "current.pdf"), so it is never overwritten: the new text becomes an edition and the old text stays.
+    @MainActor
+    func testADifferentPDFAtTheSameAddressBecomesAnEditionNotAnOverwrite() async throws {
+        for offMain in [false, true] {
+            let (store, engine) = try makeEngine()
+            let spring = newsletter("Spring Newsletter", body: "Spring planting starts in April. Bring seeds to the hall.")
+            let old = try engine.importBrowserTextInBackground(documentHandoff(spring), structuredDocument: spring)
+            let summer = newsletter("Summer Newsletter", body: "The summer picnic is in July. Bring a dish to share.")
+            let again = offMain
+                ? try await engine.importBrowserTextInBackgroundOffMain(documentHandoff(summer), structuredDocument: summer)
+                : try engine.importBrowserTextInBackground(documentHandoff(summer), structuredDocument: summer)
+
+            XCTAssertTrue(again.id.hasPrefix(old.id + "-edition-"), "offMain \(offMain): \(again.id)")
+            let kept = try store.loadItem(id: old.id)
+            XCTAssertEqual(kept.text, spring.text, "offMain \(offMain)")
+            XCTAssertEqual(kept.title, "Spring Newsletter", "offMain \(offMain)")
+            XCTAssertEqual(try store.loadStructuredDocument(itemId: old.id), spring, "offMain \(offMain)")
+            XCTAssertEqual(try store.loadItem(id: again.id).text, summer.text, "offMain \(offMain)")
+        }
+    }
+
+    /// The same PDF read again under its new title, with unchanged text, is still the one item.
+    @MainActor
+    func testTheSamePDFWithADocumentAndANewTitleIsStillOneItem() async throws {
+        let (store, engine) = try makeEngine()
+        let paper = newsletter("1 Introduction", body: "We measured sleep in adults and found a steady effect.")
+        let old = try engine.importBrowserTextInBackground(documentHandoff(paper), structuredDocument: paper)
+        let retitled = BrowserTextHandoff(
+            captureMode: .markdownFile, source: .init(url: address, title: "Attention Is All You Need"),
+            text: paper.text, contentFormat: .plainText
+        )
+        let again = try await engine.importBrowserTextInBackgroundOffMain(retitled, structuredDocument: paper)
+        XCTAssertEqual(again.id, old.id)
+        XCTAssertEqual(try store.listItems(includeDeleted: true).filter { $0.mediaType == "pdf" }.count, 1)
+    }
+
+    private func newsletter(_ title: String, body: String) -> StructuredDocument {
+        StructuredDocumentBuilder.build(lines: [
+            .init(text: title, role: .title, pageIndex: 0),
+            .init(text: body, role: .body, pageIndex: 0),
+        ], engine: "pdfkit_baseline", version: 2, pageCount: 1)
+    }
+
+    private func documentHandoff(_ document: StructuredDocument) -> BrowserTextHandoff {
+        let title = document.text.components(separatedBy: "\n").first ?? ""
+        return .init(captureMode: .markdownFile, source: .init(url: address, title: title), text: document.text, contentFormat: .plainText)
+    }
+
     func testSeveralOriginalsAtOneAddressPickTheListenersOldestCopy() throws {
         let (store, engine) = try makeEngine()
         func original(_ id: String, created: TimeInterval, deleted: Bool) -> Item {
