@@ -51,6 +51,7 @@ SECOND_SLOT_COOLDOWN = 4 * 3600
 SECOND_SLOT_COOLDOWN_MAX = 24 * 3600
 SECOND_SLOT_TRIP_WINDOW = 7 * 24 * 3600
 SIMULATOR_DECISION = 'simulator-slot-decision.lock'
+SIMULATOR_RECLAIM = 'simulator-slot-reclaim.lock'
 # A simulator job outlives its taker's process by design, but not by hours: the longest desk run is about two.
 STALE_HOLD_SECONDS = 3 * 3600
 RECLAIM_SETTLE_SECONDS = 10
@@ -108,8 +109,9 @@ def _read_holders(names, directory=None):
         if not isinstance(holder, dict) or not _lock_held(path):
             continue
         found.append({**holder, 'gone': not _pid_running(holder.get('pid'))})
-    for holder in stale_holders(found):
-        holder['stale'] = True
+    if all(name in SIMULATOR_SLOTS for name in names):  # only the simulator slots outlive their taker by design
+        for holder in stale_holders(found):
+            holder['stale'] = True
     return found
 
 
@@ -468,6 +470,11 @@ def acquire_simulator_slot(label, out=sys.stderr, max_wait=None):
     return acquire(*_simulator_slot_args(label, out, max_wait))[0]
 
 
+def _shut_down_device(udid):
+    import lane_sim_pool
+    lane_sim_pool.shut_down(udid)
+
+
 def _release_device(udid, out):
     """`lane-sim-boot --done <udid>`: stop the watcher, shut the device down, then erase it (a desk pool device) or delete it."""
     import lane_sim
@@ -478,39 +485,50 @@ def _release_device(udid, out):
         lane_sim.release(udid)
 
 
-def reclaim_stale_simulator_holds(directory=None, out=sys.stderr, release=None, now=None):
+def reclaim_stale_simulator_holds(directory=None, out=sys.stderr, release=None, shut_down=None):
     """Free simulator slots held past STALE_HOLD_SECONDS by a watcher whose taker has exited (#2174).
 
     A hold is reclaimed only when it names its device and watcher (lane-sim-boot adds both once the watcher
     has the slot). The device is released the way `--done` does; if the lock is still held after
-    RECLAIM_SETTLE_SECONDS, the watcher's process is stopped. A hold whose note names no device, from a
-    lane-sim-boot before this change, is only reported as STALE in the wait message. Returns True when a lock was freed.
+    RECLAIM_SETTLE_SECONDS, the watcher's process is stopped and the device shut down, so the slot's next
+    holder is the only simulator up. One reclaimer at a time: a second waiter reads the holders only after the
+    first has finished, so it can't release a device that a new job has since taken. A hold whose note names
+    no device, from a lane-sim-boot before this change, is only reported as STALE in the wait message.
+    Returns True when a lock was freed.
     """
     directory = Path(directory or state_dir())
     release = release or _release_device
+    shut_down = shut_down or _shut_down_device
     freed = False
-    for holder in _read_holders(SIMULATOR_SLOTS, directory):
-        udid, watcher = holder.get('udid'), holder.get('watcher_pid')
-        if not holder.get('stale') or not udid or not isinstance(watcher, int) or watcher <= 0:
-            continue
-        print(f'[lane] reclaiming a stale simulator slot: {_describe(holder)}; device {udid}, watcher pid {watcher}',
-              file=out, flush=True)
-        try:
-            release(udid, out)
-        except Exception as error:  # a device simctl can't find, a timeout: the watcher below is the point
-            print(f'[lane] releasing {udid} failed ({error!r}); stopping its watcher', file=out, flush=True)
-        deadline = time.monotonic() + RECLAIM_SETTLE_SECONDS
-        while time.monotonic() < deadline and _lock_held_by(holder, directory):
-            time.sleep(0.2)
-        if _lock_held_by(holder, directory) and _pid_running(watcher):
+    directory.mkdir(parents=True, exist_ok=True)
+    with open(directory / SIMULATOR_RECLAIM, 'a+') as reclaiming:
+        fcntl.flock(reclaiming, fcntl.LOCK_EX)
+        for holder in _read_holders(SIMULATOR_SLOTS, directory):
+            udid, watcher = holder.get('udid'), holder.get('watcher_pid')
+            if not holder.get('stale') or not udid or not isinstance(watcher, int) or watcher <= 0:
+                continue
+            print(f'[lane] reclaiming a stale simulator slot: {_describe(holder)}; device {udid}, watcher pid {watcher}',
+                  file=out, flush=True)
             try:
-                os.kill(watcher, signal.SIGTERM)
-            except OSError:
-                pass
-            time.sleep(0.5)
-        if not _lock_held_by(holder, directory):
-            freed = True
-            print(f'[lane] simulator slot freed (device {udid})', file=out, flush=True)
+                release(udid, out)
+            except Exception as error:  # a device simctl can't find, a timeout: the watcher below is the point
+                print(f'[lane] releasing {udid} failed ({error!r}); stopping its watcher', file=out, flush=True)
+            deadline = time.monotonic() + RECLAIM_SETTLE_SECONDS
+            while time.monotonic() < deadline and _lock_held_by(holder, directory):
+                time.sleep(0.2)
+            if _lock_held_by(holder, directory) and _pid_running(watcher):
+                try:
+                    os.kill(watcher, signal.SIGTERM)
+                except OSError:
+                    pass
+                time.sleep(0.5)
+                try:
+                    shut_down(udid)  # the release did not get this far; two simulators must not be up
+                except Exception as error:  # noqa: BLE001 - best effort
+                    print(f'[lane] could not shut {udid} down ({error!r}); do it by hand', file=out, flush=True)
+            if not _lock_held_by(holder, directory):
+                freed = True
+                print(f'[lane] simulator slot freed (device {udid})', file=out, flush=True)
     return freed
 
 

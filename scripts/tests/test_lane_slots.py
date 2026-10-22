@@ -289,7 +289,8 @@ class StaleSimulatorHoldTests(unittest.TestCase):
         process = self.holder_process(started_hours_ago=5)
         out = io.StringIO()
         with unittest.mock.patch.object(self.slots, 'RECLAIM_SETTLE_SECONDS', 0.2):
-            freed = self.slots.reclaim_stale_simulator_holds(self.state, out, release=lambda udid, out: None)
+            freed = self.slots.reclaim_stale_simulator_holds(self.state, out, release=lambda udid, out: None,
+                                                             shut_down=lambda udid: None)
         process.wait(timeout=5)
         self.assertTrue(freed)
         self.assertEqual(process.returncode, -signal.SIGTERM)
@@ -308,9 +309,61 @@ class StaleSimulatorHoldTests(unittest.TestCase):
             fresh.append(udid)
 
         with unittest.mock.patch.object(self.slots, 'RECLAIM_SETTLE_SECONDS', 0.2):
-            self.slots.reclaim_stale_simulator_holds(self.state, io.StringIO(), release=release)
+            self.slots.reclaim_stale_simulator_holds(self.state, io.StringIO(), release=release,
+                                                     shut_down=lambda udid: None)
         self.assertEqual(fresh, ['DEVICE-1'])
         self.assertIsNone(process.poll())
+
+    def test_a_watcher_stopped_by_force_has_its_device_shut_down(self):
+        process = self.holder_process(started_hours_ago=5)
+        shut = []
+        with unittest.mock.patch.object(self.slots, 'RECLAIM_SETTLE_SECONDS', 0.2):
+            self.slots.reclaim_stale_simulator_holds(self.state, io.StringIO(), release=lambda udid, out: None,
+                                                     shut_down=shut.append)
+        process.wait(timeout=5)
+        self.assertEqual(shut, ['DEVICE-1'])
+
+    def test_an_old_hold_whose_taker_is_alive_is_left_alone(self):
+        # The runner's T3 holds its slot under its own live pid, however long it takes.
+        path = self.state / self.slots.SIMULATOR_SLOT
+        handle = open(path, 'a+')
+        self.addCleanup(handle.close)
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        started = (datetime.datetime.now() - datetime.timedelta(hours=9)).isoformat(timespec='seconds')
+        path.write_text(json.dumps({'pid': os.getpid(), 'cwd': '/x', 'label': 'runner T3', 'started': started,
+                                    'udid': 'DEVICE-2', 'watcher_pid': os.getpid()}))
+        released = []
+        self.assertFalse(self.slots.reclaim_stale_simulator_holds(self.state, io.StringIO(),
+                                                                  release=lambda udid, out: released.append(udid)))
+        self.assertEqual(released, [])
+
+    def test_an_old_gone_hold_without_a_device_is_not_reclaimed(self):
+        process = self.holder_process(started_hours_ago=5, with_watcher=False)
+        released = []
+        self.assertFalse(self.slots.reclaim_stale_simulator_holds(self.state, io.StringIO(),
+                                                                  release=lambda udid, out: released.append(udid)))
+        self.assertEqual(released, [])
+        self.assertIsNone(process.poll())
+
+    def test_a_second_reclaimer_waits_and_then_finds_nothing_to_release(self):
+        import threading
+        process = self.holder_process(started_hours_ago=5)
+        released, entered = [], threading.Event()
+
+        def release(udid, out):  # slow, like a simctl shutdown
+            released.append(udid)
+            entered.set()
+            time.sleep(0.5)
+            process.kill()
+            process.wait()
+
+        first = threading.Thread(target=self.slots.reclaim_stale_simulator_holds,
+                                 args=(self.state, io.StringIO(), release))
+        first.start()
+        self.assertTrue(entered.wait(5))
+        self.slots.reclaim_stale_simulator_holds(self.state, io.StringIO(), release=release)  # blocks until the first ends
+        first.join()
+        self.assertEqual(released, ['DEVICE-1'])
 
     def test_a_failing_release_still_stops_the_watcher(self):
         process = self.holder_process(started_hours_ago=5)
@@ -319,7 +372,8 @@ class StaleSimulatorHoldTests(unittest.TestCase):
             raise OSError('simctl is not available')
 
         with unittest.mock.patch.object(self.slots, 'RECLAIM_SETTLE_SECONDS', 0.2):
-            self.assertTrue(self.slots.reclaim_stale_simulator_holds(self.state, io.StringIO(), release=release))
+            self.assertTrue(self.slots.reclaim_stale_simulator_holds(self.state, io.StringIO(), release=release,
+                                                                     shut_down=lambda udid: None))
         process.wait(timeout=5)
 
     def test_start_watcher_records_the_device_and_the_watcher_in_the_slot_note(self):
