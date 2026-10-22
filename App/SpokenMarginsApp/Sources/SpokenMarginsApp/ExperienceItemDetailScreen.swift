@@ -398,18 +398,20 @@ struct ExperienceItemDetailScreen: View {
                         ForEach(Array(model.selectedItem.chapters.enumerated()), id: \.element.id) { index, chapter in
                             if index > 0 { Divider() }
                             Button { model.jumpToChapter(chapter) } label: {
-                                HStack {
+                                GutterRow(gutterWidth: 42, spacing: 8) {
                                     Text("\(chapter.percent)%")
                                         .font(.caption.monospacedDigit().weight(.bold))
                                         .foregroundStyle(AppColors.evergreen)
-                                        .frame(width: 42, alignment: .leading)
-                                    Text(chapter.title)
-                                        .font(.headline)
-                                        .foregroundStyle(AppColors.text)
-                                    Spacer()
-                                    Image(systemName: "play.fill")
-                                        .foregroundStyle(AppColors.evergreen)
-                                        .accessibilityHidden(true)
+                                } content: {
+                                    HStack {
+                                        Text(chapter.title)
+                                            .font(.headline)
+                                            .foregroundStyle(AppColors.text)
+                                        Spacer()
+                                        Image(systemName: "play.fill")
+                                            .foregroundStyle(AppColors.evergreen)
+                                            .accessibilityHidden(true)
+                                    }
                                 }
                                 .frame(minHeight: 52)
                             }
@@ -424,27 +426,29 @@ struct ExperienceItemDetailScreen: View {
                         ForEach(Array(model.selectedItem.mediaChapters.sorted { $0.startMs < $1.startMs }.enumerated()), id: \.element.id) { index, chapter in
                             if index > 0 { Divider() }
                             Button { model.jumpToMediaChapter(chapter) } label: {
-                                HStack(spacing: 12) {
+                                GutterRow(gutterWidth: 52, alignment: .center, spacing: 12) {
                                     Text(formatPlaybackTime(chapter.startMs))
                                         .font(.caption.monospacedDigit().weight(.bold))
                                         .foregroundStyle(AppColors.evergreen)
-                                        .frame(width: 52, alignment: .leading)
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(chapter.title)
-                                            .font(.headline)
-                                            .foregroundStyle(AppColors.text)
-                                            .multilineTextAlignment(.leading)
-                                        if let description = chapter.description, !description.isEmpty {
-                                            Text(description)
-                                                .font(.caption)
-                                                .foregroundStyle(AppColors.secondaryText)
-                                                .lineLimit(2)
+                                } content: {
+                                    HStack(spacing: 12) {
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(chapter.title)
+                                                .font(.headline)
+                                                .foregroundStyle(AppColors.text)
+                                                .multilineTextAlignment(.leading)
+                                            if let description = chapter.description, !description.isEmpty {
+                                                Text(description)
+                                                    .font(.caption)
+                                                    .foregroundStyle(AppColors.secondaryText)
+                                                    .lineLimit(2)
+                                            }
                                         }
+                                        Spacer()
+                                        Image(systemName: "play.fill")
+                                            .foregroundStyle(AppColors.evergreen)
+                                            .accessibilityHidden(true)
                                     }
-                                    Spacer()
-                                    Image(systemName: "play.fill")
-                                        .foregroundStyle(AppColors.evergreen)
-                                        .accessibilityHidden(true)
                                 }
                                 .frame(minHeight: 52)
                             }
@@ -572,49 +576,70 @@ struct ExperienceItemDetailScreen: View {
     private var downloadRecovery: some View {
         switch model.selectedPodcastDownloadState {
         case .waitingForWiFi, .streamingOnly, .failed, .evicted, .downloading:
-            HStack(spacing: 12) {
-                Label(readinessLabel, systemImage: readinessIcon)
-                    .font(.subheadline)
-                    .foregroundStyle(readinessColor)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 8)
-                switch model.selectedPodcastDownloadState {
-                case .waitingForWiFi, .streamingOnly:
-                    Button("Download Now", action: model.downloadSelectedPodcastNow)
-                        .buttonStyle(.bordered)
-                        .tint(AppColors.evergreen)
-                case .failed, .evicted:
-                    Button("Retry Download", action: model.retrySelectedPodcastDownload)
-                        .buttonStyle(.bordered)
-                        .tint(AppColors.evergreen)
-                case .downloading:
-                    if let progress = model.selectedPodcastDownloadProgress {
-                        ProgressView(value: progress)
-                            .tint(readinessColor)
-                            .frame(width: 72)
-                            .accessibilityLabel("Download progress")
-                    } else {
-                        ProgressView()
-                            .accessibilityLabel("Downloading")
-                            .tint(readinessColor)
-                    }
-                case .availableOffline, .none:
-                    EmptyView()
+            // The status beside its button, or one above the other when they don't fit (large text, #1938).
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    downloadStatusLabel
+                    Spacer(minLength: 8)
+                    downloadRecoveryControl
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    downloadStatusLabel
+                    downloadRecoveryControl
                 }
             }
             .accessibilityIdentifier("item.podcastDownload.status")
         case .availableOffline:
-            HStack(spacing: 12) {
-                Label(readinessLabel, systemImage: readinessIcon)
-                    .font(.subheadline)
-                    .foregroundStyle(readinessColor)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("item.podcastDownload.saved")
-                Spacer(minLength: 8)
-                Button("Download Again", action: model.redownloadSelectedPodcast)
-                    .buttonStyle(.bordered)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    downloadStatusLabel
+                        .accessibilityIdentifier("item.podcastDownload.saved")
+                    Spacer(minLength: 8)
+                    Button("Download Again", action: model.redownloadSelectedPodcast)
+                        .buttonStyle(.bordered)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    downloadStatusLabel
+                        .accessibilityIdentifier("item.podcastDownload.saved")
+                    Button("Download Again", action: model.redownloadSelectedPodcast)
+                        .buttonStyle(.bordered)
+                }
             }
         case .none:
+            EmptyView()
+        }
+    }
+
+    private var downloadStatusLabel: some View {
+        Label(readinessLabel, systemImage: readinessIcon)
+            .font(.subheadline)
+            .foregroundStyle(readinessColor)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    private var downloadRecoveryControl: some View {
+        switch model.selectedPodcastDownloadState {
+        case .waitingForWiFi, .streamingOnly:
+            Button("Download Now", action: model.downloadSelectedPodcastNow)
+                .buttonStyle(.bordered)
+                .tint(AppColors.evergreen)
+        case .failed, .evicted:
+            Button("Retry Download", action: model.retrySelectedPodcastDownload)
+                .buttonStyle(.bordered)
+                .tint(AppColors.evergreen)
+        case .downloading:
+            if let progress = model.selectedPodcastDownloadProgress {
+                ProgressView(value: progress)
+                    .tint(readinessColor)
+                    .frame(width: 72)
+                    .accessibilityLabel("Download progress")
+            } else {
+                ProgressView()
+                    .accessibilityLabel("Downloading")
+                    .tint(readinessColor)
+            }
+        case .availableOffline, .none:
             EmptyView()
         }
     }
@@ -774,27 +799,29 @@ private struct ExperienceListeningMapSection: View, Equatable {
                         VStack(spacing: 0) {
                             if index > 0 { Divider() }
                             Button { model.jumpToListeningMapScene(scene) } label: {
-                                HStack(spacing: 12) {
+                                GutterRow(gutterWidth: 52, alignment: .center, spacing: 12) {
                                     Text(formatPlaybackTime(scene.startMs))
                                         .font(.caption.monospacedDigit().weight(.bold))
                                         .foregroundStyle(AppColors.evergreen)
-                                        .frame(width: 52, alignment: .leading)
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(scene.title)
-                                            .font(.headline)
-                                            .foregroundStyle(AppColors.text)
-                                            .multilineTextAlignment(.leading)
-                                        if let description = scene.description, !description.isEmpty {
-                                            Text(description)
-                                                .font(.caption)
-                                                .foregroundStyle(AppColors.secondaryText)
-                                                .lineLimit(3)
+                                } content: {
+                                    HStack(spacing: 12) {
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(scene.title)
+                                                .font(.headline)
+                                                .foregroundStyle(AppColors.text)
+                                                .multilineTextAlignment(.leading)
+                                            if let description = scene.description, !description.isEmpty {
+                                                Text(description)
+                                                    .font(.caption)
+                                                    .foregroundStyle(AppColors.secondaryText)
+                                                    .lineLimit(3)
+                                            }
                                         }
+                                        Spacer()
+                                        Image(systemName: "play.fill")
+                                            .foregroundStyle(AppColors.evergreen)
+                                            .accessibilityHidden(true)
                                     }
-                                    Spacer()
-                                    Image(systemName: "play.fill")
-                                        .foregroundStyle(AppColors.evergreen)
-                                        .accessibilityHidden(true)
                                 }
                                 .frame(minHeight: 52)
                             }
