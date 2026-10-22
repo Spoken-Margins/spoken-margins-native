@@ -108,7 +108,8 @@ from trunk import trunk_branch  # noqa: E402  (#1492: the branch it builds)
 
 REPO = 'Spoken-Margins/spoken-margins-native'
 # Issue and PR links written before the move to the org (#2169) still name the old owner.
-REPO_LINK = r'(?:Spoken-Margins|uncomposed)/spoken-margins-native'
+# GitHub ignores case in the host, owner and repo name, so these patterns do too.
+REPO_LINK = r'(?i:github\.com/(?:spoken-margins|uncomposed)/spoken-margins-native)'
 BRANCH = trunk_branch()
 REPORTS_ISSUE = 184      # where the integration run and the Test Desk post their lane reports
 DISK_FLOOR_GB = 10
@@ -160,7 +161,7 @@ NO_CHECK = re.compile(
     r'|not needed|no (?:(?:owner|phone) )?checks?(?:\s+needed)?)'
     r'\s*(?:[.;:,(\u2014\u2013]|-\s|$))', re.I)
 # "#547" or a link to issue/PR 547 in a check: something it may need on the phone first (#847).
-REFERENCE = re.compile(r'(?<![\w&/])#(\d+)\b|github\.com/' + REPO_LINK + r'/(?:issues|pull)/(\d+)\b')
+REFERENCE = re.compile(r'(?<![\w&/])#(\d+)\b|' + REPO_LINK + r'/(?:issues|pull)/(\d+)\b')
 # "**Owner check:**", "**Owner check (phone):**", "4. Owner check:", "**Phone check:**" (#927), "**Owner check.**"
 # (#574) and threads' "2. The owner's phone check:" (#1337). Plain text only at the start of a line or list item:
 # "the phone check covers that" in prose isn't one, nor is a dated report ("Owner phone check, 2026-10-14 ...").
@@ -206,7 +207,7 @@ ATTACH_LIMIT = 50_000_000
 # no file left the owner with nothing to test, twice (2026-09-30, 2026-10-07).
 MATERIAL = re.compile(r'\b(PDF|EPUB|audiobook|packet)s?\b|\.spokenmargins\b', re.I)
 # A link that supplies the file: any URL except an issue or PR, which is a prerequisite, not content.
-SUPPLIED_URL = re.compile(r'https?://(?!(?:www\.)?github\.com/' + REPO_LINK + r'/(?:issues|pull)/)\S+')
+SUPPLIED_URL = re.compile(r'https?://(?!(?i:www\.)?' + REPO_LINK + r'/(?:issues|pull)/)\S+')
 # A document the check names but doesn't link: "the arXiv paper" (#1476: #586). A link or repo file supplies it.
 NAMED_DOCUMENT = re.compile(r'\b(?:[Tt]he|[Tt]his|[Tt]hat)\s+(?:[\w.-]+\s+){0,2}(?:paper|whitepaper|thesis)\b')  # not "Paper theme"
 # A check the owner can't run (#1476): lane and agent procedures belong to the lane and the Test Desk, not to

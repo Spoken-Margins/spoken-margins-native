@@ -18,11 +18,11 @@ What a ping means: a runner is idle. It does not mean RAM, disk or the Mac's one
 The job runs on merge but sends nothing until two repo secrets exist. They are the Dial relay's own URL and token, piped from the VPS so neither is shown or typed (replace `<vps>` with the SSH host that runs the Dial gate):
 
 ```zsh
-ssh <vps> 'cat /etc/sm-dial/relay-url' | gh secret set SM_LANE_OPEN_URL -R uncomposed/spoken-margins-native
+ssh <vps> 'cat /etc/sm-dial/relay-url' | gh secret set SM_LANE_OPEN_URL -R Spoken-Margins/spoken-margins-native
 ```
 
 ```zsh
-ssh <vps> 'cat /etc/sm-dial/relay-token' | gh secret set SM_LANE_OPEN_TOKEN -R uncomposed/spoken-margins-native
+ssh <vps> 'cat /etc/sm-dial/relay-token' | gh secret set SM_LANE_OPEN_TOKEN -R Spoken-Margins/spoken-margins-native
 ```
 
 Turn it off by deleting either secret; remove it by deleting the two `lane-open-*` jobs. Any lane job on a PR can read these secrets (as it can `SM_LANE_RUNNERS_TOKEN`); the token can only post text into the project chat.
