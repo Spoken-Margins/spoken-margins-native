@@ -507,12 +507,19 @@ def reclaim_stale_simulator_holds(directory=None, out=sys.stderr, release=None, 
             udid, watcher = holder.get('udid'), holder.get('watcher_pid')
             if not holder.get('stale') or not udid or not isinstance(watcher, int) or watcher <= 0:
                 continue
+            # Read again just before acting: an earlier hold's release can take minutes, and if this one ended by
+            # itself meanwhile, a new job may have taken the slot and the same pool device.
+            if not _lock_held_by(holder, directory):
+                freed = True
+                continue
             print(f'[lane] reclaiming a stale simulator slot: {_describe(holder)}; device {udid}, watcher pid {watcher}',
                   file=out, flush=True)
             try:
                 release(udid, out)
             except Exception as error:  # a device simctl can't find, a timeout: the watcher below is the point
-                print(f'[lane] releasing {udid} failed ({error!r}); stopping its watcher', file=out, flush=True)
+                print(f'[lane] releasing {udid} failed ({error!r}); shutting it down and stopping its watcher',
+                      file=out, flush=True)
+                _shut_down_quietly(shut_down, udid, out)  # now, while its watcher still holds the slot
             deadline = time.monotonic() + RECLAIM_SETTLE_SECONDS
             while time.monotonic() < deadline and _lock_held_by(holder, directory):
                 time.sleep(0.2)
@@ -522,14 +529,18 @@ def reclaim_stale_simulator_holds(directory=None, out=sys.stderr, release=None, 
                 except OSError:
                     pass
                 time.sleep(0.5)
-                try:
-                    shut_down(udid)  # the release did not get this far; two simulators must not be up
-                except Exception as error:  # noqa: BLE001 - best effort
-                    print(f'[lane] could not shut {udid} down ({error!r}); do it by hand', file=out, flush=True)
+                _shut_down_quietly(shut_down, udid, out)  # the release did not get this far; two simulators must not be up
             if not _lock_held_by(holder, directory):
                 freed = True
                 print(f'[lane] simulator slot freed (device {udid})', file=out, flush=True)
     return freed
+
+
+def _shut_down_quietly(shut_down, udid, out):
+    try:
+        shut_down(udid)
+    except Exception as error:  # noqa: BLE001 - best effort
+        print(f'[lane] could not shut {udid} down ({error!r}); do it by hand', file=out, flush=True)
 
 
 def _lock_held_by(holder, directory):

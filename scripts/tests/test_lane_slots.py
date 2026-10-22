@@ -230,8 +230,8 @@ class StaleSimulatorHoldTests(unittest.TestCase):
         exited.wait()
         self.dead_pid = exited.pid
 
-    def holder_process(self, started_hours_ago, with_watcher=True):
-        path = self.state / self.slots.SIMULATOR_SLOT
+    def holder_process(self, started_hours_ago, with_watcher=True, slot=0, udid='DEVICE-1'):
+        path = self.state / self.slots.SIMULATOR_SLOTS[slot]
         process = subprocess.Popen([sys.executable, '-c',
                                     'import fcntl, sys, time; h = open(sys.argv[1], "a+"); '
                                     'fcntl.flock(h, fcntl.LOCK_EX); print("locked", flush=True); time.sleep(60)',
@@ -241,7 +241,7 @@ class StaleSimulatorHoldTests(unittest.TestCase):
         started = (datetime.datetime.now() - datetime.timedelta(hours=started_hours_ago)).isoformat(timespec='seconds')
         note = {'pid': self.dead_pid, 'cwd': '/desk', 'label': 'lane-sim-boot a desk pool device', 'started': started}
         if with_watcher:
-            note.update(udid='DEVICE-1', watcher_pid=process.pid)
+            note.update(udid=udid, watcher_pid=process.pid)
         path.write_text(json.dumps(note))
         return process
 
@@ -375,6 +375,65 @@ class StaleSimulatorHoldTests(unittest.TestCase):
             self.assertTrue(self.slots.reclaim_stale_simulator_holds(self.state, io.StringIO(), release=release,
                                                                      shut_down=lambda udid: None))
         process.wait(timeout=5)
+
+    def test_a_failing_release_shuts_the_device_down_before_the_watcher_lets_go(self):
+        # The watcher exits once its device is gone, so a shutdown right after the failed release frees the
+        # slot with the device down; stopping the watcher first could free the slot with the device still up.
+        process = self.holder_process(started_hours_ago=5)
+        shut = []
+
+        def shut_down(udid):  # the device goes, and its watcher exits by itself
+            shut.append(udid)
+            process.kill()
+            process.wait()
+
+        def release(udid, out):
+            raise OSError('simctl shutdown timed out')
+
+        with unittest.mock.patch.object(self.slots, 'RECLAIM_SETTLE_SECONDS', 2):
+            self.assertTrue(self.slots.reclaim_stale_simulator_holds(self.state, io.StringIO(), release=release,
+                                                                     shut_down=shut_down))
+        self.assertEqual(shut, ['DEVICE-1'])
+        self.assertEqual(process.returncode, -signal.SIGKILL)  # ended by the shutdown, not by a SIGTERM
+
+    def test_a_hold_that_ends_while_an_earlier_one_is_reclaimed_is_not_released(self):
+        # Slot 2's stale hold ends while slot 1's release runs, and a new job takes slot 2 (same pool device).
+        first = self.holder_process(started_hours_ago=5)
+        second = self.holder_process(started_hours_ago=5, slot=1, udid='DEVICE-2')
+        released = []
+
+        def release(udid, out):
+            released.append(udid)
+            path = self.state / self.slots.SIMULATOR_SLOTS[1]  # the new job's note on slot 2
+            note = json.loads(path.read_text())
+            note.update(started=datetime.datetime.now().isoformat(timespec='seconds'), watcher_pid=12345)
+            path.write_text(json.dumps(note))
+            first.kill()
+            first.wait()
+
+        with unittest.mock.patch.object(self.slots, 'RECLAIM_SETTLE_SECONDS', 0.2):
+            self.slots.reclaim_stale_simulator_holds(self.state, io.StringIO(), release=release,
+                                                     shut_down=lambda udid: None)
+        self.assertEqual(released, ['DEVICE-1'])
+        self.assertIsNone(second.poll())
+
+    def test_the_real_simulator_slot_wait_reclaims_a_stale_hold(self):
+        # acquire_simulator_slot itself, not acquire() with reclaim passed by hand: with the second slot off,
+        # a T3 behind a dead desk run's watcher gets the slot at once instead of after its hour.
+        process = self.holder_process(started_hours_ago=5)
+        self.slots.disable_second_slot('test', by_hand=True)
+        released = []
+
+        def release(udid, out):
+            released.append(udid)
+            process.kill()
+            process.wait()
+
+        with unittest.mock.patch.object(self.slots, 'POLL_SECONDS', 0.01), \
+                unittest.mock.patch.object(self.slots, '_release_device', release):
+            handle = self.slots.acquire_simulator_slot('runner T3 pr2049', out=self.quiet, max_wait=5)
+        self.addCleanup(self.slots.release_handle, handle)
+        self.assertEqual(released, ['DEVICE-1'])
 
     def test_start_watcher_records_the_device_and_the_watcher_in_the_slot_note(self):
         import lane_sim
