@@ -1,0 +1,266 @@
+{
+ "summary": {
+  "extractor": "app-v2",
+  "papers": 64,
+  "papers_with_title_page_chapters": 9,
+  "title_page_chapters": 9
+ },
+ "papers": {
+  "arxiv-2506.00266v2": {
+   "chapters": 8,
+   "title_page_chapters": 0
+  },
+  "arxiv-2506.00268v2": {
+   "chapters": 3,
+   "title_page_chapters": 0
+  },
+  "arxiv-2506.00390v1": {
+   "chapters": 4,
+   "title_page_chapters": 0
+  },
+  "arxiv-2506.00547v1": {
+   "chapters": 7,
+   "title_page_chapters": 0
+  },
+  "arxiv-2605.07149v1": {
+   "chapters": 26,
+   "title_page_chapters": 0
+  },
+  "arxiv-2605.10717v1": {
+   "chapters": 1,
+   "title_page_chapters": 0
+  },
+  "arxiv-2606.21736v1": {
+   "chapters": 20,
+   "title_page_chapters": 0
+  },
+  "arxiv-2607.07895v1": {
+   "chapters": 26,
+   "title_page_chapters": 0
+  },
+  "arxiv-2607.10715v1": {
+   "chapters": 22,
+   "title_page_chapters": 0
+  },
+  "arxiv-2607.28282v1": {
+   "chapters": 29,
+   "title_page_chapters": 0
+  },
+  "arxiv-2608.09666v1": {
+   "chapters": 24,
+   "title_page_chapters": 1
+  },
+  "arxiv-2609.06489v1": {
+   "chapters": 29,
+   "title_page_chapters": 0
+  },
+  "arxiv-2609.07965v1": {
+   "chapters": 10,
+   "title_page_chapters": 0
+  },
+  "arxiv-2609.19108v1": {
+   "chapters": 1,
+   "title_page_chapters": 1
+  },
+  "arxiv-2609.20536v1": {
+   "chapters": 41,
+   "title_page_chapters": 0
+  },
+  "arxiv-2609.21432v1": {
+   "chapters": 26,
+   "title_page_chapters": 0
+  },
+  "arxiv-2609.21554v1": {
+   "chapters": 14,
+   "title_page_chapters": 0
+  },
+  "arxiv-2609.22558v1": {
+   "chapters": 6,
+   "title_page_chapters": 1
+  },
+  "arxiv-2609.25172v1": {
+   "chapters": 12,
+   "title_page_chapters": 0
+  },
+  "arxiv-2609.27549v1": {
+   "chapters": 6,
+   "title_page_chapters": 0
+  },
+  "arxiv-2609.29509v1": {
+   "chapters": 12,
+   "title_page_chapters": 0
+  },
+  "arxiv-2609.31218v1": {
+   "chapters": 26,
+   "title_page_chapters": 0
+  },
+  "arxiv-2609.31301v1": {
+   "chapters": 43,
+   "title_page_chapters": 0
+  },
+  "arxiv-2609.31457v1": {
+   "chapters": 18,
+   "title_page_chapters": 1
+  },
+  "arxiv-2609.31565v1": {
+   "chapters": 23,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc10711437": {
+   "chapters": 9,
+   "title_page_chapters": 1
+  },
+  "pmc-pmc10731324": {
+   "chapters": 22,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc10731326": {
+   "chapters": 29,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc10740247": {
+   "chapters": 23,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc10740312": {
+   "chapters": 22,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc10755640": {
+   "chapters": 11,
+   "title_page_chapters": 1
+  },
+  "pmc-pmc10755645": {
+   "chapters": 20,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc10756530": {
+   "chapters": 19,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc10756544": {
+   "chapters": 25,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc10756880": {
+   "chapters": 24,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc10756881": {
+   "chapters": 28,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc10756882": {
+   "chapters": 15,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc10775890": {
+   "chapters": 35,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc10777729": {
+   "chapters": 14,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc10784378": {
+   "chapters": 17,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc10787326": {
+   "chapters": 24,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc10817199": {
+   "chapters": 24,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc10928513": {
+   "chapters": 55,
+   "title_page_chapters": 1
+  },
+  "pmc-pmc10950207": {
+   "chapters": 7,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc11148707": {
+   "chapters": 37,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc11150781": {
+   "chapters": 22,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc11154291": {
+   "chapters": 32,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc11314421": {
+   "chapters": 10,
+   "title_page_chapters": 1
+  },
+  "pmc-pmc11326079": {
+   "chapters": 13,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc11334374": {
+   "chapters": 9,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc11639692": {
+   "chapters": 34,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc11731475": {
+   "chapters": 28,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc11843480": {
+   "chapters": 8,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc11960816": {
+   "chapters": 25,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc12629593": {
+   "chapters": 28,
+   "title_page_chapters": 1
+  },
+  "pmc-pmc13305550": {
+   "chapters": 2,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc13577200": {
+   "chapters": 14,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc13585476": {
+   "chapters": 8,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc13612741": {
+   "chapters": 9,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc5315332": {
+   "chapters": 0,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc5315336": {
+   "chapters": 0,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc5315337": {
+   "chapters": 0,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc7619013": {
+   "chapters": 30,
+   "title_page_chapters": 0
+  },
+  "pmc-pmc7619014": {
+   "chapters": 21,
+   "title_page_chapters": 0
+  }
+ }
+}
