@@ -26,7 +26,7 @@ It looks for seven things:
      last run, so 136 piled up unseen); the daily routine milestones and labels every one
 
 --apply releases a stale claim by removing `in-progress`, adding `ready` (unless the issue is `blocked`,
-`needs-owner` or `deferred`) and commenting why. It re-reads the issue's comments just before writing and does
+`needs-owner`, `deferred`, `validate-by-use`, `agent-verify` or `status: needs-human-validation`) and commenting why. It re-reads the issue's comments just before writing and does
 nothing if any arrived. Every other finding is printed for the coordinator to dispatch; nothing else is written.
 
 Limits, stated so the output isn't over-trusted: the sweep reads GitHub, not sessions. A Test Desk or thread that has
@@ -67,7 +67,8 @@ FINISHER_BUSY = 30                           # minutes: a finisher active more r
 COMMENT_WINDOW = dt.timedelta(hours=24)      # the Dial gate's own window for claim and stop notes
 SKIP_LABELS = {'in-progress', 'needs-owner', 'deferred', 'blocked'}
 OUTSIDE_LABEL = 'needs-triage-review'          # an issue by an untrusted author; only a collaborator can make it `ready`
-HOLD_LABELS = {'blocked', 'needs-owner', 'deferred'}   # a released claim isn't made `ready` with one of these
+HOLD_LABELS = {'blocked', 'needs-owner', 'deferred', 'validate-by-use', 'agent-verify',
+               'status: needs-human-validation'}   # a released claim isn't made `ready` with one of these
 DEAD = ('mac-tick-stale',)
 
 RED, LOOK = sm_status.RED, sm_status.LOOK

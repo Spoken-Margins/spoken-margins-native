@@ -54,8 +54,12 @@ final class VoiceModelCatalogTests: XCTestCase {
     }
 
     private func verify(_ fixtureName: String, last: Int? = nil, keys: [VoiceCatalogTrustedKey]? = nil) throws -> VerifiedVoiceModelCatalog {
+        try verify(envelope: fixture(fixtureName), last: last, keys: keys)
+    }
+
+    private func verify(envelope: Data, last: Int? = nil, keys: [VoiceCatalogTrustedKey]? = nil) throws -> VerifiedVoiceModelCatalog {
         try VoiceModelCatalogVerifier.verify(
-            envelopeData: fixture(fixtureName),
+            envelopeData: envelope,
             trustedKeys: keys ?? trustedKeys(),
             lastAcceptedCatalogVersion: last
         )
@@ -136,7 +140,8 @@ final class VoiceModelCatalogTests: XCTestCase {
     }
 
     func testProductionKeyListDoesNotTrustTheTestKey() throws {
-        XCTAssertThrowsError(try VoiceModelCatalogVerifier.verify(envelopeData: fixture("envelope-valid.json"), trustedKeys: VoiceCatalogTrust.production)) {
+        let envelope = try fixture("envelope-valid.json")
+        XCTAssertThrowsError(try VoiceModelCatalogVerifier.verify(envelopeData: envelope, trustedKeys: VoiceCatalogTrust.production)) {
             XCTAssertEqual($0 as? VoiceCatalogError, .unknownKey("sm-test-1"))
         }
         XCTAssertEqual(VoiceCatalogTrust.production.map(\.keyId), ["sm-voices-1"])
@@ -144,13 +149,17 @@ final class VoiceModelCatalogTests: XCTestCase {
     }
 
     func testOlderCatalogThanTheLastAcceptedIsARollback() throws {
-        XCTAssertThrowsError(try verify("envelope-rollback.json", last: 3)) {
+        let rollback = try fixture("envelope-rollback.json")
+        let valid = try fixture("envelope-valid.json")
+        let withdrawn = try fixture("envelope-withdrawn.json")
+        let keys = try trustedKeys()
+        XCTAssertThrowsError(try verify(envelope: rollback, last: 3, keys: keys)) {
             XCTAssertEqual($0 as? VoiceCatalogError, .rollback(lastAccepted: 3, offered: 1))
         }
-        XCTAssertEqual(try verify("envelope-rollback.json", last: nil).catalogVersion, 1)
-        XCTAssertEqual(try verify("envelope-rollback.json", last: 1).catalogVersion, 1)
-        XCTAssertEqual(try verify("envelope-valid.json", last: 3).catalogVersion, 3, "the same version again is a refresh, not a rollback")
-        XCTAssertEqual(try verify("envelope-withdrawn.json", last: 3).catalogVersion, 4)
+        XCTAssertEqual(try verify(envelope: rollback, last: nil, keys: keys).catalogVersion, 1)
+        XCTAssertEqual(try verify(envelope: rollback, last: 1, keys: keys).catalogVersion, 1)
+        XCTAssertEqual(try verify(envelope: valid, last: 3, keys: keys).catalogVersion, 3, "the same version again is a refresh, not a rollback")
+        XCTAssertEqual(try verify(envelope: withdrawn, last: 3, keys: keys).catalogVersion, 4)
     }
 
     func testEnvelopeShapesTheSchemaRejectAreRejectedHere() throws {
@@ -169,7 +178,9 @@ final class VoiceModelCatalogTests: XCTestCase {
     func testSignatureOverAnotherContextIsRejected() throws {
         let payload = try fixture("catalog-valid.json")
         try assertVerifyThrows(.badSignature, signedEnvelope(payload, context: Data("something else\n".utf8)))
-        XCTAssertNoThrow(try VoiceModelCatalogVerifier.verify(envelopeData: signedEnvelope(payload), trustedKeys: trustedKeys()))
+        let envelope = try signedEnvelope(payload)
+        let keys = try trustedKeys()
+        XCTAssertNoThrow(try VoiceModelCatalogVerifier.verify(envelopeData: envelope, trustedKeys: keys))
     }
 
     func testSignedButBrokenPayloadsAreRejectedWhole() throws {
@@ -210,7 +221,9 @@ final class VoiceModelCatalogTests: XCTestCase {
     }
 
     func testEntryThatCannotBeReadIsLeftOutAndTheRestStay() throws {
-        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture("catalog-valid.json")) as? [String: Any])
+        let payload = try fixture("catalog-valid.json")
+        let keys = try trustedKeys()
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: payload) as? [String: Any])
         var voices = try XCTUnwrap(object["voices"] as? [[String: Any]])
         var broken = voices[1]
         broken["id"] = "fixture-broken"
@@ -221,7 +234,7 @@ final class VoiceModelCatalogTests: XCTestCase {
         voices += [broken, wrongType, ["displayName": "no id at all"]]
         object["voices"] = voices
         let envelope = try signedEnvelope(JSONSerialization.data(withJSONObject: object))
-        let catalog = try VoiceModelCatalogVerifier.verify(envelopeData: envelope, trustedKeys: trustedKeys())
+        let catalog = try VoiceModelCatalogVerifier.verify(envelopeData: envelope, trustedKeys: keys)
         XCTAssertEqual(catalog.voices.map(\.id), ["fixture-bundled", "fixture-voice"])
         XCTAssertEqual(catalog.rejected, [
             RejectedVoiceEntry(id: "fixture-broken", reason: .malformed),
@@ -317,7 +330,8 @@ final class VoiceModelCatalogTests: XCTestCase {
         let files = try XCTUnwrap(object["files"] as? [[String: Any]])
         XCTAssertTrue(files.allSatisfy { $0["sources"] != nil && $0["archiveMember"] == nil && $0["content"] == nil })
         XCTAssertEqual(try JSONDecoder().decode(VoiceModelEntry.self, from: encoded), voice)
-        let archiveVoice = try XCTUnwrap(try VoiceModelCatalog.decode(fixture("catalog-archive.json")).voices.last)
+        let archiveCatalog = try VoiceModelCatalog.decode(fixture("catalog-archive.json"))
+        let archiveVoice = try XCTUnwrap(archiveCatalog.voices.last)
         XCTAssertEqual(try JSONDecoder().decode(VoiceModelEntry.self, from: JSONEncoder().encode(archiveVoice)), archiveVoice)
     }
 

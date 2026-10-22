@@ -44,19 +44,21 @@ public struct ItemDetailLoader {
         let needsSegments = isNativeAudio && storedInterjections.contains {
             $0.targetType == .item && $0.anchor.mediaTimeMs != nil
         }
-        let mediaTimeline = try needsSegments ? store.loadTranscriptTimeline(itemId: id)?.timeline : nil
+        let anchorContexts = try needsSegments
+            ? store.resolveSourceAnchorContexts(
+                itemId: id,
+                mediaTimesMs: Set(storedInterjections.compactMap { $0.targetType == .item ? $0.anchor.mediaTimeMs : nil })
+            )
+            : [:]
         let interjections = storedInterjections.map { interjection -> Interjection in
             guard isNativeAudio,
                   interjection.targetType == .item,
                   let mediaTimeMs = interjection.anchor.mediaTimeMs,
-                  let mediaTimeline else {
+                  let answer = anchorContexts[mediaTimeMs] else {
                 return interjection
             }
             var resolved = interjection
-            if let context = SourceAnchorContextResolver.resolve(
-                mediaTimeMs: mediaTimeMs,
-                timeline: mediaTimeline
-            ) {
+            if let context = answer {
                 resolved.anchor.anchorBefore = context.anchorBefore
                 resolved.anchor.anchorAfter = context.anchorAfter
                 resolved.anchor.transcriptSegmentId = context.transcriptSegmentId

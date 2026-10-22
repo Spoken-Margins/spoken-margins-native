@@ -16,7 +16,7 @@ A milestone's "Done when" is met through PRs, and a PR is done when it's armed: 
 
 - **Items the agent can show** (a test that fails without the change, a measured number, a fixture, a tap count, a screenshot) are shown in the PR description before arming.
 - **Lane items** ("T2 green", "T3 green", "Lane T3 is green") are met by arming the PR. The runner merges only on PASS, so the thread doesn't wait for the report.
-- **"Lane T4" items and named journeys** run in the integration run on `next`'s merged tip ([test-lane.md](test-lane.md), Three test levels). The PR names them so that run covers them.
+- **"Lane T4" items and named journeys** run in the integration run on `main`'s merged tip ([test-lane.md](test-lane.md), Three test levels). The PR names them so that run covers them.
 - **Items marked (owner) or (Mac)** stay out, as before.
 
 The thread that armed the PR moves on to its next issue and doesn't chase the lane. A lane FAIL on the PR's own code goes to whoever is free, through the project's hourly dispatcher. A runner fault gets one more run (a new `/lane T3` comment with the same `tests:` line plus `lane:queued` for an INCONCLUSIVE T3, or `automerge` removed and re-added for a host-test or build fault), and becomes an issue labelled `ready` and `regression` only if it fails the same way again.
@@ -31,7 +31,7 @@ These keep the rules in `AGENTS.md` and add what's needed for parallel work. The
 4. **Don't grow `Gate1AppModel` or `Gate1RootView`.** New logic goes in focused types, in SessionKit when it can be host-tested. Keep edits to either file to thin call sites.
 5. **Test at the lowest tier that covers the change** ([test-lane.md](test-lane.md)). Only the lane boots simulators.
 6. **Keep packets and databases backward-compatible.** The last shipped build's packet reader rejects unknown keys, so no packet field is "just additive" (interfaces.md, I10). Never touch the owner's Library data.
-7. **Nothing reaches `main` without the owner.** Streams merge into `next`, and the owner decides when `next` becomes a TestFlight build.
+7. **Nothing reaches testers without the owner.** Streams merge into `main`, and the owner decides when a commit on `main` becomes a TestFlight build.
 
 ## The streams
 
@@ -156,9 +156,9 @@ The reach pass (#141, #145–#149, #151) moves into B1, D3, D4 and D5.
 
 ## Branches and merging
 
-- `next` is the integration branch, created from `main`. Every stream branches `ws/<id>-…` from `next`, one branch per PR, and opens PRs back into `next`.
-- A PR merges into `next` when its tier's lane report is green. The lane runner merges armed `automerge` PRs itself. Audio, persistence, packet and lane diffs wait for a clean Claude (or legacy Codex) audit of their head commit, then merge the same way.
-- GitHub closes the issue named by "Closes #N" only when a PR merges into the default branch (`main`), so an issue whose PR merged into `next` stays open. The hourly dispatcher then removes `in-progress` and names the PR. What happens next depends on whether the owner could notice the change on the phone (owner, 2026-10-11):
+- `main` is the integration branch (the trunk, `SM_TRUNK=main`, since 2026-10-20; before that it was `next`, now frozen). Every stream branches `ws/<id>-…` from `main`, one branch per PR, and opens PRs back into `main`.
+- A PR merges into `main` when its tier's lane report is green. The lane runner merges armed `automerge` PRs itself. Audio, persistence, packet and lane diffs wait for a clean Claude (or legacy Codex) audit of their head commit, then merge the same way.
+- GitHub closes the issue named by "Closes #N" when a PR merges into the default branch (`main`). Before 2026-10-20 PRs merged into `next`, so issues closed by those PRs stayed open. The hourly dispatcher then removes `in-progress` and names the PR. What happens next depends on whether the owner could notice the change on the phone (owner, 2026-10-11):
   - **Something the owner would see or hear** (a listener-facing bug fix or feature): pick who checks it (owner, 2026-10-15, replacing "when unsure, add the label" below for these):
     - **`agent-verify`**: an agent can show it working with a host test, a real file or Diagnostics. Never on his plans.
     - **`validate-by-use`**: he meets it in ordinary listening. Add an "Owner check: none" comment so it stays off his plans. Once the fix is merged, move the issue to the next milestone so it doesn't block a release, and close it when his use (with no complaint) or Diagnostics show it working.
@@ -171,9 +171,9 @@ The reach pass (#141, #145–#149, #151) moves into B1, D3, D4 and D5.
   - **Check health** is a separate text field: Waiting on checks/review versus Needs attention, with the head's failures, conflicts, audit blockers, runner holds or owner merge tap named. Old-head PASS reports never become head passes. The script reuses `sm_status.py`'s live reader. Routine lane, audit, phone and bot comments do not keep an implementer active. `found-on-phone` alone identifies a reported bug, not a completed fix ready for acceptance. A claim has a six-hour activity window; the script changes its display, never releases the label itself.
   - Project 6 must have Status options `Todo`, `In Progress`, `Checking`, `Needs your check` and `Done`. Missing options fail safely with an unknown; the script does not replace the dropdown or its existing values. On the first applying run that needs it, the script creates the Check health text field. Area, other fields, existing views, drafts, other repositories, issue closure and all labels (including validation, found-on-phone and priority) are preserved. The existing views can show Check health beside Status.
   - Cost, measured on 2026-10-15: the first applying run on the live board made 142 changes (184 writes, all read back) in 398 calls and 263 s; the next run changed nothing, with 0 writes, 69 calls and 44 s. The worker's log keeps each run's changes, unknowns, calls, writes and seconds. Repeated writes on a run with no new evidence, or the calls climbing, mean the derivation is flipping or scanning twice. Authentication needs repository read and project write permissions (the Mac's `gh` token has the `project` scope).
-- Streams merge `next` into their branch at least daily, and before any lane request, so reports test what will actually integrate.
+- Streams merge `main` into their branch at least daily, and before any lane request, so reports test what will actually integrate.
 - Merge order when PRs conflict: gate streams (A2 first), then the older PR.
-- A TestFlight candidate is a commit on `next` that passed T5. Releasing still follows "Releasing a build" in `AGENTS.md`. `main` is fast-forwarded only at release, by the owner's decision.
+- A TestFlight candidate is a commit on `main` that passed T5. Releasing still follows "Releasing a build" in `AGENTS.md`, by the owner's decision.
 
 ## Owner setup (one-time, about 30 minutes at the Mac)
 

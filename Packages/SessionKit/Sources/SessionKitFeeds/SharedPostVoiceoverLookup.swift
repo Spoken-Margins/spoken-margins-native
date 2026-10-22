@@ -103,3 +103,18 @@ public struct SharedPostVoiceoverLog: Sendable {
         entries.map { "\($0.itemId): \($0.status)" }.joined(separator: "; ")
     }
 }
+
+/// Failures that say only "no usable connection right now", so a try that hit one is tried again later and is
+/// never recorded as the recording's verdict (#810: clipping works offline, the voiceover waits for a network).
+public enum OfflineFailure {
+    public static func isConnectivity(_ error: Error) -> Bool {
+        guard let code = (error as? URLError)?.code else { return false }
+        switch code {
+        case .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotConnectToHost, .cannotFindHost,
+             .dnsLookupFailed, .dataNotAllowed, .internationalRoamingOff, .callIsActive:
+            return true
+        default:
+            return false
+        }
+    }
+}

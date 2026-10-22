@@ -58,6 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import comment_trust  # noqa: E402
 
 # The runner's owner-tap paths (scripts/lane-runner.py OWNER_TAP_FILES, OWNER_TAP_PREFIXES). A test keeps them equal.
+OWNER_LOGIN = 'uncomposed'  # who to @mention; the repo's owner is the org after #2169
 OWNER_TAP_FILES = {'scripts/lane-runner.py'}
 OWNER_TAP_PREFIXES = ('.github/',)
 # The runner's audit formats (scripts/lane-runner.py AUDITS, AUDIT_SHA, CLEAN_AUDIT). A test keeps them equal.
@@ -294,7 +295,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.base is None:  # #1492: the trunk (scripts/trunk.py)
         from trunk import trunk_branch
         args.base = trunk_branch()
-    args.mention = args.mention or args.repo.partition('/')[0]
+    args.mention = args.mention or OWNER_LOGIN
     if not args.repo or not re.fullmatch(r'[A-Za-z0-9_.-]+', args.mention):
         ap.error('need --repo (or GH_REPO) and a plain --mention login')
     if args.clear_label and not args.pr:

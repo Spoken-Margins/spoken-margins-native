@@ -65,7 +65,7 @@ CONTENT_LIMIT = 4_096
 MAX_CHECK_AGE_HOURS = 24
 REVERIFY_DAYS = 30
 LICENCE_TEXT_LIMIT = 2 * 1024 * 1024
-ISSUE_REPO = "uncomposed/spoken-margins-native"
+ISSUE_REPO = "Spoken-Margins/spoken-margins-native"
 
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 HTTPS_RE = re.compile(r"https://[^\s]+")

@@ -3847,6 +3847,32 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["playbackLifecycleSync"], "saved")
     }
 
+    /// #2184: leaving the foreground saves the position but does not re-read the item on the main thread. On the owner's
+    /// phone that read decoded a mapped episode's transcript as iOS waited for the app to settle, and iOS killed it.
+    func testLeavingTheForegroundSavesThePositionWithoutReloadingTheItem() throws {
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio)
+        defer { OnDeviceVoiceGovernor.app.setAppBackgrounded(false) } // the background handler sets it app-wide
+        model.resetAndSeed()
+        model.importTitle = "Long Item"
+        model.importText = "One. Two. Three."
+        model.importTextItem()
+        let shownOffset = try XCTUnwrap(model.selectedItem.sessions.last).position.charOffset
+        let sessionID = try XCTUnwrap(model.snapshot.sessionId)
+
+        audio.currentOffset = "One. Two. ".count
+        model.handleAppBecameInactiveOrBackground(entersBackground: true)
+
+        XCTAssertEqual(model.diagnostics["playbackLifecycleSync"], "saved")
+        let stored = try XCTUnwrap(model.store?.loadSessions(itemId: model.selectedItem.id).first { $0.id == sessionID })
+        XCTAssertEqual(stored.position.charOffset, "One. Two. ".count, "the position is saved before the app is suspended")
+        XCTAssertEqual(model.selectedItem.sessions.last?.position.charOffset, shownOffset, "the item is not re-read on the way out")
+        XCTAssertNotEqual(shownOffset, "One. Two. ".count, "precondition: a reload would have shown the new position")
+
+        model.syncPlaybackProgressForLifecycle()
+        XCTAssertEqual(model.selectedItem.sessions.last?.position.charOffset, "One. Two. ".count, "coming back re-reads it")
+    }
+
     func testCompletingFinalAudioRetainsFinishedSessionForReview() throws {
         let audio = WorkflowCompletionAudioClient()
         let model = Gate1AppModel(audioPlaybackClient: audio)
@@ -5583,6 +5609,41 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         try await waitFor("subscription reloaded") { model.feedSubscriptions.contains { $0.id == "followed" } }
         XCTAssertTrue(model.sourceFollowSuggestionCandidates.isEmpty)
         XCTAssertNil(try store.loadSourceSuggestionDecision(sourceId: source.id))
+    }
+
+    /// #1961: a failed Follow from a suggestion card left `followSourceFailure` empty, while the
+    /// Follow button and the candidate list already recorded theirs (#244).
+    func testAFailedFollowFromASuggestionRecordsTheFollowFailure() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try model.libraryStoreForTesting()
+        addTeardownBlock { [weak model, weak store] in
+            // Never unlink an open SQLite/WAL file; see testFollowDiscoveryRechecksSubscriptionsBeforePublishing.
+            if model == nil, store == nil {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        model.followCandidateDiscoveryHandler = { _, _ in [] }
+        try store.saveItem(Item(id: "article", title: "Article", mediaType: "text", text: "Source text.", externalReference: "https://example.com/article", status: "ready"))
+        model.openHome()
+        model.openItem(id: "article")
+        // An empty feed link is not a URL, so following it throws before any request is made.
+        let source = SourceIdentity(id: "source", kind: .articleFeed, canonicalURL: "", host: "example.com")
+        let candidate = SourceCandidateEvidence(id: "candidate", source: source, evidenceURL: "https://example.com/article", relation: "html_alternate", confidence: 1)
+        model.sourceFollowSuggestionItemId = "article"
+        model.storedSourceFollowSuggestionCandidates = [candidate]
+        XCTAssertEqual(model.sourceFollowSuggestionCandidates.map(\.id), ["candidate"])
+        XCTAssertNil(model.diagnostics["followSourceFailure"])
+
+        model.acceptSourceFollowSuggestion(candidate)
+
+        try await waitFor("follow failure recorded") { model.diagnostics["followSourceFailure"] != nil }
+        XCTAssertEqual(model.diagnostics["followSourceFailure"]?.hasPrefix("invalid_url host="), true)
+        XCTAssertTrue(model.feedSubscriptions.isEmpty)
+        XCTAssertNil(try store.loadSourceSuggestionDecision(sourceId: source.id), "a failed follow records no decision")
     }
 
     /// #539: diagnostics showed a Follow failure for Noahpinion, which the owner follows. Its

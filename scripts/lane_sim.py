@@ -58,7 +58,7 @@ LOCK_WAIT = 1800
 MAX_BOOTED = 2  # hard cap; lane_slots decides when a second simulator job may start (#184)
 # Back to one simulator if pressure sits at warn this long while two are up (the lead's brake, #184).
 TWO_SIMULATOR_WARN_LIMIT = 600
-LANE_REPO = 'uncomposed/spoken-margins-native'
+LANE_REPO = 'Spoken-Margins/spoken-margins-native'
 LANE_ISSUE = 184
 RELEASE_WAIT = 130
 # Both boots the watcher stopped on 2026-09-29 happened under memory pressure (#184), so a boot first

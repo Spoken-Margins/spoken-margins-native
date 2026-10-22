@@ -46,6 +46,9 @@ public enum NextChapterSummaryRule {
         case skim
         /// The chapter row's own Next chapter button.
         case nextChapter
+        /// Next chapter standing in for a Skim that can't be pressed, on an item that has Skim. It is drawn unlike
+        /// Skim and says why, so a plain chapter jump never passes for a Skim (#2185).
+        case nextChapterInSkimSlot
         /// A Skim control that can't be pressed now (no scene ahead, or the end of the map). It keeps its place so the
         /// title doesn't shift when the listener crosses a chapter.
         case skimDisabled
@@ -54,12 +57,13 @@ public enum NextChapterSummaryRule {
     }
 
     /// The control on the right of the chapter title. When forward Skim can be pressed it is the one forward control;
-    /// otherwise Next chapter if there is a chapter ahead; otherwise a disabled Skim so the slot never goes empty.
+    /// otherwise Next chapter if there is a chapter ahead (marked as standing in for Skim when the item has Skim);
+    /// otherwise a disabled Skim so the slot never goes empty.
     /// Only the button depends on Skim: the Lock Screen and external commands go by `isAvailable`. The Skim row can
     /// be on screen for Skim Back alone, so forward Skim counts only when the row is shown and forward is enabled.
     public static func forwardControl(isAvailable: Bool, skimRowShown: Bool, canSkimForward: Bool) -> ChapterRowControl {
         if skimRowShown && canSkimForward { return .skim }
-        if isAvailable { return .nextChapter }
+        if isAvailable { return skimRowShown ? .nextChapterInSkimSlot : .nextChapter }
         return skimRowShown ? .skimDisabled : .hidden
     }
 

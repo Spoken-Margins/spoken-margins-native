@@ -4,6 +4,7 @@ import inspect
 import io
 import json
 import plistlib
+import re
 import os
 import shutil
 import subprocess
@@ -24,6 +25,19 @@ spec.loader.exec_module(verification)
 
 
 class VerificationTests(unittest.TestCase):
+    def test_a_step_does_not_inherit_the_trunk_setting(self):
+        # #1492: the lane and the Mac export SM_TRUNK=main; suites written for the default trunk failed under it.
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {'SM_TRUNK': 'main', 'KEEP': '1'}):
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            with patch.object(verification, 'build_slot', return_value=contextlib.nullcontext()), \
+                    patch.object(verification.subprocess, 'Popen') as process:
+                process.return_value.wait.return_value = 0
+                run.command('probe', ['true'])
+            env = process.call_args.kwargs['env']
+            self.assertNotIn('SM_TRUNK', env)
+            self.assertEqual(env['KEEP'], '1')
+            self.assertEqual(os.environ['SM_TRUNK'], 'main')  # the caller's own environment is left alone
+
     def test_test_without_building_does_not_take_a_build_slot(self):
         # #1330: even an empty test run used to queue behind compilers and hold their slot.
         with tempfile.TemporaryDirectory() as temporary:
@@ -750,7 +764,9 @@ class VerificationTests(unittest.TestCase):
                                         'print(os.environ.get("SM_LANE_HOST_SLOT", "none"))'], timeout=2)
                 seen['child'] = (run.output / 'package.log').read_text().strip()
 
-            with patch.object(verification, 'host_test_slot', slow_slot), patch.object(run, 'host_steps', steps):
+            # The hot-file ratchet is its own step with its own tests; here it would run on this checkout (#2180 audit).
+            with patch.object(verification, 'host_test_slot', slow_slot), patch.object(run, 'host_steps', steps), \
+                    patch.object(run, 'hot_file_ratchet'):
                 run.fast()
             step = run.manifest['steps'][-1]
         self.assertEqual(step['exit_code'], 0)
@@ -975,6 +991,29 @@ class VerificationTests(unittest.TestCase):
         skipped = {name: {'status': 'skipped', 'seconds': 0}}
         self.assertTrue(verification.reconcile({name}, skipped))
         self.assertEqual(verification.reconcile({name}, skipped, {name}), [])
+
+    def test_the_hang_probe_timing_tests_may_skip_on_a_busy_host_in_both_core_steps(self):
+        # #2210: those tests skip when the host runs a 10 ms sleep 40 ms late. A skip the core steps don't allow turns
+        # the fast plan red just the same, and a name that drifts from the Swift file allows nothing.
+        swift = (Path(__file__).resolve().parents[2] / 'Packages/SessionKit/Tests/SessionKitCoreTests'
+                 / 'MainThreadHangProbeTests.swift').read_text()
+        skipping = {f'SessionKitCoreTests/MainThreadHangProbeTests/{name}' for name in
+                    re.findall(r'func (test\w+)\(\) throws', swift)}
+        self.assertEqual(verification.HANG_PROBE_TIMING_TESTS, skipping)
+        steps = {}
+
+        def command(name, args, **kw):
+            steps[name] = kw.get('allowed_skips', ())
+            run.manifest['steps'].append({'name': name})
+            if name == 'package-core':
+                raise RuntimeError('parallel run failed')
+
+        run = verification.Run(Path(tempfile.mkdtemp()) / 'run', 'fast')
+        with patch.object(run, 'command', side_effect=command):
+            run.package_core({'SessionKitCoreTests/MainThreadHangProbeTests/testAHundredMillisecondBlockRecordsNothing'})
+        self.assertEqual(set(steps), {'package-core', 'package-core-serial'})
+        for allowed in steps.values():
+            self.assertLessEqual(verification.HANG_PROBE_TIMING_TESTS, set(allowed))
 
     def xctest_log(self, *results):
         return '; '.join(f"print(\"Test Case '-[SpokenMarginsAppUITests.{c} {m}]' {status} (1.0 seconds)\")"
@@ -1288,6 +1327,8 @@ class VerificationTests(unittest.TestCase):
             # #705: the app-hosted plans watch for a run that never starts its tests.
             self.assertEqual((startup['seconds'], startup['retries']),
                              (verification.STARTUP_STALL_SECONDS, verification.STARTUP_RETRIES))
+            # #2176: every launch first waits, bounded, for normal memory pressure.
+            self.assertIs(startup['hold'], verification.hold_for_launch)
             # The relaunch hook ends the stalled app and frees the result-bundle path for the second launch.
             app = root / '.build/verification/SpokenMarginsAppBehavior/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app'
             app.mkdir(parents=True)
@@ -1388,6 +1429,39 @@ class VerificationTests(unittest.TestCase):
                              [(1, 'start', 0), (2, 'start', 2), (2, 'tests_started', 3)])
             self.assertEqual(step['startup_stalls'][0]['conditions'], {'reading': 1})
             self.assertLess(step['launch_conditions'][-1]['seconds'], 30)
+
+    def test_hold_for_launch_waits_a_bounded_time_for_normal_pressure_and_reports_it(self):
+        # #2176: launches that began under memory pressure "warn" stalled 10 times in 12 on 2026-10-20.
+        asked = []
+        held = verification.hold_for_launch(wait=lambda limit: asked.append(limit) or ('warn', 90.04))
+        self.assertEqual(asked, [verification.LAUNCH_PRESSURE_WAIT_SECONDS])
+        self.assertEqual(held, {'memory_pressure': 'warn', 'waited_seconds': 90.0})
+        self.assertEqual(verification.hold_for_launch(wait=lambda limit: ('normal', 0.0)),
+                         {'memory_pressure': 'normal', 'waited_seconds': 0.0})
+        # The real wait never runs past its limit and never fails, whatever the Mac reports.
+        ticks = iter(range(0, 1000, 10))
+        level, waited = verification.lane_sim.wait_for_normal_pressure(
+            30, poll=10, level=lambda: 2, clock=lambda: next(ticks), sleep=lambda seconds: None)
+        self.assertEqual(level, 'warn')
+        self.assertTrue(30 <= waited <= 40, waited)
+
+    def test_every_launch_is_held_for_pressure_first_and_the_hold_is_recorded(self):
+        # The first launch and the retry each wait before they start, so the conditions noted at each start are
+        # the ones the launch really began under; the wait is not charged to the step's time.
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'adapters')
+            calls, startup = self.watch()
+            order = []
+            startup['hold'] = lambda: order.append('hold') or {'memory_pressure': 'normal', 'waited_seconds': 0.0}
+            startup['conditions'] = lambda: order.append('conditions') or {}
+            run.command('xcode-tests', [sys.executable, '-c', self.STALLS_THEN_RUNS, str(Path(temporary) / 'seen')],
+                        timeout=60, expected={'SpokenMarginsAppTests/SpeechTests/testBundled'}, tests=True,
+                        startup=startup)
+            step = run.manifest['steps'][-1]
+            self.assertEqual([h['attempt'] for h in step['launch_holds']], [1, 2])
+            self.assertEqual(order[:2], ['hold', 'conditions'])
+            self.assertEqual(order.count('hold'), 2)
+            self.assertEqual(step['exit_code'], 0)
 
     def test_recovered_stall_still_fails_when_a_requested_test_did_not_pass(self):
         # The PASS is for a retry that passes every requested test; a missing test is still an error.

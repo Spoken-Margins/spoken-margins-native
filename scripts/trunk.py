@@ -5,10 +5,10 @@ integration run, the status page, the audit's base checkout) asks trunk_branch()
 
 One name, two places to set it:
 - SM_TRUNK in the environment wins. Every workflow sets it from the repository variable `SM_TRUNK`, with
-  DEFAULT_TRUNK as the fallback (`${{ vars.SM_TRUNK || 'next' }}`); scripts/tests/test_trunk.py keeps the
+  DEFAULT_TRUNK as the fallback (`${{ vars.SM_TRUNK || 'main' }}`); scripts/tests/test_trunk.py keeps the
   fallbacks equal to DEFAULT_TRUNK.
 - DEFAULT_TRUNK below, for the Mac's launchd jobs and local runs.
-Moving the trunk to main (#1492 step 2) sets the repository variable and changes DEFAULT_TRUNK.
+The trunk moved to main on 2026-10-20 (#1492): the repository variable and DEFAULT_TRUNK both say main.
 
 Stdlib only, Python 3.9-compatible: the lane runner and launchd jobs import it under /usr/bin/python3.
 """
@@ -18,7 +18,7 @@ import os
 import re
 from typing import Mapping, Optional
 
-DEFAULT_TRUNK = 'next'
+DEFAULT_TRUNK = 'main'
 
 # A plain branch name: no leading dash (an option to git), no "..", no ref prefix, nothing a shell would expand.
 _NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._/-]*')

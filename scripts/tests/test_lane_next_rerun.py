@@ -29,7 +29,7 @@ def git(tree, *args):
 
 class FakeApi:
     """gh api: the open issues and milestones it returns, and every write it is asked for."""
-    def __init__(self, issues=(), milestones=({'number': 7, 'title': 'Solid Ground'},)):
+    def __init__(self, issues=(), milestones=({'number': 7, 'title': 'Open Source: after the flip'},)):
         self.issues, self.milestones, self.writes = list(issues), list(milestones), []
 
     def __call__(self, *args):
@@ -155,6 +155,19 @@ class RecheckTests(unittest.TestCase):
             self.assertEqual(lane.lane_report_verdict('\n'.join(
                 [lane.report('pr5-r1', verdict, 'a' * 40, repo.next, 'auto', 'host only', 1, 'x', details, 'none', '/e',
                              'owner', {'commit': 'a' * 40, 'next': repo.next, 'tier': 'auto', 'tests': []})]))[0], False)
+
+    def test_many_tests_failing_at_once_make_one_issue_not_one_each(self):
+        api = FakeApi(milestones=[{'number': 9, 'title': rerun.MILESTONE}])
+        tests = [f'test_x.T.test_{n}' for n in range(8)]
+        lines = rerun.report_broken_on_next(api, 'o/r', tests, 'a' * 40, 5, 'r1', Path('/log'))
+        (filed,) = api.filed()
+        self.assertIn('title=Host tests fail on next: many at once', filed)
+        self.assertIn('milestone=9', filed)
+        self.assertEqual(len(lines), 1)
+        again = FakeApi(issues=[{'number': 50, 'title': 'Host tests fail on next: many at once', **OWNER}])
+        rerun.report_broken_on_next(again, 'o/r', tests, 'a' * 40, 6, 'r2', Path('/log'))
+        self.assertEqual(again.filed(), [])
+        self.assertEqual(again.commented()[0][0], 'repos/o/r/issues/50/comments')
 
     def test_an_open_issue_naming_the_test_gets_a_comment_instead(self):
         with tempfile.TemporaryDirectory() as folder:

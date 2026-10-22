@@ -9,6 +9,8 @@ that merges.
 """
 from __future__ import annotations
 
+import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 import datetime
 import json
 import os
@@ -55,13 +57,13 @@ def job_steps(workflow: str, job: str) -> list[dict]:
 
 
 class HandOffAfterTheT3PassTests(RealGitLaneTests):
-    """With real git: the build runner's held run, next moving, the T3 PASS, then the hand-off and the release."""
+    """With real git: the build runner's held run, main moving, the T3 PASS, then the hand-off and the release."""
 
     def held_run(self, github):
-        base = lane.fetch_base(self.tree, 'next')
+        base = lane.fetch_base(self.tree, 'main')
         context = lane.AutoRunContext(base)
         with mock.patch.object(lane, 'run_automerge', return_value=PASSED):
-            verdict, where, ran, details = lane.run_auto(github, github.pull(), 5, 'next', self.head, base,
+            verdict, where, ran, details = lane.run_auto(github, github.pull(), 5, 'main', self.head, base,
                                                          self.evidence / 'held', github.comments(), context=context)
         github.comment(lane.report('pr5-r41', verdict, self.head, context.tested_base, 'auto', where, 1, ran, details,
                                    'none', '/e', 'owner', lane.identity('auto', self.head, context.tested_base, [])))
@@ -71,13 +73,13 @@ class HandOffAfterTheT3PassTests(RealGitLaneTests):
         return FakeGitHub(labels=('automerge', 'lane:queued'), head=self.head, comments=[self.t3_request])
 
     def t3_passes(self, github):
-        github._comments.append(runner_report('PASS', lane.identity('T3', self.head, self.rev(self.tree, 'origin/next'),
+        github._comments.append(runner_report('PASS', lane.identity('T3', self.head, self.rev(self.tree, 'origin/main'),
                                                                    ['SupertonicSpeechTests'])))
 
     def lane_job_release(self, github, hand_off):
         with mock.patch.object(lane, 'run_automerge', return_value=PASSED) as checks:
-            released = lane.merge_after_t3(github, 5, 'next', self.head, 'pr5-r43-auto', self.evidence / 'released',
-                                           self.rev(self.tree, 'origin/next'), 'started by the T3 PASS',
+            released = lane.merge_after_t3(github, 5, 'main', self.head, 'pr5-r43-auto', self.evidence / 'released',
+                                           self.rev(self.tree, 'origin/main'), 'started by the T3 PASS',
                                            hand_off=hand_off)
         return checks, released
 
@@ -95,11 +97,11 @@ class HandOffAfterTheT3PassTests(RealGitLaneTests):
         self.move_next_by_a_build_input()
         self.t3_passes(github)
         hand_off = mock.Mock(return_value='https://example.test/runs')
-        before = self.rev(self.origin, 'next')
+        before = self.rev(self.origin, 'main')
         checks, released = self.lane_job_release(github, hand_off)
         hand_off.assert_called_once_with()
         checks.assert_not_called()  # no --plan fast on the simulator runner
-        self.assertEqual(self.rev(self.origin, 'next'), before)  # nothing merged without a host PASS
+        self.assertEqual(self.rev(self.origin, 'main'), before)  # nothing merged without a host PASS
         self.assertTrue(released.startswith(lane.HANDED_OFF), released)
         self.assertEqual(github.posted[-1], released)
         self.assertIn('https://example.test/runs', released)
@@ -114,13 +116,13 @@ class HandOffAfterTheT3PassTests(RealGitLaneTests):
         github = self.handed_off()
         room = mock.Mock(return_value=(None, None))
         with mock.patch.object(lane, 'run_automerge', return_value=PASSED) as checks:
-            released = lane.merge_after_t3(github, 5, 'next', self.head, 'pr5-r50-auto', self.evidence / 'release',
-                                           self.rev(self.tree, 'origin/next'), 'handed to the build runner', room=room)
+            released = lane.merge_after_t3(github, 5, 'main', self.head, 'pr5-r50-auto', self.evidence / 'release',
+                                           self.rev(self.tree, 'origin/main'), 'handed to the build runner', room=room)
         room.assert_called_once_with()  # under the build runner's room rules
         checks.assert_called_once()  # the host PASS on the tree that merges
         self.assertTrue(released.startswith('Lane report pr5-r50-auto — PASS'), released)
-        merged = self.rev(self.origin, 'next')
-        self.assertIn(f'merged into next as {merged[:7]}', released)
+        merged = self.rev(self.origin, 'main')
+        self.assertIn(f'merged into main as {merged[:7]}', released)
         self.assertEqual(subprocess.check_output(['git', '-C', str(self.tree), 'rev-list', '--parents', '-n', '1',
                                                  merged], text=True).split()[2], self.head)
 
@@ -128,28 +130,28 @@ class HandOffAfterTheT3PassTests(RealGitLaneTests):
         # #712 x #1209: the hand-off moves the host tests, not the merge rules. A PR that brings in another PR's
         # blocked commits stays held on the build runner, however clean its own T3 and host tests are.
         github = self.handed_off()
-        before = self.rev(self.origin, 'next')
+        before = self.rev(self.origin, 'main')
         hold = f'{lane.INHERITED_HOLD} from PR #616 on `abc1234`'
         with mock.patch.object(lane, 'run_automerge', return_value=PASSED) as checks, \
                 mock.patch.object(lane, 'inherited_check', return_value=lambda comments: [hold]) as inherited:
-            released = lane.merge_after_t3(github, 5, 'next', self.head, 'pr5-r50-auto', self.evidence / 'release',
+            released = lane.merge_after_t3(github, 5, 'main', self.head, 'pr5-r50-auto', self.evidence / 'release',
                                            before, 'handed to the build runner', room=mock.Mock(return_value=(None, None)))
         checks.assert_called_once()  # the host PASS still runs; only the merge waits
         inherited.assert_called_once()
-        self.assertEqual(self.rev(self.origin, 'next'), before)
-        self.assertNotIn('merged into next as', released)
+        self.assertEqual(self.rev(self.origin, 'main'), before)
+        self.assertNotIn('merged into main as', released)
         self.assertIn(f'not merged by the runner: {hold}.', released)
         self.assertTrue(lane.AUDIT_HOLD.search(released))  # the audit script finds it by this line
 
     def test_no_room_on_the_build_runner_reports_a_runner_fault_and_merges_nothing(self):
         github = self.handed_off()
-        before = self.rev(self.origin, 'next')
+        before = self.rev(self.origin, 'main')
         with mock.patch.object(lane, 'run_automerge') as checks:
-            released = lane.merge_after_t3(github, 5, 'next', self.head, 'pr5-r50-auto', self.evidence / 'release',
+            released = lane.merge_after_t3(github, 5, 'main', self.head, 'pr5-r50-auto', self.evidence / 'release',
                                            before, 'handed to the build runner',
                                            room=lambda: ('the build runner waited 90m00s for room: x', None))
         checks.assert_not_called()
-        self.assertEqual(self.rev(self.origin, 'next'), before)
+        self.assertEqual(self.rev(self.origin, 'main'), before)
         self.assertTrue(released.startswith('Lane report pr5-r50-auto — INCONCLUSIVE'), released)
         self.assertIn('Remove and re-add automerge', released)
         self.assertTrue(lane.lane_report_verdict(released)[0])  # a runner fault, as in the automerge job
@@ -160,11 +162,11 @@ class HandOffAfterTheT3PassTests(RealGitLaneTests):
         posted = len(github.posted)
 
         def room():
-            github.head = 'c' * 40  # the owner merged next into the branch meanwhile
+            github.head = 'c' * 40  # the owner merged main into the branch meanwhile
             return None, None
         with mock.patch.object(lane, 'run_automerge') as checks:
-            released = lane.merge_after_t3(github, 5, 'next', self.head, 'pr5-r50-auto', self.evidence / 'release',
-                                           self.rev(self.tree, 'origin/next'), 'handed to the build runner', room=room)
+            released = lane.merge_after_t3(github, 5, 'main', self.head, 'pr5-r50-auto', self.evidence / 'release',
+                                           self.rev(self.tree, 'origin/main'), 'handed to the build runner', room=room)
         self.assertIsNone(released)
         checks.assert_not_called()
         self.assertEqual(len(github.posted), posted)
@@ -195,7 +197,7 @@ class HandOffAfterTheT3PassTests(RealGitLaneTests):
         hand_off.assert_not_called()
         checks.assert_not_called()
         self.assertIn('Lane report pr5-r43-auto — PASS', released)
-        self.assertIn('merged into next as', released)
+        self.assertIn('merged into main as', released)
 
     def test_a_failed_hand_off_tests_here_as_before(self):
         # A PR whose merge ref predates this change has no actions: write, and a base without the release job
@@ -209,12 +211,12 @@ class HandOffAfterTheT3PassTests(RealGitLaneTests):
         hand_off.assert_called_once_with()
         checks.assert_called_once()
         self.assertIn('the hand-off to the build runner failed', released)
-        self.assertIn('merged into next as', released)
+        self.assertIn('merged into main as', released)
 
     def test_without_a_held_pass_to_reuse_it_hands_off_too(self):
         # Another runner's automerge run skipped its checks and reported held (no lane-checks line).
         github = self.github()
-        github.comment(lane.report('pr5-r41', 'INCONCLUSIVE', self.head, self.rev(self.tree, 'origin/next'), 'auto',
+        github.comment(lane.report('pr5-r41', 'INCONCLUSIVE', self.head, self.rev(self.tree, 'origin/main'), 'auto',
                                    'no build', 1, 'nothing', [f'{lane.HELD_FOR_T3[0]}: the /lane T3 request'],
                                    'none', '/e', 'owner', lane.identity('auto', self.head, MERGE, [])))
         self.t3_passes(github)
@@ -244,7 +246,7 @@ class MainWiringTests(unittest.TestCase):
         release = self.t3_job(github, '', None)
         hand_off = release.call_args.kwargs['hand_off']
         self.assertEqual(hand_off(), 'https://example.test/runs')
-        github.hand_off_release.assert_called_once_with('next', HEAD, 'https://example.test/1')  # the T3 report
+        github.hand_off_release.assert_called_once_with('main', HEAD, 'https://example.test/1')  # the T3 report
 
     def test_a_lane_job_on_a_build_runner_tests_where_it_is(self):
         github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[self.T3_REQUEST])
@@ -274,7 +276,7 @@ class MainWiringTests(unittest.TestCase):
                     mock.patch.dict('os.environ', {'GITHUB_OUTPUT': str(out)}), \
                     mock.patch.object(lane, 'drop_workspace_builds'):
                 github.pull = lambda: {'state': merged_state, 'head': {'sha': HEAD, 'repo': {'full_name': repo}},
-                                       'base': {'ref': 'next'},
+                                       'base': {'ref': 'main'},
                                        'labels': [{'name': n} for n in sorted(github.labels)]}
                 self.run_main(github, head, 'PASS', '--mode', 'release', '--t3-report', 'https://example.test/t3')
             outcome = dict(line.split('=', 1) for line in out.read_text().splitlines()) if out.exists() else {}
@@ -284,7 +286,7 @@ class MainWiringTests(unittest.TestCase):
         github = FakeGitHub(labels=('automerge',))
         release, outcome = self.release_job(github, 'Lane report pr5-r42-auto — FAIL\nran: x\n')
         args, kwargs = release.call_args
-        self.assertEqual(args[:5], (github, 5, 'next', HEAD, 'pr5-r42-auto'))
+        self.assertEqual(args[:5], (github, 5, 'main', HEAD, 'pr5-r42-auto'))
         self.assertIs(kwargs['room'], lane.wait_for_room_to_test_on_host)
         self.assertNotIn('hand_off', kwargs)  # it never hands off again
         self.assertIn('https://example.test/t3', args[7])
@@ -293,7 +295,7 @@ class MainWiringTests(unittest.TestCase):
 
     def test_a_merged_release_leaves_the_labels_alone(self):
         github = FakeGitHub(labels=('automerge',))
-        _, outcome = self.release_job(github, 'Lane report pr5-r42-auto — PASS\nmerged into next as abc1234\n',
+        _, outcome = self.release_job(github, 'Lane report pr5-r42-auto — PASS\nmerged into main as abc1234\n',
                                       merged_state='closed')
         self.assertEqual(outcome['verdict'], 'PASS')
         self.assertEqual(github.label_changes, [])
@@ -318,7 +320,7 @@ class MainWiringTests(unittest.TestCase):
         # #1542: a release run that never starts (cancelled or timed out in the queue) runs no step at all, so it
         # can post nothing. The note itself tells the hourly dispatcher when to treat it as lost.
         now = datetime.datetime(2026, 10, 13, 17, 31, tzinfo=datetime.timezone.utc)
-        note = lane.handed_off_note(HEAD, 'started by the T3 PASS', 'next moved', 'https://example.test/runs', now=now)
+        note = lane.handed_off_note(HEAD, 'started by the T3 PASS', 'main moved', 'https://example.test/runs', now=now)
         self.assertIn('2026-10-13 20:31Z', note)
         self.assertIn('remove and re-add `automerge` once', note)
         # Still no report, no stopped-job note and no answer to a /lane request.
@@ -332,7 +334,7 @@ class MainWiringTests(unittest.TestCase):
         with mock.patch.object(lane, 'merge_after_t3') as release:
             self.role = 'build'
             github.pull = lambda: {'state': 'open', 'head': {'sha': HEAD, 'repo': {'full_name': 'o/r'}},
-                                   'base': {'ref': 'main'}, 'labels': []}
+                                   'base': {'ref': 'next'}, 'labels': []}
             self.run_main(github, HEAD, 'PASS', '--mode', 'release')
         release.assert_not_called()
 
@@ -347,8 +349,8 @@ class GitHubDispatchTests(unittest.TestCase):
         github = lane.GitHub('o/r', 5)
         with mock.patch.object(github, 'api', return_value='') as api, \
                 mock.patch.dict('os.environ', {'GITHUB_SERVER_URL': 'https://github.com'}):
-            where = github.hand_off_release('next', HEAD, 'https://example.test/t3')
-        api.assert_called_once_with('-X', 'POST', 'repos/o/r/actions/workflows/lane.yml/dispatches', '-f', 'ref=next',
+            where = github.hand_off_release('main', HEAD, 'https://example.test/t3')
+        api.assert_called_once_with('-X', 'POST', 'repos/o/r/actions/workflows/lane.yml/dispatches', '-f', 'ref=main',
                                     '-f', 'inputs[pr]=5', '-f', f'inputs[head]={HEAD}',
                                     '-f', 'inputs[t3]=https://example.test/t3')
         self.assertTrue(where.startswith('https://github.com/o/r/actions/workflows/lane.yml'), where)
@@ -445,7 +447,7 @@ if [ -n "$expr" ]; then printf '%s' "$STUB_PULL" | jq -r "$expr"; else echo '{}'
         log.write_bytes(b'')
         jq = Path(shutil.which('jq')).parent
         environment = {'PATH': f'{self.folder}:{jq}:/usr/bin:/bin', 'GH_LOG': str(log), 'STUB_PULL': json.dumps(pull),
-                       'GH_REPO': 'o/r', 'PR_NUMBER': '5', 'EVENT_HEAD': HEAD, 'BASE_REF': 'next',
+                       'GH_REPO': 'o/r', 'PR_NUMBER': '5', 'EVENT_HEAD': HEAD, 'BASE_REF': 'main',
                        'RUN_URL': 'https://github.com/o/r/actions/runs/42'}
         environment.update(env)
         done = subprocess.run(['bash', '--noprofile', '--norc', '-eo', 'pipefail', '-c', self.step['run']],
@@ -455,7 +457,7 @@ if [ -n "$expr" ]; then printf '%s' "$STUB_PULL" | jq -r "$expr"; else echo '{}'
 
     @staticmethod
     def pull(**changes):
-        pull = {'state': 'open', 'head': {'sha': HEAD, 'repo': {'full_name': 'o/r'}}, 'base': {'ref': 'next'},
+        pull = {'state': 'open', 'head': {'sha': HEAD, 'repo': {'full_name': 'o/r'}}, 'base': {'ref': 'main'},
                 'labels': [{'name': 'automerge'}, {'name': 'lane:queued'}]}
         pull.update(changes)
         return pull
@@ -482,7 +484,7 @@ if [ -n "$expr" ]; then printf '%s' "$STUB_PULL" | jq -r "$expr"; else echo '{}'
 
     def test_a_pr_that_moved_on_closed_or_lost_automerge_gets_nothing(self):
         for pull in (self.pull(head={'sha': MERGE, 'repo': {'full_name': 'o/r'}}), self.pull(state='closed'),
-                     self.pull(labels=[{'name': 'lane:done'}]), self.pull(base={'ref': 'main'}),
+                     self.pull(labels=[{'name': 'lane:done'}]), self.pull(base={'ref': 'next'}),
                      self.pull(head={'sha': HEAD, 'repo': None})):
             with self.subTest(pull=pull):
                 calls = self.run_step(pull)

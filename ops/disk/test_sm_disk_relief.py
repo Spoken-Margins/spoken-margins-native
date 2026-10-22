@@ -2,6 +2,8 @@
 
 Run: python3 -m unittest ops/disk/test_sm_disk_relief.py
 """
+import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 import fcntl
 import json
 import os
@@ -154,12 +156,12 @@ class Base(unittest.TestCase):
     def make_repo(self, *worktrees):
         repo = self.cfg.repo
         repo.mkdir(parents=True, exist_ok=True)
-        git(repo, 'init', '-q', '-b', 'next')
+        git(repo, 'init', '-q', '-b', 'main')
         write(repo / 'README.md', 10)
         (repo / '.gitignore').write_text('.build/\nartifacts/\nPackages/SessionKit/.build/\n.venv\nnode_modules\n.swiftpm\n')
         git(repo, 'add', '.')
         git(repo, 'commit', '-qm', 'one')
-        git(repo, 'update-ref', 'refs/remotes/origin/next', 'HEAD')
+        git(repo, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
         paths = []
         for name in worktrees:
             path = repo / '.claude/worktrees' / name
@@ -696,7 +698,7 @@ class Worktrees(Base):
         write(dirty / 'wip.txt', 10)
         write(evidence / 'artifacts/run/report.md', 10)
         git(repo, 'worktree', 'lock', str(locked))
-        git(ahead, 'commit', '-q', '--allow-empty', '-m', 'not in next yet')
+        git(ahead, 'commit', '-q', '--allow-empty', '-m', 'not in main yet')
         for tree in (dirty, busy, evidence, locked, session, ahead, desk, elsewhere):
             age_tree(tree, 2 * DAY)
         self.cfg.claude_sessions.mkdir(parents=True)

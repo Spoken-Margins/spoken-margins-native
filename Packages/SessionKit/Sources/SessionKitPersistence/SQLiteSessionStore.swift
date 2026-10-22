@@ -39,6 +39,9 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     /// answering from it never waits behind a write holding `connectionLock`.
     private let transcriptSummaryLock = NSLock()
     private var transcriptSummaryByItem: [String: (stamp: String, summary: TranscriptTimelineSummary)] = [:]
+    private let anchorContextLock = NSLock()
+    private var anchorContextByItem: [String: (stamp: String, contexts: [Int: SourceAnchorContext?])] = [:]
+    private var anchorTimelineDecodeCount = 0
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     /// How often each item was written or deleted through this connection, for `itemRevision(id:)`.
@@ -48,7 +51,11 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     /// Moved by `reset()`, which can remove any item.
     private var itemRevisionBase = 0
 
-    public init(path: String) throws {
+    /// Counts each read when set (#2258). Fixed at init, so the unmetered app path needs no lock to check it.
+    public let readMeter: StoreReadMeter?
+
+    public init(path: String, readMeter: StoreReadMeter? = nil) throws {
+        self.readMeter = readMeter
         encoder.dateEncodingStrategy = .iso8601
         decoder.dateDecodingStrategy = .iso8601
         guard sqlite3_open_v2(
@@ -439,6 +446,9 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     }
 
     private func readPairs(_ sql: String, name: String, _ body: (String, Int) -> Void) throws {
+        let timer = StoreReadTimer(readMeter, method: name)
+        var rowCount = 0
+        defer { timer?.finish(rows: rowCount, bytes: 0) }
         try withReadConnection { connection in
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -449,13 +459,19 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
                 let step = sqlite3_step(statement)
                 if step == SQLITE_DONE { return }
                 guard step == SQLITE_ROW else { throw SessionKitError.persistenceFailed("step_\(name)") }
-                if let raw = sqlite3_column_text(statement, 0) { body(String(cString: raw), Int(sqlite3_column_int64(statement, 1))) }
+                if let raw = sqlite3_column_text(statement, 0) {
+                    rowCount += 1
+                    body(String(cString: raw), Int(sqlite3_column_int64(statement, 1)))
+                }
             }
         }
     }
 
     /// Internal so a test can hold a read open (a long statement) and watch what else the store still answers.
     func readTexts(_ sql: String, _ values: [String], name: String, _ body: (String) -> Void) throws {
+        let timer = StoreReadTimer(readMeter, method: name)
+        var rowCount = 0, byteCount = 0
+        defer { timer?.finish(rows: rowCount, bytes: byteCount) }
         try withReadConnection { connection in
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -467,7 +483,12 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
                 let step = sqlite3_step(statement)
                 if step == SQLITE_DONE { return }
                 guard step == SQLITE_ROW else { throw SessionKitError.persistenceFailed("step_\(name)") }
-                if let raw = sqlite3_column_text(statement, 0) { body(String(cString: raw)) }
+                if let raw = sqlite3_column_text(statement, 0) {
+                    let text = String(cString: raw)
+                    rowCount += 1
+                    byteCount += text.utf8.count
+                    body(text)
+                }
             }
         }
     }
@@ -837,6 +858,32 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return summary
     }
 
+    /// The words around each media time, for Margins placed by media time (#2102). Naming the words needs the full
+    /// timeline (thousands of segments, several MB of JSON), and every refresh of the Item screen asked for it again, so a
+    /// mapped episode with a spoken Margin held the main thread for each tap. The answers are kept per timeline record
+    /// (the same stamp as the summary) and the timeline is only decoded for times not answered yet. A time with no
+    /// passage is kept as nil so it isn't asked again either.
+    public func resolveSourceAnchorContexts(itemId: String, mediaTimesMs: Set<Int>) throws -> [Int: SourceAnchorContext?] {
+        guard !mediaTimesMs.isEmpty, let stamp = try transcriptTimelineStamp(itemId: itemId) else {
+            anchorContextLock.withLock { _ = anchorContextByItem.removeValue(forKey: itemId) }
+            return [:]
+        }
+        var known: [Int: SourceAnchorContext?] = anchorContextLock.withLock {
+            anchorContextByItem[itemId].flatMap { $0.stamp == stamp ? $0.contexts : nil } ?? [:]
+        }
+        let missing = mediaTimesMs.filter { known.index(forKey: $0) == nil }
+        if !missing.isEmpty {
+            guard let timeline = try loadTranscriptTimeline(itemId: itemId)?.timeline else { return [:] }
+            anchorContextLock.withLock { anchorTimelineDecodeCount += 1 }
+            for ms in missing { known[ms] = .some(SourceAnchorContextResolver.resolve(mediaTimeMs: ms, timeline: timeline)) }
+            anchorContextLock.withLock { anchorContextByItem[itemId] = (stamp: stamp, contexts: known) }
+        }
+        return known.filter { mediaTimesMs.contains($0.key) }
+    }
+
+    /// How many times `resolveSourceAnchorContexts` decoded a whole timeline. A test reads it to prove a repeat refresh doesn't.
+    public var anchorTimelineDecodes: Int { anchorContextLock.withLock { anchorTimelineDecodeCount } }
+
     /// Only the chapters of an item's source transcript timeline (#777). Empty when there is no timeline.
     public func loadTranscriptTimelineChapters(itemId: String) throws -> [MediaTimelineChapter] {
         try loadTranscriptTimelineSummary(itemId: itemId)?.chapters ?? []
@@ -1177,6 +1224,59 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return includeDeleted ? items : items.filter { $0.deletedAt == nil }
     }
 
+    /// How much of an item's text the summary read looks at to tell whether there is any besides whitespace.
+    private static let summaryTextHeadLength = 512
+
+    /// The Library list's read (#2102): every item in `listItems`' order, without its `text` or `documentStructure`.
+    /// SQLite cuts those two out of each payload, so the several MB of an article or book are never copied or decoded.
+    /// The text's length is counted in Unicode scalars, which is how SQLite counts; it differs from Swift's character
+    /// count only for text with combining marks or joined emoji, and only feeds the listening-time estimate. A payload
+    /// that can't be cut or decoded sends the whole read the full way, which sets the broken record aside as before.
+    public func listItemSummaries(includeDeleted: Bool = false) throws -> [LibraryItemSummary] {
+        var rows: [(payload: String, head: String?, length: Int?)] = []
+        var needsFullRead = false
+        try withReadConnection { connection in
+            var statement: OpaquePointer?
+            let sql = """
+                SELECT CASE WHEN json_valid(payload) THEN json_remove(payload, '$.text', '$.documentStructure') END,
+                       substr(CASE WHEN json_valid(payload) THEN json_extract(payload, '$.text') END, 1, \(Self.summaryTextHeadLength)),
+                       CASE WHEN json_valid(payload) THEN length(json_extract(payload, '$.text')) END
+                FROM records WHERE kind = 'item' ORDER BY updated_at DESC, id;
+                """
+            guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_item_summaries")
+            }
+            defer { sqlite3_finalize(statement) }
+            while true {
+                let step = sqlite3_step(statement)
+                if step == SQLITE_DONE { return }
+                guard step == SQLITE_ROW else { throw SessionKitError.persistenceFailed("step_item_summaries") }
+                guard let raw = sqlite3_column_text(statement, 0) else { needsFullRead = true; continue }
+                let head = sqlite3_column_text(statement, 1).map { String(cString: $0) }
+                let length = sqlite3_column_type(statement, 2) == SQLITE_NULL ? nil : Int(sqlite3_column_int64(statement, 2))
+                rows.append((payload: String(cString: raw), head: head, length: length))
+            }
+        }
+        var summaries: [LibraryItemSummary] = []
+        for row in rows {
+            guard !needsFullRead, let data = row.payload.data(using: .utf8),
+                  let item = try? decoder.decode(Item.self, from: data) else { needsFullRead = true; break }
+            var hasText = row.head?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            if !hasText, (row.length ?? 0) > Self.summaryTextHeadLength {
+                // Whitespace for the first stretch, then maybe words: only this rare item is read whole.
+                hasText = (try? loadItem(id: item.id))?.hasListenableText ?? false
+            }
+            summaries.append(LibraryItemSummary(
+                id: item.id, title: item.title, mediaType: item.mediaType, status: item.status,
+                externalReference: item.externalReference, externalReferenceType: item.externalReferenceType,
+                media: item.media, deletedAt: item.deletedAt, author: item.author, sourceTitle: item.sourceTitle,
+                sourceURL: item.sourceURL, createdAt: item.createdAt, sourceCompletedAt: item.sourceCompletedAt,
+                hasListenableText: hasText, textCharacterCount: row.length))
+        }
+        if needsFullRead { return try listItems(includeDeleted: includeDeleted).map(LibraryItemSummary.init) }
+        return includeDeleted ? summaries : summaries.filter { $0.deletedAt == nil }
+    }
+
     public func listDeletedItems() throws -> [Item] {
         try listItems(includeDeleted: true)
             .filter { $0.deletedAt != nil }
@@ -1364,31 +1464,35 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         }
     }
 
-    private func load<T: Decodable>(kind: String, id: String) throws -> T {
-        guard let value: T = try loadOptional(kind: kind, id: id) else {
+    private func load<T: Decodable>(kind: String, id: String, caller: String = #function) throws -> T {
+        guard let value: T = try loadOptional(kind: kind, id: id, caller: caller) else {
             throw SessionKitError.missingFixture("\(kind):\(id)")
         }
         return value
     }
 
-    private func loadOptional<T: Decodable>(kind: String, id: String) throws -> T? {
-        let values: [T] = try query("SELECT kind, id, payload FROM records WHERE kind = ? AND id = ?;", [kind, id])
+    private func loadOptional<T: Decodable>(kind: String, id: String, caller: String = #function) throws -> T? {
+        let values: [T] = try query("SELECT kind, id, payload FROM records WHERE kind = ? AND id = ?;", [kind, id], caller: caller)
         return values.first
     }
 
-    private func loadBySession<T: Decodable>(kind: String, sessionId: String) throws -> [T] {
-        try query("SELECT kind, id, payload FROM records WHERE kind = ? AND session_id = ? ORDER BY updated_at, id;", [kind, sessionId])
+    private func loadBySession<T: Decodable>(kind: String, sessionId: String, caller: String = #function) throws -> [T] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? AND session_id = ? ORDER BY updated_at, id;", [kind, sessionId], caller: caller)
     }
 
-    private func loadByItem<T: Decodable>(kind: String, itemId: String) throws -> [T] {
-        try query("SELECT kind, id, payload FROM records WHERE kind = ? AND item_id = ? ORDER BY updated_at, id;", [kind, itemId])
+    private func loadByItem<T: Decodable>(kind: String, itemId: String, caller: String = #function) throws -> [T] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? AND item_id = ? ORDER BY updated_at, id;", [kind, itemId], caller: caller)
     }
 
     /// Rows are copied out while the connection lock is held and decoded after it is released, so a small read or write
     /// on another thread (the main thread's, usually) never waits for a big background read to finish decoding (#2103).
     /// A caller that already holds the lock keeps holding it; the gain is for callers that don't.
-    private func query<T: Decodable>(_ sql: String, _ values: [String]) throws -> [T] {
+    ///
+    /// `caller` names the public method the read is metered under (#2258); the helpers above pass it down.
+    private func query<T: Decodable>(_ sql: String, _ values: [String], caller: String = #function) throws -> [T] {
+        let timer = StoreReadTimer(readMeter, method: caller)
         var rows: [(kind: String, id: String, payload: String)] = []
+        defer { timer?.finish(rows: rows.count, bytes: rows.reduce(0) { $0 + $1.payload.utf8.count }) }
         try withReadConnection { connection in
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -1863,7 +1967,10 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
         """
 
     public func loadSharedMarginTallies() throws -> [String: SharedMarginTally] {
-        try withReadConnection { connection in
+        let timer = StoreReadTimer(readMeter, method: #function)
+        var rowCount = 0
+        defer { timer?.finish(rows: rowCount, bytes: 0) }
+        return try withReadConnection { connection in
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(connection, Self.sharedMarginTalliesSQL, -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_shared_margin_tallies")
@@ -1874,6 +1981,7 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
             var tallies: [String: SharedMarginTally] = [:]
             while sqlite3_step(statement) == SQLITE_ROW {
                 guard let raw = sqlite3_column_text(statement, 0) else { continue }
+                rowCount += 1
                 tallies[String(cString: raw)] = SharedMarginTally(
                     total: Int(sqlite3_column_int64(statement, 1)),
                     new: Int(sqlite3_column_int64(statement, 2))

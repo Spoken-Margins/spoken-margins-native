@@ -143,17 +143,17 @@ class HostedChecksStandTests(unittest.TestCase):
         path = self.other / name
         path.parent.mkdir(parents=True, exist_ok=True)
         self.commit(self.other, name, text)
-        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', 'origin', 'HEAD:next'], check=True)
-        return lane.fetch_base(self.tree, 'next')
+        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', 'origin', 'HEAD:main'], check=True)
+        return lane.fetch_base(self.tree, 'main')
 
     def pr(self):
         self.commit(self.tree, 'pr.txt', 'pr\n')
         head = self.rev(self.tree, 'HEAD')
-        tested = lane.fetch_base(self.tree, 'next')
+        tested = lane.fetch_base(self.tree, 'main')
         return head, tested, lane.merged_tree(self.tree, tested, head)
 
     def stands(self, head, base_sha, records, env=ON):
-        return lane.hosted_fast_checks(None, self.tree, 'next', head, base_sha, env=env, records=records)
+        return lane.hosted_fast_checks(None, self.tree, 'main', head, base_sha, env=env, records=records)
 
     def records(self, head, base, tree, only=None):
         """A records reader whose checks all passed and recorded <tree>; with <only>, just that set of checks."""
@@ -164,6 +164,58 @@ class HostedChecksStandTests(unittest.TestCase):
                     for name, plan in checks.items()}, ''
         return read
 
+    def test_it_waits_for_checks_still_running_then_takes_them(self):
+        # The first lane runs after the switch went on found the hosted checks still running and ran the whole
+        # --plan fast on the Mac (#1389). Inside a lane job the runner now waits for them.
+        head, tested, tree = self.pr()
+        passed = self.records(head, tested, tree)
+        reads, slept, now = [], [], [0.0]
+
+        def running_twice(github, h, checks):
+            reads.append(checks)
+            if len(reads) <= 4:  # two polls, each reading the hosted pair then the VPS pair
+                return None, f'"{next(iter(checks))}" had not finished on {h[:7]}'
+            return passed(github, h, checks)
+
+        def sleep(seconds):
+            slept.append(seconds)
+            now[0] += seconds
+        found, why = lane.hosted_fast_checks(None, self.tree, 'main', head, tested, env={**ON, 'GITHUB_ACTIONS': 'true'},
+                                             records=running_twice, clock=lambda: now[0], sleep=sleep,
+                                             out=io.StringIO())
+        self.assertEqual(why, '')
+        self.assertEqual(set(found), set(lane.HOSTED_FAST_CHECKS))
+        self.assertEqual(slept, [lane.HOSTED_FAST_POLL] * 2)
+
+    def test_the_wait_is_bounded_and_skipped_outside_a_lane_job(self):
+        head, tested, _ = self.pr()
+
+        def running(github, h, checks):
+            return None, f'"{next(iter(checks))}" had not finished on {h[:7]}'
+        for env, polls in (({**ON, 'GITHUB_ACTIONS': 'true'}, lane.HOSTED_FAST_WAIT // lane.HOSTED_FAST_POLL), (ON, 0)):
+            with self.subTest(env):
+                slept, now = [], [0.0]
+
+                def sleep(seconds):
+                    slept.append(seconds)
+                    now[0] += seconds
+                found, why = lane.hosted_fast_checks(None, self.tree, 'main', head, tested, env=env, records=running,
+                                                     clock=lambda: now[0], sleep=sleep, out=io.StringIO())
+                self.assertIsNone(found)
+                self.assertIn('had not finished', why)
+                self.assertEqual(len(slept), polls)
+
+    def test_a_failed_or_missing_check_is_not_waited_for(self):
+        head, tested, _ = self.pr()
+        slept = []
+        for why in ('"hosted fast: portable" ended failure on abc1234', 'no "vps fast: portable" check ran'):
+            found, said = lane.hosted_fast_checks(None, self.tree, 'main', head, tested,
+                                                  env={**ON, 'GITHUB_ACTIONS': 'true'},
+                                                  records=lambda github, h, checks, why=why: (None, why),
+                                                  sleep=slept.append, out=io.StringIO())
+            self.assertIsNone(found)
+        self.assertEqual(slept, [])
+
     def test_off_reads_only_the_vps_checks(self):
         head, tested, tree = self.pr()
         for env in ({}, {'LANE_HOSTED_FAST': ''}, {'LANE_HOSTED_FAST': 'off'}, {'LANE_HOSTED_FAST': 'yes'}):
@@ -173,7 +225,7 @@ class HostedChecksStandTests(unittest.TestCase):
                 def missing(github, h, checks):
                     reads.append(checks)
                     return None, 'no "vps fast: portable" check ran'
-                found, why = lane.hosted_fast_checks(None, self.tree, 'next', head, tested, env=env, records=missing)
+                found, why = lane.hosted_fast_checks(None, self.tree, 'main', head, tested, env=env, records=missing)
                 self.assertEqual((found, why), (None, 'no "vps fast: portable" check ran'))
                 self.assertEqual(reads, [lane.VPS_FAST_CHECKS])
 
@@ -208,7 +260,7 @@ class HostedChecksStandTests(unittest.TestCase):
         self.assertEqual(why, '')
         self.assertEqual(set(found), set(lane.HOSTED_FAST_CHECKS))
         # The tree the runner's own merge commit holds is the one the hosted job reported.
-        sha, _ = lane.build_merge_commit(self.tree, 'next', head, 5, 'A change')
+        sha, _ = lane.build_merge_commit(self.tree, 'main', head, 5, 'A change')
         self.assertEqual(self.rev(self.tree, sha + '^{tree}'), tree)
 
     def test_a_tree_that_is_not_this_merge_is_refused(self):
@@ -235,7 +287,7 @@ class HostedChecksStandTests(unittest.TestCase):
                 newest = self.move_next(path)
                 found, why = self.stands(head, newest, self.records(head, tested, tree))
                 self.assertIsNone(found)
-                self.assertIn(f'tested it on next at {tested[:7]}', why)
+                self.assertIn(f'tested it on main at {tested[:7]}', why)
 
     def test_a_record_naming_a_next_the_runner_does_not_have_falls_back(self):
         head, tested, tree = self.pr()
@@ -248,7 +300,7 @@ class HostedChecksStandTests(unittest.TestCase):
 
         def broken(github, h, checks):
             raise subprocess.CalledProcessError(1, ['gh', 'api'])
-        found, why = lane.hosted_fast_checks(None, self.tree, 'next', head, tested, env=ON, records=broken)
+        found, why = lane.hosted_fast_checks(None, self.tree, 'main', head, tested, env=ON, records=broken)
         self.assertIsNone(found)
         self.assertIn('could not read the fast checks off the Mac', why)
 
@@ -349,7 +401,7 @@ class SplitPlanTests(unittest.TestCase):
     def test_mac_rest_for_an_app_diff_runs_only_the_sessionkit_rest(self):
         calls, skipped = self.run_plan('fast-mac-rest', ['App/SpokenMarginsApp/X.swift'])
         self.assertEqual(calls, [('slot', None), ('package-steps', {'core_elsewhere': True})])
-        self.assertEqual(skipped, {'runner-tests', 'ops', 'tools', 'shipped-compat'})
+        self.assertEqual(skipped, {'hot-file-ratchet', 'runner-tests', 'ops', 'tools', 'shipped-compat'})
 
     def test_mac_rest_for_a_lane_diff_also_runs_the_apple_tool_tests_and_ops_disk(self):
         calls, _ = self.run_plan('fast-mac-rest', ['scripts/phone-build'])

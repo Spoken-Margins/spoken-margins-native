@@ -285,7 +285,16 @@ public enum StructuredDocumentBuilder {
         excluding existing: [StructuredDocument.Marker]
     ) -> [StructuredDocument.Marker] {
         let numeric = #"\[[0-9]{1,4}(?:\s*[,–-]\s*[0-9]{1,4})*(?:,\s*(?i:pp?\.|§|(?:lemma|theorem|thm|corollary|cor|proposition|prop|example|appendix|definition|def|remark|section|sec|chapter|chap|ch|eqs?|equation|fig|figure|table|part|page|pages|claim)\b)\.?\s*[\p{Lu}0-9][^\[\]]{0,40})?\]"#
-        let authorYear = #"\((?:(?:see|e\.g\.,?|cf\.)\s+)?\p{Lu}[\p{L}'’\-]+(?:,?\s+(?:et\s+al\.|and|&)\s*(?:\p{Lu}[\p{L}'’\-]+)?)?,?\s+(?:19|20)[0-9]{2}[a-z]?(?:\s*[;,]\s*(?:\p{Lu}[\p{L}'’\-]+(?:,?\s+(?:et\s+al\.|and|&)\s*(?:\p{Lu}[\p{L}'’\-]+)?)?,?\s+)?(?:19|20)[0-9]{2}[a-z]?)*\)"#
+        // Any number of authors ("Autor, Levy and Murnane", "Smith et al.") and of years
+        // ("2019, 2024", "2026a"), several works apart by ";" (#2370). A PDF that lost its
+        // spaces prints "Chen,2025", so the comma before a year needs no space.
+        let name = #"(?:(?:van|von|de|der|den|du|da|di|le|la)\s+)*\p{Lu}[\p{L}'’\-]+"#
+        // A list of names ends in "and" or "&", so "(Paris, France, 2019)" stays prose; as before,
+        // the last name may follow with no space ("&Jones", "andChen").
+        let authors = #"\#(name)(?:(?:,\s*\#(name))*,?\s+(?:and|&)\s*\#(name))?(?:,?\s+et\s+al\.)?"#
+        let years = #"(?:19|20)[0-9]{2}[a-z]?(?:\s*,\s*(?:19|20)[0-9]{2}[a-z]?)*"#
+        let work = #"(?:(?:see|e\.g\.,?|cf\.)\s*)?\#(authors)(?:,\s*|\s+)\#(years)"#
+        let authorYear = #"\(\#(work)(?:\s*;\s*(?:\#(work)|\#(years)))*\)"#
         let round = #"\([0-9]{1,4}(?:\s*[,–-]\s*[0-9]{1,4})*\)"#
         let characters = Array(text)
         guard let square = try? NSRegularExpression(pattern: #"\[[0-9]{1,4}(?:\s*[,–-]\s*[0-9]{1,4})*\]"#),
