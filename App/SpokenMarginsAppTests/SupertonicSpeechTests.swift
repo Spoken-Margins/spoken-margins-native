@@ -2257,11 +2257,16 @@ final class SupertonicSpeechTests: XCTestCase {
         await harness.finishPlayingChunk()                          // the end notification; the queue is still on A
         let caughtUp = await harness.waitForPlayingChunk(chunk[1])
         XCTAssertTrue(caughtUp, "the client's place moved on to B")
+        // The player is still on A. The guard on `items().last` lets the client queue C behind B anyway: before
+        // #1764 it required `currentItem` to be B, so C could not be queued until the player reached B.
+        let next = await harness.waitForQueuedChunk(chunk[2])
+        XCTAssertTrue(next, "C is queued behind B while the player is still on A")
+        XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "queued_ahead 1")
+
         harness.advanceTheQueueWithoutTellingTheApp()               // the player gets to B a moment later
 
-        let next = await harness.waitForQueuedChunk(chunk[2])
-        XCTAssertTrue(next, "C is queued behind B")
         XCTAssertEqual(harness.playerStarts, before, "B was not started again on a new player")
+        XCTAssertEqual(harness.playingChunkStart, chunk[1])
         XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "queued_ahead 1")
     }
 
@@ -2288,7 +2293,7 @@ final class SupertonicSpeechTests: XCTestCase {
     }
 
     // #1762: the real queue, with nothing driving it. Each chunk is two seconds of its own tone; the app is away
-    // through four of them. Every seam must be the queue's own: no new player, one `queued_ahead` per seam.
+    // through four of them. Every seam must be the queue's own: no new player, and no seam handed to the app.
     func testTheRealQueuePlaysThroughSeveralSeamsWithTheAppAwayAndNoNewPlayer() async throws {
         let harness = try SupertonicClientHarness(
             chunkSeconds: 2, distinctTones: true, applicationIsActive: { false }
@@ -2303,7 +2308,10 @@ final class SupertonicSpeechTests: XCTestCase {
 
         XCTAssertTrue(reached, "the real queue played on to the fourth chunk by itself")
         XCTAssertEqual(harness.playerStarts, starts, "no seam started a new player")
-        XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "queued_ahead 3")
+        XCTAssertFalse(
+            (harness.client.debugBackgroundSeamSummary ?? "").contains("rendered_not_queued"),
+            "no seam went through the app: \(harness.client.debugBackgroundSeamSummary ?? "none")"
+        )
     }
 
     // #1763: a new player the system would not start with the phone locked sat at time 0 with rate 0 ("SetRateFailed")
