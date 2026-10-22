@@ -149,15 +149,20 @@ final class SkimBridgeController {
             durationMs: source.durationMs
         ) else { return nil }
         let summaryScene = plan.summaryScene
+        let proposalId = SharedListeningMapPlacement.isSharedProjection(id: projection.id) ? projection.id : proposal.id
         let assetID = host.summaryBridgeAssetID(
             itemId: source.itemId,
-            proposalId: SharedListeningMapPlacement.isSharedProjection(id: projection.id) ? projection.id : proposal.id,
+            proposalId: proposalId,
             sceneId: summaryScene.id,
             suppliedAssetId: summaryScene.summaryAssetId
         )
-        guard let asset = resources.assets.first(where: {
-            $0.id == assetID && $0.category == .summaryBridge && $0.integrity == .valid
-        }), let url = host.resolvedApplicationSupportAssetURL(for: asset.relativePath) else {
+        // A supplied voice imported before #1120 sits under the old cut name, so that name is tried after the new one.
+        let legacyID = summaryScene.summaryAssetId.flatMap {
+            SummaryBridgeAssetNaming.legacyAssetID(itemId: source.itemId, proposalId: proposalId, sceneId: summaryScene.id, suppliedAssetId: $0)
+        }
+        guard let asset = ([assetID] + (legacyID.map { [$0] } ?? [])).lazy.compactMap({ id in
+            resources.assets.first(where: { $0.id == id && $0.category == .summaryBridge && $0.integrity == .valid })
+        }).first, let url = host.resolvedApplicationSupportAssetURL(for: asset.relativePath) else {
             return nil
         }
         return ResolvedSkimPlaybackPlan(
@@ -167,7 +172,7 @@ final class SkimBridgeController {
             summarySceneId: summaryScene.id,
             destinationSceneId: plan.destinationSceneId,
             destinationMediaTimeMs: plan.destinationMediaTimeMs,
-            summaryAssetId: assetID,
+            summaryAssetId: asset.id,
             summaryAudioURL: url
         )
     }

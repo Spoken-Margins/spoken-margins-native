@@ -68,8 +68,11 @@ extension Gate1AppModel {
     /// `usesKitten` is read once by the caller, so an ID and the voice that renders under it can't disagree if the
     /// Supertonic download lands or is removed in between.
     private func summaryBridgeAssetID(itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String?, usesKitten: Bool) -> String {
-        let voiceKey = suppliedAssetId.map { "supplied-\(safePodcastEvidenceComponent($0))" } ?? currentSummaryBridgeVoiceKey(usesKitten: usesKitten)
-        return "summary-bridge-\(safePodcastEvidenceComponent(itemId))-\(safePodcastEvidenceComponent(proposalId))-\(safePodcastEvidenceComponent(sceneId))-\(voiceKey)"
+        // An id the name cut would change carries a hash of the whole id, so two ids can't share a file (#1120).
+        SummaryBridgeAssetNaming.assetID(
+            itemId: itemId, proposalId: proposalId, sceneId: sceneId, suppliedAssetId: suppliedAssetId,
+            generatedVoiceKey: suppliedAssetId == nil ? currentSummaryBridgeVoiceKey(usesKitten: usesKitten) : ""
+        )
     }
 
     func prepareSummaryBridgeAsset(
@@ -83,9 +86,15 @@ extension Gate1AppModel {
         let usesKitten = summaryBridgeUsesKitten
         let assetID = summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id,
                                            suppliedAssetId: scene.summaryAssetId, usesKitten: usesKitten)
-        if let existing = try store.loadOwnedOfflineAssets().first(where: {
-            $0.id == assetID && $0.integrity == .valid
-        }), resolvedApplicationSupportAssetURL(for: existing.relativePath) != nil { return existing }
+        // A supplied voice imported before #1120 sits under the old cut name; it still counts as prepared.
+        let legacyID = scene.summaryAssetId.flatMap {
+            SummaryBridgeAssetNaming.legacyAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id, suppliedAssetId: $0)
+        }
+        let storedAssets = try store.loadOwnedOfflineAssets()
+        for id in [assetID] + (legacyID.map { [$0] } ?? []) {
+            if let existing = storedAssets.first(where: { $0.id == id && $0.integrity == .valid }),
+               resolvedApplicationSupportAssetURL(for: existing.relativePath) != nil { return existing }
+        }
         // An authored voice is part of the imported experience, not a request
         // to silently synthesize replacement speech in the current system voice.
         guard scene.summaryAssetId == nil else { return nil }
