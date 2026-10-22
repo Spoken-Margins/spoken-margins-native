@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: com.spokenmargins
   deploymentTarget:
     iOS: "26.0"
+    watchOS: "26.0"
 # The signing team comes from the untracked Config/Local.xcconfig, through this file (#1841).
 configFiles:
   Debug: Config/Signing.xcconfig
@@ -56,6 +57,8 @@ targets:
       - target: SpokenMarginsGate2Widget
       - target: SpokenMarginsShareExtension
       - target: SpokenMarginsBrowserTextExtension
+      # The Watch app (#2487), embedded in Watch/ inside the iOS app.
+      - target: SpokenMarginsWatchApp
       - package: SessionKit
         product: SessionKit
       - package: SessionKit
@@ -154,6 +157,32 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: true
+  # Speak a Margin from the wrist during a phone call (#2487): the call holds the iPhone's microphone, the Watch's
+  # still records. A single-target watchOS app, embedded in the iOS app. It doesn't link SessionKit.
+  SpokenMarginsWatchApp:
+    type: application
+    platform: watchOS
+    sources:
+      - path: App/SpokenMarginsWatchApp/Sources
+        type: syncedFolder
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.watchkitapp
+        CODE_SIGN_STYLE: Automatic
+        CURRENT_PROJECT_VERSION: "35"
+        MARKETING_VERSION: "0.1"
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "4"
+        SKIP_INSTALL: YES
+    info:
+      path: App/SpokenMarginsWatchApp/Info.plist
+      properties:
+        CFBundleDisplayName: Spoken Margins
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: com.spokenmargins.native
+        NSMicrophoneUsageDescription: Spoken Margins records the Margins you speak on your Watch and sends them to your iPhone.
   SpokenMarginsGate2Widget:
     type: app-extension
     platform: iOS
