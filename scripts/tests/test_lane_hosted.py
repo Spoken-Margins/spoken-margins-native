@@ -163,19 +163,14 @@ class HostedMergeTests(unittest.TestCase):
         self.assertIn('not merged by the runner: it inherits', '\n'.join(result[3]))
         push.assert_not_called()
 
-    def test_a_diff_the_linux_job_cannot_test_needs_hosted_checks_or_the_mac_fallback(self):
-        # #2459: it used to stop with INCONCLUSIVE; now it hands the job to automerge-mac, with no report.
-        result, github, push, ops = self.run_auto(['scripts/lane_slots.py'])
-        self.assertEqual(result[0], lane.NEEDS_MAC)
-        push.assert_not_called()
-        ops.assert_not_called()
-        self.assertEqual(github.posted, [])
-
-    def test_checks_a_Mac_run_held_for_the_audit_still_stand_on_the_hosted_job(self):
-        checked = {'next': MERGE, 'ran': 'old checks', 'where': 'host only'}
-        result, github, push, ops = self.run_auto(['scripts/lane_slots.py'], checked=checked)
-        self.assertEqual(result[0], 'PASS')
-        ops.assert_not_called()
+    def test_latest_scope_rejects_mac_diff_even_if_a_previous_check_passed(self):
+        checked = {'next': MERGE, 'ran': 'old checks', 'where': 'hosted'}
+        for previous in (None, checked):
+            with self.subTest(reused=bool(previous)):
+                result, github, push, ops = self.run_auto(['scripts/lane_slots.py'], checked=previous)
+                self.assertEqual(result[0], 'INCONCLUSIVE')
+                push.assert_not_called()
+                ops.assert_not_called()
 
 
 if __name__ == '__main__':

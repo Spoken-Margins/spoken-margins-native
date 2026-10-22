@@ -282,10 +282,6 @@ def classify(paths, diffs=None, root=ROOT):
             'app_tests': app_tests, 'lane_paths': lane_paths}
 
 
-# The ordinary automerge job (host tests, then the merge) takes any of the Mac's runners, whichever frees first (#2450).
-# It used to need the label sm-lane-build, which only sm-lane-mac-2 carries, so 38 armed PRs queued behind it while
-# sm-lane-mac-3 sat idle. Every runner here is the same Mac, so lane_slots' Mac-wide slots still bound the work.
-MAC_AUTOMERGE_RUNNER = ['self-hosted', 'macOS']
 HOSTED_RUNNER = ['ubuntu-latest']  # runs-on for the off-Mac automerge job; lane.yml keys on it (#2442)
 
 # #1389 phase 2: once the repo is public, /lane T2 and T3 requests run on a GitHub-hosted Mac, the image and Xcode the
@@ -320,29 +316,19 @@ def hosted_automerge(scope):
             and all(p.startswith(('ops/', 'docs/')) or p.endswith('.md') for p in paths))
 
 
-def hosted_merge_routing(result, env=None):
-    """#2459: with the LANE_HOSTED_FAST switch `on`, every automerge job starts on a GitHub-hosted Linux runner. It
-    decides and merges from the GitHub API, takes the hosted fast checks' PASS on the head instead of re-running host
-    tests, and hands the job to lane.yml's `automerge-mac` fallback only when those checks don't stand."""
-    if (os.environ if env is None else env).get('LANE_HOSTED_FAST', '').strip().lower() != 'on':
-        return result
-    return dict(result, automerge=list(HOSTED_RUNNER))
-
-
 def runner_routing(pr, file_pages, runner_pages, root=ROOT, offmac=True):
     """Choose queue labels, never capacity. API errors/incomplete diffs keep today's queues.
 
     Inputs are the event's PR and gh api --paginate --slurp responses. Busy online runners
     count: priority work queues there, but an absent/offline runner must not strand a job.
-    Overflow (#1327, replaced by #2450): an automerge job that isn't priority work asks for any Mac runner
-    (`self-hosted, macOS`), so whichever frees first takes it. A snapshot of which runner was idle when the PR was
-    armed left jobs queued for one runner while another sat idle.
+    Overflow (#1327): an automerge job that isn't priority work goes to the priority runner when it
+    is idle and no build runner is, instead of queueing behind them while the Mac has a runner free.
     Never slower (#2147), a guard: if every online priority runner also takes build jobs, a priority automerge job uses the
     build queue, because GitHub gives waiting self-hosted jobs no order and the narrower label only means fewer
     runners. Priority does not jump the queue; real ordering is #1057.
     """
     normal = {'lane': ['self-hosted', 'macOS', 'sm-lane'],
-              'automerge': list(MAC_AUTOMERGE_RUNNER)}
+              'automerge': ['self-hosted', 'macOS', 'sm-lane-build']}
     priority = ['self-hosted', 'sm-lane-priority']
     try:
         # An API error, malformed page, duplicate or truncated listing cannot prove a hosted diff.
@@ -379,16 +365,23 @@ def runner_routing(pr, file_pages, runner_pages, root=ROOT, offmac=True):
             return dict(runner_routing(pr, file_pages, runner_pages, root, offmac=False),
                         automerge=list(HOSTED_RUNNER))
 
+        # Only an explicit busy=false is idle: a runner whose state is missing or unreadable is not.
+        def idle(runner, wanted):
+            return runner['status'] == 'online' and runner.get('busy') is False and wanted <= names(runner)
+
         if not any(r['status'] == 'online' and set(priority) <= names(r) for r in runners):
             return normal
+        overflow = dict(normal)
+        if any(idle(r, set(priority)) for r in runners) and not any(idle(r, {'sm-lane-build'}) for r in runners):
+            overflow['automerge'] = priority
         if not labelled:
             if not complete:
-                return normal
+                return overflow
             # Both sides of a rename belong to the diff: moving app code into ops isn't ops-only.
             if not all(path.startswith(('ops/', 'docs/')) or is_lane_path(path) for path in paths):
-                return normal
+                return overflow
             if classify(paths, root=root)['tier'] != 'T1':
-                return normal
+                return overflow
         # The lane job keeps the priority runner: the build queue would only add the host-test backlog to it.
         shared = all('sm-lane-build' in names(r) for r in runners
                      if r['status'] == 'online' and set(priority) <= names(r))
@@ -446,7 +439,7 @@ def main(argv=None):
             result = runner_routing(event['pull_request'], files, runners)
         except (OSError, ValueError, KeyError, TypeError):
             result = runner_routing({}, [], [])
-        print(json.dumps(hosted_merge_routing(hosted_app_routing(result))))
+        print(json.dumps(hosted_app_routing(result)))
         return 0
     if not args.files and args.base is None:  # #1492: the trunk (scripts/trunk.py)
         from trunk import trunk_ref

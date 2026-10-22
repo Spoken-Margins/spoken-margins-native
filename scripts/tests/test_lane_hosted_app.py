@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / 'scripts'
 sys.path.insert(0, str(SCRIPTS))
 scope = importlib.import_module('test-scope')
-NORMAL = {'lane': ['self-hosted', 'macOS', 'sm-lane'], 'automerge': ['self-hosted', 'macOS']}
+NORMAL = {'lane': ['self-hosted', 'macOS', 'sm-lane'], 'automerge': ['self-hosted', 'macOS', 'sm-lane-build']}
 HOSTED = 'github-hosted'
 
 

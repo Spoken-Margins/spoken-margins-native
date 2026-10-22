@@ -135,8 +135,6 @@ jobs:
         env:
           # #1389 phase 2: `on` sends the lane job (T2/T3) to a GitHub-hosted Mac (test-scope.py hosted_app_routing).
           LANE_HOSTED_APP: ${{ vars.LANE_HOSTED_APP }}
-          # #2459: `on` starts every automerge job on a GitHub-hosted Linux runner (test-scope.py hosted_merge_routing).
-          LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
         run: |
           # The base can predate this helper while this workflow is first being introduced.
           if python3 scripts/test-scope.py --runner-routing "$GITHUB_EVENT_PATH" "$RUNNER_TEMP/files.json" "$RUNNER_TEMP/runners.json" > "$RUNNER_TEMP/route.json"; then
@@ -334,7 +332,7 @@ jobs:
       needs.route.outputs.skip_automerge != 'true' &&
       contains(github.event.pull_request.labels.*.name, 'automerge') &&
       (github.event.action != 'labeled' || github.event.label.name == 'automerge')
-    runs-on: ${{ fromJSON(needs.route.outputs.automerge || '["self-hosted","macOS"]') }}
+    runs-on: ${{ fromJSON(needs.route.outputs.automerge || '["self-hosted","macOS","sm-lane-build"]') }}
     # One runner is one lane, so runs from different PRs queue behind each other. Within a PR, a
     # newer queued run replaces one that hasn't started, so only the newest commit is tested. This
     # sits on the job, not the workflow, so skipped runs (other labels) never cancel a real one.
@@ -342,9 +340,6 @@ jobs:
       group: lane-auto-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: false
     timeout-minutes: 150
-    # #2459: set when the hosted fast checks did not stand, so automerge-mac below runs the job with host tests.
-    outputs:
-      needs_mac: ${{ steps.run.outputs.needs_mac }}
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -358,8 +353,6 @@ jobs:
       # #1389 rollout guard: `on` once the repo is public, and the runner takes the hosted fast checks' PASS
       # (hosted-portable.yml) and runs only --plan fast-mac-rest on the Mac. Unset, the whole --plan fast, as before.
       LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
-      # Any Mac runner may take this job (#2450), so it applies the build runner's room rules wherever it lands.
-      SM_LANE_RUNNER_ROLE: build
     steps:
       - uses: actions/checkout@v4
         with:
@@ -368,92 +361,6 @@ jobs:
           persist-credentials: false
           # Mac host tests need the LFS models; hosted T0/ops checks read none of them.
           lfs: ${{ !contains(fromJSON(needs.route.outputs.automerge || '[]'), 'ubuntu-latest') }}
-      - name: Prepare hosted evidence
-        if: env.HOSTED_ARGS == '--hosted'
-        run: |
-          echo "GIT_LFS_SKIP_SMUDGE=1" >> "$GITHUB_ENV"
-          echo "SM_LANE_EVIDENCE_DIR=$RUNNER_TEMP/lane-evidence" >> "$GITHUB_ENV"
-          # The machine is the job's alone and gone afterwards (#2442), so the lane state is too: the step ledger
-          # (lane_ledger.py, #1200) on the Mac no longer sees these T0/ops runs.
-          echo "SM_LANE_STATE_DIR=$RUNNER_TEMP/lane-state" >> "$GITHUB_ENV"
-      - name: Take the lane runner from the base branch
-        run: git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
-      - name: Run the request
-        id: run
-        run: >-
-          /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
-          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode auto $HOSTED_ARGS
-      # The check is red only on FAIL (#184): project threads wake when a check on their PR fails, and
-      # a FAIL is the PR's code. INCONCLUSIVE (held for T3, no simulator, a flood, a conflict with next)
-      # stays green with a warning: the report and the lane:done relabel take it to the dispatcher.
-      # This step runs after the report is posted and the labels are set. A job that dies before it
-      # reports still fails at its Run step, so a lost report never looks green.
-      - name: Verdict
-        if: steps.run.outputs.reported == 'true'
-        env:
-          VERDICT: ${{ steps.run.outputs.verdict }}
-        run: |
-          echo "Lane verdict: $VERDICT (the report is on the PR)"
-          if [ "$VERDICT" = FAIL ]; then
-            echo "::error title=Lane FAIL::The lane reported FAIL. The report on the PR says why."
-            exit 1
-          elif [ "$VERDICT" != PASS ]; then
-            echo "::warning title=Lane $VERDICT::The lane reported $VERDICT, not a pass. The report on the PR says why."
-          fi
-      - name: Tidy up after a cancelled or failed run
-        if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'
-        run: >-
-          /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --cleanup --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
-          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode auto $HOSTED_ARGS
-      - name: Keep hosted evidence
-        if: always() && env.HOSTED_ARGS == '--hosted'
-        uses: actions/upload-artifact@v4
-        with:
-          name: lane-hosted-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/lane-evidence
-          retention-days: 7
-
-  automerge-mac:
-    needs: [route, automerge]
-    # fallback #2459: the hosted automerge job above found no passing hosted fast checks for this head and next, so
-    # this runs the whole job, host tests included, on a GitHub-hosted Mac (free for the public repo).
-    if: >-
-      !cancelled() && needs.automerge.outputs.needs_mac == 'true' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      (github.event.pull_request.base.ref == (vars.SM_TRUNK || 'main') || startsWith(github.event.pull_request.base.ref, 'lane-check/')) &&
-      needs.route.outputs.skip_automerge != 'true' &&
-      contains(github.event.pull_request.labels.*.name, 'automerge') &&
-      (github.event.action != 'labeled' || github.event.label.name == 'automerge')
-    runs-on: macos-latest
-    # One runner is one lane, so runs from different PRs queue behind each other. Within a PR, a
-    # newer queued run replaces one that hasn't started, so only the newest commit is tested. This
-    # sits on the job, not the workflow, so skipped runs (other labels) never cancel a real one.
-    concurrency:
-      group: lane-auto-pr-${{ github.event.pull_request.number }}
-      cancel-in-progress: false
-    timeout-minutes: 150
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-      # Event values reach the shell only through these variables, always quoted.
-      PR_NUMBER: ${{ github.event.pull_request.number }}
-      EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
-      BASE_REF: ${{ github.event.pull_request.base.ref }}
-      SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
-      RUN_ID: ${{ github.run_id }}
-      HOSTED_ARGS: ''
-      SM_LANE_GITHUB_HOSTED: '1'
-      # #1389 rollout guard: `on` once the repo is public, and the runner takes the hosted fast checks' PASS
-      # (hosted-portable.yml) and runs only --plan fast-mac-rest on the Mac. Unset, the whole --plan fast, as before.
-      LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-          # Mac host tests need the LFS models; hosted T0/ops checks read none of them.
-          lfs: true
       - name: Prepare hosted evidence
         if: env.HOSTED_ARGS == '--hosted'
         run: |

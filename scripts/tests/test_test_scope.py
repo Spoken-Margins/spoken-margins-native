@@ -278,7 +278,7 @@ class LaneRunnerRoutingTests(unittest.TestCase):
 
     def assert_normal(self, result):
         self.assertEqual(result, {'lane': ['self-hosted', 'macOS', 'sm-lane'],
-                                  'automerge': ['self-hosted', 'macOS']})
+                                  'automerge': ['self-hosted', 'macOS', 'sm-lane-build']})
 
     def assert_priority(self, result):
         for job in ('lane', 'automerge'):
@@ -335,8 +335,7 @@ class LaneRunnerRoutingTests(unittest.TestCase):
             'filename': 'ops/codex/a.py', 'previous_filename': APP + 'ExperienceLibraryScreen.swift'}]]))
 
 
-    # #1327, #2450: sm-lane-mac-3 sat idle for hours while automerge jobs queued behind sm-lane-mac-2. The ordinary
-    # automerge job now asks for any Mac runner, so the idle one takes it; no snapshot of who is idle decides.
+    # #1327: sm-lane-mac-3 sat idle for hours while automerge jobs queued behind sm-lane-mac-2.
     def runner(self, name, busy, online=True):
         return {'status': 'online' if online else 'offline', 'busy': busy,
                 'labels': [{'name': 'self-hosted'}, {'name': name}]}
@@ -344,31 +343,41 @@ class LaneRunnerRoutingTests(unittest.TestCase):
     def spill(self, runners, paths=(APP + 'ExperienceLibraryScreen.swift',), labels=()):
         return self.route(list(paths), labels, runners=[{'runners': runners}])
 
-    def test_ordinary_automerge_asks_for_any_mac_runner_whatever_is_busy(self):
-        for build_busy in (True, False):
-            for priority_busy in (True, False):
-                with self.subTest(build_busy=build_busy, priority_busy=priority_busy):
-                    self.assert_normal(self.spill([self.runner('sm-lane-build', build_busy),
-                                                   self.runner('sm-lane-priority', priority_busy)]))
+    def test_idle_priority_runner_takes_automerge_when_every_build_runner_is_busy(self):
+        result = self.spill([self.runner('sm-lane-build', True), self.runner('sm-lane-build', True),
+                             self.runner('sm-lane-priority', False)])
+        self.assertEqual(result, {'lane': ['self-hosted', 'macOS', 'sm-lane'],
+                                  'automerge': ['self-hosted', 'sm-lane-priority']})
 
-    def test_automerge_label_is_one_every_mac_runner_carries(self):
-        result = self.spill([self.runner('sm-lane-build', True), self.runner('sm-lane-priority', False)])
-        for name in ('sm-lane', 'sm-lane-build', 'sm-lane-priority'):
-            labels = {'self-hosted', 'macOS', 'ARM64', name}
-            self.assertLessEqual(set(result['automerge']), labels)
-
-    def test_ops_mixed_and_incomplete_diffs_take_the_same_label(self):
+    def test_idle_priority_runner_takes_overflow_for_ops_mixed_and_incomplete_diffs_too(self):
         runners = [self.runner('sm-lane-build', True), self.runner('sm-lane-priority', False)]
         for paths, files in [(['ops/codex/a.py', 'project.yml'], None), (['ops/codex/a.py'], [])]:
             with self.subTest(paths=paths):
                 pr = {'labels': [], 'changed_files': len(paths)}
                 result = scope.runner_routing(pr, files if files is not None else [[{'filename': p} for p in paths]],
                                               [{'runners': runners}])
-                self.assertEqual(result['automerge'], ['self-hosted', 'macOS'])
+                self.assertEqual(result['automerge'], ['self-hosted', 'sm-lane-priority'])
 
-    def test_offline_priority_runner_falls_back_to_normal(self):
+    def test_automerge_stays_in_the_build_queue_while_a_build_runner_is_idle(self):
+        self.assert_normal(self.spill([self.runner('sm-lane-build', True), self.runner('sm-lane-build', False),
+                                       self.runner('sm-lane-priority', False)]))
+
+    def test_automerge_stays_in_the_build_queue_while_the_priority_runner_is_busy(self):
+        self.assert_normal(self.spill([self.runner('sm-lane-build', True), self.runner('sm-lane-priority', True)]))
+
+    def test_unknown_busy_state_never_counts_as_idle(self):
+        runner = self.runner('sm-lane-priority', False)
+        del runner['busy']
+        self.assert_normal(self.spill([self.runner('sm-lane-build', True), runner]))
+
+    def test_offline_priority_runner_never_takes_overflow(self):
         self.assert_normal(self.spill([self.runner('sm-lane-build', True),
                                        self.runner('sm-lane-priority', False, online=False)]))
+
+    def test_idle_priority_runner_takes_automerge_when_no_build_runner_is_online(self):
+        result = self.spill([self.runner('sm-lane-build', False, online=False), self.runner('sm-lane-priority', False)])
+        self.assertEqual(result['automerge'], ['self-hosted', 'sm-lane-priority'])
+        self.assertEqual(result['lane'], ['self-hosted', 'macOS', 'sm-lane'])
 
     def test_priority_work_still_routes_priority_when_the_priority_runner_is_idle(self):
         runners = [self.runner('sm-lane-build', True), self.runner('sm-lane-priority', False)]
@@ -393,14 +402,14 @@ class LaneRunnerRoutingTests(unittest.TestCase):
                 with self.subTest(busy=busy, **kwargs):
                     result = self.spill(self.shared_runners(busy), **kwargs)
                     self.assertEqual(result, {'lane': ['self-hosted', 'sm-lane-priority'],
-                                              'automerge': ['self-hosted', 'macOS']})
+                                              'automerge': ['self-hosted', 'macOS', 'sm-lane-build']})
 
     def test_a_dedicated_priority_runner_beside_a_shared_one_keeps_the_priority_queue(self):
         self.assert_priority(self.spill(self.shared_runners() + [self.runner('sm-lane-priority', True)],
                                         labels=['priority']))
         offline = self.runner('sm-lane-priority', True, online=False)
         self.assertEqual(self.spill(self.shared_runners() + [offline], labels=['priority'])['automerge'],
-                         ['self-hosted', 'macOS'])
+                         ['self-hosted', 'macOS', 'sm-lane-build'])
 
     def test_ordinary_work_stays_normal_with_a_shared_priority_runner(self):
         for busy in (True, False):
@@ -446,7 +455,7 @@ class LaneRunnerRoutingTests(unittest.TestCase):
         self.assertIn('pulls/$PR_NUMBER/files?per_page=100', route)
         self.assertIn('ref: ${{ github.event.pull_request.base.sha }}', route)
         for job, text, normal in [('lane', mac_jobs.split('\n  automerge:\n')[0], 'sm-lane'),
-                                  ('automerge', mac_jobs.split('\n  automerge:\n')[1], 'macOS')]:
+                                  ('automerge', mac_jobs.split('\n  automerge:\n')[1], 'sm-lane-build')]:
             with self.subTest(job=job):
                 self.assertIn('needs: route', text)
                 # A failed or skipped route falls back to the normal queues; a cancelled run stays cancelled
@@ -455,14 +464,6 @@ class LaneRunnerRoutingTests(unittest.TestCase):
                 self.assertNotIn('always()', text.split('    steps:', 1)[0])
                 self.assertIn(f'fromJSON(needs.route.outputs.{job} ||', text)
                 self.assertIn(f'"{normal}"', text)
-
-    def test_automerge_job_takes_any_mac_runner_and_applies_the_build_rules(self):
-        # #2450: sm-lane-build is only on sm-lane-mac-2; jobs queued behind it for hours while sm-lane-mac-3 sat idle.
-        workflow = (SCRIPTS.parent / '.github/workflows/lane.yml').read_text()
-        job = workflow.split('\n  automerge:\n', 1)[1].split('\n  release:\n', 1)[0]
-        self.assertNotIn('sm-lane-build', job)
-        self.assertIn("'[\"self-hosted\",\"macOS\"]'", job)
-        self.assertIn('SM_LANE_RUNNER_ROLE: build', job)
 
     def test_lane_routes_still_require_codex_or_claude_audit(self):
         result = scope.classify(['scripts/lane-runner.py'])

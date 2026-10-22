@@ -448,7 +448,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(on_vps, {'lane.yml': ['lane-open-lane', 'lane-open-automerge']})
 
     def test_the_lane_hands_the_switch_to_the_automerge_and_release_runs_and_may_read_checks(self):
-        self.assertEqual(self.lane_yml.count(f'{lane.HOSTED_FAST_SWITCH}: ${{{{ vars.{lane.HOSTED_FAST_SWITCH} }}}}'), 4)  # route, automerge, automerge-mac, release
+        self.assertEqual(self.lane_yml.count(f'{lane.HOSTED_FAST_SWITCH}: ${{{{ vars.{lane.HOSTED_FAST_SWITCH} }}}}'), 2)
         self.assertIn('  checks: read\n', self.lane_yml)
 
 
