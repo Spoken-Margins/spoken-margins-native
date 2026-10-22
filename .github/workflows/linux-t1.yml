@@ -19,6 +19,11 @@
 # tree and parents); when both passed on the PR's head, the lane's automerge run (lane-runner.py VPS_FAST_CHECKS)
 # runs only --plan fast-mac-rest on the Mac instead of the whole --plan fast. They queue on the one runner.
 #
+# The fallback since the repo went public (#2442): with the repository variable LANE_HOSTED_FAST `on`, the same two
+# halves run on GitHub-hosted runners (hosted-portable.yml), the lane takes those, and every job here is skipped. On
+# 2026-10-22 this one runner had 24 runs queued, the oldest an hour old, for checks the lane no longer read. Set the
+# variable to anything else and the VPS carries them again.
+#
 # Fork PRs never run here (#1719): the job's `if` skips them, and the runner's own job-started hook
 # (ops/runner-guard) refuses them even if a fork's copy of this file drops the `if`.
 name: linux-t1
@@ -38,8 +43,8 @@ concurrency:
 
 jobs:
   sessionkit-core:
-    # Same-repo PRs only: a fork's PR would run its own code on the owner's VPS.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Same-repo PRs only: a fork's PR would run its own code on the owner's VPS. And only as the fallback (above).
+    if: github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST != 'on'
     runs-on: [sm-vps-t1]
     timeout-minutes: 45
     steps:
@@ -63,7 +68,7 @@ jobs:
   portable:
     # The fast plan's Python, Node and Go steps (#2160). A shallow checkout without LFS, like hosted-portable.yml.
     name: 'vps fast: portable'
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST != 'on'
     runs-on: [sm-vps-t1]
     timeout-minutes: 30
     steps:
@@ -111,9 +116,10 @@ jobs:
     # because GitHub reads dispatch triggers from main, which doesn't carry owner-tap-alert.yml until #1492. The
     # script comes from the PR's base with no credentials kept, never from the PR, and this is the only job here
     # whose token may comment. A base that doesn't have the script yet skips quietly.
+    # With the hosted checks on, hosted-portable.yml's own owner-tap-alert job decides instead (#2442).
     name: owner-tap-alert
     needs: [sessionkit-core, portable]
-    if: always() && github.event.pull_request.head.repo.full_name == github.repository
+    if: always() && github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST != 'on'
     runs-on: [self-hosted, Linux, sm-vps]
     timeout-minutes: 5
     permissions:

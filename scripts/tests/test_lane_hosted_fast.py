@@ -470,7 +470,9 @@ class WorkflowTests(unittest.TestCase):
         for job in jobs.split('\n  owner-tap-alert:\n')[0].split('\n  portable:\n'):
             # PR code only on sm-vps-t1, never the routing runner, and never a fork's.
             self.assertIn('    runs-on: [sm-vps-t1]\n', job)
-            self.assertIn('    if: github.event.pull_request.head.repo.full_name == github.repository\n', job)
+            # And only as the fallback: with the hosted checks on, the VPS doesn't repeat them (#2442).
+            self.assertIn('    if: github.event.pull_request.head.repo.full_name == github.repository'
+                          f" && vars.{lane.HOSTED_FAST_SWITCH} != 'on'\n", job)
         self.assertNotIn('pull_request_target:', linux)
 
     def test_the_lane_hands_the_switch_to_the_automerge_and_release_runs_and_may_read_checks(self):

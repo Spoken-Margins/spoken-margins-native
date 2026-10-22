@@ -8,8 +8,8 @@
 # app pushes mentions.
 #
 # Where the alert is decided:
-# - Mostly at the end of linux-t1.yml and shipped-build-compat.yml, in their own `owner-tap-alert` job, so it comes
-#   when a PR's checks finish. Their push event fires while the checks are still running, and check_suite,
+# - Mostly at the end of hosted-portable.yml (linux-t1.yml while LANE_HOSTED_FAST is off, #2442) and
+#   shipped-build-compat.yml, in their own `owner-tap-alert` job, so it comes when a PR's checks finish. Their push event fires while the checks are still running, and check_suite,
 #   workflow_run and workflow_dispatch all take their triggers from main, which doesn't carry this file until
 #   #1492. After #1492 those jobs can move here as a `workflow_run` or `check_suite` trigger.
 # - Here, when a PR touching those paths gets the `owner-tap-check` label, is marked ready for review or is

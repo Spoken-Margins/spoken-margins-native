@@ -279,15 +279,19 @@ class Workflow(unittest.TestCase):
                       self.text)
 
     def test_check_workflows_end_with_an_alert_job_from_the_base(self):
-        for name, needs in (('linux-t1.yml', '[sessionkit-core, portable]'), ('shipped-build-compat.yml', 'compat')):
+        # hosted-portable.yml decides with the hosted fast checks on, linux-t1.yml with them off (#2442): exactly one.
+        same_repo = '    if: always() && github.event.pull_request.head.repo.full_name == github.repository'
+        for name, needs, guard in (
+                ('hosted-portable.yml', '[portable, sessionkit]', " && vars.LANE_HOSTED_FAST == 'on'"),
+                ('linux-t1.yml', '[sessionkit-core, portable]', " && vars.LANE_HOSTED_FAST != 'on'"),
+                ('shipped-build-compat.yml', 'compat', '')):
             with self.subTest(name):
                 text = (SCRIPTS.parent / '.github' / 'workflows' / name).read_text()
                 head, _, job = text.partition('\n  owner-tap-alert:\n')
                 self.assertTrue(job, 'no owner-tap-alert job')
                 self.assertIn('    name: owner-tap-alert\n', job)
                 self.assertIn(f'    needs: {needs}\n', job)
-                self.assertIn('    if: always() && github.event.pull_request.head.repo.full_name == github.repository\n',
-                              job)
+                self.assertIn(f'{same_repo}{guard}\n', job)
                 self.assertIn('    runs-on: [self-hosted, Linux, sm-vps]\n', job)
                 self.assertIn('      issues: write\n', job)
                 self.assertNotIn('actions: write', job)
@@ -300,7 +304,7 @@ class Workflow(unittest.TestCase):
 
     def test_a_base_without_the_script_skips_quietly(self):
         # Before this merges, the base has no script: the job must pass with a note, not fail (PR #2054's first run).
-        for name in ('owner-tap-alert.yml', 'linux-t1.yml', 'shipped-build-compat.yml'):
+        for name in ('owner-tap-alert.yml', 'hosted-portable.yml', 'linux-t1.yml', 'shipped-build-compat.yml'):
             with self.subTest(name):
                 text = (SCRIPTS.parent / '.github' / 'workflows' / name).read_text()
                 step = text[text.index('          if [ ! -f scripts/owner_tap_alert.py ]; then'):]

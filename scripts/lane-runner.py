@@ -63,8 +63,9 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   head merged onto the next they tested, and next's commits since can't matter (untested_moves), the automerge
   run takes them for the portable steps and SessionKitCoreTests and runs only --plan fast-mac-rest on the Mac.
   Anything short of that, and with the variable unset, it runs the whole --plan fast as before.
-  Until the repo is public (#2160), the same rule takes the two VPS checks in linux-t1.yml instead: `vps fast:
-  portable` (--plan fast-portable) and `sessionkit-core` (SessionKitCoreTests on Linux), with no switch.
+  With the variable off (#2160), the same rule takes the two VPS checks in linux-t1.yml instead: `vps fast:
+  portable` (--plan fast-portable) and `sessionkit-core` (SessionKitCoreTests on Linux). linux-t1.yml runs them only
+  then (#2442); with it on they are skipped, and a skipped VPS check never stands.
 - Hosted T2 and T3 (#1389 phase 2), only with the LANE_HOSTED_APP repository variable `on` (the same kind of rollout
   guard): test-scope.py routes the lane job to a GitHub-hosted Mac, and lane.yml sets SM_LANE_GITHUB_HOSTED=1 there,
   with the lane state and evidence folders in the job's own temporary folder. This script runs as on the Mac: the
@@ -913,10 +914,11 @@ HOSTED_FAST_SWITCH = 'LANE_HOSTED_FAST'
 # check run name (the job's `name:` in hosted-portable.yml) -> the verify-tests.py plan it ran
 HOSTED_FAST_CHECKS = {'hosted fast: portable': 'fast-portable',
                       'hosted fast: SessionKit core': 'fast-hosted-sessionkit'}
-# The bridge until then (#2160): the same two halves on the owner's VPS runner sm-vps-t1 (linux-t1.yml), on the same
-# merge commit, with no switch. Its SessionKitCoreTests run on Linux, which leaves out the few Darwin-only core tests
-# (3,281 there against about 3,290 on the Mac on 2026-10-19); every whole --plan fast on the Mac (a fallback, a T3
-# release) still runs them. Missing, failed or for another tree, the Mac runs the whole --plan fast as before.
+# The fallback with the switch off (#2160): the same two halves on the owner's VPS runner sm-vps-t1 (linux-t1.yml), on
+# the same merge commit; linux-t1.yml skips them while the switch is on (#2442). Its SessionKitCoreTests run on Linux,
+# which leaves out the few Darwin-only core tests (3,281 there against about 3,290 on the Mac on 2026-10-19); every
+# whole --plan fast on the Mac (a fallback, a T3 release) still runs them. Missing, failed or for another tree, the
+# Mac runs the whole --plan fast as before.
 VPS_FAST_CHECKS = {'vps fast: portable': 'fast-portable', 'sessionkit-core': 'linux-sessionkit-core'}
 HOSTED_TESTED_TITLE = 'lane-hosted-tested'
 HOSTED_TESTED = re.compile(r'^plan=(\S+) tree=([0-9a-f]{40}) parents=([0-9a-f]{40}) ([0-9a-f]{40})\s*$')
