@@ -26,7 +26,7 @@ Publishers: BMC (Springer Nature); BMJ; Cell Press (Elsevier); Elsevier; F1000 (
 - Median clutter rate: **24.2%** of spoken words
 - Median missing body text: **0.9%**
 - Median reading-order breaks: 2.38 per 1000 body words
-- Median extraction time: 792 ms
+- Median extraction time: 808 ms
 
 ### Failure categories ranked by listener cost
 
@@ -447,8 +447,8 @@ Ranked by listener cost per minute of real body text.
 - Papers scored: 65; produced no text: 1 (pmc-pmc11960816-imageonly)
 - Median clutter rate: **10.3%** of spoken words
 - Median missing body text: **1.0%**
-- Median reading-order breaks: 1.02 per 1000 body words
-- Median extraction time: 936 ms
+- Median reading-order breaks: 1.00 per 1000 body words
+- Median extraction time: 905 ms
 
 ### Failure categories ranked by listener cost
 
@@ -457,7 +457,7 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 | Rank | Category | Corpus total (min) | Median per paper (min) | Papers ≥ 30 s |
 | ---: | --- | ---: | ---: | ---: |
-| 1 | Math read as symbols and letters | 187 | 0.7 | 35 |
+| 1 | Math read as symbols and letters | 186 | 0.7 | 35 |
 | 2 | Reading order broken (columns, floats) | 118 | 0.7 | 40 |
 | 3 | Body text missing (never spoken) | 89 | 0.4 | 31 |
 | 4 | Table cells read aloud | 80 | 0.0 | 17 |
@@ -478,19 +478,19 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 | Category | Words | Share of spoken |
 | --- | ---: | ---: |
-| body | 415706 | 75.4% |
-| math | 28921 | 5.2% |
-| caption | 26919 | 4.9% |
+| body | 415751 | 75.4% |
+| math | 28894 | 5.2% |
+| caption | 26924 | 4.9% |
 | table | 12473 | 2.3% |
 | unattributed_prose | 10716 | 1.9% |
-| reference | 10326 | 1.9% |
-| back_matter | 9350 | 1.7% |
+| reference | 10330 | 1.9% |
+| back_matter | 9351 | 1.7% |
 | announcement | 7538 | 1.4% |
-| equation | 6583 | 1.2% |
+| equation | 6580 | 1.2% |
 | front_matter | 4515 | 0.8% |
-| repeated | 4381 | 0.8% |
-| furniture | 4124 | 0.7% |
-| inline_residue | 4000 | 0.7% |
+| repeated | 4376 | 0.8% |
+| furniture | 4136 | 0.8% |
+| inline_residue | 3972 | 0.7% |
 | fragment | 1758 | 0.3% |
 | footnote | 1627 | 0.3% |
 | authors | 782 | 0.1% |
