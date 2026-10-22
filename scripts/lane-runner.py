@@ -2843,6 +2843,57 @@ def cleanup(github: GitHub, run_url: str, mode: str = 'any', hosted: bool = Fals
     return 0
 
 
+LOST_REASON = ('The lane job ended without running or reporting: its runner was lost, or the job was cancelled or '
+               'killed before its first step (GitHub shows "The self-hosted runner lost communication with the server" '
+               'for a runner that stopped answering)')
+
+
+def report_lost(github: GitHub, pr: int, run_id: str, attempt: str | None, event_head: str, base: str,
+                run_url: str) -> int:
+    """Answer a /lane request whose lane job ended with no report and no tidy-up of its own (#2174).
+
+    A job whose runner is lost runs no step, so neither its Verdict nor its tidy step can speak and the PR keeps
+    lane:queued with the request unanswered. lane.yml's `lane-lost` job, on a runner that is not the lane's, runs
+    this after the lane job failed or was cancelled. It posts an INCONCLUSIVE report for the pending T2/T3 request,
+    naming the run, and frees the labels as cleanup() does. The report names no tested commit, so the auto-revert
+    never counts it against a lane change. Does nothing when the lane job reported or tidied up, the PR moved on,
+    or there is no unanswered request.
+    """
+    pull = github.pull()
+    if pull.get('state', 'open') != 'open' or pull['head']['sha'] != event_head:
+        print('The PR moved on or closed; nothing to report.')
+        return 0
+    comments = github.comments()
+    name = request_name(pr, run_id, attempt)
+    for comment in comments:
+        body = comment.get('body') or ''
+        if body.startswith(f'Lane report {name} ') or f'Lane: the runner stopped before reporting ({run_url})' in body:
+            print(f'This run already reported ({comment.get("html_url")}); nothing to add.')
+            return 0
+    request, desk_waiting = pending_requests(comments)
+    changed = False
+    if request is not None and request['tier'] in RUNNER_TIERS:
+        details = [f'{LOST_REASON}. Run {run_url} (attempt {attempt or "1"}) has no steps or log to read; the Mac '
+                   "runner's _diag logs for that time say why. No test ran. To try again, comment the same "
+                   f'`/lane {request["tier"]}` request with the same `tests:` line and add lane:queued.']
+        github.comment(report(name, 'INCONCLUSIVE', event_head, 'unknown', request['tier'], 'no runner', 0,
+                              'nothing', details, 'none', 'none', NOT_VERIFIED,
+                              identity(request['tier'], event_head, '', request['tests']), '', base))
+        changed = True
+    else:
+        print('No unanswered T2/T3 request; only the labels come off.')
+    labels = {label['name'] for label in pull.get('labels', [])}
+    if RUNNING in labels:
+        github.relabel(RUNNING, None)
+        changed = True
+    if not desk_waiting and QUEUED in labels:
+        github.relabel(QUEUED, None)
+        changed = True
+    if changed:  # nothing posted and no label left: the lane job had already answered; don't wake the dispatcher
+        github.relabel(DONE, DONE)  # the Hourly dispatch wakes on lane:done's
+    return 0
+
+
 def fetch_base(tree: Path, base: str) -> str:
     """Fetch the newest base branch into the tree and return its commit."""
     subprocess.run(git_with_token(tree) + ['fetch', '--no-tags', '--quiet', 'origin', base], check=True)
@@ -2899,6 +2950,8 @@ def main(argv=None) -> int:
     parser.add_argument('--tree', type=Path, default=ROOT, help='checkout of the PR head to test')
     parser.add_argument('--base', help='branch the PR merges into (default: the trunk, scripts/trunk.py)')
     parser.add_argument('--cleanup', action='store_true', help='tidy up after a cancelled or failed job')
+    parser.add_argument('--lost', action='store_true',
+                        help='report a lane job that ended with no report (its runner was lost); runs on another runner')
     parser.add_argument('--hosted', action='store_true', help='auto only: T0 or ops Python tests, no Mac setup')
     parser.add_argument('--mode', choices=['explicit', 'auto', 'release', 'any'], default='any',
                         help='explicit: answer /lane requests only; auto: the automerge label only; release: the '
@@ -2924,6 +2977,9 @@ def main(argv=None) -> int:
     if os.environ.get('RUNNER_TEMP'):  # one job's own folder, shared by its run and its cleanup step
         TESTED_RECORD = Path(os.environ['RUNNER_TEMP']) / \
             f'sm-lane-tested-{args.run_id}-{os.environ.get("GITHUB_RUN_ATTEMPT") or "1"}.json'
+    if args.lost:
+        return report_lost(github, args.pr, args.run_id, os.environ.get('GITHUB_RUN_ATTEMPT'), args.event_head,
+                           args.base, run_url)
     if args.cleanup:
         return cleanup(github, run_url, args.mode, hosted=args.hosted)
     STEP_RUNS.clear()
