@@ -73,6 +73,10 @@ class Router:
         self.writes.append(('POST', path, body))
         return {}
 
+    def patch(self, path, body):
+        self.writes.append(('PATCH', path, body))
+        return {}
+
     def delete(self, path):
         self.writes.append(('DELETE', path, None))
         return {}
@@ -560,6 +564,108 @@ class ReleasingClaims(unittest.TestCase):
         _, text = self.run_main('--apply')
         self.assertEqual(self.router.writes, [])
         self.assertIn('no claim was judged stale', text)
+
+
+def merged_pull(number, body, merged_at=None):
+    return {'number': number, 'title': f'PR {number}', 'body': body, 'merged_at': merged_at}
+
+
+class MergedFixStillReady(unittest.TestCase):
+    """Rule 8: a ready issue whose `Closes #N` PR merged only waits on validation, so --apply takes it off the queue."""
+    MERGED = '2026-10-14T12:00:00Z'
+
+    def build(self, labels=('ready', 'found-on-phone'), pulls=(), open_pr=None, comments=(), milestone_open=True):
+        router = world(ready=[issue(70, labels, title='Phone bug')], comments=list(comments))
+        router.on(r'^pulls\?state=closed', list(pulls))
+        router.on(r'^milestones\?state=open', [{'number': 7, 'title': sweep.VALIDATION_MILESTONE}] if milestone_open else [])
+        router.on(r'^issues/70/comments\?since', [])
+        router.on(r'^issues/70$', {'number': 70, 'state': 'open', 'labels': [{'name': n} for n in labels]})
+        rows = [dict(pr(900, None, armed=False), issues=[70], issue=70)] if open_pr else []
+        return router, rows
+
+    def apply(self, router, rows):
+        original = sm_status.snapshot
+        sm_status.snapshot = lambda api, now: snapshot(rows)
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                sweep.main(['--apply'], api=router, now=NOW)
+            return out.getvalue()
+        finally:
+            sm_status.snapshot = original
+
+    def test_a_merged_closes_pr_takes_the_issue_off_the_queue(self):
+        router, rows = self.build(pulls=[merged_pull(800, 'Closes #70', self.MERGED)])
+        text = self.apply(router, rows)
+        self.assertIn('FIX-MERGED', text)
+        self.assertIn('[released]', text)
+        self.assertIn(('POST', 'issues/70/labels', {'labels': ['agent-verify']}), router.writes)
+        self.assertIn(('PATCH', 'issues/70', {'milestone': 7}), router.writes)
+        self.assertIn(('DELETE', 'issues/70/labels/ready', None), router.writes)
+        comment = next(b['body'] for m, p, b in router.writes if p == 'issues/70/comments')
+        self.assertIn('fix merged in #800 on 2026-10-14; waiting on validation (2026-10-17 call)', comment)
+        removed = [p for m, p, b in router.writes if m == 'DELETE']
+        self.assertEqual(removed, ['issues/70/labels/ready'])          # found-on-phone is never removed, nothing is closed
+        self.assertNotIn('"state"', json.dumps(router.writes))
+        self.assertEqual(router.writes[-1], ('DELETE', 'issues/70/labels/ready', None))   # ready last, so a failure retries
+
+    def test_without_apply_it_only_reports(self):
+        router, rows = self.build(pulls=[merged_pull(800, 'Fixes #70', self.MERGED)])
+        facts = sweep.collect(router, NOW, snapshot(rows))
+        actions, _ = sweep.decide(facts)
+        self.assertEqual([a['rule'] for a in actions if a['rule'] == 'fix-merged'], ['fix-merged'])
+        self.assertEqual(router.writes, [])
+
+    def test_part_of_or_refs_only_is_skipped(self):
+        for body in ('Part of #70', 'Refs #70', 'See #70'):
+            with self.subTest(body=body):
+                router, rows = self.build(pulls=[merged_pull(800, body, self.MERGED)])
+                self.apply(router, rows)
+                self.assertEqual(router.writes, [])
+
+    def test_an_unmerged_closed_pr_is_not_a_fix(self):
+        router, rows = self.build(pulls=[merged_pull(800, 'Closes #70', None)])
+        self.apply(router, rows)
+        self.assertEqual(router.writes, [])
+
+    def test_a_merged_fix_with_an_open_follow_up_pr_is_skipped(self):
+        router, rows = self.build(pulls=[merged_pull(800, 'Closes #70', self.MERGED)], open_pr=True)
+        self.apply(router, rows)
+        self.assertEqual(router.writes, [])
+
+    def test_an_existing_validation_label_is_kept_and_ready_still_comes_off(self):
+        for label in ('validate-by-use', 'agent-verify'):
+            with self.subTest(label=label):
+                router, rows = self.build(labels=('ready', label), pulls=[merged_pull(800, 'Closes #70', self.MERGED)])
+                self.apply(router, rows)
+                self.assertNotIn('issues/70/labels', [p for m, p, b in router.writes if m == 'POST'])
+                self.assertIn(('DELETE', 'issues/70/labels/ready', None), router.writes)
+                self.assertIn(('PATCH', 'issues/70', {'milestone': 7}), router.writes)
+
+    def test_a_recent_claim_or_comment_is_skipped(self):
+        router, rows = self.build(pulls=[merged_pull(800, 'Closes #70', self.MERGED)],
+                                  comments=[claim(70, 'Fix thread', at(minutes=30))])
+        self.apply(router, rows)
+        self.assertEqual(router.writes, [])
+        router, rows = self.build(pulls=[merged_pull(800, 'Closes #70', self.MERGED)],
+                                  comments=[note(70, 'looking at it', at(hours=1))])
+        self.apply(router, rows)
+        self.assertEqual(router.writes, [])
+
+    def test_a_missing_milestone_or_unreadable_pr_list_writes_nothing(self):
+        router, rows = self.build(pulls=[merged_pull(800, 'Closes #70', self.MERGED)], milestone_open=False)
+        self.apply(router, rows)
+        self.assertEqual(router.writes, [])
+        router, rows = self.build()
+        router.on(r'^pulls\?state=closed', sm_status.GitHubError('HTTP 502'))
+        self.apply(router, rows)
+        self.assertEqual(router.writes, [])
+        self.assertIsNone(sweep.collect(router, NOW, snapshot(rows))['merged_fixes'])
+
+    def test_the_closed_pr_read_is_one_batched_call_not_one_per_issue(self):
+        router, rows = self.build(pulls=[merged_pull(800, 'Closes #70', self.MERGED)])
+        sweep.collect(router, NOW, snapshot(rows))
+        self.assertEqual(len([r for r in router.reads if r.startswith('pulls?state=closed')]), 1)
 
 
 class Output(unittest.TestCase):
