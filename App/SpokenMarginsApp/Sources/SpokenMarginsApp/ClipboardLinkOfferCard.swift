@@ -27,12 +27,24 @@ final class ClipboardLinkOfferModel: ObservableObject {
     var showsCard: Bool { offer.isOffered || isAdding }
 
     func refresh() async {
+        let check = await Self.checkClipboard()
+        // Checks can overlap (appearing, returning to the app, a copy). A stale answer is dropped; the copy that outdated it triggers its own check.
+        #if canImport(UIKit)
+        guard UIPasteboard.general.changeCount == check.changeCount else { return }
+        #endif
+        offer.observe(changeCount: check.changeCount, holdsProbableLink: check.holdsProbableLink)
+    }
+
+    /// Reads the change count and asks iOS whether the clipboard looks like a web link. Neither reads the copied text.
+    private nonisolated static func checkClipboard() async -> (changeCount: Int, holdsProbableLink: Bool) {
         #if canImport(UIKit)
         let pasteboard = UIPasteboard.general
         let changeCount = pasteboard.changeCount
         let probableLink: PartialKeyPath<UIPasteboard.DetectedValues> = \.probableWebURL
         let found = (try? await pasteboard.detectedPatterns(for: [probableLink])) ?? []
-        offer.observe(changeCount: changeCount, holdsProbableLink: found.contains(probableLink))
+        return (changeCount, found.contains(probableLink))
+        #else
+        return (0, false)
         #endif
     }
 
@@ -86,12 +98,14 @@ struct ClipboardLinkOfferCard: View {
                         .frame(minWidth: 44, minHeight: 44)
                 } else {
                     action("Add to Library", play: false)
-                    action("Add and play", play: true)
+                    // With something already playing the import adds without interrupting it, so don't promise play.
+                    if !model.hasActiveSession { action("Add and play", play: true) }
                 }
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("library.clipboardLink.card")
+        .onCompatibleChange(of: clipboard.offer.changeCount) { _ in message = nil }
     }
 
     private func action(_ title: String, play: Bool) -> some View {
