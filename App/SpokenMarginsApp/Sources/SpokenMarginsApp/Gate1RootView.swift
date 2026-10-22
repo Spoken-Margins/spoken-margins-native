@@ -628,20 +628,6 @@ func sessionProgressDescription(_ session: Session) -> String {
     return "\(session.completionPercent)% complete"
 }
 
-enum AppLinks {
-    static var privacy: URL {
-        URL(string: "https://spokenmargins.proximitytoprogress.com/privacy/") ?? URL(fileURLWithPath: "/")
-    }
-
-    static var support: URL {
-        URL(string: "https://spokenmargins.proximitytoprogress.com/support/") ?? URL(fileURLWithPath: "/")
-    }
-
-    static var versionDescription: String {
-        BuildIdentity.describe(info: Bundle.main.infoDictionary ?? [:])
-    }
-}
-
 enum AppColors {
     static let listeningBackground = dynamicColor(AppSemanticColorRGB.listeningBackground)
     static let captureBackground = dynamicColor(AppSemanticColorRGB.captureBackground)
