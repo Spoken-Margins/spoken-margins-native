@@ -22,7 +22,10 @@ class LibraryRowDynamicTypeTests(unittest.TestCase):
         strip = text[text.index("private var onboardingStrip"):text.index("private var controls")]
         self.assertIn("if dynamicTypeSize.isAccessibilitySize", strip)
         self.assertIn("ViewThatFits(in: .horizontal)", text[text.index("private var onboardingContent"):])
-        self.assertEqual(text.count("Button(\"Hear overview\")"), 1, "the two buttons are written once")
+        self.assertEqual(text.count("Text(\"Hear overview\")"), 1, "the two buttons are written once")
+        # A label wider than the column wraps instead of being cut off (#2056).
+        actions = text[text.index("private var onboardingActions"):text.index("private var onboardingDismiss")]
+        self.assertEqual(actions.count(".fixedSize(horizontal: false, vertical: true)"), 2)
 
     def test_the_icon_tile_and_play_circle_scale_but_never_shrink_below_default(self):
         text = _text()
