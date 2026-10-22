@@ -120,7 +120,7 @@ class PointerGuardTests(GuardTestCase):
         self.assertEqual(self.steps(), [(lane.LFS_STEP, 'PASS')])
 
     def test_a_job_that_skips_lfs_on_purpose_is_not_checked(self):
-        # sm-vps-t1's hosted checks and the hosted fast checks keep pointers on purpose.
+        # the hosted fast checks keep pointers on purpose.
         for value in ('1', 'true', 'TRUE'):
             os.environ['GIT_LFS_SKIP_SMUDGE'] = value
             self.assertIsNone(lane.ensure_lfs_files(self.tree, run=lambda *a, **k: self.fail('skipped jobs repair nothing')))

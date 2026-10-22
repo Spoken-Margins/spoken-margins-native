@@ -1,15 +1,10 @@
 # Hosted T1 on Linux: SessionKit's Foundation-only modules and their tests (SessionKitCoreTests) on a
-# GitHub-hosted ubuntu runner, the job linux-t1.yml runs on the owner's VPS today (#1389).
-#
-# Draft, started by hand only. The private repo's free Linux minutes ran out on 2026-10-07 (#1023), and
-# spending money needs the owner. Once the repo is public, standard hosted runners are free, and this
-# takes over from linux-t1.yml as the per-PR T1 (the PR that adds a pull_request trigger here retires
-# linux-t1.yml and the sm-vps-t1 runner in the same change).
-# GitHub offers workflow_dispatch only for a workflow file that is on the default branch (main). Until
-# the owner moves main past this file, `gh workflow run <file> --ref next` is likely to be refused.
+# GitHub-hosted ubuntu runner (#1389). By hand only: linux-t1.yml, which ran it per PR on the owner's VPS, was
+# retired in #2442, because the lane takes SessionKitCoreTests from hosted-portable.yml (macOS) and a per-PR check
+# that blocks no merge is not kept (owner, 2026-10-21). Run it when a change may break the Linux build.
 #
 # #1384's benchmark: `swift:6.2` on ubuntu-latest clean-built and tested a package of this shape in about
-# 3.5 minutes. The toolchain is pinned to 6.2.4, the same as the VPS runner, so the two can't disagree.
+# 3.5 minutes. The toolchain is pinned to 6.2.4, the same as substack-canary.yml.
 name: hosted-sessionkit-linux
 
 on:

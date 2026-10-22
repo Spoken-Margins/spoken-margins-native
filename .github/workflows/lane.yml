@@ -3,7 +3,7 @@
 #
 # A stream asks by commenting `/lane T2` or `/lane T3` on its PR into next and adding the
 # lane:queued label. The automerge label asks for the checks a finished PR needs without a comment:
-# --plan fast for Mac diffs; T0 and ops plus docs run on the VPS runner (#861), with no app build, again on
+# --plan fast for Mac diffs; T0 and ops plus docs run on a GitHub-hosted Linux runner (#861, #2442), with no app build, again on
 # every push while the label stays. On PASS the runner merges the PR itself (decision 3, approved by
 # the owner): it tests the exact merge commit, next first, and pushes it to next, unless the PR
 # is an audio, persistence, packet or lane change with no clean Codex audit of its head yet
@@ -40,7 +40,7 @@
 # own), the Python tools, Git LFS from a cache, and Xcode's compilation cache; afterwards the evidence is uploaded as the
 # run's `lane-evidence` artifact. On the Mac those steps are skipped and the job runs exactly as before. Unset (the
 # private repo, whose hosted minutes cost money), nothing changes. The `automerge` and `release` jobs stay on the Mac
-# or the VPS. Set it once the repo is public: `gh variable set LANE_HOSTED_APP --body on`.
+# or a GitHub-hosted Linux runner. Set it once the repo is public: `gh variable set LANE_HOSTED_APP --body on`.
 name: lane
 
 # The run name carries what scripts/lane_dedupe.py needs to tell this PR's runs apart (#860): the PR, the
@@ -93,8 +93,8 @@ jobs:
         (github.event.action != 'labeled' || github.event.label.name == 'lane:queued')) ||
        (contains(github.event.pull_request.labels.*.name, 'automerge') &&
         (github.event.action != 'labeled' || github.event.label.name == 'automerge')))
-    # The owner's VPS runner (sm-vps), not a GitHub-hosted one: the free Linux minutes ran out in October.
-    runs-on: [self-hosted, Linux, sm-vps]
+    # GitHub-hosted (free for the public repo; on the owner's VPS until #2442), so it never queues behind a lane job.
+    runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
       contents: read
@@ -110,8 +110,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Policy and code from the base, never PR code with the runner-discovery token.
-          ref: ${{ github.event.pull_request.base.sha }}
+          # Policy and code from the base branch's tip, never PR code with the runner-discovery token. Not
+          # pull_request.base.sha: a PR's recorded base only moves when the PR does, so a label event on an older PR
+          # routed with stale rules (2026-10-22: #2454 kept the pre-#2458 Mac route after #2458 merged).
+          ref: ${{ github.event.pull_request.base.ref }}
           persist-credentials: false
           # No LFS downloads or history needed to classify infrastructure paths.
           sparse-checkout: |
@@ -135,6 +137,10 @@ jobs:
         env:
           # #1389 phase 2: `on` sends the lane job (T2/T3) to a GitHub-hosted Mac (test-scope.py hosted_app_routing).
           LANE_HOSTED_APP: ${{ vars.LANE_HOSTED_APP }}
+          # #2459: with LANE_HOSTED_FAST `on`, every automerge job starts on hosted Linux (test-scope.py
+          # hosted_merge_routing); with LANE_HOSTED_MAC_REST `on` too it merges there on the three hosted checks.
+          LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
+          LANE_HOSTED_MAC_REST: ${{ vars.LANE_HOSTED_MAC_REST }}
         run: |
           # The base can predate this helper while this workflow is first being introduced.
           if python3 scripts/test-scope.py --runner-routing "$GITHUB_EVENT_PATH" "$RUNNER_TEMP/files.json" "$RUNNER_TEMP/runners.json" > "$RUNNER_TEMP/route.json"; then
@@ -210,6 +216,10 @@ jobs:
       BASE_REF: ${{ github.event.pull_request.base.ref }}
       SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
       RUN_ID: ${{ github.run_id }}
+      # #2459: a T3 PASS releases the held automerge run here, and when the three hosted checks stand for the head
+      # it merges on them in seconds instead of handing host tests to the build Mac (merge_after_t3).
+      LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
+      LANE_HOSTED_MAC_REST: ${{ vars.LANE_HOSTED_MAC_REST }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -321,8 +331,13 @@ jobs:
 
   automerge:
     needs: route
-    # T0 and ops plus docs run on the VPS runner sm-vps-t1 (#861; GitHub-hosted minutes ran out, #1023);
-    # everything else stays on the Mac.
+    # T0 and ops plus docs run on a GitHub-hosted Linux runner (#861; the VPS runner sm-vps-t1 until #2442).
+    # #2459: with LANE_HOSTED_FAST `on`, every other diff starts there too, and a PR held for T3 is reported held in
+    # seconds, taking no Mac. Otherwise it waits there for the hosted checks (hosted-portable.yml) on the head; a failed
+    # one is the PR's FAIL. With LANE_HOSTED_MAC_REST `on` too it merges on all three and runs no test. With it off
+    # (until #2469), once the pair has finished it posts nothing and sets needs_mac, and automerge-mac below runs
+    # --plan fast-mac-rest on the build Mac and merges, so the Mac never idles waiting for the pair. The same hand-off
+    # happens when the checks can't be had. With LANE_HOSTED_FAST unset, those diffs stay on the Mac as before.
     # A routing failure leaves the normal Mac default below. Explicit lane requests always stay on Mac.
     # The build-only runner waits for room first (lane-runner.py, wait_for_room_to_test_on_host).
     if: >-
@@ -340,6 +355,8 @@ jobs:
       group: lane-auto-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: false
     timeout-minutes: 150
+    outputs:
+      needs_mac: ${{ steps.run.outputs.needs_mac }}
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -349,10 +366,11 @@ jobs:
       BASE_REF: ${{ github.event.pull_request.base.ref }}
       SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
       RUN_ID: ${{ github.run_id }}
-      HOSTED_ARGS: ${{ contains(fromJSON(needs.route.outputs.automerge || '[]'), 'sm-vps-t1') && '--hosted' || '' }}
+      HOSTED_ARGS: ${{ contains(fromJSON(needs.route.outputs.automerge || '[]'), 'ubuntu-latest') && '--hosted' || '' }}
       # #1389 rollout guard: `on` once the repo is public, and the runner takes the hosted fast checks' PASS
       # (hosted-portable.yml) and runs only --plan fast-mac-rest on the Mac. Unset, the whole --plan fast, as before.
       LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
+      LANE_HOSTED_MAC_REST: ${{ vars.LANE_HOSTED_MAC_REST }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -360,14 +378,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           # Mac host tests need the LFS models; hosted T0/ops checks read none of them.
-          lfs: ${{ !contains(fromJSON(needs.route.outputs.automerge || '[]'), 'sm-vps-t1') }}
+          lfs: ${{ !contains(fromJSON(needs.route.outputs.automerge || '[]'), 'ubuntu-latest') }}
       - name: Prepare hosted evidence
         if: env.HOSTED_ARGS == '--hosted'
         run: |
           echo "GIT_LFS_SKIP_SMUDGE=1" >> "$GITHUB_ENV"
           echo "SM_LANE_EVIDENCE_DIR=$RUNNER_TEMP/lane-evidence" >> "$GITHUB_ENV"
-          # Kept between runs on this one runner, so the step ledger (lane_ledger.py, #1200) sees hosted runs too.
-          echo "SM_LANE_STATE_DIR=$HOME/.cache/sm-lane-hosted" >> "$GITHUB_ENV"
+          # The machine is the job's alone and gone afterwards (#2442), so the lane state is too: the step ledger
+          # (lane_ledger.py, #1200) on the Mac no longer sees these T0/ops runs.
+          echo "SM_LANE_STATE_DIR=$RUNNER_TEMP/lane-state" >> "$GITHUB_ENV"
       - name: Take the lane runner from the base branch
         run: git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
       - name: Run the request
@@ -405,6 +424,68 @@ jobs:
           path: ${{ runner.temp }}/lane-evidence
           retention-days: 7
 
+  automerge-mac:
+    # #2459: the hosted automerge job above handed this run over and posted nothing: with LANE_HOSTED_MAC_REST off,
+    # because the hosted pair passed on this head; or because the hosted checks could not be had (one missing,
+    # cancelled or never recorded, or next kept moving under them). This runs the automerge run the old way, on the
+    # build Mac with its room rules: the hosted pair if it stands, and --plan fast-mac-rest here.
+    # It asks for sm-lane-build only, never the priority runner (#2147) or the simulator runner.
+    needs: [route, automerge]
+    if: >-
+      !cancelled() && needs.automerge.outputs.needs_mac == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (github.event.pull_request.base.ref == (vars.SM_TRUNK || 'main') || startsWith(github.event.pull_request.base.ref, 'lane-check/')) &&
+      contains(github.event.pull_request.labels.*.name, 'automerge')
+    runs-on: [self-hosted, macOS, sm-lane-build]
+    # The automerge job's group: it has finished by now, and a newer push's pending run replaces this one.
+    concurrency:
+      group: lane-auto-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      # Event values reach the shell only through these variables, always quoted.
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+      SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
+      RUN_ID: ${{ github.run_id }}
+      LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
+      LANE_HOSTED_MAC_REST: ${{ vars.LANE_HOSTED_MAC_REST }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          lfs: true
+      - name: Take the lane runner from the base branch
+        run: git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
+      - name: Run the request
+        id: run
+        run: >-
+          /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
+          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode auto
+      # As the automerge job's: red only on FAIL (#184).
+      - name: Verdict
+        if: steps.run.outputs.reported == 'true'
+        env:
+          VERDICT: ${{ steps.run.outputs.verdict }}
+        run: |
+          echo "Lane verdict: $VERDICT (the report is on the PR)"
+          if [ "$VERDICT" = FAIL ]; then
+            echo "::error title=Lane FAIL::The lane reported FAIL. The report on the PR says why."
+            exit 1
+          elif [ "$VERDICT" != PASS ]; then
+            echo "::warning title=Lane $VERDICT::The lane reported $VERDICT, not a pass. The report on the PR says why."
+          fi
+      - name: Tidy up after a cancelled or failed run
+        if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'
+        run: >-
+          /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --cleanup --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
+          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode auto
+
   release:
     # #1209: the automerge run a T3 PASS released, handed over by the lane job (see the top of this file). It runs
     # on a build runner under the build runner's room rules, then tests the merge commit and merges on PASS, as
@@ -431,6 +512,7 @@ jobs:
       SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
       RUN_ID: ${{ github.run_id }}
       LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
+      LANE_HOSTED_MAC_REST: ${{ vars.LANE_HOSTED_MAC_REST }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -496,10 +578,56 @@ jobs:
           gh api -X DELETE "repos/$GH_REPO/issues/$PR_NUMBER/labels/lane%3Adone" > /dev/null 2>&1 || true
           gh api "repos/$GH_REPO/issues/$PR_NUMBER/labels" -f 'labels[]=lane:done' > /dev/null
 
+  # A lane job whose runner is lost runs no step, so neither its tidy-up nor its report can speak: the PR keeps
+  # lane:queued with its /lane request unanswered, and a held automerge run waits on a report that never comes
+  # (#2174: the Mac runner's worker did not start within the runner's 30-second hand-over, GitHub failed the job
+  # ten minutes later with "lost communication", and #2049 was left with nothing). This job runs on a GitHub-hosted
+  # Linux runner (never the Mac the lane job was lost on), only when the lane job failed. `lane-runner.py --lost`,
+  # taken from the base branch, finds out whether the lane job reported or tidied up (then it does nothing) and
+  # otherwise posts an INCONCLUSIVE report naming the run and takes lane:queued and lane:running off. Not a lane
+  # result: a failure here must not change the run's outcome. A cancelled lane job (replaced by a newer run of the
+  # same PR, or cancelled by hand) is not handled here.
+  lane-lost:
+    needs: [route, lane]
+    if: >-
+      always() && needs.lane.result == 'failure' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Report a lane job that ended without a report
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          # Base-branch code only, written under another name first so a failed download leaves nothing to run.
+          if ! gh api -H 'Accept: application/vnd.github.raw' "repos/$GH_REPO/contents/scripts/lane-runner.py?ref=$BASE_REF" \
+              > "$RUNNER_TEMP/lane-runner.py.part"; then
+            echo "::error::Could not download lane-runner.py from $BASE_REF; the lost lane job on this PR was not reported."
+            exit 1
+          fi
+          mv "$RUNNER_TEMP/lane-runner.py.part" "$RUNNER_TEMP/lane-runner.py"
+          if ! grep -q -e '--lost' "$RUNNER_TEMP/lane-runner.py"; then
+            echo '::warning::The base branch'"'"'s lane-runner.py has no --lost yet; nothing reported.'
+            exit 0
+          fi
+          python3 "$RUNNER_TEMP/lane-runner.py" --lost --tree "$RUNNER_TEMP" --pr "$PR_NUMBER" \
+            --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF"
+
   # Tell the coordinator when a Mac lane runner is left idle (#1215). One job per Mac job, so the
   # notice comes when either frees its runner, not when both are done (a PR with both labels runs
   # both). Each runs on the owner's VPS runner (never a Mac runner, so it can't queue behind a lane
-  # job), with sm_lane_open.py taken from the base branch's tip. The script reads the runner list and
+  # job), with sm_lane_open.py taken from the base branch's tip. They stay on the VPS when everything else left it
+  # (#2442): the 10-minute limit is a state file shared by every PR's runs, which hosted runners can't share. The script reads the runner list and
   # the jobs still waiting for a lane runner; if a runner is idle with no job to take it, it sends
   # "Lane open-<time>: <free> free, <queued> queued" through the Dial relay, at most once per 10
   # minutes (one state file on that runner, so the two jobs share it). With the two secrets unset, or
