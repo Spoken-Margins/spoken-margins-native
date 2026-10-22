@@ -100,6 +100,31 @@ public enum ListeningEditionBatch {
         }
     }
 
+    /// One message for a set of result lines, for a place with no results list (the Add sheet's Files route, #2373).
+    /// `isFailure` is true when any file was not imported or kept a different map, and the message then names each one.
+    public struct Summary: Equatable, Sendable {
+        public let message: String
+        public let isFailure: Bool
+    }
+
+    public static func summary(of lines: [Line]) -> Summary {
+        let imported = lines.filter { $0.outcome == .imported }
+        let already = lines.filter { $0.outcome == .alreadyImported }
+        let problems = lines.filter { $0.outcome.isFailure }
+        let done = imported.count + already.count
+        var parts: [String] = []
+        if problems.isEmpty {
+            if lines.count == 1, let line = lines.first { return Summary(message: line.message, isFailure: false) }
+            parts.append("Imported \(imported.count) \(imported.count == 1 ? "edition" : "editions").")
+            if !already.isEmpty { parts.append("\(already.count) already in your Library.") }
+            return Summary(message: parts.joined(separator: " "), isFailure: false)
+        }
+        if done > 0 { parts.append("Imported \(done) of \(lines.count) \(lines.count == 1 ? "file" : "files").") }
+        else if lines.count > 1 { parts.append("None of the \(lines.count) files could be imported as a Listening Edition.") }
+        parts.append(contentsOf: problems.map(\.message))
+        return Summary(message: parts.joined(separator: " "), isFailure: true)
+    }
+
     /// "Import 3 editions", "Import 1 edition", or the idle label.
     public static func buttonTitle(count: Int) -> String {
         count == 0 ? "Import Editions" : "Import \(count) \(count == 1 ? "edition" : "editions")"

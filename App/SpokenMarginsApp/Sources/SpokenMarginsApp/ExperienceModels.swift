@@ -118,7 +118,7 @@ enum AddSourceRoute: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .linkOrPodcast: "Podcast episode, RSS feed, public audio, or readable web link"
         case .pastedText: "Create a listening item from text already on your clipboard"
-        case .documentOrBook: "Plain text, Markdown, text-based PDF, or DRM-free EPUB"
+        case .documentOrBook: "Plain text, Markdown, text-based PDF, DRM-free EPUB, or a Listening Edition"
         case .audiobook: "Import an app-owned MP3, M4A, M4B, or audio-bearing MP4"
         case .quickFolder: "Choose a folder whose eligible files appear in Sources"
         }

@@ -305,26 +305,12 @@ struct ListeningEditionImportScreen: View {
         .fileImporter(isPresented: $choosingFile, allowedContentTypes: [.json], allowsMultipleSelection: true) { result in
             do {
                 for url in try result.get() {
-                    picked.append(Self.entry(for: url, id: nextEntryID))
+                    picked.append(.reading(url: url, id: nextEntryID))
                     nextEntryID += 1
                 }
                 results = []
                 message = ""
             } catch { message = error.localizedDescription; messageIsFailure = true }
-        }
-    }
-
-    private static func entry(for url: URL, id: Int) -> ListeningEditionBatch.Entry {
-        let name = url.lastPathComponent
-        let access = url.startAccessingSecurityScopedResource()
-        defer { if access { url.stopAccessingSecurityScopedResource() } }
-        do {
-            guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 8_000_000 else {
-                return ListeningEditionBatch.Entry(id: id, name: name, error: "Listening edition exceeds 8 MB.")
-            }
-            return ListeningEditionBatch.Entry(id: id, name: name, data: try Data(contentsOf: url))
-        } catch {
-            return ListeningEditionBatch.Entry(id: id, name: name, error: error.localizedDescription)
         }
     }
 

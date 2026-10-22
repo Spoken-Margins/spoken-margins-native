@@ -47,6 +47,22 @@ extension Gate1AppModel {
         })
     }
 
+    /// Collection files picked from the Add sheet's Files route (#2373). Like a PDF added there, they land in the
+    /// Library and nothing opens or plays. Returns whether every file went in, so the sheet knows to close.
+    @discardableResult
+    func importListeningEditionFiles(_ urls: [URL]) -> Bool {
+        let entries = urls.enumerated().map { ListeningEditionBatch.Entry.reading(url: $1, id: $0) }
+        let lines = importListeningEditions(entries)
+        let summary = ListeningEditionBatch.summary(of: lines)
+        if lines.contains(where: { $0.outcome.isSuccess }) { markOnboardingSteps([.addedOwnSource, .addedFromFiles]) }
+        if summary.isFailure {
+            reportFailure(summary.message)
+        } else {
+            reportConfirmation(summary.message)
+        }
+        return !summary.isFailure
+    }
+
     func importListeningEditionDataForShortcut(_ data: Data) throws {
         try performListeningEditionImport(data, replaceMap: false)
     }
