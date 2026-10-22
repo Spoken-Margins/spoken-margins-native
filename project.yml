@@ -56,6 +56,7 @@ targets:
       - target: SpokenMarginsGate2Widget
       - target: SpokenMarginsShareExtension
       - target: SpokenMarginsBrowserTextExtension
+      - target: SpokenMarginsLiveCaptureExtension
       - package: SessionKit
         product: SessionKit
       - package: SessionKit
@@ -256,6 +257,39 @@ targets:
               ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "com.apple.property-list"
               ).@count > 0
               ).@count > 0
+  # Live capture (#2481): a ReplayKit broadcast upload extension that writes the phone's app audio to the App
+  # Group. It compiles two Foundation-only SessionKit files rather than linking SessionKit (50 MB memory limit).
+  SpokenMarginsLiveCaptureExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: App/SpokenMarginsLiveCaptureExtension/Sources
+        type: syncedFolder
+      - path: Packages/SessionKit/Sources/SessionKit/LiveCaptureFiles.swift
+      - path: Packages/SessionKit/Sources/SessionKit/LiveCapturePCM.swift
+    dependencies:
+      - sdk: ReplayKit.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.livecapture
+        CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsLiveCaptureExtension/SpokenMarginsLiveCaptureExtension.entitlements
+        CODE_SIGN_STYLE: Automatic
+        CURRENT_PROJECT_VERSION: "35"
+        ENABLE_DEBUG_DYLIB: NO
+        MARKETING_VERSION: "0.1"
+        SDKROOT: iphoneos
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+    info:
+      path: App/SpokenMarginsLiveCaptureExtension/Info.plist
+      properties:
+        CFBundleDisplayName: Spoken Margins Live
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.broadcast-services-upload
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).LiveCaptureSampleHandler
+          RPBroadcastProcessMode: RPBroadcastProcessModeSampleBuffer
   SpokenMarginsAppUITests:
     type: bundle.ui-testing
     platform: iOS
