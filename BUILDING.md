@@ -22,7 +22,7 @@ Install git-lfs and turn it on once, before cloning:
 
 ```sh
 git lfs install
-git clone https://github.com/uncomposed/spoken-margins-native.git
+git clone https://github.com/Spoken-Margins/spoken-margins-native.git
 cd spoken-margins-native
 git lfs pull
 ```

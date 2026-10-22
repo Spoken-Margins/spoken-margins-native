@@ -141,6 +141,9 @@ public final class SessionEngine {
     /// the "is the listener in this item?" check, so a test can open the item at exactly the point the check
     /// guards, with no dependence on how the scheduler orders main-actor tasks. Nil in the app.
     var afterStructuredUpgradePlannedForTesting: (() throws -> Void)?
+    /// Test seam (#2384): runs in the same task as a re-imported PDF's upgrade plan, just before it, so a test can
+    /// prove the plan is off the main actor by waiting there for something only the main actor can do. Nil in the app.
+    var whileStructuredUpgradeIsPlannedForTesting: (@Sendable () -> Void)?
 
     private struct PlaybackProgress {
         var sourcePercent: Int
@@ -957,7 +960,11 @@ public final class SessionEngine {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
         var outcome = try browserTextImportOutcome(handoff, structuredDocument: structuredDocument, upgrade: .deferred)
         if case .upgradeCandidate(let job) = outcome {
-            let planned = await Task.detached(priority: .userInitiated) { try? job.plan() }.value
+            let whilePlanned = whileStructuredUpgradeIsPlannedForTesting
+            let planned = await Task.detached(priority: .userInitiated) {
+                whilePlanned?()
+                return try? job.plan()
+            }.value
             try afterStructuredUpgradePlannedForTesting?()
             if case .success(let upgrade)? = planned, currentSession?.itemId != job.existing.id, currentItem?.id != job.existing.id {
                 do {

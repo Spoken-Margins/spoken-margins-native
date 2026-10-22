@@ -41,9 +41,13 @@ extension Gate1AppModel {
             diagnostics["speechVoiceAvailability"] = "unavailable"
             throw SessionKitError.persistenceFailed("selected_speech_voice_unavailable")
         }
-        if let voice = ttsVoiceSelection.supertonicVoice {
+        if ttsVoiceSelection.isOnDeviceVoice {
             // Supertonic's model is a download (#1820). The player follows the files live: Kitten reads until they
             // arrive, and after a download or a Remove the next play gets the right voice without a rebuild.
+            // Kitten picked as the voice (#2226) uses the same player held on Kitten: Supertonic never renders and
+            // none of its saved audio plays. `voice` then only gives saved Kitten audio its identity, as for James.
+            let selection = ttsVoiceSelection
+            let voice = selection.supertonicVoice ?? .m2
             try verifyCurrentTermsForOnDeviceVoice()
             let renderer = SupertonicDownloadedModelRenderer(model: self)
             let supportDirectory = try applicationSupportDirectory()
@@ -61,7 +65,7 @@ extension Gate1AppModel {
             let hooks = PreparedSpeechHooks(store: store, coordinator: coordinator, signatureTask: signatureTask) // #336
             Task { [weak self] in
                 guard let signature = try? await signatureTask.value,
-                      let self, self.ttsVoiceSelection.supertonicVoice == voice else { return }
+                      let self, self.ttsVoiceSelection == selection, !selection.choice.bundledVoiceIsChosen else { return }
                 self.currentSupertonicRenderSignature = signature
             }
             let diskCache: RenderedSpeechDiskCache
@@ -77,8 +81,19 @@ extension Gate1AppModel {
                 diskCache = created
             }
             let supertonicModel = supertonicModel
-            let renderingAllowed = supertonicModel.renderingAllowed(when: SupertonicModelNotDownloaded.governorAllowsRendering)
-            refreshSupertonicSessionDiagnostics(voice: voice)
+            let kittenIsChosen = selection.choice.bundledVoiceIsChosen
+            var savedSupertonicLookup: SupertonicSpeechPlaybackClient.PreparedChunkLookup?
+            if selection.choice.playsSavedSupertonicAudio {
+                savedSupertonicLookup = { await hooks.lookup(itemId: $0, articleIdentity: $1, plan: $2) }
+            }
+            let renderingAllowed: @Sendable () -> Bool
+            if kittenIsChosen {
+                renderingAllowed = { return false }
+                diagnostics["sessionTTS"] = "Kitten (chosen)"
+            } else {
+                renderingAllowed = supertonicModel.renderingAllowed(when: SupertonicModelNotDownloaded.governorAllowsRendering)
+                refreshSupertonicSessionDiagnostics(voice: voice)
+            }
             diagnostics["renderedSpeechCacheLimitMB"] = "\(renderedSpeechCacheLimitMB)"
             diagnostics["renderedSpeechCacheBytes"] = "\(diskCache.sizeBytes)"
             return SupertonicSpeechPlaybackClient(
@@ -87,7 +102,7 @@ extension Gate1AppModel {
                 speed: Float(speechRate / 0.5),
                 fallbackVoiceIdentifier: selectedVoice.isEmpty ? nil : selectedVoice,
                 fallbackRate: Float(speechRate),
-                diskCache: diskCache,
+                diskCache: selection.choice.playsSavedSupertonicAudio ? diskCache : nil,
                 preparedAudioDirectory: supportDirectory.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory),
                 voiceChangeCue: { [chime = NarrationVoiceChangeChime()] in _ = chime.play() },
                 onDeviceRenderingAllowed: renderingAllowed,
@@ -107,7 +122,7 @@ extension Gate1AppModel {
                 onPreparationPlan: { await hooks.planned(itemId: $0, articleIdentity: $1, plan: $2) },
                 onPreparedChunk: { await hooks.rendered(itemId: $0, articleIdentity: $1, plan: $2, audioURL: $3, durationMs: $4, engine: $5) },
                 articleText: { hooks.articleText(itemId: $0) },
-                preparedChunkLookup: { await hooks.lookup(itemId: $0, articleIdentity: $1, plan: $2) },
+                preparedChunkLookup: savedSupertonicLookup,
                 bundledVoiceChunkLookup: { await hooks.lookup(itemId: $0, articleIdentity: $1, plan: $2, engine: KittenNarrationRenderer.engine) },
                 onPreparedAudio: { [weak self] itemId, prepared in
                     Task { @MainActor [weak self] in
@@ -177,6 +192,8 @@ extension Gate1AppModel {
                 },
                 onBundledVoice: { [weak self] block, offset, _ in
                     Task { @MainActor [weak self] in
+                        // Kitten is the listener's choice, not a stand-in: nothing changed that needs explaining (#2226).
+                        if kittenIsChosen { self?.diagnostics["bundledVoice"] = "chosen"; return }
                         // Not downloaded is not a warm-phone warning; the one-time download card explains it (#1820).
                         if !supertonicModel.isModelPresent { self?.diagnostics["supertonicFallback"] = SupertonicModelNotDownloaded.fallbackCode; return }
                         self?.reportBundledVoiceTookOver(block: block, offset: offset)

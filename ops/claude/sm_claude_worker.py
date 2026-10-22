@@ -12,7 +12,7 @@ Dial gate counts against Claude's Threads box (ops/dial/dial_gate.py: only `Code
 Codex). So the worker never takes a slot the Dial has already given to a project thread.
 
 Job order (as the Codex worker's, which this replaces after 2026-10-15):
-1. A stalled PR into `next`: `needs-mac` (after the Mac finisher's hour), a lane FAIL on its
+1. A stalled PR into the trunk (`main`): `needs-mac` (after the Mac finisher's hour), a lane FAIL on its
    head, or audit findings on its head. At most two rounds per PR in 24 h. Never a PR labelled
    `blocked`, `needs-owner` or `deferred`: it waits for a human.
 2. A `ready` issue that carries `where:mac`. A pending hand-off first, then `priority`,
@@ -70,7 +70,7 @@ from trunk import trunk_branch  # noqa: E402  (#1492: the branch its PRs go into
 # Configuration
 # ---------------------------------------------------------------------------
 
-REPO = os.environ.get('SM_CLAUDE_WORKER_REPO', 'uncomposed/spoken-margins-native')
+REPO = os.environ.get('SM_CLAUDE_WORKER_REPO', 'Spoken-Margins/spoken-margins-native')
 DIAL_ISSUE = int(os.environ.get('SM_DIAL_ISSUE', '589'))
 STATUS_ISSUE = int(os.environ.get('SM_DIAL_STATUS_ISSUE', '337'))
 BASE_BRANCH = trunk_branch()
@@ -276,7 +276,7 @@ def handoff_text(slot: int, run: int, branch: str, head: str, commits: int, prog
 def parse_handoffs(comments: list, now: dt.datetime, issue_number: int) -> list:
     """Hand-offs in the window, oldest first: {run, branch, head, commits, progress, notes, at}. A hand-off
     whose branch is not `ws/<this issue>-...` is ignored: the worker deletes and pushes that branch, so a
-    comment must never be able to name `next` or someone else's branch."""
+    comment must never be able to name the trunk or someone else's branch."""
     found = []
     for c in sorted(comments or [], key=comment_time):
         body = (c.get('body') or '').strip()

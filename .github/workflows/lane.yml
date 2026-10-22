@@ -79,13 +79,16 @@ permissions:
   issues: write
   # read: the automerge runs read the hosted fast checks' results on the PR's head (#1389).
   checks: read
+  # write: after pushing the trunk's new tip, the automerge and release runs start hosted-integration.yml on it
+  # (lane-runner.py dispatch_hosted_integration); without it GitHub answers 403.
+  actions: write
 
 jobs:
   route:
     # Cheap hosted routing, before a job enters either Mac queue. Only same-repo requests.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
-      (github.event.pull_request.base.ref == (vars.SM_TRUNK || 'next') || startsWith(github.event.pull_request.base.ref, 'lane-check/')) &&
+      (github.event.pull_request.base.ref == (vars.SM_TRUNK || 'main') || startsWith(github.event.pull_request.base.ref, 'lane-check/')) &&
       ((contains(github.event.pull_request.labels.*.name, 'lane:queued') &&
         (github.event.action != 'labeled' || github.event.label.name == 'lane:queued')) ||
        (contains(github.event.pull_request.labels.*.name, 'automerge') &&
@@ -177,7 +180,7 @@ jobs:
     if: >-
       !cancelled() &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      (github.event.pull_request.base.ref == (vars.SM_TRUNK || 'next') || startsWith(github.event.pull_request.base.ref, 'lane-check/')) &&
+      (github.event.pull_request.base.ref == (vars.SM_TRUNK || 'main') || startsWith(github.event.pull_request.base.ref, 'lane-check/')) &&
       needs.route.outputs.skip_lane != 'true' &&
       contains(github.event.pull_request.labels.*.name, 'lane:queued') &&
       (github.event.action != 'labeled' || github.event.label.name == 'lane:queued')
@@ -205,7 +208,7 @@ jobs:
       PR_NUMBER: ${{ github.event.pull_request.number }}
       EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
       BASE_REF: ${{ github.event.pull_request.base.ref }}
-      SM_TRUNK: ${{ vars.SM_TRUNK || 'next' }}
+      SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
       RUN_ID: ${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
@@ -325,7 +328,7 @@ jobs:
     if: >-
       !cancelled() &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      (github.event.pull_request.base.ref == (vars.SM_TRUNK || 'next') || startsWith(github.event.pull_request.base.ref, 'lane-check/')) &&
+      (github.event.pull_request.base.ref == (vars.SM_TRUNK || 'main') || startsWith(github.event.pull_request.base.ref, 'lane-check/')) &&
       needs.route.outputs.skip_automerge != 'true' &&
       contains(github.event.pull_request.labels.*.name, 'automerge') &&
       (github.event.action != 'labeled' || github.event.label.name == 'automerge')
@@ -344,7 +347,7 @@ jobs:
       PR_NUMBER: ${{ github.event.pull_request.number }}
       EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
       BASE_REF: ${{ github.event.pull_request.base.ref }}
-      SM_TRUNK: ${{ vars.SM_TRUNK || 'next' }}
+      SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
       RUN_ID: ${{ github.run_id }}
       HOSTED_ARGS: ${{ contains(fromJSON(needs.route.outputs.automerge || '[]'), 'sm-vps-t1') && '--hosted' || '' }}
       # #1389 rollout guard: `on` once the repo is public, and the runner takes the hosted fast checks' PASS
@@ -409,7 +412,7 @@ jobs:
     # still open on this head, armed and held for T3 with its T3 passed, so a stale or stray dispatch is harmless.
     if: >-
       github.event_name == 'workflow_dispatch' &&
-      (github.ref_name == (vars.SM_TRUNK || 'next') || startsWith(github.ref, 'refs/heads/lane-check/'))
+      (github.ref_name == (vars.SM_TRUNK || 'main') || startsWith(github.ref, 'refs/heads/lane-check/'))
     runs-on: [self-hosted, macOS, sm-lane-build]
     # Its own group: sharing the automerge job's would let this replace a pending automerge run, or wait behind it.
     concurrency:
@@ -425,7 +428,7 @@ jobs:
       EVENT_HEAD: ${{ inputs.head }}
       T3_REPORT: ${{ inputs.t3 }}
       BASE_REF: ${{ github.ref_name }}
-      SM_TRUNK: ${{ vars.SM_TRUNK || 'next' }}
+      SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
       RUN_ID: ${{ github.run_id }}
       LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
     steps:

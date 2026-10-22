@@ -183,6 +183,22 @@ final class PlaybackDockLayoutTests: XCTestCase {
         XCTAssertEqual(dimmed, skim, accuracy: 0.5, "a dimmed Skim must keep its place")
         XCTAssertEqual(idealWidth(backward: .skim, forward: .nextChapter), skim, accuracy: 0.5,
                        "Next chapter takes Skim forward's slot, no wider")
+        XCTAssertEqual(idealWidth(backward: .skimDisabled, forward: .nextChapterInSkimSlot), skim, accuracy: 0.5,
+                       "Next chapter standing in for Skim keeps the slot's size too")
+    }
+
+    /// #2185: forward Skim that couldn't be pressed became Next chapter with a near-identical arrow, so a plain chapter
+    /// jump passed for a Skim. Standing in for Skim, Next chapter has its own arrow and says why.
+    func testNextChapterStandingInForSkimLooksAndReadsUnlikeSkim() {
+        typealias Row = PlaybackChapterRowView
+        XCTAssertNotEqual(Row.nextChapterInSkimSlotSymbol, Row.skimForwardSymbol)
+        XCTAssertNotEqual(Row.nextChapterInSkimSlotSymbol, Row.nextChapterSymbol)
+        XCTAssertFalse(Row.nextChapterInSkimSlotSymbol.hasPrefix("forward.end"), "not a variant of Skim's own arrow")
+        XCTAssertNotNil(UIImage(systemName: Row.nextChapterInSkimSlotSymbol), "the symbol exists on this OS")
+        XCTAssertEqual(Row.nextChapterInSkimSlotLabel(.noSceneSummary),
+                       "Next chapter. " + SkimUnavailableReason.noSceneSummary.message, "VoiceOver hears why it isn't Skim")
+        XCTAssertEqual(Row.nextChapterInSkimSlotLabel(.suppliedSummaryMissing),
+                       "Next chapter. " + SkimUnavailableReason.suppliedSummaryMissing.message)
     }
 
     /// #1933: at accessibility sizes the chapter title was one line between two 44-point buttons and showed a few

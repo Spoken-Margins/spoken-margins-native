@@ -1986,6 +1986,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         let traceStartedAt = ProcessInfo.processInfo.systemUptime
         let rebuildsItem = activeTargetId != targetId || activePlaybackURL != url || player == nil
         if activeTargetId != targetId || activePlaybackURL != url || player == nil {
+            let setupLabel = MainThreadOperationLabels.shared.push("avPlayer.itemSetup") // names a slow setup in a hang (#2255)
+            defer { MainThreadOperationLabels.shared.pop(setupLabel) }
             cancelPostResumeEvidenceCapture(reason: "playback_item_changed")
             removePlayerStateObserver()
             removeCompletionObserver()
@@ -2702,7 +2704,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             let install = {
                 guard let self, let item, self.player?.currentItem === item else { return }
                 MainActor.assumeIsolated {
-                    if self.installContinuousPodcastEvidenceTapIfPossible(on: item) {
+                    // Unlabeled main-thread work hid what froze a mapped episode's start (#2255).
+                    if MainThreadOperationLabels.shared.scoped("avPlayer.evidenceTap", { self.installContinuousPodcastEvidenceTapIfPossible(on: item) }) {
                         self.continuousEvidenceTapTracksObservation?.invalidate()
                         self.continuousEvidenceTapTracksObservation = nil
                     }

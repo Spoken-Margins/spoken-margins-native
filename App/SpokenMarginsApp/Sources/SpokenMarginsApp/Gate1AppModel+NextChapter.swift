@@ -16,9 +16,12 @@ extension Gate1AppModel {
 
     /// Whether this item has Skim controls at all (a podcast with a ready map, or a Skim summary playing). The chapter
     /// row draws them either side of the title and keeps both in place, dimmed when there is nowhere to go (#1666).
+    /// A mapped item keeps them even where neither direction can be pressed, so Next chapter is never mistaken for
+    /// Skim there (#2185).
     var showsSkimRow: Bool {
         isMediaPlaybackSnapshot
-            && (snapshot.canSkimBackward || snapshot.canSkimForward || snapshot.skimBridgeState != nil)
+            && (snapshot.canSkimBackward || snapshot.canSkimForward || snapshot.skimBridgeState != nil
+                || skimBridge.itemHasMap)
     }
 
     /// What the chapter row draws right of the title: forward Skim when it can be pressed, else Next chapter, else a
@@ -36,6 +39,18 @@ extension Gate1AppModel {
 
     private var playingSummaryForNextChapter: NextChapterSummaryRule.PlayingSummary? {
         snapshot.skimBridgeState.map { .init(direction: $0.direction, landsAtMs: $0.destinationMediaTimeMs) }
+    }
+
+    /// The chapter row's Next chapter button. Where it stands in for a Skim that can't be pressed, the press is logged
+    /// as Skim's fallback with the reason, and the listener is told why it was a plain jump (#2185).
+    func nextChapterFromChapterRow() {
+        let standsInForSkim = chapterRowForwardControl == .nextChapterInSkimSlot
+        let reason = skimBridge.forwardUnavailableReason ?? .noSceneSummary
+        jumpToNextChapter()
+        guard standsInForSkim else { return }
+        recordDeveloperDiagnostic(
+            "skim.press", SkimPressOutcome.fellBackToChapter.diagnosticFields(direction: .forward, reason: reason.rawValue))
+        reportSuccess("Next chapter. \(reason.message)")
     }
 
     /// Reads the summary of the chapter being left, when it has one, then lands at the next

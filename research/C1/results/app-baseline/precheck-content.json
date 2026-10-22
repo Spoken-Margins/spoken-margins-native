@@ -9,9 +9,9 @@
   "hard": 13,
   "caught": 12,
   "recall": 0.923,
-  "easy": 53,
+  "easy": 52,
   "false_alarms": 3,
-  "false_alarm_rate": 0.057,
+  "false_alarm_rate": 0.058,
   "flagged": 15,
   "share_of_flags_wrong": 0.2,
   "missed": [
@@ -27,9 +27,9 @@
   "hard": 13,
   "caught": 11,
   "recall": 0.846,
-  "easy": 53,
+  "easy": 52,
   "false_alarms": 3,
-  "false_alarm_rate": 0.057,
+  "false_alarm_rate": 0.058,
   "flagged": 14,
   "share_of_flags_wrong": 0.214,
   "missed": [
@@ -521,22 +521,6 @@
    "text_single_letter_share": 0.0225,
    "hard": false,
    "words_per_page": 405.5,
-   "flagged": false
-  },
-  "pmc-pmc13560010": {
-   "pages": 25,
-   "chars_per_page": 2920,
-   "math_share": 0.0014,
-   "single_letter_share": 0.0132,
-   "short_line_share": 0.2531,
-   "hyphen_end_share": 0.0168,
-   "two_column_share": 0.1011,
-   "words": 6972,
-   "bib_line_share": 0.0774,
-   "numeric_line_share": 0.1263,
-   "text_single_letter_share": 0.0156,
-   "hard": false,
-   "words_per_page": 278.9,
    "flagged": false
   },
   "pmc-pmc13305550": {

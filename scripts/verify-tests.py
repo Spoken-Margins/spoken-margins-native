@@ -55,6 +55,19 @@ BUILD_SLOT_WAIT_SECONDS = 1800
 # about twice the limit (measured: a 1G limit held it to 1.4 GB).
 COMPILATION_CACHE_LIMIT = '3G'
 
+# Settings that describe the machine or the lane job, not the code under test. A step must not inherit them:
+# with SM_TRUNK=main exported (the lane and the Mac set it after #1492), suites whose fixtures were written
+# for the default trunk failed, and every merge run came back INCONCLUSIVE.
+STEP_ENV_DROPS = ('SM_TRUNK',)
+
+
+def step_env(environ=None):
+    """The environment a test step runs in: the caller's, without STEP_ENV_DROPS."""
+    env = dict(os.environ if environ is None else environ)
+    for name in STEP_ENV_DROPS:
+        env.pop(name, None)
+    return env
+
 
 def compilation_cache_settings(root=None):
     """The build settings that turn on Xcode's compilation cache, in the lane's state folder."""
@@ -443,6 +456,7 @@ PORTABLE_LEFT_OUT = {
     'package-core-serial': 'needs the Swift toolchain on macOS',
     'package': 'needs the Swift toolchain, AVFoundation and a sound output; only the Mac lane runs the whole package',
     'shipped-compat': 'builds SessionKit and Build 29\'s persistence code with Swift on macOS; only the Mac lane runs it',
+    'hot-file-ratchet': 'the author\'s own fast run checks it, and the lane runner checks next\'s copy with the PR\'s labels',
 }
 # Inside runner-tests and ops, the tests that drive an Apple tool. Each is matched as a test id prefix (module,
 # class or test) in scripts/tests, or as a folder under ops/.
@@ -474,7 +488,7 @@ PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snaps
 # Between them the three plans run every fast-plan step (test_fast_split.py checks it).
 FAST_SPLIT_PLANS = ('fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest')
 HOSTED_SESSIONKIT_STEPS = ('package-build', 'package-core', 'package-core-serial')
-MAC_REST_STEPS = ('runner-tests', 'ops', 'package-build', 'package', 'shipped-compat')
+MAC_REST_STEPS = ('hot-file-ratchet', 'runner-tests', 'ops', 'package-build', 'package', 'shipped-compat')
 # runner-tests without the tests above: discover scripts/tests as the plain step does, then drop the listed ids.
 PORTABLE_RUNNER_LOADER = '''
 import sys, unittest
@@ -538,7 +552,7 @@ def github_glob_matches(pattern, path):
 
 def shipped_compat_needed(changed, root=None):
     """(run, reason) for the compatibility checks. changed=None means no diff information: run, as every other
-    step does, so the Test Desk's run on next's tip and an author's own --plan fast keep them."""
+    step does, so the Test Desk's run on the trunk's tip and an author's own --plan fast keep them."""
     if not changed:
         return True, 'no list of changed paths, so every step runs'
     patterns = shipped_compat_paths(root or ROOT)
@@ -601,6 +615,24 @@ CODEX_SANDBOX_AUDIO_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
     'SupertonicChunkingTests/testSystemVoiceReadsAFlaggedChunkInSupertonicsFormat',
     'SystemNarrationRateTests/testNarrationIsHeardAtTheChosenSpeed',
 ))
+
+# MainThreadHangProbeTests time the probe against wall-clock time. On a host so busy that a 10 ms sleep ran 40 ms
+# late they skip rather than judge it (#2210), so a skip there is not an unexpected one.
+HANG_PROBE_TIMING_TESTS = frozenset(f'SessionKitCoreTests/MainThreadHangProbeTests/{test}' for test in (
+    'testAFourHundredMillisecondBlockRecordsOneHangWithItsLabel',
+    'testAThreeHundredFiftyMillisecondBlockIsStillRecorded',
+    'testAHundredMillisecondBlockRecordsNothing',
+    'testNestedLabelsReadOutermostFirstAndAnUnlabelledHangHasNone',
+    'testAStoppedProbeRecordsNothingAndASecondHangAfterAFirstIsCounted',
+))
+
+# StoreReadMeterTests skip by design (#2258): the Library list is a known-oversized read that skips with its measured
+# bytes until #2102's fix fails it on purpose, and the cost table builds the large fixtures only when asked for.
+READ_METER_SKIPS = frozenset(f'SessionKitCoreTests/StoreReadMeterTests/{test}' for test in (
+    'testTheLibraryListDoesNotDecodeEveryArticleText',
+    'testReadCostTableAtEveryScale',
+))
+CORE_ALLOWED_SKIPS = HANG_PROBE_TIMING_TESTS | READ_METER_SKIPS
 
 # Pocket's render tests need ~131 MB of git-ignored weights (research/C2/pocket/fetch_weights.sh). Without them they
 # skip with "skipped: weights not fetched", which is how the lane Mac runs them. The renderer's logic tests, with
@@ -751,6 +783,22 @@ def settle_before_tests(udid, sleep=time.sleep):
               f'(quiet for {quiet_for:.0f}s)', flush=True)
         sleep(wait)
     return {'seconds_quiet': None if quiet_for is None else round(quiet_for, 1), 'waited_seconds': round(wait, 1)}
+
+
+# #2176: of the host-app launches the lane recorded on 2026-10-20, those that began while the Mac reported memory
+# pressure "warn" stalled about 3 times in 4 (10 of 12 from 11:27 to 12:41), against about 1 in 5 at "normal". The
+# boot already waits for normal pressure; the launch did not. Wait here too, bounded and never failing: the launch
+# goes ahead when the wait ends, so a Mac that stays pressured costs at most this long per launch, and the run is
+# still judged by the stall rule below.
+LAUNCH_PRESSURE_WAIT_SECONDS = 90
+
+
+def hold_for_launch(wait=lane_sim.wait_for_normal_pressure, limit=None):
+    """Wait (bounded) for normal memory pressure before a host-app launch; returns what it saw and the wait."""
+    level, waited = wait(LAUNCH_PRESSURE_WAIT_SECONDS if limit is None else limit)
+    if waited >= 1:
+        print(f'held the host-app launch {waited:.0f}s for memory pressure (now {level})', flush=True)
+    return {'memory_pressure': level, 'waited_seconds': round(waited, 1)}
 
 
 # #705: on intermittent runs the AudioAdapters step launched the app (AcquiredPID) and then sat until its 5m00s
@@ -933,12 +981,21 @@ class Run:
         with (self.output / f'{name}.log').open('w') as log, slot as held:
             if held:
                 entry['build_slot'] = held
+            attempt = 1
+
+            def hold_launch():
+                # The wait is the host's, not the step's: it does not use up the step's own time.
+                if not (startup and startup.get('hold')):
+                    return 0.0
+                held = startup['hold']()
+                entry.setdefault('launch_holds', []).append({'attempt': attempt, **held})
+                return held['waited_seconds']
+            hold_launch()
             start = attempt_start = last_output = time.monotonic()
             if ceiling and self.manifest['plan'] in ('fast', 'fast-mac-rest'):
                 ceiling = max(timeout, min(ceiling, FAST_PLAN_SECONDS - (start - self.started)))
                 entry['ceiling_seconds'] = round(ceiling)
             log_size = 0
-            attempt = 1
             watching = startup is not None
             # #2176: the host's conditions as each launch starts, when its tests start and when it stalls.
             conditions = startup.get('conditions') if startup else None
@@ -953,7 +1010,7 @@ class Run:
             finish = xcodebuild_finish.FinishWatch() if tests and args[0] == 'xcodebuild' else None
             finish_offset = 0
             process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
-                                       start_new_session=True)
+                                       start_new_session=True, env=step_env())
             try:
                 while True:
                     if device and (report := new_crash(reports, self.crash_baseline, device)):
@@ -1021,12 +1078,13 @@ class Run:
                         log.write(f'\n--- {name}: no test output after {stall["after_seconds"]}s; launching attempt {attempt} ---\n')
                         log.flush()
                         scan_from = len((self.output / f'{name}.log').read_text(errors='replace'))
+                        start += hold_launch()
                         attempt_start = time.monotonic()
                         note_conditions('start')
                         if finish is not None:
                             finish = xcodebuild_finish.FinishWatch()
                         process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
-                                                   start_new_session=True)
+                                                   start_new_session=True, env=step_env())
             except (subprocess.TimeoutExpired, KeyboardInterrupt, InterruptedError, StartupStall) as stopped:
                 # A startup stall is reported as its own reason below, not as the step running out of budget.
                 entry['interrupted'] = not isinstance(stopped, StartupStall)
@@ -1088,6 +1146,10 @@ class Run:
                 entry['gating'] = {test: records.get(test, {}).get('status', 'missing')
                                    for test in sorted(set(expected or ()) - probation)}
                 entry['probation'] = {test: records.get(test, {}).get('status', 'missing') for test in sorted(probation)}
+        if name == 'hot-file-ratchet':
+            # The lane's own words (lane-runner.py run_auto), so a local FAIL reads as the queue's would.
+            errors.extend(f'hot-file ratchet — {line[len("FAIL "):]}' for line in text.splitlines()
+                          if line.startswith('FAIL '))
         if name == 'runner-tests' or name.startswith('ops-'):
             match = re.search(r'Ran (\d+) tests? in ', text)
             entry['executed_count'] = int(match[1]) if match else 0
@@ -1114,7 +1176,7 @@ class Run:
         probation_only = (tests and not errors and not entry.get('interrupted')
                           and any(status != 'passed' for status in entry.get('probation', {}).values()))
         if result and not probation_only:
-            if not any(error.startswith('Failed: ') for error in errors):  # failed tests already say why
+            if not any(error.startswith(('Failed: ', 'hot-file ratchet — ')) for error in errors):  # they already say why
                 errors[:0] = log_errors(text)
             errors.insert(0, f'Process exit {result}')
             if entry.get('timeout_note'):
@@ -1146,6 +1208,8 @@ class Run:
             return self.portable()
         if self.manifest['plan'] == 'fast-hosted-sessionkit':
             return self.hosted_sessionkit()
+        # First and outside the slot: it takes seconds, and a failure here would otherwise cost a lane queue trip.
+        self.hot_file_ratchet()
         # The host steps share two Mac-wide host-test slots with every session and the runner (#350);
         # the package step's swift test runs inside this run's slot.
         with host_test_slot(f'verify-tests {self.manifest["plan"]} in {ROOT}', out=sys.stdout,
@@ -1156,6 +1220,29 @@ class Run:
                 self.mac_rest()
             else:
                 self.host_steps()
+
+    def hot_file_ratchet(self, base=None):
+        """The lane's hot-file ratchet (scripts/hot_file_ratchet.py) in the author's own loop (#2175).
+
+        On 2026-10-19 #2159, #2155 and #2067 each failed only this check, hours into the lane queue. It compares the
+        committed branch with the local `base` (fetch first for an up-to-date verdict) and fails with the lane's words.
+        A lane run (one given the PR's changed paths, or any CI job) leaves it to the runner, which judges next's copy with the PR's
+        labels. With the hot-file-ok label granted, set SM_HOT_FILE_OK=1. `base` defaults to the trunk's ref."""
+        if self.changed is not None or os.environ.get('GITHUB_ACTIONS') == 'true':
+            # A CI job is a lane job even without --changed-files (the lane drops it for a path it can't pass), and
+            # the lane's runner-tests step runs inside it too.
+            return self.skip('hot-file-ratchet', 'the lane runner checks next\'s ratchet, with the PR\'s labels, before any build')
+        if os.environ.get('SM_HOT_FILE_OK') == '1':
+            return self.skip('hot-file-ratchet', 'SM_HOT_FILE_OK=1: the PR carries the hot-file-ok label')
+        from trunk import trunk_branch  # #1492: the branch the author's run judges the ratchet against
+        base = base or f'origin/{trunk_branch()}'
+        known = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', '--verify', '--quiet', f'{base}^{{commit}}'],
+                               capture_output=True, text=True)
+        if known.returncode:
+            # Name the fetch for the base actually judged, which a caller may give instead of the trunk (#2180 audit).
+            branch = base[len('origin/'):] if base.startswith('origin/') else base
+            return self.skip('hot-file-ratchet', f'{base} is not in this clone; run `git fetch origin {branch}` to check it')
+        self.command('hot-file-ratchet', [sys.executable, 'scripts/hot_file_ratchet.py', '--base', base], timeout=60)
 
     def shipped_compat(self):
         """The shipped build's packet reader and database checks (#1899), when the diff reaches what they watch.
@@ -1343,7 +1430,7 @@ class Run:
             self.command('package-core', [*PACKAGE_RUNNER, '--core-parallel', str(xunit)],
                          timeout=PARALLEL_CORE_TIMEOUT, ceiling=PARALLEL_CORE_CEILING,
                          stall_seconds=PARALLEL_CORE_STALL_SECONDS, expected=expected, tests=True,
-                         record_source=lambda: xunit_records(xunit))
+                         allowed_skips=CORE_ALLOWED_SKIPS, record_source=lambda: xunit_records(xunit))
             return
         except RuntimeError as error:
             step = self.manifest['steps'][-1]
@@ -1356,7 +1443,7 @@ class Run:
             print('package-core: parallel run failed; running SessionKitCoreTests serially', flush=True)
         self.command('package-core-serial', [*PACKAGE_RUNNER, '--core-serial'],
                      timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
-                     expected=expected, tests=True)
+                     expected=expected, tests=True, allowed_skips=CORE_ALLOWED_SKIPS)
 
     def skip(self, name, reason=None):
         reason = reason or CODEX_SANDBOX_SKIPS[name]
@@ -1562,7 +1649,7 @@ class Run:
             # Only the app-hosted unit tests (app, adapters): the UI plans launch a separate runner app.
             startup = {'seconds': STARTUP_STALL_SECONDS, 'retries': STARTUP_RETRIES,
                        'diagnose': lambda folder: stall_evidence(chosen['udid'], folder, result_bundle=result_bundle),
-                       'reset': relaunch, 'conditions': lane_conditions.snapshot} \
+                       'reset': relaunch, 'conditions': lane_conditions.snapshot, 'hold': hold_for_launch} \
                 if scheme == 'SpokenMarginsAppBehavior' else None
             if startup is not None:
                 # What each launch installs (#2176): #2067 takes Supertonic's model out, about 144 MB.
@@ -1634,7 +1721,7 @@ def main():
               else '\n'.join(sorted(plan_tests(ROOT, PLANS[args.plan][1]))) if args.plan in PLANS
               else ('fast-portable runs ' + ', '.join(PORTABLE_STEPS) + '; it leaves out ' + ', '.join(PORTABLE_LEFT_OUT)
                     if args.plan == 'fast-portable'
-                    else 'runner-tests, ops tests, contracts, surfaces, inventory, browser, all SessionKit tests'))
+                    else 'hot-file ratchet, runner-tests, ops tests, contracts, surfaces, inventory, browser, all SessionKit tests'))
         return 0
     if journeys is not None and not any(journeys.values()):
         print('No scripted journeys are listed in TestPlans/scripted-journeys.json; nothing to run.')

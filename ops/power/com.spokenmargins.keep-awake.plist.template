@@ -3,7 +3,7 @@
 <!--
   Keep awake: every minute, hold the Mac awake with Amphetamine while builds or agents are
   working, down to 10% battery, lid closed included (ops/power/README.md). Not installed by the PR.
-  It runs the main checkout's copy, which the hourly Mac tick fast-forwards to origin/next.
+  It runs the main checkout's copy, which the hourly Mac tick fast-forwards to origin/main.
 -->
 <plist version="1.0">
 <dict>
