@@ -539,7 +539,7 @@ class VerificationTests(unittest.TestCase):
         # The third-party notices test (#1823) reads the dependency manifests and the generated list.
         self.assertIn('test_third_party_notices', verification.RUNNER_TEST_READERS)
         for path in ('package.json', 'requirements-dev.txt', 'docs/legal/third-party-components.json',
-                     'THIRD_PARTY_NOTICES.md', 'Design/SpokenMarginsOverhaul/package.json'):
+                     'THIRD_PARTY_NOTICES.md', 'Design/UXProposal20260909/package.json'):
             self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
         self.assertEqual(verification.runner_test_scope(['docs/a.md'])[0], 'none')
         # A manifest, model or font file added anywhere must run the check in the PR that adds it, not in the

@@ -87,3 +87,5 @@ Deferred by release-lane boundary:
 - Watch, publisher-artwork dependencies, remote execution, analytics, accounts, and deployment behavior remain out of scope.
 
 The native paths are `implemented`. Automated checks may establish `verified`; only the product owner can mark them `human_validated`.
+
+Note: the package files (`package.json`, `package-lock.json`) were removed on 2026-10-22 to clear Dependabot alerts. The source here is reference only; git history has the files.
