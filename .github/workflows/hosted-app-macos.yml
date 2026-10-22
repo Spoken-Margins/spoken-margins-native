@@ -2,7 +2,8 @@
 # device (T2), then, when `tests` names any, run those app-hosted test classes or methods in a fresh
 # simulator (T3). The lane does both on the owner's Mac today (scripts/lane-runner.py, verify-tests.py).
 #
-# T2 runs on every PR that changes app code and, once `LANE_HOSTED_APP` is on, on the trunk's new tips.
+# T2 runs on every PR that changes app code and on the trunk's new tips. `LANE_HOSTED_APP` (lane routing) is
+# separate: it stays off until hosted T3 passes.
 # T3 is started by hand (workflow_dispatch) until it passes on the hosted image (#2365).
 #
 # Image and Xcode: #1384's benchmark ran on `xcode-27` (image xcode-27-arm64, Xcode 27.0 default) and
@@ -20,7 +21,7 @@
 name: hosted-app-macos
 
 on:
-  # T2 only on the trunk's new tips, once hosted app tests are on: GitHub lets a PR's run restore caches saved on
+  # T2 on the trunk's new tips, whatever LANE_HOSTED_APP says (owner, 2026-10-22): GitHub lets a PR's run restore caches saved on
   # the default branch but not another PR's, so these runs keep a warm compilation cache where every PR can read it.
   push:
     branches: [main]
@@ -79,7 +80,8 @@ env:
 
 jobs:
   app:
-    if: github.event_name != 'push' || vars.LANE_HOSTED_APP == 'on'
+    # Collaborators' PRs only; a fork's PR starts no Mac.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: xcode-27
     # T2 about 10 min on the benchmark's numbers, T3 up to 25 min, plus one retry of a stalled start.
     timeout-minutes: 75
