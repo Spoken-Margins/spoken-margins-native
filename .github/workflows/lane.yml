@@ -108,7 +108,7 @@ jobs:
       skip_lane: ${{ steps.sender.outputs.trusted == 'false' && 'true' || steps.dedupe.outputs.skip_lane }}
       skip_automerge: ${{ steps.sender.outputs.trusted == 'false' && 'true' || steps.dedupe.outputs.skip_automerge }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # Policy and code from the base, never PR code with the runner-discovery token.
           ref: ${{ github.event.pull_request.base.sha }}
@@ -219,7 +219,7 @@ jobs:
       LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
       LANE_HOSTED_MAC_REST: ${{ vars.LANE_HOSTED_MAC_REST }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -260,7 +260,7 @@ jobs:
         run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
       - name: Hosted Mac - LFS cache
         if: runner.environment == 'github-hosted'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .git/lfs
           key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
@@ -275,7 +275,7 @@ jobs:
       # state folder, and Xcode bounds the store itself.
       - name: Hosted Mac - Xcode compilation cache
         if: runner.environment == 'github-hosted'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ runner.temp }}/lane-state/compilation-cache
           key: xcode-cas-27.0-lane-${{ github.run_id }}
@@ -317,7 +317,7 @@ jobs:
       # and reports only; result bundles are large and the logs name each failure.
       - name: Hosted Mac - keep the evidence
         if: always() && runner.environment == 'github-hosted'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lane-evidence
           path: |
@@ -370,7 +370,7 @@ jobs:
       LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
       LANE_HOSTED_MAC_REST: ${{ vars.LANE_HOSTED_MAC_REST }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -416,7 +416,7 @@ jobs:
           --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode auto $HOSTED_ARGS
       - name: Keep hosted evidence
         if: always() && env.HOSTED_ARGS == '--hosted'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lane-hosted-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/lane-evidence
@@ -452,7 +452,7 @@ jobs:
       LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
       LANE_HOSTED_MAC_REST: ${{ vars.LANE_HOSTED_MAC_REST }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -512,7 +512,7 @@ jobs:
       LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
       LANE_HOSTED_MAC_REST: ${{ vars.LANE_HOSTED_MAC_REST }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.head }}
           fetch-depth: 0

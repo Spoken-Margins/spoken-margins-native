@@ -67,7 +67,7 @@ jobs:
       # no LFS file, so its worktrees keep the pointers.
       GIT_LFS_SKIP_SMUDGE: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # Policy and code from the base branch's live tip, never PR code. Not `base.sha`: that is the commit
           # GitHub recorded when the PR was opened or last retargeted, and a PR older than #1964 would check out
