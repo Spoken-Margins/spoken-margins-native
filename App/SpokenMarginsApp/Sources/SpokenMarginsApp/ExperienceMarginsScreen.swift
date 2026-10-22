@@ -15,6 +15,7 @@ struct ExperienceMarginsScreen: View {
 
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?

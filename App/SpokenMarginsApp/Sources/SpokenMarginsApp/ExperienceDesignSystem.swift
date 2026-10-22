@@ -98,7 +98,7 @@ struct TapTargetIcon: View {
 /// content instead (#1938).
 struct GutterRow<Gutter: View, Content: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @ScaledMetric(relativeTo: .caption) private var gutterWidth: CGFloat
+    @ScaledMetric private var gutterWidth: CGFloat
     private let alignment: VerticalAlignment
     private let spacing: CGFloat?
     private let gutter: Gutter
