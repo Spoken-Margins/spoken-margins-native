@@ -10,6 +10,10 @@ struct ExperienceLibraryScreen: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @Binding var addSourceRoute: AddSourceRoute?
+    /// The place in the list, kept by the root view because opening an item destroys this screen (#2395).
+    @Binding var scrollMemory: FollowingScrollMemory
+    @State private var scrollTracker = ListScrollTracker()
+    @State private var restoredScroll = false
     @State private var isAudioPreparationQueuePresented = false
     /// The item whose Continue is waiting on the "hear new Margins first?" question (#474).
     @State private var newMarginsOfferItemId: String?
@@ -29,6 +33,7 @@ struct ExperienceLibraryScreen: View {
 
     var body: some View {
         NavigationStack {
+            ScrollViewReader { proxy in
             List {
                 if clipboardLink.showsCard {
                     ClipboardLinkOfferCard(clipboard: clipboardLink)
@@ -55,6 +60,12 @@ struct ExperienceLibraryScreen: View {
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
             }
+            .onChange(of: listEntries.map(\.id), initial: true) { _, ids in
+                scrollTracker.order = ids
+                restoreScroll(in: ids, using: proxy)
+            }
+            .onAppear { if restoredScroll { scrollTracker.thaw() } }
+            .onDisappear { rememberScroll() }
             .background(AppColors.bone)
             .scrollContentBackground(.hidden)
             .listStyle(.plain)
@@ -64,6 +75,7 @@ struct ExperienceLibraryScreen: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
             .miniPlayerKeepOut()
+            }
         }
         .accessibilityIdentifier("library.screen")
         .sheet(isPresented: $isAudioPreparationQueuePresented) {
@@ -435,7 +447,34 @@ struct ExperienceLibraryScreen: View {
                     onDelete: { model.moveItemToTrash(id: row.id) }
                 )
                 .libraryRowLayout(horizontalSizeClass: horizontalSizeClass)
+                .onAppear { scrollTracker.rowChanged(row.id, isVisible: true) }
+                .onDisappear { scrollTracker.rowChanged(row.id, isVisible: false) }
             }
+        }
+    }
+
+    /// Hands the place to the root view, which outlives this screen.
+    private func rememberScroll() {
+        scrollTracker.freeze()
+        guard let top = scrollTracker.topEntryID else { return }
+        scrollMemory = FollowingScrollMemory(topEntryId: top, order: listEntries.map(\.id))
+    }
+
+    /// Scrolls back to the remembered row once, the first time the list has rows. The tracker stays
+    /// frozen until then, so the rows that appear at the top first don't overwrite the place.
+    private func restoreScroll(in ids: [String], using proxy: ScrollViewProxy) {
+        guard !restoredScroll, !ids.isEmpty else { return }
+        restoredScroll = true
+        guard let target = scrollMemory.restoreTarget(in: ids) else {
+            scrollTracker.thaw()
+            return
+        }
+        Task { @MainActor in
+            // After the list's first layout, or the scroll finds nothing to move.
+            try? await Task.sleep(for: .milliseconds(150))
+            proxy.scrollTo(target, anchor: .top)
+            try? await Task.sleep(for: .milliseconds(150))
+            scrollTracker.thaw()
         }
     }
 
