@@ -1149,7 +1149,7 @@ struct PlaybackScreen: View {
                     Button("Stop", action: model.stopOnDeviceSpeechGeneration)
                         .font(.caption.weight(.bold))
                         .buttonStyle(.bordered)
-                        .tint(.red)
+                        .tint(AppColors.watchDanger)
                         .accessibilityHint("Continues playback with the iOS system voice")
                         .accessibilityIdentifier("playback.onDeviceGeneration.stop")
                 } else if model.canRetryOnDeviceSpeechGeneration {
@@ -2003,7 +2003,7 @@ private struct TimelineInterjectionRow: View {
                 Button(action: toggleStar) {
                     Image(systemName: isStarred ? "star.fill" : "star")
                         .font(.title3.weight(.semibold))
-                        .foregroundStyle(isStarred ? Color.yellow : AppColors.secondaryText)
+                        .foregroundStyle(isStarred ? AppColors.star : AppColors.secondaryText)
                         .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }

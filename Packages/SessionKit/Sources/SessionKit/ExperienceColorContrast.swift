@@ -130,6 +130,15 @@ public enum AppSemanticColorRGB {
         light: .init(red: 0.70, green: 0.27, blue: 0.20),
         dark: .init(red: 1.00, green: 0.57, blue: 0.48)
     )
+    /// The starred-for-sharing star. A dark amber on light surfaces, where the system yellow was about 1.5:1
+    /// on a white panel (#1925); the shape (filled or outline) still carries the state as well.
+    public static let star = AppDynamicRGB(
+        light: .init(red: 0.68, green: 0.40, blue: 0.0),
+        dark: .init(red: 1.0, green: 0.82, blue: 0.30)
+    )
+    /// A destructive label on the always-dark playback cards (Stop on-device generation): the dark-mode danger
+    /// text in both appearances, since the card does not change with the system appearance (#1925).
+    public static let watchDanger = fixed(1, 0.55, 0.48)
 
     /// Every token above, by name. `AppColors` in the app builds its colours from these and nowhere else, so
     /// the audit sees every colour the app draws with. A test fails when a token is missing from this list or
@@ -142,7 +151,8 @@ public enum AppSemanticColorRGB {
         ("plum", plum), ("evergreen", evergreen), ("onEvergreen", onEvergreen), ("softGreen", softGreen),
         ("dangerText", dangerText), ("dangerBackground", dangerBackground), ("inputBackground", inputBackground),
         ("border", border), ("borderIncreased", borderIncreased), ("green", green), ("accent", accent), ("accentSoft", accentSoft),
-        ("watchBackground", watchBackground), ("watchControl", watchControl), ("ochre", ochre), ("coral", coral)
+        ("watchBackground", watchBackground), ("watchControl", watchControl), ("ochre", ochre), ("coral", coral),
+        ("star", star), ("watchDanger", watchDanger)
     ]
 }
 
@@ -152,10 +162,6 @@ public enum AppSystemColorApproximation {
     public static let orange = AppDynamicRGB(
         light: .init(red: 1.0, green: 0.584, blue: 0.0),
         dark: .init(red: 1.0, green: 0.624, blue: 0.039)
-    )
-    public static let yellow = AppDynamicRGB(
-        light: .init(red: 1.0, green: 0.80, blue: 0.0),
-        dark: .init(red: 1.0, green: 0.839, blue: 0.039)
     )
 }
 
@@ -210,6 +216,8 @@ public enum AppColorContrastAudit {
         .init(name: "listening secondary on watch control", foreground: AppSemanticColorRGB.listeningSecondary, background: AppSemanticColorRGB.watchControl, minimumRatio: 4.5),
         .init(name: "listening accent on watch background", foreground: AppSemanticColorRGB.listeningAccent, background: AppSemanticColorRGB.watchBackground, minimumRatio: 4.5),
         .init(name: "listening secondary on watch background", foreground: AppSemanticColorRGB.listeningSecondary, background: AppSemanticColorRGB.watchBackground, minimumRatio: 4.5),
+        .init(name: "danger label on watch control", foreground: AppSemanticColorRGB.watchDanger, background: AppSemanticColorRGB.watchControl, minimumRatio: 4.5),
+        .init(name: "danger label on watch background", foreground: AppSemanticColorRGB.watchDanger, background: AppSemanticColorRGB.watchBackground, minimumRatio: 4.5),
         .init(name: "NOW badge label", foreground: AppSemanticColorRGB.text, background: AppSemanticColorRGB.accentSoft, minimumRatio: 4.5)
     ]
 
@@ -227,7 +235,9 @@ public enum AppColorContrastAudit {
         .init(name: "ochre icon on panel", foreground: AppSemanticColorRGB.ochre, background: AppSemanticColorRGB.panel, minimumRatio: 3),
         .init(name: "ochre icon on soft green", foreground: AppSemanticColorRGB.ochre, background: AppSemanticColorRGB.softGreen, minimumRatio: 3),
         .init(name: "system orange icon on panel", foreground: AppSystemColorApproximation.orange, background: AppSemanticColorRGB.panel, minimumRatio: 3),
-        .init(name: "system yellow star on panel", foreground: AppSystemColorApproximation.yellow, background: AppSemanticColorRGB.panel, minimumRatio: 3),
+        .init(name: "star icon on panel", foreground: AppSemanticColorRGB.star, background: AppSemanticColorRGB.panel, minimumRatio: 3),
+        .init(name: "star icon on app background", foreground: AppSemanticColorRGB.star, background: AppSemanticColorRGB.background, minimumRatio: 3),
+        .init(name: "star icon on bone", foreground: AppSemanticColorRGB.star, background: AppSemanticColorRGB.bone, minimumRatio: 3),
         .init(name: "border on app background", foreground: AppSemanticColorRGB.border, background: AppSemanticColorRGB.background, minimumRatio: 3),
         .init(name: "border on panel", foreground: AppSemanticColorRGB.border, background: AppSemanticColorRGB.panel, minimumRatio: 3),
         .init(name: "input fill on panel", foreground: AppSemanticColorRGB.inputBackground, background: AppSemanticColorRGB.panel, minimumRatio: 3),
@@ -255,7 +265,6 @@ public enum AppColorContrastAudit {
         .init(pair: "ochre icon on bone", appearance: "light", since: "2026-10-17", fixedBy: "#1920"),
         .init(pair: "ochre icon on soft green", appearance: "light", since: "2026-10-17", fixedBy: "#1920"),
         .init(pair: "system orange icon on panel", appearance: "light", since: "2026-10-17", fixedBy: "#1920"),
-        .init(pair: "system yellow star on panel", appearance: "light", since: "2026-10-17", fixedBy: "#1925"),
         .init(pair: "border on app background", appearance: "light", since: "2026-10-17", fixedBy: "#1922"),
         .init(pair: "border on app background", appearance: "dark", since: "2026-10-17", fixedBy: "#1922"),
         .init(pair: "border on panel", appearance: "light", since: "2026-10-17", fixedBy: "#1922"),
