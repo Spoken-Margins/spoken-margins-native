@@ -258,6 +258,23 @@ class Harness:
 # Slot counting: the Dial's Claude slots
 # ---------------------------------------------------------------------------
 
+class FocusMilestoneTests(unittest.TestCase):
+    def rank(self, milestone, focus):
+        with unittest.mock.patch.object(w, 'FOCUS_MILESTONES', focus):
+            return w.issue_rank({'number': 1, 'labels': [], 'milestone': {'title': milestone}}, False)
+
+    def test_default_focus_is_showcase_not_the_closed_solid_ground(self):
+        self.assertEqual(w.FOCUS_MILESTONES, ('Showcase',))
+
+    def test_an_ordered_list_ranks_earlier_names_first(self):
+        focus = ('Showcase', 'Co-op Experience')
+        self.assertLess(self.rank('Showcase', focus), self.rank('Co-op Experience', focus))
+        self.assertLess(self.rank('Co-op Experience', focus), self.rank('Later', focus))
+
+    def test_an_empty_list_ranks_every_milestone_alike(self):
+        self.assertEqual(self.rank('Showcase', ()), self.rank('Later', ()))
+
+
 class SlotCountTests(unittest.TestCase):
     gate = w.load_dial_gate()
 
@@ -475,7 +492,7 @@ class ChooseIssueTests(unittest.TestCase):
     def test_order_priority_regression_phone_milestone_then_oldest(self):
         base = ('ready', 'where:mac')
         issues = [issue(1, created='2026-10-01T00:00:00Z'),
-                  issue(2, created='2026-10-02T00:00:00Z', milestone='Solid Ground'),
+                  issue(2, created='2026-10-02T00:00:00Z', milestone='Showcase'),
                   issue(3, created='2026-10-03T00:00:00Z', labels=base + ('found-on-phone',)),
                   issue(4, created='2026-10-04T00:00:00Z', labels=base + ('regression',)),
                   issue(5, created='2026-10-05T00:00:00Z', labels=base + ('priority',))]
