@@ -155,6 +155,8 @@ struct AppNavigationState: Equatable, Sendable {
     ]
     var taskRoute: AppRoute?
     var addSourceRoute: AddSourceRoute?
+    /// "Search podcasts by name" in the add sheet: the sheet closes first, then the catalog opens (#1784).
+    var opensCatalogAfterAddSheet = false
     /// Where Following was scrolled to, kept across the screen switches that destroy its list (#479).
     var followingScroll = FollowingScrollMemory()
     /// The same for the Library list, whose rows are also destroyed when an item opens (#2395).
@@ -174,6 +176,17 @@ struct AppNavigationState: Equatable, Sendable {
     mutating func present(_ route: AppRoute, recordingIsLocked: Bool) {
         guard !recordingIsLocked else { return }
         taskRoute = route
+    }
+
+    mutating func searchPodcastsFromAddSheet() {
+        addSourceRoute = nil
+        opensCatalogAfterAddSheet = true
+    }
+
+    /// True once per request, so a later dismissal of the sheet doesn't open the catalog again.
+    mutating func takeCatalogRequest() -> Bool {
+        defer { opensCatalogAfterAddSheet = false }
+        return opensCatalogAfterAddSheet
     }
 
     mutating func dismissTask(recordingIsLocked: Bool) {
