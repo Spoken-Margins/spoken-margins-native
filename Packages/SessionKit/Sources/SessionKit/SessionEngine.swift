@@ -371,7 +371,9 @@ public final class SessionEngine {
               !isPartialGeneratedTextPlayback(session),
               let mediaTimeMs = session.position.mediaTimeMs, mediaTimeMs > 0,
               let durationMs = durableMediaDurationMs(for: session), durationMs > 0 else { return false }
-        return durationMs - mediaTimeMs <= Self.endOfMediaStartToleranceMs
+        // A place past the stored length means the stored length is short of the real file (corrections under 1 s
+        // are skipped; a feed length can miss dynamic ads), so it says nothing about the end (#2189).
+        return (0...Self.endOfMediaStartToleranceMs).contains(durationMs - mediaTimeMs)
     }
 
     /// Half a second: inside the player's own seek tolerance (0.25 s either side) of the end there is nothing
