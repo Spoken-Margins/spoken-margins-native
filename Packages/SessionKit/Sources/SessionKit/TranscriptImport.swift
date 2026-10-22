@@ -1,7 +1,7 @@
 import Foundation
 
 /// One line of a meeting transcript: when it was said, by whom, and what.
-public struct TranscriptCue: Equatable, Sendable {
+public struct TranscriptCue: Codable, Equatable, Sendable {
     /// From the transcript's time zero (the recording's start, or the first cue for wall-clock formats).
     public var startMs: Int
     public var endMs: Int?
@@ -17,8 +17,8 @@ public struct TranscriptCue: Equatable, Sendable {
 }
 
 /// A meeting transcript in one normalized shape, whatever the file was (#2481).
-public struct ImportedTranscript: Equatable, Sendable {
-    public enum Format: String, Equatable, Sendable {
+public struct ImportedTranscript: Codable, Equatable, Sendable {
+    public enum Format: String, Codable, Equatable, Sendable {
         case webVTT
         case srt
         /// Speaker and timestamp lines: Teams .docx, Otter, Google Meet, Zoom saved captions.

@@ -106,8 +106,15 @@ public struct LiveSessionMargin: Codable, Equatable, Sendable, Identifiable {
     /// The listener's "where I am" (chapter, page, slide), if they gave one.
     public var whereNote: String?
     public var isBlindMark: Bool
+    /// A source position the listener slid to by hand while taking the Margin. It is never moved
+    /// automatically; a transcript anchor that disagrees is only offered as a suggestion.
+    public var listenerPositionMs: Int?
 
-    public init(id: String, text: String, markedAt: Date, sessionOffsetMs: Int = 0, whereNote: String? = nil, isBlindMark: Bool = false) {
+    public init(
+        id: String, text: String, markedAt: Date, sessionOffsetMs: Int = 0, whereNote: String? = nil, isBlindMark: Bool = false,
+        listenerPositionMs: Int? = nil
+    ) {
+        self.listenerPositionMs = listenerPositionMs
         self.id = id
         self.text = text
         self.markedAt = markedAt
@@ -184,12 +191,26 @@ public enum LiveSessionAlignment {
         case sessionStart
     }
 
-    public enum Clamp: String, Equatable, Sendable {
+    /// Which evidence a Margin is placed by in the player: a transcript match (only confident ones are kept),
+    /// else the listener's own setting, else the estimate. The others stay alongside it.
+    public enum PositionSource: String, Codable, Equatable, Sendable {
+        case transcriptMatch
+        case listener
+        case estimate
+    }
+
+    public static func best(estimateMs: Int, listenerMs: Int?, matchMs: Int?) -> (offsetMs: Int, source: PositionSource) {
+        if let matchMs { return (matchMs, .transcriptMatch) }
+        if let listenerMs { return (listenerMs, .listener) }
+        return (estimateMs, .estimate)
+    }
+
+    public enum Clamp: String, Codable, Equatable, Sendable {
         case beforeStart
         case afterEnd
     }
 
-    public struct Placed: Equatable, Sendable, Identifiable {
+    public struct Placed: Codable, Equatable, Sendable, Identifiable {
         public var id: String
         public var text: String
         /// Where the Margin sits in the recording, within it.
@@ -198,6 +219,18 @@ public enum LiveSessionAlignment {
         public var clamp: Clamp?
         /// Where it sits in the item's text, for an item with no audio (a transcript or session notes).
         public var charOffset: Int?
+        /// Which evidence `offsetMs` came from.
+        public var source: PositionSource = .estimate
+        // Every piece of position evidence, kept side by side (owner, 2026-10-22): none is thrown away.
+        /// The start/end estimate ("about").
+        public var estimateMs: Int?
+        /// The listener's own setting, if they slid it.
+        public var listenerMs: Int?
+        /// The transcript match: where, the cue's words and speaker, and how sure (0...1).
+        public var matchMs: Int?
+        public var matchText: String?
+        public var matchSpeaker: String?
+        public var matchScore: Double?
 
         public init(id: String, text: String, offsetMs: Int, clamp: Clamp? = nil, charOffset: Int? = nil) {
             self.id = id
@@ -205,6 +238,7 @@ public enum LiveSessionAlignment {
             self.offsetMs = offsetMs
             self.clamp = clamp
             self.charOffset = charOffset
+            self.estimateMs = offsetMs
         }
     }
 

@@ -54,10 +54,12 @@ public enum TranscriptAlignment {
         calendar: Calendar = .current
     ) -> Result {
         var matches: [String: Int] = [:]
+        var scores: [String: Double] = [:]
         var estimates: [TimeInterval] = []
         for margin in session.margins where !margin.isBlindMark {
-            guard let (cue, _) = bestCue(for: margin.text, in: transcript.cues, threshold: matchThreshold) else { continue }
+            guard let (cue, score) = bestCue(for: margin.text, in: transcript.cues, threshold: matchThreshold) else { continue }
             matches[margin.id] = cue
+            scores[margin.id] = score
             estimates.append(margin.markedAt.timeIntervalSince1970 - Double(transcript.cues[cue].startMs) / 1_000)
         }
         let base: Date
@@ -70,13 +72,81 @@ public enum TranscriptAlignment {
         }
         let start = base.addingTimeInterval(Double(nudgeMs) / 1_000)
         var placed = LiveSessionAlignment.place(session.margins, recordingStart: start, durationMs: transcript.durationMs.map { $0 + 1 })
+        // Then each remaining Margin's own words as a hint ("Johnny was just talking about the budget"), searched
+        // only near where the estimate puts it.
+        let window = session.endPositionMs == nil ? hintWindowWithoutEndMs : hintWindowMs
+        for margin in placed where matches[margin.id] == nil {
+            guard let source = session.margins.first(where: { $0.id == margin.id }), !source.isBlindMark || !source.text.isEmpty,
+                  let cue = hintCue(for: source.text, near: margin.offsetMs, in: transcript.cues, windowMs: window, threshold: hintThreshold)
+            else { continue }
+            matches[margin.id] = cue.index
+            scores[margin.id] = cue.confidence
+        }
         for index in placed.indices {
+            let source = session.margins.first { $0.id == placed[index].id }
+            placed[index].estimateMs = placed[index].offsetMs
+            placed[index].listenerMs = source?.listenerPositionMs
             if let cue = matches[placed[index].id] {
-                placed[index].offsetMs = transcript.cues[cue].startMs
-                placed[index].clamp = nil
+                placed[index].matchMs = transcript.cues[cue].startMs
+                placed[index].matchText = transcript.cues[cue].text
+                placed[index].matchSpeaker = transcript.cues[cue].speaker
+                placed[index].matchScore = scores[placed[index].id]
             }
+            let best = LiveSessionAlignment.best(
+                estimateMs: placed[index].offsetMs, listenerMs: placed[index].listenerMs, matchMs: placed[index].matchMs
+            )
+            placed[index].offsetMs = best.offsetMs
+            placed[index].source = best.source
+            if best.source != .estimate { placed[index].clamp = nil }
         }
         return Result(transcriptStart: start, method: method, matches: matches, placed: placed)
+    }
+
+    /// How far from the estimate a hint is searched: ±10 minutes, or ±20 without an end position.
+    public static let hintWindowMs = 600_000
+    public static let hintWindowWithoutEndMs = 1_200_000
+    public static let hintThreshold = 0.6
+
+    private static let hintStopwords: Set<String> = [
+        "a", "an", "the", "and", "or", "but", "of", "to", "in", "on", "at", "for", "with", "about", "from",
+        "i", "me", "my", "we", "us", "our", "you", "he", "she", "they", "them", "it", "its", "this", "that", "these",
+        "those", "is", "are", "was", "were", "be", "been", "being", "am", "just", "now", "so", "very", "really",
+        "think", "thought", "talking", "talked", "talk", "said", "saying", "says", "say", "mentioned", "mention",
+        "something", "someone", "thing", "things", "here", "there", "then", "when", "what", "who", "like", "also"
+    ]
+
+    /// The cue near `estimateMs` that a Margin's own words point at: a speaker named in them and topic words in
+    /// the cue. Confidence is 0.4 for the speaker plus 0.6 × the share of topic words the cue holds; with no
+    /// speaker named, 0.8 × that share and at least two topic words. Below `threshold` there's no match, and
+    /// among near-equal matches the one nearest the estimate wins.
+    public static func hintCue(
+        for text: String, near estimateMs: Int, in cues: [TranscriptCue], windowMs: Int, threshold: Double = hintThreshold
+    ) -> (index: Int, confidence: Double)? {
+        let speakerTokens = Set(cues.compactMap(\.speaker).flatMap { tokens($0) }.filter { $0.count >= 3 })
+        let content = Set(tokens(text).filter { !hintStopwords.contains($0) })
+        let named = content.intersection(speakerTokens)
+        let topic = content.subtracting(speakerTokens)
+        guard !topic.isEmpty else { return nil }
+        var scored: [(index: Int, confidence: Double)] = []
+        for (index, cue) in cues.enumerated() where abs(cue.startMs - estimateMs) <= windowMs {
+            let cueWords = Set(tokens(cue.text))
+            let found = topic.filter { cueWords.contains($0) }.count
+            guard found > 0 else { continue }
+            let share = Double(found) / Double(topic.count)
+            let speakerHit = !named.isEmpty && !named.isDisjoint(with: Set(tokens(cue.speaker ?? "")))
+            let confidence: Double
+            if speakerHit {
+                confidence = 0.4 + 0.6 * share
+            } else {
+                guard found >= 2 else { continue }
+                confidence = 0.8 * share
+            }
+            if confidence >= threshold { scored.append((index, confidence)) }
+        }
+        guard let top = scored.map(\.confidence).max() else { return nil }
+        return scored
+            .filter { $0.confidence >= top - 0.05 }
+            .min { abs(cues[$0.index].startMs - estimateMs) < abs(cues[$1.index].startMs - estimateMs) }
     }
 
     /// The cue (or the cue that starts a run of up to three) whose words best cover `text`. A match needs at

@@ -30,6 +30,14 @@ public enum LiveSessionPositionMap {
     public struct Position: Equatable, Sendable {
         public var ms: Int
         public var isApproximate: Bool
+        /// Slid by the listener: shown as they set it, still "about" (it's their estimate, not a match).
+        public var isListenerSet = false
+
+        public init(ms: Int, isApproximate: Bool, isListenerSet: Bool = false) {
+            self.ms = ms
+            self.isApproximate = isApproximate
+            self.isListenerSet = isListenerSet
+        }
 
         /// "about 1:23:10", or "1:23:10" for a position pinned by a transcript match.
         public var label: String {
@@ -70,6 +78,12 @@ public enum LiveSessionPositionMap {
         ms = max(startPosition, ms)
         if let endPosition = session.endPositionMs, endPosition >= startPosition { ms = min(endPosition, ms) }
         return Position(ms: ms, isApproximate: true)
+    }
+
+    /// A Margin's place in the source: the listener's own setting, else an exact anchor, else the estimate.
+    public static func position(of margin: LiveSessionMargin, in session: LiveSession, anchors: [Anchor] = []) -> Position? {
+        if let listener = margin.listenerPositionMs { return Position(ms: listener, isApproximate: true, isListenerSet: true) }
+        return position(at: margin.markedAt, in: session, anchors: anchors)
     }
 
     /// "1:23:10" or "4:05". Reads "h:mm:ss", "m:ss" or plain minutes ("2" is 2:00) back with `parse`.

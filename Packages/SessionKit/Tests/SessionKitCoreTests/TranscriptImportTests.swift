@@ -189,3 +189,54 @@ final class TranscriptImportTests: XCTestCase {
         XCTAssertEqual(built.placed.first?.text, "Great line")
     }
 }
+
+/// Owner rule 2026-10-22: a Margin's own words work as a hint ("Johnny was just talking about the budget"),
+/// matched near the estimate with the speaker weighted, and only a confident match anchors it.
+final class TranscriptHintTests: XCTestCase {
+    private let cues = [
+        TranscriptCue(startMs: 0, endMs: 60_000, speaker: "Alice Example", text: "Welcome, the budget is first on the list."),
+        TranscriptCue(startMs: 120_000, endMs: 180_000, speaker: "Johnny Rivera", text: "The travel budget is over by a third."),
+        TranscriptCue(startMs: 240_000, endMs: 300_000, speaker: "Alice Example", text: "Let's talk hiring next quarter."),
+        TranscriptCue(startMs: 2_400_000, endMs: 2_460_000, speaker: "Johnny Rivera", text: "Back to the travel budget once more."),
+        TranscriptCue(startMs: 3_000_000, endMs: 3_060_000, speaker: "Ben Sample", text: "Hiring plan approved.")
+    ]
+
+    func testSpeakerAndTopicFindTheRightCue() {
+        let match = TranscriptAlignment.hintCue(for: "Johnny was just talking about the budget", near: 200_000, in: cues, windowMs: 600_000)
+        XCTAssertEqual(match?.index, 1)
+        XCTAssertEqual(match?.confidence ?? 0, 1, accuracy: 1e-9)
+    }
+
+    func testAHintMatchingTwoCuesPicksTheOneNearerTheEstimate() {
+        let wide = 4_000_000
+        XCTAssertEqual(TranscriptAlignment.hintCue(for: "Johnny on the travel budget", near: 300_000, in: cues, windowMs: wide)?.index, 1)
+        XCTAssertEqual(TranscriptAlignment.hintCue(for: "Johnny on the travel budget", near: 2_300_000, in: cues, windowMs: wide)?.index, 3)
+    }
+
+    func testTheWindowLimitsTheSearch() {
+        // The only hiring cue Ben spoke is 46 minutes from the estimate.
+        XCTAssertNil(TranscriptAlignment.hintCue(for: "Ben said the hiring plan", near: 200_000, in: cues, windowMs: 600_000))
+    }
+
+    func testAWeakHintDoesNotAnchor() {
+        XCTAssertNil(TranscriptAlignment.hintCue(for: "something about money", near: 100_000, in: cues, windowMs: 600_000))
+        // One topic word with no speaker is too thin.
+        XCTAssertNil(TranscriptAlignment.hintCue(for: "budget", near: 100_000, in: cues, windowMs: 600_000))
+        // A speaker alone isn't a topic.
+        XCTAssertNil(TranscriptAlignment.hintCue(for: "Johnny", near: 100_000, in: cues, windowMs: 600_000))
+    }
+
+    func testAHintBecomesAnAnchorInAlignmentAndAWeakOneStaysAnEstimate() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        var live = LiveSession(id: "s", kind: .meeting, startedAt: start, startPositionMs: 0)
+        live.margins = [
+            live.margin(id: "hint", text: "Johnny was just talking about the travel budget", markedAt: start.addingTimeInterval(170)),
+            live.margin(id: "weak", text: "remember to follow up", markedAt: start.addingTimeInterval(200))
+        ]
+        let transcript = ImportedTranscript(format: .webVTT, cues: cues)
+        let result = TranscriptAlignment.align(session: live, transcript: transcript)
+        XCTAssertEqual(result.matches, ["hint": 1])
+        XCTAssertEqual(result.placed.first { $0.id == "hint" }?.offsetMs, 120_000)
+        XCTAssertEqual(result.placed.first { $0.id == "weak" }?.offsetMs, 200_000)
+    }
+}

@@ -84,3 +84,35 @@ final class LiveSessionPositionMapTests: XCTestCase {
         XCTAssertEqual(TranscriptAlignment.fallbackStart(transcript: transcript, session: live, roughStart: nil).date, t0.addingTimeInterval(-120))
     }
 }
+
+/// Owner rule 2026-10-22 (final): every position is kept; the player uses a confident transcript match, else
+/// the listener's setting, else the estimate.
+final class LiveSessionPrecedenceTests: XCTestCase {
+    func testAListenerPositionIsKeptBesideAMatchThatPlacesTheMargin() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        var live = LiveSession(id: "s", kind: .meeting, startedAt: start, startPositionMs: 0)
+        var margin = live.margin(id: "m", text: "we should move the launch to April", markedAt: start.addingTimeInterval(500))
+        margin.listenerPositionMs = 480_000
+        live.margins = [margin, live.margin(id: "n", text: "no words in common here", markedAt: start.addingTimeInterval(700))]
+        live.margins[1].listenerPositionMs = 690_000
+        let transcript = ImportedTranscript(format: .webVTT, cues: [
+            TranscriptCue(startMs: 0, endMs: 10_000, text: "Hello and welcome everyone"),
+            TranscriptCue(startMs: 600_000, endMs: 620_000, text: "I think we should move the launch to April.")
+        ])
+        let placed = TranscriptAlignment.align(session: live, transcript: transcript).placed
+        XCTAssertEqual(placed[0].source, .transcriptMatch)
+        XCTAssertEqual(placed[0].listenerMs, 480_000)
+        XCTAssertEqual(placed[1].source, .listener)
+        XCTAssertEqual(placed[1].offsetMs, 690_000)
+        XCTAssertNotNil(placed[1].estimateMs)
+    }
+
+    func testPositionOfAMarginPrefersTheListenerOverTheEstimate() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let live = LiveSession(id: "s", kind: .audiobook, startedAt: start, startPositionMs: 0)
+        var margin = live.margin(id: "m", text: "x", markedAt: start.addingTimeInterval(60))
+        XCTAssertEqual(LiveSessionPositionMap.position(of: margin, in: live)?.ms, 60_000)
+        margin.listenerPositionMs = 65_000
+        XCTAssertEqual(LiveSessionPositionMap.position(of: margin, in: live), .init(ms: 65_000, isApproximate: true, isListenerSet: true))
+    }
+}
