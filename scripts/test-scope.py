@@ -320,6 +320,15 @@ def hosted_automerge(scope):
             and all(p.startswith(('ops/', 'docs/')) or p.endswith('.md') for p in paths))
 
 
+def hosted_merge_routing(result, env=None):
+    """#2459: with the LANE_HOSTED_FAST switch `on`, every automerge job starts on a GitHub-hosted Linux runner. It
+    decides and merges from the GitHub API, takes the hosted fast checks' PASS on the head instead of re-running host
+    tests, and hands the job to lane.yml's `automerge-mac` fallback only when those checks don't stand."""
+    if (os.environ if env is None else env).get('LANE_HOSTED_FAST', '').strip().lower() != 'on':
+        return result
+    return dict(result, automerge=list(HOSTED_RUNNER))
+
+
 def runner_routing(pr, file_pages, runner_pages, root=ROOT, offmac=True):
     """Choose queue labels, never capacity. API errors/incomplete diffs keep today's queues.
 
@@ -437,7 +446,7 @@ def main(argv=None):
             result = runner_routing(event['pull_request'], files, runners)
         except (OSError, ValueError, KeyError, TypeError):
             result = runner_routing({}, [], [])
-        print(json.dumps(hosted_app_routing(result)))
+        print(json.dumps(hosted_merge_routing(hosted_app_routing(result))))
         return 0
     if not args.files and args.base is None:  # #1492: the trunk (scripts/trunk.py)
         from trunk import trunk_ref
