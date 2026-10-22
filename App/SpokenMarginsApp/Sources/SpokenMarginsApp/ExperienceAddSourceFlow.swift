@@ -460,6 +460,7 @@ struct ExperienceAddSourceFlow: View {
 
     private func presentFileImporter(_ request: FileRequest) {
         focusedField = nil
+        fileImportError = nil
         fileRequest = request
         showsFileImporter = true
     }
