@@ -2,7 +2,8 @@
 #
 # A conflict was found only when the PR's job reached a Mac runner: #604 passed T2, waited three hours in the
 # queue, and ended in a 0-second job that said "does not merge cleanly into next". This job asks the same
-# question on the owner's VPS runner (sm-vps), so a Mac slot is never spent on it. For every open PR into next
+# question on a GitHub-hosted Linux runner (the owner's VPS until #2442), so a Mac slot is never spent on it.
+# For every open PR into next
 # that carries `automerge` or `lane:queued`, scripts/lane_conflicts.py tries `git merge --no-commit --no-ff` of
 # the PR head onto next's tip in a throwaway worktree. A clean merge does nothing. On a conflict it posts one
 # comment naming the files (in the Mac finisher's hand-off format), adds `needs-mac`, removes `lane:queued` and
@@ -59,8 +60,12 @@ jobs:
         contains(github.event.pull_request.labels.*.name, 'lane:queued')) &&
        (github.event.action != 'labeled' ||
         github.event.label.name == 'automerge' || github.event.label.name == 'lane:queued')))
-    runs-on: [self-hosted, Linux, sm-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # Each run clones afresh into the runner's ~/.cache (a few hundred MB, under a minute here); the merge test reads
+      # no LFS file, so its worktrees keep the pointers.
+      GIT_LFS_SKIP_SMUDGE: '1'
     steps:
       - uses: actions/checkout@v4
         with:
