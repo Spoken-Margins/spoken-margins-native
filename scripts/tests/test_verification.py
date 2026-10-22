@@ -893,6 +893,24 @@ class VerificationTests(unittest.TestCase):
         self.assertTrue(failures[1][2].startswith("AssertionError: {'a': 1} != {'a': 2}"), failures[1])
         self.assertEqual(verification.unittest_failures('Ran 3 tests in 0.1s\n\nOK\n'), [])
 
+    def test_the_last_in_repo_line_and_the_final_chained_exception_are_reported(self):
+        # Review of #2466: a library frame or the first of two chained exceptions must not stand for the failure.
+        here = str(verification.ROOT)
+        log = ('======================================================================\n'
+               'ERROR: test_x (m.C.test_x)\n'
+               '----------------------------------------------------------------------\n'
+               'Traceback (most recent call last):\n'
+               f'  File "{here}/scripts/tests/m.py", line 5, in test_x\n    data["x"]\nKeyError: \'x\'\n\n'
+               'During handling of the above exception, another exception occurred:\n\n'
+               'Traceback (most recent call last):\n'
+               f'  File "{here}/scripts/tests/m.py", line 7, in test_x\n    json.loads("{{")\n'
+               '  File "/usr/lib/python3/json/decoder.py", line 361, in raw_decode\n'
+               'ValueError: Expecting property name\n\n'
+               '----------------------------------------------------------------------\n'
+               'Ran 1 test in 0.1s\n\nFAILED (errors=1)\n')
+        self.assertEqual(verification.unittest_failures(log), [
+            ('test_x (m.C.test_x)', f'{here}/scripts/tests/m.py:7', 'ValueError: Expecting property name')])
+
     def test_a_failing_runner_test_step_names_each_failing_test(self):
         with tempfile.TemporaryDirectory() as temporary:
             script = Path(temporary) / 'sample.py'

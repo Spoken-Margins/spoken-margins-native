@@ -424,8 +424,12 @@ def unittest_failures(text):
         if not re.match(r'(FAIL|ERROR): ', header):
             continue
         trace = re.split(r'^-{70}$', body, flags=re.M)[1] if body.count('-' * 70) else body  # the last block ends in the summary
+        if 'Traceback (most recent call last):' in trace:  # a chained exception: the last one is the failure
+            trace = trace[trace.rindex('Traceback (most recent call last):'):]
         frames = re.findall(r'^\s*File "([^"]+)", line (\d+)', trace, re.M)
-        where = f'{Path(frames[-1][0]).as_posix()}:{frames[-1][1]}' if frames else 'no traceback'
+        ours = [frame for frame in frames if frame[0].startswith(str(ROOT))]  # the test's line, not a library's
+        where = ('{}:{}'.format(Path((ours or frames)[-1][0]).as_posix(), (ours or frames)[-1][1])
+                 if frames else 'no traceback')
         message = [line.strip() for line in trace.splitlines() if line.strip() and not line[0].isspace()
                    and not line.startswith('Traceback')][:2]
         failures.append((header.split(': ', 1)[1], where, ' | '.join(message)[:300]))
@@ -1203,7 +1207,7 @@ class Run:
             # The lane's own words (lane-runner.py run_auto), so a local FAIL reads as the queue's would.
             errors.extend(f'hot-file ratchet — {line[len("FAIL "):]}' for line in text.splitlines()
                           if line.startswith('FAIL '))
-        if name == 'runner-tests' or name.startswith('ops-'):
+        if name in ('runner-tests', 'ops') or name.startswith('ops-'):
             match = re.search(r'Ran (\d+) tests? in ', text)
             entry['executed_count'] = int(match[1]) if match else 0
             if not entry['executed_count']:
