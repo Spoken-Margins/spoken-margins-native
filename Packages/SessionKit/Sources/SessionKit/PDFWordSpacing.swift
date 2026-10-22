@@ -457,6 +457,11 @@ public struct PDFWordSpacer {
             let seen = Double(documentCounts[Self.key(Array(letters[range]))] ?? 0)
             return seen >= 2 ? log2(tokenCount / seen) : unknownCost(printed.count)
         }
+        // An acronym's plural ("MWDs") is one piece, so "theMWDsinthesample" isn't "MWD sin".
+        if range.count >= 3, !afterLower, letters[range.upperBound - 1] == "s",
+           cased.dropLast().allSatisfy({ cases.isUpper[$0] }) {
+            return wordCost(Array(letters[range.dropLast()]), isLower: false, isUpper: true)
+        }
         guard isLower || isUpper && !afterLower || (isCapitalised && afterUpper) else { return .infinity }
         // "A" or "I" cut from an acronym ("AI" as "A I") isn't a word.
         if range.count == 1, isUpper, range.lowerBound > 0 && cases.isUpper[range.lowerBound - 1]
@@ -525,17 +530,16 @@ public struct PDFWordSpacer {
                 if isWord(Array(letters[start..<end])) { covered[end] = true; break }
             }
         }
-        // A phrase glued the same way every time ("attheendof", eight times in table notes)
-        // splits into three or more words once two-letter function words count.
-        var pieces = [Int](repeating: 0, count: letters.count + 1)
+        // Nor is a phrase glued the same way every time ("attheendof", eight times in table
+        // notes): it splits wholly into common words. "subtilis" ("sub til is") doesn't.
+        var phrase = [Bool](repeating: false, count: letters.count + 1)
+        phrase[0] = true
         for end in 1...letters.count {
-            for start in max(0, end - 24)..<end where start == 0 || pieces[start] > 0 {
-                let piece = String(letters[start..<end])
-                let fits = end - start >= 3 ? isWord(Array(piece)) : Self.functionWords.contains(piece)
-                if fits, end - start < letters.count { pieces[end] = max(pieces[end], pieces[start] + 1) }
+            for start in max(0, end - 12)..<end where phrase[start] && end - start < letters.count {
+                if Self.commonWords.contains(String(letters[start..<end])) { phrase[end] = true; break }
             }
         }
-        let known = !covered[letters.count] && pieces[letters.count] < 3
+        let known = !covered[letters.count] && !phrase[letters.count]
         cache.documentWords[key] = known
         return known
     }
@@ -603,10 +607,6 @@ public struct PDFWordSpacer {
         "a", "i", "am", "an", "as", "at", "be", "by", "do", "go", "he", "if", "in", "is", "it", "me", "my",
         "no", "of", "oh", "on", "or", "ox", "so", "to", "up", "us", "we", "vs"
     ]
-
-    /// Two-letter words glued prose is full of; "us" and "so" are left out, so "prolixus"
-    /// stays a name.
-    private static let functionWords: Set<String> = ["of", "to", "in", "at", "is", "on", "an", "as", "by", "or", "it", "be", "we"]
 
     /// The commonest English words, which win ties ("is the" over "ist he").
     static let commonWords: Set<String> = [
