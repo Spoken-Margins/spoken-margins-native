@@ -472,7 +472,8 @@ def gh(method: str, path: str, token: str, body: dict | None = None):
         f'https://api.github.com/{path}', method=method,
         data=json.dumps(body).encode() if body is not None else None,
         headers={'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json',
-                 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'sm-dial-gate'})
+                 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'sm-dial-gate',
+                 **({'Content-Type': 'application/json'} if body is not None else {})})  # else GitHub: 415 (#2265)
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read() or b'null')
 

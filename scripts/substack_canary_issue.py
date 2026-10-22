@@ -53,6 +53,7 @@ def request(method, path, token, body=None):
         'Accept': 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
         'User-Agent': 'spoken-margins-substack-canary',
+        **({'Content-Type': 'application/json'} if data is not None else {}),  # form-encoded bodies get 415 (#2265)
     })
     with urllib.request.urlopen(req, timeout=30) as response:
         return json.loads(response.read() or b'null')
