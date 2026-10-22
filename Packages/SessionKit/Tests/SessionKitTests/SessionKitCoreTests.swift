@@ -4120,7 +4120,8 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.targetType, TargetType.itemTextTTS.rawValue, file: file, line: line)
         XCTAssertEqual(audio.playedTargets.last, fixture.item.id, "reads the article text", file: file, line: line)
         XCTAssertEqual(audio.preparedTexts.last, fixture.item.text, file: file, line: line)
-        XCTAssertEqual(engine.currentSession?.position.charOffset, 24, "from the saved position", file: file, line: line)
+        // Character 24 is inside "sentence." (it starts at 23): reading starts on its first letter (#2128).
+        XCTAssertEqual(engine.currentSession?.position.charOffset, 23, "from the saved position, at the start of its word", file: file, line: line)
         XCTAssertEqual(snapshot.playbackRate, 1.25, file: file, line: line)
         let saved = try XCTUnwrap(try repo.loadSession(id: fixture.session.id), file: file, line: line)
         XCTAssertEqual(saved.currentTargetType, .itemTextTTS, file: file, line: line)

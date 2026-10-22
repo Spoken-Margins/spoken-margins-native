@@ -62,11 +62,11 @@ public enum PreparedNarrationFallback {
         let textLength = item.text?.count ?? 0
         var offset = session.position.charOffset
         if let mediaTimeMs = session.position.mediaTimeMs, let timeline, !timeline.segments.isEmpty {
-            // The timeline interpolates inside a segment by time share, which lands mid-word; on-device
-            // speech starting there would speak "entence..." (#2128). A saved character offset is kept as
-            // it is: it was written where the speech voice stopped.
-            offset = wordStart(atOrBefore: textOffset(mediaTimeMs: mediaTimeMs, timeline: timeline), in: item.text ?? "")
+            offset = textOffset(mediaTimeMs: mediaTimeMs, timeline: timeline)
         }
+        // Both the timeline and a media session's saved character offset are interpolated inside a segment by
+        // time share, which lands mid-word; on-device speech starting there would say "entence..." (#2128).
+        offset = wordStart(atOrBefore: offset, in: item.text ?? "")
         offset = max(0, min(offset, textLength))
         var updated = session
         updated.currentTargetType = .itemTextTTS

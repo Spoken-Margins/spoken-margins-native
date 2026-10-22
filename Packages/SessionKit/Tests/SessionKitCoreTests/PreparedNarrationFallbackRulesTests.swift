@@ -140,11 +140,20 @@ final class PreparedNarrationFallbackRulesTests: XCTestCase {
     }
 
     func testTheSavedCharacterOffsetIsUsedWhenThereIsNoMediaTimeOrNoTimeline() {
-        XCTAssertEqual(resumeOffset(atMs: nil, charOffset: 20), 20, "no media time was saved")
-        XCTAssertEqual(resumeOffset(atMs: 1_100, timeline: TranscriptTimeline(segments: [], chapters: [], durationMs: 0), charOffset: 20), 20,
+        // 22 is the space after "Second", so the saved place is already between words and is kept.
+        XCTAssertEqual(resumeOffset(atMs: nil, charOffset: 22), 22, "no media time was saved")
+        XCTAssertEqual(resumeOffset(atMs: 1_100, timeline: TranscriptTimeline(segments: [], chapters: [], durationMs: 0), charOffset: 22), 22,
                        "an empty timeline says nothing")
+        let resumed = PreparedNarrationFallback.liveSpeechSession(from: session(charOffset: 22), item: item(), timeline: nil)
+        XCTAssertEqual(resumed.position.charOffset, 22, "no timeline")
+    }
+
+    func testASavedCharacterOffsetInsideAWordResumesAtThatWordsStart() {
+        // A media session's saved character offset was interpolated by time share too (#2128): 20 is inside "Second" (16).
+        XCTAssertEqual(resumeOffset(atMs: nil, charOffset: 20), 16, "no media time was saved")
         let resumed = PreparedNarrationFallback.liveSpeechSession(from: session(charOffset: 20), item: item(), timeline: nil)
-        XCTAssertEqual(resumed.position.charOffset, 20, "no timeline")
+        XCTAssertEqual(resumed.position.charOffset, 16, "no timeline")
+        XCTAssertEqual(resumed.completionPercent, 50)
     }
 
     func testTheResumePlaceStaysInsideTheTextAndSetsTheCompletion() {
