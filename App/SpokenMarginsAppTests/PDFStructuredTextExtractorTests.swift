@@ -719,9 +719,13 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
             "measurethescopeforAItoperformworkinsteadofwhereitmaypayoffmore.",
             "Ourindexthereforemeasurespressurefromcapabilitybottlenecks,ratherthanintegration",
             "Weaskinsteadwherethemarginalvalueofworkmayriseasthejobspeedsup.",
+            "inpostingsthatmentionafeasibletaskandaninfeasibleone,ofallAI-",
+            "infeasiblementionsappearinpostingsthatalsolistafeasibletask.",
         ])
         let spaced = try PDFStructuredTextExtractor.structuredDocument(from: XCTUnwrap(PDFDocument(data: glued)))
         XCTAssertTrue(spaced.text.contains("the standard tool for describing which occupations"), spaced.text)
+        // The broken word's first half is "AI" from the respaced line, not the glued "ofallAI".
+        XCTAssertTrue(spaced.text.contains("infeasible mentions appear in postings"), spaced.text)
         // A spaced PDF with a long unlisted word keeps its text exactly.
         let lines = ["Measures of AI exposure have become the standard tool for describing work,",
                      "and Pneumonoultramicroscopicsilicovolcanoconiosis stays as it is printed."]

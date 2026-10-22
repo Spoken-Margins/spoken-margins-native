@@ -37,6 +37,7 @@ final class PDFWordSpacingTests: XCTestCase {
         XCTAssertEqual(spacer.respaced("ratherthanjustthoseonthepostingoccupation’sO*NET"),
                        "rather than just those on the posting occupation’s O*NET")
         XCTAssertEqual(spacer.respaced("soeachoccupation’sAI-infeasiblework"), "so each occupation’s AI-infeasible work")
+        XCTAssertEqual(spacer.respaced("therecipient’sGenome"), "the recipient’s Genome")
         XCTAssertEqual(spacer.respaced("whenever 𝜎 < 1 ≤𝜌butcanfailwhen𝜌 < 1"), "whenever 𝜎 < 1 ≤𝜌 but can fail when 𝜌 < 1")
         XCTAssertEqual(spacer.respaced("Wang.2026.“GenerativeAIandtheReorganization"), "Wang. 2026. “Generative AI and the Reorganization")
         // Unchanged: a possessive already spaced, math in a spaced line, an abbreviation, a version.

@@ -84,11 +84,8 @@ public struct PDFWordSpacer {
             guard characters[start].isLetter else { start += 1; continue }
             var end = start
             while end < characters.count, characters[end].isLetter { end += 1 }
-            var tokenStart = start, tokenEnd = end
-            while tokenStart > 0, !characters[tokenStart - 1].isWhitespace { tokenStart -= 1 }
-            while tokenEnd < characters.count, !characters[tokenEnd].isWhitespace { tokenEnd += 1 }
             // An e-mail address or URL slug is not glued prose.
-            if end - start >= Self.gluedRunLength, !Self.isAddressLike(String(characters[tokenStart..<tokenEnd])) {
+            if end - start >= Self.gluedRunLength, !isInAddress(characters, start..<end) {
                 // Hard case cues first, as `respaced` does: "occupationsAIislikely".
                 for piece in caseRuns(characters, start..<end) where piece.count >= Self.gluedRunLength {
                     let run = Array(characters[piece])
@@ -103,6 +100,13 @@ public struct PDFWordSpacer {
             start = end
         }
         return false
+    }
+
+    private func isInAddress(_ characters: [Character], _ run: Range<Int>) -> Bool {
+        var tokenStart = run.lowerBound, tokenEnd = run.upperBound
+        while tokenStart > 0, !characters[tokenStart - 1].isWhitespace { tokenStart -= 1 }
+        while tokenEnd < characters.count, !characters[tokenEnd].isWhitespace { tokenEnd += 1 }
+        return Self.isAddressLike(String(characters[tokenStart..<tokenEnd]))
     }
 
     /// The line with its word spaces put back.
@@ -229,6 +233,10 @@ public struct PDFWordSpacer {
             let before = characters[index - 1], here = characters[index]
             let next: Character? = index + 1 < token.upperBound ? characters[index + 1] : nil
             switch (before, here) {
+            case let (a, b) where (a == "s" || a == "S") && b.isUppercase && index >= token.lowerBound + 3
+                && (characters[index - 2] == "’" || characters[index - 2] == "'") && characters[index - 3].isLetter:
+                // A possessive: "occupation’sAI-infeasible", "occupation’sO*NET".
+                offsets.append(index)
             case let (a, b) where a.isLowercase && b.isUppercase && startsWord(characters, at: index, in: token):
                 // "andChen" and "InProceedings" split; "iPhone", "McDonald", "LaTeX", "PhD",
                 // "microRNA" and "circRNAs" keep their case.
@@ -248,10 +256,6 @@ public struct PDFWordSpacer {
                 if !isPrintedWhole, lowerTail >= 2 && !isShortCapitalised && endsInWord || word.count >= 2 && isWord(word) {
                     offsets.append(index)
                 }
-            case let (a, b) where (a == "s" || a == "S") && b.isUppercase && index >= token.lowerBound + 3
-                && (characters[index - 2] == "’" || characters[index - 2] == "'") && characters[index - 3].isLetter:
-                // A possessive: "occupation’sAI-infeasible", "occupation’sO*NET".
-                offsets.append(index)
             case let (a, b) where Self.isMathLetter(a) != Self.isMathLetter(b) && a.isLetter && b.isLetter:
                 // Math italic against prose: "𝜌butcanfailwhen𝜌", "𝑡inoccupation".
                 offsets.append(index)
