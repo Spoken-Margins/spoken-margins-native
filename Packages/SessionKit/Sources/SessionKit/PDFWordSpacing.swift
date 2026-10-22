@@ -17,6 +17,9 @@ public struct PDFWordSpacer {
     /// frequencies, and a word the paper itself prints spaced ("instead", "Autor") is
     /// the likelier reading of a glued run.
     private let documentCounts: [String: Int]
+    /// Capitalised names with a capital inside ("GitHub", "OpenAI") that the paper prints
+    /// alone at least three times. They stay whole even when each half is a word.
+    private let printedNames: [[Character]]
 
     /// `isWord` answers for one lower-case word (the app passes the bundled Kitten
     /// lexicon, `SortedWordList`). Capitalised and upper-case forms are looked up too.
@@ -24,6 +27,7 @@ public struct PDFWordSpacer {
     public init(isWord: @escaping (String) -> Bool, context: [String] = []) {
         lookUp = isWord
         var counts: [String: Int] = [:]
+        var nameCounts: [String: Int] = [:]
         var brokenBefore = false
         for line in context {
             // The halves of a word broken at a line-end hyphen ("re-" and "cipient") aren't words.
@@ -35,9 +39,13 @@ public struct PDFWordSpacer {
                 if word.hasSuffix("’s") || word.hasSuffix("'s") { word = word.dropLast(2) }
                 guard word.count >= 2 || word == "a" || word == "A" || word == "I", word.allSatisfy(\.isLetter) else { continue }
                 counts[Self.key(Array(word)), default: 0] += 1
+                if word.first?.isUppercase == true, zip(word, word.dropFirst()).contains(where: { $0.isLowercase && $1.isUppercase }) {
+                    nameCounts[String(word), default: 0] += 1
+                }
             }
         }
         documentCounts = counts
+        printedNames = nameCounts.filter { $0.value >= 3 }.keys.sorted().map(Array.init)
         tokenCount = max(1_000, Double(counts.values.reduce(0, +)))
     }
 
@@ -253,6 +261,7 @@ public struct PDFWordSpacer {
                 while end < token.upperBound, characters[end].isLetter { end += 1 }
                 let isPrintedWhole = isDocumentWord(Self.key(Array(characters[(index - run.count)..<end])))
                     && !Self.commonWords.contains(Self.key(word))
+                    || isInsidePrintedName(characters, at: index, in: token)
                 if !isPrintedWhole, lowerTail >= 2 && !isShortCapitalised && endsInWord || word.count >= 2 && isWord(word) {
                     offsets.append(index)
                 }
@@ -312,7 +321,17 @@ public struct PDFWordSpacer {
                 break
             }
         }
-        return offsets
+        // A printed name ends where a word starts: "OpenAIand", "GitHubusers"; "DeepMinds" stays.
+        for name in printedNames where name.count <= token.count {
+            for start in token.lowerBound...(token.upperBound - name.count) where characters[start..<(start + name.count)].elementsEqual(name) {
+                let end = start + name.count
+                let after = letterRunLength(startingAt: end)
+                if after >= 2, (2...min(after, 12)).contains(where: { isWord(Array(characters[end..<(end + $0)])) }) {
+                    offsets.append(end)
+                }
+            }
+        }
+        return Array(Set(offsets)).sorted()
     }
 
     /// The capital at `index` starts a capitalised word ("Chen"), or an acronym after
@@ -519,6 +538,16 @@ public struct PDFWordSpacer {
         guard key.count >= 3, key.count <= 6, !Self.commonWords.contains(key) else { return false }
         return (1..<key.count).contains { cut in
             Self.commonWords.contains(String(key.prefix(cut))) && Self.commonWords.contains(String(key.dropFirst(cut)))
+        }
+    }
+
+    /// Whether `index` falls inside one of `printedNames`, as "OpenAI" in "datafromOpenAIand".
+    private func isInsidePrintedName(_ characters: [Character], at index: Int, in token: Range<Int>) -> Bool {
+        printedNames.contains { name in
+            let first = max(token.lowerBound, index - name.count + 1)
+            let last = min(index - 1, token.upperBound - name.count)
+            guard first <= last else { return false }
+            return (first...last).contains { characters[$0..<($0 + name.count)].elementsEqual(name) }
         }
     }
 

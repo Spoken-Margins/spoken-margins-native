@@ -214,10 +214,12 @@ final class StructuredDocumentTests: XCTestCase {
         ])
         XCTAssertEqual(citationLabels(["GPT-4 ratings from Eloundou et al. (2024) construct a measure."], references: nil), [])
         XCTAssertEqual(citationLabels(["We tested (1) speed and (2) accuracy."], references: numberedReferences), [])
+        // An author-year paper like this one has no numbered list; with one, "(2)" is a citation (#138).
         XCTAssertEqual(citationLabels(["In 2019 (2) groups met."], references: nil), [])
         XCTAssertEqual(citationLabels(["Sales rose (Table 2, 2019) and fell (in 2020)."], references: nil), [])
         XCTAssertEqual(citationLabels(["The summit (Paris, France, 2019) met."], references: nil), [])
         XCTAssertEqual(citationLabels(["As shown (Smith, Jones, & Lee, 2019)."], references: nil), ["(Smith, Jones, & Lee, 2019)"])
+        XCTAssertEqual(citationLabels(["As shown (Smith &Jones, 2019)."], references: nil), ["(Smith &Jones, 2019)"])
     }
 
     private func citationLabels(_ body: [String], references: [String]?) -> [String] {

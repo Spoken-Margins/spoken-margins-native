@@ -68,6 +68,11 @@ final class PDFWordSpacingTests: XCTestCase {
         XCTAssertEqual(spacer.respaced("meetsBGI’sinternalhigh-confidence threshold"), "meets BGI’s internal high-confidence threshold")
         XCTAssertEqual(spacer.respaced("nonmetal, acetal, Sheetal and H2SO4 in 2019Baumol, Kwaetal.,2025"),
                        "nonmetal, acetal, Sheetal and H2SO4 in 2019 Baumol, Kwa et al., 2025")
+        // Product and company names the paper prints whole stay whole, even when each half is a word.
+        let products = try kittenSpacer(context: Array(repeating: "TensorFlow, GitHub, OpenAI, DeepMind and LinkedIn", count: 3))
+        XCTAssertEqual(products.respaced("we used TensorFlow, DeepMind and LinkedIn"), "we used TensorFlow, DeepMind and LinkedIn")
+        XCTAssertEqual(products.respaced("datafromOpenAIandGitHub"), "data from OpenAI and GitHub")
+        XCTAssertEqual(products.respaced("Brynjolfsson,Chandar andChen,2025"), "Brynjolfsson, Chandar and Chen, 2025")
         // E-mail addresses are not glued prose.
         let addresses = Array(repeating: "Contact: firstname.lastname@burningglassinstitute.org", count: 5)
         XCTAssertFalse(spacer.isGlued(addresses))
