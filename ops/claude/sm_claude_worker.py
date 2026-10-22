@@ -98,7 +98,8 @@ MAX_WORKERS = int(os.environ.get('SM_CLAUDE_WORKER_MAX', '1'))  # the Mac has tw
 MARGIN = 3                 # points below the Dial's stop line where new work holds (as the Dial gate)
 TREND_SLACK = 10           # points ahead of the trend line allowed (as the Dial gate; owner 2026-10-19)
 MIN_FREE_GIB = 20          # the Mac finisher's pause line; AGENTS.md wants 10 GiB plus 4 per build
-FOCUS_MILESTONE = os.environ.get('SM_CLAUDE_WORKER_FOCUS_MILESTONE', 'Solid Ground')
+FOCUS_MILESTONES = tuple(name.strip() for name in
+                         os.environ.get('SM_CLAUDE_WORKER_FOCUS_MILESTONE', 'Showcase').split(',') if name.strip())
 CLAIM_STALE = dt.timedelta(hours=6)      # another thread's claim this old and quiet is released
 STALL_GRACE = dt.timedelta(hours=1)      # the Mac finisher gets this long on a stalled PR first
 FAULT_COOLDOWN = dt.timedelta(minutes=30)
@@ -387,6 +388,13 @@ def label_skip(issue: dict, held: set = frozenset()) -> Optional[str]:
     return None
 
 
+def focus_rank(milestone: Optional[str]) -> int:
+    """Position of the milestone in the ordered focus list; anything else ranks after every listed one."""
+    if FOCUS_MILESTONES and milestone in FOCUS_MILESTONES:
+        return FOCUS_MILESTONES.index(milestone)
+    return len(FOCUS_MILESTONES)
+
+
 def issue_rank(issue: dict, pending: bool) -> tuple:
     """Pending hand-off, then priority, regressions and reverts, found-on-phone, the focus milestone, oldest."""
     names = label_names(issue)
@@ -394,7 +402,7 @@ def issue_rank(issue: dict, pending: bool) -> tuple:
     milestone = milestone.get('title') if isinstance(milestone, dict) else milestone
     return (not pending, 'priority' not in names,
             not ('regression' in names or (issue.get('title') or '').startswith('Revert')),
-            'found-on-phone' not in names, bool(FOCUS_MILESTONE) and milestone != FOCUS_MILESTONE,
+            'found-on-phone' not in names, focus_rank(milestone),
             issue.get('createdAt') or '', issue.get('number') or 0)
 
 
