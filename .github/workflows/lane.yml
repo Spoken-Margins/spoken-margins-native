@@ -332,7 +332,7 @@ jobs:
       needs.route.outputs.skip_automerge != 'true' &&
       contains(github.event.pull_request.labels.*.name, 'automerge') &&
       (github.event.action != 'labeled' || github.event.label.name == 'automerge')
-    runs-on: ${{ fromJSON(needs.route.outputs.automerge || '["self-hosted","macOS","sm-lane-build"]') }}
+    runs-on: ${{ fromJSON(needs.route.outputs.automerge || '["self-hosted","macOS"]') }}
     # One runner is one lane, so runs from different PRs queue behind each other. Within a PR, a
     # newer queued run replaces one that hasn't started, so only the newest commit is tested. This
     # sits on the job, not the workflow, so skipped runs (other labels) never cancel a real one.
@@ -353,6 +353,8 @@ jobs:
       # #1389 rollout guard: `on` once the repo is public, and the runner takes the hosted fast checks' PASS
       # (hosted-portable.yml) and runs only --plan fast-mac-rest on the Mac. Unset, the whole --plan fast, as before.
       LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
+      # Any Mac runner may take this job (#2450), so it applies the build runner's room rules wherever it lands.
+      SM_LANE_RUNNER_ROLE: build
     steps:
       - uses: actions/checkout@v4
         with:
