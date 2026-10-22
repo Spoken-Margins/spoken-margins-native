@@ -21,8 +21,8 @@ public final class VoiceDownloadLog: @unchecked Sendable {
     }
 
     public static let schemaVersion = "spoken-margins.voice-downloads.v1"
-    /// The newest this many events are kept. A whole install is a few dozen.
-    public static let defaultLimit = 200
+    /// The newest this many events are kept. A whole install is a few dozen, and each visit to Voices adds about four.
+    public static let defaultLimit = 400
     public static let fileName = "download-log.json"
 
     private let fileURL: URL?
@@ -84,11 +84,11 @@ public final class VoiceDownloadLog: @unchecked Sendable {
 
     // MARK: What may go in
 
-    /// A web address becomes its host; a path becomes its last component. Anything longer than 200
+    /// Any scheme://address becomes its host; a path (to the next quote or bracket, since iOS folders hold spaces) is dropped. Anything longer than 200
     /// characters is cut, so a stray error text can't fill the log.
     public static func sanitized(_ value: String) -> String {
         var text = value
-        if let regex = try? NSRegularExpression(pattern: #"https?://[^\s"')\]]+"#) {
+        if let regex = try? NSRegularExpression(pattern: #"[A-Za-z][A-Za-z0-9+.-]*://[^\s"')\]]+"#) {
             let range = NSRange(text.startIndex..., in: text)
             let matches = regex.matches(in: text, range: range).reversed()
             for match in matches {
@@ -96,7 +96,7 @@ public final class VoiceDownloadLog: @unchecked Sendable {
                 text.replaceSubrange(matchRange, with: host(of: String(text[matchRange])))
             }
         }
-        if let regex = try? NSRegularExpression(pattern: #"/(?:private|Users|var|Library|tmp|data)/[^\s"')\]]+"#) {
+        if let regex = try? NSRegularExpression(pattern: #"/(?:private|Users|var|Library|tmp|data)/[^"')\]]*"#) {
             let range = NSRange(text.startIndex..., in: text)
             let matches = regex.matches(in: text, range: range).reversed()
             for match in matches {

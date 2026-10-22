@@ -56,8 +56,9 @@ final class VoiceDownloadLogTests: XCTestCase {
             ("https://huggingface.co/Supertone/supertonic-3/resolve/abc/onnx/model.onnx", "huggingface.co"),
             ("fetch https://voices.example/v1/catalog.json?token=secret failed", "fetch voices.example failed"),
             ("(https://a.example/x) and https://b.example:8443/y", "(a.example) and b.example"),
-            ("wrote /var/mobile/Containers/Data/Application/ABC/Library/Application Support/Voices/x", "wrote <path> Support/Voices/x"),
-            ("/private/var/mobile/tmp/file.partial gone", "<path> gone"),
+            ("wrote /var/mobile/Containers/Data/Application/ABC/Library/Application Support/Voices/x", "wrote <path>"),
+            ("/private/var/mobile/tmp/file.partial gone", "<path>"),
+            ("ftp://h.example/secret/file not usable", "h.example not usable"),
             ("onnx/model.onnx", "onnx/model.onnx"),
             ("", ""),
         ]
