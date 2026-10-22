@@ -93,10 +93,18 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      # research/B4/server's tests; its go.mod names the version.
+      # research/B4/server's tests. Its go.mod `toolchain` line names the exact
+      # patch release; setup-go v5's go-version-file reads only the `go` line
+      # (the minimum), so read the toolchain line here instead.
+      - name: Read the Go toolchain from go.mod
+        id: gotool
+        run: |
+          v=$(sed -n 's/^toolchain go//p' research/B4/server/go.mod)
+          [ -n "$v" ] || { echo "no toolchain line in go.mod" >&2; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version-file: research/B4/server/go.mod
+          go-version: ${{ steps.gotool.outputs.version }}
       - name: Python tools and Node packages
         run: |
           bash scripts/bootstrap-python-tools.sh
