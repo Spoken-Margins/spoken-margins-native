@@ -292,7 +292,7 @@ Simulators:
   steps "not verified" and leave them for the owner's phone pass.
 - At most two simulator jobs on this 16 GB Mac, and the second only while memory pressure is
   normal (two plus builds filled swap before the owner freed memory, #184). The helper holds a
-  Mac-wide simulator slot from boot until its watcher stops (the stop flag above, or --done). The runner's T3 takes the other slot or waits.
+  Mac-wide simulator slot from boot until its watcher stops (the stop flag above, or --done). The runner's T3 takes the other slot or waits. A job that waits reclaims a slot whose taker has exited and that is over 3 hours old (a desk run that died without --done, #2174): it releases the device as --done does and stops the watcher. A note from before that change names no device, so such a hold is only reported as STALE in the wait message.
   `scripts/lane-sim-boot --second-slot status` says whether a second job may start. When the
   lane switches the second slot off by itself, it comes back on after a cooldown (4 h, doubling
   for each repeat trip that week, at most 24 h) once pressure is normal; `off` by hand stays off

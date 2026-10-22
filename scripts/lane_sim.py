@@ -46,7 +46,7 @@ import subprocess
 import sys
 import time
 
-from lane_slots import (build_slot_file, disable_second_slot, memory_pressure_level, second_slot_back_on_at, simulator_boot_lock,
+from lane_slots import (annotate_holder, build_slot_file, disable_second_slot, memory_pressure_level, second_slot_back_on_at, simulator_boot_lock,
                         simulator_jobs_running, state_dir, PRESSURE_NAMES, SLOTS)
 
 # iOS 27's Apple Intelligence services crash-flood on this Mac (#184). A GitHub-hosted Mac (lane.yml, #1389) sets
@@ -420,6 +420,8 @@ def start_watcher(udid: str, helper: Path, slot=None, crash_window: tuple | None
                                    stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True,
                                    pass_fds=(slot.fileno(),) if slot else ())
     pid_file.write_text(f'{watcher.pid}\n')
+    if slot:
+        annotate_holder(slot, udid=udid, watcher_pid=watcher.pid)
 
 
 def release(udid: str, wait: float = RELEASE_WAIT, keep: bool = False) -> None:
