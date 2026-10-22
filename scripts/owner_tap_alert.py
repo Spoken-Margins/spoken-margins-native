@@ -35,7 +35,7 @@ stranger's look-alike audit or alert marker can't start or stop an alert.
 Any doubt (an API error, a head that moved during the run) posts nothing for that PR; the next run tries again.
 
 Where it runs. The alert must come from the bot, so it is posted only inside GitHub Actions:
-  * at the end of linux-t1.yml and shipped-build-compat.yml (their `owner-tap-alert` job, `--pr N`), so it is
+  * at the end of hosted-portable.yml and shipped-build-compat.yml (their `owner-tap-alert` job, `--pr N`), so it is
     decided when a PR's checks finish. A workflow_dispatch can't start it: GitHub reads a workflow's dispatch
     trigger from main, which doesn't carry this one until #1492 (hosted-app-macos.yml records the same limit);
   * in owner-tap-alert.yml when the PR gets the `owner-tap-check` label (`--pr N --clear-label owner-tap-check`).
