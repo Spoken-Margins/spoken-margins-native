@@ -1607,6 +1607,17 @@ public final class SessionEngine {
         return reading
     }
 
+    /// The ready cue is about to play (#1594): the recorder stops taking audio in, so the cue is not in the saved Margin.
+    public func pauseRecordingForReadyCue() {
+        guard currentSession?.phase == .recordingInterjection else { return }
+        recorder.pauseForReadyCue()
+    }
+
+    /// The cue has started, or did not play (0 seconds): the recorder listens again after `seconds`.
+    public func resumeRecordingAfterReadyCue(after seconds: TimeInterval) {
+        recorder.resumeAfterReadyCue(after: seconds)
+    }
+
     /// Starts a new recorder after one that never got audio; the session stays in `recordingInterjection`.
     public func restartRecordingCapture() throws {
         guard currentSession?.phase == .recordingInterjection else {
@@ -2919,6 +2930,18 @@ public final class SessionEngine {
     public func deleteInterjection(interjectionId: String, sessionId: String? = nil) throws -> SessionSnapshot {
         try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
             interjection.status = "deleted"
+        }
+        publish(status: snapshot.status, phase: snapshot.phase)
+        return snapshot
+    }
+
+    /// Brings back a Margin `deleteInterjection` hid, for the Undo on the "Deleted Margin" banner (#1981). Deleting
+    /// only sets the status, so the words, the recording, the place and the order were never touched. A Margin that
+    /// isn't deleted is left as it is, so a second Undo does nothing.
+    @discardableResult
+    public func restoreInterjection(interjectionId: String, sessionId: String? = nil) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            if interjection.status == "deleted" { interjection.status = "active" }
         }
         publish(status: snapshot.status, phase: snapshot.phase)
         return snapshot

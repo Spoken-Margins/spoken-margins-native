@@ -120,7 +120,7 @@ jobs:
           [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::main only"; exit 1; }
           echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
@@ -128,7 +128,7 @@ jobs:
       # restores only caches it wrote itself.
       - name: List LFS objects
         run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .git/lfs
           key: phone-lfs-${{ hashFiles('.build/lfs-ids.txt') }}
@@ -139,12 +139,12 @@ jobs:
         run: |
           auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.SPM }}
           key: phone-spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
           restore-keys: phone-spm-
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.CAS }}
           key: phone-cas-27.0-${{ github.run_id }}
@@ -261,7 +261,7 @@ jobs:
           print(f"Build {details['bundle_version']} from {sha[:7]}, {size / 1e6:.0f} MB, built in {details['build_seconds']} s.")
           PY
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: phone-build-${{ github.sha }}
           path: |
