@@ -13,13 +13,14 @@ extension Gate1AppModel {
     }
 
     /// Routes pasted content: a link through the podcast-first link import with its article fallback,
-    /// text through the text import, and anything else to an inline message. Never starts playback.
+    /// text through the text import, and anything else to an inline message. Starts playback only for a link and
+    /// only when `startSession` says so (the Library's "Add and play" offer, #1379); Paste & go never does.
     @discardableResult
-    func pasteAndGo(_ content: String?, html: String? = nil) -> PasteAndGoOutcome {
+    func pasteAndGo(_ content: String?, html: String? = nil, startSession: Bool = false) -> PasteAndGoOutcome {
         switch ClipboardIntakeClassifier.classify(content) {
         case .link(let url):
             sourceLinkURL = url.absoluteString
-            guard beginSourceLinkImportFromForm(startSession: false) else {
+            guard beginSourceLinkImportFromForm(startSession: startSession) else {
                 return .notAdded(isResolvingSourceLink
                     ? "Still adding the last link. Try again in a moment."
                     : sourceLinkImportMessage ?? "This link could not be added.")

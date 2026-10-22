@@ -101,6 +101,29 @@ final class PasteAndGoTests: XCTestCase {
         XCTAssertEqual(row.mediaType, "text")
     }
 
+    /// #1379: the Library's "Add and play" offer asks for the session; the Add sheet's Paste & go never does.
+    func testALinkAddedWithStartSessionPlaysItAtOnce() async throws {
+        let model = makeModel()
+        model.declineCurrentTerms()
+        let articleURL = try XCTUnwrap(URL(string: PasteAndGoURLProtocol.articleURL))
+        model.readablePageExtractor = PasteAndGoPageExtractor(.success(BrowserTextHandoff(
+            itemId: "item-browser-paste-and-go-add-and-play",
+            captureMode: .readablePage,
+            source: BrowserTextSource(url: articleURL.absoluteString, title: "A recorded article"),
+            text: "# A recorded article\n\nThe article's first paragraph.",
+            contentFormat: .markdown
+        )))
+        model.openHome()
+
+        XCTAssertEqual(model.pasteAndGo(PasteAndGoURLProtocol.articleURL, startSession: true), .resolvingLink)
+        try await waitFor("article link import") { model.sourceLinkImportState != "resolving" }
+
+        XCTAssertEqual(model.sourceLinkImportState, "success", model.sourceLinkImportMessage ?? "")
+        let row = try XCTUnwrap(model.libraryItems.first { $0.title == "A recorded article" })
+        XCTAssertEqual(model.libraryItems.filter { $0.title == "A recorded article" }.count, 1, "exactly one item is added")
+        XCTAssertEqual(model.snapshot.itemId, row.id, "the added item is the one playing")
+    }
+
     /// #828: an article added with nothing in Now Playing gets the same "Added <title> to Library." and
     /// Play now as other adds, stays on the screen it was added from, and doesn't play by itself.
     func testARecordedArticleOffersPlayNowAndStaysOnTheScreenItWasAddedFrom() async throws {

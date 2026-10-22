@@ -1,5 +1,8 @@
 import SwiftUI
 import SessionKit
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct ExperienceLibraryScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
@@ -11,6 +14,9 @@ struct ExperienceLibraryScreen: View {
     /// The item whose Continue is waiting on the "hear new Margins first?" question (#474).
     @State private var newMarginsOfferItemId: String?
     @State private var collectionItem: LibraryItemRow?
+    @Environment(\.scenePhase) private var scenePhase
+    /// A copied link on offer at the top of the Library (#1379).
+    @StateObject private var clipboardLink = ClipboardLinkOfferModel()
 
     private var continueItem: LibraryItemRow? {
         LibraryPresentation.continueItem(in: model.libraryItems, activeItemId: model.activePlaybackItemId)
@@ -24,6 +30,11 @@ struct ExperienceLibraryScreen: View {
     var body: some View {
         NavigationStack {
             List {
+                if clipboardLink.showsCard {
+                    ClipboardLinkOfferCard(clipboard: clipboardLink)
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                }
+
                 controls
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
 
@@ -64,6 +75,22 @@ struct ExperienceLibraryScreen: View {
                 .environmentObject(model)
         }
         .newMarginsOffer(itemId: $newMarginsOfferItemId)
+        .task { await clipboardLink.refresh() }
+        .onCompatibleChange(of: scenePhase) { phase in
+            if phase == .active { Task { await clipboardLink.refresh() } }
+        }
+        #if canImport(UIKit)
+        .onReceive(NotificationCenter.default.publisher(for: UIPasteboard.changedNotification)) { _ in
+            Task { await clipboardLink.refresh() }
+        }
+        #endif
+        // The Add sheet has its own Paste & go, so opening it settles this copy.
+        .onCompatibleChange(of: addSourceRoute) { route in
+            if route != nil { clipboardLink.markHandled() }
+        }
+        .onCompatibleChange(of: model.sourceLinkImportState) { state in
+            if clipboardLink.isAdding, state == "success" || state == "review" { clipboardLink.markHandled() }
+        }
     }
 
     @ToolbarContentBuilder
