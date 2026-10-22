@@ -86,9 +86,9 @@ final class EpisodeMapStoredNamesTests: XCTestCase {
         let asset = try await importSummary(itemID: "p19-author-996",
             safeItemDirectory: "p19-author-996", voice: .system, supplied: true)
         XCTAssertEqual(asset.id,
-            "summary-bridge-p19-author-996-p19-map-996-xbbdab9273043b5f0-p19-scene-1-xb2b41cd1af2794ab-supplied-p19-author-caf--xdcdf2af036ee7b5f")
+            "summary-bridge-p19-author-996-p19-map-996-xbbdab9273043b5f0-p19-scene-1-xb2b41cd1af2794ab-supplied-p19-author--caf--xb05344fc930f4c44")
         XCTAssertEqual(asset.relativePath,
-            "SpokenMargins/EpisodeMaps/p19-author-996/SummaryBridges/summary-bridge-p19-author-996-p19-map-996-xbbdab9273043b5f0-p19-scene-1-xb2b41cd1af2794ab-supplied-p19-author-caf--xdcdf2af036ee7b5f.m4a")
+            "SpokenMargins/EpisodeMaps/p19-author-996/SummaryBridges/summary-bridge-p19-author-996-p19-map-996-xbbdab9273043b5f0-p19-scene-1-xb2b41cd1af2794ab-supplied-p19-author--caf--xb05344fc930f4c44.m4a")
         XCTAssertFalse(asset.isReproducible, "The author's voice is adopted, not synthesized")
     }
 
