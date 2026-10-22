@@ -52,6 +52,22 @@ final class PDFWordSpacingTests: XCTestCase {
         XCTAssertEqual(try kittenSpacer(context: context).respaced("Fullnotes attheendof the table."), "Full notes at the end of the table.")
     }
 
+    /// Names, units and terms the corpus's glued papers showed being split (#2370).
+    func testNamesUnitsAndTermsInAGluedPaperStayWhole() throws {
+        let context = Array(repeating: "replicates of BspizHyb, BvalHyb and GeoHyb were run", count: 3)
+            + ["Wedetectregionsuniquetotherecipient", "for the re-", "cipient strain", "the recipient", "the recipient"]
+        let spacer = try kittenSpacer(context: context)
+        XCTAssertEqual(spacer.respaced("each BspizHyb, BvalHyb, GeoHyb and"), "each BspizHyb, BvalHyb, GeoHyb and")
+        XCTAssertEqual(spacer.respaced("we use Bacillus vallismortis and B. vallismortis"), "we use Bacillus vallismortis and B. vallismortis")
+        XCTAssertEqual(spacer.respaced("higherconfinement(0.4–0.7GPa),thespecimens"), "higher confinement (0.4–0.7GPa), the specimens")
+        XCTAssertEqual(spacer.respaced("respecttotherecipient’sgenome."), "respect to the recipient’s genome.")
+        XCTAssertEqual(spacer.respaced("nonmetal, acetal, Sheetal and H2SO4 in 2019Baumol, Kwaetal.,2025"),
+                       "nonmetal, acetal, Sheetal and H2SO4 in 2019 Baumol, Kwa et al., 2025")
+        // E-mail addresses are not glued prose.
+        let addresses = Array(repeating: "Contact: firstname.lastname@burningglassinstitute.org", count: 5)
+        XCTAssertFalse(spacer.isGlued(addresses))
+    }
+
     func testNeighbouringInputsStayAsTheyAre() throws {
         let spacer = try kittenSpacer()
         let unchanged = [

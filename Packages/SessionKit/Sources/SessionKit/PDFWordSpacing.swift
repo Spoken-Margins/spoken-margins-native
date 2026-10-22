@@ -24,8 +24,12 @@ public struct PDFWordSpacer {
     public init(isWord: @escaping (String) -> Bool, context: [String] = []) {
         lookUp = isWord
         var counts: [String: Int] = [:]
+        var brokenBefore = false
         for line in context {
-            for token in line.split(whereSeparator: \.isWhitespace) {
+            // The halves of a word broken at a line-end hyphen ("re-" and "cipient") aren't words.
+            defer { brokenBefore = line.hasSuffix("-") }
+            for (index, token) in line.split(whereSeparator: \.isWhitespace).enumerated() {
+                if token.hasSuffix("-") || index == 0 && brokenBefore { continue }
                 var word = token.drop { !$0.isLetter }
                 while let last = word.last, !last.isLetter { word = word.dropLast() }
                 if word.hasSuffix("’s") || word.hasSuffix("'s") { word = word.dropLast(2) }
@@ -80,7 +84,11 @@ public struct PDFWordSpacer {
             guard characters[start].isLetter else { start += 1; continue }
             var end = start
             while end < characters.count, characters[end].isLetter { end += 1 }
-            if end - start >= Self.gluedRunLength {
+            var tokenStart = start, tokenEnd = end
+            while tokenStart > 0, !characters[tokenStart - 1].isWhitespace { tokenStart -= 1 }
+            while tokenEnd < characters.count, !characters[tokenEnd].isWhitespace { tokenEnd += 1 }
+            // An e-mail address or URL slug is not glued prose.
+            if end - start >= Self.gluedRunLength, !Self.isAddressLike(String(characters[tokenStart..<tokenEnd])) {
                 // Hard case cues first, as `respaced` does: "occupationsAIislikely".
                 for piece in caseRuns(characters, start..<end) where piece.count >= Self.gluedRunLength {
                     let run = Array(characters[piece])
@@ -121,6 +129,10 @@ public struct PDFWordSpacer {
             defer { tokenStart = tokenEnd }
             let token = tokenStart..<tokenEnd
             guard !Self.isAddressLike(String(characters[token])) else { continue }
+            // A species after its genus initial ("B. vallismortis", "R. prolixus") is a name.
+            let afterGenus = tokenStart >= 3 && characters[tokenStart - 1] == " " && characters[tokenStart - 2] == "."
+                && characters[tokenStart - 3].isUppercase && (tokenStart == 3 || !characters[tokenStart - 4].isLetter)
+                && characters[tokenStart].isLowercase && tokenEnd - tokenStart < Self.gluedRunLength
             for offset in hardCueOffsets(characters, token) { insertions.insert(offset) }
             for range in protected where range.upperBound < tokenEnd && range.upperBound > tokenStart
                 && characters[range.upperBound].isLetter {
@@ -147,7 +159,7 @@ public struct PDFWordSpacer {
                         for offset in wordOffsets(joined, 0..<joined.count) where offset > carried.count {
                             insertions.insert(offset - carried.count)
                         }
-                    } else {
+                    } else if !afterGenus {
                         // A run that is the whole token is a word PDFKit spaced itself ("Levanon,").
                         let isWholeToken = characters[token].filter(\.isLetter).count == end - start
                         for offset in wordOffsets(characters, start..<end, wholeToken: isWholeToken) { insertions.insert(offset) }
@@ -205,8 +217,9 @@ public struct PDFWordSpacer {
         // "Kwaetal.," is "Kwa et al.,".
         var etAl = token.lowerBound + 2
         while etAl + 4 <= token.upperBound {
+            // "nonmetal" and "Sheetal" stay whole: glued "et al." keeps its full stop.
             if String(characters[etAl..<(etAl + 4)]) == "etal", characters[etAl - 1].isLetter, characters[etAl - 2].isLetter,
-               etAl + 4 == token.upperBound || !characters[etAl + 4].isLetter {
+               etAl + 4 < token.upperBound, characters[etAl + 4] == ".", !isWord(Array(letterRun(endingAt: etAl + 3))) {
                 offsets.append(etAl)
                 offsets.append(etAl + 2)
             }
@@ -224,7 +237,17 @@ public struct PDFWordSpacer {
                 let isShortCapitalised = run.first?.isUppercase == true && run.count == lowerTail + 1 && lowerTail <= 2
                 // The word since the last capital: "In" of "InProceedings", "Te" of "LaTeX".
                 let word = Array(run.suffix(run.count > lowerTail ? lowerTail + 1 : lowerTail))
-                if lowerTail >= 2 && !isShortCapitalised || word.count >= 2 && isWord(word) { offsets.append(index) }
+                // The run before must end in a word: "andChen" splits, "BspizHyb" (a strain) doesn't.
+                let endsInWord = (2...min(max(run.count, 2), 12)).contains { run.count >= $0 && isWord(Array(run.suffix($0))) }
+                // A name the paper prints alone as one word ("BvalHyb", "GeoHyb") stays whole, unless
+                // what comes before is a common word ("andChen").
+                var end = index
+                while end < token.upperBound, characters[end].isLetter { end += 1 }
+                let isPrintedWhole = isDocumentWord(Self.key(Array(characters[(index - run.count)..<end])))
+                    && !Self.commonWords.contains(Self.key(word))
+                if !isPrintedWhole, lowerTail >= 2 && !isShortCapitalised && endsInWord || word.count >= 2 && isWord(word) {
+                    offsets.append(index)
+                }
             case let (a, b) where (a == "s" || a == "S") && b.isUppercase && index >= token.lowerBound + 3
                 && (characters[index - 2] == "’" || characters[index - 2] == "'") && characters[index - 3].isLetter:
                 // A possessive: "occupation’sAI-infeasible", "occupation’sO*NET".
@@ -274,7 +297,11 @@ public struct PDFWordSpacer {
             case let (a, b) where a.isNumber && b.isLetter:
                 // "2019Baumol" and "1992and" split; "2026a", "20th", "10ms" don't.
                 let length = letterRunLength(startingAt: index)
-                if b.isUppercase ? length >= 2 : length >= 3 && !Self.unitWords.contains(String(characters[index..<(index + length)]).lowercased()) {
+                // Capitals start a word ("Baumol") or follow a year ("1992AER"): "H2SO4" stays whole.
+                var digits = index
+                while digits > token.lowerBound, characters[digits - 1].isNumber { digits -= 1 }
+                let isWordStart = next?.isLowercase == true || index - digits == 4
+                if b.isUppercase ? length >= 2 && isWordStart : length >= 3 && !Self.unitWords.contains(String(characters[index..<(index + length)]).lowercased()) {
                     offsets.append(index)
                 }
             default:
@@ -342,7 +369,16 @@ public struct PDFWordSpacer {
         // An acronym's plural ("RNAs", "PDFs") is one word.
         let isAcronymPlural = letters.count >= 3 && letters.last == "s" && isAcronym(Array(letters.dropLast()))
         guard letters.count >= 2, !isWord(letters), !isAcronym(letters), !isAcronymPlural,
+              !(wholeToken && isDocumentWord(Self.key(letters))),
               let pieces = segmentation(letters), pieces.count >= 2 else { return [] }
+        // A short run that splits into two rare words the paper never prints alone is more
+        // likely a term ("vallismortis", "auxetic") than glued prose.
+        if pieces.count == 2, letters.count <= 12, pieces.allSatisfy({ piece in
+            let key = Self.key(Array(letters[piece]))
+            return !Self.commonWords.contains(key) && documentCounts[key] == nil
+        }) {
+            return []
+        }
         // A capitalised word ("Goldfarb", "Tonetti") is most likely a name: split it only
         // into known words, one of them common ("Theresults"), unless the run is long. A
         // two-letter common word counts first before longer or common words ("Inthe",
@@ -427,6 +463,8 @@ public struct PDFWordSpacer {
             || range.upperBound < letters.count && cases.isUpper[range.upperBound] {
             return .infinity
         }
+        // Nor is a lone lower-case letter after capitals: "GPa", "kPa".
+        if range.count == 1, isLower, range.lowerBound > 0, cases.isUpper[range.lowerBound - 1] { return .infinity }
         let printed = String(letters[range])
         if let known = cache.costs[printed] { return known }
         let cost = wordCost(Array(letters[range]), isLower: isLower, isUpper: isUpper)
@@ -438,7 +476,9 @@ public struct PDFWordSpacer {
         // A unigram cost, log2(tokens / expected count): the count is how often the paper
         // prints the word alone, plus a prior rate from the word list for words it never does.
         let key = Self.key(piece)
-        let seen = Double(isLower && isGluedFragment(key) ? 0 : documentCounts[key] ?? 0)
+        // A possessive ("recipient’s") counts its stem's uses, as `documentCounts` does.
+        let countKey = possessiveStem(piece).map { Self.key($0) } ?? key
+        let seen = Double(isLower && isGluedFragment(key) ? 0 : documentCounts[countKey] ?? 0)
         func cost(rate: Double) -> Double { log2(tokenCount / (seen + tokenCount * rate)) }
         if isUpper, piece.count >= 2 {
             guard isAcronym(piece) else { return .infinity }
