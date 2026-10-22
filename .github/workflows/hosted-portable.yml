@@ -4,7 +4,12 @@
 # validators, the test inventory, the browser-extraction and share-link suites, and the research suites. It
 # prints each step it leaves out and a host test fails if a fast-plan step is in neither list.
 # The second job, `sessionkit`, runs `--plan fast-hosted-sessionkit` on a GitHub-hosted Mac: SessionKit's build and
-# SessionKitCoreTests. SessionKitTests and SessionKitTraceTests need a sound output and stay on the lane Mac.
+# SessionKitCoreTests. The third, `mac-rest` (#2459), runs `--plan fast-mac-rest` on another GitHub-hosted Mac with
+# the BlackHole virtual audio output installed: what neither of the others runs (SessionKitTests and
+# SessionKitTraceTests, which need a sound output, the shipped-build compatibility checks, and the runner and ops
+# tests that drive Apple tools). With all three passed on the merge commit, the lane's automerge job runs on hosted
+# Linux, tests nothing itself and merges, so merging takes no Mac. The repository variable LANE_HOSTED_MAC_REST
+# set to `off` skips this job, and the automerge job goes back to the build Mac and runs fast-mac-rest there.
 #
 # Per PR, only once the lane takes hosted results (#1389): the pull_request trigger is here, but both jobs are
 # skipped, and cost nothing, until the repository variable LANE_HOSTED_FAST is `on`. The private repo's free
@@ -24,6 +29,16 @@ name: hosted-portable
 
 on:
   workflow_dispatch:
+    inputs:
+      base:
+        # #2459: the hosted automerge job dispatches this on a PR's branch when the PR's own checks tested an older
+        # base that has since moved in ways that matter (lane-runner.py hosted_rest_rerun). Each job then tests the
+        # dispatched commit merged onto the base's tip, with the base as parent 1 as in GitHub's merge commit, and
+        # records it as for a PR. Empty: test the dispatched commit as it is, and record nothing.
+        description: 'Test the commit merged onto this base branch (e.g. main) and record it for the lane'
+        required: false
+        type: string
+        default: ''
   pull_request:
     branches: [next, main]  # either trunk (#1492); the checks read the PR's own base
     # Docs-only PRs are T0 (scripts/test-scope.py): the lane runs nothing for them and never waits for these checks.
@@ -54,6 +69,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # A dispatch with a base merges it in below, which needs the history back to the merge base.
+          fetch-depth: ${{ inputs.base == '' && 1 || 0 }}
+      - name: Merge the base in (dispatch with a base)
+        if: inputs.base != ''
+        env:
+          BASE: ${{ inputs.base }}
+        run: |
+          # As GitHub's merge commit: the base's tip is parent 1, the dispatched commit parent 2. A conflict fails.
+          head=$(git rev-parse HEAD)
+          git fetch --no-tags origin "+refs/heads/$BASE:refs/remotes/origin/$BASE"
+          git checkout --quiet --detach "refs/remotes/origin/$BASE"
+          git -c user.name=lane -c user.email=lane@users.noreply.github.com merge --quiet --no-ff --no-edit "$head"
+          git log --oneline -1
       # pip's and npm's download caches, keyed on the lock files (#1389).
       - uses: actions/setup-python@v5
         with:
@@ -84,7 +112,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - name: Record what was tested, for the lane runner
-        if: success() && github.event_name == 'pull_request'
+        if: success() && (github.event_name == 'pull_request' || inputs.base != '')
         run: |
           # GitHub's merge commit: parent 1 is the base, parent 2 the PR's head. The runner matches the tree.
           parents=$(git cat-file -p HEAD | awk '/^parent /{print $2}' | tr '\n' ' ')
@@ -114,6 +142,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # A dispatch with a base merges it in below, which needs the history back to the merge base.
+          fetch-depth: ${{ inputs.base == '' && 1 || 0 }}
+      - name: Merge the base in (dispatch with a base)
+        if: inputs.base != ''
+        env:
+          BASE: ${{ inputs.base }}
+        run: |
+          # As GitHub's merge commit: the base's tip is parent 1, the dispatched commit parent 2. A conflict fails.
+          head=$(git rev-parse HEAD)
+          git fetch --no-tags origin "+refs/heads/$BASE:refs/remotes/origin/$BASE"
+          git checkout --quiet --detach "refs/remotes/origin/$BASE"
+          git -c user.name=lane -c user.email=lane@users.noreply.github.com merge --quiet --no-ff --no-edit "$head"
+          git log --oneline -1
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -142,7 +183,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - name: Record what was tested, for the lane runner
-        if: success() && github.event_name == 'pull_request'
+        if: success() && (github.event_name == 'pull_request' || inputs.base != '')
         run: |
           # GitHub's merge commit: parent 1 is the base, parent 2 the PR's head. The runner matches the tree.
           parents=$(git cat-file -p HEAD | awk '/^parent /{print $2}' | tr '\n' ' ')
@@ -153,8 +194,121 @@ jobs:
           seconds=$(( $(date +%s) - STARTED ))
           echo "hosted fast SessionKit core took ${seconds}s on xcode-27." | tee -a "$GITHUB_STEP_SUMMARY"
 
+  mac-rest:
+    # #2459: --plan fast-mac-rest, which the lane's automerge job used to run on the owner's build Mac (about 8 minutes
+    # a PR, behind a queue of up to 21 jobs on 2026-10-22). Same PRs and paths as the two jobs above. The repository
+    # variable LANE_HOSTED_MAC_REST set to `off` skips it; lane.yml then routes the automerge job back to the Mac.
+    name: 'hosted fast: Mac rest'
+    if: >-
+      vars.LANE_HOSTED_MAC_REST != 'off' &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on'))
+    runs-on: xcode-27
+    # SessionKit's build (cached dependencies), its two serial targets, and the compatibility checks when the diff
+    # reaches them (the lane's own budget for those is 40 minutes).
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+    steps:
+      - name: Start the clock
+        run: |
+          echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
+          echo "SM_LANE_STATE_DIR=$RUNNER_TEMP/lane-state" >> "$GITHUB_ENV"
+      # Whole history and tags: the compatibility checks read the shipped build's tag, and the changed-file list
+      # below needs the merge base.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Merge the base in (dispatch with a base)
+        if: inputs.base != ''
+        env:
+          BASE: ${{ inputs.base }}
+        run: |
+          # As GitHub's merge commit: the base's tip is parent 1, the dispatched commit parent 2. A conflict fails.
+          head=$(git rev-parse HEAD)
+          git fetch --no-tags origin "+refs/heads/$BASE:refs/remotes/origin/$BASE"
+          git checkout --quiet --detach "refs/remotes/origin/$BASE"
+          git -c user.name=lane -c user.email=lane@users.noreply.github.com merge --quiet --no-ff --no-edit "$head"
+          git log --oneline -1
+      # The voice models are LFS files the SessionKit voice tests read. The same cache hosted-app-macos.yml keeps on
+      # the trunk, so a PR's run restores it instead of spending the LFS bandwidth quota.
+      - name: List LFS objects
+        run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
+      - uses: actions/cache/restore@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
+          restore-keys: lfs-
+      - name: Fetch LFS files
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - uses: actions/cache@v4
+        with:
+          path: Packages/SessionKit/.build
+          key: sessionkit-macos-xcode27.0-${{ hashFiles('Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: sessionkit-macos-xcode27.0-
+      - name: Python tools
+        run: bash scripts/bootstrap-python-tools.sh
+      # Hosted Macs have no audio hardware, and AVPlayer's clock does not move without a running output (#909).
+      # BlackHole gives Core Audio one. brew refuses to run as root; the cask's installer asks for sudo itself,
+      # which is passwordless on hosted runners. verify-tests.py checks the output starts before the audio tests.
+      - name: Install BlackHole (virtual audio output)
+        run: |
+          brew install --cask blackhole-2ch
+          brew install switchaudio-osx
+          # Core Audio picks up a new driver only after it restarts.
+          sudo killall coreaudiod || true
+          sleep 5
+          SwitchAudioSource -t output -s "BlackHole 2ch"
+          SwitchAudioSource -t output -c | sed 's/^/Default output: /' | tee -a "$GITHUB_STEP_SUMMARY"
+      # What the lane's own run gets (lane-runner.py changed_paths_for_tests): every path the PR changes against its
+      # merge base with the base, both sides of a rename. A dispatch without a base runs every step.
+      - name: Changed files
+        run: |
+          if git rev-parse --verify --quiet HEAD^2 > /dev/null; then
+            git diff --name-only --no-renames "$(git merge-base HEAD^1 HEAD^2)" HEAD^2 > "$RUNNER_TEMP/changed-files.txt"
+            echo "CHANGED_ARGS=--changed-files $RUNNER_TEMP/changed-files.txt" >> "$GITHUB_ENV"
+            echo "$(grep -c . "$RUNNER_TEMP/changed-files.txt" || true) changed files"
+          else
+            echo "Not a merge commit: every fast-mac-rest step runs."
+          fi
+      - name: Mac rest of the fast plan
+        run: |
+          swift --version
+          .venv/bin/python scripts/verify-tests.py --plan fast-mac-rest $CHANGED_ARGS
+      - name: Keep the step logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-mac-rest-test-runs
+          path: artifacts/test-runs/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Record what was tested, for the lane runner
+        if: success() && (github.event_name == 'pull_request' || inputs.base != '')
+        run: |
+          # GitHub's merge commit: parent 1 is the base, parent 2 the PR's head. The runner matches the tree.
+          parents=$(git cat-file -p HEAD | awk '/^parent /{print $2}' | tr '\n' ' ')
+          echo "::notice title=lane-hosted-tested::plan=fast-mac-rest tree=$(git rev-parse 'HEAD^{tree}') parents=$parents"
+      - name: Report time
+        if: always()
+        run: |
+          seconds=$(( $(date +%s) - STARTED ))
+          echo "hosted fast Mac rest took ${seconds}s on xcode-27." | tee -a "$GITHUB_STEP_SUMMARY"
+
   owner-tap-alert:
-    # When both jobs above finish, tell the owner's phone if this PR now waits only for his merge tap (#2047, #2442):
+    # When the jobs above finish, tell the owner's phone if this PR now waits only for his merge tap (#2047, #2442):
     # scripts/owner_tap_alert.py posts one github-actions[bot] comment that @mentions him, once per head, when the
     # PR touches .github/ or scripts/lane-runner.py and is ready. It moved here from linux-t1.yml (retired, #2442),
     # whose one VPS runner held it in a queue for an hour or more. With LANE_HOSTED_FAST off the two jobs above are
@@ -163,7 +317,7 @@ jobs:
     # no credentials kept, never from the PR, and this is the only job here whose token may comment. A base that
     # doesn't have the script yet skips quietly. Pull requests from this repository only.
     name: owner-tap-alert
-    needs: [portable, sessionkit]
+    needs: [portable, sessionkit, mac-rest]
     if: always() && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
