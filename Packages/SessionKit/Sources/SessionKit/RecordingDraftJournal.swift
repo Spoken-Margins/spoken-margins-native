@@ -155,22 +155,27 @@ public struct RecordingDraftReconciler {
     private let applicationSupport: URL
     private let fileManager: FileManager
     private let isDecodable: (URL) -> Bool
+    private let onRecovered: (_ sessionId: String, _ interjectionId: String) -> Void
 
     /// - Parameters:
     ///   - applicationSupport: the folder recording paths are relative to.
     ///   - isDecodable: true when the file opens and holds audio. The audio module supplies the real check.
+    ///   - onRecovered: called right after a recovered Margin is stored, before its note is removed, so a later draft
+    ///     failing or a kill cannot lose what the caller keeps about it.
     public init(
         journal: RecordingDraftJournal,
         repository: SessionRepository,
         applicationSupport: URL,
         fileManager: FileManager = .default,
-        isDecodable: @escaping (URL) -> Bool
+        isDecodable: @escaping (URL) -> Bool,
+        onRecovered: @escaping (_ sessionId: String, _ interjectionId: String) -> Void = { _, _ in }
     ) {
         self.journal = journal
         self.repository = repository
         self.applicationSupport = applicationSupport
         self.fileManager = fileManager
         self.isDecodable = isDecodable
+        self.onRecovered = onRecovered
     }
 
     /// - Parameter savedAudioPaths: every recording any stored Margin names, quarantined ones included, so a
@@ -237,6 +242,7 @@ public struct RecordingDraftReconciler {
             replyTo: draft.replyTo
         )
         try repository.saveInterjection(margin)
+        onRecovered(margin.sessionId, margin.id)
         try journal.remove(id: draft.id)
         return .recovered(interjectionId: margin.id)
     }
