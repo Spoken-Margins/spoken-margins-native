@@ -26,6 +26,10 @@ final class MarginCaptureWatcher {
     private var lastRouteChangeAtMs: Int?
     private var routeObserver: NSObjectProtocol?
     private let notificationCenter: NotificationCenter
+    private let readyCue: MarginReadyCuePlaying
+    private var readyCueGate = MarginReadyCueGate()
+    /// What the ready cue did for this recording ("played", "skipped:..."), nil until capture is verified (#1594).
+    private(set) var readyCueResult: String?
     /// Milliseconds on a clock that only moves forward. Tests replace it.
     var nowMs: () -> Int
 
@@ -33,10 +37,12 @@ final class MarginCaptureWatcher {
     init(
         autoPoll: Bool = true,
         notificationCenter: NotificationCenter = .default,
+        readyCue: MarginReadyCuePlaying = MarginReadyCuePlayer(),
         nowMs: @escaping () -> Int = { Int((ProcessInfo.processInfo.systemUptime * 1_000).rounded()) }
     ) {
         self.autoPoll = autoPoll
         self.notificationCenter = notificationCenter
+        self.readyCue = readyCue
         self.nowMs = nowMs
     }
 
@@ -72,6 +78,8 @@ final class MarginCaptureWatcher {
         lastReported = nil
         finalRecorded = false
         lastRouteChangeAtMs = nil
+        readyCueGate = MarginReadyCueGate()
+        readyCueResult = nil
         observeRouteChanges()
         tick()
         guard autoPoll else { return }
@@ -92,7 +100,16 @@ final class MarginCaptureWatcher {
             restartNow(&current)
         }
         supervisor = current
+        cueIfCaptureVerified(current)
         report()
+    }
+
+    /// The ready cue (#1594): once per recording, and only after the recorder has really taken audio in, so the
+    /// listener hears it exactly when speaking is safe. It sounds before `changed` runs, so the diagnostics line
+    /// written for that health change can say what it did.
+    private func cueIfCaptureVerified(_ current: MarginCaptureSupervisor) {
+        guard readyCueGate.shouldCue(health: current.health, capturedMs: current.capturedMs) else { return }
+        readyCueResult = readyCue.playReadyCue()
     }
 
     /// The listener asked to try again after the capture failed: restart now, then judge afresh.

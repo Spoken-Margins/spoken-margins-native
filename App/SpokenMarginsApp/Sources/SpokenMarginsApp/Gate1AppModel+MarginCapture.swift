@@ -45,6 +45,7 @@ extension Gate1AppModel {
         var fields = engine?.recordingCaptureDiagnostics() ?? [:]
         fields["health"] = health.diagnosticName
         fields["restarts"] = String(restarts)
+        if let readyCue = captureWatcher.readyCueResult { fields["readyCue"] = readyCue }
         recordDeveloperDiagnostic("margin.capture.health", fields)
         diagnostics["lastVoiceCapture"] = Self.captureSummary(fields)
         switch health {
