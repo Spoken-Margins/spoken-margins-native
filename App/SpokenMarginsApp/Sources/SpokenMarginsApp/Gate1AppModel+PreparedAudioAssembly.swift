@@ -46,11 +46,13 @@ extension Gate1AppModel {
                 outputDirectory: support.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory)
             )
             let assembledURL = prepared.media.url.flatMap(URL.init(string:))
-            let attached = try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: store) { _, current in
+            var refused = false // Stop or a new voice landed while assembling: drop the audio, no failure (#2134)
+            let attached = try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: store) { saved, current in
+                guard PreparedAudioEnqueue.mayComplete(saved.state) else { refused = true; return false }
                 guard current.text == item.text, try PreparedAudioEnqueue.preparedText(item: current, repository: store) == sourceText else { return false }
                 return attachPreparedTextAudio(prepared, itemId: item.id, replaceActivePlayback: false)
             }
-            guard attached != nil, stillCurrent() else {
+            guard attached != nil, !refused, stillCurrent() else {
                 await ledger.discardStaleAssembly(assembledURL, reservationId: assemblyReservation.id)
                 return
             }

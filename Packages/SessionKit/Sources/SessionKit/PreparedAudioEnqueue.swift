@@ -24,6 +24,16 @@ public enum PreparedAudioEnqueue {
         }
     }
 
+    /// Whether finished assembly may mark a manifest ready. A Stop, a failure or a retirement
+    /// (the voice changed, so the old manifest needs repreparing) that landed while the audio
+    /// was being assembled must win; the finished audio is dropped, not saved (#2134).
+    public static func mayComplete(_ state: PreparedAudioState) -> Bool {
+        switch state {
+        case .preparing, .pausedForThermal, .readyOffline: return true
+        case .notPrepared, .needsRepreparation, .stopped, .failed: return false
+        }
+    }
+
     /// Runs a record update only while this preparation still belongs to the item.
     public static func withCurrentManifest<T>(
         _ candidate: PreparedAudioManifest, repository: any SessionRepository,

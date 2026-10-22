@@ -171,6 +171,38 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         XCTAssertEqual(try fixture.store.loadPreparedAudioManifest(id: manifest.id)?.state, .readyOffline)
     }
 
+    func testNarrationFinishedAfterStopOrAVoiceChangeIsNotMarkedReady() async throws {
+        // #2134: assembly runs for a while; a Stop or a new voice that landed meanwhile was overwritten
+        // by complete(), which marked the old voice's audio ready.
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let text = "First chunk. Second chunk."
+        let artifact = fixture.root.appending(path: "complete.wav")
+        try Data([1, 2, 3, 4, 5, 6]).write(to: artifact)
+        let prepared = PreparedTextAudio(
+            normalizedText: text,
+            media: ItemMedia(sourceType: .generatedTTSPrerendered, url: artifact.absoluteString, durationMs: 2_000),
+            timeline: TranscriptTimeline(segments: [], chapters: [], durationMs: 2_000)
+        )
+
+        let stopped = try await coordinator.begin(itemId: "item", sourceText: text, signature: signature("one"), plan: plans())
+        try await coordinator.stop(itemId: "item", signature: signature("one"))
+        let refusedAfterStop = try await coordinator.refusesCompletion(itemId: "item", signature: signature("one"))
+        XCTAssertTrue(refusedAfterStop)
+        let afterStop = try await coordinator.complete(itemId: "item", signature: signature("one"), prepared: prepared)
+        XCTAssertFalse(afterStop)
+        XCTAssertEqual(try fixture.store.loadPreparedAudioManifest(id: stopped.id)?.state, .stopped)
+        XCTAssertNil(try fixture.store.loadPreparedAudioManifest(id: stopped.id)?.artifact)
+
+        // A new voice retires the old one's manifest; the old assembly finishing must not revive it.
+        _ = try await coordinator.begin(itemId: "item", sourceText: text, signature: signature("two"), plan: plans())
+        let afterVoiceChange = try await coordinator.complete(itemId: "item", signature: signature("one"), prepared: prepared)
+        XCTAssertFalse(afterVoiceChange)
+        XCTAssertEqual(try fixture.store.loadPreparedAudioManifest(id: stopped.id)?.state, .needsRepreparation)
+        XCTAssertNil(try fixture.store.loadPreparedAudioManifest(id: stopped.id)?.artifact)
+    }
+
     func testAChunkRenderedFromTextTheItemNoLongerHasIsNotSaved() async throws {
         // #344 audit on 4d7d41f: commit() copies the chunk before saving, and a re-import
         // can move the item to new text meanwhile; the old text's chunk was saved anyway.

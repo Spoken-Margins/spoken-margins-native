@@ -133,6 +133,10 @@ extension Gate1AppModel {
                             self.diagnostics["supertonicPreparedCanonicalization:\(itemId)"] = "source_mismatch"
                             return
                         }
+                        if (try? await coordinator.refusesCompletion(itemId: itemId, signature: signature)) == true {
+                            self.diagnostics["supertonicPreparedCanonicalization:\(itemId)"] = "preparation_stopped" // #2134
+                            return
+                        }
                         let attached = self.attachPreparedTextAudio(
                             canonical,
                             itemId: itemId,

@@ -268,6 +268,14 @@ actor PreparedAudioCoordinator {
         })
     }
 
+    /// True when a Stop, a failure or a new voice has retired this manifest, so audio finished for it
+    /// must not be attached or marked ready (#2134). A manifest that does not exist is not refused.
+    func refusesCompletion(itemId: String, signature: TTSRenderSignature) throws -> Bool {
+        let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
+        guard let manifest = try repository.loadPreparedAudioManifest(id: manifestId) else { return false }
+        return !PreparedAudioEnqueue.mayComplete(manifest.state)
+    }
+
     /// False when the manifest is gone or was retired by a re-import meanwhile (#344 audit).
     @discardableResult
     func complete(itemId: String, signature: TTSRenderSignature, prepared: PreparedTextAudio) throws -> Bool {
@@ -278,7 +286,8 @@ actor PreparedAudioCoordinator {
               url.isFileURL else { return false }
         let data = try Data(contentsOf: url, options: [.mappedIfSafe])
         // Loaded after the hash, which a re-import can overtake (#344 audit).
-        guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId) else { return false }
+        guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId),
+              PreparedAudioEnqueue.mayComplete(manifest.state) else { return false }
         manifest.artifact = PreparedAudioArtifact(
             relativePath: relativePath(url),
             byteCount: Int64(data.count),
@@ -288,15 +297,16 @@ actor PreparedAudioCoordinator {
         manifest.state = .readyOffline
         manifest.failureCode = nil
         manifest.updatedAt = Date()
-        guard try saveUnlessRetired(manifest, stillCurrent: { Self.isMade(from: (try? PreparedAudioEnqueue.preparedText(item: $0, repository: repository)) ?? "", manifest) }) else { return false }
+        guard try saveUnlessRetired(manifest, stillCurrent: { Self.isMade(from: (try? PreparedAudioEnqueue.preparedText(item: $0, repository: repository)) ?? "", manifest) },
+                                    stillAllowed: { PreparedAudioEnqueue.mayComplete($0.state) }) else { return false }
         return true
     }
 
     /// Saves progress/completion and its job atomically with the retirement check.
     /// File copying and hashing happen before entering this short transaction.
-    private func saveUnlessRetired(_ manifest: PreparedAudioManifest, stillCurrent: (Item) -> Bool, commitFile: (() throws -> Void)? = nil) throws -> Bool {
-        try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: repository) { _, item in
-            guard stillCurrent(item) else { return false }
+    private func saveUnlessRetired(_ manifest: PreparedAudioManifest, stillCurrent: (Item) -> Bool, stillAllowed: (PreparedAudioManifest) -> Bool = { _ in true }, commitFile: (() throws -> Void)? = nil) throws -> Bool {
+        try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: repository) { saved, item in
+            guard stillCurrent(item), stillAllowed(saved) else { return false }
             try commitFile?()
             try repository.savePreparedAudioManifest(manifest)
             if manifest.state == .readyOffline {
