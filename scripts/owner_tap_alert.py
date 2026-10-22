@@ -292,14 +292,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument('--via-label', metavar='LABEL', help='for a ready PR, re-add this label instead of commenting')
     ap.add_argument('--clear-label', metavar='LABEL', help='with --pr: remove this label after the check')
     args = ap.parse_args(argv)
-    if args.base is None:  # #1492: the trunk (scripts/trunk.py)
-        from trunk import trunk_branch
-        args.base = trunk_branch()
     args.mention = args.mention or OWNER_LOGIN
     if not args.repo or not re.fullmatch(r'[A-Za-z0-9_.-]+', args.mention):
         ap.error('need --repo (or GH_REPO) and a plain --mention login')
     if args.clear_label and not args.pr:
         ap.error('--clear-label needs --pr')
+    if args.base is None and not args.pr:  # #1492: the trunk (scripts/trunk.py). A single PR needs no trunk (#2270).
+        from trunk import trunk_branch
+        args.base = trunk_branch()
     api = GitHubApi(args.repo)
     if args.pr:
         numbers = [args.pr]
@@ -318,7 +318,7 @@ def main(argv: list[str] | None = None) -> int:
             api.remove_label(args.pr, args.clear_label)
         except subprocess.SubprocessError as exc:
             print(f'#{args.pr}: could not remove `{args.clear_label}`: {(getattr(exc, "stderr", "") or "").strip()[:160]}')
-    print(f'{len(numbers)} open PRs into {args.base} checked, {failures} skipped on errors')
+    print(f'{len(numbers)} open PRs{f" into {args.base}" if args.base else ""} checked, {failures} skipped on errors')
     return 0
 
 
