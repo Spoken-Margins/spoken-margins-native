@@ -159,10 +159,15 @@ struct ExperienceLibraryScreen: View {
     }
 
     @ViewBuilder private var onboardingActions: some View {
-        Button("Hear overview") { model.startItem(id: Gate1AppModel.welcomeSampleItemId) }
-            .buttonStyle(PrimaryButtonStyle())
-        Button("Practice") { model.startGuidedOnboarding() }
-            .buttonStyle(.bordered)
+        // A label wider than the column wraps to a second line rather than being cut off (#2056).
+        Button { model.startItem(id: Gate1AppModel.welcomeSampleItemId) } label: {
+            Text("Hear overview").multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+        }
+        .buttonStyle(PrimaryButtonStyle())
+        Button { model.startGuidedOnboarding() } label: {
+            Text("Practice").multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+        }
+        .buttonStyle(.bordered)
     }
 
     private var onboardingDismiss: some View {
@@ -430,53 +435,82 @@ private struct ExperienceLibraryCompactRow: View {
     let onAddToCollection: () -> Void
     let onDelete: () -> Void
 
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: mediaSymbol)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(AppColors.evergreen)
-                .frame(width: min(max(iconWidth, 38), 76), height: min(max(iconHeight, 44), 88))
-                .background(AppColors.softGreen.opacity(isCurrentItem ? 0.85 : 0.55))
-                // The row's own text already says the kind (`LibraryRowDetail`), so the icon is not a third stop per row.
-                .accessibilityHidden(true)
-            Button(action: onOpen) {
-                VStack(alignment: .leading, spacing: 3) {
-                    if isCurrentItem {
-                        Label(currentItemLabel, systemImage: "play.circle.fill")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(AppColors.evergreen)
-                    }
-                    Text(row.title)
-                        .font(.headline)
-                        .foregroundStyle(AppColors.text)
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
-                    detailLineView
-                        .font(.subheadline)
-                        .foregroundStyle(AppColors.secondaryText)
-                        .multilineTextAlignment(.leading)
-                    sharedMarginsLine
+    /// At accessibility sizes the title gets its own full-width line, with the icon and the play button together on a line
+    /// below it. Beside them the title was left about half the row and broke letter by letter (#2056). The open button
+    /// stays ahead of the play button, so the VoiceOver order is the same at every size.
+    @ViewBuilder private var rowLayout: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 8) {
+                openButton
+                HStack(spacing: 12) {
+                    iconTile
+                    Spacer(minLength: 0)
+                    playButton
                 }
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("library.row.\(row.id)")
-
-            Button(action: onPlay) {
-                LibraryRowPlayLabel(isReadyOffline: row.offlineState == .readyOffline, isPreparing: row.startupAudioState == .preparing)
+        } else {
+            HStack(alignment: .center, spacing: 12) {
+                iconTile
+                openButton
+                playButton
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(playActionTitle)
-            .accessibilityValue(
-                row.startupAudioState == .preparing
-                    ? "Preparing audio, \(startupProgressDescription). Playback can start now."
-                    : row.startupAudioState == .waiting ? "Waiting to prepare audio. Playback can start now."
-                    : (row.offlineState == .readyOffline ? "Ready offline" : "Ready to start")
-            )
-            .accessibilityIdentifier("queue.start.\(row.id)")
         }
+    }
+
+    private var iconTile: some View {
+        Image(systemName: mediaSymbol)
+            .font(.body.weight(.semibold))
+            .foregroundStyle(AppColors.evergreen)
+            .frame(width: min(max(iconWidth, 38), 76), height: min(max(iconHeight, 44), 88))
+            .background(AppColors.softGreen.opacity(isCurrentItem ? 0.85 : 0.55))
+            // The row's own text already says the kind (`LibraryRowDetail`), so the icon is not a third stop per row.
+            .accessibilityHidden(true)
+    }
+
+    private var openButton: some View {
+        Button(action: onOpen) {
+            VStack(alignment: .leading, spacing: 3) {
+                if isCurrentItem {
+                    Label(currentItemLabel, systemImage: "play.circle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppColors.evergreen)
+                }
+                Text(row.title)
+                    .font(.headline)
+                    .foregroundStyle(AppColors.text)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                detailLineView
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .multilineTextAlignment(.leading)
+                sharedMarginsLine
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("library.row.\(row.id)")
+    }
+
+    private var playButton: some View {
+        Button(action: onPlay) {
+            LibraryRowPlayLabel(isReadyOffline: row.offlineState == .readyOffline, isPreparing: row.startupAudioState == .preparing)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(playActionTitle)
+        .accessibilityValue(
+            row.startupAudioState == .preparing
+                ? "Preparing audio, \(startupProgressDescription). Playback can start now."
+                : row.startupAudioState == .waiting ? "Waiting to prepare audio. Playback can start now."
+                : (row.offlineState == .readyOffline ? "Ready offline" : "Ready to start")
+        )
+        .accessibilityIdentifier("queue.start.\(row.id)")
+    }
+
+    var body: some View {
+        rowLayout
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
