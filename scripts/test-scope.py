@@ -282,7 +282,7 @@ def classify(paths, diffs=None, root=ROOT):
             'app_tests': app_tests, 'lane_paths': lane_paths}
 
 
-HOSTED_RUNNER = ['sm-vps-t1']  # runs-on for the off-Mac automerge job; lane.yml and lane-runner.py key on it
+HOSTED_RUNNER = ['ubuntu-latest']  # runs-on for the off-Mac automerge job; lane.yml keys on it (#2442)
 
 # #1389 phase 2: once the repo is public, /lane T2 and T3 requests run on a GitHub-hosted Mac, the image and Xcode the
 # hosted fast checks use (hosted-portable.yml). Rollout guard, not a feature switch: lane.yml's route job hands this
@@ -358,10 +358,9 @@ def runner_routing(pr, file_pages, runner_pages, root=ROOT, offmac=True):
         def names(runner):
             return {label['name'] for label in runner['labels']}
 
-        # The free GitHub-hosted Linux minutes ran out (#1023), so "hosted" is the VPS runner that already runs PR
-        # code in isolation (linux-t1.yml). With it offline or unlisted the job would wait forever: stay on the Mac.
-        if offmac and complete and hosted_automerge(classify(paths, root=root)) \
-                and any(r['status'] == 'online' and HOSTED_RUNNER[0] in names(r) for r in runners):
+        # A GitHub-hosted Linux runner, free for the public repo (#2442; the VPS runner sm-vps-t1 until then, which
+        # had to be online). GitHub always has one, so there is no runner to look for.
+        if offmac and complete and hosted_automerge(classify(paths, root=root)):
             # Only the automerge job leaves the Mac: explicit /lane requests keep the Mac routing they had.
             return dict(runner_routing(pr, file_pages, runner_pages, root, offmac=False),
                         automerge=list(HOSTED_RUNNER))

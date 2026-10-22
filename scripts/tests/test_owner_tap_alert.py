@@ -260,8 +260,8 @@ class Workflow(unittest.TestCase):
     def setUp(self):
         self.text = (SCRIPTS.parent / '.github' / 'workflows' / 'owner-tap-alert.yml').read_text()
 
-    def test_runs_on_the_vps_from_the_base_with_no_kept_credentials(self):
-        self.assertIn('runs-on: [self-hosted, Linux, sm-vps]', self.text)
+    def test_runs_hosted_from_the_base_with_no_kept_credentials(self):
+        self.assertIn('runs-on: ubuntu-latest', self.text)  # off the owner's VPS since #2442
         self.assertIn('ref: ${{ github.event.pull_request.base.sha || github.sha }}', self.text)
         self.assertIn('persist-credentials: false', self.text)
         self.assertIn('github.event.pull_request.head.repo.full_name == github.repository', self.text)
@@ -279,7 +279,8 @@ class Workflow(unittest.TestCase):
                       self.text)
 
     def test_check_workflows_end_with_an_alert_job_from_the_base(self):
-        for name, needs in (('linux-t1.yml', '[sessionkit-core, portable]'), ('shipped-build-compat.yml', 'compat')):
+        # hosted-portable.yml took over from linux-t1.yml, whose VPS queue held the alert for an hour or more (#2442).
+        for name, needs in (('hosted-portable.yml', '[portable, sessionkit]'), ('shipped-build-compat.yml', 'compat')):
             with self.subTest(name):
                 text = (SCRIPTS.parent / '.github' / 'workflows' / name).read_text()
                 head, _, job = text.partition('\n  owner-tap-alert:\n')
@@ -288,7 +289,7 @@ class Workflow(unittest.TestCase):
                 self.assertIn(f'    needs: {needs}\n', job)
                 self.assertIn('    if: always() && github.event.pull_request.head.repo.full_name == github.repository\n',
                               job)
-                self.assertIn('    runs-on: [self-hosted, Linux, sm-vps]\n', job)
+                self.assertIn('    runs-on: ubuntu-latest\n', job)
                 self.assertIn('      issues: write\n', job)
                 self.assertNotIn('actions: write', job)
                 self.assertIn('ref: ${{ github.event.pull_request.base.sha }}', job)
@@ -300,7 +301,7 @@ class Workflow(unittest.TestCase):
 
     def test_a_base_without_the_script_skips_quietly(self):
         # Before this merges, the base has no script: the job must pass with a note, not fail (PR #2054's first run).
-        for name in ('owner-tap-alert.yml', 'linux-t1.yml', 'shipped-build-compat.yml'):
+        for name in ('owner-tap-alert.yml', 'hosted-portable.yml', 'shipped-build-compat.yml'):
             with self.subTest(name):
                 text = (SCRIPTS.parent / '.github' / 'workflows' / name).read_text()
                 step = text[text.index('          if [ ! -f scripts/owner_tap_alert.py ]; then'):]

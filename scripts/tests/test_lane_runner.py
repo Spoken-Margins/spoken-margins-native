@@ -2346,7 +2346,7 @@ class MainFlowTests(unittest.TestCase):
         # GitHub-hosted Mac fetches them from a cache instead (#1389 phase 2, test_lane_hosted_app.py).
         self.assertEqual(workflow.count('lfs: true'), 1)
         self.assertIn("lfs: ${{ runner.environment != 'github-hosted' }}", workflow)
-        self.assertIn("lfs: ${{ !contains(fromJSON(needs.route.outputs.automerge || '[]'), 'sm-vps-t1') }}", workflow)
+        self.assertIn("lfs: ${{ !contains(fromJSON(needs.route.outputs.automerge || '[]'), 'ubuntu-latest') }}", workflow)
         self.assertEqual(workflow.count('persist-credentials: false'), 4)  # hosted routing plus the three Mac jobs
         self.assertIn("if: steps.run.outputs.reported == 'true'", workflow)
         self.assertIn("if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'", workflow)
