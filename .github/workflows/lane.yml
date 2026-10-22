@@ -496,6 +496,51 @@ jobs:
           gh api -X DELETE "repos/$GH_REPO/issues/$PR_NUMBER/labels/lane%3Adone" > /dev/null 2>&1 || true
           gh api "repos/$GH_REPO/issues/$PR_NUMBER/labels" -f 'labels[]=lane:done' > /dev/null
 
+  # A lane job whose runner is lost runs no step, so neither its tidy-up nor its report can speak: the PR keeps
+  # lane:queued with its /lane request unanswered, and a held automerge run waits on a report that never comes
+  # (#2174: the Mac runner's worker did not start within the runner's 30-second hand-over, GitHub failed the job
+  # ten minutes later with "lost communication", and #2049 was left with nothing). This job runs on the owner's
+  # VPS runner (never the Mac the lane job was lost on), only when the lane job failed. `lane-runner.py --lost`,
+  # taken from the base branch, finds out whether the lane job reported or tidied up (then it does nothing) and
+  # otherwise posts an INCONCLUSIVE report naming the run and takes lane:queued and lane:running off. Not a lane
+  # result: a failure here must not change the run's outcome. A cancelled lane job (replaced by a newer run of the
+  # same PR, or cancelled by hand) is not handled here.
+  lane-lost:
+    needs: [route, lane]
+    if: >-
+      always() && needs.lane.result == 'failure' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, sm-vps]
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Report a lane job that ended without a report
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          # Base-branch code only, written under another name first so a failed download leaves nothing to run.
+          if ! gh api -H 'Accept: application/vnd.github.raw' "repos/$GH_REPO/contents/scripts/lane-runner.py?ref=$BASE_REF" \
+              > "$RUNNER_TEMP/lane-runner.py.part"; then
+            echo "::error::Could not download lane-runner.py from $BASE_REF; the lost lane job on this PR was not reported."
+            exit 1
+          fi
+          mv "$RUNNER_TEMP/lane-runner.py.part" "$RUNNER_TEMP/lane-runner.py"
+          if ! grep -q -e '--lost' "$RUNNER_TEMP/lane-runner.py"; then
+            echo '::warning::The base branch'"'"'s lane-runner.py has no --lost yet; nothing reported.'
+            exit 0
+          fi
+          python3 "$RUNNER_TEMP/lane-runner.py" --lost --tree "$RUNNER_TEMP" --pr "$PR_NUMBER" \
+            --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF"
+
   # Tell the coordinator when a Mac lane runner is left idle (#1215). One job per Mac job, so the
   # notice comes when either frees its runner, not when both are done (a PR with both labels runs
   # both). Each runs on the owner's VPS runner (never a Mac runner, so it can't queue behind a lane
