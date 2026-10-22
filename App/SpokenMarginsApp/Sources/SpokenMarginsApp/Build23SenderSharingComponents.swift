@@ -215,7 +215,7 @@ struct Build23MarginSelectionRow: View {
 
     var body: some View {
         ExperienceSurface(tint: margin.isIncluded ? AppColors.softGreen : nil) {
-            HStack(alignment: .top, spacing: 12) {
+            AdaptiveStack(alignment: .top, spacing: 12) {
                 Button {
                     onSetIncluded(!margin.isIncluded)
                 } label: {
@@ -382,7 +382,7 @@ struct Build23MarginEditor: View {
                         }
                         Text("Text").tag(ShareMarginRepresentationChoice.textOnly)
                     }
-                    .pickerStyle(.segmented)
+                    .segmentedUnlessLargeText()
                     .accessibilityIdentifier("build23.sender.representation.\(margin.id)")
                 }
 

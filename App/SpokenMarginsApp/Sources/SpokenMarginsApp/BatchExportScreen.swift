@@ -32,7 +32,7 @@ struct BatchExportScreen: View {
                                     Text("With Margins").tag(BatchSessionExportFilter.withInterjections)
                                     Text("All Sessions").tag(BatchSessionExportFilter.all)
                                 }
-                                .pickerStyle(.segmented)
+                                .segmentedUnlessLargeText()
                                 .accessibilityIdentifier("batchExport.filter.picker")
 
                                 HStack {
@@ -176,7 +176,7 @@ struct BatchExportScreen: View {
                         Text("Margins").tag("source_interjections")
                         Text("Full Session").tag("full_session")
                     }
-                    .pickerStyle(.segmented)
+                    .segmentedUnlessLargeText()
                     .accessibilityIdentifier("batchExport.scope.picker")
                     .onCompatibleChange(of: model.exportScope) { _ in model.exportOptionsChanged() }
 
