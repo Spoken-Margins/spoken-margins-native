@@ -4150,6 +4150,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// have caught it is this one: the action, with the stored session rate and the shown rate disagreeing.
     func testPlayThisMomentPlaysAtTheShownRateNotTheMarginsStoredSessionRate() throws {
         for (shown, stored) in [(1.0, 1.5), (1.5, 1.0)] {
+            UserDefaults.standard.removeObject(forKey: "mediaPlaybackRate")
             defer { UserDefaults.standard.removeObject(forKey: "mediaPlaybackRate") }
             let root = FileManager.default.temporaryDirectory.appending(path: "margin-moment-rate-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -4183,9 +4184,19 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
             XCTAssertEqual(model.snapshot.playbackRate, shown, "the source plays at the speed shown (stored \(stored))")
             XCTAssertEqual(model.mediaPlaybackRate, shown)
-            XCTAssertEqual(model.diagnostics["marginVoice.rate"],
-                           String(format: "moment;voice=%.2f;source=%.2f;shown=%.2f;player=n/a;voicePlayer=n/a", shown, shown, shown),
-                           "the Margin's voice reads the same rate, and Diagnostics say so")
+            // Parse the Diagnostics line instead of matching it whole: the fix guarantees the kind and that the Margin's
+            // voice and the source both ran at the shown rate; the other fields may change format freely.
+            let parts = try XCTUnwrap(model.diagnostics["marginVoice.rate"]).split(separator: ";").map(String.init)
+            XCTAssertEqual(parts.first, "moment")
+            var fields: [String: String] = [:]
+            for part in parts.dropFirst() {
+                let pair = part.split(separator: "=", maxSplits: 1).map(String.init)
+                if pair.count == 2 { fields[pair[0]] = pair[1] }
+            }
+            let voice = try XCTUnwrap(fields["voice"].flatMap(Double.init), "voice rate in \(parts)")
+            let source = try XCTUnwrap(fields["source"].flatMap(Double.init), "source rate in \(parts)")
+            XCTAssertEqual(voice, shown, accuracy: 0.001, "the Margin's voice reads the shown rate (stored \(stored))")
+            XCTAssertEqual(source, shown, accuracy: 0.001, "Diagnostics report the source at the shown rate")
         }
     }
 

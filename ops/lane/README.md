@@ -18,11 +18,11 @@ What a ping means: a runner is idle. It does not mean RAM, disk or the Mac's one
 The job runs on merge but sends nothing until two repo secrets exist. They are the Dial relay's own URL and token, piped from the VPS so neither is shown or typed (replace `<vps>` with the SSH host that runs the Dial gate):
 
 ```zsh
-ssh <vps> 'cat /etc/sm-dial/relay-url' | gh secret set SM_LANE_OPEN_URL -R uncomposed/spoken-margins-native
+ssh <vps> 'cat /etc/sm-dial/relay-url' | gh secret set SM_LANE_OPEN_URL -R Spoken-Margins/spoken-margins-native
 ```
 
 ```zsh
-ssh <vps> 'cat /etc/sm-dial/relay-token' | gh secret set SM_LANE_OPEN_TOKEN -R uncomposed/spoken-margins-native
+ssh <vps> 'cat /etc/sm-dial/relay-token' | gh secret set SM_LANE_OPEN_TOKEN -R Spoken-Margins/spoken-margins-native
 ```
 
 Turn it off by deleting either secret; remove it by deleting the two `lane-open-*` jobs. Any lane job on a PR can read these secrets (as it can `SM_LANE_RUNNERS_TOKEN`); the token can only post text into the project chat.
@@ -74,7 +74,7 @@ Paste this into `~/.claude/scheduled-tasks/sm-mac-tick/SKILL.md`, right after st
 
 ### Owner-tap alert backstop (#2047)
 
-`scripts/owner_tap_alert.py` pushes the owner's phone (a `github-actions[bot]` comment that @mentions him) when a PR only he can merge is ready for his tap. It runs in the last job of `linux-t1.yml` and `shipped-build-compat.yml`, so it decides as a PR's checks finish. The audit script asks for a check after auditing such a PR, by re-adding the `owner-tap-check` label, whose labeled run in `owner-tap-alert.yml` posts as the bot. A lane run that finishes last starts nothing, so this tick step is an optional backstop. On the Mac, `gh` is the owner, whose comment would notify nobody, so the step only re-adds the label on PRs that are ready and not yet alerted. To add it, paste this after step 2a:
+`scripts/owner_tap_alert.py` pushes the owner's phone (a `github-actions[bot]` comment that @mentions him) when a PR only he can merge is ready for his tap. It runs in the last job of `hosted-portable.yml` (`linux-t1.yml` until #2442) and `shipped-build-compat.yml`, so it decides as a PR's checks finish. The audit script asks for a check after auditing such a PR, by re-adding the `owner-tap-check` label, whose labeled run in `owner-tap-alert.yml` posts as the bot. A lane run that finishes last starts nothing, so this tick step is an optional backstop. On the Mac, `gh` is the owner, whose comment would notify nobody, so the step only re-adds the label on PRs that are ready and not yet alerted. To add it, paste this after step 2a:
 
 ```text
 2c. OWNER-TAP ALERT. Run `cd ~/Documents/GitHub/spoken-margins-native && GH_REPO=Spoken-Margins/spoken-margins-native python3 scripts/owner_tap_alert.py --via-label owner-tap-check` and keep going. For each PR ready for the owner's merge tap and not yet alerted on its head, it re-adds the `owner-tap-check` label, and GitHub Actions posts the alert. Running it every tick never repeats an alert. If it prints "skipped", note that line in this tick's #337 comment.

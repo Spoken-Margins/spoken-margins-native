@@ -14,6 +14,8 @@ struct ExperienceAddSourceFlow: View {
     @State private var fileRequest: FileRequest?
     @State private var showsFileImporter = false
     @State private var textImportError: String?
+    /// What the last Files pick could not import, shown under the Files button (#2373).
+    @State private var fileImportError: String?
     @FocusState private var focusedField: Field?
 
     private enum Field { case link, title, text }
@@ -233,7 +235,7 @@ struct ExperienceAddSourceFlow: View {
         switch route {
         case .linkOrPodcast: "A web article, podcast episode, feed, or public audio link"
         case .pastedText: "Words already copied to your clipboard"
-        case .documentOrBook: "Text, Markdown, PDF, or DRM-free EPUB"
+        case .documentOrBook: "Text, Markdown, PDF, DRM-free EPUB, or a Listening Edition"
         case .audiobook: "An MP3, M4A, M4B, or audio MP4 file"
         case .quickFolder: "A folder of eligible local files"
         }
@@ -346,9 +348,13 @@ struct ExperienceAddSourceFlow: View {
                 .filledActionButton()
                 .frame(minHeight: 44)
                 .accessibilityIdentifier("document.import.button")
-                Text("Documents and books stay local and retain authored structure when the format provides it.")
+                Text("Documents and books stay local and retain authored structure when the format provides it. A Listening Edition collection (.json) can be chosen here too.")
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)
+                if let fileImportError {
+                    FailureMessageLabel(fileImportError)
+                        .accessibilityIdentifier("document.import.error")
+                }
             }
         }
     }
@@ -444,7 +450,7 @@ struct ExperienceAddSourceFlow: View {
     private var allowedContentTypes: [UTType] {
         switch fileRequest {
         case .documentOrBook, .none:
-            [UTType(filenameExtension: "md") ?? .plainText, .plainText, .pdf, UTType(filenameExtension: "epub") ?? .data]
+            [UTType(filenameExtension: "md") ?? .plainText, .plainText, .pdf, UTType(filenameExtension: "epub") ?? .data, .json]
         case .audiobook:
             [.mp3, .mpeg4Audio, .mpeg4Movie, UTType(filenameExtension: "m4b") ?? .audio]
         case .quickFolder:
@@ -454,8 +460,33 @@ struct ExperienceAddSourceFlow: View {
 
     private func presentFileImporter(_ request: FileRequest) {
         focusedField = nil
+        fileImportError = nil
         fileRequest = request
         showsFileImporter = true
+    }
+
+    /// A Listening Edition collection (`.json`) goes to the edition import, like a PDF added from here: it lands in
+    /// the Library and nothing opens (#2373). Everything else goes the way it always did. The sheet closes unless
+    /// something could not be imported, and then it says what, under the Files button.
+    private func importDocumentsAndCollections(_ picked: [URL]) {
+        let editionURLs = picked.filter { $0.pathExtension.lowercased() == "json" }
+        let urls = picked.filter { $0.pathExtension.lowercased() != "json" }
+        fileImportError = nil
+        var closes = !picked.isEmpty
+        if !editionURLs.isEmpty, !model.importListeningEditionFiles(editionURLs) {
+            fileImportError = model.lastError
+            closes = false
+        }
+        let epubURLs = urls.filter { $0.pathExtension.lowercased() == "epub" }
+        if epubURLs.isEmpty, !urls.isEmpty {
+            model.importObsidianMarkdownFiles(urls: urls)
+        } else if urls.count == 1, let epubURL = epubURLs.first {
+            model.importEPUBFile(url: epubURL, openWhenFinished: false)
+        } else if !urls.isEmpty {
+            model.reportImportFailure(ExperienceFileImportError.epubMustBeImportedAlone)
+            closes = false
+        }
+        if closes { dismiss() }
     }
 
     private func handleFileImport(_ result: Result<[URL], Error>) {
@@ -465,16 +496,7 @@ struct ExperienceAddSourceFlow: View {
         case .success(let urls):
             switch request {
             case .documentOrBook:
-                let epubURLs = urls.filter { $0.pathExtension.lowercased() == "epub" }
-                if epubURLs.isEmpty, !urls.isEmpty {
-                    model.importObsidianMarkdownFiles(urls: urls)
-                    dismiss()
-                } else if urls.count == 1, let epubURL = epubURLs.first {
-                    model.importEPUBFile(url: epubURL, openWhenFinished: false)
-                    dismiss()
-                } else if !urls.isEmpty {
-                    model.reportImportFailure(ExperienceFileImportError.epubMustBeImportedAlone)
-                }
+                importDocumentsAndCollections(urls)
             case .audiobook:
                 if let url = urls.first { model.importAudiobookFile(url: url, openWhenFinished: false); dismiss() }
             case .quickFolder:

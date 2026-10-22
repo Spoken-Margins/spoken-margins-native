@@ -2,11 +2,9 @@
 # device (T2), then, when `tests` names any, run those app-hosted test classes or methods in a fresh
 # simulator (T3). The lane does both on the owner's Mac today (scripts/lane-runner.py, verify-tests.py).
 #
-# Draft, started by hand only. The private repo's free minutes are spent and spending money needs the
-# owner. Once the repo is public, standard hosted runners are free; the PR that wires this to pull
-# requests or the lane's labels is a separate change, after a measured first run (#1389).
-# GitHub offers workflow_dispatch only for a workflow file that is on the default branch (main). Until
-# the owner moves main past this file, `gh workflow run <file> --ref next` is likely to be refused.
+# T2 runs on every PR that changes app code and on the trunk's new tips. `LANE_HOSTED_APP` (lane routing) is
+# separate: it stays off until hosted T3 passes.
+# T3 is started by hand (workflow_dispatch) until it passes on the hosted image (#2365).
 #
 # Image and Xcode: #1384's benchmark ran on `xcode-27` (image xcode-27-arm64, Xcode 27.0 default) and
 # `macos-26` (Xcode 26.6). This repo builds with Xcode 27 and its iOS 27 SDK (docs/testing.md) and the lane
@@ -23,9 +21,14 @@
 name: hosted-app-macos
 
 on:
-  # T2 only on the trunk's new tips, once hosted app tests are on: GitHub lets a PR's run restore caches saved on
+  # T2 on the trunk's new tips, whatever LANE_HOSTED_APP says (owner, 2026-10-22): GitHub lets a PR's run restore caches saved on
   # the default branch but not another PR's, so these runs keep a warm compilation cache where every PR can read it.
   push:
+    branches: [main]
+    paths: ['App/**', 'Packages/**', 'project.yml', 'SpokenMarginsNative.xcodeproj/**']
+  # T2 on every PR that changes app code (owner, 2026-10-22), so a cloud thread's app change is built on a Mac
+  # before audit and merge. Same paths as the push trigger; a docs, ops or scripts PR starts no Mac.
+  pull_request:
     branches: [main]
     paths: ['App/**', 'Packages/**', 'project.yml', 'SpokenMarginsNative.xcodeproj/**']
   workflow_dispatch:
@@ -67,7 +70,8 @@ permissions:
 
 concurrency:
   group: hosted-app-macos-${{ github.ref }}
-  cancel-in-progress: false
+  # A new push to a PR replaces its older build; trunk and hand-started runs always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
@@ -76,7 +80,8 @@ env:
 
 jobs:
   app:
-    if: github.event_name != 'push' || vars.LANE_HOSTED_APP == 'on'
+    # Collaborators' PRs only; a fork's PR starts no Mac.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: xcode-27
     # T2 about 10 min on the benchmark's numbers, T3 up to 25 min, plus one retry of a stalled start.
     timeout-minutes: 75
@@ -89,29 +94,21 @@ jobs:
       - name: Start the clock
         run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
 
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # The lane's own selection rule (verify-tests.py t3_selection, through scripts/hosted_t3_check.py): only
+      # class and method names, each of which must name tests in the plan. A misspelled name fails here, before
+      # the build, instead of running nothing (#2138).
       - name: Check the tests input
         id: tests
         env:
           TESTS: ${{ inputs.tests }}
+          PLAN: ${{ inputs.plan || 'AppBehavior' }}
         run: |
-          # Only class and method names reach xcodebuild: each entry is Class or Class/method.
-          selectors=()
-          IFS=',' read -ra entries <<< "$TESTS"
-          for raw in "${entries[@]}"; do
-            entry=$(echo "$raw" | xargs)
-            [ -z "$entry" ] && continue
-            if ! [[ "$entry" =~ ^[A-Za-z_][A-Za-z0-9_]*(/[A-Za-z_][A-Za-z0-9_]*(\(\))?)?$ ]]; then
-              echo "::error::Not a test class or Class/method: '$entry'"
-              exit 1
-            fi
-            selectors+=("-only-testing:SpokenMarginsAppTests/$entry")
-          done
-          echo "count=${#selectors[@]}" >> "$GITHUB_OUTPUT"
-          printf '%s\n' "${selectors[@]}" > "$RUNNER_TEMP/selectors.txt"
-
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+          python3 scripts/hosted_t3_check.py select --tests "$TESTS" --plan "$PLAN" --out "$RUNNER_TEMP"
+          echo "count=$(grep -c . "$RUNNER_TEMP/selectors.txt" || true)" >> "$GITHUB_OUTPUT"
 
       # The voice models are LFS files (about 200 MB) that the app bundles. Cache them so every run doesn't
       # spend that from the LFS bandwidth quota.
@@ -195,7 +192,8 @@ jobs:
         run: python3 scripts/verify-bundle.py "$DERIVED/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app"
 
       - name: T2 - build for a device (unsigned)
-        if: inputs.device_build
+        # Inputs are empty outside workflow_dispatch, so push and PR runs always build for a device, as the lane T2 does.
+        if: inputs.device_build || github.event_name != 'workflow_dispatch'
         run: |
           set -o pipefail
           xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -configuration Debug \
@@ -260,6 +258,7 @@ jobs:
             break
           done
           echo "BUNDLE=$bundle" >> "$GITHUB_ENV"
+          echo "TESTS_LOG=$log" >> "$GITHUB_ENV"
           exit "$status"
 
       # After T2, whatever T3 did: the build's caches are worth keeping even when a test fails. A key that already
@@ -283,21 +282,16 @@ jobs:
           path: ${{ env.CAS }}
           key: xcode-cas-27.0-${{ github.run_id }}
 
-      - name: T3 - test counts
-        if: always() && env.BUNDLE != ''
+      # Passes only when every requested test completed and passed: a missing, skipped or failed test, a test
+      # outside the request, or a run that completed nothing fails (#2138), by verify-tests.py's reconcile. It runs
+      # whenever tests were requested, so a T3 step that never wrote a bundle or log fails here too.
+      - name: T3 - check every requested test ran and passed
+        if: always() && steps.tests.outputs.count != '0' && steps.tests.outputs.count != ''
         run: |
-          xcrun xcresulttool get test-results summary --path "$BUNDLE" --compact > "$RESULTS/summary.json"
-          python3 - "$RESULTS/summary.json" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
-          import json, sys
-          s = json.load(open(sys.argv[1]))
-          total = s.get('totalTestCount', 0)
-          print(f"T3: {s.get('result')}, {total} tests: {s.get('passedTests', 0)} passed, "
-                f"{s.get('failedTests', 0)} failed, {s.get('skippedTests', 0)} skipped.")
-          for failure in s.get('testFailures', [])[:20]:
-              print(f"- {failure.get('testIdentifierString') or failure.get('testName')}: {failure.get('failureText', '')[:200]}")
-          # A named test that ran nothing is a failure, as in verify-tests.py.
-          sys.exit(1 if total == 0 else 0)
-          PY
+          set -o pipefail
+          python3 scripts/hosted_t3_check.py reconcile --expected "$RUNNER_TEMP/expected.json" \
+            --log "${TESTS_LOG:-$RESULTS/tests-1.log}" --bundle "${BUNDLE:-$RESULTS/tests-1.xcresult}" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Shut down the simulator
         if: always() && env.UDID != ''
@@ -310,7 +304,6 @@ jobs:
           name: hosted-app-macos-${{ github.run_id }}
           path: |
             .build/hosted-results/*.log
-            .build/hosted-results/summary.json
           if-no-files-found: ignore
           retention-days: 7
 
