@@ -73,6 +73,8 @@ final class PDFWordSpacingTests: XCTestCase {
         XCTAssertEqual(products.respaced("we used TensorFlow, DeepMind and LinkedIn"), "we used TensorFlow, DeepMind and LinkedIn")
         XCTAssertEqual(products.respaced("datafromOpenAIandGitHub"), "data from OpenAI and GitHub")
         XCTAssertEqual(products.respaced("Brynjolfsson,Chandar andChen,2025"), "Brynjolfsson, Chandar and Chen, 2025")
+        let headings = try kittenSpacer(context: Array(repeating: "ComparativeAdvantage", count: 4))
+        XCTAssertEqual(headings.respaced("theComparativeAdvantageof"), "the Comparative Advantage of")
         // E-mail addresses are not glued prose.
         let addresses = Array(repeating: "Contact: firstname.lastname@burningglassinstitute.org", count: 5)
         XCTAssertFalse(spacer.isGlued(addresses))

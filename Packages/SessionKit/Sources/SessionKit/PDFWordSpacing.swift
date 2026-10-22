@@ -18,7 +18,8 @@ public struct PDFWordSpacer {
     /// the likelier reading of a glued run.
     private let documentCounts: [String: Int]
     /// Capitalised names with a capital inside ("GitHub", "OpenAI") that the paper prints
-    /// alone at least three times. They stay whole even when each half is a word.
+    /// alone at least three times. They stay whole even when each half is a word. Longer
+    /// ones are glued title words ("ComparativeAdvantage" in a running head), not names.
     private let printedNames: [[Character]]
 
     /// `isWord` answers for one lower-case word (the app passes the bundled Kitten
@@ -45,7 +46,7 @@ public struct PDFWordSpacer {
             }
         }
         documentCounts = counts
-        printedNames = nameCounts.filter { $0.value >= 3 }.keys.sorted().map(Array.init)
+        printedNames = nameCounts.filter { $0.value >= 3 && $0.key.count <= 12 }.keys.sorted().map(Array.init)
         tokenCount = max(1_000, Double(counts.values.reduce(0, +)))
     }
 
