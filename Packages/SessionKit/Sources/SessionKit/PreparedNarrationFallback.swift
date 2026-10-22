@@ -62,7 +62,10 @@ public enum PreparedNarrationFallback {
         let textLength = item.text?.count ?? 0
         var offset = session.position.charOffset
         if let mediaTimeMs = session.position.mediaTimeMs, let timeline, !timeline.segments.isEmpty {
-            offset = textOffset(mediaTimeMs: mediaTimeMs, timeline: timeline)
+            // The timeline interpolates inside a segment by time share, which lands mid-word; on-device
+            // speech starting there would speak "entence..." (#2128). A saved character offset is kept as
+            // it is: it was written where the speech voice stopped.
+            offset = wordStart(atOrBefore: textOffset(mediaTimeMs: mediaTimeMs, timeline: timeline), in: item.text ?? "")
         }
         offset = max(0, min(offset, textLength))
         var updated = session
@@ -73,6 +76,29 @@ public enum PreparedNarrationFallback {
             updated.completionPercent = min(100, max(0, Int((Double(offset) / Double(textLength)) * 100)))
         }
         return updated
+    }
+
+    /// The longest word `wordStart` will back up through. A longer run without whitespace (a pasted URL or
+    /// data) has no word start worth the re-reading, so its offset stays where it is.
+    private static let longestWordBackedUpThrough = 64
+
+    /// `offset` moved back to the start of the word it falls inside, so speech begins on a whole word.
+    /// An offset already at a word start, on whitespace, at the end or past it is returned as it is. A word
+    /// is a run of non-whitespace characters, offsets count characters (as `String.count` does), and
+    /// punctuation stays with its word.
+    public static func wordStart(atOrBefore offset: Int, in text: String) -> Int {
+        guard offset > 0, offset < text.count else { return offset }
+        var index = text.index(text.startIndex, offsetBy: offset)
+        guard !text[index].isWhitespace else { return offset }
+        var start = offset
+        while start > 0 {
+            let previous = text.index(before: index)
+            if text[previous].isWhitespace { return start }
+            guard offset - start < longestWordBackedUpThrough else { return offset }
+            index = previous
+            start -= 1
+        }
+        return 0
     }
 
     /// The text offset generated narration has reached at `mediaTimeMs`, interpolated within a segment.

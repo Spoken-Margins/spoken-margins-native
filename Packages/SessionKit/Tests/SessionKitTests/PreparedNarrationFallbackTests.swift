@@ -55,9 +55,10 @@ final class PreparedNarrationFallbackTests: XCTestCase {
         )
         XCTAssertEqual(reading.currentTargetType, .itemTextTTS)
         XCTAssertEqual(reading.currentTargetId, item.id)
-        XCTAssertEqual(reading.position.charOffset, 24)
+        // Halfway through "Second sentence." is character 24, inside "sentence."; reading starts at its first letter (#2128).
+        XCTAssertEqual(reading.position.charOffset, 23)
         XCTAssertNil(reading.position.mediaTimeMs)
-        XCTAssertEqual(reading.completionPercent, 75)
+        XCTAssertEqual(reading.completionPercent, 71)
     }
 
     func testEvictionDetachesNarrationButKeepsAFileAnItemPlaysAsItsOnlyAudio() {
