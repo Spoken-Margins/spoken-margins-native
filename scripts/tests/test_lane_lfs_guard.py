@@ -181,7 +181,7 @@ def jobs(text: str):
 
 def checkouts(body: str):
     """The `with:` text of each actions/checkout step in a job body."""
-    return re.findall(r'uses: actions/checkout@\S+\n(?:        with:\n)?((?:          .*\n)*)', body)
+    return re.findall(r'uses: actions/checkout@\S+[^\n]*\n(?:        with:\n)?((?:          .*\n)*)', body)
 
 
 class MacCheckoutTests(unittest.TestCase):
