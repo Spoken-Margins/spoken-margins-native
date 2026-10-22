@@ -44,9 +44,9 @@ extension Gate1AppModel {
         guard sourceLinkResolver == nil else {
             return importSourceLink(urlString: urlString, sourceSurface: sourceSurface, startSession: shouldStartSession)
         }
-        isResolvingSourceLink = true
+        sourceLinkGate.begin()
         statusMessage = "Resolving source link..."
-        defer { isResolvingSourceLink = false }
+        defer { sourceLinkGate.end() }
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed),
               let scheme = url.scheme?.lowercased(),
@@ -63,13 +63,16 @@ extension Gate1AppModel {
         do {
             let fetched = FetchedPageMemo() // the voiceover lookup reads the post page from here (#810)
             let result = try await PublicPodcastLinkResolver().remembering(fetched).resolveAsync(request)
+            // Resolving took seconds: a start that began meanwhile keeps the audio, and this item is only added (#2135).
+            let startNow = SourceLinkImportGate.mayStartPlayback(
+                requested: shouldStartSession, anotherSessionIsActive: hasActiveSession)
             if result.isPDFDocument { return try await importPDFFromLinkField(url) }
-            if let article = await readLinkAsArticleOrOfferSafari(url, after: result, startSession: shouldStartSession) {
+            if let article = await readLinkAsArticleOrOfferSafari(url, after: result, startSession: startNow) {
                 guard let itemId = importBrowserTextItem(article, opensItem: false) else { return false }
                 rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: fetched)
                 return true
             }
-            return importResolvedSourceLink(request: request, result: result, startSession: shouldStartSession)
+            return importResolvedSourceLink(request: request, result: result, startSession: startNow)
         } catch {
             offerSafariIfUnreadable(url, error: error)
             reportFailure(error, context: "Source link import failed", retry: .init(key: "sourceLink") { [weak self] in
@@ -93,8 +96,8 @@ extension Gate1AppModel {
             }
             return true
         }
-        isResolvingSourceLink = true
-        defer { isResolvingSourceLink = false }
+        sourceLinkGate.begin()
+        defer { sourceLinkGate.end() }
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed),
               let scheme = url.scheme?.lowercased(),
@@ -178,7 +181,10 @@ extension Gate1AppModel {
     }
 
     @discardableResult
-    func importResolvedSourceLink(request: LinkResolutionRequest, result: LinkResolutionResult, startSession: Bool = true) -> Bool {
+    func importResolvedSourceLink(request: LinkResolutionRequest, result: LinkResolutionResult, startSession requestedStart: Bool = true) -> Bool {
+        // Asked again here, as the last step: a review pick or a slow resolve can finish after playback began (#2135).
+        let startSession = SourceLinkImportGate.mayStartPlayback(
+            requested: requestedStart, anotherSessionIsActive: hasActiveSession)
         do {
             if presentSourceLinkCandidateReviewIfAvailable(request: request, result: result, startSession: startSession) {
                 return false
