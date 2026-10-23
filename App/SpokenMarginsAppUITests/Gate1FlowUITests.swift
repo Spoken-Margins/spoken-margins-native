@@ -855,6 +855,29 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertEqual(element("playback.play.button").label, "Pause", "Voice capture cancellation did not resume the source")
     }
 
+    /// #1942: at AX5 with the keyboard up, the editor keeps a usable height and sits inside the screen.
+    func testWrittenMarginEditorStaysUsableAtAccessibilitySizesWithTheKeyboardUp() throws {
+        app.terminate()
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = "A listener's notebook about the art of paying attention, ordinary streets, familiar voices, and everything we might otherwise forget"
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = String(repeating: "Notice the small details along the way. ", count: 80)
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        app.launch()
+        scrollToElement("queue.start.item-ui-text-regression").tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        pausePlaybackIfNeeded()
+        scrollToElement("playback.write.button").tap()
+        XCTAssertTrue(element("writtenMargin.screen").waitForExistence(timeout: 4))
+        let editor = app.textViews["writtenMargin.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 4))
+        editor.tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 4))
+        XCTAssertGreaterThanOrEqual(editor.frame.height, 100, "The editor was squeezed")
+        XCTAssertLessThanOrEqual(editor.frame.maxY, keyboard.frame.minY + 1, "The editor sits under the keyboard")
+        XCTAssertGreaterThanOrEqual(editor.frame.minY, app.windows.firstMatch.frame.minY, "The editor was pushed off the top")
+        captureScreen(named: "written-margin-accessibility-keyboard")
+    }
+
     func testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource() throws {
         app.terminate()
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = "A walk with room to think"

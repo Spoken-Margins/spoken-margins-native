@@ -16,6 +16,8 @@ struct ExperienceAddSourceFlow: View {
     @State private var textImportError: String?
     /// What the last Files pick could not import, shown under the Files button (#2373).
     @State private var fileImportError: String?
+    /// Live session (#1989, #2481, prototype).
+    @State private var showsLiveSession = false
     @FocusState private var focusedField: Field?
 
     private enum Field { case link, title, text }
@@ -203,6 +205,17 @@ struct ExperienceAddSourceFlow: View {
             }
             .buttonStyle(.bordered)
             .accessibilityIdentifier("addSource.route.quickFolder")
+            Button {
+                showsLiveSession = true
+            } label: {
+                Label("Live Session: Margins on a Meeting or Book", systemImage: "clock.badge")
+                    .frame(minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("addSource.route.liveSession")
+            .fullScreenCover(isPresented: $showsLiveSession, onDismiss: { dismiss() }) {
+                LiveSessionView().environmentObject(model)
+            }
         }
     }
 
