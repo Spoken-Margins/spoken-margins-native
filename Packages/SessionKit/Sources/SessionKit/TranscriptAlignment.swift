@@ -277,6 +277,8 @@ public enum LiveSessionText {
             var entry = LiveSessionAlignment.Placed(id: margin.id, text: margin.savedText, offsetMs: margin.sessionOffsetMs, charOffset: offset)
             entry.estimateMs = estimate?.ms
             entry.listenerMs = margin.listenerPositionMs
+            entry.audioPath = margin.audioPath
+            entry.transcript = margin.spokenTranscript
             let best = LiveSessionAlignment.best(estimateMs: estimate?.ms ?? margin.sessionOffsetMs, listenerMs: margin.listenerPositionMs, matchMs: nil)
             entry.offsetMs = best.offsetMs
             entry.source = best.source

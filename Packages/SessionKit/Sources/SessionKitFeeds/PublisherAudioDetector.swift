@@ -58,8 +58,14 @@ public enum PublisherAudioDetector {
 
     /// An authenticated feed already supplied this text. Do not replace it with a public teaser.
     public static func articleHandoff(for entry: FeedEntry) -> BrowserTextHandoff? {
-        guard entry.hasPublisherAudio, let body = entry.fullBody,
-              !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        guard entry.hasPublisherAudio else { return nil }
+        return feedBodyHandoff(for: entry)
+    }
+
+    /// The text the feed itself carried, for an import that must not read the post page (#2368): a followed
+    /// Substack post added by "Add every new item", which the listener didn't start. Nil when the feed gave none.
+    public static func feedBodyHandoff(for entry: FeedEntry) -> BrowserTextHandoff? {
+        guard let body = entry.fullBody, !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         return BrowserTextHandoff(captureMode: .readablePage,
             source: BrowserTextSource(url: entry.canonicalURL, title: entry.title), text: body)
     }

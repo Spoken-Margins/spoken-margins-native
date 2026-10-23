@@ -8,6 +8,9 @@ struct PlaybackPositionSlider: UIViewRepresentable {
     @Binding var value: Double
     var range: ClosedRange<Double>
     var onEditingChanged: (Bool) -> Void
+    /// A touch that slid far off the bar and lifted there (#1930). The position is back where it was; no seek.
+    /// Left nil, a cancel ends editing the usual way, with the value restored.
+    var onCancelled: (() -> Void)? = nil
     var preparedFraction: Double? = nil
     /// Chapters and Margins to draw on the bar (#428). Display only; nil draws the plain slider.
     var barContent: PlaybackBarContent? = nil
@@ -31,6 +34,7 @@ struct PlaybackPositionSlider: UIViewRepresentable {
         slider.accessibilityHint = positionAccessibilityHint
         slider.onValue = { value = $0 }
         slider.onEditing = onEditingChanged
+        slider.onCancelled = onCancelled
         slider.isEnabled = isEnabled
         slider.preparedFraction = preparedFraction
         slider.barContent = barContent
@@ -68,6 +72,7 @@ struct PlaybackPositionSlider: UIViewRepresentable {
     static func dismantleUIView(_ view: PlaybackBarAccessibilityView, coordinator: ()) {
         view.slider.onValue = nil
         view.slider.onEditing = nil
+        view.slider.onCancelled = nil
         view.slider.onBarLayout = nil
     }
 }
@@ -75,6 +80,8 @@ struct PlaybackPositionSlider: UIViewRepresentable {
 final class TrackingPlaybackSlider: UISlider {
     var onValue: ((Double) -> Void)?
     var onEditing: ((Bool) -> Void)?
+    var onCancelled: (() -> Void)?
+    private var valueAtTouchDown: Float = 0
     var onBarLayout: (([PlaybackBarRenderer.RenderedStack]) -> Void)?
     private(set) var gestureActive = false
     var preparedFraction: Double? { didSet { if oldValue != preparedFraction { setNeedsLayout() } } }
@@ -145,25 +152,44 @@ final class TrackingPlaybackSlider: UISlider {
     // synthesized tracking callbacks with SwiftUI publication during a seek.
     override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool { false }
 
-    @objc private func trackTouch(_ touch: UILongPressGestureRecognizer) {
+    @objc func trackTouch(_ touch: UILongPressGestureRecognizer) {
         guard isEnabled else { return }
         switch touch.state {
         case .began:
             gestureActive = true
             isHighlighted = true
+            valueAtTouchDown = value
             onEditing?(true)
-            updatePosition(at: touch.location(in: self))
+            follow(touch.location(in: self))
         case .changed:
             guard gestureActive else { return }
-            updatePosition(at: touch.location(in: self))
+            follow(touch.location(in: self))
         case .ended:
             guard gestureActive else { return }
-            updatePosition(at: touch.location(in: self))
-            finishGesture()
+            if isOffTheBar(touch.location(in: self)) {
+                cancelGesture()
+            } else {
+                updatePosition(at: touch.location(in: self))
+                finishGesture()
+            }
         case .cancelled, .failed:
-            finishGesture()
+            cancelGesture()
         default:
             break
+        }
+    }
+
+    private func isOffTheBar(_ point: CGPoint) -> Bool {
+        ScrubTouchRule.outcome(verticalOffset: Double(point.y - bounds.midY)) == .cancel
+    }
+
+    /// Follows a finger near the bar; a finger far off it shows the position it will go back to.
+    private func follow(_ point: CGPoint) {
+        if isOffTheBar(point) {
+            setValue(valueAtTouchDown, animated: false)
+            onValue?(Double(value))
+        } else {
+            updatePosition(at: point)
         }
     }
 
@@ -175,6 +201,17 @@ final class TrackingPlaybackSlider: UISlider {
         let fraction = min(1, max(0, (point.x - lower) / (upper - lower)))
         setValue(minimumValue + Float(fraction) * (maximumValue - minimumValue), animated: false)
         onValue?(Double(value))
+    }
+
+    /// Puts the position back and ends the touch without a seek (#1930).
+    private func cancelGesture() {
+        guard gestureActive else { return }
+        setValue(valueAtTouchDown, animated: false)
+        onValue?(Double(value))
+        guard let onCancelled else { return finishGesture() }
+        gestureActive = false
+        isHighlighted = false
+        onCancelled()
     }
 
     private func finishGesture() {
