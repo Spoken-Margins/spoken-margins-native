@@ -50,6 +50,17 @@ def condition(text):
     return found.group(1) if found else ''
 
 
+class HostedToolTests(unittest.TestCase):
+    def test_the_hosted_mac_gets_xcodegen_before_the_run(self):
+        # #2557: verify-tests.py runs `xcodegen generate` before a T3 build; the image has none, so every hosted T3
+        # was INCONCLUSIVE ("No such file or directory: 'xcodegen'") and held its PR's merge.
+        titles = [text.splitlines()[0] for text in steps()]
+        found = [text for text in steps() if 'xcodegen' in text and 'brew install xcodegen' in text]
+        self.assertEqual(len(found), 1, 'one step installs XcodeGen on the hosted Mac')
+        self.assertEqual(condition(found[0]), "runner.environment == 'github-hosted'", 'never on the build Macs')
+        self.assertLess(titles.index(found[0].splitlines()[0]), titles.index(next(t for t in titles if 'Run the request' in t)))
+
+
 class RoutingTests(unittest.TestCase):
     def test_unset_or_anything_but_on_keeps_the_mac(self):
         for env in ({}, {'LANE_HOSTED_APP': ''}, {'LANE_HOSTED_APP': 'off'}, {'LANE_HOSTED_APP': 'yes'}):
