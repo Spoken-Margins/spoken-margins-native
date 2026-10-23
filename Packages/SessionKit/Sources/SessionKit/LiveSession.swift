@@ -36,12 +36,22 @@ public struct LiveSession: Codable, Equatable, Sendable {
     public var startWhere: String?
     public var endWhere: String?
     public var margins: [LiveSessionMargin]
+    /// True for a quick session (#2487 slice 1a): one the phone made for a Margin taken with no session running.
+    /// Its span runs from its first Margin to its last. Optional, so `current.json` from an earlier build still
+    /// reads, and an earlier build reading this one ignores it.
+    public var isQuick: Bool?
+    /// The Library item this session was saved as. A saved session stays in the session store, so a late copy of
+    /// one of its Margins is still known, but takes no new Margins.
+    public var savedItemId: String?
 
     public init(
         id: String, kind: ElsewhereKind = .meeting, title: String = "", startedAt: Date, endedAt: Date? = nil,
         startPositionMs: Int? = nil, endPositionMs: Int? = nil,
-        startWhere: String? = nil, endWhere: String? = nil, margins: [LiveSessionMargin] = []
+        startWhere: String? = nil, endWhere: String? = nil, margins: [LiveSessionMargin] = [],
+        isQuick: Bool? = nil, savedItemId: String? = nil
     ) {
+        self.isQuick = isQuick
+        self.savedItemId = savedItemId
         self.startPositionMs = startPositionMs
         self.endPositionMs = endPositionMs
         self.id = id
@@ -117,6 +127,9 @@ public struct LiveSessionMargin: Codable, Equatable, Sendable, Identifiable {
     public var durationMs: Int?
     /// Where it was spoken: "phone" or "watch". Nil for a written Margin or a Mark.
     public var spokenOn: String?
+    /// How it came to be filed here, when not simply during the session (#2487 slice 1a): "after the session
+    /// ended" or "moved from a quick session". Evidence for the listener and the export; never used to place it.
+    public var filingNote: String?
 
     public init(
         id: String, text: String, markedAt: Date, sessionOffsetMs: Int = 0, whereNote: String? = nil, isBlindMark: Bool = false,
