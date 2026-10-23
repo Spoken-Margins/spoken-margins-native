@@ -432,9 +432,9 @@ class TokenHandlingTests(unittest.TestCase):
 class WorkflowWiringTests(unittest.TestCase):
     workflow = (Path(__file__).resolve().parents[2] / '.github' / 'workflows' / 'lane-conflicts.yml')
 
-    def test_it_runs_on_the_vps_from_the_base_branch_and_cannot_push(self):
+    def test_it_runs_hosted_from_the_base_branch_and_cannot_push(self):
         text = self.workflow.read_text()
-        self.assertIn('runs-on: [self-hosted, Linux, sm-vps]', text)
+        self.assertIn('runs-on: ubuntu-latest', text)
         self.assertIn("ref: ${{ github.event.pull_request.base.ref || vars.SM_TRUNK || 'main' }}", text)
         self.assertIn('persist-credentials: false', text)
         self.assertIn('contents: read', text)
