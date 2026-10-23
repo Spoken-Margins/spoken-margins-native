@@ -4674,6 +4674,8 @@ public final class SessionEngine {
             if previous == beforeStart { break }
             beforeStart = previous
         }
+        // Lines that end no sentence (a heading, a title page's names and emails) are not part of the passage.
+        beforeStart = max(beforeStart, unsentencedBlockEnd(in: text, before: split))
         for _ in 0..<Self.textAnchorShoulderSentenceCount {
             let next = nextBoundary(after: afterEnd, unit: "sentence", text: text)
             if next == afterEnd { break }
@@ -4683,6 +4685,44 @@ public final class SessionEngine {
             slice(text, start: beforeStart, end: split),
             slice(text, start: split, end: afterEnd)
         )
+    }
+
+    /// Where the text just before `offset` stops being sentences: the start of the line after the nearest earlier line
+    /// that doesn't end in sentence punctuation. 0 when every earlier line does, so prose keeps its shoulder across
+    /// paragraph breaks. A PDF's title page is a run of such lines with no full stops (names, affiliations, emails),
+    /// and sentence boundaries alone ran back through it, so a Margin on the abstract kept the author block as the
+    /// context shown for it (#2482).
+    private static let sentenceEndings: Set<Character> = [
+        ".", "?", "!", ":", ";", "…", "—", "\"", "'", "”", "’", "»", ")", "]", "。", "！", "？", "」", "』"
+    ]
+    /// A longer line is prose, not a heading or a name.
+    private static let unsentencedLineLimit = 120
+
+    /// The line starting at `from` goes on from the one before it (a hard-wrapped line): its first letter is lower case.
+    private func continues(_ characters: [Character], from: Int, before limit: Int) -> Bool {
+        var index = from
+        while index < min(limit, characters.count), characters[index].isWhitespace { index += 1 }
+        return index < characters.count && characters[index].isLowercase
+    }
+
+    private func unsentencedBlockEnd(in text: String, before offset: Int) -> Int {
+        let characters = Array(text)
+        var lineStart = min(max(0, offset), characters.count)
+        while lineStart > 0, !characters[lineStart - 1].isNewline { lineStart -= 1 }
+        var following = lineStart // the start of the line after the one being read
+        var end = lineStart
+        while end > 0 {
+            end -= 1 // the line break that ends the previous line
+            var start = end
+            while start > 0, !characters[start - 1].isNewline { start -= 1 }
+            if let last = characters[start..<end].last(where: { !$0.isWhitespace }) {
+                if !Self.sentenceEndings.contains(last), end - start <= Self.unsentencedLineLimit,
+                   !continues(characters, from: following, before: lineStart) { return following }
+                following = start
+            }
+            end = start
+        }
+        return 0
     }
 
     private func completedWordBoundary(in text: String, at rawOffset: Int) -> Int {
