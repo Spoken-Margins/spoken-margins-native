@@ -118,7 +118,7 @@ enum AddSourceRoute: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .linkOrPodcast: "Podcast episode, RSS feed, public audio, or readable web link"
         case .pastedText: "Create a listening item from text already on your clipboard"
-        case .documentOrBook: "Plain text, Markdown, text-based PDF, or DRM-free EPUB"
+        case .documentOrBook: "Plain text, Markdown, text-based PDF, DRM-free EPUB, or a Listening Edition"
         case .audiobook: "Import an app-owned MP3, M4A, M4B, or audio-bearing MP4"
         case .quickFolder: "Choose a folder whose eligible files appear in Sources"
         }
@@ -157,6 +157,8 @@ struct AppNavigationState: Equatable, Sendable {
     var addSourceRoute: AddSourceRoute?
     /// Where Following was scrolled to, kept across the screen switches that destroy its list (#479).
     var followingScroll = FollowingScrollMemory()
+    /// The same for the Library list, whose rows are also destroyed when an item opens (#2395).
+    var libraryScroll = FollowingScrollMemory()
 
     mutating func select(_ root: AppRoot, recordingIsLocked: Bool) {
         guard !recordingIsLocked else { return }

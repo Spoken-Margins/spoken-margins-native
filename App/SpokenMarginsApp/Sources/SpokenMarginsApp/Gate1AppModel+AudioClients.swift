@@ -187,6 +187,9 @@ extension Gate1AppModel {
                         self.diagnostics["supertonicFallbackRestored"] = itemId
                     }
                 },
+                onVoiceRestored: { [weak self] fields in
+                    Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("voice.restored", fields) }
+                },
                 onBundledVoice: { [weak self] block, offset, _ in
                     Task { @MainActor [weak self] in
                         // Kitten is the listener's choice, not a stand-in: nothing changed that needs explaining (#2226).
