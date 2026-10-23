@@ -11,7 +11,15 @@ public final class SessionEngine {
     private static let storedDurationTruncationMs = 999
     public private(set) var profile: RuntimeCapabilityProfile
     public private(set) var snapshot = SessionSnapshot()
-    public private(set) var currentSession: Session?
+    public private(set) var currentSession: Session? {
+        // A coalesced progress tick (#2509) leaves the newest place only in memory. Whatever replaces the session,
+        // the place is written first.
+        didSet {
+            guard let unsaved = unsavedProgressSessionId, let old = oldValue, old.id == unsaved,
+                  currentSession?.id != unsaved else { return }
+            try? persistSession(old)
+        }
+    }
     public private(set) var currentItem: Item? {
         // An article that plays its publisher's recording is always the playing copy in memory, however
         // the item was loaded (#547).
@@ -530,8 +538,19 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// How long a steady playback tick may keep its place in memory before it is saved (#2509). A kill loses at
+    /// most this much; pause, stop, a lifecycle sync, a status change and a change of session save at once.
+    static let progressWriteInterval: TimeInterval = 5
+
+    /// The session whose newest place is in memory but not yet saved.
+    private var unsavedProgressSessionId: String?
+    private var lastProgressWriteAt: [String: Date] = [:]
+
+    /// - Parameter coalescingWrites: the foreground ticker (about twice a second) passes true so a steady advance
+    ///   writes the Session row at most every `progressWriteInterval` seconds instead of on every tick. Every other
+    ///   caller leaves it false and saves a moved place at once.
     @discardableResult
-    public func syncPlaybackProgress() throws -> SessionSnapshot {
+    public func syncPlaybackProgress(coalescingWrites: Bool = false) throws -> SessionSnapshot {
         guard var session = currentSession else {
             return snapshot
         }
@@ -631,9 +650,20 @@ public final class SessionEngine {
             || updated.completionPercent != session.completionPercent
             || updated.phase != session.phase
             || updated.status != session.status {
+            let steadyAdvance = updated.phase == session.phase && updated.status == session.status && !playbackCompleted
+            let savedRecently = lastProgressWriteAt[session.id].map { now().timeIntervalSince($0) < Self.progressWriteInterval } ?? false
+            let deferWrite = coalescingWrites && steadyAdvance && savedRecently
             session = updated
-            currentSession = session
-            try persistSession(session)
+            if deferWrite {
+                unsavedProgressSessionId = session.id
+                currentSession = session
+            } else {
+                currentSession = session
+                try persistSession(session)
+            }
+        }
+        if !coalescingWrites, unsavedProgressSessionId == session.id, let held = currentSession {
+            try persistSession(held) // a lifecycle sync saves the place the ticker has been holding
         }
         let reconciledStatus: PlaybackStatus
         if playbackCompleted || (snapshot.status == .playing && transportState == .paused) {
@@ -6183,6 +6213,8 @@ public final class SessionEngine {
         }
         try repository.saveSession(storedForm(of: stamped))
         lastSavedMediaTimeMs[stamped.id] = stamped.position.mediaTimeMs
+        lastProgressWriteAt[stamped.id] = timestamp
+        if unsavedProgressSessionId == stamped.id { unsavedProgressSessionId = nil }
         if stamped.completionPercent > 98,
            completionPercentIsMeasured(stamped),
            var item = try? repository.loadItem(id: stamped.itemId),
