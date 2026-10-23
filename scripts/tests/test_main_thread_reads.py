@@ -309,9 +309,11 @@ class TheRepository(unittest.TestCase):
         for name in (('Gate1AppModel.refreshMarginRows', 'store.listItems'),
                      # #2102 swapped the full items for summaries here; it is still a whole-table read on main
                      ('Gate1AppModel.refreshAudioPreparationPresentation', 'store.listItemSummaries'),
-                     ('SkimBridgeController.resolvedPlan', 'store.loadOwnedOfflineAssets'),
-                     ('Gate1AppModel.prepareSummaryBridgeAsset', 'store.loadOwnedOfflineAssets'),
-                     ('Gate1AppModel.prepareImportedLocalAudioBridges', 'Task {}')):
+                     # #2184 cached Skim's reads once per item, but the cache fill is still a main-thread
+                     # whole-table read (it moved from resolvedPlan into loadedResources)
+                     ('SkimBridgeController.loadedResources', 'store.loadOwnedOfflineAssets')):
+                # #2255 moved prepareImportedLocalAudioBridges' and prepareSummaryBridgeAsset's reads into a
+                # Task.detached, so their rows left the baseline as fixed.
             with self.subTest(name):
                 self.assertIn(name, functions)
 
