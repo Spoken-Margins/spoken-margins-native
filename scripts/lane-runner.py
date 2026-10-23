@@ -132,7 +132,8 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
 
 Environment: GH_TOKEN and GH_REPO (the workflow's), SM_LANE_EVIDENCE_DIR (where evidence goes,
 default ~/Library/Caches/SpokenMarginsLane/evidence), SM_LANE_TOOLS (a checkout whose .venv and
-node_modules to link in, default the owner's main checkout).
+node_modules to link in, default ~/Library/Caches/SpokenMarginsLane/tools, a lane-only clone kept out of
+~/Documents, which macOS privacy denies the runners' service process (#2493)).
 Stdlib only, Python 3.9-compatible: it runs under /usr/bin/python3.
 """
 from __future__ import annotations
@@ -3108,7 +3109,9 @@ def request_name(pr: int, run_id: str, attempt: str | None) -> str:
 
 
 def tools_source() -> Path:
-    return Path(os.environ.get('SM_LANE_TOOLS') or Path.home() / 'Documents/GitHub/spoken-margins-native')
+    # Not the owner's main checkout in ~/Documents: macOS privacy (TCC) denies the runners' node access to
+    # Documents, and every host-test run died reading .venv/pyvenv.cfg there (#2493).
+    return Path(os.environ.get('SM_LANE_TOOLS') or Path.home() / 'Library/Caches/SpokenMarginsLane/tools')
 
 
 def link_tools(source: Path) -> None:
