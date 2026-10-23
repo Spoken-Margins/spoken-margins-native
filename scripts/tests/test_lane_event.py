@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_lane_runner import HEAD, comment, lane  # noqa: E402
+from test_lane_runner import FakeGitHub, HEAD, MERGE, comment, lane, runner_report  # noqa: E402
 import lane_event  # noqa: E402
 
 BASE = 'd' * 40
@@ -159,6 +159,12 @@ class CollectTests(unittest.TestCase):
         self.assertEqual((event['head'], event['trunk']), (HEAD[:7], BASE[:7]))
         self.assertEqual(event['steps'], [])
 
+    def test_an_older_report_whose_base_was_not_a_commit_still_gives_its_tier_and_head(self):
+        body = lane.report('pr1-r1', 'INCONCLUSIVE', HEAD, 'unknown', 'T3', 'no runner', 0, 'nothing', [], 'none', '/e',
+                           'n', {})
+        event = lane_event.collect(body)
+        self.assertEqual((event['tier'], event['head'], event['trunk']), ('T3', HEAD[:7], ''))
+
     def test_a_forged_line_falls_back_to_the_prose_and_other_comments_are_none(self):
         body = lane.report('pr1-r1', 'PASS', HEAD, BASE, 'T2', 'x', 5, 'x', [], 'none', '/e', 'n', {},
                            event=lane_event.note(dict(build(), head='/Users/x')))
@@ -210,6 +216,30 @@ class RunnerTests(unittest.TestCase):
         with mock.patch.object(lane.time, 'gmtime', return_value=__import__('time').gmtime(1_700_000_300)):
             note = lane.event_note('PASS', 'T3', HEAD, BASE, 100, None, '2023-11-14T22:13:20Z')  # 1_700_000_000
         self.assertEqual(lane_event.parse(note)['queue_seconds'], 200)
+
+    def test_the_automerge_run_a_t3_pass_releases_counts_only_its_own_steps(self):
+        # The T3 job's steps are in STEP_RUNS when merge_after_t3 runs in the same process; its report must not repeat them.
+        t3_request = comment(f'/lane T3\ncommit: {HEAD[:7]}\ntests: SupertonicSpeechTests')
+        github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[t3_request])
+        lane.note_step('app tests (T3)', 'PASS', 300.0)
+        lane.note_step('LFS files', 'PASS', 2.0)
+
+        def auto(*args, **kwargs):
+            lane.note_step('host tests', 'PASS', 40.0)
+            return 'PASS', 'x', 'host tests', ['merged into main as abc1234']
+        github._comments.append(comment(lane.report('pr5-r1', 'INCONCLUSIVE', HEAD, MERGE, 'auto', 'x', 1, 'x',
+                                                    [lane.HELD_FOR_T3[0]], 'none', '/e', 'n',
+                                                    lane.identity('auto', HEAD, MERGE, []), event=''),
+                                        login='github-actions[bot]'))
+        github._comments.append(runner_report('PASS', lane.identity('T3', HEAD, MERGE, ['SupertonicSpeechTests'])))
+        with mock.patch.object(lane, 'run_auto', side_effect=auto), \
+                mock.patch.object(lane, 'fetch_base', return_value=MERGE), mock.patch.object(lane, 'clean_tree'), \
+                mock.patch('builtins.print'), tempfile.TemporaryDirectory() as evidence:
+            released = lane.merge_after_t3(github, 5, 'main', HEAD, 'pr5-r43-auto', Path(evidence), MERGE,
+                                           'started by the T3 PASS')
+        event = lane_event.parse(released)
+        self.assertIsNotNone(event, released)
+        self.assertEqual((event['tier'], [step['step'] for step in event['steps']]), ('auto', ['host tests']))
 
     def test_a_failing_measurement_leaves_the_report_without_a_line(self):
         with mock.patch.object(lane_event, 'build', side_effect=RuntimeError('boom')):

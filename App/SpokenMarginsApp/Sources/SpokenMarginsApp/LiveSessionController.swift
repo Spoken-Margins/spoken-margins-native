@@ -5,20 +5,36 @@ import SessionKit
 /// Drives the live session screen (#1989, #2481): Margins on a clock while something plays or is read outside
 /// the app, with nothing recorded. The session is kept in Application Support so closing the app never loses
 /// it; Lock Screen Marks arrive through `LiveSessionMarkQueue` and are merged in while the screen is open.
+/// Every disk read and write goes through `LiveSessionFileWorker` off the main thread (#2256); the screen keeps
+/// the session in memory and only publishes what comes back.
 @MainActor
 final class LiveSessionController: ObservableObject {
     @Published private(set) var session: LiveSession?
     @Published private(set) var now = Date()
     @Published var errorMessage: String?
+    @Published private(set) var isRecordingSpoken = false
 
-    private let directory = Gate1AppModel.liveSessionDirectory
+    private let files = LiveSessionFileWorker.shared
+    /// Rises with each save or discard, so the worker writes them in the order the screen made them.
+    private var saveGeneration = 0
+    private var spokenStart: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
+    private let phoneRecorder = LiveSessionPhoneRecorder()
+    private var diskObserver: NSObjectProtocol?
 
     func load() {
-        guard let directory else { return }
-        session = LiveSessionStore.load(from: directory)
-        mergeMarks()
-        startPolling()
+        let generation = saveGeneration
+        Task { [weak self, files] in
+            let stored = await files.load()
+            guard let self else { return }
+            // A session started or discarded while the file was read is newer than the file.
+            if saveGeneration == generation { session = stored }
+            mergeMarks()
+            startPolling()
+            observeDisk()
+            sessionChanged()
+            await LiveSessionSpokenMargins.transcribeMissing()
+        }
     }
 
     var isRunning: Bool { session != nil && session?.endedAt == nil }
@@ -47,6 +63,7 @@ final class LiveSessionController: ObservableObject {
         session = started
         save()
         startActivity(startedAt: started.startedAt)
+        sessionChanged()
     }
 
     /// Ends the session. Rejects an end position before the start position.
@@ -63,6 +80,7 @@ final class LiveSessionController: ObservableObject {
         session?.endWhere = endWhere
         save()
         endActivities()
+        sessionChanged()
         return true
     }
 
@@ -94,14 +112,115 @@ final class LiveSessionController: ObservableObject {
 
     /// Forgets the session and its Margins.
     func discard() {
+        if isRecordingSpoken {
+            isRecordingSpoken = false
+            Task { [phoneRecorder, spokenStart] in
+                await spokenStart?.value
+                await phoneRecorder.cancel()
+            }
+        }
         endActivities()
         session = nil
-        if let directory { LiveSessionStore.remove(from: directory) }
+        saveGeneration += 1
+        let generation = saveGeneration
+        Task { [files] in await files.remove(generation: generation) }
+        sessionChanged()
     }
 
     func stopPolling() {
         pollTask?.cancel()
         pollTask = nil
+        if let diskObserver { NotificationCenter.default.removeObserver(diskObserver) }
+        diskObserver = nil
+    }
+
+    // MARK: Spoken Margins (#2487)
+
+    /// Starts a spoken Margin on the phone. During a call it says to use the Watch instead: the call holds the
+    /// phone's microphone, so nothing would be recorded.
+    func startSpokenMargin() {
+        guard isRunning, !isRecordingSpoken else { return }
+        isRecordingSpoken = true
+        spokenStart = Task { [weak self, phoneRecorder] in
+            do {
+                try await LiveSessionPhoneRecorder.checkCanRecord()
+                try await phoneRecorder.start()
+            } catch {
+                self?.isRecordingSpoken = false
+                self?.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    /// Stops the spoken Margin, files it at the moment it was started, and transcribes it on the device.
+    func stopSpokenMargin() {
+        guard isRecordingSpoken else { return }
+        isRecordingSpoken = false
+        Task { [weak self, phoneRecorder, spokenStart] in
+            await spokenStart?.value // a stop tapped while the start was still opening the microphone waits for it
+            do {
+                guard let recording = try await phoneRecorder.stop() else { return }
+                self?.fileSpokenMargin(recording)
+            } catch {
+                self?.errorMessage = "Couldn't save the spoken Margin: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func fileSpokenMargin(_ recording: LiveSessionPhoneRecorder.Recording) {
+        guard isRunning else { return }
+        let id = "phone-\(UUID().uuidString.lowercased())"
+        session?.attachSpokenMargin(
+            id: id, audioPath: recording.audioPath, markedAt: recording.startedAt,
+            durationMs: recording.durationMs, spokenOn: "phone"
+        )
+        save()
+        Task { [weak self] in
+            guard let text = await LiveSessionSpokenMargins.transcribe(audioPath: recording.audioPath) else { return }
+            if self?.session?.setTranscript(text, forMarginId: id) == true { self?.save() }
+        }
+    }
+
+    /// The stored session changed underneath (a Watch Margin arrived, or a transcript finished): take in Margins
+    /// and transcripts this screen doesn't have yet. What the listener changed here wins.
+    private func reconcileWithDisk() {
+        Task { [weak self, files] in
+            guard let stored = await files.load() else { return }
+            self?.takeIn(stored)
+        }
+    }
+
+    private func takeIn(_ stored: LiveSession) {
+        guard stored.id == session?.id else { return }
+        var changed = false
+        for margin in stored.margins {
+            if let index = session?.margins.firstIndex(where: { $0.id == margin.id }) {
+                if let text = margin.spokenTranscript, session?.margins[index].spokenTranscript == nil {
+                    changed = session?.setTranscript(text, forMarginId: margin.id) == true || changed
+                }
+            } else {
+                session?.margins.append(margin)
+                changed = true
+            }
+        }
+        guard changed else { return }
+        session?.margins.sort { $0.markedAt < $1.markedAt }
+        save()
+    }
+
+    private func observeDisk() {
+        guard diskObserver == nil else { return }
+        diskObserver = NotificationCenter.default.addObserver(
+            forName: LiveSessionSpokenMargins.changedOnDisk, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reconcileWithDisk() }
+        }
+    }
+
+    /// Tells the Watch about the session, and files any Watch Margins that waited for one.
+    private func sessionChanged() {
+        WatchMarginReceiver.shared.publish(session: isRunning ? session : nil)
+        WatchMarginReceiver.shared.processInbox()
     }
 
     private func startPolling() {
@@ -122,12 +241,18 @@ final class LiveSessionController: ObservableObject {
         if session?.mergeMarks(marks) ?? 0 > 0 { save() }
     }
 
+    /// Hands the session to the file worker. Saves land in the order they were made; an older one never
+    /// overwrites a newer one.
     private func save() {
-        guard let directory, let session else { return }
-        do {
-            try LiveSessionStore.save(session, in: directory)
-        } catch {
-            errorMessage = "Couldn't save the live session: \(error.localizedDescription)"
+        guard let session else { return }
+        saveGeneration += 1
+        let generation = saveGeneration
+        Task { [weak self, files] in
+            do {
+                try await files.save(session, generation: generation)
+            } catch {
+                self?.errorMessage = "Couldn't save the live session: \(error.localizedDescription)"
+            }
         }
     }
 

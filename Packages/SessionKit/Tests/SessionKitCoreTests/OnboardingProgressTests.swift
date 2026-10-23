@@ -268,7 +268,7 @@ final class OnboardingProgressTests: XCTestCase {
             item(id: "item-spoken-margins-overview", mediaType: "text", externalReferenceType: "url"),
             item(id: "guided-onboarding", mediaType: "guided_tour", externalReferenceType: "file")
         ]
-        XCTAssertEqual(OnboardingEvidenceClassifier.sourceSteps(items: []), [])
+        XCTAssertEqual(OnboardingEvidenceClassifier.sourceSteps(items: [Item]()), [])
         // Safari means a web page's text; a PDF fetched from a link is only "own source".
         let pdfFromLink = item(id: "paper", mediaType: "pdf", externalReferenceType: "url")
         XCTAssertEqual(OnboardingEvidenceClassifier.sourceSteps(items: [pdfFromLink]), [.addedOwnSource])

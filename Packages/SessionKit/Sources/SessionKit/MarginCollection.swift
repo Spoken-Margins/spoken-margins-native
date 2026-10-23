@@ -143,11 +143,42 @@ public enum MarginCollection {
         return Entries(privateRows: placedRows, sharedRows: sharedRows)
     }
 
+    /// The most characters of context a Margin shows.
+    public static let sourceContextLimit = 600
+    private static let sourceContextJoiner = " … "
+
+    /// The text around where the Margin was made, from the bounded anchor saved with it.
+    /// Past the limit it keeps the text nearest the Margin: the end of what came before and the start of what
+    /// follows. Cutting from the front kept the far end instead, and on a paper's title page that was the author
+    /// block, not the passage (#2482).
     public static func sourceContext(anchorBefore: String?, anchorAfter: String?) -> String? {
         // The saved bounded anchor belongs to this Margin's source or generated target.
-        let parts = [anchorBefore, anchorAfter]
-            .compactMap { $0 }.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        guard !parts.isEmpty else { return nil }
-        return String(parts.joined(separator: " … ").prefix(600))
+        let blank = { (text: String) in text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let before = anchorBefore.flatMap { blank($0) ? nil : $0 }
+        let after = anchorAfter.flatMap { blank($0) ? nil : $0 }
+        let limit = sourceContextLimit
+        switch (before, after) {
+        case (nil, nil):
+            return nil
+        case let (before?, nil):
+            return String(before.suffix(limit))
+        case let (nil, after?):
+            return String(after.prefix(limit))
+        case let (before?, after?):
+            let joined = before + sourceContextJoiner + after
+            guard joined.count > limit else { return joined }
+            // Each side gets half; a side too short to use its half gives the rest to the other.
+            let room = limit - sourceContextJoiner.count
+            var beforeRoom = room / 2
+            var afterRoom = room - beforeRoom
+            if before.count < beforeRoom {
+                afterRoom += beforeRoom - before.count
+                beforeRoom = before.count
+            } else if after.count < afterRoom {
+                beforeRoom += afterRoom - after.count
+                afterRoom = after.count
+            }
+            return String(before.suffix(beforeRoom)) + sourceContextJoiner + String(after.prefix(afterRoom))
+        }
     }
 }

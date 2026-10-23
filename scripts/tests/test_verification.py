@@ -539,7 +539,7 @@ class VerificationTests(unittest.TestCase):
         # The third-party notices test (#1823) reads the dependency manifests and the generated list.
         self.assertIn('test_third_party_notices', verification.RUNNER_TEST_READERS)
         for path in ('package.json', 'requirements-dev.txt', 'docs/legal/third-party-components.json',
-                     'THIRD_PARTY_NOTICES.md', 'Design/SpokenMarginsOverhaul/package.json'):
+                     'THIRD_PARTY_NOTICES.md', 'Design/UXProposal20260909/package.json'):
             self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
         self.assertEqual(verification.runner_test_scope(['docs/a.md'])[0], 'none')
         # A manifest, model or font file added anywhere must run the check in the PR that adds it, not in the
@@ -2302,6 +2302,7 @@ class VerificationTests(unittest.TestCase):
             run = verification.Run(Path(temporary) / 'run', 'test')
             for name in ('browser', 'share-link'):
                 for label, output in (('a TAP summary of zero tests', '# tests 0'),
+                                      ('a spec summary of zero tests', 'ℹ tests 0'),
                                       ('no TAP summary at all', 'npm warn nothing to run')):
                     with self.subTest(name=name, label=label):
                         with self.assertRaisesRegex(RuntimeError, f'{"Browser runner" if name == "browser" else name} '
@@ -2311,6 +2312,10 @@ class VerificationTests(unittest.TestCase):
                         self.assertEqual((step['executed_count'], step['exit_code']), (0, 0))  # it exited 0
                 with self.subTest(name=name, label='a TAP summary of three tests'):
                     run.command(name, [sys.executable, '-c', 'print("TAP version 13\\n# tests 3\\n# pass 3")'])
+                    step = run.manifest['steps'][-1]
+                    self.assertEqual((step['executed_count'], step['errors']), (3, []))
+                with self.subTest(name=name, label='a spec summary of three tests (Node 24)'):
+                    run.command(name, [sys.executable, '-c', 'print("✔ a test (1ms)\\nℹ tests 3\\nℹ pass 3")'])
                     step = run.manifest['steps'][-1]
                     self.assertEqual((step['executed_count'], step['errors']), (3, []))
 

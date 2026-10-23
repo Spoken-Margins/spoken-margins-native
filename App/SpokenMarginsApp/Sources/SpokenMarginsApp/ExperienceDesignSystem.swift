@@ -93,6 +93,46 @@ struct TapTargetIcon: View {
     }
 }
 
+/// A row with a time or percent gutter on the left. The gutter's width scales with the text size so
+/// "1:02:03" or "100%" fits; at accessibility sizes it would eat half the row, so the time sits above the
+/// content instead (#1938).
+struct GutterRow<Gutter: View, Content: View>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric private var gutterWidth: CGFloat
+    private let alignment: VerticalAlignment
+    private let spacing: CGFloat?
+    private let gutter: Gutter
+    private let content: Content
+
+    init(
+        gutterWidth: CGFloat,
+        alignment: VerticalAlignment = .center,
+        spacing: CGFloat? = nil,
+        @ViewBuilder gutter: () -> Gutter,
+        @ViewBuilder content: () -> Content
+    ) {
+        _gutterWidth = ScaledMetric(wrappedValue: gutterWidth, relativeTo: .caption)
+        self.alignment = alignment
+        self.spacing = spacing
+        self.gutter = gutter()
+        self.content = content()
+    }
+
+    var body: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 4) {
+                gutter
+                content
+            }
+        } else {
+            HStack(alignment: alignment, spacing: spacing) {
+                gutter.frame(width: gutterWidth, alignment: .leading)
+                content
+            }
+        }
+    }
+}
+
 struct ExperienceFilterChip<Content: View>: View {
     private let preferences = AppAccessibilityPreferences()
     let isActive: Bool

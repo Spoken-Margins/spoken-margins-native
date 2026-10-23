@@ -5908,6 +5908,25 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertNotNil(try repo.loadItem(id: item.id).sourceCompletedAt)
     }
 
+    func testAMomentInTheLastSecondOfAStaleShortStoredLengthStillPlays() throws {
+        // #2414: the stored length is truncated to whole seconds (#2189), so up to 999 ms under the real file.
+        // A Margin recorded in that last stretch used to be refused as past the end.
+        var (item, session, note) = podcastMarginFixture(durationMs: 3_600_000)
+        note.anchor.mediaTimeMs = 3_600_999
+        var beyond = note
+        beyond.id = "ij-beyond"
+        beyond.anchor.mediaTimeMs = 3_601_000
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], interjections: [note.id: note, beyond.id: beyond])
+        let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "phone", displayName: "Phone", capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]), repository: repo, audio: audio)
+
+        _ = try engine.playInterjectionAnchor(note)
+        XCTAssertEqual(audio.playedOffsets.last, 3_600_000, "it plays from the end of the stored length")
+
+        // #293: a Margin well past the real end stays refused.
+        XCTAssertThrowsError(try engine.playInterjectionAnchor(beyond))
+    }
+
     func testPlayThisMomentUsesThePodcastsOwnDurationNotThePlayingItems() throws {
         // #293: the anchor was planned before currentItem became the podcast, so the
         // duration came from whatever was playing: a text item (none, so the fallback

@@ -86,14 +86,29 @@ final class MarginCollectionTests: XCTestCase {
         XCTAssertEqual(MarginCollectionFilter.allCases.map(\.title), ["Mine", "Starred", "Needs attention", "Shared"])
     }
 
-    func testSourceContextJoinsWithEllipsisAndLimitsCharactersWithoutTrimmingContent() {
+    func testSourceContextJoinsWithEllipsisAndKeepsTheTextNearestTheMarginPastTheLimit() {
         XCTAssertEqual(MarginCollection.sourceContext(anchorBefore: " before ", anchorAfter: " after "), " before  …  after ")
         XCTAssertEqual(MarginCollection.sourceContext(anchorBefore: "\n ", anchorAfter: "after"), "after")
         XCTAssertEqual(MarginCollection.sourceContext(anchorBefore: "before", anchorAfter: nil), "before")
         XCTAssertNil(MarginCollection.sourceContext(anchorBefore: nil, anchorAfter: " \n"))
+        // Exactly the limit is not cut; one more character is (#2482).
+        let fits = String(repeating: "a", count: 300) + " … " + String(repeating: "b", count: 297)
+        XCTAssertEqual(MarginCollection.sourceContext(anchorBefore: String(repeating: "a", count: 300), anchorAfter: String(repeating: "b", count: 297)), fits)
         let character = "👩🏽‍💻"
-        XCTAssertEqual(MarginCollection.sourceContext(anchorBefore: String(repeating: character, count: 599), anchorAfter: "end"), String(repeating: character, count: 599) + " ")
-        XCTAssertEqual(MarginCollection.sourceContext(anchorBefore: String(repeating: "é", count: 601), anchorAfter: "after"), String(repeating: "é", count: 600))
+        // Each side keeps its half, so the end of `before` and the start of `after` survive; the far ends go.
+        let both = MarginCollection.sourceContext(
+            anchorBefore: "far" + String(repeating: "x", count: 400) + "near", anchorAfter: "next" + String(repeating: "y", count: 400) + "far")
+        XCTAssertEqual(both?.count, 600)
+        XCTAssertTrue(both?.hasPrefix("xxx") == true && both?.hasSuffix("yyy") == true)
+        XCTAssertTrue(both?.contains("near … next") == true, both ?? "")
+        // A short side gives its unused room to the other.
+        let shortBefore = MarginCollection.sourceContext(anchorBefore: "before", anchorAfter: String(repeating: "y", count: 700))
+        XCTAssertEqual(shortBefore, "before … " + String(repeating: "y", count: 600 - "before … ".count))
+        let shortAfter = MarginCollection.sourceContext(anchorBefore: String(repeating: "x", count: 700), anchorAfter: "after")
+        XCTAssertEqual(shortAfter, String(repeating: "x", count: 600 - " … after".count) + " … after")
+        // One side alone: before keeps its end, after keeps its start. Characters are never split.
+        XCTAssertEqual(MarginCollection.sourceContext(anchorBefore: String(repeating: character, count: 599) + "AB", anchorAfter: nil), String(repeating: character, count: 598) + "AB")
+        XCTAssertEqual(MarginCollection.sourceContext(anchorBefore: nil, anchorAfter: String(repeating: "é", count: 601)), String(repeating: "é", count: 600))
     }
 
     func testThrowingReadsDoNotReturnPartialListsAndKeepReadOrder() throws {

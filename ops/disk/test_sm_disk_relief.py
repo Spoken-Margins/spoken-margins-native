@@ -926,7 +926,9 @@ class LaneFolder(Base):
         for cache, age in ((self.newest, DAY), (self.spare, 3 * DAY), (self.gone, 3 * DAY)):
             write(cache / 'Build/blob', 3 * MiB)
             age_tree(cache, age)
-            age_tree(cache.parent, age)
+            # Only the folder itself: walking it would reset the sibling cache's age and leave a tie, whose order
+            # follows the filesystem's listing (macOS sorted, Linux hashed) (#2538).
+            os.utime(cache.parent, (NOW - age, NOW - age))
         self.old = write(lane / 'evidence/pr1-r1/report.md', MiB).parent
         self.fresh = write(lane / 'evidence/pr2-r2/report.md', MiB).parent
         self.open_old = write(lane / 'evidence/pr3-r3/report.md', MiB).parent

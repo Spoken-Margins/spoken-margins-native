@@ -176,20 +176,26 @@ def _choice(value, choices):
 
 
 PROSE_TOP = re.compile(r'^Lane report (\S+) — (PASS|FAIL|INCONCLUSIVE)\s*$', re.M)
-PROSE_SECOND = re.compile(r'^commit ([0-9a-f]{7,40}) \(tested merged with \S+ at ([0-9a-f]{7,40})\) · tier (\S+) · ', re.M)
+# Each piece on its own: an older report whose base was not a commit ("at unknown") still gives its head and tier.
+PROSE_HEAD = re.compile(r'^commit ([0-9a-f]{7,40}) ', re.M)
+PROSE_TRUNK = re.compile(r'^commit \S+ \(tested merged with \S+ at ([0-9a-f]{7,40})\)', re.M)
+PROSE_TIER = re.compile(r'^commit .* · tier (T2|T3|auto) · ', re.M)
 
 
 def collect(body: str):
     """The event for a lane report: the line when it has a valid one, else what the prose gives (verdict, tier,
-    head and trunk; no steps, no test counts), marked 'source': 'prose'. None when the body isn't a lane report."""
+    head and trunk; no steps, no test counts), marked 'source': 'prose'. None when the body isn't a lane report.
+
+    It doesn't look at who wrote the comment: a caller reads only comments that scripts/comment_trust.py trusts (#1822)."""
     event = parse(body)
     if event:
         return dict(event, source='line')
-    top, second = PROSE_TOP.search(body or ''), PROSE_SECOND.search(body or '')
+    top = PROSE_TOP.search(body or '')
     if not top:
         return None
-    tier = second.group(3) if second and second.group(3) in TIERS else 'auto'
-    return {'v': VERSION, 'verdict': top.group(2), 'fault': top.group(2) == 'INCONCLUSIVE', 'tier': tier,
-            'head': second.group(1) if second else '', 'trunk': second.group(2) if second else '',
+    head, trunk, tier = (pattern.search(body) for pattern in (PROSE_HEAD, PROSE_TRUNK, PROSE_TIER))
+    return {'v': VERSION, 'verdict': top.group(2), 'fault': top.group(2) == 'INCONCLUSIVE',
+            'tier': tier.group(1) if tier else 'auto', 'head': head.group(1) if head else '',
+            'trunk': trunk.group(1) if trunk else '',
             'seconds': None, 'queue_seconds': None, 'steps': [], 'tests': None, 'classes': {}, 'slowest': [],
             'source': 'prose'}

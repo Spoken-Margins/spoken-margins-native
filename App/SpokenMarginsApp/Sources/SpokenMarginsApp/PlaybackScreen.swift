@@ -765,6 +765,10 @@ struct PlaybackScreen: View {
                             mediaScrubState.finish()
                         }
                     },
+                    onCancelled: {
+                        model.recordDeveloperDiagnostic("scrub.media.cancelled", [:])
+                        mediaScrubState.finish() // slid off the bar and lifted: no seek (#1930)
+                    },
                     barContent: mediaBarContent,
                     barPositionUnit: .seconds,
                     positionAccessibilityValue: "\(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))"
@@ -808,6 +812,10 @@ struct PlaybackScreen: View {
                             model.seekText(toCharOffset: Int(targetOffset.rounded()))
                             textScrubState.finish()
                         }
+                    },
+                    onCancelled: {
+                        model.recordDeveloperDiagnostic("scrub.text.cancelled", [:])
+                        textScrubState.finish() // slid off the bar and lifted: no seek (#1930)
                     },
                     barContent: textBarContent,
                     barPositionUnit: .characters,
@@ -1155,7 +1163,7 @@ struct PlaybackScreen: View {
                     Button("Stop", action: model.stopOnDeviceSpeechGeneration)
                         .font(.caption.weight(.bold))
                         .buttonStyle(.bordered)
-                        .tint(.red)
+                        .tint(AppColors.watchDanger)
                         .accessibilityHint("Continues playback with the iOS system voice")
                         .accessibilityIdentifier("playback.onDeviceGeneration.stop")
                 } else if model.canRetryOnDeviceSpeechGeneration {
@@ -2009,7 +2017,7 @@ private struct TimelineInterjectionRow: View {
                 Button(action: toggleStar) {
                     Image(systemName: isStarred ? "star.fill" : "star")
                         .font(.title3.weight(.semibold))
-                        .foregroundStyle(isStarred ? Color.yellow : AppColors.secondaryText)
+                        .foregroundStyle(isStarred ? AppColors.star : AppColors.secondaryText)
                         .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
