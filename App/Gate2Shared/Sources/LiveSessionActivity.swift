@@ -23,30 +23,23 @@ public struct LiveSessionActivityAttributes: ActivityAttributes {
     }
 }
 
-/// Moments marked from the Lock Screen, waiting for the app to read them.
+/// Moments marked from the Lock Screen, waiting for the app to read them. Each Mark is its own key in the
+/// App Group (`LiveSessionMarkInbox`), so a Mark written while the screen reads the others is never lost.
 public enum LiveSessionMarkQueue {
-    private static let storageKey = "LiveSessionMarks.v1"
-    private static let maximumBufferedMarks = 500
-
-    private static func defaults() -> UserDefaults? {
-        UserDefaults(suiteName: Gate2CompactCommandQueue.appGroupIdentifier)
+    private static func inbox() -> LiveSessionMarkInbox? {
+        UserDefaults(suiteName: Gate2CompactCommandQueue.appGroupIdentifier).map { LiveSessionMarkInbox(store: $0) }
     }
 
     @discardableResult
     public static func enqueue(_ date: Date = Date()) -> Bool {
-        guard let store = defaults() else { return false }
-        var marks = store.array(forKey: storageKey) as? [Double] ?? []
-        marks.append(date.timeIntervalSince1970)
-        store.set(Array(marks.suffix(maximumBufferedMarks)), forKey: storageKey)
+        guard let inbox = inbox() else { return false }
+        inbox.enqueue(date)
         return true
     }
 
-    /// Returns the waiting marks and clears them.
+    /// Returns the waiting marks and removes exactly those.
     public static func drain() -> [Date] {
-        guard let store = defaults() else { return [] }
-        let marks = store.array(forKey: storageKey) as? [Double] ?? []
-        store.removeObject(forKey: storageKey)
-        return marks.map { Date(timeIntervalSince1970: $0) }
+        inbox()?.drain() ?? []
     }
 }
 
