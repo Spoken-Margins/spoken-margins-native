@@ -355,7 +355,7 @@ final class Gate1AppModel: ObservableObject {
     /// The latest Play now or Add and open from Following; any later open or start makes it stale (#2124).
     var followedPlayIntent = CurrentRequest()
     @Published var isFollowingSelectedSource = false
-    @Published var isResolvingSourceLink = false
+    @Published var sourceLinkGate = SourceLinkImportGate() // #2135: counts overlapping imports
     @Published var sourceLinkCandidateReview: SourceLinkCandidateReviewState?
     @Published var sourceLinkImportState = "idle"
     @Published var sourceLinkImportMessage: String?
