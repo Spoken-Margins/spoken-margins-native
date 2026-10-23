@@ -11,7 +11,7 @@ This page takes a fresh clone to a built app and passing host tests. `scripts/ch
 | Swift | 6.0 language mode (Xcode 27 ships 6.2 or newer) | `SWIFT_VERSION: "6.0"` in `project.yml`, `swift-tools-version: 6.0` in `Packages/SessionKit/Package.swift` |
 | iOS deployment target | 26.0 | `project.yml` |
 | Python | 3 (checked on 3.13) | Used by the validators and the test runner. |
-| Node | 22 | Used by the browser-extraction tests (checked on 22). |
+| Node | 24 (`.nvmrc`, `engines` in `package.json`) | Used by the browser-extraction and share-link tests. Node 20 is end of life and 22 is not what CI runs; with nvm, `nvm install` then `nvm use` in the repo picks it up. |
 | git and git-lfs | any recent | The voice model files are Git LFS objects. |
 
 Without a Mac you can still run the contract validators, the browser tests and SessionKit's core tests (see "On Linux").

@@ -508,7 +508,7 @@ final class Gate1AppModel: ObservableObject {
     var sourceSuggestionChecks: Set<String> = []
     var followDiscoveries: [String: Task<[SourceCandidateEvidence], Error>] = [:]
     @Published var followOffers: [String: FollowOffer] = [:]
-    private var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
+    var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
     private let recordingClientOverride: RecordingClient?
     let microphoneAccess: MarginMicrophoneAccess
     let sourceTranscriptionClient: SourceTranscriptionClient
@@ -551,6 +551,7 @@ final class Gate1AppModel: ObservableObject {
     lazy var episodeMapPreparer = EpisodeMapPreparer(host: self) // private episode map preparation: task, status, pending request (#957)
     var backgroundPreparationPlanner = BackgroundPreparationPlanner()
     var sourceImportTask: Task<Void, Never>?
+    var offlineServicesStartupTasks: [Task<Void, Never>] = [] // `startOfflineServices`; cancelled with the model (#2195)
     var liveSpeechFallbackItemIds: Set<String> = []
     var suppressedAutomaticAudioPreparationItemIds = Set(
         UserDefaults.standard.stringArray(forKey: Gate1AppModel.suppressedAudioPreparationItemIdsKey) ?? []
@@ -995,6 +996,7 @@ final class Gate1AppModel: ObservableObject {
         sourceImportTask?.cancel()
         importedCommentaryAutoPlayTask?.cancel()
         bulkSharePreparationTask?.cancel()
+        offlineServicesStartupTasks.forEach { $0.cancel() }
     }
 
     private func reconcilePlaybackProgressTicker() {
@@ -3584,78 +3586,7 @@ final class Gate1AppModel: ObservableObject {
             directory: support.appending(path: "GuidedOnboarding", directoryHint: .isDirectory),
             ledger: ledger
         )
-        Task {
-            try? store.saveOfflineStorageBudget(OfflineStorageBudget(
-                limitBytes: Int64(self.offlineStorageLimitGB) * OfflineStorageBudget.bytesPerGigabyte
-            ))
-            try? await ledger.adoptExistingAssets()
-            let residualOverage = try? await ledger.enforceBudget()
-            let reconciled = await ledger.lastReconciliation?.summary ?? "failed"
-            let ledgerBytes = try? await ledger.inventoryBytes()
-            let filesystemBytes = await ledger.directFilesystemBytes()
-            await MainActor.run { [weak self] in
-                self?.diagnostics["offlineLedgerReconciled"] = reconciled
-                self?.diagnostics["offlineLedgerBytes"] = "\(ledgerBytes ?? 0)"
-                self?.diagnostics["offlineFilesystemBytes"] = "\(filesystemBytes)"
-                self?.diagnostics["offlineResidualOverageBytes"] = "\(residualOverage ?? 0)"
-                self?.tryRefreshOfflineStorageUsage()
-            }
-            await self.performFollowedSourceRefresh(force: false)
-            await self.refreshGuidedOnboardingContent()
-        }
-    }
-
-    private func refreshGuidedOnboardingContent() async {
-        guard !UserDefaults.standard.bool(forKey: Self.guidedOnboardingTombstoneKey),
-              let coordinator = guidedOnboardingCoordinator,
-              let store else { return }
-        do {
-            let payload = try await coordinator.refresh()
-            let priorChecksum = UserDefaults.standard.string(forKey: "guidedOnboardingAudioChecksum")
-            var item = (try? store.loadItem(id: Self.guidedOnboardingItemId)) ?? Self.makeBundledGuidedOnboardingItem()
-            item.title = payload.manifest.title
-            item.sourceTitle = "Spoken Margins"
-            item.media = ItemMedia(
-                sourceType: .nativeMediaFile,
-                url: payload.audioURL.absoluteString,
-                nativeMediaId: "guided-onboarding-audio"
-            )
-            try store.saveItem(item)
-            try store.saveAudioAsset(AudioAsset(
-                id: "guided-onboarding-audio",
-                itemId: item.id,
-                audioSourceType: .nativeMediaFile,
-                availability: .localPhone,
-                url: payload.audioURL.absoluteString,
-                title: payload.manifest.title
-            ))
-            try store.saveTranscriptTimeline(SourceTranscriptTimeline(
-                id: "timeline-guided-onboarding",
-                itemId: item.id,
-                createdAt: Date(),
-                timeline: TranscriptTimeline(
-                    segments: [],
-                    chapters: [
-                        MediaTimelineChapter(
-                            id: "guided-onboarding-core-loop",
-                            title: "The Core Loop",
-                            startMs: 0,
-                            transcriptSegmentId: "guided-onboarding-core-loop"
-                        )
-                    ]
-                )
-            ))
-            UserDefaults.standard.set(payload.manifest.audioChecksumSHA256, forKey: "guidedOnboardingAudioChecksum")
-            if payload.audioChanged, priorChecksum != nil, snapshot.itemId == item.id {
-                _ = try? engine?.stopPlayback()
-                snapshot = SessionSnapshot()
-                diagnostics["guidedOnboardingProgress"] = "reset_for_audio_change"
-            }
-            try refreshLibraryRows(store: store)
-            diagnostics["guidedOnboardingRemote"] = "ready:v\(payload.manifest.contentVersion)"
-        } catch {
-            diagnostics["guidedOnboardingRemote"] = "fallback:\(String(describing: type(of: error)))"
-        }
+        startOfflineServices(store: store, ledger: ledger)
     }
 
     var followCandidateDiscoveryHandler: ((Item, URL) async throws -> [SourceCandidateEvidence])?
