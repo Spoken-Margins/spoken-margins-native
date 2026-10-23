@@ -287,7 +287,7 @@ def classify(paths, diffs=None, root=ROOT):
             'app_tests': app_tests, 'lane_paths': lane_paths}
 
 
-HOSTED_RUNNER = ['sm-vps-t1']  # runs-on for the off-Mac automerge job; lane.yml and lane-runner.py key on it
+HOSTED_RUNNER = ['ubuntu-latest']  # runs-on for the off-Mac automerge job; lane.yml keys on it (#2442)
 
 # #1389 phase 2: once the repo is public, /lane T2 and T3 requests run on a GitHub-hosted Mac, the image and Xcode the
 # hosted fast checks use (hosted-portable.yml). Rollout guard, not a feature switch: lane.yml's route job hands this
@@ -302,6 +302,19 @@ def hosted_app_routing(result, env=None):
     if (os.environ if env is None else env).get(HOSTED_APP_SWITCH, '').strip().lower() != 'on':
         return result
     return dict(result, lane=list(HOSTED_APP_RUNNER))
+
+
+def hosted_merge_routing(result, env=None):
+    """#2459: every automerge job starts on a GitHub-hosted Linux runner once the hosted fast pair runs
+    (LANE_HOSTED_FAST `on`, the rule lane-runner.py's hosted_fast_on reads). There a PR held for T3 is reported held
+    without a Mac, and the job waits for the hosted checks: with LANE_HOSTED_MAC_REST `on` too it merges on all
+    three and runs no test; without it, it hands the run to the build Mac (lane.yml's automerge-mac) only once the
+    pair has finished. T0 and ops diffs test themselves, as before. The lane job keeps its route. Anything else
+    leaves <result> as it is."""
+    env = os.environ if env is None else env
+    if env.get('LANE_HOSTED_FAST', '').strip().lower() != 'on':
+        return result
+    return dict(result, automerge=list(HOSTED_RUNNER))
 
 
 # Ops folders whose tests skip themselves on Linux (ops/power's amph is AppleScript): a pass there proves nothing.
@@ -363,10 +376,9 @@ def runner_routing(pr, file_pages, runner_pages, root=ROOT, offmac=True):
         def names(runner):
             return {label['name'] for label in runner['labels']}
 
-        # The free GitHub-hosted Linux minutes ran out (#1023), so "hosted" is the VPS runner that already runs PR
-        # code in isolation (linux-t1.yml). With it offline or unlisted the job would wait forever: stay on the Mac.
-        if offmac and complete and hosted_automerge(classify(paths, root=root)) \
-                and any(r['status'] == 'online' and HOSTED_RUNNER[0] in names(r) for r in runners):
+        # A GitHub-hosted Linux runner, free for the public repo (#2442; the VPS runner sm-vps-t1 until then, which
+        # had to be online). GitHub always has one, so there is no runner to look for.
+        if offmac and complete and hosted_automerge(classify(paths, root=root)):
             # Only the automerge job leaves the Mac: explicit /lane requests keep the Mac routing they had.
             return dict(runner_routing(pr, file_pages, runner_pages, root, offmac=False),
                         automerge=list(HOSTED_RUNNER))
@@ -445,7 +457,7 @@ def main(argv=None):
             result = runner_routing(event['pull_request'], files, runners)
         except (OSError, ValueError, KeyError, TypeError):
             result = runner_routing({}, [], [])
-        print(json.dumps(hosted_app_routing(result)))
+        print(json.dumps(hosted_merge_routing(hosted_app_routing(result))))
         return 0
     if not args.files and args.base is None:  # #1492: the trunk (scripts/trunk.py)
         from trunk import trunk_ref

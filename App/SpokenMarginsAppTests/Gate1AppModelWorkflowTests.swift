@@ -4150,6 +4150,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// have caught it is this one: the action, with the stored session rate and the shown rate disagreeing.
     func testPlayThisMomentPlaysAtTheShownRateNotTheMarginsStoredSessionRate() throws {
         for (shown, stored) in [(1.0, 1.5), (1.5, 1.0)] {
+            UserDefaults.standard.removeObject(forKey: "mediaPlaybackRate")
             defer { UserDefaults.standard.removeObject(forKey: "mediaPlaybackRate") }
             let root = FileManager.default.temporaryDirectory.appending(path: "margin-moment-rate-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -4183,9 +4184,19 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
             XCTAssertEqual(model.snapshot.playbackRate, shown, "the source plays at the speed shown (stored \(stored))")
             XCTAssertEqual(model.mediaPlaybackRate, shown)
-            XCTAssertEqual(model.diagnostics["marginVoice.rate"],
-                           String(format: "moment;voice=%.2f;source=%.2f;shown=%.2f;player=n/a;voicePlayer=n/a", shown, shown, shown),
-                           "the Margin's voice reads the same rate, and Diagnostics say so")
+            // Parse the Diagnostics line instead of matching it whole: the fix guarantees the kind and that the Margin's
+            // voice and the source both ran at the shown rate; the other fields may change format freely.
+            let parts = try XCTUnwrap(model.diagnostics["marginVoice.rate"]).split(separator: ";").map(String.init)
+            XCTAssertEqual(parts.first, "moment")
+            var fields: [String: String] = [:]
+            for part in parts.dropFirst() {
+                let pair = part.split(separator: "=", maxSplits: 1).map(String.init)
+                if pair.count == 2 { fields[pair[0]] = pair[1] }
+            }
+            let voice = try XCTUnwrap(fields["voice"].flatMap(Double.init), "voice rate in \(parts)")
+            let source = try XCTUnwrap(fields["source"].flatMap(Double.init), "source rate in \(parts)")
+            XCTAssertEqual(voice, shown, accuracy: 0.001, "the Margin's voice reads the shown rate (stored \(stored))")
+            XCTAssertEqual(source, shown, accuracy: 0.001, "Diagnostics report the source at the shown rate")
         }
     }
 
@@ -4553,6 +4564,29 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(try store.loadInterjections(sessionId: foreign.sessionId).first?.status, "deleted")
         XCTAssertEqual(try store.loadInterjections(sessionId: original.sessionId).first, original)
         XCTAssertEqual(model.snapshot, before)
+    }
+
+    func testDeletingAMarginOffersUndoThatBringsTheSameMarginBack() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "margin-delete-undo-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: url)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let store = try SQLiteSessionStore(path: url.path)
+        var margin = shareableInterjection(itemId: "item-pill")
+        margin.id = "undo-me"
+        margin.sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        try store.saveInterjection(margin)
+
+        model.deleteInterjection(margin)
+        XCTAssertEqual(try store.loadInterjections(sessionId: margin.sessionId).first { $0.id == margin.id }?.status, "deleted")
+        let undo = try XCTUnwrap(model.feedbackEvent?.action, "the Deleted Margin banner offers Undo")
+        XCTAssertEqual(undo.title, "Undo")
+
+        undo.perform()
+        XCTAssertEqual(try store.loadInterjections(sessionId: margin.sessionId).first { $0.id == margin.id }, margin)
     }
 
     func testLateMicrophoneGrantCannotReplaceWrittenCaptureOrRestartCancelledCapture() async throws {
@@ -5459,52 +5493,17 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appending(path: "Collected Stories.pdf")
         let storyTitles = (1...20).map { "Story \($0)" }
-        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
-        try renderer.writePDF(to: file) { context in
-            context.beginPage()
-            ("Collected Stories" as NSString).draw(
-                at: CGPoint(x: 40, y: 35),
-                withAttributes: [.font: UIFont.boldSystemFont(ofSize: 26)]
-            )
-            ("Edited by Example Author" as NSString).draw(
-                at: CGPoint(x: 40, y: 78),
-                withAttributes: [.font: UIFont.systemFont(ofSize: 12)]
-            )
-            ("Contents" as NSString).draw(
-                at: CGPoint(x: 40, y: 110),
-                withAttributes: [.font: UIFont.boldSystemFont(ofSize: 18)]
-            )
-            for (index, title) in storyTitles.enumerated() {
-                (title as NSString).draw(
-                    at: CGPoint(x: 55, y: 145 + CGFloat(index * 23)),
-                    withAttributes: [.font: UIFont.boldSystemFont(ofSize: 12)]
-                )
-            }
-
-            for title in storyTitles {
-                context.beginPage()
-                (title as NSString).draw(
-                    at: CGPoint(x: 40, y: 40),
-                    withAttributes: [.font: UIFont.boldSystemFont(ofSize: 20)]
-                )
-                ("This is the readable body of \(title), with enough ordinary prose to establish the document body font size." as NSString).draw(
-                    at: CGPoint(x: 40, y: 85),
-                    withAttributes: [.font: UIFont.systemFont(ofSize: 12)]
-                )
-            }
-        }
-
+        // A PDF drawn here with UIFont.systemFont came back with no chapters on the iOS 27 simulator, which
+        // falls back to TimesNewRoman, while the same file built on macOS kept all 21 on an iOS 27 iPhone
+        // (#2365). The fixture is that file: a printed contents page, then 20 story pages, and an outline
+        // of 20 entries. scripts/fixtures/generate-pdf-outline-fixture.swift writes it.
+        let fixture = try XCTUnwrap(Bundle(for: Gate1AppModelWorkflowTests.self).url(
+            forResource: "pdf-outline-collected-stories",
+            withExtension: "pdf"
+        ))
+        try FileManager.default.copyItem(at: fixture, to: file)
         let document = try XCTUnwrap(PDFDocument(url: file))
-        let outlineRoot = PDFOutline()
-        for (index, title) in storyTitles.enumerated() {
-            let page = try XCTUnwrap(document.page(at: index + 1))
-            let child = PDFOutline()
-            child.label = title
-            child.destination = PDFDestination(page: page, at: CGPoint(x: 40, y: 740))
-            outlineRoot.insertChild(child, at: outlineRoot.numberOfChildren)
-        }
-        document.outlineRoot = outlineRoot
-        XCTAssertTrue(document.write(to: file))
+        XCTAssertEqual(document.outlineRoot?.numberOfChildren, 20, "the fixture carries its outline")
 
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()

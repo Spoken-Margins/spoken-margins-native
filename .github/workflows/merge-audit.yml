@@ -6,10 +6,10 @@
 # could silently not run for exactly the merges it should catch. A push run always uses next's own
 # copy of this file, and it also sees a commit pushed to next without any pull request.
 #
-# It runs on the owner's VPS runner (sm-vps), so it never queues behind lane jobs on the Mac and
-# uses none of the free GitHub-hosted Linux minutes. It never reverts anything: it labels and comments.
-# Fork-safe as it is (#1719): only people with write access can push to next, so no fork code reaches
-# this runner through it. Don't add a pull_request trigger here without the same-repo guard lane.yml uses.
+# It runs on a GitHub-hosted Linux runner (free for the public repo; on the owner's VPS until #2442), so it
+# never queues behind lane jobs on the Mac. It never reverts anything: it labels and comments.
+# Fork-safe as it is (#1719): only people with write access can push to next, so no fork code runs
+# with its token. Don't add a pull_request trigger here without the same-repo guard lane.yml uses.
 #
 # The lane runner's own merges: it merges with the workflow token (decision 3), and pushes made with
 # that token start no workflow, so this file never sees them. lane-runner.py runs
@@ -30,10 +30,10 @@ permissions:
 jobs:
   audit:
     if: github.ref_name == (vars.SM_TRUNK || 'main')
-    runs-on: [self-hosted, Linux, sm-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           sparse-checkout: |
             scripts/merge_audit.py

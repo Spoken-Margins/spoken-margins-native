@@ -154,7 +154,7 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
         stopsEarly.isInverted = true
         XCTAssertEqual(XCTWaiter().wait(for: [stopsEarly], timeout: 5), .completed,
                        "The Margin stopped before its 10 s recording could finish")
-        waitUntil("The Margin never played to the end", timeout: 25) { play.label == "Play Margin" }
+        waitUntil("The Margin never played to the end", timeout: 25) { play.label == "Hear my recording" }
         assertNoAudioProblemShown()
     }
 

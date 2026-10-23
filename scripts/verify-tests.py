@@ -20,6 +20,7 @@ from lane_xcresult_attachments import export_failed_attachments
 
 from check_posterboard_repair import crash_snapshot, new_crash
 import host_audio
+import lane_audio_window
 import lane_conditions
 import lane_sim
 import sm_build_cache
@@ -142,6 +143,24 @@ def narrow_selectors(selectors, planned, available):
         else:
             narrowed.extend(test for test in covered if test in planned)
     return narrowed
+
+
+def t3_selection(only, plan_name, root=None):
+    """The -only-testing selectors for a T3 request of `only` (Class or Class/method) in a test plan, the plan's
+    tests, and the tests the run must complete. A selector that names nothing in the plan is refused, so a
+    misspelled name fails before anything builds instead of running nothing (#2138). Shared with the hosted Mac
+    (scripts/hosted_t3_check.py), so both judge a T3 by one rule."""
+    root = ROOT if root is None else root
+    selectors = [s if s.startswith((f'{APP_TEST_TARGET}/', f'{UI_TEST_TARGET}/')) else f'{APP_TEST_TARGET}/{s}'
+                 for s in only]
+    planned = plan_tests(root, plan_name)
+    unmatched = [s for s in selectors if not any(selected(test, s) for test in planned)]
+    if unmatched:
+        raise RuntimeError(f'Not in the {plan_name} test plan: {", ".join(unmatched)}')
+    selectors = narrow_selectors(selectors, planned,
+                                 {f'{APP_TEST_TARGET}/{test}' for test in target_tests(root, APP_TEST_TARGET)})
+    expected = {test for test in planned if not selectors or any(selected(test, s) for s in selectors)}
+    return selectors, planned, expected
 
 
 def dedicated_simulator(devices, ios=None):
@@ -393,6 +412,45 @@ def log_errors(text, limit=3, width=300):
     return [line[:width] for line in dict.fromkeys(found)][:limit]
 
 
+def unittest_failures(text):
+    """Each failing test in a unittest log as (test, "path:line", message), so a red runner or ops step names it.
+
+    unittest prints `FAIL: name (id)` or `ERROR: name (id)` between `=====` rules, then a traceback whose last
+    `File` line is the assertion (or the crash) and whose unindented lines after it are the message (#2457).
+    A subTest failure repeats the header with its parameters, so each is its own entry.
+    """
+    failures = []
+    for block in re.split(r'^={70}$', text, flags=re.M)[1:]:
+        header, _, body = block.strip().partition('\n')
+        if not re.match(r'(FAIL|ERROR): ', header):
+            continue
+        trace = re.split(r'^-{70}$', body, flags=re.M)[1] if body.count('-' * 70) else body  # the last block ends in the summary
+        if 'Traceback (most recent call last):' in trace:  # a chained exception: the last one is the failure
+            trace = trace[trace.rindex('Traceback (most recent call last):'):]
+        frames = re.findall(r'^\s*File "([^"]+)", line (\d+)', trace, re.M)
+        ours = [frame for frame in frames if frame[0].startswith(str(ROOT))]  # the test's line, not a library's
+        where = ('{}:{}'.format(Path((ours or frames)[-1][0]).as_posix(), (ours or frames)[-1][1])
+                 if frames else 'no traceback')
+        message = [line.strip() for line in trace.splitlines() if line.strip() and not line[0].isspace()
+                   and not line.startswith('Traceback')][:2]
+        failures.append((header.split(': ', 1)[1], where, ' | '.join(message)[:300]))
+    return failures
+
+
+def report_unittest_failures(name, failures, limit=10):
+    """The failures as manifest error lines, and (on GitHub) as the job's step summary."""
+    lines = [f'Failed: {test} at {where}' + (f' — {message}' if message else '')
+             for test, where, message in failures]
+    if (summary := os.environ.get('GITHUB_STEP_SUMMARY')) and failures:
+        with open(summary, 'a') as handle:
+            handle.write(f'### {name}: {len(failures)} failing test(s)\n\n'
+                         + ''.join(f'- `{test}` at `{where}`' + (f': {message}' if message else '') + '\n'
+                                   for test, where, message in failures))
+    if len(lines) > limit:
+        lines[limit:] = [f'Failed: and {len(lines) - limit} more (see the step log)']
+    return lines
+
+
 # Codex runs its shell commands under macOS seatbelt and sets CODEX_SANDBOX there. That sandbox refuses
 # to run `ps`, which the lane's own boot tests in scripts/tests need, so runner-tests can't pass inside it
 # (#64's Codex run, 2026-10-01: 2 failures and 12 errors, and the plan stopped before the package step).
@@ -432,7 +490,9 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        # The accessibility source scans read App/ Swift files (#2041).
                        'test_screen_change_cue', 'test_selected_trait', 'test_screen_title_heading',
                        'test_row_accessibility_actions', 'test_voiceover_label_nits',
-                       'test_increase_contrast_wiring', 'test_reduce_motion', 'test_tap_target_styles')
+                       'test_increase_contrast_wiring', 'test_reduce_motion', 'test_tap_target_styles',
+                       # The article-entry inventory reads App/ Swift files (#2363).
+                       'test_article_entry_followups')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
                       'docs/sharing-test-kit/', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
                       # test_third_party_notices reads the dependency manifests and its own list (#1823).
@@ -675,6 +735,10 @@ SUPERTONIC_MODEL_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
     'SupertonicVoiceSelectionTests/testJamesAndLilyReadTheSameSentenceInTheirOwnAudibleVoices',
 ))
 
+# The real speech recognizer needs SpeechTranscriber and a model for the host's locale. GitHub's hosted macOS image
+# has neither, so the test skips there, naming why; the owner's call is that this skip "is expected" (#2469, 2026-10-23).
+SPEECH_MODEL_TESTS = frozenset({'SessionKitTests/RealSpeechTranscriberTests/testRealTranscriberHearsSynthesizedSpeech'})
+
 
 # The one app-hosted test that runs Supertonic's real model, in the adapters plan. The model is a download since #1820,
 # so the run fetches it (pinned by sha256 in Contracts/voice-models/sources.json) into a cache outside the checkout,
@@ -776,6 +840,13 @@ PACKAGE_RUNNER = ['bash', 'scripts/run-sessionkit-tests.sh']
 # was killed (exit 124) and the plan reported "Infrastructure runner executed zero tests", twice on #1103's
 # head (#1110). Its own limit leaves headroom for load and for the suite to keep growing.
 RUNNER_TESTS_TIMEOUT = 600
+# #2488: by 2026-10-22 the step took 482-519 s on a busy day and was killed at 600 s at load 138-150, its log still a
+# stream of passing dots, so two runs of #2409 failed with "executed zero tests". It gets #1767's rule: a run still
+# printing at its budget goes on until the ceiling; one silent for the stall time is a hang and stops.
+RUNNER_TESTS_CEILING = 1200
+RUNNER_TESTS_STALL_SECONDS = PACKAGE_STALL_SECONDS  # one test compiles Swift, silent for minutes at high load
+RUNNER_TESTS_LIMITS = {'timeout': RUNNER_TESTS_TIMEOUT, 'ceiling': RUNNER_TESTS_CEILING,
+                       'stall_seconds': RUNNER_TESTS_STALL_SECONDS}
 
 # #705: the startup stall below follows the simulator having just been busy. On 2026-10-14, in the lane's artifacts:
 # - 18 of the 20 app-plan stalls launched the host app 1-16 s after the simulator finished booting (median 5 s, from
@@ -1167,12 +1238,15 @@ class Run:
             # The lane's own words (lane-runner.py run_auto), so a local FAIL reads as the queue's would.
             errors.extend(f'hot-file ratchet — {line[len("FAIL "):]}' for line in text.splitlines()
                           if line.startswith('FAIL '))
-        if name == 'runner-tests' or name.startswith('ops-'):
+        if name in ('runner-tests', 'ops') or name.startswith('ops-'):
             match = re.search(r'Ran (\d+) tests? in ', text)
             entry['executed_count'] = int(match[1]) if match else 0
             if not entry['executed_count']:
                 errors.append('Infrastructure runner executed zero tests' if name == 'runner-tests'
                               else f'{name} executed zero tests')
+            if failures := unittest_failures(text):  # name them: CI shows only the manifest's errors (#2457)
+                errors.extend(report_unittest_failures(name, failures))
+                print('\n'.join(error for error in errors if error.startswith('Failed: ')), flush=True)
         if name in ('browser', 'share-link'):
             match = re.search(r'^# tests (\d+)$', text, re.M)
             entry['executed_count'] = int(match[1]) if match else 0
@@ -1303,7 +1377,7 @@ class Run:
             self.skip('runner-tests', why or 'the diff reaches none of the runner tests that drive Apple tools')
         else:
             self.command('runner-tests', [sys.executable, '-c', MAC_REST_RUNNER_LOADER, *PORTABLE_RUNNER_TESTS_LEFT_OUT],
-                         timeout=RUNNER_TESTS_TIMEOUT)
+                         **RUNNER_TESTS_LIMITS)
         needed, why = ops_tests_needed(self.changed)
         if needed:
             self.ops_steps(only=PORTABLE_OPS_LEFT_OUT)
@@ -1346,7 +1420,7 @@ class Run:
         scope, why = runner_test_scope(self.changed)
         if portable:
             self.command('runner-tests', [sys.executable, '-c', PORTABLE_RUNNER_LOADER, *PORTABLE_RUNNER_TESTS_LEFT_OUT],
-                         timeout=RUNNER_TESTS_TIMEOUT)
+                         **RUNNER_TESTS_LIMITS)
         elif in_codex_sandbox():
             self.skip('runner-tests')
         elif scope == 'none':
@@ -1358,10 +1432,10 @@ class Run:
                       'result = unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromNames(sys.argv[1:])); '
                       'sys.exit(not result.wasSuccessful())')
             self.command('runner-tests', [sys.executable, '-c', loader, *RUNNER_TEST_READERS],
-                         timeout=RUNNER_TESTS_TIMEOUT)
+                         **RUNNER_TESTS_LIMITS)
         else:
             self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'],
-                         timeout=RUNNER_TESTS_TIMEOUT)
+                         **RUNNER_TESTS_LIMITS)
         needed, why = ops_tests_needed(self.changed)
         if portable:
             self.ops_steps(left_out=PORTABLE_OPS_LEFT_OUT)
@@ -1433,7 +1507,7 @@ class Run:
                          timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
                          expected=expected - core if split else expected, tests=True,
                          allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus',
-                                        *POCKET_WEIGHT_TESTS, *SUPERTONIC_MODEL_TESTS},
+                                        *POCKET_WEIGHT_TESTS, *SUPERTONIC_MODEL_TESTS, *SPEECH_MODEL_TESTS},
                          probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
         except RuntimeError as error:
             step = self.manifest['steps'][-1]
@@ -1584,14 +1658,7 @@ class Run:
             raise RuntimeError('Inputs changed before Xcode verification')
         scheme, name, timeout = PLANS[plan]
         # T3 runs a few test classes or methods of a plan. Each selector must name tests in the plan.
-        selectors = [s if s.startswith((f'{APP_TEST_TARGET}/', f'{UI_TEST_TARGET}/')) else f'{APP_TEST_TARGET}/{s}'
-                     for s in only]
-        planned = plan_tests(ROOT, name)
-        unmatched = [s for s in selectors if not any(selected(test, s) for test in planned)]
-        if unmatched:
-            raise RuntimeError(f'Not in the {name} test plan: {", ".join(unmatched)}')
-        selectors = narrow_selectors(selectors, planned,
-                                     {f'{APP_TEST_TARGET}/{test}' for test in target_tests(ROOT, APP_TEST_TARGET)})
+        selectors, planned, expected = t3_selection(only, name)
         if selectors:
             self.manifest['only_testing'] = selectors
         if any(test.endswith(SUPERTONIC_APP_MODEL_TEST)
@@ -1654,7 +1721,6 @@ class Run:
                 bundle_id = plistlib.loads((app / 'Info.plist').read_bytes())['CFBundleIdentifier']
                 subprocess.run(['xcrun', 'simctl', 'uninstall', chosen['udid'], bundle_id],
                                cwd=ROOT, capture_output=True, timeout=60)
-            expected = {test for test in planned if not selectors or any(selected(test, s) for s in selectors)}
             on_probation = None if probation is None else {
                 test for test in expected if any(selected(test, s) for s in probation)}
             result_bundle = self.output / 'tests.xcresult'
@@ -1685,11 +1751,23 @@ class Run:
                     derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')
                 self.manifest['settle_before_tests'] = settle_before_tests(chosen['udid'])
                 self.save()
-            self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
-                         'test-without-building', '-parallel-testing-enabled', 'NO',
-                         '-collect-test-diagnostics', 'never',
-                         '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
-                         timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup)
+            # An AudioLoopback test asks the Mac to record what it plays (#1790). A server starts only when the
+            # request names one; in a whole-plan run (Release, a full AudioAdapters) it skips, and that's expected.
+            asked = selectors if scheme == 'SpokenMarginsAppBehavior' else ()
+            with lane_audio_window.serve(self.output, asked) as audio:
+                try:
+                    self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
+                                 'test-without-building', '-parallel-testing-enabled', 'NO',
+                                 '-collect-test-diagnostics', 'never',
+                                 '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
+                                 timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup,
+                                 allowed_skips=lane_audio_window.unasked(expected, asked))
+                finally:  # a failed or skipped test raises here, and its verdict is what the report needs most
+                    if audio:
+                        step = self.manifest['steps'][-1]
+                        step['audio_windows'] = lane_audio_window.attachments(audio)
+                        step.setdefault('attachments', []).extend(step['audio_windows'])
+                        self.save()
         finally:
             if scheme == 'SpokenMarginsAppBehavior':
                 lane_sim.mark_quiet(chosen['udid'])
