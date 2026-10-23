@@ -329,7 +329,7 @@ struct ExperienceTimelineRailScreen: View {
                         row.preview,
                         characterLimit: TimelineTextPresentation.marginCharacterLimit
                     ),
-                    detail: row.needsAttention ? row.attentionDescription : "Captured at \(position)%",
+                    detail: [row.cutShort?.tag, row.needsAttention ? row.attentionDescription : "Captured at \(position)%"].compactMap { $0 }.joined(separator: " · "),
                     action: .margin(row),
                     precisePosition: preciseSourcePosition(row.interjection, in: item, durationMs: knownDuration),
                     reference: .local(row.interjection.id)

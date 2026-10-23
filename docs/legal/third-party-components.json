@@ -333,10 +333,9 @@
       "paths": [
         "Design"
       ],
-      "note": "Design/SpokenMarginsOverhaul and Design/UXProposal20260909 are web prototypes. Their packages are listed in each package.json and installed on request; none are copied into this repository or the app.",
+      "note": "Design/UXProposal20260909 is a web prototype. Its packages are listed in its package.json and installed on request; none are copied into this repository or the app.",
       "tracks": {
         "manifests": [
-          "Design/SpokenMarginsOverhaul/package.json",
           "Design/UXProposal20260909/package.json"
         ]
       }

@@ -524,7 +524,7 @@ struct Build23ReviewTokenButton: View {
                 .strikethrough(token.isRemoved)
                 .foregroundStyle(
                     token.isRemoved
-                        ? AppColors.secondaryText.opacity(0.65)
+                        ? AppColors.secondaryText
                         : (token.kind == .pause ? AppColors.evergreen : AppColors.text)
                 )
                 .contentShape(Rectangle())
