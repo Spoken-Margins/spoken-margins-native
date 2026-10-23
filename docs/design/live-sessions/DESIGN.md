@@ -319,6 +319,8 @@ Checked against `main` on 2026-10-23.
 
 ## 10. Decisions for the owner
 
+**Decided 2026-10-23: the owner took all three picks ("all three").**
+
 Each takes one word. My pick is first.
 
 1. **A Margin taken with no session running starts a quick session.**
