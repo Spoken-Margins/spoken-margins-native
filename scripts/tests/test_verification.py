@@ -811,8 +811,33 @@ class VerificationTests(unittest.TestCase):
             self.assertLess(step['stall_seconds'], step['ceiling'] - step['timeout'])  # a hang still stops early
             self.assertLess(step['ceiling'], 2400)  # the lane's FAST_TIMEOUT still bounds the plan
         # The readers-only and Mac-rest runs of the same step get the same limits.
-        source = (Path(verification.__file__)).read_text()
-        self.assertEqual(source.count("self.command('runner-tests'"), source.count('**RUNNER_TESTS_LIMITS)'))
+        for scope in ('readers', 'all'):
+            calls = []
+            with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+                verification.os.environ.pop('CODEX_SANDBOX', None)
+                run = verification.Run(Path(temporary) / 'run', 'fast')
+                with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
+                        patch.object(run, 'ops_steps'), patch.object(run, 'skip'), \
+                        patch.object(verification, 'runner_test_scope', return_value=(scope, '')), \
+                        patch.object(verification, 'swift_tests', return_value=set()), \
+                        patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
+                        patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                    run.host_steps()
+            self.assertEqual({k: dict(calls)['runner-tests'][k] for k in verification.RUNNER_TESTS_LIMITS},
+                             verification.RUNNER_TESTS_LIMITS, scope)
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+            verification.os.environ.pop('CODEX_SANDBOX', None)
+            run = verification.Run(Path(temporary) / 'run', 'fast-mac-rest')
+            with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
+                    patch.object(run, 'ops_steps'), patch.object(run, 'skip'), patch.object(run, 'package_steps'), \
+                    patch.object(run, 'shipped_compat'), \
+                    patch.object(verification, 'runner_test_scope', return_value=('all', '')), \
+                    patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification.sessionkit_pass, 'find', return_value=None):
+                run.mac_rest()
+        self.assertEqual({k: dict(calls)['runner-tests'][k] for k in verification.RUNNER_TESTS_LIMITS},
+                         verification.RUNNER_TESTS_LIMITS)
 
     def run_sessionkit_script(self, *args, exit_code=0, **env):
         """Run scripts/run-sessionkit-tests.sh from a copy in a temporary ROOT whose host-test-lane records what it
