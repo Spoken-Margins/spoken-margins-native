@@ -19,6 +19,12 @@ mentions by default, and tapping the push opens the PR. A PR is ready when all o
 5. no alert names this head yet. The alert carries `<!-- owner-tap-alert: <full head sha> -->`, so a new push
    alerts again once it is ready and a re-run never repeats one.
 
+Persistent label (owner, 2026-10-22). While a PR qualifies for his tap (every rule above except "no alert names this
+head yet", so it keeps the label after the alert), it carries `needs-owner-tap`, so he can filter for what waits on
+him. The label is created when missing. It comes off when the PR stops qualifying (new head with failing or pending
+checks, a blocking audit, a conflict, a draft) or no longer touches the owner-tap paths, and a sweep of every open
+PR also strips it from closed and merged PRs. Adding and removing it only needs `issues: write` on the job token.
+
 An alert posted before the audit says so. When the audit of that head lands afterwards (the audit script audits an
 owner-tap PR once its checks finish and then asks for a check, #2052), one follow-up comment says "no blocking
 findings" or names the blocking verdict, so his tap rests on the audit either way. One follow-up per head.
@@ -29,7 +35,7 @@ stranger's look-alike audit or alert marker can't start or stop an alert.
 Any doubt (an API error, a head that moved during the run) posts nothing for that PR; the next run tries again.
 
 Where it runs. The alert must come from the bot, so it is posted only inside GitHub Actions:
-  * at the end of linux-t1.yml and shipped-build-compat.yml (their `owner-tap-alert` job, `--pr N`), so it is
+  * at the end of hosted-portable.yml and shipped-build-compat.yml (their `owner-tap-alert` job, `--pr N`), so it is
     decided when a PR's checks finish. A workflow_dispatch can't start it: GitHub reads a workflow's dispatch
     trigger from main, which doesn't carry this one until #1492 (hosted-app-macos.yml records the same limit);
   * in owner-tap-alert.yml when the PR gets the `owner-tap-check` label (`--pr N --clear-label owner-tap-check`).
@@ -73,6 +79,10 @@ NO_AUDIT_TEXT = 'no Claude audit covers this head'  # what an alert posted befor
 # The job that runs this script (the same name in all three workflows): it is running on the head while it checks it.
 OWN_CHECKS = {'owner-tap-alert'}
 LABEL = 'owner-tap-check'  # the Mac's and the audit script's way to ask Actions for a check (--via-label)
+TAP_LABEL = 'needs-owner-tap'  # persistent: this PR waits only for the owner's merge tap
+TAP_LABEL_DESCRIPTION = "Waits only for the owner's merge tap (.github or lane-runner change)"
+TAP_LABEL_COLOR = '0075ca'  # blue
+ALREADY_ALERTED = 'already alerted on'
 FAILED = {'failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure', 'stale'}
 
 
@@ -135,6 +145,11 @@ def checks_state(check_runs: list[dict], statuses: list[dict]) -> tuple[str, lis
     return 'ok', []
 
 
+def qualifies(ready: bool, why: str) -> bool:
+    """Whether a `readiness` answer means the PR waits for the owner's tap: ready, or ready but already alerted."""
+    return ready or why.startswith(ALREADY_ALERTED)
+
+
 def readiness(pr: dict, files: list[dict], check_runs: list[dict], statuses: list[dict],
               comments: list[dict], repo: str) -> tuple[bool, str]:
     """(ready, why) for one open PR. `pr` is the REST pulls/N shape."""
@@ -157,7 +172,7 @@ def readiness(pr: dict, files: list[dict], check_runs: list[dict], statuses: lis
     if verdict is not None and not CLEAN_AUDIT.match(verdict):
         return False, f'the audit of {head[:7]} has blocking findings'
     if alerted(comments, head):
-        return False, f'already alerted on {head[:7]}'
+        return False, f'{ALREADY_ALERTED} {head[:7]}'
     return True, 'ready: ' + ', '.join(tap)
 
 
@@ -236,21 +251,53 @@ class GitHubApi:
             if 'HTTP 404' not in (exc.stderr or ''):
                 raise
 
+    def add_tap_label(self, number: int) -> None:
+        """Add `needs-owner-tap`, creating the label first when the repository lacks it."""
+        try:
+            self._run(['-X', 'POST', f'repos/{self.repo}/labels', '-f', f'name={TAP_LABEL}',
+                       '-f', f'color={TAP_LABEL_COLOR}', '-f', f'description={TAP_LABEL_DESCRIPTION}'])
+        except subprocess.CalledProcessError as exc:
+            if 'HTTP 422' not in (exc.stderr or ''):  # 422: the label exists already
+                raise
+        self._run(['-X', 'POST', f'repos/{self.repo}/issues/{number}/labels', '-f', f'labels[]={TAP_LABEL}'])
+
+    def closed_with_tap_label(self) -> list[int]:
+        """Closed or merged PRs that still carry `needs-owner-tap` (one call, newest first)."""
+        found = self.get_all(f'issues?state=closed&labels={TAP_LABEL}&per_page=100')
+        return [i['number'] for i in found if 'pull_request' in i]
+
     def readd_label(self, number: int, label: str) -> None:
         """Remove and add the label, so GitHub sends a `labeled` event even when the PR already carried it."""
         self.remove_label(number, label)
         self._run(['-X', 'POST', f'repos/{self.repo}/issues/{number}/labels', '-f', f'labels[]={label}'])
 
 
+def sync_tap_label(api: GitHubApi, number: int, pr: dict, waits: bool, dry_run: bool) -> None:
+    """Make the PR carry `needs-owner-tap` exactly while it waits for the owner's tap; no write when it already does."""
+    has = any(label.get('name') == TAP_LABEL for label in pr.get('labels') or [])
+    if dry_run or waits == has:
+        return
+    try:
+        if waits:
+            api.add_tap_label(number)
+        else:
+            api.remove_label(number, TAP_LABEL)
+    except subprocess.SubprocessError as exc:  # a label is a convenience: never block the alert, the next run retries
+        print(f'#{number}: could not update `{TAP_LABEL}`: {(getattr(exc, "stderr", "") or "").strip()[:160]}')
+
+
 def check_pr(api: GitHubApi, number: int, mention: str, dry_run: bool, via_label: str | None = None) -> str:
     files = api.get_all(f'pulls/{number}/files?per_page=100')
     if not owner_tap_paths(files):
+        sync_tap_label(api, number, api.get(f'pulls/{number}'), False, dry_run)  # it may carry the label from before
         return 'no owner-tap paths'
     pr = api.get(f'pulls/{number}')  # the single-PR read is the one that carries `mergeable`
     head = pr['head']['sha']
     runs = api.get_all(f'commits/{head}/check-runs?filter=latest&per_page=100')
     statuses = api.get_all(f'commits/{head}/statuses?per_page=100')
     comments = api.get_all(f'issues/{number}/comments?per_page=100')
+    if pr.get('mergeable') is not None:  # GitHub still working it out: leave the label as it is until the next run
+        sync_tap_label(api, number, pr, qualifies(*readiness(pr, files, runs, statuses, comments, api.repo)), dry_run)
     verdict = followup_verdict(pr, comments, api.repo)
     if verdict is not None:  # alerted before the audit, which has landed since (#2052)
         if dry_run:
@@ -318,6 +365,13 @@ def main(argv: list[str] | None = None) -> int:
             api.remove_label(args.pr, args.clear_label)
         except subprocess.SubprocessError as exc:
             print(f'#{args.pr}: could not remove `{args.clear_label}`: {(getattr(exc, "stderr", "") or "").strip()[:160]}')
+    if not args.pr and not args.dry_run:  # a full sweep also clears the label from PRs that closed or merged
+        try:
+            for number in api.closed_with_tap_label():
+                api.remove_label(number, TAP_LABEL)
+                print(f'#{number}: closed, `{TAP_LABEL}` removed')
+        except (subprocess.SubprocessError, ValueError, KeyError) as exc:
+            print(f'could not clear `{TAP_LABEL}` from closed PRs: {(getattr(exc, "stderr", "") or str(exc)).strip()[:160]}')
     print(f'{len(numbers)} open PRs into {args.base} checked, {failures} skipped on errors')
     return 0
 

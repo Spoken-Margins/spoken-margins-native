@@ -104,8 +104,13 @@ struct ExperienceWrittenMarginScreen: View {
                         }
                     }
                     ToolbarItemGroup(placement: .keyboard) {
-                        Spacer()
                         Button("Done") { isEditing = false }
+                        Spacer()
+                        // Save under the thumb too, not only in the far corner (#1980). The bar Save keeps its
+                        // identifier; this one has its own so the two stay distinguishable.
+                        saveButton(draft, fillsWidth: false, identifier: "writtenMargin.save.keyboard.button")
+                            .labelStyle(.titleOnly)
+                            .fontWeight(.semibold)
                     }
                 }
                 .alert("Discard this Margin?", isPresented: $confirmsDiscard) {
@@ -139,10 +144,9 @@ struct ExperienceWrittenMarginScreen: View {
         }
     }
 
-    /// One Save button, built twice: the bottom bar when the keyboard is down, the
-    /// navigation bar while typing. Only one is on screen at a time, so the
-    /// identifier stays unique.
-    private func saveButton(_ draft: WrittenMarginDraft, fillsWidth: Bool) -> some View {
+    /// One Save button, built three ways: the bottom bar when the keyboard is down, and the
+    /// navigation bar and the keyboard bar while typing. The identifier tells them apart.
+    private func saveButton(_ draft: WrittenMarginDraft, fillsWidth: Bool, identifier: String = "writtenMargin.save.button") -> some View {
         Button {
             model.saveWrittenMargin(text: draft.text)
         } label: {
@@ -150,7 +154,7 @@ struct ExperienceWrittenMarginScreen: View {
                 .frame(maxWidth: fillsWidth ? CGFloat.infinity : nil)
         }
         .disabled(draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        .accessibilityIdentifier("writtenMargin.save.button")
+        .accessibilityIdentifier(identifier)
     }
 
     private func requestCancel() {

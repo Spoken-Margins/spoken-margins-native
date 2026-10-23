@@ -1,5 +1,8 @@
 import SwiftUI
 import SessionKit
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct ExperienceLibraryScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
@@ -7,10 +10,17 @@ struct ExperienceLibraryScreen: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @Binding var addSourceRoute: AddSourceRoute?
+    /// The place in the list, kept by the root view because opening an item destroys this screen (#2395).
+    @Binding var scrollMemory: FollowingScrollMemory
+    @State private var scrollTracker = ListScrollTracker()
+    @State private var restoredScroll = false
     @State private var isAudioPreparationQueuePresented = false
     /// The item whose Continue is waiting on the "hear new Margins first?" question (#474).
     @State private var newMarginsOfferItemId: String?
     @State private var collectionItem: LibraryItemRow?
+    @Environment(\.scenePhase) private var scenePhase
+    /// A copied link on offer at the top of the Library (#1379).
+    @StateObject private var clipboardLink = ClipboardLinkOfferModel()
 
     private var continueItem: LibraryItemRow? {
         LibraryPresentation.continueItem(in: model.libraryItems, activeItemId: model.activePlaybackItemId)
@@ -23,7 +33,13 @@ struct ExperienceLibraryScreen: View {
 
     var body: some View {
         NavigationStack {
+            ScrollViewReader { proxy in
             List {
+                if clipboardLink.showsCard {
+                    ClipboardLinkOfferCard(clipboard: clipboardLink)
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                }
+
                 controls
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
 
@@ -44,6 +60,12 @@ struct ExperienceLibraryScreen: View {
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
             }
+            .onChange(of: listEntries.map(\.id), initial: true) { _, ids in
+                scrollTracker.order = ids
+                restoreScroll(in: ids, using: proxy)
+            }
+            .onAppear { if restoredScroll { scrollTracker.thaw() } }
+            .onDisappear { rememberScroll() }
             .background(AppColors.bone)
             .scrollContentBackground(.hidden)
             .listStyle(.plain)
@@ -53,6 +75,7 @@ struct ExperienceLibraryScreen: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
             .miniPlayerKeepOut()
+            }
         }
         .accessibilityIdentifier("library.screen")
         .sheet(isPresented: $isAudioPreparationQueuePresented) {
@@ -64,6 +87,22 @@ struct ExperienceLibraryScreen: View {
                 .environmentObject(model)
         }
         .newMarginsOffer(itemId: $newMarginsOfferItemId)
+        .task { await clipboardLink.refresh() }
+        .onCompatibleChange(of: scenePhase) { phase in
+            if phase == .active { Task { await clipboardLink.refresh() } }
+        }
+        #if canImport(UIKit)
+        .onReceive(NotificationCenter.default.publisher(for: UIPasteboard.changedNotification)) { _ in
+            Task { await clipboardLink.refresh() }
+        }
+        #endif
+        // The Add sheet has its own Paste & go, so opening it settles this copy.
+        .onCompatibleChange(of: addSourceRoute) { route in
+            if route != nil { clipboardLink.markHandled() }
+        }
+        .onCompatibleChange(of: model.sourceLinkImportState) { state in
+            if clipboardLink.isAdding, state == "success" || state == "review" { clipboardLink.markHandled() }
+        }
     }
 
     @ToolbarContentBuilder
@@ -159,10 +198,15 @@ struct ExperienceLibraryScreen: View {
     }
 
     @ViewBuilder private var onboardingActions: some View {
-        Button("Hear overview") { model.startItem(id: Gate1AppModel.welcomeSampleItemId) }
-            .buttonStyle(PrimaryButtonStyle())
-        Button("Practice") { model.startGuidedOnboarding() }
-            .buttonStyle(.bordered)
+        // A label wider than the column wraps to a second line rather than being cut off (#2056).
+        Button { model.startItem(id: Gate1AppModel.welcomeSampleItemId) } label: {
+            Text("Hear overview").multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+        }
+        .buttonStyle(PrimaryButtonStyle())
+        Button { model.startGuidedOnboarding() } label: {
+            Text("Practice").multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+        }
+        .buttonStyle(.bordered)
     }
 
     private var onboardingDismiss: some View {
@@ -403,7 +447,34 @@ struct ExperienceLibraryScreen: View {
                     onDelete: { model.moveItemToTrash(id: row.id) }
                 )
                 .libraryRowLayout(horizontalSizeClass: horizontalSizeClass)
+                .onAppear { scrollTracker.rowChanged(row.id, isVisible: true) }
+                .onDisappear { scrollTracker.rowChanged(row.id, isVisible: false) }
             }
+        }
+    }
+
+    /// Hands the place to the root view, which outlives this screen.
+    private func rememberScroll() {
+        scrollTracker.freeze()
+        guard let top = scrollTracker.topEntryID else { return }
+        scrollMemory = FollowingScrollMemory(topEntryId: top, order: listEntries.map(\.id))
+    }
+
+    /// Scrolls back to the remembered row once, the first time the list has rows. The tracker stays
+    /// frozen until then, so the rows that appear at the top first don't overwrite the place.
+    private func restoreScroll(in ids: [String], using proxy: ScrollViewProxy) {
+        guard !restoredScroll, !ids.isEmpty else { return }
+        restoredScroll = true
+        guard let target = scrollMemory.restoreTarget(in: ids) else {
+            scrollTracker.thaw()
+            return
+        }
+        Task { @MainActor in
+            // After the list's first layout, or the scroll finds nothing to move.
+            try? await Task.sleep(for: .milliseconds(150))
+            proxy.scrollTo(target, anchor: .top)
+            try? await Task.sleep(for: .milliseconds(150))
+            scrollTracker.thaw()
         }
     }
 
@@ -430,53 +501,82 @@ private struct ExperienceLibraryCompactRow: View {
     let onAddToCollection: () -> Void
     let onDelete: () -> Void
 
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: mediaSymbol)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(AppColors.evergreen)
-                .frame(width: min(max(iconWidth, 38), 76), height: min(max(iconHeight, 44), 88))
-                .background(AppColors.softGreen.opacity(isCurrentItem ? 0.85 : 0.55))
-                // The row's own text already says the kind (`LibraryRowDetail`), so the icon is not a third stop per row.
-                .accessibilityHidden(true)
-            Button(action: onOpen) {
-                VStack(alignment: .leading, spacing: 3) {
-                    if isCurrentItem {
-                        Label(currentItemLabel, systemImage: "play.circle.fill")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(AppColors.evergreen)
-                    }
-                    Text(row.title)
-                        .font(.headline)
-                        .foregroundStyle(AppColors.text)
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
-                    detailLineView
-                        .font(.subheadline)
-                        .foregroundStyle(AppColors.secondaryText)
-                        .multilineTextAlignment(.leading)
-                    sharedMarginsLine
+    /// At accessibility sizes the title gets its own full-width line, with the icon and the play button together on a line
+    /// below it. Beside them the title was left about half the row and broke letter by letter (#2056). The open button
+    /// stays ahead of the play button, so the VoiceOver order is the same at every size.
+    @ViewBuilder private var rowLayout: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 8) {
+                openButton
+                HStack(spacing: 12) {
+                    iconTile
+                    Spacer(minLength: 0)
+                    playButton
                 }
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("library.row.\(row.id)")
-
-            Button(action: onPlay) {
-                LibraryRowPlayLabel(isReadyOffline: row.offlineState == .readyOffline, isPreparing: row.startupAudioState == .preparing)
+        } else {
+            HStack(alignment: .center, spacing: 12) {
+                iconTile
+                openButton
+                playButton
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(playActionTitle)
-            .accessibilityValue(
-                row.startupAudioState == .preparing
-                    ? "Preparing audio, \(startupProgressDescription). Playback can start now."
-                    : row.startupAudioState == .waiting ? "Waiting to prepare audio. Playback can start now."
-                    : (row.offlineState == .readyOffline ? "Ready offline" : "Ready to start")
-            )
-            .accessibilityIdentifier("queue.start.\(row.id)")
         }
+    }
+
+    private var iconTile: some View {
+        Image(systemName: mediaSymbol)
+            .font(.body.weight(.semibold))
+            .foregroundStyle(AppColors.evergreen)
+            .frame(width: min(max(iconWidth, 38), 76), height: min(max(iconHeight, 44), 88))
+            .background(AppColors.softGreen.opacity(isCurrentItem ? 0.85 : 0.55))
+            // The row's own text already says the kind (`LibraryRowDetail`), so the icon is not a third stop per row.
+            .accessibilityHidden(true)
+    }
+
+    private var openButton: some View {
+        Button(action: onOpen) {
+            VStack(alignment: .leading, spacing: 3) {
+                if isCurrentItem {
+                    Label(currentItemLabel, systemImage: "play.circle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppColors.evergreen)
+                }
+                Text(row.title)
+                    .font(.headline)
+                    .foregroundStyle(AppColors.text)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                detailLineView
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .multilineTextAlignment(.leading)
+                sharedMarginsLine
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("library.row.\(row.id)")
+    }
+
+    private var playButton: some View {
+        Button(action: onPlay) {
+            LibraryRowPlayLabel(isReadyOffline: row.offlineState == .readyOffline, isPreparing: row.startupAudioState == .preparing)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(playActionTitle)
+        .accessibilityValue(
+            row.startupAudioState == .preparing
+                ? "Preparing audio, \(startupProgressDescription). Playback can start now."
+                : row.startupAudioState == .waiting ? "Waiting to prepare audio. Playback can start now."
+                : (row.offlineState == .readyOffline ? "Ready offline" : "Ready to start")
+        )
+        .accessibilityIdentifier("queue.start.\(row.id)")
+    }
+
+    var body: some View {
+        rowLayout
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
