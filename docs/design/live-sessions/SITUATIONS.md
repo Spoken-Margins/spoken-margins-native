@@ -2,6 +2,8 @@
 
 Written 2026-10-23 for #2481 and #1989, from [BRIEF.md](BRIEF.md). The Watch itself is in `WATCH.md`, written in parallel. Here the Watch is a device that can record a Margin and start or stop a session. Status: a design, nothing built. No pixels or colours; where a state matters, it is named in words.
 
+**Review note (2026-10-23):** this file is now an appendix to [DESIGN.md](DESIGN.md), which the owner reads. Where the reviewer changed a call here, a review note says so. DESIGN.md's decisions and defaults replace section 7's list.
+
 ## In one minute
 
 1. **A session is a stretch of time spent on one thing outside the app.** A meeting, a book, a lecture, a video. It holds the Margins taken during that time, and what the listener said about where they were.
@@ -95,10 +97,16 @@ Why this and not a visible inbox list: a quick session needs no new kind of plac
 
 ### 1.8 Confirmation means filed
 
-1. Each Margin has three states, said in words on the Watch and the Live Activity: **Recording**, **Saved on Watch, waiting for iPhone**, and **Filed in <session>**.
+1. Each Margin has four states, said in words on the Watch and the Live Activity: **Recording**, **Saved on Watch**, **Waiting for iPhone** (only after 15 seconds with no answer), and **Filed in <session>**. **Review note (2026-10-23):** this was three states; it now matches `WATCH.md` section 2.6, so both devices use the same words.
 2. The phone sends the "filed" answer back to the Watch for each Margin. Until it arrives, the Watch keeps the recording and shows how many are waiting.
 3. The phone's Live Activity count rises only when a Margin is filed.
 4. A Margin that arrives after its session ended is filed into that session's item, labelled "arrived after the session ended", and placed with the same line-up if there is one.
+5. **How a Margin finds its session.** Its own corrected time decides, and the session id it carries settles the rest:
+   1. If a session's span holds the Margin's time (corrected for the Watch's clock, `WATCH.md` 3.5), it files there.
+   2. Otherwise, if the id names a session that has ended, it files there, labelled "after the session ended".
+   3. Otherwise, if the id names a session the phone has never seen (the Watch started it out of range), the phone creates that session.
+   4. Otherwise it starts a quick session (1.4).
+   **Review note (2026-10-23):** section 1.9 said time span only, and `WATCH.md` said session id only. Time alone can't place a Margin from a session the Watch started out of range. The id alone files a Margin into an old session after the phone has started a new one. This rule keeps both strengths.
 
 ### 1.9 What in today's code stays, changes, or goes
 
@@ -119,7 +127,7 @@ Why this and not a visible inbox list: a quick session needs no new kind of plac
 2. **Positions:** `startPositionMs` and `endPositionMs` become the first and last of a list of checkpoints, each a clock time and a position. A session saved by an earlier build still reads, as two checkpoints. `LiveSessionPositionMap` reads the list.
 3. **End:** a meeting ends with one tap and becomes an item at once. Only an audiobook or paper book shows the end sheet.
 4. **Line Up:** moves from the ended-session screen to the item's screen, and gains an entry for opened or shared transcript files.
-5. **Filing:** `LiveSessionWatchMatch` files by time span only. The fallback to "the most recently started session" goes, because it can file a Margin into a session hours away from it.
+5. **Filing:** `LiveSessionWatchMatch` files by the rule in 1.8, point 5: time span first, then the Margin's session id. The fallback to "the most recently started session" goes, because it can file a Margin into a session hours away from it.
 6. **Back-channel:** the phone tells the Watch when each Margin is filed, and the Watch shows it.
 7. **Lock Screen Marks taken outside any session** are filed by time, like Watch Margins. Today `start()` throws them away.
 8. **The running session is reachable** from the Library's Live row, the Margins tab and the Live Activity, not only through the plus sheet's route.
@@ -145,7 +153,7 @@ These failures come up in every situation. Each situation below says which ones 
 | F4 | **No transcript exists.** | Margins keep "about 12:40", the estimate, with the placing hint in the Margin's text. The item says "Not lined up" in words. Nothing asks again. |
 | F5 | **Wrong start position.** | The item's screen shows the start checkpoint, editable. Changing it moves every estimate. A transcript match still wins and both are shown. |
 | F6 | **Two sessions overlap.** | Starting a second asks one question: Go to it, or End it and start a new one. Sessions started apart on the phone and the Watch: the later one ends the earlier, and the earlier item says so in words. |
-| F7 | **Forgot to end.** | Starting something else ends it (F6). Otherwise it ends itself 8 hours after its start, when the Live Activity must end (check C9). Its end is set to its last Margin, and the item says "Ended automatically". |
+| F7 | **Forgot to end.** | Starting something else ends it (F6). Otherwise it ends itself 8 hours after its start, when the Live Activity must end (check C9). Its end is set to its last Margin, and the item says "Ended automatically". This holds for sessions started on the Watch too; only quick sessions close after 30 quiet minutes. |
 | F8 | **The phone's microphone is busy** (a call holds it). | Speak and the Live Activity's Record say "Your call is using the microphone. Speak on your Watch, or write." If the app can't tell beforehand (check C1), Speak tries, fails cleanly and says the same. Nothing half-saved. |
 | F9 | **A Margin arrives after its session ended.** | Filed into that session's item, labelled "arrived after the session ended". |
 
@@ -168,7 +176,7 @@ Times are approximate, counted from the moment the listener decides to start. "P
 #### S1a. With a Watch
 
 1. **-0:30.** The meeting is about to start. On the Watch he taps Start, then Meeting (`WATCH.md`). Or on the phone: Control Center, then Start session (2 taps, no app opened).
-2. **0:00.** The Live Activity appears on the phone. The Watch shows "Meeting, 0:00".
+2. **0:00.** The Watch shows "Meeting, 0:00". Started from Control Center, the Live Activity appears on the phone at once. Started from the Watch, it may appear only once the phone app next comes forward. **Review note (2026-10-23):** the original said it appears at once from the Watch too. iOS lets an app start a Live Activity from the foreground or from an App Intent; a Watch message that wakes the app in the background may not be enough (inference; check C12).
 3. **0:02.** He joins the Teams call. The meeting clock and the session clock run together, so 0:00 is right without asking.
 4. **12:40.** Someone says something worth answering. He checks he's muted. He raises his wrist and taps Record. The Watch shows the placing hint: "Say something that helps place this, like 'Johnny was just talking about the budget'".
 5. **12:41.** He says: "Priya's point on the Q3 budget, we already cut that line. Check with finance." He taps Stop.
@@ -389,6 +397,7 @@ Each platform claim this design leans on, how sure it is, and the check that set
 | C9 | The Live Activity survives the app being closed, ends after 8 hours, and its Mark and End buttons work with the app closed. | Documented (8-hour limit), unverified for us | Start a session, close the app from the app switcher, tap Mark and End, then reopen and check both took effect. |
 | C10 | AirPods double-press goes to the app that owns Now Playing (Audible), not to us, while Audible plays. | Inference, high confidence | Audible playing, a session running, double-press. See which app reacts. |
 | C11 | Audible's main view shows time within the chapter, not time in the book. | Inference | Look at Audible's player. It decides the hint for an audiobook's "Where are you now?". |
+| C12 | A session started on the Watch puts the Live Activity on the phone's Lock Screen without the phone app coming forward. | Inference: probably not (an app starts a Live Activity from the foreground or an App Intent) | Phone locked, app in the background. Start a session on the Watch. Wake the phone and look for the Live Activity. |
 
 ---
 
@@ -396,7 +405,7 @@ Each platform claim this design leans on, how sure it is, and the check that set
 
 1. **Margins are the listener's own voice.** That raises no consent issue (BRIEF).
 2. **A spoken Margin can carry other voices behind it:** a call on the speaker, laptop speakers, a lecturer. It is a short clip of the listener talking, not a recording of the meeting, and the app never transcribes the background on purpose. It is still a recording that can hold other people's words. Illinois requires every party's consent to record a private conversation.
-3. **What this design does:** in a Meeting session, the first spoken Margin shows one line, once per listener: "Your Margin records your voice. If the meeting is on a speaker, other voices may be in the background. Headphones keep them out." This is decision 3 below.
+3. **What this design does:** in a Meeting session, the first spoken Margin shows one line, once per listener: "Your Margin records your voice. If the meeting is on a speaker, other voices may be in the background. Headphones keep them out." This is Default taken 12 in [DESIGN.md](DESIGN.md).
 4. **What it doesn't do:** record the meeting, the lecture or the room. Continuous recording is the Watch design's question, and it needs the owner's consent call.
 
 ---
@@ -415,7 +424,7 @@ Each platform claim this design leans on, how sure it is, and the check that set
    - The alternative: today's end card (Line Up, or Save as Notes), and a review before saving.
    - The cost: a bad transcript match is applied before he looks. The evidence is shown, and Undo restores it.
    - What would show it's wrong: he taps Undo on a line-up more than once in his first five.
-3. **A one-time note about background voices in meeting Margins.**
+3. **A one-time note about background voices in meeting Margins.** **Review note (2026-10-23):** moved to DESIGN.md's Defaults taken. It is one line of text, reversible, and the legal question goes on the attorney list either way.
    - My pick: show the note once, on the first spoken Margin in a Meeting session.
    - The alternative: no note. Or ask the attorney first and add it to `docs/legal/attorney-questions.md`.
    - The cost: one more line of text, once.
@@ -426,7 +435,7 @@ Each platform claim this design leans on, how sure it is, and the check that set
 4. **One session at a time per person,** and a later start ends the earlier one. The alternative is parallel sessions, such as a book and a meeting. Wrong if a listener asks for two at once.
 5. **A forgotten session ends itself at 8 hours,** at its last Margin. That matches the Live Activity's limit. The alternative is to run until ended. Wrong if real sessions over 8 hours turn up, such as a conference day.
 6. **Start and end become checkpoints,** with the old fields read as two checkpoints. The alternative is to keep start and end only. Wrong if nobody adds a third checkpoint in a month of use. Then the list is extra weight, but harmless.
-7. **Filing by time span only,** dropping today's "most recent session" fallback. No alternative is worth keeping: the fallback can file a Margin into a session hours away.
+7. **Filing by time span first, then the Margin's session id** (1.8, point 5), dropping today's "most recent session" fallback. The fallback can file a Margin into a session hours away.
 8. **Rename "Something else" to "Lecture, video or something else",** keeping four kinds. The alternative is adding Lecture and Video kinds. Wrong if the kinds start to need different behaviour, and today they don't.
 9. **Quick sessions close after 30 quiet minutes.** Wrong if a lecture's Margins split into two quick sessions often. Then raise it to 90.
 

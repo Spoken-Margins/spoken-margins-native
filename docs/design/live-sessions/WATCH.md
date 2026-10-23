@@ -2,6 +2,8 @@
 
 Written 2026-10-23 for #2487 and #2481, answering `BRIEF.md`. A second designer covers the situations and the iPhone side in `SITUATIONS.md`. This file covers the Watch, and the contract between the Watch and the phone. Nothing here is built. Each platform claim says whether it is confirmed and gives its source; the sources are listed at the end.
 
+**Review note (2026-10-23):** this file is now an appendix to [DESIGN.md](DESIGN.md), which the owner reads. Where the reviewer changed a call here, a review note says so. DESIGN.md holds the merged slice order, the owner's decisions and the defaults taken.
+
 ---
 
 ## In one minute
@@ -9,7 +11,7 @@ Written 2026-10-23 for #2487 and #2481, answering `BRIEF.md`. A second designer 
 1. **The Watch has one job: never lose what you said, and tell you the truth about where it went.** The first build failed both. It said "sent" when it only meant "queued", it never knew whether a session existed, and a Margin with no session waited in a hidden inbox.
 2. **The Watch always knows the session.** It shows one of three states: no session, a session running on the iPhone, or a session running on the Watch. Starting a session works from either device, and the Watch joins a phone session on its own, with no step.
 3. **"Filed" is the only success word.** The Watch says "Filed in Budget meeting, about 12:40" only after the phone has written the Margin into a session and answered. Until then it says "Saved on Watch". The Watch keeps the audio until the phone says filed.
-4. **No Margin is ever homeless.** A Margin recorded with no session starts a session for itself, visible in the Library. The phone never parks a Margin out of sight.
+4. **No Margin is ever homeless.** A Margin recorded with no session starts a quick session for itself, visible in the Library. The phone never parks a Margin out of sight.
 5. **Three platform facts shape everything.**
    - Recording must *start* while our app is in front, but once started it can carry on with the wrist down (Apple engineers, on the developer forums). After a call or Siri interrupts it, it cannot restart by itself. So the safety net closes the audio safely and asks for one tap to resume.
    - Double-tap (`handGestureShortcut`) works on Series 9 and later, but only with the screen awake. So it is "raise, double-tap", never a blind gesture.
@@ -71,6 +73,7 @@ Each fact has a status:
 4. **Tapping that Live Activity opens our Watch app** when one is installed. Status: confirmed ("When you tap on the Live Activity widget, you're taken into the app").
 5. **Buttons in it.** Apple recommends one control, for play, pause or resume, and says double-tap can fire it. Where that button's intent runs, on the Watch or on the iPhone, is not stated. Status: unconfirmed. This matters: if a "Record" button there runs on the iPhone, it uses the phone's microphone and fails during a call. Device check: put a button on the Live Activity that writes which device ran it into the session's log, press it from the Watch, read the log.
 6. **Design rule until that check passes:** the Live Activity on the Watch has no Record button. Tapping it opens our Watch app straight onto the Record screen. Its one button is **Mark**, which is device-neutral (a mark is a timestamp; it doesn't need a microphone).
+7. **Review note (2026-10-23):** the phone's Live Activity has Record, Mark and End (`SITUATIONS.md` 1.6). The two layouts don't clash: ActivityKit lets an iOS Live Activity give the Watch's Smart Stack its own small layout (`supplementalActivityFamilies`, iOS 18). Status: documented, unchecked in our app. If it can't, the phone layout's Record is hidden on the Watch by showing Mark first and Record only on the phone's expanded island.
 
 ### 1.6 Siri and App Intents on the Watch
 
@@ -129,22 +132,23 @@ Fewer is better. There are three, and the listener never navigates between them 
    - "Budget meeting · on iPhone · about 12:40" (a phone outline). One big **Record** button. **Mark** and **End** sit below, reached by scrolling or the crown.
    - "Lecture · on Watch · 14:02" (a watch outline and a moving level meter). The level meter proves the microphone is live. One big **Margin** button. **End** below.
 2. **Recording a Margin.** Full screen. The elapsed time, a level meter, the placing hint in large type, and a big **Stop**. Double-tap is Stop.
-3. **Session start.** Three steps on one scrolling page: kind (Meeting, Audiobook, Lecture or Other; crown or tap), where you are (crown sets minutes; it starts at 0:00), and **Start**. A switch, off by default, says "Also record the whole session" (section 2.10).
+3. **Session start.** Four kind buttons: Meeting, Audiobook, Paper book and Other (lecture, video). Tapping one starts the session at once, as on the phone. Home then shows a **Where are you now?** row, filled in by kind (Meeting 0:00; Audiobook empty, "the time your app shows"; Paper book empty, "page"). Turning the crown on that row sets it, and the checkpoint is stamped at the moment it is set (`SITUATIONS.md` 1.5). It never blocks the start. A switch on Home, off by default, says "Also record the whole session" (section 2.8). **Review note (2026-10-23):** the original asked kind and position on one page before Start, with Lecture as a kind and minutes only. The kinds now match the phone and the code (`ElsewhereKind`: meeting, audiobook, paper, other), a paper book takes a page, and the position is a field, not a step, which matches the phone and saves a tap.
 
 Blue and orange tint the big button (blue for ready, orange while recording), as today. The words "Record", "Stop" and the icon shape carry the meaning on their own; tint is extra.
 
 ### 2.3 Seeing that a phone session is running
 
 1. When the phone starts a session, its Live Activity appears in the Watch's Smart Stack by itself (1.5). The Smart Stack stays up when the wrist goes down. So the next raise shows the session. **Cost: Raise 1 · Glance 1.**
-2. Our Watch app's Home shows the same, from application context, the moment it opens.
+2. Our Watch app's Home shows the same, from application context, the moment it opens. When the phone can't be reached and that state is more than a minute old, Home says so: "Budget meeting · as of 14:05". **Review note (2026-10-23):** added, from `SITUATIONS.md` F3. Showing a stale state as current is the first build's "no session awareness" failure in a new place.
 3. A Smart Stack widget of our own (later slice) says "No session" when none is running, so the listener knows before opening the app.
 
 ### 2.4 Starting or joining a session from the Watch
 
 1. **Joining a phone session has no step.** The Watch is always joined to the phone's running session. Every Margin recorded while one runs carries that session's id. **Cost: 0.**
-2. **Starting a session on the Watch.** Raise, tap the complication or the app, tap **Start session**, pick the kind, set the position with the crown if it isn't 0:00, tap **Start**.
-   - **Cost: Raise 1 · Taps 3 (app, Start session, Start) · Crown 0 to 2 (kind, position) · Phone: no.**
-   - The phone learns of it on the sure lane, makes the session at once, and its Live Activity starts. If the phone is out of reach, the session lives on the Watch and the phone catches up later.
+2. **Starting a session on the Watch.** Raise, tap the complication or the app, tap **Start session**, tap the kind. Set the position with the crown afterwards if it isn't the default.
+   - **Cost: Raise 1 · Taps 3 (app, Start session, kind) · Crown 0 or 1 (position) · Phone: no.**
+   - The phone learns of it on both lanes and makes the session at once. If the phone is out of reach, the session lives on the Watch and the phone catches up later.
+   - **Review note (2026-10-23):** the original said the phone's Live Activity starts at once. That is unconfirmed and probably false: iOS starts a Live Activity from the app in front or from an App Intent, and a background wake from the Watch may not count (`SITUATIONS.md` check C12). Until the check passes, the Watch is the session's display, and the phone's Live Activity appears when its app next comes forward.
 3. **If the phone already has a session**, Home shows it and **Start session** is replaced by **End**. Two running sessions at once are not allowed. This prevents the "which session did that go to?" question entirely.
 
 ### 2.5 Recording a Margin, with the placing hint
@@ -158,7 +162,8 @@ Blue and orange tint the big button (blue for ready, orange while recording), as
 4. **What the screen shows while recording.** The hint is spoken advice, not a step (owner's rule). It sits under the clock:
    - Meeting: "Say who was talking or what about: 'Johnny, on the budget'."
    - Audiobook: "Say where you are: 'chapter 5'."
-   - Lecture or other: "Say what was just said, in a few words."
+   - Paper book: "Say the page: 'page 118'."
+   - Other (lecture, video): "Say what was just said, in a few words."
    - Below it, in small type: "about 12:40" when the session has a start position.
    - The hint changes after a few Margins to a shorter form ("Who, or what about?") so it doesn't become wallpaper.
 5. **Tones and haptics.** A short haptic at start and two at stop. No sound, because the listener is in a meeting.
@@ -178,8 +183,9 @@ Blue and orange tint the big button (blue for ready, orange while recording), as
 
 ### 2.7 With no phone session
 
-1. **Record still works.** Tapping **Record** with no session records the Margin, then starts a session for it: kind Other, called "Watch Margins, Thu 23 Oct, 2:14 pm", with no start position.
-2. The screen says so: "Filed in a new session: Watch Margins 2:14 pm". The phone shows it in the Library like any session. Later Margins in the next 30 minutes join it, because the session stays open until ended or 30 minutes pass with no Margin.
+1. **Record still works.** Tapping **Record** with no session records the Margin, then starts a quick session for it: kind Other, called "Quick session, Thu 14:14", with no start position. The Watch makes the session's id; the phone makes the session when the Margin arrives.
+2. The screen says so: "Filed in a quick session, 14:14". The phone shows it in the Library like any session. Later Margins within 30 minutes of the last one join it; after 30 quiet minutes it ends at its last Margin (`SITUATIONS.md` 1.4).
+   - **Review note (2026-10-23):** the name was "Watch Margins". It is now "Quick session" on every device, because a Siri or Lock Screen Margin makes the same thing and one name is easier to learn. If the phone already had a session the Watch didn't know about, the filing rule (3.6) files the Margin there instead, and the ack tells the Watch where it went.
 3. On the phone the listener can rename it or move its Margins into another session (that screen is `SITUATIONS.md`'s).
 4. **Cost: the same as 2.5.** No extra step, no question asked at the worst moment.
 5. Why not ask "Start a session?" first: that question comes exactly when the listener wants to speak. A session made for them is easy to tidy later; a Margin lost to a question is not. See decision 1.
@@ -189,7 +195,7 @@ Blue and orange tint the big button (blue for ready, orange while recording), as
 The owner's words: "worst case scenario, it doesn't lose your recording."
 
 1. **What it is.** The session records everything the Watch hears, from **Start** to **End**. A Margin is a marked span inside that recording, not a separate file. A mark that fires at the wrong time loses nothing, because the audio is there either way.
-2. **Turning it on** is the switch on the start screen (2.2) with the consent screen (2.12). It can also be turned on from Home during a session with one tap.
+2. **Turning it on** is the switch on Home (2.2) with the consent screen (2.12). It can also be turned on from Home during a session with one tap.
 3. **Marking a Margin.** Raise, double-tap: a haptic, and the screen turns to the Recording view with the hint. Speak. Double-tap again: two haptics, the span closes. If the listener forgets the second double-tap, the span closes after 10 seconds of quiet or 2 minutes, whichever comes first.
 4. **Every mark is a moment as well as a span.** The phone keeps the double-tap moment as "you marked here" even if the span turns out to be silence. A silent mark becomes a flag, as `hands-free-margins.md` describes for silent triggers.
 5. **The safety net. Audio is written in closed pieces.**
@@ -230,14 +236,16 @@ The owner's rule: recording from the Watch uses the Watch's microphone; with no 
 4. **For headphones on the phone, the phone side records** (a headphone double-press adds a Margin, owner's standing call). That's `SITUATIONS.md`'s territory.
 5. **Every Margin records which microphone made it** (Watch, headphones), and the export says so. If quality complaints come in, the evidence is there.
 6. **The device check in 1.1 decides this.** If it shows the Watch can use phone-connected AirPods without moving the audio, decision 2 flips.
+7. **Review note (2026-10-23):** this pushback is kept, as a default rather than a decision, and the check moves from slice 6 to the first Watch build. The owner said the Watch "could try to grab the headphones", which is a challenge to try, not an order. The argument against is reasoned from how Bluetooth works (one active connection, and a headset microphone switches the AirPods into a lower-quality call mode), but it is not observed: points 3 and 4 of 1.1 are both inference. So the Watch microphone is the default only until a cheap test says otherwise. A second reason to keep it: the Watch microphone already worked during his Teams call, and the AirPods route has never been seen working at all.
 
 ### 2.11 The Watch out of range
 
 1. **Everything works on the Watch alone.** Recording, marks, starting and ending a session.
 2. Each Margin shows "Saved on Watch", then "Waiting for iPhone". The tally on Home shows how many wait.
 3. **The Watch's estimate of position keeps running** from the last state it had ("about 12:40"), and says "about" as always.
-4. **When the phone is back**, the queue drains in order. Each Margin carries its session's id, so it files into that session **even if the session has ended since**. Filing goes by id, not by whether the time falls inside a session's span.
-5. **If the phone ended the session while the Watch was away, and the Watch kept recording after that end**, the late Margins still file into it, marked "after the session ended". Nothing is moved into a different session by guesswork.
+4. **When the phone is back**, the queue drains in order, and each Margin files by the rule in 3.6, point 4: a session whose span holds its corrected time first, then the session its id names.
+5. **If the phone ended the session while the Watch was away, and the Watch kept recording after that end**, the late Margins file into it, marked "after the session ended", unless the listener started another session on the phone that holds their time. Then they file there, because that is what he was doing.
+   - **Review note (2026-10-23):** the original filed by id alone. That puts a Margin into an old, ended session even when the listener has started a new one on the phone in the meantime.
 6. **Cost: none extra.** The listener does nothing.
 
 ### 2.12 Consent for continuous room recording
@@ -257,19 +265,19 @@ The owner's rule: recording from the Watch uses the Watch's microphone; with no 
 
 1. **Ending from the Watch.** Raise, open the app, tap **End**.
    - **Meeting, lecture or other**: it ends. No question. The owner: "a meeting, it's less important."
-   - **Audiobook**: one more screen: "Where did you stop?" with the crown, starting at the start position plus the elapsed time. Tap **Done**. The phone keeps both the estimate and the answer, as evidence.
+   - **Audiobook or paper book**: one more screen: "Where did you stop?" with the crown, starting at the estimate (for a paper book, the last page said). Tap **Done**, or **Skip**. The phone keeps both the estimate and the answer, as evidence. **Review note (2026-10-23):** paper book added, to match the phone (`SITUATIONS.md` 1.5, point 4).
    - **Cost: Raise 1 · Taps 2 · Crown 0 or 1.**
 2. **Ending from the phone** is the same on the phone side. The Watch's Home changes to "No session" on its next update.
 3. **After ending, the Watch shows a summary** for 10 seconds: "Budget meeting ended. 5 Margins filed. 1 waiting." Waiting ones finish on their own.
 4. **A continuous recording ends with the session.** Its last piece is closed and queued like any other.
-5. **A session nobody ends** closes itself after 30 minutes with no Margin and no continuous recording, with its end marked "closed automatically". A session with continuous recording ends only when the listener ends it or the Watch runs out of battery or storage; each ending is stated.
+5. **A session nobody ends** closes itself 8 hours after its start, at its last Margin, marked "Ended automatically", as on the phone (`SITUATIONS.md` F7). Only a quick session closes after 30 quiet minutes. A continuous recording also ends if the Watch runs out of battery or storage; each ending is stated. **Review note (2026-10-23):** the original closed every Watch session after 30 minutes with no Margin. That would end a meeting in which the listener said nothing for half an hour, and the phone and the Watch would disagree about when sessions end.
 
 ### 2.14 Every job with its cost
 
 | Job | Today (build dbaa231) | Excellent |
 | --- | --- | --- |
 | See that a phone session is running | Open app; title shows if sent. Raise 1, Taps 1 | Raise 1, Glance 1 (Smart Stack) |
-| Start a session on the Watch | Not possible | Raise 1, Taps 3, Crown 0 to 2 |
+| Start a session on the Watch | Not possible | Raise 1, Taps 3, Crown 0 or 1 |
 | Join the phone's session | Not possible to see | 0 (automatic) |
 | Record a Margin, app closed | Raise 1, Taps 3 | Raise 1, Taps 1, Double-taps 1 (complication) |
 | Record a Margin, continuous recording | Not possible | Raise 1, Double-taps 2, one hand |
@@ -291,7 +299,7 @@ Every Watch job has **Phone: no**. None asks the listener to leave the call or t
 2. **The phone is where every Margin ends up.** The Library, transcripts, line-up and export all live there.
 3. **The Watch owns its audio until the phone says filed.** It deletes a recording only after a "filed" or "duplicate" answer for that exact id.
 4. **Every id is made by the device that creates the thing**: a random UUID, lower case. Session ids, Margin ids, mark ids and piece ids never clash, so neither device has to ask the other for one.
-5. **One running session at a time.** If both devices try to start one in the same second, the phone keeps the one whose start time is earlier, and tells the Watch to treat the other as its own and file into the survivor. This should be rare; it is written down so it is handled, not guessed.
+5. **One running session at a time.** If both devices start one while apart, the later start ends the earlier one at that moment, and the earlier session's item says so in words (`SITUATIONS.md` 1.3, point 4). Each Margin then files by its own time. **Review note (2026-10-23):** the original kept the earlier session and filed the other's Margins into it. That moves Margins into a session the listener didn't choose, which is the guesswork 2.11 forbids.
 
 ### 3.2 Two lanes
 
@@ -333,7 +341,12 @@ Each carries `v` (contract version), `sentAt` (Watch wall time) and `seq` (a cou
 1. **Filing is idempotent by id.** The phone files a given Margin, mark or piece id once. A second copy gets `duplicate`. This makes every retry safe.
 2. **The phone stores the file before it answers.** It moves the received file into its own container and writes the details, then files, then acks. If storing fails, it answers `rejected` with the reason, so the Watch keeps its copy.
 3. **The Watch retries** any item with no ack after 10 minutes that is not still in WatchConnectivity's own outgoing queue. It retries at most every 10 minutes while the phone is reachable, and immediately after a **hello** that doesn't list it as filed.
-4. **The phone never holds a Margin out of sight.** Today's inbox waits for a session whose time span fits (`LiveSessionFileWorker.fileWatchInbox`), which is how the owner's Margin vanished. Under this contract every Margin names its session. A Margin with a session id the phone has never heard of makes that session (the Watch started it out of range). An old Margin from before this contract, with no session id, files into a "Watch Margins" session for its day.
+4. **The phone never holds a Margin out of sight.** Today's inbox waits for a session whose time span fits (`LiveSessionFileWorker.fileWatchInbox`), which is how the owner's Margin vanished. Under this contract every Margin names a session, and the phone files it by one rule, the same as `SITUATIONS.md` 1.8, point 5:
+   1. a session whose span holds the Margin's corrected time;
+   2. else the session its id names, if that session has ended (labelled "after the session ended");
+   3. else a new session with that id, if the phone has never seen it (the Watch started it out of range);
+   4. else a quick session.
+   An old Margin from before this contract, with no session id, goes through the same rule from step 1, and lands in a quick session for its time if nothing fits.
 5. **Every Margin is visible in exactly one place on each device**: on the Watch in the tally until filed, and on the phone in its session from the moment it is filed.
 6. **Packets and the database.** None of this changes the `.spokenmargins` packet. Live sessions are stored in their own files today; new fields are additions, so the last shipped build still reads them. Standing call: keep packets and databases backward compatible.
 
@@ -349,16 +362,16 @@ Fixes exactly what failed: no way to start or link a session, no check for one, 
 
 1. Home shows the three states (2.2) from the phone's state board.
 2. **Start session** on the Watch (kind and position), and **End**.
-3. Every Margin carries a session id. With no session, Record starts a "Watch Margins" session (2.7).
+3. Every Margin carries a session id. With no session, Record starts a quick session (2.7).
 4. The ack (3.4), the four confirmation states (2.6), and the tally.
 5. The Watch keeps the audio until filed. The phone stores before it answers.
-6. The phone's hidden inbox goes; anything left in it files into a dated "Watch Margins" session.
+6. The phone's hidden inbox goes; anything left in it files by the rule in 3.6, point 4, which ends in a quick session for its time.
 7. The fast lane for the Watch in front, the sure lane always, and **hello** on open.
 
 **Owner check (5 minutes):**
 1. With nothing running on the phone, open Spoken Margins on the Watch. It says "No session".
-2. Tap Record, say "Testing, no session", tap Stop. Within a few seconds it says "Filed in a new session". On the phone, the Library shows "Watch Margins" with that Margin.
-3. On the Watch, tap Start session, pick Meeting, leave 0:00, tap Start. On the phone, a live session is running.
+2. Tap Record, say "Testing, no session", tap Stop. Within a few seconds it says "Filed in a quick session". On the phone, the Library shows "Quick session" with that Margin.
+3. On the Watch, tap Start session, then Meeting. Leave 0:00. Open Spoken Margins on the phone: a live session is running.
 4. Join a Teams call on the phone. On the Watch, record "Johnny was talking about the budget". The Watch says "Filed in Meeting, about 1:10" or similar.
 5. Turn Bluetooth off on the phone. Record one more. The Watch says "Waiting for iPhone". Turn Bluetooth on. Within a minute it says "Filed".
 6. Tap End on the Watch. On the phone the session has ended with three Margins.
@@ -407,10 +420,12 @@ Fixes exactly what failed: no way to start or link a session, no check for one, 
 
 ## 5. Open decisions
 
+**Review note (2026-10-23):** DESIGN.md keeps decision 3 (continuous recording) for the owner, and decision 1 (the quick session) merged with `SITUATIONS.md`'s. Decisions 2, 4, 5, 6 and 7 are engineering calls and are listed there as Defaults taken.
+
 1. **Record with no session makes a session for it.**
-   - My pick: make it, call it "Watch Margins, date and time", file at once.
+   - My pick: make it, call it "Quick session" with its time, file at once.
    - Alternative: ask "Start a session?" first, with kind and position. Cost: 2 to 3 more taps at the moment the listener wants to speak.
-   - What would show me wrong: after two weeks, more than half of his "Watch Margins" sessions get moved by hand into another session. Then a one-tap "Add to the last session" offer at Stop would be better.
+   - What would show me wrong: after two weeks, more than half of his quick sessions get moved by hand into another session. Then a one-tap "Add to the last session" offer at Stop would be better.
 2. **The Watch uses its own microphone even when headphones are connected to the phone and no call runs.**
    - My pick: Watch microphone, always, until slice 6's device check.
    - Alternative: the owner's suggestion, try the headphones when no call runs. Cost: if my reading is right, it pulls the AirPods off the phone and stops what he is listening to.
