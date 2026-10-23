@@ -37,21 +37,37 @@ public enum ItemMetadata {
         return parsed
     }
 
-    private static func parse(_ text: String) -> (date: Date, hasTime: Bool)? {
-        let iso = ISO8601DateFormatter()
-        for options: ISO8601DateFormatter.Options in [[.withInternetDateTime, .withFractionalSeconds], [.withInternetDateTime]] {
-            iso.formatOptions = options
-            if let date = iso.date(from: text) { return (date, true) }
+    /// Built once: the Library's Published sort reads this date for every item on every rebuild (#1867), and
+    /// making a formatter per call, and up to nine more for an RFC 822 date, cost real time on the main thread.
+    /// Never changed after they are built, so any thread may use them.
+    nonisolated(unsafe) private static let isoFormatters: [(formatter: ISO8601DateFormatter, hasTime: Bool)] = {
+        let kinds: [(ISO8601DateFormatter.Options, Bool)] = [
+            ([.withInternetDateTime, .withFractionalSeconds], true), ([.withInternetDateTime], true), ([.withFullDate], false)
+        ]
+        return kinds.map { options, hasTime in
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = options
+            return (formatter, hasTime)
         }
-        iso.formatOptions = [.withFullDate]
-        if let date = iso.date(from: text) { return (date, false) }
-        let posix = DateFormatter()
-        posix.locale = Locale(identifier: "en_US_POSIX")
-        for format in ["EEE, dd MMM yyyy HH:mm:ss zzz", "EEE, d MMM yyyy HH:mm:ss zzz", "EEE, dd MMM yyyy HH:mm:ss Z",
-                       "EEE, d MMM yyyy HH:mm:ss Z", "dd MMM yyyy HH:mm:ss zzz", "d MMM yyyy HH:mm:ss zzz",
-                       "EEE, dd MMM yyyy HH:mm zzz", "EEE, d MMM yyyy HH:mm zzz", "EEE, dd MMM yyyy HH:mm Z"] {
-            posix.dateFormat = format
-            if let date = posix.date(from: text) { return (date, true) }
+    }()
+
+    nonisolated(unsafe) private static let rfc822Formatters: [DateFormatter] = [
+        "EEE, dd MMM yyyy HH:mm:ss zzz", "EEE, d MMM yyyy HH:mm:ss zzz", "EEE, dd MMM yyyy HH:mm:ss Z",
+        "EEE, d MMM yyyy HH:mm:ss Z", "dd MMM yyyy HH:mm:ss zzz", "d MMM yyyy HH:mm:ss zzz",
+        "EEE, dd MMM yyyy HH:mm zzz", "EEE, d MMM yyyy HH:mm zzz", "EEE, dd MMM yyyy HH:mm Z"
+    ].map { format in
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = format
+        return formatter
+    }
+
+    private static func parse(_ text: String) -> (date: Date, hasTime: Bool)? {
+        for (formatter, hasTime) in isoFormatters {
+            if let date = formatter.date(from: text) { return (date, hasTime) }
+        }
+        for formatter in rfc822Formatters {
+            if let date = formatter.date(from: text) { return (date, true) }
         }
         return nil
     }
