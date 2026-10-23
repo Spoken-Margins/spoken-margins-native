@@ -3231,10 +3231,7 @@ final class Gate1AppModel: ObservableObject {
                     }.value
                     if let timeline = parsed, !timeline.segments.isEmpty {
                         await MainActor.run {
-                            self.hangTelemetry.labels.scoped("sourceTranscriptAttach") {
-                                self.diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "attached:\(link.type)"
-                                self.attachSourceTranscriptTimeline(timeline, itemId: itemId)
-                            }
+                            self.finishDiscoveredSourceTranscript(timeline, itemId: itemId, linkType: link.type)
                         }
                         return
                     }
@@ -3244,14 +3241,7 @@ final class Gate1AppModel: ObservableObject {
                 }
             }
             await MainActor.run {
-                self.hangTelemetry.labels.scoped("sourceTranscriptUnavailable") {
-                    self.diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "unavailable:\(lastFailure)"
-                    self.diagnostics["sourceTranscriptionStatus"] = "unavailable"
-                    if self.activeItemId == itemId {
-                        self.sourceTranscriptStatus = "unavailable"
-                        self.snapshot.sourceTranscriptStatus = "unavailable"
-                    }
-                }
+                self.markSourceTranscriptUnavailable(itemId: itemId, lastFailure: lastFailure)
             }
         }
     }
@@ -3305,28 +3295,11 @@ final class Gate1AppModel: ObservableObject {
                     durationMs: item.media?.durationMs
                 )
                 await MainActor.run {
-                    self.hangTelemetry.labels.scoped("sourceTranscriptAttach") {
-                        self.importedPodcastPlacement.releaseFullSourceTranscription(itemId: item.id)
-                        self.attachSourceTranscriptTimeline(timeline, itemId: item.id)
-                    }
+                    self.finishFullSourceTranscription(timeline, itemId: item.id)
                 }
             } catch {
                 await MainActor.run {
-                    self.hangTelemetry.labels.scoped("sourceTranscriptionFailed") {
-                        self.importedPodcastPlacement.releaseFullSourceTranscription(itemId: item.id)
-                        self.diagnostics["sourceTranscriptionStatus"] = "unavailable"
-                        self.diagnostics["sourceTranscriptionError"] = String(describing: error)
-                        if self.activeItemId == item.id {
-                            self.sourceTranscriptStatus = "unavailable"
-                            self.snapshot.sourceTranscriptStatus = "unavailable"
-                        }
-                        if self.pendingMapGenerationItemId == item.id {
-                            self.pendingMapGenerationItemId = nil
-                        }
-                        if self.activeItemId == item.id, self.lastError == nil {
-                            self.statusMessage = "Audio ready. Source transcript and Listening Map are unavailable; notes will use timestamp context."
-                        }
-                    }
+                    self.failFullSourceTranscription(itemId: item.id, error: error)
                 }
             }
         }

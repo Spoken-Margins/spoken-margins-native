@@ -24,7 +24,7 @@ SITES = {
     'Gate1AppModel+PodcastPlacementDeferral.swift': ['resumeDeferredPlacements'],
     'Gate1AppModel+SourceLinkBackground.swift': ['sharedLinkVoiceover'],
     'Gate1AppModel+SourceLinkForm.swift': ['sourceLinkFormFinish'],
-    'Gate1AppModel.swift': ['sourceTranscriptAttach', 'sourceTranscriptUnavailable', 'sourceTranscriptionFailed'],
+    'Gate1AppModel+TranscriptionRecovery.swift': ['sourceTranscriptAttach', 'sourceTranscriptUnavailable', 'sourceTranscriptionFailed'],
     'ImportedPodcastPlacementCoordinator.swift': ['transientTranscriptResolve'],
     'LiveSessionLineUpView.swift': ['liveSessionLineUpSaved'],
     'LiveSessionView.swift': ['liveSessionSavedAsNotes'],
