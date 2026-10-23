@@ -214,36 +214,37 @@ class WhatNeverRunsOnTheAppsMainThread(unittest.TestCase):
     """#2514: the baseline holds only real main-thread work. Each case below says what the scanner leaves out and
     pairs it with a lookalike that must still be a row, so the ratchet keeps catching a new real instance."""
 
-    def test_a_closure_that_is_sendable_does_not_inherit_the_main_actor(self):
+    def test_a_closure_given_to_a_queue_the_file_made_runs_off_the_main_thread(self):
+        queue = '    let writer = DispatchQueue(label: "w")\n'
         off = {
-            'literal attribute': MODEL % '    func f() { run { @Sendable in _ = try? store?.listItems() } }',
-            'capture list first': MODEL % '    func f() { run { [store] @Sendable in _ = try? store?.listItems() } }',
-            'typed value': MODEL % '    func f() { let work: @Sendable () -> Void = { _ = try? self.store?.listItems() }; work() }',
-            'serial queue under another name': MODEL % '    let writer = DispatchQueue(label: "w")\n    func f() { writer.async { _ = try? self.store?.listItems() } }',
-            'serial queue with arguments': MODEL % '    let writer = DispatchQueue(label: "w")\n    func f() { writer.asyncAfter(deadline: .now()) { _ = try? self.store?.listItems() } }',
+            'serial queue under another name': MODEL % (queue + '    func f() { writer.async { _ = try? self.store?.listItems() } }'),
+            'serial queue with arguments': MODEL % (queue + '    func f() { writer.asyncAfter(deadline: .now()) { _ = try? self.store?.listItems() } }'),
         }
         for name, source in off.items():
             with self.subTest(name):
                 self.assertEqual(scan(Model=source), [])
         on = {
-            'sendable but main actor too': MODEL % '    func f() { run { @MainActor @Sendable in _ = try? store?.listItems() } }',
-            'a plain closure': MODEL % '    func f() { run { [store] in _ = try? store?.listItems() } }',
-            'a plain typed value': MODEL % '    func f() { let work: () -> Void = { _ = try? self.store?.listItems() }; work() }',
+            'an alias of the main queue': MODEL % '    let ui = DispatchQueue.main\n    func f() { ui.async { _ = try? self.store?.listItems() } }',
+            'an alias of the main queue, synchronously': MODEL % '    let ui = DispatchQueue.main\n    func f() { ui.sync(flags: .barrier) { _ = try? self.store?.listItems() } }',
+            'an object with an async method': MODEL % '    let scheduler = Scheduler()\n    func f() { scheduler.async { _ = try? self.store?.listItems() } }',
             'the main queue': MODEL % '    func f() { DispatchQueue.main.async { _ = try? self.store?.listItems() } }',
-            'a main-actor hop out of a sendable closure': MODEL % '    func f() { run { @Sendable in await MainActor.run { _ = try? self.store?.listItems() } } }',
         }
         for name, source in on.items():
             with self.subTest(name):
                 self.assertTrue(scan(Model=source), 'expected a row')
 
-    def test_a_closure_stored_in_a_sendable_property_runs_where_its_owner_calls_it(self):
-        seams = 'typealias CheckHandler = @Sendable (URL) throws -> Int\ntypealias PlainHandler = (URL) throws -> Int\n'
-        template = ('@MainActor\nfinal class Model {\n    var store: SQLiteSessionStore?\n    let check: %s\n'
-                    '    init(check: %s? = nil) {\n        self.check = check ?? { url in try self.store?.loadItem(id: url.path).id.count ?? 0 }\n    }\n}\n')
-        sendable = scan(Seams=seams, Model=template % ('CheckHandler', 'CheckHandler'))
-        self.assertEqual(sendable, [])
-        plain = scan(Seams=seams, Model=template % ('PlainHandler', 'PlainHandler'))
-        self.assertEqual(apis(plain), ['store.loadItem'])
+    def test_a_sendable_closure_is_not_taken_to_leave_the_main_thread(self):
+        # not actor-isolated is not off the main thread: a synchronous closure runs on whoever calls it
+        for name, source in {
+            'literal attribute': MODEL % '    func f() { run { @Sendable in _ = try? store?.listItems() } }',
+            'typed value': MODEL % '    func f() { let work: @Sendable () -> Void = { _ = try? self.store?.listItems() }; work() }',
+            'a main hop out of it': MODEL % '    func f() { DispatchQueue.main.async { @Sendable in _ = try? self.store?.listItems() } }',
+            'stored in a sendable typealias property': ('typealias CheckHandler = @Sendable (URL) throws -> Int\n@MainActor\nfinal class Model {\n'
+                '    var store: SQLiteSessionStore?\n    let check: CheckHandler\n    init(check: CheckHandler? = nil) {\n'
+                '        self.check = check ?? { url in try self.store?.loadItem(id: url.path).id.count ?? 0 }\n    }\n}\n'),
+        }.items():
+            with self.subTest(name):
+                self.assertTrue(scan(Model=source), 'expected a row')
 
     def test_a_task_row_names_only_a_task_that_starts_on_the_main_thread(self):
         detached = MODEL % ('    func f() { Task.detached { let x = 1; _ = x\n'
@@ -270,6 +271,16 @@ class WhatNeverRunsOnTheAppsMainThread(unittest.TestCase):
         # with the flag on, or not named in project.yml, both reads are rows again
         self.assertEqual(len(scan(Model=MODEL % body)), 3)
         self.assertEqual(len(scan({'someOtherFlag'}, Model=MODEL % body)), 3)
+
+    def test_a_guard_does_not_hide_a_later_switch_case_or_an_else_after_a_closure_in_its_condition(self):
+        flag = 'remoteProviderExperienceEnabled'
+        body = (f'    var {flag} = false\n    func a(_ k: Int) {{\n        switch k {{\n        case 1:\n'
+                f'            guard {flag} else {{ return }}\n            _ = try? store?.loadSessions()\n'
+                f'        default:\n            _ = try? store?.listItems()\n        }}\n    }}\n'
+                f'    func b(_ xs: [Int]) {{\n        guard {flag}, xs.contains(where: {{ $0 > 1 }}) else {{ _ = try? store?.listItems(); return }}\n'
+                f'        _ = try? store?.loadSessions()\n    }}')
+        rows = scan({flag}, Model=MODEL % body)
+        self.assertEqual(sorted((r['function'], r['api']) for r in rows), [('Model.a', 'store.listItems'), ('Model.b', 'store.listItems')])
 
     def test_an_if_on_the_flag_and_other_conditions_on_it_are_not_dead_code(self):
         flag = 'remoteProviderExperienceEnabled'
@@ -298,6 +309,18 @@ class WhatNeverRunsOnTheAppsMainThread(unittest.TestCase):
             with self.subTest(name):
                 rows = scan(Model=MODEL % reads, Screen=screen)
                 self.assertEqual([r['function'] for r in rows], ['Model.seed'])
+
+    def test_a_function_the_system_or_a_string_can_call_is_never_called_dead(self):
+        screen = 'struct Screen: View {\n var model: Model\n var body: some View {\n#if DEBUG\n  Button("Seed") { model.seed() }\n#endif\n  Text("x")\n }\n}\n'
+        cases = {
+            'objc': ('    @objc func seed() { _ = try? store?.listItems() }\n', ''),
+            'override': ('    override func seed() { _ = try? store?.listItems() }\n', ''),
+            'a selector string in live code': ('    func seed() { _ = try? store?.listItems() }\n', '    func f() { perform(Selector("seed")) }\n'),
+        }
+        for name, (reads, extra) in cases.items():
+            with self.subTest(name):
+                rows = scan(Model=MODEL % (reads + extra), Screen=screen)
+                self.assertIn('Model.seed', [r['function'] for r in rows])
 
     def test_a_function_with_two_definitions_is_never_called_dead(self):
         # the callee cannot be told apart without types, so a debug-only call of `seed` proves nothing
@@ -363,6 +386,25 @@ targets:
         }.items():
             with self.subTest(rel):
                 self.assertEqual(built(rel), expected)
+
+    def test_a_source_entry_the_reader_does_not_know_means_every_file_is_scanned(self):
+        for name, entry in {
+            'a key before the path': '      - optional: true\n        path: App/Bar\n',
+            'a name entry': '      - name: Bar\n',
+            'inline excludes': '      - path: App/Bar\n        excludes: [a.swift]\n',
+        }.items():
+            with self.subTest(name):
+                text = 'targets:\n  App:\n    type: application\n    sources:\n      - path: App/Foo\n' + entry
+                self.assertIsNone(mtr.app_process_filter(text))
+        quoted = mtr.app_process_filter('targets:\n  App:\n    type: "application"\n    sources:\n      - path: "App/Foo"\n      - \'App/Bar\'\n')
+        self.assertTrue(quoted('App/Foo/a.swift') and quoted('App/Bar/b.swift') and not quoted('App/Baz/c.swift'))
+
+    def test_the_flag_counts_only_in_the_application_target(self):
+        text = ('targets:\n  App:\n    type: application\n    settings:\n      base:\n        SMRemoteProviderExperienceEnabled: true\n'
+                '  Ext:\n    type: app-extension\n    settings:\n      base:\n        SMRemoteProviderExperienceEnabled: false\n')
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'project.yml').write_text(text)
+            self.assertEqual(mtr.project_build(Path(tmp))[1], frozenset())
 
     def test_no_application_target_means_every_file_is_scanned(self):
         self.assertIsNone(mtr.app_process_filter('targets:\n  Ext:\n    type: app-extension\n'))

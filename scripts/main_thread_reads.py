@@ -16,15 +16,14 @@ This scanner is that list (the audit's raw inventory) and the guard that keeps a
 What it leaves out (#2514), so a row is worth a person's attention: files project.yml does not compile into the app's
 own process (the Watch app, the excluded Watch bridge, the Share, Browser text and widget extensions, which have
 their own main thread), code behind `guard`/`if` on a flag project.yml sets false (`BUILD_FLAGS`), and functions
-whose every mention sits in `#if DEBUG` or in such code. `--summary` lists the files and counts the rest.
+whose every mention (strings included; `@objc` and `override` functions never) sits in `#if DEBUG` or in such code. `--summary` lists the files and counts the rest.
 
 How it decides what runs on the main thread (a heuristic over source text, no compiler; misses are listed below):
 - A scope is main when its type or function is `@MainActor`, the type conforms to View/App/Scene/UIKit classes, or it is
   an extension of such a type in any file (`Gate1AppModel+*.swift`), or its closure is `Task { @MainActor in`,
   `MainActor.run` or `DispatchQueue.main`. It is off the main thread in `Task.detached`, `nonisolated async`
-  functions, actors, `DispatchQueue.global()`, a serial queue under any name (`writer.async { }`), a `@Sendable`
-  closure (`{ @Sendable in`, `let f: @Sendable … = {`, or a closure stored in a property or parameter typed
-  `@Sendable` or by a `@Sendable` typealias) and `addTask`. A `Task { }` and every other closure keep their
+  functions, actors, `DispatchQueue.global()`, a queue the file made with `DispatchQueue(label:…)` (`writer.async { }`)
+  and `addTask`. A `Task { }` and every other closure keep their
   surroundings' isolation.
 - A sync helper (`nonisolated`, or in a plain type) runs on its caller's thread. When the main thread calls one, the
   call is a row ("via Type.helper") carrying the helper's own reads, found through up to six levels of calls.
@@ -42,6 +41,8 @@ Known blind spots (each is a heuristic, not a proof; the baseline holds the know
   declared type (`var engine: SessionEngine?` or a parameter, in the file or the enclosing type's files), else a type
   named like it (`sessionEngine` -> SessionEngine, `engine` -> …Engine), else a type containing its name. When the
   first tier that matches still names two types, the call is skipped as `ambiguous-callee` (counted in --summary).
+- A `@Sendable` closure is not taken to run off the main thread: it is not actor-isolated, but a synchronous one runs
+  on whoever calls it.
 - Not seen: code a release build never reaches because a test hook answers no (`UITestingHooks.isActive`, a handler
   only tests set), a call resolved to the wrong type, and a read that is cheap by construction. Those stay rows.
 - Cost is never judged: `loadItem(id:)` of a short note and of a 1 MB book are the same row. Ranking is step 4
@@ -115,23 +116,30 @@ def parse_project(text: str):
         elif not in_targets:
             continue
         elif indent == 2 and body.endswith(':'):
-            current, section = {'type': '', 'sources': []}, None
+            current, section = {'type': '', 'sources': [], 'unparsed': False, 'text': []}, None
             targets[body[:-1]] = current
         elif current is None:
             continue
         elif indent == 4:
             section = 'sources' if body == 'sources:' else None
             if body.startswith('type:'):
-                current['type'] = body.split(':', 1)[1].strip()
+                current['type'] = body.split(':', 1)[1].strip().strip('\'"')
         elif section == 'sources' and indent == 6 and body.startswith('- '):
             item = body[2:].strip()
-            entry, in_excludes = (item.split(':', 1)[1].strip() if item.startswith('path:') else item), False
-            entry = (entry, [])
+            if item.startswith('path:'):
+                item = item.split(':', 1)[1].strip()
+            elif re.match(r'[\w-]+\s*:', item) or item.startswith(('[', '{')):
+                current['unparsed'] = True    # a source entry in a shape this reader does not know
+            entry, in_excludes = (item.strip('\'"'), []), False
             current['sources'].append(entry)
         elif section == 'sources' and entry and indent == 8:
             in_excludes = body == 'excludes:'
+            if re.match(r'(?:excludes|includes)\s*:\s*[^\s]', body):
+                current['unparsed'] = True    # `excludes: [a, b]` inline
         elif section == 'sources' and entry and in_excludes and indent == 10 and body.startswith('- '):
-            entry[1].append(body[2:].strip())
+            entry[1].append(body[2:].strip().strip('\'"'))
+        if current is not None:
+            current['text'].append(body)
     return targets
 
 
@@ -140,8 +148,10 @@ def app_process_filter(text: str):
     (Share, Browser text, widget) run in the extension's process, so the app's main thread never waits on them; files
     no target lists (the Watch app) or a target excludes are not built at all. Only paths under App/ are judged;
     None when project.yml names no application target."""
-    roots = [(path.rstrip('/'), excludes) for t in parse_project(text).values() if t['type'] == 'application'
-             for path, excludes in t['sources']]
+    apps = [t for t in parse_project(text).values() if t['type'] == 'application']
+    if not apps or any(t['unparsed'] for t in apps):  # an entry this reader does not know: scan everything
+        return None
+    roots = [(path.rstrip('/'), excludes) for t in apps for path, excludes in t['sources']]
     if not roots:
         return None
 
@@ -163,7 +173,8 @@ def project_build(root: Path):
     if not path.is_file():
         return None, frozenset()
     text = path.read_text(errors='replace')
-    off = frozenset(prop for key, prop in BUILD_FLAGS.items() if re.search(r'^\s*' + key + r':\s*false\s*$', text, re.M))
+    app_text = '\n'.join('\n'.join(t['text']) for t in parse_project(text).values() if t['type'] == 'application')
+    off = frozenset(prop for key, prop in BUILD_FLAGS.items() if re.search(r'^\s*' + key + r':\s*false\s*$', app_text, re.M))
     return app_process_filter(text), off
 
 
@@ -265,14 +276,12 @@ ATTR_ONLY = re.compile(r'^\s*(?:(?:@\w+(?:\([^)]*\))?|public|private|internal|fi
 LOOP_CALLS = re.compile(r'\.(map|flatMap|compactMap|filter|forEach|reduce|sorted|sort|allSatisfy|first|firstIndex|'
                         r'lastIndex|contains|removeAll|min|max|mapValues|compactMapValues)\s*(\([^)]*\))?\s*$')
 CONTROL = re.compile(r'^(?:\w+:\s*)?(if|guard|for|while|switch|else|do|catch|defer|repeat)\b')
-CLOSURE_ATTRIBUTES = re.compile(r'\s*(?:\[[^\]]*\]\s*)?((?:@\w+\s+)+)')
-SERIAL_QUEUE_CALL = re.compile(r'(?<!\bmain)\.\s*(?:async|asyncAfter|sync)\s*(?:\([^{}]*\))?\s*$')
-SENDABLE_VALUE = re.compile(r':\s*@Sendable\b[^=]*=\s*$')
+QUEUE_CALL = re.compile(r'\b(\w+)\s*\.\s*(?:async|asyncAfter|sync)\s*(?:\([^{}]*\))?\s*$')
 TASK_HEADER = re.compile(r'(?<![\w.])Task(?:<[^>]*>)?\s*(?:\([^)]*\))?\s*$')
 
 
 class Scope:
-    __slots__ = ('kind', 'name', 'iso', 'start', 'end', 'async_', 'nonisolated', 'loop', 'labelled', 'ext', 'conforms', 'header', 'parent')
+    __slots__ = ('kind', 'name', 'iso', 'start', 'end', 'async_', 'nonisolated', 'loop', 'labelled', 'ext', 'conforms', 'header', 'parent', 'queue')
 
     def __init__(self, kind, name='', iso=None, start=0):
         self.kind, self.name, self.iso, self.start, self.end = kind, name, iso, start, None
@@ -281,6 +290,7 @@ class Scope:
         self.conforms = ()
         self.header = ''
         self.parent = None
+        self.queue = None
 
 
 def last_statement(segment: str) -> str:
@@ -358,17 +368,12 @@ def classify(header: str, after: str) -> Scope:
         scope.iso = 'main'
     elif re.search(r'\bDispatchQueue\b|\b\w*[qQ]ueue\w*\s*\.\s*(async|sync|asyncAfter)\b', h):
         scope.iso = 'off'
-    elif SERIAL_QUEUE_CALL.search(h):  # `writer.async { … }`: a serial queue held under any name
-        scope.iso = 'off'
-    elif SENDABLE_VALUE.search(h):     # `let discard: @Sendable (URL) async -> Void = { … }`
-        scope.iso = 'off'
-    attributes = CLOSURE_ATTRIBUTES.match(after)
-    if attributes:  # `{ @MainActor in` runs on main; a `@Sendable` closure does not inherit the surroundings' isolation
-        names = set(re.findall(r'@(\w+)', attributes.group(1)))
-        if 'MainActor' in names:
-            scope.iso = 'main'
-        elif 'Sendable' in names:
-            scope.iso = 'off'
+    else:
+        queue = QUEUE_CALL.search(h)  # `writer.async { … }`: off the main thread if `writer` is a queue the file made
+        if queue:
+            scope.queue = queue.group(1)
+    if re.match(r'\s*(?:\[[^\]]*\]\s*)?@MainActor\b', after):
+        scope.iso = 'main'
     if re.search(r'\blabels\s*\.\s*scoped\s*\(|\bhangLabel\b', h):
         scope.labelled = True
     if LOOP_CALLS.search(h):
@@ -488,9 +493,9 @@ class FileScan:
 
     @property
     def words(self):
-        """Every identifier-like word of the blanked source, as a set (a cheap test for whether a name is mentioned)."""
+        """Every word of the source, strings and comments included, as a set (a cheap test for whether a name is mentioned)."""
         if self._words is None:
-            self._words = set(re.findall(r'\w+', self.text))
+            self._words = set(re.findall(r'\w+', self.raw))
         return self._words
 
     def enclosing(self, kind, pos):
@@ -633,11 +638,15 @@ def unreachable(scans, by_rel, off_props):
         for prop in off_props & fs.words:
             name = r'(?:self\s*\.\s*)?' + prop + r'\b'
             for m in re.finditer(r'\bguard\s+' + name + r'\s*(?:,|else\b)', fs.text):
-                brace = fs.text.find('{', m.end())
-                else_block = next((x for x in fs.scopes if x.start == brace), None)
+                else_open = re.compile(r'\belse\s*\{').search(fs.text, m.start())
+                else_block = next((x for x in fs.scopes if else_open and x.start == else_open.end() - 1), None)
                 outer = fs.stack_at(m.start())
                 if else_block is not None and else_block.end is not None and outer:
-                    regions[fs.rel].append((else_block.end, outer[-1].end if outer[-1].end is not None else len(fs.text)))
+                    end = outer[-1].end if outer[-1].end is not None else len(fs.text)
+                    case = None
+                    if outer[-1].header.startswith('switch'):  # the guard sits in a case body: the next case is live
+                        case = re.compile(r'\n[ \t]*(?:case\b[^\n]*|default\s*):').search(fs.text, else_block.end, end)
+                    regions[fs.rel].append((else_block.end, case.start() if case else end))
             for m in re.finditer(r'\bif\s+' + name + r'\s*\{', fs.text):
                 block = next((x for x in fs.scopes if x.start == m.end() - 1), None)
                 if block is not None and block.end is not None:
@@ -650,6 +659,8 @@ def unreachable(scans, by_rel, off_props):
             if sc.kind == 'func' and sc.name not in ('init', 'deinit', 'subscript'):
                 count[sc.name] += 1
                 single[sc.name] = (fs, sc)
+                if re.search(r'@objc\b|\boverride\b', sc.header):  # the system calls these, with no mention to see
+                    count[sc.name] += 1
     single = {n: v for n, v in single.items() if count[n] == 1}
     word = re.compile(r'\w+')
 
@@ -657,7 +668,7 @@ def unreachable(scans, by_rel, off_props):
         return line_of(fs.starts, pos) in fs.debug or any(a <= pos < b for a, b in regions.get(fs.rel, ()))
 
     def names_in(text):
-        return {w for w in word.findall(text) if w in single}
+        return {w for w in word.findall(text) if w in single}  # raw text: a name in a string (`Selector("x")`) is a mention
 
     # Names that can be dead are the ones mentioned in dead code; a dead function's body then names more of them.
     candidates = set()
@@ -665,15 +676,15 @@ def unreachable(scans, by_rel, off_props):
         lines = fs.raw.split('\n')
         candidates |= names_in('\n'.join(lines[n - 1] for n in fs.debug if n <= len(lines)))
         for a, b in regions.get(fs.rel, ()):
-            candidates |= names_in(fs.text[a:b])
+            candidates |= names_in(fs.raw[a:b])
     dead = set()
     while True:
         uses = defaultdict(list)     # candidate name -> [(file scan, position)]
         for fs in scans:
             hit = candidates & fs.words
             if hit:
-                for m in re.finditer(r'\b(?:' + '|'.join(sorted(hit)) + r')\b', fs.text):
-                    if not re.search(r'\bfunc\s+$', fs.text[max(0, m.start() - 8):m.start()]):
+                for m in re.finditer(r'\b(?:' + '|'.join(sorted(hit)) + r')\b', fs.raw):
+                    if not re.search(r'\bfunc\s+$', fs.raw[max(0, m.start() - 8):m.start()]):
                         uses[m.group(0)].append((fs, m.start()))
 
         def in_dead_code(fs, pos, others):
@@ -688,39 +699,17 @@ def unreachable(scans, by_rel, off_props):
         dead |= new
         for n in new:
             fs, sc = single[n]
-            candidates |= names_in(fs.text[sc.start:sc.end])
+            candidates |= names_in(fs.raw[sc.start:sc.end])
     return Unreachable(regions, dead)
 
 
-ASSIGNED_CLOSURE = re.compile(r'(?:^|[\s;])(?:self\s*\.\s*)?(\w+)\s*=\s*(?:[\w.]+\s*\?\?\s*)?$')
-
-
-def mark_sendable_assignments(scans):
-    """A closure literal stored in a property or parameter whose type is `@Sendable` (directly or through a typealias,
-    `shareMarginSilenceAnalysisHandler: ShareMarginSilenceAnalysisHandler? = nil`) runs wherever its owner calls it,
-    not in the `init` that builds it, and a `@Sendable` closure is not main-actor isolated (#2514)."""
-    aliases = {m.group(1) for fs in scans for m in re.finditer(r'\btypealias\s+(\w+)\s*=\s*@Sendable\b', fs.text)}
-    if not aliases:
-        return
-    typed = re.compile(r'@Sendable\b|\b(?:' + '|'.join(sorted(aliases)) + r')\b')
-    owned = defaultdict(set)         # type name -> names declared with a @Sendable type
-    for fs in scans:
-        if '@Sendable' not in fs.text and not aliases & fs.words:
-            continue
-        for m in typed.finditer(fs.text):
-            before = re.search(r'(\w+)\s*:\s*(?:\(\s*)?$', fs.text[max(0, m.start() - 80):m.start()])
-            owner = fs.enclosing('type', m.start()) if before else None
-            if owner:
-                owned[owner.name].add(before.group(1))
+def mark_serial_queues(scans):
+    """`writer.async { … }` runs on `writer`'s queue when the file made `writer` with `DispatchQueue(label:…)`. A queue
+    that is only an alias (`let ui = DispatchQueue.main`) or a scheduler object with an `.async` method stays main."""
     for fs in scans:
         for sc in fs.scopes:
-            if sc.kind != 'block' or sc.iso is not None:
-                continue
-            m = ASSIGNED_CLOSURE.search(sc.header)
-            if m:
-                owner = fs.enclosing('type', sc.start)
-                if owner and m.group(1) in owned.get(owner.name, ()):
-                    sc.iso = 'off'
+            if sc.queue and re.search(r'\b(?:let|var)\s+' + re.escape(sc.queue) + r'\b[^=\n]*=\s*DispatchQueue\s*\(', fs.text):
+                sc.iso = 'off'
 
 
 def scan(files, apis, off_props=frozenset()):
@@ -731,7 +720,7 @@ def scan(files, apis, off_props=frozenset()):
     by_rel = {fs.rel: fs for fs in scans}
     main_types = {s.name for fs in scans for s in fs.scopes if s.kind == 'type' and s.iso == 'main' and not s.ext}
 
-    mark_sendable_assignments(scans)
+    mark_serial_queues(scans)
 
     # Every function that runs on the main thread or on its caller's thread. A nonisolated async function runs
     # elsewhere, so a call to it leaves the main thread and is not followed.
