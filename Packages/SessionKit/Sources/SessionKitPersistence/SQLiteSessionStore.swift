@@ -1296,8 +1296,8 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
                 id: item.id, title: item.title, mediaType: item.mediaType, status: item.status,
                 externalReference: item.externalReference, externalReferenceType: item.externalReferenceType,
                 media: item.media, deletedAt: item.deletedAt, author: item.author, sourceTitle: item.sourceTitle,
-                sourceURL: item.sourceURL, createdAt: item.createdAt, sourceCompletedAt: item.sourceCompletedAt,
-                hasListenableText: hasText, textCharacterCount: row.length))
+                sourceURL: item.sourceURL, createdAt: item.createdAt, publishedAt: item.publishedAt,
+                sourceCompletedAt: item.sourceCompletedAt, hasListenableText: hasText, textCharacterCount: row.length))
         }
         if needsFullRead { return try listItems(includeDeleted: includeDeleted).map(LibraryItemSummary.init) }
         return includeDeleted ? summaries : summaries.filter { $0.deletedAt == nil }

@@ -14,9 +14,7 @@ public enum ItemMetadata {
     /// than two days after `now`, or before 1970, is treated as garbage rather than shown.
     public static func publishedDateText(_ raw: String?, now: Date = Date(),
                                          locale: Locale = .current, timeZone: TimeZone = .current) -> String? {
-        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty,
-              let parsed = parse(trimmed) else { return nil }
-        guard parsed.date.timeIntervalSince1970 >= 0, parsed.date <= now.addingTimeInterval(2 * 86_400) else { return nil }
+        guard let parsed = plausiblePublished(raw, now: now) else { return nil }
         let formatter = DateFormatter()
         formatter.locale = locale
         formatter.dateStyle = .long
@@ -24,6 +22,19 @@ public enum ItemMetadata {
         // A date with no time of day names a calendar day: show that day, not the one a time zone shifts it to.
         formatter.timeZone = parsed.hasTime ? timeZone : TimeZone(secondsFromGMT: 0)
         return formatter.string(from: parsed.date)
+    }
+
+    /// The moment `Item.publishedAt` names, for ordering the Library by it. Nil for the same text
+    /// `publishedDateText` refuses, so an item with no usable date sorts as undated (#1867).
+    public static func publishedDate(_ raw: String?, now: Date = Date()) -> Date? {
+        plausiblePublished(raw, now: now)?.date
+    }
+
+    private static func plausiblePublished(_ raw: String?, now: Date) -> (date: Date, hasTime: Bool)? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty,
+              let parsed = parse(trimmed) else { return nil }
+        guard parsed.date.timeIntervalSince1970 >= 0, parsed.date <= now.addingTimeInterval(2 * 86_400) else { return nil }
+        return parsed
     }
 
     private static func parse(_ text: String) -> (date: Date, hasTime: Bool)? {
