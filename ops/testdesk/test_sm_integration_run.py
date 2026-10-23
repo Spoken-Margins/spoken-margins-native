@@ -468,6 +468,40 @@ class TickTests(unittest.TestCase):
             self.assertEqual(run.tick(ops), 'held')
         self.assertEqual(ops.posted, [])
 
+    def test_a_scratch_folder_git_no_longer_knows_is_cleared_not_reported_inconclusive(self):
+        # #2397: `git worktree remove` said "<home>/worktree is not a working tree" for a folder left by an
+        # interrupted tick, the tick stopped there, and every tip was reported INCONCLUSIVE with 0 tests run.
+        with tempfile.TemporaryDirectory() as tmp, mac_with_room():
+            ops = FakeOps(tmp, [manifest({TEST: 'passed'})], bodies=[report_comment(OLD[:7], 'PASS')])
+            leftover = ops.home / 'worktree'
+            (leftover / 'junk').mkdir(parents=True)
+            first_remove = []
+
+            def refusing(cmd, cwd=None, timeout=None, stdin=None, env=None, base=ops.fake_run):
+                if [str(c) for c in cmd[:3]] == ['git', 'worktree', 'remove'] and not first_remove:
+                    first_remove.append(cmd)
+                    ops.calls.append([str(c) for c in cmd])
+                    return run.Result(128, '', f"fatal: '{leftover}' is not a working tree")
+                return base(cmd, cwd=cwd, timeout=timeout, stdin=stdin, env=env)
+
+            ops.run = refusing
+            self.assertEqual(run.tick(ops), 'PASS')
+            self.assertEqual(len(ops.posted), 1)
+            self.assertNotIn('INCONCLUSIVE', ops.posted[0])
+        self.assertTrue(first_remove, 'the stale folder was never offered to git')
+        order = [c[:3] for c in ops.calls if c[:2] == ['git', 'worktree']]
+        self.assertIn(['git', 'worktree', 'prune'], [c[:3] for c in order])
+        self.assertLess(order.index(['git', 'worktree', 'prune']), order.index(['git', 'worktree', 'add']))
+
+    def test_a_scratch_folder_outside_the_job_home_is_never_deleted_by_hand(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = FakeOps(tmp, [])
+            elsewhere = Path(tmp) / 'precious'
+            elsewhere.mkdir()
+            ops.run = lambda cmd, **kw: run.Result(128, '', 'not a working tree') if cmd[2:3] == ['remove'] else run.Result(0, '')
+            ops.clear_scratch_worktree(elsewhere)
+            self.assertTrue(elsewhere.exists())
+
     def test_pass_posts_one_report_and_records_the_tip(self):
         with tempfile.TemporaryDirectory() as tmp, mac_with_room():
             ops = FakeOps(tmp, [manifest({TEST: 'passed'})], bodies=[report_comment(OLD[:7], 'PASS')])

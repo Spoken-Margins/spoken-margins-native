@@ -34,5 +34,27 @@ class SubstackCanaryIssueTests(unittest.TestCase):
         self.assertIsNone(canary.decide(3, False, None, 'x'))
 
 
+class RequestHeaderTests(unittest.TestCase):
+    def test_a_write_says_it_is_json_and_a_read_does_not(self):
+        from unittest import mock
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return b'[]'
+
+        with mock.patch.object(canary.urllib.request, 'urlopen', return_value=Response()) as opened:
+            canary.request('POST', '/repos/o/r/issues', 't', {'title': 'x'})
+            canary.request('GET', '/repos/o/r/issues', 't')
+        write, read = (call.args[0] for call in opened.call_args_list)
+        self.assertEqual(write.get_header('Content-type'), 'application/json')  # form-encoded gets 415 (#2265)
+        self.assertIsNone(read.get_header('Content-type'))
+
+
 if __name__ == '__main__':
     unittest.main()

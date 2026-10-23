@@ -19,6 +19,12 @@ filled swap (2026-09-29, #184), so:
 Each lock is an flock on a file in one per-user directory. The kernel releases a lock when its
 last holder exits, however it exits, so a crash never leaves one stuck. A lock can be handed to a
 child process (lane-sim-boot gives the simulator slot to the device's watcher).
+
+A watcher outlives the run that started it. When that run dies without `lane-sim-boot --done`, its watcher
+holds the simulator slot for good: on 2026-10-18 a desk device's watcher held it five hours after its run was
+gone, and a T3 waited out its hour behind it (#2174). So a waiter for a simulator slot reclaims a hold whose
+taker has exited and that is older than STALE_HOLD_SECONDS: it releases the device the way --done does, then
+stops the watcher if that did not free the lock.
 """
 import contextlib
 import datetime
@@ -27,6 +33,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import sys
 import time
 
@@ -44,6 +51,10 @@ SECOND_SLOT_COOLDOWN = 4 * 3600
 SECOND_SLOT_COOLDOWN_MAX = 24 * 3600
 SECOND_SLOT_TRIP_WINDOW = 7 * 24 * 3600
 SIMULATOR_DECISION = 'simulator-slot-decision.lock'
+SIMULATOR_RECLAIM = 'simulator-slot-reclaim.lock'
+# A simulator job outlives its taker's process by design, but not by hours: the longest desk run is about two.
+STALE_HOLD_SECONDS = 3 * 3600
+RECLAIM_SETTLE_SECONDS = 10
 PRESSURE_NAMES = {1: 'normal', 2: 'warn', 4: 'critical'}
 
 
@@ -98,6 +109,9 @@ def _read_holders(names, directory=None):
         if not isinstance(holder, dict) or not _lock_held(path):
             continue
         found.append({**holder, 'gone': not _pid_running(holder.get('pid'))})
+    if all(name in SIMULATOR_SLOTS for name in names):  # only the simulator slots outlive their taker by design
+        for holder in stale_holders(found):
+            holder['stale'] = True
     return found
 
 
@@ -118,7 +132,30 @@ def simulator_holders(directory=None):
 
 def _describe(holder):
     pid = f"pid {holder.get('pid')}" + (' (gone; a child still holds its lock)' if holder.get('gone') else '')
-    return f"{pid} in {holder.get('cwd')} ({holder.get('label')}, since {holder.get('started')})"
+    stale = ' STALE: older than the longest run, and its taker is gone' if holder.get('stale') else ''
+    return f"{pid} in {holder.get('cwd')} ({holder.get('label')}, since {holder.get('started')}){stale}"
+
+
+def stale_hold_seconds():
+    try:
+        return float(os.environ.get('SM_LANE_STALE_HOLD_SECONDS') or STALE_HOLD_SECONDS)
+    except ValueError:
+        return STALE_HOLD_SECONDS
+
+
+def _held_for(holder, now):
+    """Seconds since the holder took the lock, or None when its note has no readable start."""
+    try:
+        return now - datetime.datetime.fromisoformat(holder['started']).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def stale_holders(holders, now=None, max_age=None):
+    """The holders whose taker has exited and that have held their lock longer than max_age."""
+    now = time.time() if now is None else now
+    max_age = stale_hold_seconds() if max_age is None else max_age
+    return [h for h in holders if h.get('gone') and (_held_for(h, now) or 0) > max_age]
 
 
 def _held(name):
@@ -265,13 +302,16 @@ def enable_second_slot():
     (state_dir() / SECOND_SLOT_OFF).unlink(missing_ok=True)
 
 
-def acquire(names, what, label, out=sys.stderr, max_wait=None, allowed=None, why=None, decide=None):
+def acquire(names, what, label, out=sys.stderr, max_wait=None, allowed=None, why=None, decide=None, reclaim=None):
     """Wait for one of the named lock files and return (open handle, index, seconds waited).
 
     The lock lasts as long as the handle stays open, here or in a child that inherited it.
     allowed(), if given, returns how many of the names may be used right now; why() says why not all.
     decide, if given, is a lock file held while allowed() is checked and a slot taken, so two
     processes can't both act on the same check.
+    reclaim, if given, is called when the wait is first noted, again at each later note and before giving up:
+    it frees a stale hold (reclaim_stale_simulator_holds) and returns True when it freed one, so the next
+    poll tries the lock at once.
     """
     directory = state_dir()
     directory.mkdir(parents=True, exist_ok=True)
@@ -308,6 +348,9 @@ def acquire(names, what, label, out=sys.stderr, max_wait=None, allowed=None, why
             return handle, index, waited
         now = time.monotonic()
         timed_out = max_wait is not None and now - started >= max_wait
+        if reclaim and (timed_out or last_note is None or now - last_note >= NOTE_EVERY_SECONDS) \
+                and reclaim(directory, out):
+            continue
         if timed_out or last_note is None or now - last_note >= NOTE_EVERY_SECONDS:
             # Only when saying it: reading the holders probes each lock, which shouldn't happen every poll.
             busy = '; '.join(_describe(h) for h in _read_holders(names, directory)) or 'nothing holds them'
@@ -318,6 +361,24 @@ def acquire(names, what, label, out=sys.stderr, max_wait=None, allowed=None, why
             print(f'[lane] waiting for a {what} ({now - started:.0f}s so far): {busy}', file=out, flush=True)
             last_note = now
         time.sleep(POLL_SECONDS)
+
+
+def annotate_holder(handle, **fields):
+    """Add fields to the holder note of a lock this process holds (best effort).
+
+    lane-sim-boot adds the device and its watcher's pid once the watcher has the slot, so a waiter can reclaim
+    the slot from a watcher whose run died.
+    """
+    try:
+        handle.seek(0)
+        note = json.loads(handle.read() or '{}')
+        note.update(fields)
+        handle.seek(0)
+        handle.truncate()
+        handle.write(json.dumps(note))
+        handle.flush()
+    except (OSError, ValueError):
+        pass
 
 
 def release_handle(handle):
@@ -391,7 +452,7 @@ def _simulator_slots_usable():
 
 def _simulator_slot_args(label, out, max_wait):
     return (SIMULATOR_SLOTS, 'simulator slot', label, out, max_wait, _simulator_slots_usable,
-            lambda: second_slot_status()[1], SIMULATOR_DECISION)
+            lambda: second_slot_status()[1], SIMULATOR_DECISION, reclaim_stale_simulator_holds)
 
 
 @contextlib.contextmanager
@@ -407,3 +468,82 @@ def simulator_slot(label, out=sys.stderr, max_wait=None):
 def acquire_simulator_slot(label, out=sys.stderr, max_wait=None):
     """Take a simulator slot and return its open handle, to hand to a longer-lived child process."""
     return acquire(*_simulator_slot_args(label, out, max_wait))[0]
+
+
+def _shut_down_device(udid):
+    import lane_sim_pool
+    lane_sim_pool.shut_down(udid)
+
+
+def _release_device(udid, out):
+    """`lane-sim-boot --done <udid>`: stop the watcher, shut the device down, then erase it (a desk pool device) or delete it."""
+    import lane_sim
+    import lane_sim_pool
+    if lane_sim_pool.in_pool(udid):
+        lane_sim_pool.release(udid, out=out)
+    else:
+        lane_sim.release(udid)
+
+
+def reclaim_stale_simulator_holds(directory=None, out=sys.stderr, release=None, shut_down=None):
+    """Free simulator slots held past STALE_HOLD_SECONDS by a watcher whose taker has exited (#2174).
+
+    A hold is reclaimed only when it names its device and watcher (lane-sim-boot adds both once the watcher
+    has the slot). The device is released the way `--done` does; if the lock is still held after
+    RECLAIM_SETTLE_SECONDS, the watcher's process is stopped and the device shut down, so the slot's next
+    holder is the only simulator up. One reclaimer at a time: a second waiter reads the holders only after the
+    first has finished, so it can't release a device that a new job has since taken. A hold whose note names
+    no device, from a lane-sim-boot before this change, is only reported as STALE in the wait message.
+    Returns True when a lock was freed.
+    """
+    directory = Path(directory or state_dir())
+    release = release or _release_device
+    shut_down = shut_down or _shut_down_device
+    freed = False
+    directory.mkdir(parents=True, exist_ok=True)
+    with open(directory / SIMULATOR_RECLAIM, 'a+') as reclaiming:
+        fcntl.flock(reclaiming, fcntl.LOCK_EX)
+        for holder in _read_holders(SIMULATOR_SLOTS, directory):
+            udid, watcher = holder.get('udid'), holder.get('watcher_pid')
+            if not holder.get('stale') or not udid or not isinstance(watcher, int) or watcher <= 0:
+                continue
+            # Read again just before acting: an earlier hold's release can take minutes, and if this one ended by
+            # itself meanwhile, a new job may have taken the slot and the same pool device.
+            if not _lock_held_by(holder, directory):
+                freed = True
+                continue
+            print(f'[lane] reclaiming a stale simulator slot: {_describe(holder)}; device {udid}, watcher pid {watcher}',
+                  file=out, flush=True)
+            try:
+                release(udid, out)
+            except Exception as error:  # a device simctl can't find, a timeout: the watcher below is the point
+                print(f'[lane] releasing {udid} failed ({error!r}); shutting it down and stopping its watcher',
+                      file=out, flush=True)
+                _shut_down_quietly(shut_down, udid, out)  # now, while its watcher still holds the slot
+            deadline = time.monotonic() + RECLAIM_SETTLE_SECONDS
+            while time.monotonic() < deadline and _lock_held_by(holder, directory):
+                time.sleep(0.2)
+            if _lock_held_by(holder, directory) and _pid_running(watcher):
+                try:
+                    os.kill(watcher, signal.SIGTERM)
+                except OSError:
+                    pass
+                time.sleep(0.5)
+                _shut_down_quietly(shut_down, udid, out)  # the release did not get this far; two simulators must not be up
+            if not _lock_held_by(holder, directory):
+                freed = True
+                print(f'[lane] simulator slot freed (device {udid})', file=out, flush=True)
+    return freed
+
+
+def _shut_down_quietly(shut_down, udid, out):
+    try:
+        shut_down(udid)
+    except Exception as error:  # noqa: BLE001 - best effort
+        print(f'[lane] could not shut {udid} down ({error!r}); do it by hand', file=out, flush=True)
+
+
+def _lock_held_by(holder, directory):
+    """Whether the lock still carries this same holder's note (a slot taken since by another job is not it)."""
+    return any(h.get('started') == holder.get('started') and h.get('watcher_pid') == holder.get('watcher_pid')
+               for h in _read_holders(SIMULATOR_SLOTS, directory))

@@ -24,6 +24,9 @@ targets:
         type: syncedFolder
       - path: App/SharedSources
         type: syncedFolder
+      # The Lock Screen Mark inbox (#2481), host-tested in SessionKit; LiveSessionActivity.swift uses it in the
+      # app and the widget, which doesn't link SessionKit.
+      - path: Packages/SessionKit/Sources/SessionKit/LiveSessionMarkInbox.swift
       # Supertonic's licences and modification notice only; the model is a download from Settings › Voices (#1820).
       - path: App/SpokenMarginsApp/Resources/Supertonic
         type: folder
@@ -162,6 +165,7 @@ targets:
         type: syncedFolder
       - path: App/Gate2Shared/Sources
         type: syncedFolder
+      - path: Packages/SessionKit/Sources/SessionKit/LiveSessionMarkInbox.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.gate2widget
@@ -223,6 +227,7 @@ targets:
           - Gate2CompactCommandURL.swift
           - Gate2LiveActivityAttributes.swift
           - Gate2LiveActivityIntents.swift
+          - LiveSessionActivity.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.share

@@ -94,7 +94,7 @@ jobs:
       - name: Start the clock
         run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
@@ -117,7 +117,7 @@ jobs:
         run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
       # Restore and save are separate steps so a failed test still saves what the build fetched and compiled: the
       # combined action saves only when the job succeeds, and four failing trials in a row each built cold (#1389).
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         id: lfs-cache
         with:
           path: .git/lfs
@@ -131,14 +131,14 @@ jobs:
           auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         id: spm-cache
         with:
           path: ${{ env.SPM }}
           key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
           restore-keys: spm-
       # Rolling key: every run saves its cache, the next restores the newest. Xcode bounds the store itself.
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.CAS }}
           key: xcode-cas-27.0-${{ github.run_id }}
@@ -265,19 +265,19 @@ jobs:
       # exists is skipped; a run that never reached its builds has nothing worth saving.
       - name: Save the LFS cache
         if: always() && steps.lfs-cache.outputs.cache-hit != 'true' && steps.t2-sim.outcome != 'skipped'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .git/lfs
           key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
       - name: Save the package cache
         if: always() && steps.spm-cache.outputs.cache-hit != 'true' && steps.t2-sim.outcome != 'skipped'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.SPM }}
           key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
       - name: Save the compilation cache
         if: always() && steps.t2-sim.outcome != 'skipped'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.CAS }}
           key: xcode-cas-27.0-${{ github.run_id }}
@@ -299,7 +299,7 @@ jobs:
 
       - name: Keep the logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: hosted-app-macos-${{ github.run_id }}
           path: |

@@ -383,7 +383,7 @@ class WorkflowTests(unittest.TestCase):
         # job's last step must work without anything the checkout or the runner fetch brought.
         steps = job_steps(WORKFLOW, 'release')
         names = [step.get('name', step.get('uses', '')) for step in steps]
-        self.assertIn('actions/checkout@v4', names[0])
+        self.assertIn('actions/checkout@', names[0])
         last = steps[-1]
         self.assertIn('failure() || cancelled()', last.get('if', ''), names)
         self.assertNotIn('uses', last)
