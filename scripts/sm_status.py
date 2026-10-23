@@ -177,6 +177,9 @@ class GitHub:
     def post(self, path: str, body: dict):
         return self.request('POST', path, body)[0]
 
+    def patch(self, path: str, body: dict):
+        return self.request('PATCH', path, body)[0]
+
     def delete(self, path: str):
         return self.request('DELETE', path)[0]
 
