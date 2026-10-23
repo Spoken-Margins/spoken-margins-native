@@ -287,7 +287,8 @@ def pending_requests(comments: list[dict]) -> tuple[dict | None, bool]:
             continue
         if request['tier'] in RUNNER_TIERS:
             runner_request = (index, dict(request, url=comment.get('html_url'),
-                                          author=(comment.get('user') or {}).get('login')))
+                                          author=(comment.get('user') or {}).get('login'),
+                                          created_at=comment.get('created_at')))
         else:
             desk_request = index
     newest = runner_request[1] if runner_request and runner_request[0] > runner_answered else None
@@ -338,7 +339,7 @@ def github_hosted() -> bool:
 
 def report(request_id: str, verdict: str, head: str, base: str, tier: str, where: str, seconds: float,
            ran: str, details: list[str], crashes: str, evidence: str, not_verified: str, wanted: dict,
-           cc: str = '', base_name: str | None = None, hosted: bool = False) -> str:
+           cc: str = '', base_name: str | None = None, hosted: bool = False, event: str = '') -> str:
     base_name = base_name or trunk()
     location = ('on a GitHub-hosted Linux runner' if hosted else
                 'on a GitHub-hosted Mac; the run\'s `lane-evidence` artifact keeps it for 7 days' if github_hosted()
@@ -349,7 +350,26 @@ def report(request_id: str, verdict: str, head: str, base: str, tier: str, where
              f'not verified: {not_verified}']
     if cc:
         lines.append(cc)
-    return '\n'.join(lines) + f'\n<!-- lane-request: {json.dumps(wanted, sort_keys=True)} -->\n'
+    return '\n'.join(lines) + f'\n<!-- lane-request: {json.dumps(wanted, sort_keys=True)} -->\n' + \
+        (f'{event}\n' if event else '')
+
+
+def event_note(verdict: str, tier: str, head: str, base: str, seconds: float, evidence: Path | None,
+               requested_at: str | None = None) -> str:
+    """The report's hidden lane-event line (lane_event.py, #2378), from this job's step runs and the
+    verify-tests.py manifests under <evidence>. requested_at: when the /lane request was commented (an automerge
+    run has none). Best effort: a report never fails for want of its measurements, and says nothing then."""
+    try:
+        import lane_event
+        waited = None
+        if requested_at:
+            waited = max(0.0, (utc(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())) - utc(requested_at)).total_seconds()
+                         - seconds)
+        records = lane_event.test_records(evidence) if evidence else {}
+        return lane_event.note(lane_event.build(verdict, tier, head, base, seconds, waited, STEP_RUNS, records))
+    except Exception as error:  # noqa: BLE001
+        print(f'[lane] no lane-event line: {error!r}')
+        return ''
 
 
 # ---- Step ledger --------------------------------------------------------------------------------
@@ -1550,7 +1570,7 @@ HOST_UNREAD_SCRIPTS = frozenset({
     'scripts/verify-gate2.sh',
     # Runner test modules that aren't readers, so only a lane PR's own run (all runner tests) runs them.
     *(f'scripts/tests/{name}.py' for name in (
-        'test_host_audio', 'test_integration_precheck', 'test_lane_beside_simulator', 'test_lane_dedupe',
+        'test_host_audio', 'test_integration_precheck', 'test_lane_beside_simulator', 'test_lane_dedupe', 'test_lane_event',
         'test_lane_guard', 'test_lane_ledger', 'test_lane_next_moved', 'test_lane_next_rerun', 'test_lane_sim_pool',
         'test_lane_slots', 'test_lane_t3_first', 'test_lane_release_handoff', 'test_merge_audit', 'test_phone_build', 'test_posterboard_repair',
         'test_sessionkit_steps', 'test_test_scope', 'test_ui_test_hooks_debug_only', 'test_xcresult_attachments')),
@@ -1941,7 +1961,8 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
     base_sha = context.tested_base
     body = report(request_id, verdict, head, base_sha, 'auto', where, time.monotonic() - started, ran,
                   started_by + details, 'none', str(evidence), NOT_VERIFIED, identity('auto', head, base_sha, []),
-                  base_name=base)
+                  base_name=base,
+                  event=event_note(verdict, 'auto', head, base_sha, time.monotonic() - started, evidence))
     (evidence / 'report.md').write_text(body)
     print(body)
     github.comment(body)
@@ -3094,7 +3115,8 @@ def report_lost(github: GitHub, pr: int, run_id: str, attempt: str | None, event
                    f'`/lane {request["tier"]}` request with the same `tests:` line and add lane:queued.']
         github.comment(report(name, 'INCONCLUSIVE', event_head, 'unknown', request['tier'], 'no runner', 0,
                               'nothing', details, 'none', 'none', NOT_VERIFIED,
-                              identity(request['tier'], event_head, '', request['tests']), '', base))
+                              identity(request['tier'], event_head, '', request['tests']), '', base,
+                              event=event_note('INCONCLUSIVE', request['tier'], event_head, '', 0, None)))
         changed = True
     else:
         print('No unanswered T2/T3 request; only the labels come off.')
@@ -3380,7 +3402,9 @@ def main(argv=None) -> int:
         wanted = identity('auto', head, base_sha, request['tests'])
     body = report(request_id, verdict, head, base_sha, request['tier'], where, time.monotonic() - started,
                   ran, moved + details, crashes, str(evidence),
-                  NOT_VERIFIED, wanted, cc, args.base, hosted=args.hosted)
+                  NOT_VERIFIED, wanted, cc, args.base, hosted=args.hosted,
+                  event=event_note(verdict, request['tier'], head, base_sha, time.monotonic() - started, evidence,
+                                   request.get('created_at')))
     (evidence / 'report.md').write_text(body)
     print(body)
     t3_url = github.comment(body)  # if this fails, the job fails and the tidy step says so on the PR
