@@ -2937,18 +2937,6 @@ public final class SessionEngine {
         return snapshot
     }
 
-    /// Brings back a Margin `deleteInterjection` hid, for the Undo on the "Deleted Margin" banner (#1981). Deleting
-    /// only sets the status, so the words, the recording, the place and the order were never touched. A Margin that
-    /// isn't deleted is left as it is, so a second Undo does nothing.
-    @discardableResult
-    public func restoreInterjection(interjectionId: String, sessionId: String? = nil) throws -> SessionSnapshot {
-        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
-            if interjection.status == "deleted" { interjection.status = "active" }
-        }
-        publish(status: snapshot.status, phase: snapshot.phase)
-        return snapshot
-    }
-
     /// Stops caller-owned inline audio before closing the source, even if teardown fails.
     /// The callback must cancel playback without resuming the source (#651).
     @discardableResult

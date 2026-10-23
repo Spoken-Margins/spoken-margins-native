@@ -121,7 +121,6 @@ extension Gate1AppModel {
             // Its failed-transcription Retry would otherwise outlive it (#430).
             withdrawRetryOffer(Self.transcriptionRetryKey(interjection))
             reportSuccess("Deleted Margin.")
-            presentMarginDeleteUndo(interjection)
         }
         refreshMarginRows()
     }
