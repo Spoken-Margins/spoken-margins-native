@@ -1,5 +1,6 @@
 """#861: hosted automerge must never admit a Mac diff or bypass the merge gates."""
 from pathlib import Path
+import os
 import sys
 import tempfile
 import unittest
@@ -127,6 +128,13 @@ class HostedMainTests(unittest.TestCase):
 
 
 class HostedMergeTests(unittest.TestCase):
+    def setUp(self):
+        # The Actions runner exports the repository's LANE_HOSTED_* rollout variables; these tests mean the defaults (#2525, #2526).
+        env = {key: value for key, value in os.environ.items() if not key.startswith('LANE_HOSTED_')}
+        patcher = mock.patch.dict(os.environ, env, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def run_auto(self, paths, inherited=(), checked=None):
         github = FakeGitHub(labels=('automerge',))
         classified = scope.classify(paths)

@@ -94,6 +94,11 @@ class WorkflowTests(unittest.TestCase):
     def test_mac_checkout_keeps_lfs_and_the_hosted_one_fetches_from_the_cache(self):
         self.assertIn(f"lfs: ${{{{ runner.environment != '{HOSTED}' }}}}", steps()[0])
 
+    def test_hosted_python_tools_use_a_python_new_enough_for_the_pins(self):
+        # The image's /usr/bin/python3 is 3.9; requirements-dev.txt pins jsonschema 4.26.0, which needs 3.10 (#2545).
+        self.assertIn("python-version: '3.12'", step('Hosted Mac - Python 3.12'))
+        self.assertNotIn('/usr/bin/python3', step('Hosted Mac - Python tools'))
+
     def test_the_prs_setup_script_never_sees_the_token(self):
         self.assertIn("GH_TOKEN: ''", step('Hosted Mac - Python tools'))
 
