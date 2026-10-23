@@ -319,6 +319,12 @@ def _is_host_test(test: str) -> bool:
     return '.' in test or test.startswith('SessionKit')
 
 
+def _without_module(parts: list[str]) -> list[str]:
+    """Class/method parts of an app test name, with a leading SpokenMarginsApp... module segment dropped (a failure
+    names the module; a request may or may not)."""
+    return parts[1:] if len(parts) > 1 and parts[0].startswith('SpokenMarginsApp') else parts
+
+
 def _closes(failure: dict, later: dict, test: str | None) -> bool:
     """Whether a later PASS report on the PR ran what the failure ran. Host tests run only in an `auto` report (T2
     runs the builds, T3 the app plans); an app test only in a T3 PASS whose request names the test or its class; a
@@ -329,10 +335,9 @@ def _closes(failure: dict, later: dict, test: str | None) -> bool:
         return later['tier'] == failure['tier']
     if _is_host_test(test):
         return later['tier'] == 'auto'
-    parts = test.split('/')
-    parts = parts[1:] if parts[0].startswith('SpokenMarginsApp') else parts
-    return later['tier'] == 'T3' and any(
-        name in later['requested'] for name in (parts[0], '/'.join(parts), test))
+    parts = _without_module(test.split('/'))
+    asked = {'/'.join(_without_module(name.split('/'))) for name in later['requested']}
+    return later['tier'] == 'T3' and (parts[0] in asked or '/'.join(parts) in asked)
 
 
 def _resolve(failure: dict, lanes: list[dict], test: str | None):

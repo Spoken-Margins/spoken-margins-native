@@ -240,12 +240,31 @@ class LabelTests(unittest.TestCase):
             return [e for e in found if e['kind'] == 'test-failure'][0]['label']['class']
         self.assertEqual([failure_class(tier) for tier in ('T2', 'T3', 'auto')], ['unresolved', 'unresolved', 'flake'])
 
+    def test_a_request_may_name_the_class_with_or_without_its_module(self):
+        fail = report_body('pr82-r1', 'FAIL', tier='T3', where='iPhone',
+                           extra='SpokenMarginsAppTests/ThingTests/testIt — expected: passes. observed: failed\n',
+                           tests=['ThingTests'])
+
+        def failure_class(*asked):
+            found = self.run_labels(
+                comment(fail, pr=82, at='2026-10-20T10:00:00Z'),
+                comment(report_body('pr82-r2', 'PASS', tier='T3', tests=list(asked)), pr=82, at='2026-10-20T11:00:00Z'))
+            return [e for e in found if e['kind'] == 'test-failure'][0]['label']['class']
+        self.assertEqual([failure_class('SpokenMarginsAppTests/ThingTests'), failure_class('ThingTests'),
+                          failure_class('SpokenMarginsAppTests/ThingTests/testIt'), failure_class('OtherTests')],
+                         ['flake', 'flake', 'flake', 'unresolved'])
+
     def test_an_app_test_named_without_its_module_is_still_an_app_test(self):
         fail = report_body('pr81-r1', 'FAIL', tier='T3', where='iPhone', tests=['Gate1AppModelWorkflowTests'],
                            extra='Failed: Gate1AppModelWorkflowTests/testX\n')
         found = self.run_labels(comment(fail, pr=81, at='2026-10-20T10:00:00Z'),
                                 comment(report_body('pr81-r2', 'PASS'), pr=81, at='2026-10-20T11:00:00Z'))
         self.assertEqual([e['label']['class'] for e in found if e['kind'] == 'test-failure'], ['unresolved'])
+        found = self.run_labels(comment(fail, pr=81, at='2026-10-20T10:00:00Z'),
+                                comment(report_body('pr81-r3', 'PASS', tier='T3', tests=['SpokenMarginsAppTests/'
+                                                                                          'Gate1AppModelWorkflowTests']),
+                                        pr=81, at='2026-10-20T12:00:00Z'))
+        self.assertEqual([e['label']['class'] for e in found if e['kind'] == 'test-failure'], ['flake'])
 
     def test_one_red_trunk_counts_once_however_many_prs_ran_into_it(self):
         body = report_body('prX-r1', 'FAIL', extra='Failed: SessionKitCoreTests/AThingTests/testOne\n')
