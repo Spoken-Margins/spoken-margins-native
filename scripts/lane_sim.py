@@ -126,14 +126,18 @@ def is_available(udid: str) -> bool:
     return any(d.get('udid') == udid for group in listing.get('devices', {}).values() for d in group)
 
 
-def pick_device_type(listing: dict, preferred: str = DEVICE_TYPE) -> str:
+def pick_device_type(listing: dict, preferred: str = DEVICE_TYPE, supported: set | None = None) -> str:
     """The device type to create: `preferred` when this Xcode has it, else its newest plain iPhone.
 
     `listing` is `simctl list devicetypes --json`. A hosted Mac's image can ship a different set of phones than the
     build Macs (#2557's audit); a type the image lacks used to fail `simctl create` with "Invalid device type".
-    With no iPhone at all it fails loudly, naming what the image has.
+    `supported` limits the choice to the types the runtime accepts: the hosted xcode-27 image lists iPhone-17, but
+    its iOS 27 runtime refuses it ("Incompatible device", simctl code 403). With no usable iPhone it fails loudly,
+    naming what the image has.
     """
     found = [t.get('identifier', '') for t in listing.get('devicetypes', [])]
+    if supported is not None:
+        found = [identifier for identifier in found if identifier in supported]
     if preferred in found:
         return preferred
     plain = []
@@ -143,19 +147,31 @@ def pick_device_type(listing: dict, preferred: str = DEVICE_TYPE) -> str:
             plain.append((int(match.group(1)), identifier))
     if plain:
         return max(plain)[1]
-    raise BootError(f'No iPhone simulator device type is installed (wanted {preferred}). This Xcode has: '
-                    f'{", ".join(found) or "none"}.')
+    raise BootError(f'No iPhone simulator device type is installed for this runtime (wanted {preferred}). '
+                    f'This Xcode and runtime have: {", ".join(found) or "none"}.')
 
 
-def device_type() -> str:
-    """`pick_device_type` for this Mac; the usual iPhone when simctl can't list device types."""
+def runtime_device_types(runtime: str) -> set | None:
+    """The device types `runtime` accepts, or None when simctl does not say (then nothing is limited)."""
+    try:
+        listing = json.loads(subprocess.check_output(simctl() + ['list', 'runtimes', '--json'], text=True, timeout=60))
+        for entry in listing.get('runtimes', []):
+            if entry.get('identifier') == runtime and entry.get('supportedDeviceTypes'):
+                return {t.get('identifier') for t in entry['supportedDeviceTypes']}
+    except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def device_type(runtime: str | None = None) -> str:
+    """`pick_device_type` for this Mac and `runtime`; the usual iPhone when simctl can't list device types."""
     try:
         listing = json.loads(subprocess.check_output(simctl() + ['list', 'devicetypes', '--json'], text=True, timeout=60))
     except (OSError, ValueError, subprocess.SubprocessError):
         return DEVICE_TYPE
     if not isinstance(listing, dict) or not listing.get('devicetypes'):
         return DEVICE_TYPE
-    return pick_device_type(listing)
+    return pick_device_type(listing, supported=runtime_device_types(runtime) if runtime else None)
 
 
 def newest_runtime(major: int = IOS_MAJOR) -> str | None:
@@ -171,7 +187,7 @@ def create_temporary(name: str) -> str:
     runtime = newest_runtime()
     if not runtime:
         raise BootError(f'No iOS {IOS_MAJOR} simulator runtime is installed.')
-    return subprocess.check_output(simctl() + ['create', name, device_type(), runtime], text=True).strip()
+    return subprocess.check_output(simctl() + ['create', name, device_type(runtime), runtime], text=True).strip()
 
 
 def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
@@ -187,7 +203,7 @@ def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
     marker = directory / 't3-template.json'
     template_name = 'SM Lane T3 template'
     toolchain = subprocess.check_output(['xcodebuild', '-version'], text=True, timeout=30).strip()
-    phone = device_type()
+    phone = device_type(runtime)
     key = [runtime, phone, toolchain]
     with (directory / 't3-template.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
