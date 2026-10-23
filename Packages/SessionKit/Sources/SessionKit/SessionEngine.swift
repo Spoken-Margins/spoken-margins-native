@@ -8,6 +8,7 @@ import Foundation
 public final class SessionEngine {
     private static let textAnchorShoulderSentenceCount = 4
     private static let mediaClockBackwardToleranceMs = 2_000
+    private static let storedDurationTruncationMs = 999
     public private(set) var profile: RuntimeCapabilityProfile
     public private(set) var snapshot = SessionSnapshot()
     public private(set) var currentSession: Session?
@@ -1897,7 +1898,9 @@ public final class SessionEngine {
                 }
                 let durableDurationMs = try (publisher?.timeline ?? repository.loadTranscriptTimeline(itemId: item.id)?.timeline)?.durationMs
                     ?? playingItem.media?.durationMs
-                guard durableDurationMs.map({ mediaTimeMs <= $0 }) ?? true else {
+                // A stored length is truncated to whole seconds (#2189), so it can sit up to 999 ms under the file's
+                // real length; a Margin made in that last second is still the listener's place, not a bad anchor.
+                guard durableDurationMs.map({ mediaTimeMs <= $0 + Self.storedDurationTruncationMs }) ?? true else {
                     throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
                 }
                 // The plan is made while another item may still be current and its player
