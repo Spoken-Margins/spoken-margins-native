@@ -1065,13 +1065,19 @@ struct PlaybackScreen: View {
     }
 
     private var lowerBackgroundAudioToggle: some View {
+        // The icon swaps between a filled check and an empty circle, as the Mix toggle's does, so "on" doesn't
+        // rest on the tint alone (#1923).
         Toggle(
-            "Lower Background Audio",
             isOn: Binding(
                 get: { model.lowersBackgroundAudio },
                 set: { model.setLowersBackgroundAudio($0) }
             )
-        )
+        ) {
+            Label(
+                "Lower Background Audio",
+                systemImage: model.lowersBackgroundAudio ? "checkmark.circle.fill" : "circle"
+            )
+        }
         .font(.subheadline.weight(.semibold))
         .tint(AppColors.ochre)
         .accessibilityIdentifier("playback.lowerBackgroundAudio.toggle")
