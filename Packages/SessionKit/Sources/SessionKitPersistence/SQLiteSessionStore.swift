@@ -1188,9 +1188,18 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try save(kind: "feed_entry", id: entry.id, sessionId: nil, itemId: nil, value: entry)
     }
 
+    /// With a `subscriptionId`, SQLite keeps only that source's rows, so the others are neither copied out nor decoded
+    /// (#2506); each entry can carry the article's full body. A payload that is not valid JSON gives NULL and matches
+    /// nothing, as it did when the filter ran after a decode that would have quarantined it.
     public func loadFeedEntries(subscriptionId: String?) throws -> [FeedEntry] {
-        let entries: [FeedEntry] = try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at DESC, id;", ["feed_entry"])
-        return entries.filter { subscriptionId == nil || $0.subscriptionId == subscriptionId }
+        guard let subscriptionId else {
+            return try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at DESC, id;", ["feed_entry"])
+        }
+        return try query("""
+            SELECT kind, id, payload FROM records
+            WHERE kind = ? AND CASE WHEN json_valid(payload) THEN json_extract(payload, '$.subscriptionId') END = ?
+            ORDER BY updated_at DESC, id;
+            """, ["feed_entry", subscriptionId], caller: "loadFeedEntries(subscriptionId:)")
     }
 
     public func deleteFeedEntry(id: String) throws { try deleteRecord(kind: "feed_entry", id: id) }
@@ -1230,6 +1239,13 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     public func listItems(includeDeleted: Bool = false) throws -> [Item] {
         let items: [Item] = try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at DESC, id;", ["item"])
         return includeDeleted ? items : items.filter { $0.deletedAt == nil }
+    }
+
+    /// Whether `id` is an item in the Library that is not in the trash: the yes or no a caller wants when it would
+    /// otherwise read every item to look for one id (#2506). Reads and decodes that one row.
+    public func hasLiveItem(id: String) throws -> Bool {
+        let items: [Item] = try query("SELECT kind, id, payload FROM records WHERE kind = ? AND id = ?;", ["item", id])
+        return items.first.map { $0.deletedAt == nil } ?? false
     }
 
     /// How much of an item's text the summary read looks at to tell whether there is any besides whitespace.

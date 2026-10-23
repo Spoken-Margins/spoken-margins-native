@@ -218,6 +218,35 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(element("provider.apiKey.field").exists)
     }
 
+    /// #1938: at AX5 the Margins item heading keeps its width, with Share and Share as Markdown on a row below,
+    /// and the scope row's count sits under the scope menu.
+    func testMarginsHeadingAndScopeRowStackAtAccessibilitySizes() throws {
+        app.terminate()
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        app.launch()
+        scrollToElement("queue.start.item-pill").tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        pausePlaybackIfNeeded()
+        scrollToElement("playback.write.button").tap()
+        let editor = app.textViews["writtenMargin.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 4))
+        editor.tap()
+        editor.typeText("A thought to find again.")
+        element("writtenMargin.save.button").tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
+        scrollToElement("playback.margins.button").tap()
+        let open = element("margins.openItem.item-pill")
+        let share = element("margins.shareItem.item-pill")
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        XCTAssertTrue(share.exists)
+        let window = app.windows.firstMatch.frame
+        XCTAssertGreaterThanOrEqual(share.frame.minY, open.frame.maxY - 1, "Share still sits beside the item title")
+        XCTAssertGreaterThanOrEqual(share.frame.height, 44)
+        XCTAssertLessThanOrEqual(share.frame.maxX, window.maxX + 1)
+        XCTAssertGreaterThan(open.frame.width, window.width * 0.6, "The item title is squeezed beside the buttons")
+        captureScreen(named: "margins-heading-accessibility")
+    }
+
     /// #1935: at AX5 the banner gives its message the full width and puts Undo on its own row, 44 pt tall.
     func testFeedbackBannerPutsItsButtonsOnTheirOwnRowAtAccessibilitySizes() throws {
         app.terminate()

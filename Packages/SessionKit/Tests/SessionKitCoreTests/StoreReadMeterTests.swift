@@ -193,6 +193,56 @@ final class StoreReadMeterTests: XCTestCase {
         XCTAssertEqual(file.markdown.components(separatedBy: MarginMarkdownShare.separator).sorted(), expected.sorted())
     }
 
+    func testOneSourcesFeedEntriesReadOnlyThatSourcesRows() throws {
+        let fixture = try build(.small)
+        let meter = StoreReadMeter()
+        let store = try fixture.openStore(meter: meter)
+        let everyEntry = try store.loadFeedEntries(subscriptionId: nil)
+        meter.reset()
+
+        let one = try store.loadFeedEntries(subscriptionId: "feed-1")
+
+        XCTAssertEqual(one, everyEntry.filter { $0.subscriptionId == "feed-1" }, "same entries, same order")
+        XCTAssertFalse(one.isEmpty)
+        XCTAssertLessThan(one.count, everyEntry.count)
+        let totals = meter.totals(for: "loadFeedEntries(subscriptionId:)")
+        XCTAssertEqual(totals.rows, one.count, "the other sources' rows are not read at all (#2506)")
+        XCTAssertEqual(try store.loadFeedEntries(subscriptionId: "no-such-source"), [])
+    }
+
+    func testAnItemYesOrNoReadsOneRowNotTheLibrary() throws {
+        let fixture = try build(.small)
+        let meter = StoreReadMeter()
+        let store = try fixture.openStore(meter: meter)
+        meter.reset()
+
+        XCTAssertTrue(try store.hasLiveItem(id: fixture.articleItemId))
+        XCTAssertFalse(try store.hasLiveItem(id: "no-such-item"))
+
+        XCTAssertEqual(meter.samples.map(\.method), ["hasLiveItem(id:)", "hasLiveItem(id:)"])
+        XCTAssertEqual(meter.samples.map(\.rows), [1, 0], "one row for the item, none for the missing id (#2506)")
+        try store.moveItemToTrash(id: fixture.articleItemId)
+        XCTAssertFalse(try store.hasLiveItem(id: fixture.articleItemId), "a trashed item is not live, as listItems() said")
+    }
+
+    /// The screens that only need titles, ids and media types read summaries now. The answers must not change.
+    func testSummariesGiveTheSameAnswersAsWholeItems() throws {
+        let fixture = try build(.small)
+        let store = try fixture.openStore()
+        let items = try store.listItems()
+        let summaries = try store.listItemSummaries()
+        let sessions = try store.loadSessions()
+
+        XCTAssertEqual(OnboardingEvidenceClassifier.sourceSteps(items: items), OnboardingEvidenceClassifier.sourceSteps(items: summaries))
+        for startedOnly in [false, true] {
+            for query in [nil, "item 1", "ITEM"] as [String?] {
+                XCTAssertEqual(
+                    StoredSessionMargin.itemChoices(items: items, sessions: sessions, startedOnly: startedOnly, matching: query),
+                    StoredSessionMargin.itemChoices(items: summaries, sessions: sessions, startedOnly: startedOnly, matching: query))
+            }
+        }
+    }
+
     // MARK: Every read is priced (#2513)
 
     func testTheBackgroundTablesAreSeededAtTheScaleOfTheLibrary() throws {

@@ -57,6 +57,7 @@ struct ReadCostReport {
             ("loadFeedSubscriptions()", { _ = try store.loadFeedSubscriptions() }),
             ("loadFeedEntries(all)", { _ = try store.loadFeedEntries(subscriptionId: nil) }),
             ("loadFeedEntries(one source)", { _ = try store.loadFeedEntries(subscriptionId: "feed-1") }),
+            ("hasLiveItem(id:)", { _ = try store.hasLiveItem(id: article) }),
             ("allMarginAudioPaths()", { _ = try store.allMarginAudioPaths() }),
             ("quarantinedRecordCount()", { _ = try store.quarantinedRecordCount() })
         ] + backgroundReads(store, article: article) + screens(store, article: article)
