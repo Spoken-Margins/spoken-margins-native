@@ -13,7 +13,7 @@ WORKFLOW = (Path(__file__).resolve().parents[2] / '.github/workflows/lane-confli
 
 
 def checkout_ref():
-    match = re.search(r'uses: actions/checkout@v4\s+with:(?:\s+#[^\n]*)*\s+ref: ([^\n]+)', WORKFLOW)
+    match = re.search(r'uses: actions/checkout@\S+(?:[ \t]+#[^\n]*)?\s+with:(?:\s+#[^\n]*)*\s+ref: ([^\n]+)', WORKFLOW)
     assert match, 'checkout ref not found'
     return match.group(1).strip()
 

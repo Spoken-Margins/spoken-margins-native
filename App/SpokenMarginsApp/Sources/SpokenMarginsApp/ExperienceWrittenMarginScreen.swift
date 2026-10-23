@@ -18,24 +18,26 @@ struct ExperienceWrittenMarginScreen: View {
         NavigationStack {
             if let draft = model.writtenMarginDraft {
                 VStack(alignment: .leading, spacing: 16) {
-                    DisclosureGroup {
-                        Text(draft.itemTitle)
-                            .font(.subheadline.weight(.semibold))
-                            .fixedSize(horizontal: false, vertical: true)
-                    } label: {
-                        Label("\(draft.targetDescription) · \(draft.progressPercent)%", systemImage: "bookmark")
-                            .font(.subheadline)
-                    }
-                    .foregroundStyle(AppColors.secondaryText)
-                    .accessibilityLabel("Saved position for \(draft.itemTitle), \(draft.targetDescription), \(draft.progressPercent) percent")
-                    .accessibilityIdentifier("writtenMargin.anchor")
+                    cappedAtAccessibilitySizes {
+                        DisclosureGroup {
+                            Text(draft.itemTitle)
+                                .font(.subheadline.weight(.semibold))
+                                .fixedSize(horizontal: false, vertical: true)
+                        } label: {
+                            Label("\(draft.targetDescription) · \(draft.progressPercent)%", systemImage: "bookmark")
+                                .font(.subheadline)
+                        }
+                        .foregroundStyle(AppColors.secondaryText)
+                        .accessibilityLabel("Saved position for \(draft.itemTitle), \(draft.targetDescription), \(draft.progressPercent) percent")
+                        .accessibilityIdentifier("writtenMargin.anchor")
 
-                    if let reply = draft.reply {
-                        Label(reply.caption, systemImage: "arrowshape.turn.up.left.fill")
-                            .font(.subheadline)
-                            .foregroundStyle(AppColors.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityIdentifier("writtenMargin.replyCaption.label")
+                        if let reply = draft.reply {
+                            Label(reply.caption, systemImage: "arrowshape.turn.up.left.fill")
+                                .font(.subheadline)
+                                .foregroundStyle(AppColors.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("writtenMargin.replyCaption.label")
+                        }
                     }
 
                     TextEditor(text: text)
@@ -43,7 +45,7 @@ struct ExperienceWrittenMarginScreen: View {
                         .foregroundStyle(AppColors.text)
                         .scrollContentBackground(.hidden)
                         .focused($isEditing)
-                        .frame(minHeight: 100)
+                        .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? 140 : 100)
                         .overlay(alignment: .topLeading) {
                             if draft.text.isEmpty {
                                 Text("What do you want to remember?")
@@ -59,12 +61,14 @@ struct ExperienceWrittenMarginScreen: View {
                         .accessibilityIdentifier("writtenMargin.text")
 
                     if let error = model.lastError {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Label("Your draft is still here. Try saving again.", systemImage: "exclamationmark.triangle")
-                                .font(.subheadline)
-                            DisclosureGroup("Details") { Text(error).font(.caption) }
+                        cappedAtAccessibilitySizes {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Label("Your draft is still here. Try saving again.", systemImage: "exclamationmark.triangle")
+                                    .font(.subheadline)
+                                DisclosureGroup("Details") { Text(error).font(.caption) }
+                            }
+                            .foregroundStyle(AppColors.dangerText)
                         }
-                        .foregroundStyle(AppColors.dangerText)
                     }
                 }
                 .padding(.horizontal, 22)
@@ -100,8 +104,13 @@ struct ExperienceWrittenMarginScreen: View {
                         }
                     }
                     ToolbarItemGroup(placement: .keyboard) {
-                        Spacer()
                         Button("Done") { isEditing = false }
+                        Spacer()
+                        // Save under the thumb too, not only in the far corner (#1980). The bar Save keeps its
+                        // identifier; this one has its own so the two stay distinguishable.
+                        saveButton(draft, fillsWidth: false, identifier: "writtenMargin.save.keyboard.button")
+                            .labelStyle(.titleOnly)
+                            .fontWeight(.semibold)
                     }
                 }
                 .alert("Discard this Margin?", isPresented: $confirmsDiscard) {
@@ -118,10 +127,26 @@ struct ExperienceWrittenMarginScreen: View {
         .tint(AppColors.evergreen)
     }
 
-    /// One Save button, built twice: the bottom bar when the keyboard is down, the
-    /// navigation bar while typing. Only one is on screen at a time, so the
-    /// identifier stays unique.
-    private func saveButton(_ draft: WrittenMarginDraft, fillsWidth: Bool) -> some View {
+    /// At accessibility sizes the saved-position line, the reply caption and an error can take most of the screen, and
+    /// with the keyboard up they pushed the editor off it (#1942). They scroll inside a capped area, so the editor keeps
+    /// a usable height. At other sizes they sit in the screen as before.
+    @ViewBuilder
+    private func cappedAtAccessibilitySizes<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) { content() }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: isEditing ? 110 : 220)
+            .fixedSize(horizontal: false, vertical: true)
+        } else {
+            content()
+        }
+    }
+
+    /// One Save button, built three ways: the bottom bar when the keyboard is down, and the
+    /// navigation bar and the keyboard bar while typing. The identifier tells them apart.
+    private func saveButton(_ draft: WrittenMarginDraft, fillsWidth: Bool, identifier: String = "writtenMargin.save.button") -> some View {
         Button {
             model.saveWrittenMargin(text: draft.text)
         } label: {
@@ -129,7 +154,7 @@ struct ExperienceWrittenMarginScreen: View {
                 .frame(maxWidth: fillsWidth ? CGFloat.infinity : nil)
         }
         .disabled(draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        .accessibilityIdentifier("writtenMargin.save.button")
+        .accessibilityIdentifier(identifier)
     }
 
     private func requestCancel() {
