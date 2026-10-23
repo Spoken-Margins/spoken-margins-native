@@ -67,7 +67,7 @@ The native app reads the payload and imports it without replacing an active sess
 
 - `importBrowserText` creates a normal `item.v1` record with `mediaType: text` and preserves the source URL or file reference.
 - Selected text remains plain text. Readable pages and Markdown files preserve Markdown headings, which are normalized through `ObsidianMarkdownParser` and can produce a deterministic Listening Map immediately.
-- Both the Safari Web Extension and Safari share preprocessor use the pinned local Defuddle 0.19.4 bundle with `useAsync: false`. Extraction cannot send the page to a third-party fallback.
+- Both the Safari Web Extension and Safari share preprocessor use the pinned local Defuddle 0.19.5 bundle with `useAsync: false`. Extraction cannot send the page to a third-party fallback.
 - The Safari popup reads the result directly from `scripting.executeScript`; it does not depend on a second `tabs.sendMessage` round trip after injection.
 - If Defuddle cannot produce readable Markdown, the extension falls back locally to semantic content from `article`, then `main`, then `body`, while preserving headings and paragraphs where possible.
 - Both bundled and native emergency semantic fallbacks consume each DOM block's text once: descendants already included in a quotation or list container are not emitted again. Identical sibling prose is retained, since it may be intentional repetition.
