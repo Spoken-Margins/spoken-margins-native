@@ -1,6 +1,7 @@
 {
   "name": "spoken-margins-browser-extraction",
   "private": true,
+  "engines": {"node": ">=24"},
   "scripts": {
     "build:browser-extraction": "node Tools/BrowserExtraction/build.mjs",
     "test:browser-extraction": "node --test Tools/BrowserExtraction/browserExtraction.test.mjs Tools/BrowserExtraction/licenseNotices.test.mjs App/SpokenMarginsBrowserTextExtension/Tests/browserTextCapture.test.mjs",
