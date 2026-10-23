@@ -83,11 +83,15 @@ extension Gate1AppModel {
             // Installing the Supertonic client establishes the current render
             // signature. Re-project rows so startup readiness never reuses a
             // manifest from an obsolete voice or model identity.
-            rows = try loadLibraryRows(store: store)
+            // The Recently Deleted rows come from this same read: the snapshot already holds deleted items, so a
+            // second `listDeletedItemSummaries` pass would read the whole item table again (#2508).
+            let launchData = try LibraryReadSnapshot.read(store: store)
+            rows = LibraryRowBuilder.rows(from: launchData, context: startupAudioContext)
+            let deletedRows = Self.recentlyDeletedRows(from: launchData)
             try reconcileOnboardingEvidence(store: store)
             try recoverInterruptedAIJobs(store: store, rows: rows); settleOrphanedTranscriptions(store: store)
             libraryItems = rows
-            recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
+            recentlyDeletedItems = deletedRows
             let availableItemIDs = Set(rows.map(\.id))
             var writtenMarginNotice: String?
             if let restoredSession = try store.loadSessions().first(where: {
