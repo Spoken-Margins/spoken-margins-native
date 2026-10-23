@@ -35,7 +35,7 @@ stranger's look-alike audit or alert marker can't start or stop an alert.
 Any doubt (an API error, a head that moved during the run) posts nothing for that PR; the next run tries again.
 
 Where it runs. The alert must come from the bot, so it is posted only inside GitHub Actions:
-  * at the end of linux-t1.yml and shipped-build-compat.yml (their `owner-tap-alert` job, `--pr N`), so it is
+  * at the end of hosted-portable.yml and shipped-build-compat.yml (their `owner-tap-alert` job, `--pr N`), so it is
     decided when a PR's checks finish. A workflow_dispatch can't start it: GitHub reads a workflow's dispatch
     trigger from main, which doesn't carry this one until #1492 (hosted-app-macos.yml records the same limit);
   * in owner-tap-alert.yml when the PR gets the `owner-tap-check` label (`--pr N --clear-label owner-tap-check`).
@@ -339,14 +339,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument('--via-label', metavar='LABEL', help='for a ready PR, re-add this label instead of commenting')
     ap.add_argument('--clear-label', metavar='LABEL', help='with --pr: remove this label after the check')
     args = ap.parse_args(argv)
-    if args.base is None:  # #1492: the trunk (scripts/trunk.py)
-        from trunk import trunk_branch
-        args.base = trunk_branch()
     args.mention = args.mention or OWNER_LOGIN
     if not args.repo or not re.fullmatch(r'[A-Za-z0-9_.-]+', args.mention):
         ap.error('need --repo (or GH_REPO) and a plain --mention login')
     if args.clear_label and not args.pr:
         ap.error('--clear-label needs --pr')
+    if args.base is None and not args.pr:  # #1492: the trunk (scripts/trunk.py). A single PR needs no trunk (#2270).
+        from trunk import trunk_branch
+        args.base = trunk_branch()
     api = GitHubApi(args.repo)
     if args.pr:
         numbers = [args.pr]
@@ -372,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f'#{number}: closed, `{TAP_LABEL}` removed')
         except (subprocess.SubprocessError, ValueError, KeyError) as exc:
             print(f'could not clear `{TAP_LABEL}` from closed PRs: {(getattr(exc, "stderr", "") or str(exc)).strip()[:160]}')
-    print(f'{len(numbers)} open PRs into {args.base} checked, {failures} skipped on errors')
+    print(f'{len(numbers)} open PRs{f" into {args.base}" if args.base else ""} checked, {failures} skipped on errors')
     return 0
 
 

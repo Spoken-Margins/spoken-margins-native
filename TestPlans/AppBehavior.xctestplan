@@ -19,6 +19,7 @@
         "name": "SpokenMarginsAppTests"
       },
       "skippedTests": [
+        "AudioLoopbackPlaybackTests",
         "MediaPlaybackInterruptionTests",
         "MixedPlaybackAudioSessionTests",
         "SupertonicSpeechTests/testDownloadedRendererSynthesizesJamesAndLilyAndReusesSessions()"

@@ -18,6 +18,8 @@ import sys
 
 SOURCE = Path(__file__).resolve().parent / 'lane_guard.py'
 TARGET = Path.home() / '.claude/hooks/spoken-margins-lane-guard.py'
+TOOLCHAIN_SOURCE = SOURCE.parent / 'toolchain_guard.py'
+TOOLCHAIN_TARGET = Path.home() / '.claude/hooks/spoken-margins-toolchain-guard.py'
 PYTHON = '/usr/bin/python3'
 
 
@@ -33,20 +35,28 @@ def settings_entry():
                        'command': f'{PYTHON} {TARGET} --repo {main_checkout()}'}]}
 
 
+def toolchain_entry():
+    return {'matcher': 'Bash|Monitor|mcp__terminal__.*',
+            'hooks': [{'type': 'command', 'timeout': 10, 'command': f'{PYTHON} {TOOLCHAIN_TARGET}'}]}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--check', action='store_true')
     args = parser.parse_args()
-    current = TARGET.exists() and filecmp.cmp(SOURCE, TARGET, shallow=False)
+    pairs = [(SOURCE, TARGET), (TOOLCHAIN_SOURCE, TOOLCHAIN_TARGET)]
+    matches = [target.exists() and filecmp.cmp(source, target, shallow=False) for source, target in pairs]
     if args.check:
-        print(f'{TARGET}: ' + ('matches ' + str(SOURCE) if current else 'missing or different from ' + str(SOURCE)))
-        return 0 if current else 1
-    subprocess.run([PYTHON, '-m', 'py_compile', str(SOURCE)], check=True)
-    TARGET.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(SOURCE, TARGET)
-    print(f'Installed {TARGET}' + (' (unchanged)' if current else ''))
-    print('PreToolUse entry for ~/.claude/settings.json (hooks.PreToolUse):')
-    print(json.dumps(settings_entry(), indent=2))
+        for (source, target), ok in zip(pairs, matches):
+            print(f'{target}: ' + ('matches ' + str(source) if ok else 'missing or different from ' + str(source)))
+        return 0 if all(matches) else 1
+    for (source, target), ok in zip(pairs, matches):
+        subprocess.run([PYTHON, '-m', 'py_compile', str(source)], check=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        print(f'Installed {target}' + (' (unchanged)' if ok else ''))
+    print('PreToolUse entries for ~/.claude/settings.json (hooks.PreToolUse):')
+    print(json.dumps([settings_entry(), toolchain_entry()], indent=2))
     return 0
 
 
