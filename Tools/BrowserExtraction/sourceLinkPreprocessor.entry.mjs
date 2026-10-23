@@ -124,7 +124,7 @@ globalThis.SourceLinkPreprocessor.prototype = {
         markdown,
         contentFormat: "markdown",
         extractor: "defuddle",
-        extractorVersion: "0.19.1",
+        extractorVersion: "0.19.4",
         networkFallback: false
       });
     } catch (error) {
