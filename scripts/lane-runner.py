@@ -2645,7 +2645,8 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
     with (evidence / 'simulator-clone.log').open('w') as log:
         udid = lane_sim.clone_temporary(RUNNER_SIMULATOR_PREFIX + request_id, runtime, out=log)
     clone_seconds = time.monotonic() - clone_started
-    where = f'cloned iPhone 17, {runtime.rsplit(".", 1)[-1].replace("iOS-", "iOS ").replace("-", ".")}'
+    phone = lane_sim.device_type(runtime).rsplit('.', 1)[-1].replace('-', ' ')  # the phone clone_temporary chose (#2557)
+    where = f'cloned {phone}, {runtime.rsplit(".", 1)[-1].replace("iOS-", "iOS ").replace("-", ".")}'
     python = ROOT / '.venv/bin/python'
 
     def run_plan(plan, selectors, output, log_name=None):
