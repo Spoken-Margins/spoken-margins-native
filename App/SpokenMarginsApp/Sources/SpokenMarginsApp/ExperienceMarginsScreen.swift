@@ -222,6 +222,17 @@ struct ExperienceMarginsScreen: View {
                                 Image(systemName: row.interjection.isStarredForSharing == true ? "star.fill" : (row.needsAttention ? "exclamationmark.bubble.fill" : (row.isWritten ? "square.and.pencil" : "quote.bubble")))
                                     .foregroundStyle(row.needsAttention ? AppColors.coral : AppColors.evergreen)
                                     .frame(width: 28, height: 32)
+                                    .overlay(alignment: .bottomTrailing) {
+                                        // A starred Margin that needs attention shows the star, so the warning is
+                                        // a second shape and not only coral against evergreen (#1925).
+                                        if row.needsAttention && row.interjection.isStarredForSharing == true {
+                                            Image(systemName: "exclamationmark.circle.fill")
+                                                .font(.caption2.weight(.bold))
+                                                .foregroundStyle(AppColors.coral)
+                                                .background(Circle().fill(AppColors.panel))
+                                                .accessibilityHidden(true)
+                                        }
+                                    }
                                 VStack(alignment: .leading, spacing: 5) {
                                     // Where it was made comes first, then the opening words. A bold one-line gist
                                     // missed the point on 15 of 40 of the owner's real Margins, so none is shown (#777).
