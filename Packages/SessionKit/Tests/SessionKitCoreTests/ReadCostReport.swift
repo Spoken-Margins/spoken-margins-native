@@ -60,6 +60,8 @@ struct ReadCostReport {
             ("hasLiveItem(id:)", { _ = try store.hasLiveItem(id: article) }),
             ("hasActiveInterjection()", { _ = try store.hasActiveInterjection() }),
             ("loadItemSummary(id:)", { _ = try store.loadItemSummary(id: article) }),
+            ("listDeletedItemSummaries()", { _ = try store.listDeletedItemSummaries() }),
+            ("activeInterjectionCountsBySession()", { _ = try store.activeInterjectionCountsBySession() }),
             ("allMarginAudioPaths()", { _ = try store.allMarginAudioPaths() }),
             ("quarantinedRecordCount()", { _ = try store.quarantinedRecordCount() })
         ] + backgroundReads(store, article: article) + screens(store, article: article)

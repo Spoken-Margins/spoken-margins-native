@@ -289,6 +289,56 @@ final class StoreReadMeterTests: XCTestCase {
         XCTAssertTrue(try store.hasActiveInterjection())
     }
 
+    func testBatchExportCountsActiveMarginsInTheDatabaseInsteadOfDecodingThem() throws {
+        let fixture = try build(.small)
+        let meter = StoreReadMeter()
+        let store = try fixture.openStore(meter: meter)
+        meter.reset()
+
+        let counts = try store.activeInterjectionCountsBySession()
+        let asked = meter.totals(for: "activeInterjectionCountsBySession()")
+        meter.reset()
+        var oldCounts: [String: Int] = [:]
+        for session in try store.loadSessions() {
+            let active = try store.loadInterjections(sessionId: session.id).filter { $0.status == "active" }.count
+            if active > 0 { oldCounts[session.id] = active }
+        }
+        let oldBytes = meter.totals().values.reduce(0) { $0 + $1.bytes }
+
+        XCTAssertFalse(counts.isEmpty)
+        XCTAssertEqual(counts, oldCounts, "the same counts the per-session read gave (#2506)")
+        XCTAssertEqual(asked.bytes, 0, "no Margin payload is copied to count it")
+        XCTAssertGreaterThan(oldBytes, 0, "the old count decoded every Margin of every session")
+
+        var margin = try XCTUnwrap(try store.loadInterjections(sessionId: "session-0").first { $0.status == "active" })
+        margin.status = "deleted"
+        try store.saveInterjection(margin)
+        XCTAssertEqual(try store.activeInterjectionCountsBySession()["session-0"] ?? 0, (counts["session-0"] ?? 1) - 1,
+                       "a deleted Margin leaves the count")
+    }
+
+    func testRecentlyDeletedReadsSummariesInTheOrderOfTheWholeItems() throws {
+        let fixture = try build(.small)
+        let meter = StoreReadMeter()
+        let store = try fixture.openStore(meter: meter)
+        let early = Date(timeIntervalSince1970: 1_700_000_000)
+        try store.moveItemToTrash(id: fixture.articleItemId, at: early)
+        try store.moveItemToTrash(id: LibraryFixture.mappedItemId, at: early.addingTimeInterval(60))
+        meter.reset()
+
+        let summaries = try store.listDeletedItemSummaries()
+        let summaryRead = meter.totals(for: "listDeletedItemSummaries()")
+        meter.reset()
+        let whole = try store.listDeletedItems()
+        let wholeRead = meter.totals(for: "listItems(includeDeleted:)")
+
+        XCTAssertEqual(summaries.map(\.id), whole.map(\.id), "same members, newest deletion first")
+        XCTAssertEqual(summaries.first?.id, LibraryFixture.mappedItemId)
+        XCTAssertEqual(summaries, whole.map(LibraryItemSummary.init))
+        XCTAssertGreaterThan(wholeRead.bytes, 0)
+        XCTAssertLessThan(summaryRead.bytes, wholeRead.bytes / 4, "Recently Deleted no longer copies the trashed articles' text (#2506)")
+    }
+
     /// The screens that only need titles, ids and media types read summaries now. The answers must not change.
     func testSummariesGiveTheSameAnswersAsWholeItems() throws {
         let fixture = try build(.small)
