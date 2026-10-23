@@ -319,26 +319,35 @@ def _is_host_test(test: str) -> bool:
     return '.' in test or test.startswith('SessionKit')
 
 
-def _without_module(parts: list[str]) -> list[str]:
-    """Class/method parts of an app test name, with a leading SpokenMarginsApp... module segment dropped (a failure
-    names the module; a request may or may not)."""
-    return parts[1:] if len(parts) > 1 and parts[0].startswith('SpokenMarginsApp') else parts
+def _split_module(name: str):
+    """(module or None, [Class, method...]) of an app test or request name. A failure names its SpokenMarginsApp...
+    module; a request may or may not."""
+    parts = name.split('/')
+    return (parts[0], parts[1:]) if parts[0].startswith('SpokenMarginsApp') else (None, parts)
+
+
+def _covers(request: str, test: str) -> bool:
+    """Whether a T3 request names the failing app test: its module (when both give one), a class of it or the test."""
+    asked_module, asked = _split_module(request)
+    module, found = _split_module(test)
+    if asked_module and module and asked_module != module:
+        return False
+    if not asked and not asked_module:
+        return False
+    return found[:len(asked)] == asked
 
 
 def _closes(failure: dict, later: dict, test: str | None) -> bool:
     """Whether a later PASS report on the PR ran what the failure ran. Host tests run only in an `auto` report (T2
-    runs the builds, T3 the app plans); an app test only in a T3 PASS whose request names the test or its class; a
-    report-level failure is closed by a PASS of its own tier."""
+    runs the builds, T3 the app plans); an app test only in a T3 PASS whose request covers it; a report-level
+    failure is closed by a PASS of its own tier."""
     if later['verdict'] != 'PASS' or later['pr'] != failure['pr'] or later['at'] < failure['at']:
         return False
     if test is None:
         return later['tier'] == failure['tier']
     if _is_host_test(test):
         return later['tier'] == 'auto'
-    parts = _without_module(test.split('/'))
-    asked = {'/'.join(_without_module(name.split('/'))) for name in later['requested']}
-    whole_module = any(name.startswith('SpokenMarginsApp') and '/' not in name for name in later['requested'])
-    return later['tier'] == 'T3' and (whole_module or parts[0] in asked or '/'.join(parts) in asked)
+    return later['tier'] == 'T3' and any(_covers(request, test) for request in later['requested'])
 
 
 def _resolve(failure: dict, lanes: list[dict], test: str | None):
