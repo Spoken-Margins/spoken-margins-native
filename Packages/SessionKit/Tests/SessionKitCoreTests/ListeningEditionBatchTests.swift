@@ -127,3 +127,46 @@ final class ListeningEditionBatchTests: XCTestCase {
         XCTAssertEqual(ListeningEditionBatch.buttonTitle(count: 12), "Import 12 editions")
     }
 }
+
+/// #2373: the Add sheet's Files route has no results list, so a set of result lines becomes one message.
+final class ListeningEditionBatchSummaryTests: XCTestCase {
+    private func line(_ id: Int, _ outcome: ListeningEditionBatch.Outcome, name: String = "file.json", title: String? = nil) -> ListeningEditionBatch.Line {
+        .init(id: id, name: name, title: title, outcome: outcome)
+    }
+
+    func testOneImportedEditionSaysWhatWasImported() {
+        let summary = ListeningEditionBatch.summary(of: [line(0, .imported, title: "Fresh")])
+        XCTAssertEqual(summary, .init(message: "Imported Fresh.", isFailure: false))
+    }
+
+    func testSeveralImportedAndAlreadyThereAreCountedAndNotAFailure() {
+        let summary = ListeningEditionBatch.summary(of: [line(0, .imported), line(1, .imported), line(2, .alreadyImported)])
+        XCTAssertEqual(summary, .init(message: "Imported 2 editions. 1 already in your Library.", isFailure: false))
+    }
+
+    func testANonEditionJSONFileIsAClearFailureNamingTheFile() throws {
+        let entry = ListeningEditionBatch.Entry(id: 0, name: "notes.json", data: Data(#"{"hello": "world"}"#.utf8))
+        let lines = ListeningEditionBatch.run([entry], existing: { _ in .none }, importOne: { _ in XCTFail("must not import") })
+        let summary = ListeningEditionBatch.summary(of: lines)
+        XCTAssertTrue(summary.isFailure)
+        XCTAssertTrue(summary.message.hasPrefix("notes.json: "), summary.message)
+    }
+
+    func testAMixedBatchSaysHowManyWentInAndNamesTheRest() {
+        let summary = ListeningEditionBatch.summary(of: [
+            line(0, .imported, title: "Fresh"),
+            line(1, .failed("not an edition"), name: "broken.json"),
+            line(2, .keptExistingMap, title: "Kept"),
+        ])
+        XCTAssertTrue(summary.isFailure)
+        XCTAssertTrue(summary.message.hasPrefix("Imported 1 of 3 files. "), summary.message)
+        XCTAssertTrue(summary.message.contains("broken.json: not an edition"), summary.message)
+        XCTAssertTrue(summary.message.contains("Kept: this source already has a different map"), summary.message)
+    }
+
+    func testSeveralFilesThatAllFailSaySoFirst() {
+        let summary = ListeningEditionBatch.summary(of: [line(0, .failed("bad"), name: "a.json"), line(1, .failed("worse"), name: "b.json")])
+        XCTAssertTrue(summary.isFailure)
+        XCTAssertTrue(summary.message.hasPrefix("None of the 2 files could be imported as a Listening Edition."), summary.message)
+    }
+}

@@ -124,6 +124,9 @@ enum SupertonicResourcePolicy {
 final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unchecked Sendable {
     typealias FallbackHandler = @Sendable (_ reason: String, _ charOffset: Int, _ targetId: String) -> Void
     typealias RestoreHandler = @Sendable (_ targetId: String) -> Void
+    /// A stand-in voice let go of an item (#1786): `reason`, `item` and `from` (the voice that held it), so an export
+    /// shows every voice change, the ones back to the chosen voice too.
+    typealias VoiceRestoredHandler = @Sendable (_ fields: [String: String]) -> Void
     /// The bundled voice took a passage: `block` is the resource that refused Supertonic when Kitten took the
     /// generation (nil when it had cleared by then), not what the phone reports when the passage plays (#849 audit).
     typealias BundledVoiceHandler = @Sendable (_ block: SpeechFallbackReason?, _ charOffset: Int, _ targetId: String) -> Void
@@ -252,6 +255,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let maxCharacters: Int
     private let startupBufferChunkCount: Int
     private let renderWaitLimit: Duration
+    /// How long a background seam handed to the bundled voice waits in silence for its render (#1786 audit).
+    private let backgroundGapWaitLimit: Duration
     private var playbackRate: Float
     private var mixesWithOtherAudio = false
     private var lowersBackgroundAudio = false
@@ -334,6 +339,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// for a long enough run; the run ends at its first chunk without saved audio, where the bundled voice takes the
     /// generation back.
     private var savedRunGeneration: UUID?
+    /// Which stand-in voice holds which item (#1786). Kept across plays, stops and generations of the item, so a
+    /// resume, an interruption's end, the phone cooling or the app coming to the front never changes the voice; only
+    /// `NarrationVoiceHold`'s releases do. Guarded by `lock`.
+    private var voiceHold = NarrationVoiceHold()
     /// The playhead chunk as the article plan has it, keyed by its start, when a fallback play split it for a quick
     /// start (#849 audit): saved Supertonic audio for the whole chunk still plays when there is some.
     private var fastStartOriginals: [Int: RenderRequest] = [:]
@@ -351,6 +360,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// which starts that queue then (#540 audit).
     private var heldRenderQueueGeneration: UUID?
     private let onRestore: RestoreHandler?
+    private let onVoiceRestored: VoiceRestoredHandler?
     /// Told when the bundled Kitten voice starts playing in place of Supertonic (#849 audit, I14), with the resource
     /// that refused Supertonic when Kitten took over, so the listener sees why and diagnostics log it. Never after a
     /// play released the voice. `onRestore` clears it.
@@ -486,6 +496,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onPreparedAudio: PreparedAudioHandler? = nil,
         onFallback: FallbackHandler? = nil,
         onRestore: RestoreHandler? = nil,
+        onVoiceRestored: VoiceRestoredHandler? = nil,
         onBundledVoice: BundledVoiceHandler? = nil,
         onStall: StallHandler? = nil,
         onSystemPause: SystemPauseHandler? = nil,
@@ -494,6 +505,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         stallRecoveryCooldown: Duration = .seconds(30),
         onResumeDecision: ResumeDecisionHandler? = nil,
         renderWaitLimit: Duration = .seconds(15),
+        backgroundGapWaitLimit: Duration = .seconds(5),
         onRenderPace: RenderPaceHandler? = nil,
         handOverHold: HandOverBackgroundHold? = nil,
         interruptionHold: InterruptionBackgroundHold? = nil,
@@ -545,6 +557,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.onPreparedAudio = onPreparedAudio
         self.onFallback = onFallback
         self.onRestore = onRestore
+        self.onVoiceRestored = onVoiceRestored
         self.onBundledVoice = onBundledVoice
         self.onStall = onStall
         self.onSystemPause = onSystemPause
@@ -554,6 +567,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.articleText = articleText
         self.onResumeDecision = onResumeDecision
         self.renderWaitLimit = renderWaitLimit
+        self.backgroundGapWaitLimit = backgroundGapWaitLimit
         self.onRenderPace = onRenderPace
         self.handOverHold = handOverHold
         self.interruptionHold = interruptionHold
@@ -628,11 +642,19 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         // last one; the seams that follow reuse this activation.
         forgetActivatedSession()
         try activateAudioSession(forPlayback: false)
+        // Only another item, or this one having played to its end, lets a stand-in go at a play (#1786).
+        let systemVoiceFinished = lock.withLock { voiceHold.voice(for: targetId) == .system }
+            && fallback.isPlaybackComplete(targetId: targetId)
+        updateVoiceHold { hold in
+            systemVoiceFinished ? hold.itemEnded(targetId) : hold.play(item: targetId)
+        }
         restoreOnDeviceRenderingIfConditionCleared(targetId: targetId)
         let usesStoppedGeneration = lock.withLock {
             shouldResumeAfterInterruption = false
+            // The iOS voice holding the item keeps it after a stop cleared the reasons below, too.
             return generationDisabledReasons[targetId] != nil
                 || (fallbackIsActive && currentTargetId == targetId)
+                || voiceHold.voice(for: targetId) == .system
         }
         if usesStoppedGeneration {
             try playFallbackVoice(targetId: targetId, from: charOffset)
@@ -690,8 +712,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         enqueueRender(request, shouldPlayWhenReady: false)
     }
 
-    /// I14 for the bundled voice: once Supertonic is allowed again, a play (resume, seek, next item) releases the
-    /// generation from Kitten and lets go of the chunks after the one holding the playhead that are rendered and
+    /// I14 for the bundled voice: once Supertonic is allowed again, a play of another item, or of this one after it
+    /// ended, releases the generation from Kitten (#1786: a resume or seek inside the item no longer does) and lets go of the chunks after the one holding the playhead that are rendered and
     /// waiting, from the first Kitten one on, so they render again with Supertonic. The whole waiting run goes, not
     /// only its Kitten chunks: the render chain stops at the first chunk still waiting, so a Kitten chunk past it
     /// would never be rendered again (#849 audit). The chunk holding the playhead is finished first, so the voice
@@ -699,6 +721,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private func replaceBundledVoiceChunks(after spokenOffset: Int, targetId: String) {
         guard pressureRenderer != nil, onDeviceRenderingAllowed() else { return }
         let work = lock.withLock { () -> (urls: [URL], restart: RenderRequest?, told: Bool) in
+            // The bundled voice holding this item keeps it through the play, cooled phone or not (#1786).
+            if voiceHold.holds(targetId) { return ([], nil, false) }
             let told = bundledVoiceNoticeGeneration != nil
             bundledVoiceGeneration = nil
             bundledVoiceNoticeGeneration = nil
@@ -734,15 +758,33 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         lock.withLock { bundledVoiceGeneration == generation }
     }
 
-    /// Kitten renders the rest of `generation` from here on, until a play releases it (#849 audit).
-    private func holdBundledVoice(for generation: UUID) {
+    /// Kitten renders the rest of `request`'s generation from here on, and holds its item until `voiceHold` lets go
+    /// (#849 audit, #1786).
+    private func holdBundledVoice(for request: RenderRequest) {
         let block = OnDeviceVoiceGovernor.app.supertonicRenderingBlock()
         lock.withLock {
-            guard self.generation == generation else { return }
-            if bundledVoiceGeneration != generation { bundledVoiceBlock = block }
-            bundledVoiceGeneration = generation
+            guard self.generation == request.generation else { return }
+            if bundledVoiceGeneration != request.generation { bundledVoiceBlock = block }
+            bundledVoiceGeneration = request.generation
             savedRunGeneration = nil
+            voiceHold.standInTookOver(.bundled, item: request.targetId)
         }
+    }
+
+    /// Applies one change to `voiceHold` and, when it let a stand-in go, says so in diagnostics (`voice.restored`).
+    @discardableResult
+    private func updateVoiceHold(
+        _ change: (inout NarrationVoiceHold) -> NarrationVoiceHold.Release?
+    ) -> NarrationVoiceHold.Release? {
+        let released = lock.withLock { () -> [String: String]? in
+            let item = voiceHold.item
+            let from = voiceHold.holder
+            guard let reason = change(&voiceHold), let item else { return nil }
+            return ["reason": reason.rawValue, "item": item, "from": from.rawValue]
+        }
+        guard let released else { return nil }
+        onVoiceRestored?(released)
+        return released["reason"].flatMap(NarrationVoiceHold.Release.init(rawValue:))
     }
 
     /// #1680: while the bundled voice holds narration, or Supertonic may not render now, whether `request` plays saved
@@ -787,12 +829,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         let choice = SavedVoiceRunRule.choice(inSavedRun: false, atSeam: true, savedRun: run, reachesEnd: reachesEnd,
                                               playbackRate: state.rate)
         guard choice == .savedSupertonic else { return false }
-        return lock.withLock {
+        let started = lock.withLock {
             guard generation == request.generation else { return false }
             savedRunGeneration = request.generation
             if bundledVoiceGeneration == request.generation { bundledVoiceGeneration = nil }
             return true
         }
+        // The one release inside an item: the bundled voice takes the item again at the run's end only if the phone
+        // still refuses Supertonic then (#1680, #1786).
+        if started { updateVoiceHold { $0.savedRunStarted(item: request.targetId) } }
+        return started
     }
 
     /// A play's first chunk came from the bundled voice's saved audio, not a render: the export says so, since the
@@ -837,7 +883,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// I14: the chosen voice comes back once the condition that forced the fallback clears.
     /// It switches at a play (resume, seek, next item), never mid-sentence.
     private func restoreOnDeviceRenderingIfConditionCleared(targetId: String) {
-        let restoresVoice = onDeviceRenderingAllowed() && lock.withLock { resourceFallbackTargetIds.contains(targetId) }
+        // The iOS voice holding the item keeps it to the item's end (#1786); `play` has let go of another item's hold.
+        // The bundled voice holding it doesn't block the return from a memory warning or a stalled player: the
+        // iOS voice stood in for a fault there, and the new generation goes back to the bundled voice (`nextRequest`).
+        let restoresVoice = onDeviceRenderingAllowed() && lock.withLock {
+            resourceFallbackTargetIds.contains(targetId) && voiceHold.voice(for: targetId) != .system
+        }
         if restoresVoice { try? pauseFallbackVoice() }
         let restartsHeldQueue = lock.withLock { () -> Bool in
             if restoresVoice {
@@ -1216,6 +1267,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         let offset = currentCharOffset() ?? 0
         let wasPaused = lock.withLock { transportIntent == .paused }
         try stopFallbackVoice()
+        updateVoiceHold { $0.listenerChoseVoice() }
         lock.withLock {
             generationDisabledReasons.removeValue(forKey: target)
             resourceFallbackTargetIds.remove(target)
@@ -1287,6 +1339,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             }
             // No chunk follows, so no hand-over is waiting for background time.
             releaseHandOverBackgroundTimeIfHeld()
+            if let finished = snapshot.1 { updateVoiceHold { $0.itemEnded(finished) } }
             try? releaseBackgroundAudio()
             reportGenerationState(stateAfterPlayback.0, stopReason: stateAfterPlayback.1)
             return
@@ -1318,6 +1371,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 sourceOffset: sourceOffset(forSpokenOffset: snapshot.0),
                 reason: reason
             )
+        } else if backgroundGap, pressureRenderer != nil, lock.withLock({
+            voiceHold.backgroundGapStandIn(item: targetId, bundledVoiceAvailable: true) == .bundled
+        }) {
+            // The bundled voice stands in, not the iOS voice, and keeps the item (#1786). The seam keeps its
+            // background time until that chunk plays; a render that doesn't land within the seam's short deadline
+            // hands the seam to the iOS voice.
+            handBackgroundGapToBundledVoice(request)
         } else if backgroundGap, startSystemVoiceAheadOfHandOver(
             targetId: targetId, sourceOffset: sourceOffset(forSpokenOffset: snapshot.0)
         ) {
@@ -1379,6 +1439,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             startedTargetId = nil
             playbackFailure = nil
             if currentTargetId != targetId { renderPace = RenderPaceLog() }
+            // The bundled voice holding the item reads the new generation too, without announcing itself again (#1786).
+            if voiceHold.voice(for: targetId) == .bundled {
+                if bundledVoiceNoticeGeneration != nil { bundledVoiceNoticeGeneration = nextGeneration }
+                bundledVoiceGeneration = nextGeneration
+            }
             currentTargetId = targetId
             activeSourceText = preparedSourceText
             currentStartOffset = max(0, min(spokenOffset, source.count))
@@ -1419,7 +1484,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         // first half, and the whole chunk is kept: when it has saved Supertonic audio, that plays instead (#849 audit).
         var plan = canonicalPlan
         var fastStartOriginal: RenderRequest?
-        if pressureRenderer != nil, !onDeviceRenderingAllowed(),
+        if pressureRenderer != nil,
+           !onDeviceRenderingAllowed() || lock.withLock({ bundledVoiceGeneration == snapshot.generation }),
            let original = canonicalPlan.last(where: {
                $0.startOffset <= spokenOffset && spokenOffset < $0.startOffset + max(1, $0.sourceLength)
            }) {
@@ -1667,7 +1733,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     // The bundled voice's own saved audio for these words: played, not rendered again, after a
                     // restart too (#1680). A split head plays the whole chunk's. Still a stand-in, so it holds back
                     // assembly as #363 intended.
-                    self?.holdBundledVoice(for: request.generation)
+                    self?.holdBundledVoice(for: request)
                     chunk = saved.request
                     result = saved.result
                     self?.reportSavedBundledVoiceStart(request: saved.request)
@@ -1686,7 +1752,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     let renderStartedAt = ContinuousClock.now
                     let rendered: SupertonicNarrationResult
                     if usesPressureRenderer, let pressureRenderer {
-                        self?.holdBundledVoice(for: request.generation)
+                        self?.holdBundledVoice(for: request)
                         rendered = try await pressureRenderer.render(text: request.text)
                     } else {
                         performedInference = true
@@ -1732,7 +1798,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     // renders the text, so the queue keeps going on one steady voice (#849).
                     let letGo = result.audioURL
                     Task { await discard(letGo) }
-                    self?.holdBundledVoice(for: request.generation)
+                    self?.holdBundledVoice(for: request)
                     let renderStartedAt = ContinuousClock.now
                     result = try await pressureRenderer.render(text: request.text)
                     renderWall = ContinuousClock.now - renderStartedAt
@@ -1952,6 +2018,77 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// `backgroundGap`, #1673).
     private static let backgroundGapReason = "supertonic_background_gap"
 
+    /// A seam with the app in the background found the next chunk unrendered (#1786). When the bundled voice already
+    /// reads this generation its render of that chunk is under way, and the seam waits for it. Otherwise Supertonic's
+    /// chain is let go and a new generation from that chunk on is the bundled voice's, so the old chain's late results
+    /// can't land in it. The chunk plays as soon as it is rendered, or from the bundled voice's saved audio at once.
+    /// A seam never stays silent longer than `backgroundGapWaitLimit`: the iOS voice is the last resort
+    /// (`handBackgroundGapToSystemVoiceIfStillSilent`).
+    private func handBackgroundGapToBundledVoice(_ request: RenderRequest) {
+        let work = lock.withLock { () -> (next: RenderRequest?, cancel: RenderTaskControl?, waits: UUID?) in
+            guard generation == request.generation else { return (nil, nil, nil) }
+            pendingAutoplayOffset = request.startOffset
+            voiceHold.standInTookOver(.bundled, item: request.targetId)
+            if bundledVoiceGeneration == generation {
+                return (inFlightOffsets.contains(request.startOffset) ? nil : request, nil, generation)
+            }
+            let previous = generation
+            generation = UUID()
+            handOverGaps.pendingMoved(from: previous, to: generation)
+            let control = activeRenderControl
+            activeRenderControl = nil
+            inFlightOffsets.removeAll()
+            generationPlan = Self.rebound(generationPlan, to: generation)
+            preparationPlan = Self.rebound(preparationPlan, to: generation)
+            generationRenderOrder = Self.rebound(
+                generationRenderOrder.filter { $0.startOffset >= request.startOffset }, to: generation)
+            let rebind = generation
+            renderedCache = renderedCache.mapValues { cached in
+                var cached = cached
+                cached.request.generation = rebind
+                return cached
+            }
+            // A chain resting ahead (#1681) or a split first chunk (#849) restarts in the new generation, or never lands.
+            restingRender = restingRender.flatMap { $0.startOffset >= request.startOffset ? Self.rebound([$0], to: rebind).first : nil }
+            fastStartOriginals = fastStartOriginals.mapValues { Self.rebound([$0], to: rebind)[0] }
+            bundledVoiceGeneration = generation
+            bundledVoiceBlock = .backgroundGap
+            savedRunGeneration = nil
+            var next = request
+            next.generation = generation
+            return (next, control, generation)
+        }
+        work.cancel?.cancel()
+        if let next = work.next { enqueueRender(next, shouldPlayWhenReady: false) }
+        guard let waits = work.waits else { return }
+        let limit = backgroundGapWaitLimit
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: limit)
+            self?.handBackgroundGapToSystemVoiceIfStillSilent(request, generation: waits)
+        }
+    }
+
+    /// The bundled voice's render for a background seam hasn't landed within `backgroundGapWaitLimit`, so nothing has
+    /// played since the seam (#1673 / #1705: a background seam never goes silent). The iOS voice reads on from the
+    /// seam and keeps the item, as it does without the bundled voice. Kitten's render runs on the main actor's
+    /// callbacks too, so it can't land between this check and the hand-over. A play, seek or stop since the seam, or
+    /// the app back in front (where the chunk starts when it lands), leaves the seam alone.
+    @MainActor
+    private func handBackgroundGapToSystemVoiceIfStillSilent(_ request: RenderRequest, generation waits: UUID) {
+        let silent = lock.withLock {
+            generation == waits && pendingAutoplayOffset == request.startOffset && transportIntent == .playing
+        }
+        guard silent, applicationIsInBackground?() ?? true else { return }
+        let sourceOffset = sourceOffset(forSpokenOffset: request.startOffset)
+        guard startSystemVoiceAheadOfHandOver(targetId: request.targetId, sourceOffset: sourceOffset) else { return }
+        activateSystemFallback(
+            targetId: request.targetId,
+            sourceOffset: sourceOffset,
+            reason: Self.backgroundGapReason,
+            voiceAlreadyStarted: true
+        )
+    }
+
     /// Starts the iOS voice at the next chunk's place before anything of the chosen voice is touched, for a seam with
     /// the app in the background and the next chunk not rendered (#1673). If the voice can't start, nothing has
     /// changed: the seam waits for its render as it always did, with its generation, queue and voice hold intact.
@@ -1993,6 +2130,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 if reason == "supertonic_resource_pressure" || reason == Self.stalledPlayerReason
                     || reason == Self.backgroundGapReason {
                     resourceFallbackTargetIds.insert(targetId)
+                    // Taking over for the phone's condition, the iOS voice keeps the item (#1786). A stalled player
+                    // and a memory warning are faults, not the phone, so they still get the chosen voice back at the
+                    // next play (#540, I14), as their player line says.
+                    if reason != Self.stalledPlayerReason, stopReason != SpeechFallbackReason.memoryWarning.rawValue {
+                        voiceHold.standInTookOver(.system, item: targetId)
+                    }
                 } else {
                     resourceFallbackTargetIds.remove(targetId)
                 }

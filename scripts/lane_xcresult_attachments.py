@@ -104,7 +104,11 @@ def report_lines(attachments):
                 2 if suffix == '.txt' else 3)
 
     for entry in attachments:
-        block = [f"Attachments for `{entry['test']}`: {len(entry['files'])} files.", '']
+        if entry.get('audio'):  # an audio window's verdict (#1790, lane_audio_window.py)
+            audio = entry['audio']
+            block = [f"Audio check for `{entry['test']}`: {audio.get('summary') or audio.get('verdict')}"[:1200], '']
+        else:
+            block = [f"Attachments for `{entry['test']}`: {len(entry['files'])} files.", '']
         if entry.get('manifest'):
             block.append(f"- [Attachment manifest](<{entry['manifest']}>)")
         if entry.get('error'):

@@ -6,17 +6,17 @@
 # on the open one; never one a day (scripts/substack_canary_issue.py). A network error is "could not check",
 # not a failure.
 #
-# It runs on the owner's VPS runner (sm-vps-t1, user smt1, Swift 6.2.4 in /opt/swift; see linux-t1.yml),
-# sharing linux-t1's build folder, so after the first build it builds incrementally. Not ubuntu-latest: the
-# private repo's free Linux minutes ran out on 2026-10-07 (#1023). Move it to ubuntu-latest (with a
-# swift:6.2.4 toolchain, as hosted-sessionkit-linux.yml does) once the repo is public and hosted minutes are free.
-# Not the Mac: it needs nothing Apple, and the Mac shouldn't have to be awake for it.
+# It runs on a GitHub-hosted ubuntu runner in the swift:6.2.4 image, as hosted-sessionkit-linux.yml does, with the
+# package's dependency builds cached (#2442; it ran on the owner's VPS runner sm-vps-t1 until then). Requests now
+# come from GitHub's addresses, not the VPS's: if Substack starts refusing them, that shows as "could not check"
+# (status 3), which the waste signal below watches. Not the Mac: it needs nothing Apple, and the Mac shouldn't
+# have to be awake for it.
 #
 # GitHub reads `schedule` and `workflow_dispatch` only from the default branch (main), so the daily run
 # starts once the owner moves main past this file. Until then, a push to next that touches the parser or
 # the canary runs it, which also shows it go green when a parser fix merges.
 #
-# Cost and catch: a few minutes of the VPS runner a day (incremental build plus about 15 page requests),
+# Cost and catch: a few free hosted minutes a day (a cached build plus about 15 page requests),
 # no tokens, no owner clicks unless it fails. Waste signal: three months with no catch, or more than one
 # "could not check" run a week.
 name: substack-canary
@@ -47,28 +47,39 @@ concurrency:
 jobs:
   canary:
     if: github.event_name != 'push' || github.ref_name == (vars.SM_TRUNK || 'main')
-    runs-on: [sm-vps-t1]
+    runs-on: ubuntu-latest
+    container: swift:6.2.4
     timeout-minutes: 30
     steps:
       - name: Start the clock
         run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
+      # Package.swift's Linux SQLite3 system library needs the headers, and the issue step needs Python; the swift
+      # image ships neither for certain.
+      - name: Install SQLite headers and Python
+        run: apt-get update -qq && apt-get install -y -qq libsqlite3-dev python3
       # The scheduled run checks the trunk's parser, the code the next phone build carries; a push or a
       # dispatch checks the commit it ran for.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event_name == 'schedule' && (vars.SM_TRUNK || 'main') || github.sha }}
+      # Dependency checkouts and their built products. A relative path: inside the container the workspace is /__w/...
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .build-linux
+          key: substack-canary-linux-swift6.2.4-${{ hashFiles('Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: substack-canary-linux-swift6.2.4-
       - name: Run the canary
         id: canary
         run: |
           set +e
-          bash scripts/substack-canary.sh --scratch-path "$HOME/sm-t1-build" --report "$RUNNER_TEMP/canary.md"
+          bash scripts/substack-canary.sh --scratch-path "$GITHUB_WORKSPACE/.build-linux" --report "$RUNNER_TEMP/canary.md"
           echo "status=$?" >> "$GITHUB_OUTPUT"
       - name: Report
         if: always()
         run: |
           cat "$RUNNER_TEMP/canary.md" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "No report (the canary didn't build or run)." >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "substack-canary took $(( $(date +%s) - STARTED ))s on sm-vps-t1." >> "$GITHUB_STEP_SUMMARY"
+          echo "substack-canary took $(( $(date +%s) - STARTED ))s on ubuntu-latest (swift:6.2.4)." >> "$GITHUB_STEP_SUMMARY"
       - name: File or update the issue
         if: steps.canary.outputs.status == '0' || steps.canary.outputs.status == '1'
         env:
