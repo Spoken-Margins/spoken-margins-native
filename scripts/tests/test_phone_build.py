@@ -2219,14 +2219,14 @@ class PassedChecksTests(unittest.TestCase):
     def prs(self):
         both = self.pr(906, 'Half passed', [self.closed(7, 'Hear the half.'), self.opened(8, 'Hear the other half.')])
         return {n: pr for n, pr in {
-            901: self.pr(901, 'James keeps his voice', [self.closed(854, 'Hear James through numbers.', phone=True)]),
-            902: self.pr(902, 'Skim lands on the sentence', [self.closed(537, 'Skim twice.', phone=True)]),
+            901: self.pr(901, 'James keeps his voice', [self.closed(854, 'Hear James through numbers.')]),
+            902: self.pr(902, 'Skim lands on the sentence', [self.closed(537, 'Skim twice.')]),
             903: self.pr(903, 'Speech settings wording', [self.closed(281, 'Read the settings page.')]),
             904: self.pr(904, 'Open fix', [self.opened(905, 'Hear the open fix.')]),
             905: self.pr(905, 'No issue linked', body='Owner check: look at the new banner.'),
             906: both,
             907: self.pr(907, 'Passed fix with no check written', [{
-                **self.closed(223, 'x'), 'body': 'It always did this.', 'labels': {'nodes': [{'name': 'found-on-phone'}]}}]),
+                **self.closed(223, 'x'), 'body': 'It always did this.', 'labels': {'nodes': []}}]),
         }.items()}
 
     def test_closed_issues_keep_their_changes_out_of_every_section(self):
@@ -2260,6 +2260,15 @@ class PassedChecksTests(unittest.TestCase):
         plan = self.write({677: follow_up, 578: first})
         self.assertNotIn('extractor', plan)
 
+    def test_a_closed_issue_that_keeps_a_validation_label_is_not_a_pass(self):
+        # 2026-10-22: a merged fix closes its issue and the label stays, so closed no longer means "passed".
+        for label in ('found-on-phone', 'needs-human-validation', 'status: needs-human-validation'):
+            issue = self.closed(854, 'Hear James through numbers.')
+            issue['labels'] = {'nodes': [{'name': label}]}
+            entry = [self.pr(901, 'James keeps his voice', [issue])]
+            self.assertFalse(self.module.passed_on_phone(entry), label)
+            self.assertIn('James keeps his voice', self.write({901: entry[0]}), label)
+
     def test_a_plan_of_only_passed_changes_says_nothing_is_left_to_check(self):
         plan = self.write({n: pr for n, pr in self.prs().items() if n in (901, 902)})
         self.assertIn('Nothing a listener would notice changed.', plan)
@@ -2269,6 +2278,41 @@ class PassedChecksTests(unittest.TestCase):
         # The filter reads issue['state']; without it in the queries every issue looks open and nothing is dropped.
         self.assertRegex(self.module.PR_FIELDS, r'closingIssuesReferences\(first:5\)\{nodes\{[^}]*\bstate\b')
         self.assertRegex(self.module.ISSUE_FIELDS, r'\bstate\b')
+
+
+class WaitingReadsClosedIssuesTests(unittest.TestCase):
+    """2026-10-22: a merged fix closes its issue and `status: needs-human-validation` stays on it, so the
+    still-waiting list reads closed issues from the last 60 days too."""
+
+    def setUp(self):
+        self.module = load_phone_build()
+
+    def page(self, nodes):
+        return json.dumps({'data': {'repository': {'issues': {
+            'pageInfo': {'hasNextPage': False, 'endCursor': None}, 'nodes': nodes}}}})
+
+    def test_it_queries_open_and_recently_closed_and_drops_older_closed(self):
+        calls = []
+        recent = (datetime.datetime.now(datetime.timezone.utc)
+                  - datetime.timedelta(days=3)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        answers = {'OPEN': [{'number': 1, 'createdAt': '2026-10-01T00:00:00Z'}],
+                   'CLOSED': [{'number': 2, 'createdAt': '2026-09-01T00:00:00Z', 'closedAt': recent},
+                              {'number': 3, 'createdAt': '2026-08-01T00:00:00Z', 'closedAt': '2026-01-01T00:00:00Z'}]}
+
+        def gh(*args):
+            query = next(a for a in args if a.startswith('query='))
+            calls.append(query)
+            return self.page(answers['CLOSED' if 'states: CLOSED' in query else 'OPEN'])
+        self.module.gh = gh
+        found = self.module.fetch_waiting()
+        self.assertEqual([issue['number'] for issue in found], [2, 1])  # oldest first, the stale closed one dropped
+        self.assertEqual(len(calls), 2)
+        self.assertIn('states: OPEN', calls[0])
+        self.assertIn('filterBy: {since:', calls[1])
+
+    def test_a_failed_closed_read_is_not_a_complete_list(self):
+        self.module.gh = lambda *args: self.page([]) if 'states: OPEN' in ' '.join(args) else ''
+        self.assertIsNone(self.module.fetch_waiting())
 
 
 class RevertedPRTests(unittest.TestCase):

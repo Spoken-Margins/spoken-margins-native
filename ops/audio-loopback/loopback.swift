@@ -6,7 +6,9 @@
 // so it can be host-tested without any audio hardware.
 //
 // It never changes the default input device, and never changes the system (alert) output device.
-// Build with ./build.sh; usage is in README.md.
+// Build with ./build.sh; usage is in README.md. build-app.sh builds the same source as
+// SpokenMarginsLaneRecorder.app, which the lane launches through LaunchServices (`--job`, below) so macOS asks
+// for Microphone and Speech Recognition in the app's own name (README, The recorder app).
 
 import AVFoundation
 import CoreAudio
@@ -22,8 +24,88 @@ struct ToolError: Error, CustomStringConvertible {
 
 func fail(_ message: String, code: Int32 = 1) -> Never {
     FileHandle.standardError.write(Data(("loopback: " + message + "\n").utf8))
+    finish(code)
+}
+
+// MARK: - Job mode (the recorder app)
+
+/// Set by `--job <folder>`. An app that LaunchServices starts (`open -W -a ...`) has no stdout, stderr or exit
+/// status its caller can read, so in job mode they go to files in that folder: `stdout`, `stderr`, and `status`
+/// (the exit code, written last). The caller can't signal the app either; it asks it to stop by creating `stop`.
+var jobFolder: String?
+var jobWatch: DispatchSourceTimer?
+
+func finish(_ code: Int32) -> Never {
+    if let jobFolder {
+        fflush(stdout)
+        let status = jobFolder + "/status"
+        if (try? "\(code)\n".write(toFile: status + ".part", atomically: false, encoding: .utf8)) != nil {
+            rename(status + ".part", status)
+        }
+    }
     exit(code)
 }
+
+func startJob(_ folder: String) {
+    jobFolder = folder
+    for (name, descriptor) in [("stdout", STDOUT_FILENO), ("stderr", STDERR_FILENO)] {
+        let handle = open(folder + "/" + name, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
+        if handle >= 0 { dup2(handle, descriptor); close(handle) }
+    }
+    setvbuf(stdout, nil, _IOLBF, 0)
+    let watch = DispatchSource.makeTimerSource(queue: .global())
+    watch.schedule(deadline: .now() + 0.25, repeating: 0.25)
+    watch.setEventHandler {
+        if FileManager.default.fileExists(atPath: folder + "/stop") { note("stopped: the caller asked"); finish(143) }
+    }
+    watch.resume()
+    jobWatch = watch
+}
+
+/// Waits on the run loop, so permission answers and recogniser callbacks can arrive.
+func waitUntil(_ seconds: Double, _ done: () -> Bool) {
+    let deadline = Date().addingTimeInterval(seconds)
+    while !done() && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
+}
+
+func microphoneAccess() -> String {
+    switch AVCaptureDevice.authorizationStatus(for: .audio) {
+    case .authorized: return "allowed"
+    case .denied: return "denied"
+    case .restricted: return "restricted"
+    case .notDetermined: return "not asked yet"
+    @unknown default: return "unknown"
+    }
+}
+
+func speechAccess(_ status: SFSpeechRecognizerAuthorizationStatus = SFSpeechRecognizer.authorizationStatus()) -> String {
+    switch status {
+    case .authorized: return "allowed"
+    case .denied: return "denied"
+    case .restricted: return "restricted"
+    case .notDetermined: return "not asked yet"
+    @unknown default: return "unknown"
+    }
+}
+
+/// `permissions`: asks for both, once, so the owner can answer the two prompts at the Mac. `--status` only reports.
+/// Unattended jobs never ask (nobody is there to click); they fail with the status instead.
+func permissions(ask: Bool) -> Bool {
+    if ask && AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+        var answered = false
+        AVCaptureDevice.requestAccess(for: .audio) { _ in answered = true }
+        waitUntil(600) { answered }
+    }
+    if ask && SFSpeechRecognizer.authorizationStatus() == .notDetermined {
+        var answered = false
+        SFSpeechRecognizer.requestAuthorization { _ in answered = true }
+        waitUntil(600) { answered }
+    }
+    printJSON(["microphone": microphoneAccess(), "speech_recognition": speechAccess()])
+    return microphoneAccess() == "allowed" && speechAccess() == "allowed"
+}
+
+let setupHint = "run ops/audio-loopback/setup-recorder-app.sh at the Mac (README, The recorder app)"
 
 func note(_ message: String) {
     FileHandle.standardError.write(Data(("loopback: " + message + "\n").utf8))
@@ -202,6 +284,10 @@ func bind(_ unit: AudioUnit?, to device: AudioDeviceID) throws {
 /// Records `device`'s input for `seconds` into a 16-bit mono wav at `rate`. Only this process's engine is pointed
 /// at the device; the Mac's default input is not touched.
 func record(device query: String, seconds: Double, to path: String, rate: Double) throws {
+    // Without access macOS hands the engine digital silence, not an error; in job mode say so up front.
+    if jobFolder != nil && microphoneAccess() != "allowed" {
+        throw ToolError("Microphone access for this app is \(microphoneAccess()): \(setupHint)")
+    }
     guard let device = findDevice(query, input: true) else { throw ToolError("no input device matches \"\(query)\"") }
     let engine = AVAudioEngine()
     let input = engine.inputNode
@@ -280,7 +366,7 @@ func play(file path: String, device query: String) throws {
 func transcribe(file path: String, locale: String) throws -> [String: Any] {
     let status: SFSpeechRecognizerAuthorizationStatus = {
         let current = SFSpeechRecognizer.authorizationStatus()
-        guard current == .notDetermined else { return current }
+        guard current == .notDetermined, jobFolder == nil else { return current }
         let asked = DispatchSemaphore(value: 0)
         var answer = current
         SFSpeechRecognizer.requestAuthorization { answer = $0; asked.signal() }
@@ -288,7 +374,8 @@ func transcribe(file path: String, locale: String) throws -> [String: Any] {
         return answer
     }()
     guard status == .authorized else {
-        throw ToolError("speech recognition is not authorised for this process (status \(status.rawValue)); see README")
+        throw ToolError("speech recognition is not authorised for this process (\(speechAccess(status))); "
+                        + (jobFolder == nil ? "see README" : setupHint))
     }
     guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: locale)) else { throw ToolError("no recognizer for \(locale)") }
     guard recognizer.supportsOnDeviceRecognition else { throw ToolError("on-device recognition is not available for \(locale)") }
@@ -363,9 +450,15 @@ usage: loopback devices [--json]
        loopback record --device <input device> --seconds <s> --out <file.wav> [--rate 16000]
        loopback play --device <output device> <file>
        loopback transcribe <file.wav> [--locale en-US]   (one file as is; loopback.py transcribe splits at pauses)
+       loopback permissions [--status]   (asks for Microphone and Speech Recognition unless --status)
+       loopback --job <folder> <command> [args...]   (as the recorder app: output and exit status go to files)
 """
 
-var arguments = Array(CommandLine.arguments.dropFirst())
+var arguments = Array(CommandLine.arguments.dropFirst()).filter { !$0.hasPrefix("-psn_") }
+if arguments.first == "--job", arguments.count >= 2 {
+    startJob(arguments[1])
+    arguments.removeFirst(2)
+}
 guard let command = arguments.first else { fail(usage, code: 2) }
 arguments.removeFirst()
 
@@ -386,7 +479,7 @@ do {
             print("\(row["name"]!)  in:\(row["inputs"]!) out:\(row["outputs"]!)  uid:\(row["uid"]!)\(marks.isEmpty ? "" : "  [\(marks)]")")
         }
     case "route":
-        exit(try route(arguments))
+        finish(try route(arguments))
     case "restore":
         let path = statePath(&arguments)
         if let restored = restoreFromState(path) { print("restored \(restored)") } else { print("nothing to restore") }
@@ -401,9 +494,12 @@ do {
         let locale = option("--locale", &arguments) ?? "en-US"
         guard let file = arguments.first else { fail(usage, code: 2) }
         printJSON(try transcribe(file: file, locale: locale))
+    case "permissions":
+        finish(permissions(ask: !flag("--status", &arguments)) ? 0 : 1)
     default:
         fail(usage, code: 2)
     }
 } catch {
     fail("\(error)")
 }
+finish(0)
