@@ -224,7 +224,7 @@ public struct WatchSessionModel: Codable, Equatable, Sendable {
     /// The phone's latest board, and when it arrived by the Watch's clock.
     public private(set) var board: WatchBoard?
     public private(set) var boardReceivedAt: Date?
-    /// A session started on this Watch that the board doesn't show yet. Times by the Watch's clock.
+    /// A session started or resumed on this Watch that the board doesn't show running yet. Times by the Watch's clock.
     public private(set) var local: WatchSessionInfo?
     /// Sessions ended here, by id, with their end by the Watch's clock, until the board stops showing them running.
     public private(set) var endedHere: [String: Date] = [:]
@@ -295,7 +295,9 @@ public struct WatchSessionModel: Codable, Equatable, Sendable {
 
     /// The running session, by the Watch's clock, and where it runs.
     public func running(now: Date) -> (WatchSessionInfo, Home.Place)? {
-        if let local, endedHere[local.id] == nil, !Self.endsItself(local, now: now) { return (local, .onWatch) }
+        if let local, endedHere[local.id] == nil, !Self.endsItself(local, now: now) {
+            return (local, local.owner == .watch ? .onWatch : .onPhone)
+        }
         if let running = board?.running, endedHere[running.id] == nil {
             let converted = onWatchClock(running)
             if !Self.endsItself(converted, now: now) { return (converted, running.owner == .watch ? .onWatch : .onPhone) }
@@ -363,7 +365,7 @@ public struct WatchSessionModel: Codable, Equatable, Sendable {
         guard running(now: now) == nil, var session = resumable(now: now) else { return nil }
         endedHere[session.id] = nil
         session.endedAt = nil
-        if session.owner == .watch { local = session }
+        local = session // shown running until the phone's board agrees
         lastEnded = nil
         endNote = nil
         return session.id

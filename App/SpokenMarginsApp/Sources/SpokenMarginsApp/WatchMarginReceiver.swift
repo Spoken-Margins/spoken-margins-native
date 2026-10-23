@@ -17,6 +17,11 @@ import SessionKit
 ///
 /// At launch (`activate`) it restores the running session from the store and tells the Watch about it
 /// (`updateApplicationContext`), so the Watch shows "about 12:40" without the session screen being opened.
+///
+/// Slice 1b: the Watch's other messages (hello, start, end, resume, a Margin's details, withdraw) arrive on both lanes,
+/// `sendMessage` with a reply and `transferUserInfo`. `handle(_:)` applies each on the worker, in order with the
+/// filing passes, and the reply carries the phone's clock, the board and answers for what is already filed. Answers
+/// always go on the sure lane as well.
 @MainActor
 final class WatchMarginReceiver: NSObject {
     static let shared = WatchMarginReceiver(files: .shared)
@@ -28,6 +33,8 @@ final class WatchMarginReceiver: NSObject {
     var drainMarks: () -> [Date] = { LiveSessionMarkQueue.drain() }
     /// What was last sent to the Watch as the session state, kept for the launch check and tests.
     private(set) var lastPublishedContext: [String: Any]?
+    /// The last board sent, kept for tests.
+    private(set) var lastBoard: WatchBoard?
     /// Answers handed to WatchConnectivity, newest last (at most 50), kept for tests and diagnostics.
     private(set) var sentAnswers: [WatchMarginAnswer] = []
     /// Passes run one after another, so each Margin is filed once.
@@ -89,7 +96,7 @@ final class WatchMarginReceiver: NSObject {
             changed = await files.fileAsQuick(placement) || changed
         }
         send(pass.answers)
-        publish(session: await files.runningSession())
+        publish(board: await files.watchBoard())
         if changed { announceChange() }
         for margin in pass.filed {
             guard let text = await transcribe(margin.audioPath) else { continue }
@@ -114,22 +121,50 @@ final class WatchMarginReceiver: NSObject {
         return true
     }
 
-    /// The session state the Watch is sent: id, kind, title, start and start position, or empty for none.
-    static func context(for session: LiveSession?) -> [String: Any] {
-        guard let session else { return [:] }
-        var context: [String: Any] = [
-            WatchLiveSessionContext.startedAt: session.startedAt.timeIntervalSince1970,
-            WatchLiveSessionContext.title: session.title,
-            WatchLiveSessionContext.id: session.id,
-            WatchLiveSessionContext.kind: session.kind.rawValue
-        ]
+    /// Applies a message from the Watch, after any filing pass under way, and returns the reply. A filing pass runs
+    /// first, so a Margin whose file has just landed is answered as filed.
+    @discardableResult
+    func handle(_ envelope: WatchEnvelope, now: @escaping @Sendable () -> Date = { Date() }) -> Task<WatchPhoneReply, Never> {
+        let previous = lastPass
+        let files = files
+        let reply = Task { [weak self] () -> WatchPhoneReply in
+            await previous?.value
+            await self?.runPass()
+            let reply = await files.applyWatch(envelope, now: now())
+            guard let self else { return reply }
+            self.send(reply.answers)
+            self.publish(board: reply.board)
+            switch envelope.message {
+            case .sessionStart, .sessionEnd, .sessionResume, .withdraw:
+                self.announceChange()
+                LiveSessionBoard.shared.refresh()
+            case .hello, .marginDetails:
+                break
+            }
+            return reply
+        }
+        lastPass = Task { _ = await reply.value }
+        return reply
+    }
+
+    /// The session state the Watch is sent: the board, plus the running session's start and title under the keys the
+    /// Watch build before slice 1b reads.
+    static func context(for board: WatchBoard) -> [String: Any] {
+        var context: [String: Any] = [:]
+        if let data = board.encoded { context[WatchContract.boardKey] = data }
+        guard let session = board.running else { return context }
+        context[WatchLiveSessionContext.startedAt] = session.startedAt.timeIntervalSince1970
+        context[WatchLiveSessionContext.title] = session.title
+        context[WatchLiveSessionContext.id] = session.id
+        context[WatchLiveSessionContext.kind] = session.kind.rawValue
         if let start = session.startPositionMs { context[WatchLiveSessionContext.startPositionMs] = start }
         return context
     }
 
-    /// Sends the running session's state to the Watch, or clears it.
-    func publish(session: LiveSession?) {
-        let context = Self.context(for: session)
+    /// Sends the phone's view of the session to the Watch.
+    func publish(board: WatchBoard) {
+        let context = Self.context(for: board)
+        lastBoard = board
         lastPublishedContext = context
         #if canImport(WatchConnectivity)
         guard WCSession.isSupported(), WCSession.default.activationState == .activated,
@@ -146,8 +181,8 @@ final class WatchMarginReceiver: NSObject {
         guard WCSession.isSupported(), WCSession.default.activationState == .activated,
               WCSession.default.isWatchAppInstalled else { return }
         for answer in answers {
-            guard let data = try? JSONEncoder().encode(answer) else { continue }
-            WCSession.default.transferUserInfo([WatchMarginAnswer.userInfoKey: data])
+            let info = answer.userInfo
+            if !info.isEmpty { WCSession.default.transferUserInfo(info) }
         }
         #endif
     }
@@ -164,6 +199,11 @@ enum WatchLiveSessionContext {
 }
 
 #if canImport(WatchConnectivity)
+/// WatchConnectivity's reply block, carried across to the main actor.
+private struct ReplyHandler: @unchecked Sendable {
+    let send: ([String: Any]) -> Void
+}
+
 extension WatchMarginReceiver: WCSessionDelegate {
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
         Task { @MainActor in self.processInbox() }
@@ -178,6 +218,25 @@ extension WatchMarginReceiver: WCSessionDelegate {
     nonisolated func session(_ session: WCSession, didReceive file: WCSessionFile) {
         guard receive(fileAt: file.fileURL, metadata: file.metadata) else { return }
         Task { @MainActor in self.processInbox() }
+    }
+
+    /// The sure lane: answers go back on it too.
+    nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) {
+        guard let envelope = WatchEnvelope(dictionary: userInfo) else { return }
+        Task { @MainActor in self.handle(envelope) }
+    }
+
+    /// The fast lane: the reply carries the phone's clock, the board and any answers.
+    nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
+        guard let envelope = WatchEnvelope(dictionary: message) else {
+            replyHandler([:])
+            return
+        }
+        let reply = ReplyHandler(send: replyHandler)
+        Task { @MainActor in
+            let answer = await self.handle(envelope).value
+            reply.send(answer.dictionary)
+        }
     }
 }
 #endif

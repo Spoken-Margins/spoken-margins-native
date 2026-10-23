@@ -165,6 +165,17 @@ final class WatchContractTests: XCTestCase {
         XCTAssertEqual(old.attempt, 1)
     }
 
+    func testALandedFileFromSliceOneAStillReads() throws {
+        // Slice 1a wrote this beside a received file (JSONEncoder's default dates); one may be waiting at upgrade.
+        let json = #"{"id":"left","wallStart":800000000,"durationMs":900}"#
+        let read = try JSONDecoder().decode(WatchMarginTransfer.self, from: Data(json.utf8))
+        XCTAssertEqual(read, WatchMarginTransfer(id: "left", wallStart: Date(timeIntervalSinceReferenceDate: 800_000_000), durationMs: 900))
+        XCTAssertEqual(read.attempt, 1)
+        XCTAssertEqual(read.sha256, "")
+        let roundTrip = try JSONDecoder().decode(WatchMarginTransfer.self, from: JSONEncoder().encode(transfer("m", session: "s")))
+        XCTAssertEqual(roundTrip, transfer("m", session: "s"))
+    }
+
     func testEnvelopesAndRepliesRoundTripAsPropertyLists() throws {
         let envelope = WatchEnvelope(seq: 7, sentAt: t0, clock: WatchClockStamp(offset: -0.4, measuredAt: t0), message: .sessionStart(
             WatchSessionInfo(id: "live-w", kind: .paper, title: "Paper book", owner: .watch, startedAt: t0)
@@ -275,6 +286,24 @@ final class WatchContractTests: XCTestCase {
         XCTAssertNil(model.home(now: t0.addingTimeInterval(300 + 601), phoneReachable: true).resumable, "ten minutes only")
         XCTAssertEqual(model.resume(now: t0.addingTimeInterval(400)), "live-p")
         XCTAssertEqual(model.home(now: t0.addingTimeInterval(401), phoneReachable: true).place, .onPhone)
+    }
+
+    func testAResumedPhoneSessionShowsRunningBeforeThePhoneAnswers() throws {
+        // Out of range: the phone hasn't heard the Resume, and its last board still says ended.
+        var model = WatchSessionModel()
+        model.apply(board(running: phoneMeeting()), receivedAt: t0)
+        _ = try XCTUnwrap(model.end(now: t0.addingTimeInterval(300)))
+        var ended = phoneMeeting()
+        ended.endedAt = t0.addingTimeInterval(300)
+        model.apply(board(ended: ended, at: 301), receivedAt: t0.addingTimeInterval(302))
+        XCTAssertEqual(model.resume(now: t0.addingTimeInterval(400)), "live-p")
+        model.apply(board(ended: ended, at: 401), receivedAt: t0.addingTimeInterval(402)) // a board sent before it heard
+        let home = model.home(now: t0.addingTimeInterval(403), phoneReachable: false)
+        XCTAssertEqual(home.place, .onPhone)
+        XCTAssertNil(home.resumable, "no second Resume")
+        model.apply(board(running: phoneMeeting(), at: 410), receivedAt: t0.addingTimeInterval(411))
+        XCTAssertNil(model.local, "the phone has it")
+        XCTAssertEqual(model.home(now: t0.addingTimeInterval(412), phoneReachable: true).place, .onPhone)
     }
 
     func testResumeOffersAnEndThePhoneMade() {

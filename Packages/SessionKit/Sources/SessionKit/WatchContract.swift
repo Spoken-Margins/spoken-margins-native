@@ -196,6 +196,24 @@ public struct WatchMarginTransfer: Codable, Equatable, Sendable {
         self.attempt = attempt
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case id, wallStart, durationMs, sessionId, clock, sha256, attempt
+    }
+
+    /// Reads what slice 1a wrote beside a landed file too, which had only the first three fields.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(String.self, forKey: .id),
+            wallStart: try container.decode(Date.self, forKey: .wallStart),
+            durationMs: try container.decode(Int.self, forKey: .durationMs),
+            sessionId: try container.decodeIfPresent(String.self, forKey: .sessionId),
+            clock: try container.decodeIfPresent(WatchClockStamp.self, forKey: .clock),
+            sha256: try container.decodeIfPresent(String.self, forKey: .sha256) ?? "",
+            attempt: try container.decodeIfPresent(Int.self, forKey: .attempt) ?? 1
+        )
+    }
+
     /// Reads the metadata the Watch sent. Nil when it isn't a Watch Margin or a field is missing.
     public init?(metadata: [String: Any]?) {
         guard let metadata,
