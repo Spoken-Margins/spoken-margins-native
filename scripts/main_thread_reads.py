@@ -21,7 +21,7 @@ whose every mention (strings included; `@objc` and `override` functions never) s
 How it decides what runs on the main thread (a heuristic over source text, no compiler; misses are listed below):
 - A scope is main when its type or function is `@MainActor`, the type conforms to View/App/Scene/UIKit classes, or it is
   an extension of such a type in any file (`Gate1AppModel+*.swift`), or its closure is `Task { @MainActor in`,
-  `MainActor.run` or `DispatchQueue.main`. It is off the main thread in `Task.detached`, `nonisolated async`
+  `MainActor.run` or `DispatchQueue.main`. It is off the main thread in `Task.detached` (or `Self.offMain { }`), `nonisolated async`
   functions, actors, `DispatchQueue.global()`, a queue the file made with `DispatchQueue(label:…)` (`writer.async { }`)
   and `addTask`. A `Task { }` and every other closure keep their
   surroundings' isolation.
@@ -358,7 +358,7 @@ def classify(header: str, after: str) -> Scope:
         scope.loop = bool(re.match(r'^(?:\w+:\s*)?(for|while|repeat)\b', h))
         return scope
     # closures and everything else
-    if re.search(r'\bTask\s*\.\s*detached\b', h):
+    if re.search(r'\bTask\s*\.\s*detached\b|\boffMain\b', h):  # `offMain` is the app's wrapper around Task.detached
         scope.kind, scope.iso = 'task', 'off'
     elif TASK_HEADER.search(h):
         scope.kind = 'task'
