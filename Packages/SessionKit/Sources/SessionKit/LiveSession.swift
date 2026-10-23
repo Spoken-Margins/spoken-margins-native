@@ -231,6 +231,8 @@ public enum LiveSessionAlignment {
         public var matchText: String?
         public var matchSpeaker: String?
         public var matchScore: Double?
+        /// A Margin added to the item after the session, placed where the listener took it in the recording.
+        public var addedLater: Bool?
 
         public init(id: String, text: String, offsetMs: Int, clamp: Clamp? = nil, charOffset: Int? = nil) {
             self.id = id

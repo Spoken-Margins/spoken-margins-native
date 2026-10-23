@@ -21,6 +21,16 @@ public enum LiveSessionMarginPlacer {
         repository: SessionRepository & StructuredDocumentRepository,
         now: @escaping () -> Date = Date.init
     ) throws -> [Interjection] {
+        try placeLinked(margins, itemId: itemId, repository: repository, now: now).map(\.saved)
+    }
+
+    /// `place`, with each written Margin paired with the live Margin it came from, for `LiveSessionRecord`.
+    public static func placeLinked(
+        _ margins: [LiveSessionAlignment.Placed],
+        itemId: String,
+        repository: SessionRepository & StructuredDocumentRepository,
+        now: @escaping () -> Date = Date.init
+    ) throws -> [(liveId: String, saved: Interjection)] {
         guard let item = try? repository.loadItem(id: itemId), item.deletedAt == nil else { throw Failure.itemNotFound }
         let media = item.media?.url == nil ? nil : item.media
         let textLength = item.text?.count ?? 0
@@ -51,7 +61,7 @@ public enum LiveSessionMarginPlacer {
             repository: repository,
             now: now
         )
-        var saved: [Interjection] = []
+        var saved: [(liveId: String, saved: Interjection)] = []
         for margin in written {
             let time = durationMs.map { min(max(0, margin.offsetMs), max(0, $0 - 1)) } ?? max(0, margin.offsetMs)
             guard var current = try repository.loadSession(id: session.id) else { break }
@@ -70,7 +80,7 @@ public enum LiveSessionMarginPlacer {
                 throw error
             }
             if let interjection = try repository.loadInterjections(sessionId: session.id).first(where: { $0.id == "ij-written-\(capture.id)" }) {
-                saved.append(interjection)
+                saved.append((margin.id, interjection))
             }
         }
         // Leave the saved place at the start, so opening the capture plays it from the beginning.

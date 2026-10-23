@@ -23,6 +23,7 @@ extension Gate1AppModel {
             : session.title
         let itemId: String
         var finalPlaced = placed
+        var linked: [(liveId: String, saved: Interjection)] = []
         if let recordingURL {
             let importer = try requireLocalSourceImporter()
             let item = try await importer.importAudiobook(from: recordingURL)
@@ -30,7 +31,7 @@ extension Gate1AppModel {
             if let transcript {
                 attachSourceTranscriptTimeline(Self.timeline(for: transcript), itemId: itemId)
             }
-            try LiveSessionMarginPlacer.place(finalPlaced, itemId: itemId, repository: store)
+            linked = try LiveSessionMarginPlacer.placeLinked(finalPlaced, itemId: itemId, repository: store)
         } else {
             let built = transcript.map { LiveSessionText.transcript($0, placed: placed) } ?? LiveSessionText.notes(session)
             finalPlaced = built.placed
@@ -47,12 +48,15 @@ extension Gate1AppModel {
             )
             try store.seed(item: item)
             if engine == nil { installEngine(try makeEngine(store: store)) }
-            try LiveSessionMarginPlacer.place(finalPlaced, itemId: itemId, repository: store)
+            linked = try LiveSessionMarginPlacer.placeLinked(finalPlaced, itemId: itemId, repository: store)
         }
         if let directory = Self.liveSessionDirectory {
             var named = session
             named.title = title
-            try? LiveSessionRecord(itemId: itemId, session: named, transcript: transcript, placed: finalPlaced).save(in: directory)
+            try? LiveSessionRecord(
+                itemId: itemId, session: named, transcript: transcript, placed: finalPlaced,
+                savedMarginIds: Dictionary(linked.map { ($0.liveId, $0.saved.id) }, uniquingKeysWith: { first, _ in first })
+            ).save(in: directory)
         }
         libraryItems = try loadLibraryRows(store: store)
         refreshMarginRows()
@@ -62,10 +66,13 @@ extension Gate1AppModel {
         reportConfirmation("Saved \(title) with \(placed.count) Margin\(placed.count == 1 ? "" : "s").")
     }
 
-    /// The live session's Markdown for the share sheet, when `itemId` came from one.
-    func liveSessionMarkdownFileURL(itemId: String) -> URL? {
+    /// The live session's Markdown for the share sheet, when `itemId` came from one, following the item's
+    /// `margins` as they are now (#2485 audit). Nil sends the caller to the ordinary export.
+    func liveSessionMarkdownFileURL(itemId: String, margins: [Interjection]) -> URL? {
         guard let directory = Self.liveSessionDirectory,
-              let record = LiveSessionRecord.load(itemId: itemId, from: directory) else { return nil }
+              let saved = LiveSessionRecord.load(itemId: itemId, from: directory),
+              let record = saved.current(margins.filter { $0.itemId == itemId }.compactMap(LiveSessionRecord.CurrentMargin.init))
+        else { return nil }
         let folder = MarginMarkdownShare.shareDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let name = record.session.title.components(separatedBy: CharacterSet(charactersIn: "/:\\?%*|\"<>")).joined(separator: "-")
         let url = folder.appendingPathComponent((name.isEmpty ? "Live session" : name) + ".md")
@@ -77,6 +84,12 @@ extension Gate1AppModel {
             reportFailure(error, context: "Live session export failed", itemId: itemId)
             return nil
         }
+    }
+
+    /// Removes a purged item's session record, which holds the meeting's transcript.
+    func removeLiveSessionRecord(itemId: String) {
+        guard let directory = Self.liveSessionDirectory else { return }
+        LiveSessionRecord.remove(itemId: itemId, from: directory)
     }
 
     private static func timeline(for transcript: ImportedTranscript) -> TranscriptTimeline {
