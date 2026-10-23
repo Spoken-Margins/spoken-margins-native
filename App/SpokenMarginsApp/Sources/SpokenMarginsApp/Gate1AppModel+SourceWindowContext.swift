@@ -293,7 +293,14 @@ extension Gate1AppModel {
         case .unavailable, nil:
             schedulePodcastAnchorEvidenceCapture(for: interjection)
         }
-        diagnostics[Self.marginDiagnosticKey("interjectionAudioAtCapture", interjection)] = interjectionAudioEvidence(for: audioPath)
+        let audioEvidenceKey = Self.marginDiagnosticKey("interjectionAudioAtCapture", interjection)
+        let supportDirectory = try? FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false
+        )
+        Task.detached(priority: .utility) { [weak self] in
+            let evidence = Self.interjectionAudioEvidence(for: audioPath, applicationSupportDirectory: supportDirectory)
+            await MainActor.run { self?.diagnostics[audioEvidenceKey] = evidence }
+        }
         diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "scheduled"
         Task {
             do {

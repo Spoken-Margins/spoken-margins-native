@@ -3424,8 +3424,10 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func interjectionAudioEvidence(for path: String) -> String {
-        guard let url = resolvedInterjectionAudioURL(for: path) else {
+    /// A diagnostics string only, so it reads the file (size, and an `AVAudioFile` open for the length) away from
+    /// the main actor (#2510).
+    nonisolated static func interjectionAudioEvidence(for path: String, applicationSupportDirectory: URL?) -> String {
+        guard let url = resolvedInterjectionAudioURL(for: path, applicationSupportDirectory: applicationSupportDirectory) else {
             return "duration_ms=unknown;bytes=unknown"
         }
         let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
