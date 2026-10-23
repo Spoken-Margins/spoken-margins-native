@@ -1028,7 +1028,7 @@ final class Gate1AppModel: ObservableObject {
             let previousTargetId = self.snapshot.targetId
             let previousEngagementProgress = self.snapshot.currentPlaybackProgressPercent
             let updated = self.snapshotReflectingTextAudioPrewarmStatus(
-                try engine.syncPlaybackProgress(),
+                try engine.syncPlaybackProgress(coalescingWrites: true),
                 itemId: self.activeItemId
             )
             self.recordMediaSeekEvidence(from: engine)
