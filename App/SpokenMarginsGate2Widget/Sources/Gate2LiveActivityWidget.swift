@@ -515,5 +515,6 @@ private extension View {
 struct SpokenMarginsGate2WidgetBundle: WidgetBundle {
     var body: some Widget {
         Gate2LiveActivityWidget()
+        LiveSessionActivityWidget()
     }
 }

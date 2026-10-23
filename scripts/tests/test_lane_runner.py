@@ -38,6 +38,101 @@ def runner_report(verdict, wanted, url='https://example.test/r'):
                                'none', '/e', 'owner', wanted), login='github-actions[bot]', url=url)
 
 
+class LostLaneJobTests(unittest.TestCase):
+    """A lane job whose runner is lost runs no step; lane.yml's lane-lost job reports it (#2174)."""
+
+    URL = 'https://github.com/o/r/actions/runs/39167859799'
+    T3 = '/lane T3\ntests: AccessibilityFixProofTests, CatalogDrawerTests\n'
+
+    def lost(self, github, attempt='1'):
+        with mock.patch('builtins.print'):
+            return lane.report_lost(github, 9, '39167859799', attempt, HEAD, 'main', self.URL)
+
+    def test_a_lost_t3_gets_an_inconclusive_report_naming_the_run_and_frees_the_labels(self):
+        github = FakeGitHub(labels=('lane:queued', 'automerge'), comments=[comment(self.T3)])
+        self.lost(github)
+        body, = github.posted
+        self.assertTrue(body.startswith('Lane report pr9-r39167859799 — INCONCLUSIVE'), body)
+        self.assertIn(self.URL, body)
+        self.assertIn('No test ran', body)
+        wanted = lane.report_identity(body)
+        self.assertEqual((wanted['tier'], wanted['commit'], wanted['tests']),
+                         ('T3', HEAD, ['AccessibilityFixProofTests', 'CatalogDrawerTests']))
+        self.assertEqual(github.labels, {'automerge', 'lane:done'})
+        # The held automerge run now sees an INCONCLUSIVE T3 report instead of a request with none.
+        self.assertIsNone(lane.pending_requests(github.comments())[0])
+        self.assertTrue(lane.lane_report_verdict(body)[0], 'dispatch counts it as a runner fault (one rerun)')
+
+    def test_the_report_names_no_tested_commit_so_the_auto_revert_never_counts_it(self):
+        github = FakeGitHub(comments=[comment(self.T3)])
+        self.lost(github)
+        self.assertIsNone(lane.TESTED_ON.search(github.posted[0]))
+
+    def test_a_second_attempt_of_the_run_is_named_for_its_attempt(self):
+        github = FakeGitHub(comments=[comment(self.T3)])
+        self.lost(github, attempt='2')
+        self.assertTrue(github.posted[0].startswith('Lane report pr9-r39167859799-a2 — INCONCLUSIVE'))
+
+    def test_a_job_that_reported_is_left_alone(self):
+        wanted = lane.identity('T3', HEAD, 'b' * 40, ['X'])
+        done = comment(lane.report('pr9-r39167859799', 'FAIL', HEAD, 'b' * 40, 'T3', 'x', 1, 'x', [], 'none', '/e',
+                                   'owner', wanted), login='github-actions[bot]')
+        github = FakeGitHub(comments=[comment(self.T3), done])
+        self.lost(github)
+        self.assertEqual((github.posted, github.label_changes), ([], []))
+
+    def test_a_job_whose_tidy_step_spoke_is_left_alone(self):
+        note = comment(f'Lane: the runner stopped before reporting ({self.URL}). If it is still needed, comment the '
+                       f'request again and add lane:queued.\n{lane.NOTE}', login='github-actions[bot]')
+        github = FakeGitHub(comments=[comment(self.T3), note])
+        self.lost(github)
+        self.assertEqual((github.posted, github.label_changes), ([], []))
+
+    def test_the_automerge_run_of_the_same_workflow_run_does_not_hide_the_lost_lane_job(self):
+        wanted = lane.identity('auto', HEAD, 'b' * 40, [])
+        auto = comment(lane.report('pr9-r39167859799-auto', 'PASS', HEAD, 'b' * 40, 'auto', 'x', 1, 'x', [], 'none',
+                                   '/e', 'owner', wanted), login='github-actions[bot]')
+        note = comment(f'Lane: the automerge run stopped before reporting ({self.URL}).\n{lane.NOTE}',
+                       login='github-actions[bot]')
+        github = FakeGitHub(comments=[comment(self.T3), auto, note])
+        self.lost(github)
+        self.assertEqual(len(github.posted), 1)
+
+    def test_a_pr_that_moved_on_is_left_alone(self):
+        github = FakeGitHub(head='c' * 40, comments=[comment(self.T3)])
+        self.lost(github)
+        self.assertEqual((github.posted, github.label_changes), ([], []))
+
+    def test_a_request_the_runner_already_answered_only_frees_the_labels(self):
+        wanted = lane.identity('T3', HEAD, 'b' * 40, ['X'])
+        answered = runner_report('PASS', wanted)
+        github = FakeGitHub(labels=('lane:queued', 'lane:running'), comments=[comment(self.T3), answered])
+        self.lost(github)
+        self.assertEqual(github.posted, [])
+        self.assertEqual(github.labels, {'lane:done'})
+
+    def test_a_request_the_lane_job_answered_as_identical_changes_nothing(self):
+        # "Lane: identical T3 request ... already reported (FAIL)" turns the job red but answers the request.
+        identical = comment(f'Lane: identical T3 request for {HEAD[:7]} already reported (FAIL): https://example.test/r'
+                            f'\n{lane.NOTE}', login='github-actions[bot]')
+        github = FakeGitHub(labels=('lane:done',), comments=[comment(self.T3), identical])
+        self.lost(github)
+        self.assertEqual((github.posted, github.label_changes), ([], []))
+
+    def test_a_closed_pr_is_left_alone(self):
+        github = FakeGitHub(comments=[comment(self.T3)])
+        pull = github.pull
+        github.pull = lambda: {**pull(), 'state': 'closed'}
+        self.lost(github)
+        self.assertEqual((github.posted, github.label_changes), ([], []))
+
+    def test_a_waiting_test_desk_request_keeps_lane_queued(self):
+        github = FakeGitHub(labels=('lane:queued',), comments=[comment(self.T3), comment('/lane T4\nrun: J1\n')])
+        self.lost(github)
+        self.assertIn('lane:queued', github.labels)
+        self.assertEqual(len(github.posted), 1)
+
+
 class ClaudeAuditGateTests(unittest.TestCase):
     def test_claude_head_audit_clears_lane_and_risky_changes(self):
         clean = comment('**Claude audit on `aaaaaaa`**\n\nNo blocking findings.')
@@ -2249,10 +2344,11 @@ class MainFlowTests(unittest.TestCase):
         # Every Mac job checks out the Git LFS models: --plan fast's contracts check reads them (#301). The third is
         # the release job a T3 PASS hands to a build runner (#1209). The lane job checks them out on the Mac, and on a
         # GitHub-hosted Mac fetches them from a cache instead (#1389 phase 2, test_lane_hosted_app.py).
-        self.assertEqual(workflow.count('lfs: true'), 1)
+        self.assertEqual(workflow.count('lfs: true'), 2)  # the release job and the automerge-mac fallback (#2459)
         self.assertIn("lfs: ${{ runner.environment != 'github-hosted' }}", workflow)
-        self.assertIn("lfs: ${{ !contains(fromJSON(needs.route.outputs.automerge || '[]'), 'sm-vps-t1') }}", workflow)
-        self.assertEqual(workflow.count('persist-credentials: false'), 4)  # hosted routing plus the three Mac jobs
+        self.assertIn("lfs: ${{ !contains(fromJSON(needs.route.outputs.automerge || '[]'), 'ubuntu-latest') }}", workflow)
+        # hosted routing plus the four Mac jobs (automerge-mac, #2459)
+        self.assertEqual(workflow.count('persist-credentials: false'), 5)
         self.assertIn("if: steps.run.outputs.reported == 'true'", workflow)
         self.assertIn("if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'", workflow)
 
@@ -2276,8 +2372,9 @@ class MainFlowTests(unittest.TestCase):
         # stays green with a warning, and the report and the lane:done relabel carry it to the dispatcher.
         # In 13 hours on 2026-09-30, 29 of the lane's 46 red checks were INCONCLUSIVE, 20 of them held for T3.
         scripts = self.verdict_steps()
-        self.assertEqual(len(scripts), 3)  # the lane job's, the automerge job's and the release job's (#1209)
-        for job, script in zip(('lane', 'automerge', 'release'), scripts):
+        # the lane job's, the automerge job's, its automerge-mac fallback's (#2459) and the release job's (#1209)
+        self.assertEqual(len(scripts), 4)
+        for job, script in zip(('lane', 'automerge', 'automerge-mac', 'release'), scripts):
             # The release job's check sits on main's tip, not on the PR (#1209): a FAIL there stays a warning.
             fail = ('FAIL', 0, '::warning title=Lane FAIL') if job == 'release' else ('FAIL', 1, '::error title=Lane FAIL')
             for verdict, code, annotation in (('PASS', 0, None), ('INCONCLUSIVE', 0, '::warning title=Lane INCONCLUSIVE'),

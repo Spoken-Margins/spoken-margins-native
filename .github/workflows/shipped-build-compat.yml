@@ -71,7 +71,7 @@ jobs:
       cancel-in-progress: true
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           # This job shares its workspace with the lane on the same runner. Without LFS the checkout writes the
@@ -93,7 +93,7 @@ jobs:
     name: owner-tap-alert
     needs: compat
     if: always() && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, Linux, sm-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -102,7 +102,7 @@ jobs:
       checks: read
       statuses: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false

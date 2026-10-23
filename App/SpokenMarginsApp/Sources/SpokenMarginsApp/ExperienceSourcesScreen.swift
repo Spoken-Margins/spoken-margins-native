@@ -29,7 +29,7 @@ struct ExperienceSourcesScreen: View {
     /// The place in the list, kept by the root view because opening an entry destroys this screen (#479).
     @Binding var scrollMemory: FollowingScrollMemory
     /// Follows the top entry without redrawing the screen on every row that scrolls by (#479).
-    @State private var scrollTracker = FollowingScrollTracker()
+    @State private var scrollTracker = ListScrollTracker()
     @State private var restoredScroll = false
     /// "Clear" on the New list asks first: it dismisses everything listed (#1589).
     @State private var isConfirmingClear = false
@@ -862,7 +862,7 @@ struct SourceInboxRow: View {
     }
 }
 
-/// Follows the entry at the top of Following's list as rows scroll by (#479). It is a class that no
+/// Follows the entry at the top of Following's or the Library's list as rows scroll by (#479, #2395). It is a class that no
 /// view observes, so a row coming and going costs a set update, not a redraw.
 ///
 /// A change settles for a moment before it counts. The rows also disappear all at once when the
@@ -870,7 +870,7 @@ struct SourceInboxRow: View {
 /// must not slide the saved place down the list: `freeze` runs when the list disappears and drops
 /// what hasn't settled. It starts frozen, until the saved place has been restored.
 @MainActor
-private final class FollowingScrollTracker {
+final class ListScrollTracker {
     var order: [String] = []
     private(set) var topEntryID: String?
     private var visible = Set<String>()
