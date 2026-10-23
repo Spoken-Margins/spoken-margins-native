@@ -1764,7 +1764,10 @@ final class SourceLinkImportTests: XCTestCase {
 
         model.deleteInterjection(margin)
 
-        XCTAssertNil(model.feedbackEvent, "the deleted Margin's failure and Retry must go with it")
+        // The failure banner gives way to the delete's own Undo banner (#1981); its Retry must not survive.
+        XCTAssertEqual(model.feedbackEvent?.kind, .success, "the deleted Margin's failure must go with it")
+        XCTAssertNil(model.feedbackEvent?.retry, "the deleted Margin's Retry must go with it")
+        XCTAssertEqual(model.feedbackEvent?.action?.identifier, "margin.deleteUndo.button")
         XCTAssertEqual(model.statusMessage, "Deleted Margin.")
 
         // A Retry captured before the delete (an old banner, an accessibility action) reads the Margin as stored now.
