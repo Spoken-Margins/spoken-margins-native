@@ -40,6 +40,9 @@ struct ExperienceLibraryScreen: View {
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 }
 
+                LiveSessionLiveRows() // a running or quick live session, on top (#2487 slice 1a)
+                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+
                 controls
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
 

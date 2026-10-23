@@ -58,6 +58,8 @@ extension Gate1AppModel {
                 savedMarginIds: Dictionary(linked.map { ($0.liveId, $0.saved.id) }, uniquingKeysWith: { first, _ in first })
             ).save(in: directory)
         }
+        // The session stays in the session store as saved, so a late copy of one of its Margins is still known (#2487).
+        await LiveSessionFileWorker.shared.markSaved(sessionId: session.id, itemId: itemId)
         libraryItems = try loadLibraryRows(store: store)
         refreshMarginRows()
         selectedItem = try loadItemDetail(id: itemId, store: store)
