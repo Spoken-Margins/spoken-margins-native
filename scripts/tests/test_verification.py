@@ -236,7 +236,7 @@ class VerificationTests(unittest.TestCase):
             run.manifest['destination'] = {'udid': 'pool-device'}
             run.crash_baseline = {}
             crashes = [f'WidgetRenderer_Default-2026-09-24-10000{i}.ips' for i in range(3)]
-            with mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}), \
+            with patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}), \
                     patch.object(verification, 'new_crash', side_effect=self.crash_reports(*crashes)), \
                     patch.object(verification.subprocess, 'run', side_effect=shutdown):
                 with self.assertRaises(RuntimeError):
@@ -792,6 +792,53 @@ class VerificationTests(unittest.TestCase):
         self.assertGreaterEqual(timeout, 2 * measured)  # the suite grows and runs beside a simulator job
         self.assertGreater(timeout, default)
 
+    def test_runner_tests_still_printing_at_their_budget_go_on_to_a_ceiling(self):
+        # #2488: at load 138-150 the suite was killed at 600 s with its log still a stream of passing dots (#2409).
+        for portable in (False, True):
+            calls = []
+            with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+                verification.os.environ.pop('CODEX_SANDBOX', None)
+                run = verification.Run(Path(temporary) / 'run', 'fast')
+                with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
+                        patch.object(run, 'ops_steps'), patch.object(run, 'skip'), \
+                        patch.object(verification, 'swift_tests', return_value=set()), \
+                        patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
+                        patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                    run.host_steps(portable=portable)
+            step = dict(calls)['runner-tests']
+            self.assertEqual(step['timeout'], verification.RUNNER_TESTS_TIMEOUT)
+            self.assertGreater(step['ceiling'], step['timeout'])
+            self.assertLess(step['stall_seconds'], step['ceiling'] - step['timeout'])  # a hang still stops early
+            self.assertLess(step['ceiling'], 2400)  # the lane's FAST_TIMEOUT still bounds the plan
+        # The readers-only and Mac-rest runs of the same step get the same limits.
+        for scope in ('readers', 'all'):
+            calls = []
+            with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+                verification.os.environ.pop('CODEX_SANDBOX', None)
+                run = verification.Run(Path(temporary) / 'run', 'fast')
+                with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
+                        patch.object(run, 'ops_steps'), patch.object(run, 'skip'), \
+                        patch.object(verification, 'runner_test_scope', return_value=(scope, '')), \
+                        patch.object(verification, 'swift_tests', return_value=set()), \
+                        patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
+                        patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                    run.host_steps()
+            self.assertEqual({k: dict(calls)['runner-tests'][k] for k in verification.RUNNER_TESTS_LIMITS},
+                             verification.RUNNER_TESTS_LIMITS, scope)
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+            verification.os.environ.pop('CODEX_SANDBOX', None)
+            run = verification.Run(Path(temporary) / 'run', 'fast-mac-rest')
+            with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
+                    patch.object(run, 'ops_steps'), patch.object(run, 'skip'), patch.object(run, 'package_steps'), \
+                    patch.object(run, 'shipped_compat'), \
+                    patch.object(verification, 'runner_test_scope', return_value=('all', '')), \
+                    patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification.sessionkit_pass, 'find', return_value=None):
+                run.mac_rest()
+        self.assertEqual({k: dict(calls)['runner-tests'][k] for k in verification.RUNNER_TESTS_LIMITS},
+                         verification.RUNNER_TESTS_LIMITS)
+
     def run_sessionkit_script(self, *args, exit_code=0, **env):
         """Run scripts/run-sessionkit-tests.sh from a copy in a temporary ROOT whose host-test-lane records what it
         was asked to run (and where), so the script's real argument handling executes. Returns (done, calls)."""
@@ -866,6 +913,67 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(verification.log_errors(log), [
             "/src/A.swift:3:1: error: cannot find 'x' in scope", 'failed: SwiftCompile normal arm64 /src/A.swift',
             'failed: (1 failure)'])
+
+    FAILING_UNITTEST = (
+        'import unittest\n'
+        'class Sample(unittest.TestCase):\n'
+        '    def test_equal(self):\n'
+        '        self.assertEqual({"a": 1}, {"a": 2})\n'
+        '    def test_crash(self):\n'
+        '        raise ValueError("nope")\n'
+        '    def test_fine(self):\n'
+        '        pass\n'
+        'unittest.main()\n')
+
+    def test_unittest_failures_are_named_with_their_line_and_message(self):
+        # #2457: runner-tests failed in CI with only "FAILED" because log_errors reads xcodebuild's words.
+        with tempfile.TemporaryDirectory() as temporary:
+            script = Path(temporary) / 'sample.py'
+            script.write_text(self.FAILING_UNITTEST)
+            log = subprocess.run([sys.executable, str(script)], capture_output=True, text=True).stderr
+        failures = verification.unittest_failures(log)
+        self.assertEqual([test for test, _, _ in failures], ['test_crash (__main__.Sample.test_crash)',
+                                                             'test_equal (__main__.Sample.test_equal)'])
+        self.assertTrue(failures[0][1].endswith('sample.py:6'), failures[0])
+        self.assertEqual(failures[0][2], 'ValueError: nope')
+        self.assertTrue(failures[1][1].endswith('sample.py:4'), failures[1])
+        self.assertTrue(failures[1][2].startswith("AssertionError: {'a': 1} != {'a': 2}"), failures[1])
+        self.assertEqual(verification.unittest_failures('Ran 3 tests in 0.1s\n\nOK\n'), [])
+
+    def test_the_last_in_repo_line_and_the_final_chained_exception_are_reported(self):
+        # Review of #2466: a library frame or the first of two chained exceptions must not stand for the failure.
+        here = str(verification.ROOT)
+        log = ('======================================================================\n'
+               'ERROR: test_x (m.C.test_x)\n'
+               '----------------------------------------------------------------------\n'
+               'Traceback (most recent call last):\n'
+               f'  File "{here}/scripts/tests/m.py", line 5, in test_x\n    data["x"]\nKeyError: \'x\'\n\n'
+               'During handling of the above exception, another exception occurred:\n\n'
+               'Traceback (most recent call last):\n'
+               f'  File "{here}/scripts/tests/m.py", line 7, in test_x\n    json.loads("{{")\n'
+               '  File "/usr/lib/python3/json/decoder.py", line 361, in raw_decode\n'
+               'ValueError: Expecting property name\n\n'
+               '----------------------------------------------------------------------\n'
+               'Ran 1 test in 0.1s\n\nFAILED (errors=1)\n')
+        self.assertEqual(verification.unittest_failures(log), [
+            ('test_x (m.C.test_x)', f'{here}/scripts/tests/m.py:7', 'ValueError: Expecting property name')])
+
+    def test_a_failing_runner_test_step_names_each_failing_test(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            script = Path(temporary) / 'sample.py'
+            script.write_text(self.FAILING_UNITTEST)
+            summary = Path(temporary) / 'summary.md'
+            run = verification.Run(Path(temporary) / 'run', 'test')
+            with patch.dict(os.environ, {'GITHUB_STEP_SUMMARY': str(summary)}):
+                with self.assertRaises(RuntimeError) as raised:
+                    run.command('runner-tests', [sys.executable, str(script)])
+            summary_text = summary.read_text()
+        message = str(raised.exception)
+        self.assertIn('Failed: test_equal (__main__.Sample.test_equal) at ', message)
+        self.assertIn('Failed: test_crash (__main__.Sample.test_crash) at ', message)
+        self.assertNotIn('test_fine', message)
+        self.assertIn('2 failing test(s)', summary_text)
+        self.assertIn('`test_equal (__main__.Sample.test_equal)`', summary_text)
 
     def simulator_inventory(self):
         return {

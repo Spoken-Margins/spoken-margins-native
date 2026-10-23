@@ -3432,6 +3432,12 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
     /// A Margin is being captured: from `beginRecording` until it is finished or cancelled.
     private var isCaptureActive = false
     private var captureRestarts = 0
+    /// The recorder is paused while the ready cue plays (#1594), so the cue is not in the file. It is still a
+    /// running capture: the poll reads it as running, and a restart must not replace it.
+    private var recorderHeldForCue = false
+    /// Names one hold, so a resume timer from an earlier hold or recording can't restart a recorder that was
+    /// finished, cancelled, interrupted or replaced in the meantime.
+    private var cueHoldToken = 0
     /// The most `currentTime` the current recorder has shown. A stopped `AVAudioRecorder` reads 0, but
     /// the audio it took in is still in its file.
     private var capturedHighWaterMs = 0
@@ -3567,6 +3573,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         recorderDelegate = delegate
         capturedHighWaterMs = 0
         stoppedMeasurement = nil
+        recorderHeldForCue = false
         return (recorder, url)
     }
 
@@ -3670,7 +3677,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         peakPowerDb = max(peakPowerDb ?? peak, peak)
         capturedHighWaterMs = max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded()))
         var durationKnown = true
-        if recorder.isRecording {
+        if isCapturing(recorder) {
             stoppedMeasurement = nil
         } else {
             // The polls can miss audio taken in just before the stop, and a stopped recorder reads 0. The
@@ -3691,7 +3698,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         let inputRoute: String? = nil
         #endif
         return RecordingCaptureReading(
-            recorderRunning: recorder.isRecording,
+            recorderRunning: isCapturing(recorder),
             capturedMs: capturedHighWaterMs,
             durationKnown: durationKnown,
             peakPowerDb: peak,
@@ -3711,7 +3718,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         // thread (#1041). A running recorder says how much it has taken in until the moment it stops. One that
         // had already stopped has a background measurement the poll started; if that hasn't landed, the length
         // is unknown, which means keep.
-        let hadStopped = recorder.map { !$0.isRecording } ?? false
+        let hadStopped = recorder.map { !isCapturing($0) } ?? false
         if let recorder, !hadStopped {
             capturedHighWaterMs = max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded()))
         }
@@ -3757,7 +3764,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         #if canImport(AVFoundation)
         var fields: [String: String] = ["captureRestarts": String(captureRestarts), "inputPolicy": inputChoice.rawValue]
         if let recorder {
-            fields["recorderRunning"] = String(recorder.isRecording)
+            fields["recorderRunning"] = String(isCapturing(recorder))
             fields["capturedMs"] = String(max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded())))
             switch stoppedMeasurement?.outcome {
             case nil: fields["stoppedFile"] = stoppedMeasurement == nil ? "recording" : "measuring"
@@ -3782,6 +3789,44 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
 
     public func finalizedRecordingIntegrity() -> FinalizedRecordingIntegrity? { finalizedIntegrity }
 
+    public func pauseForReadyCue() {
+        #if canImport(AVFoundation)
+        guard isCaptureActive, !recorderHeldForCue, let recorder, recorder.isRecording else { return }
+        recorder.pause()
+        recorderHeldForCue = true
+        cueHoldToken += 1
+        #endif
+    }
+
+    public func resumeAfterReadyCue(after seconds: TimeInterval) {
+        #if canImport(AVFoundation)
+        guard recorderHeldForCue else { return }
+        guard seconds > 0 else { return resumeHeldRecorder(token: cueHoldToken) }
+        let token = cueHoldToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            self?.resumeHeldRecorder(token: token)
+        }
+        #endif
+    }
+
+    #if canImport(AVFoundation)
+    /// Running, or held still on purpose for the ready cue: either way the capture is alive.
+    private func isCapturing(_ recorder: AVAudioRecorder) -> Bool { recorder.isRecording || recorderHeldForCue }
+
+    private func resumeHeldRecorder(token: Int) {
+        guard recorderHeldForCue, token == cueHoldToken else { return }
+        recorderHeldForCue = false
+        guard isCaptureActive, let recorder else { return }
+        recorder.record()
+    }
+
+    /// A finish, cancel, interruption or restart ends a hold; the resume timer then does nothing.
+    private func dropCueHold() {
+        recorderHeldForCue = false
+        cueHoldToken += 1
+    }
+    #endif
+
     public func finishRecording(audioRef: String?) throws -> String {
         #if canImport(AVFoundation)
         guard let recorder, let currentURL else {
@@ -3790,6 +3835,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         }
         let reportedMs = max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded()))
         isCaptureActive = false
+        dropCueHold()
         finalizedIntegrity = RecordingFileFinalizer.finish(url: currentURL, reportedMs: reportedMs) { recorder.stop() }
         recorderDelegate = nil
         self.recorder = nil
@@ -3812,6 +3858,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         finalizedIntegrity = nil
         let url = currentURL
         isCaptureActive = false
+        dropCueHold()
         recorderDelegate = nil
         recorder?.stop()
         recorder?.deleteRecording()
@@ -3856,6 +3903,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
                 // While waiting for an end that may never come, a new interruption is reported
                 // too, so the app drops the stale resume.
                 guard self.recordingStartedAt != nil || self.awaitsInterruptionEnd else { return }
+                self.dropCueHold() // iOS has stopped the recorder: a held one must not be restarted into the call
                 if !self.awaitsInterruptionEnd { self.headphonesWhenInterrupted = Self.headphoneOutputs() }
                 self.awaitsInterruptionEnd = true
                 self.onInterruption?(.interruptionBegan, self.recordedSeconds)

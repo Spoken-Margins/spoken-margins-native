@@ -1,6 +1,9 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import SessionKit
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// The Margin Output status line. A failure is drawn with the failure icon, so a listener can
 /// tell it from ordinary status without relying on colour (#308).
@@ -213,6 +216,12 @@ struct ListeningEditionImportScreen: View {
     @FocusState private var editingJSON: Bool
     private static let pastedEntryID = -1
 
+    /// What the last Preview or Import said: the message from Preview or a failed import, else one line per file imported.
+    private var resultLines: [(text: String, isFailure: Bool)] {
+        if !message.isEmpty { return [(message, messageIsFailure)] }
+        return results.map { ($0.message, $0.outcome.isFailure) }
+    }
+
     private var hasPastedJSON: Bool { !json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     /// What the pinned button will import: every valid chosen file, plus the pasted JSON when there is any.
     private var importCount: Int { picked.filter(\.isValid).count + (hasPastedJSON ? 1 : 0) }
@@ -277,54 +286,51 @@ struct ListeningEditionImportScreen: View {
                     Text("Replacing applies when this is the only edition you import.").font(.caption).foregroundStyle(.secondary)
                 }
             }
-            if !results.isEmpty {
-                Section("Results") {
-                    ForEach(results) { line in
-                        StatusMessageText(message: line.message, isFailure: line.outcome.isFailure)
-                    }
-                }
-            }
-            if !message.isEmpty {
-                if messageIsFailure { FailureMessageLabel(message) } else { Text(message) }
-            }
         }
         .navigationTitle("Listening Edition")
         // Pinned, so Import never needs a scroll, at any screen size or text size.
+        // The result sits right above the button, so a tap is never answered below the fold (#2063).
         .safeAreaInset(edge: .bottom) {
-            Button(action: importAll) {
-                Text(ListeningEditionBatch.buttonTitle(count: importCount))
-                    .font(.headline).frame(maxWidth: .infinity, minHeight: 44)
+            VStack(spacing: 8) {
+                if !resultLines.isEmpty {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(resultLines.enumerated()), id: \.offset) { _, line in
+                                StatusMessageText(message: line.text, isFailure: line.isFailure)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 140)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("listeningEdition.result")
+                }
+                Button(action: importAll) {
+                    Text(ListeningEditionBatch.buttonTitle(count: importCount))
+                        .font(.headline).frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .filledActionButton()
+                .disabled(importCount == 0)
+                .accessibilityIdentifier("listeningEdition.import")
             }
-            .filledActionButton()
-            .disabled(importCount == 0)
-            .accessibilityIdentifier("listeningEdition.import")
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .background(.bar)
         }
+        .onChange(of: resultLines.map { $0.text }) { _, texts in
+            #if canImport(UIKit)
+            if !texts.isEmpty { UIAccessibility.post(notification: .announcement, argument: texts.joined(separator: " ")) }
+            #endif
+        }
         .fileImporter(isPresented: $choosingFile, allowedContentTypes: [.json], allowsMultipleSelection: true) { result in
             do {
                 for url in try result.get() {
-                    picked.append(Self.entry(for: url, id: nextEntryID))
+                    picked.append(.reading(url: url, id: nextEntryID))
                     nextEntryID += 1
                 }
                 results = []
                 message = ""
             } catch { message = error.localizedDescription; messageIsFailure = true }
-        }
-    }
-
-    private static func entry(for url: URL, id: Int) -> ListeningEditionBatch.Entry {
-        let name = url.lastPathComponent
-        let access = url.startAccessingSecurityScopedResource()
-        defer { if access { url.stopAccessingSecurityScopedResource() } }
-        do {
-            guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 8_000_000 else {
-                return ListeningEditionBatch.Entry(id: id, name: name, error: "Listening edition exceeds 8 MB.")
-            }
-            return ListeningEditionBatch.Entry(id: id, name: name, data: try Data(contentsOf: url))
-        } catch {
-            return ListeningEditionBatch.Entry(id: id, name: name, error: error.localizedDescription)
         }
     }
 
@@ -351,6 +357,7 @@ struct ListeningEditionImportScreen: View {
         if entries.count == 1, let single = entries[0].edition {
             let replace = entries[0].id == Self.pastedEntryID && replaceMap
             if model.importListeningEdition(single, replaceMap: replace) { picked = []; json = ""; edition = nil; replaceMap = false }
+            else { message = model.lastError ?? "The edition could not be imported."; messageIsFailure = true }
             return
         }
         let lines = model.importListeningEditions(entries)

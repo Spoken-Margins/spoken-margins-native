@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0FEB83362436FFB1CBA86CE3 /* icon-96.png in Resources */ = {isa = PBXBuildFile; fileRef = B0E665415E1CA9540B3692BC /* icon-96.png */; };
+		10C92B9BE955FDCB492E1130 /* pdf-outline-collected-stories.pdf in Resources */ = {isa = PBXBuildFile; fileRef = FB45D701E0D00156BD56A177 /* pdf-outline-collected-stories.pdf */; };
 		198C6F79A9F04D4B19F2A10B /* browserTextCapture.js in Resources */ = {isa = PBXBuildFile; fileRef = 98C26CB68BDFFFA8A1B7578B /* browserTextCapture.js */; };
 		1D558A9DAF393C1C59BA86EE /* BundledJavaScript-NOTICES.txt in Resources */ = {isa = PBXBuildFile; fileRef = 9DCA8BA796D0A4F2D17C342F /* BundledJavaScript-NOTICES.txt */; };
 		205189A37B2B08E1FAE0B0A2 /* icon-48.png in Resources */ = {isa = PBXBuildFile; fileRef = 534726939CEC57D001157DD9 /* icon-48.png */; };
@@ -31,6 +32,7 @@
 		68EFC63296D10802FDE30831 /* substack-shared-text-post.html in Resources */ = {isa = PBXBuildFile; fileRef = AA3E54540069285190E19D1B /* substack-shared-text-post.html */; };
 		6C3AD65F618F4FBE42AB6A31 /* fixtures in Resources */ = {isa = PBXBuildFile; fileRef = F8F6B4F91AA36C9513801753 /* fixtures */; };
 		76005D25F3CFA0070E96DA24 /* ClipboardIntakeClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCF082C6D01456C6743B188A /* ClipboardIntakeClassifier.swift */; };
+		78065128412B4F94A3B7B6FD /* LiveSessionMarkInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */; };
 		7F0A333F40F542B3E4C42E1A /* Defuddle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 8C1BFB86196C5C1BE2E52BEF /* Defuddle-LICENSE.txt */; };
 		81B60CCA76A6F0E91712933E /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = EE29274792FFFC88EA74C157 /* PrivacyInfo.xcprivacy */; };
 		8B40FCEFB4AFABF3E3B52486 /* SessionKitEPUB in Frameworks */ = {isa = PBXBuildFile; productRef = DAEA68EE26E46DA752778D6D /* SessionKitEPUB */; };
@@ -58,8 +60,10 @@
 		E1A30C458CE0DA8DB0031D9C /* Legal in Resources */ = {isa = PBXBuildFile; fileRef = E253416A15B5108380F819E8 /* Legal */; };
 		E3274F151D1933E8743EA4CE /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 968283859946C995CD8FA20C /* popup.html */; };
 		EA3D13B4259566F793F4E0F9 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = BF9501739D9C1D8AAED60132 /* manifest.json */; };
+		EA749D1E3C580CCE4713612F /* pdf-outline-collected-stories.pdf in Resources */ = {isa = PBXBuildFile; fileRef = FB45D701E0D00156BD56A177 /* pdf-outline-collected-stories.pdf */; };
 		EEE29B9A790A870683EE19ED /* SpokenMarginsShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BE41691E3B902A5C377AC70D /* SpokenMarginsShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		F719B3F555F883823A6AEED5 /* SessionKitPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 16898C6F40FB4FDCA4DE8C38 /* SessionKitPersistence */; };
+		FC312F1C0C4954CC4A846A2C /* LiveSessionMarkInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -127,6 +131,7 @@
 		45170E0354730F22BB2E258A /* SharedTextIntake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedTextIntake.swift; sourceTree = "<group>"; };
 		454A82B2CAACCCAED5C33E03 /* catalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = catalog.json; sourceTree = "<group>"; };
 		466DDA96AB529FEFB23D4BEE /* BundledJavaScript-NOTICES.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "BundledJavaScript-NOTICES.txt"; sourceTree = "<group>"; };
+		4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveSessionMarkInbox.swift; sourceTree = "<group>"; };
 		50026D96CAC3D753625277E0 /* substack-shared-text-feed.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = "substack-shared-text-feed.xml"; sourceTree = "<group>"; };
 		534726939CEC57D001157DD9 /* icon-48.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-48.png"; sourceTree = "<group>"; };
 		560C4E54442E123E42855A02 /* SpokenMarginsAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SpokenMarginsAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -156,6 +161,7 @@
 		EE29274792FFFC88EA74C157 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		F2A6CC7522887307C67D46AE /* SpokenMarginsBrowserTextExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SpokenMarginsBrowserTextExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F8F6B4F91AA36C9513801753 /* fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = fixtures; path = Contracts/fixtures; sourceTree = SOURCE_ROOT; };
+		FB45D701E0D00156BD56A177 /* pdf-outline-collected-stories.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = "pdf-outline-collected-stories.pdf"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -166,6 +172,7 @@
 				Gate2CompactCommandURL.swift,
 				Gate2LiveActivityAttributes.swift,
 				Gate2LiveActivityIntents.swift,
+				LiveSessionActivity.swift,
 			);
 			target = 1D8893BE578C4DB95B466E90 /* SpokenMarginsShareExtension */;
 		};
@@ -376,6 +383,7 @@
 			isa = PBXGroup;
 			children = (
 				DCF082C6D01456C6743B188A /* ClipboardIntakeClassifier.swift */,
+				4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */,
 				45170E0354730F22BB2E258A /* SharedTextIntake.swift */,
 			);
 			name = SessionKit;
@@ -422,6 +430,7 @@
 			isa = PBXGroup;
 			children = (
 				1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */,
+				FB45D701E0D00156BD56A177 /* pdf-outline-collected-stories.pdf */,
 				50026D96CAC3D753625277E0 /* substack-shared-text-feed.xml */,
 				AA3E54540069285190E19D1B /* substack-shared-text-post.html */,
 			);
@@ -728,6 +737,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				4CF539FBC54D635647751674 /* emoji-article-crash-regression.txt in Resources */,
+				EA749D1E3C580CCE4713612F /* pdf-outline-collected-stories.pdf in Resources */,
 				5CDAE601AA8B28F47829D3C6 /* substack-shared-text-feed.xml in Resources */,
 				68EFC63296D10802FDE30831 /* substack-shared-text-post.html in Resources */,
 			);
@@ -745,6 +755,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				CC6A33EA5ED33F43E7A818A4 /* emoji-article-crash-regression.txt in Resources */,
+				10C92B9BE955FDCB492E1130 /* pdf-outline-collected-stories.pdf in Resources */,
 				33700D595D54E56882A7C502 /* substack-shared-text-feed.xml in Resources */,
 				28BF34C07DBB1E26551363BE /* substack-shared-text-post.html in Resources */,
 			);
@@ -779,6 +790,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				78065128412B4F94A3B7B6FD /* LiveSessionMarkInbox.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -786,6 +798,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FC312F1C0C4954CC4A846A2C /* LiveSessionMarkInbox.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
