@@ -102,4 +102,21 @@ final class MarginSourceContextTests: XCTestCase {
         XCTAssertEqual(lines[paragraph - 1], abstractParagraph, "paragraph \(paragraph) is the passage")
         XCTAssertTrue(context.contains(lines[paragraph - 1]), context)
     }
+
+    func testHardWrappedProseKeepsItsShoulder() throws {
+        let text = "First sentence of the book. Second one follows it. It was the best of\ntimes, it was the worst.\nWe went on."
+        let start = (text as NSString).range(of: "We went on").location
+        let anchor = try writtenMargin(atOffset: start, in: text)
+
+        XCTAssertEqual(anchor.anchorBefore, "First sentence of the book. Second one follows it. It was the best of\ntimes, it was the worst.")
+    }
+
+    func testLinesEndingInOtherSentencePunctuationAreSentences() throws {
+        for ending in [":", "…", "。", "！", "»", "—"] {
+            let text = "Opening words\(ending)\nThe passage starts here. And goes on."
+            let start = (text as NSString).range(of: "The passage").location
+            let anchor = try writtenMargin(atOffset: start, in: text)
+            XCTAssertEqual(anchor.anchorBefore, "Opening words\(ending)", ending)
+        }
+    }
 }
