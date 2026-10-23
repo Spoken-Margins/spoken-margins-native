@@ -3074,7 +3074,22 @@ public final class SessionEngine {
 
     @discardableResult
     public func buildExport(options: ExportOptions) throws -> SessionExport {
-        let session = try resolveSession(options.sessionId)
+        try buildExport(options: options, source: try loadExportSource(sessionId: options.sessionId))
+    }
+
+    /// What an export reads before it shapes anything: the session, its item (with the whole text), the item's
+    /// transcript timeline (megabytes for a podcast), and the session's Margins and turns. Exporting N Margins of
+    /// one session reads this once (#2508) instead of once per Margin.
+    struct ExportSource {
+        var session: Session
+        var item: Item
+        var sourceTimeline: TranscriptTimeline?
+        var allInterjections: [Interjection]
+        var allTurns: [ConversationTurn]
+    }
+
+    func loadExportSource(sessionId: String?) throws -> ExportSource {
+        let session = try resolveSession(sessionId)
         let item = try repository.loadItem(id: session.itemId)
         let sourceTimeline = try repository.loadTranscriptTimeline(itemId: item.id)?.timeline
         let allInterjections = try repository.loadInterjections(sessionId: session.id)
@@ -3086,6 +3101,13 @@ public final class SessionEngine {
             }
             return Set(turn.sourceInterjectionIds).isSubset(of: activeInterjectionIDs)
         }
+        return ExportSource(session: session, item: item, sourceTimeline: sourceTimeline,
+                            allInterjections: allInterjections, allTurns: allTurns)
+    }
+
+    func buildExport(options: ExportOptions, source: ExportSource) throws -> SessionExport {
+        let session = source.session, item = source.item, sourceTimeline = source.sourceTimeline
+        let allInterjections = source.allInterjections, allTurns = source.allTurns
         let exposesFullSourceText = options.includeFullText && !isNativeAudioSource(item)
         let sourceTranscript = exposesFullSourceText
             ? sourceTimeline?.segments

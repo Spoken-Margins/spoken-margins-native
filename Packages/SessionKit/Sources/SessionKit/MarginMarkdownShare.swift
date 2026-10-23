@@ -42,9 +42,11 @@ public enum MarginMarkdownShare {
     }
 
     /// The notes folder's note for one Margin, dated as the folder dates it (#624).
-    static func note(for margin: Interjection, engine: SessionEngine) throws -> (SessionExport, String) {
-        let export = try engine.buildExport(options: .marginNote(sessionId: margin.sessionId, marginId: margin.id))
-        let recordedAt = margin.recordedAt(in: try engine.loadSession(id: margin.sessionId))
+    static func note(for margin: Interjection, engine: SessionEngine, source: SessionEngine.ExportSource? = nil) throws -> (SessionExport, String) {
+        let options = ExportOptions.marginNote(sessionId: margin.sessionId, marginId: margin.id)
+        let export = try source.map { try engine.buildExport(options: options, source: $0) } ?? engine.buildExport(options: options)
+        let session = try source?.session ?? engine.loadSession(id: margin.sessionId)
+        let recordedAt = margin.recordedAt(in: session)
         return (export, SessionExportMarkdownRenderer.renderMargin(export, createdAt: recordedAt))
     }
 
@@ -63,8 +65,12 @@ public enum MarginMarkdownShare {
     /// `Margins - <item title>.md`. Nil when the item has no Margin with a note.
     public static func file(forItemMargins margins: [Interjection], engine: SessionEngine) throws -> MarginMarkdownFile? {
         var notes: [(margin: Interjection, export: SessionExport, markdown: String)] = []
+        // The item and its transcript timeline are read once per session, not once per Margin (#2508).
+        var sources: [String: SessionEngine.ExportSource] = [:]
         for margin in margins where hasNote(margin) {
-            let (export, markdown) = try note(for: margin, engine: engine)
+            let source = try sources[margin.sessionId] ?? engine.loadExportSource(sessionId: margin.sessionId)
+            sources[margin.sessionId] = source
+            let (export, markdown) = try note(for: margin, engine: engine, source: source)
             if !markdown.isEmpty { notes.append((margin, export, markdown)) }
         }
         guard let item = notes.first?.export.item else { return nil }
