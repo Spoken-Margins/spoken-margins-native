@@ -63,7 +63,7 @@ struct ExperienceMarginDetailView: View {
                     }
                     if current.canPlayRecording {
                         Button(
-                            model.isPlayingInterjectionAudio(current.interjection) ? "Stop playing" : "Play Margin",
+                            model.isPlayingInterjectionAudio(current.interjection) ? "Stop playing" : "Hear my recording",
                             systemImage: model.isPlayingInterjectionAudio(current.interjection) ? "stop.fill" : "play.fill"
                         ) { model.toggleInterjectionAudioPlayback(current.interjection) }
                         .accessibilityIdentifier("marginDetail.playRecording.button")
@@ -103,7 +103,7 @@ struct ExperienceMarginDetailView: View {
             }
             .onChange(of: model.feedbackEvent) { _, event in actionFeedback = event }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                Button("Play this moment", systemImage: "play.fill") {
+                Button("Go to this moment in the source", systemImage: "arrow.turn.down.right") {
                     pendingNavigation = .moment
                     dismiss()
                 }

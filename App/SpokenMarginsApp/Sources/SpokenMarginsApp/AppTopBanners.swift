@@ -96,14 +96,22 @@ struct FloatingFeedbackBanner: View {
 
 struct SourceOperationBanner: View {
     let message: String
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        HStack(spacing: 10) {
-            ProgressView()
-            Text(message)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(2)
-            Spacer()
+        // At accessibility sizes the hint drops under the message instead of squeezing it (#1935).
+        let large = dynamicTypeSize.isAccessibilitySize
+        (large
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+            : AnyLayout(HStackLayout(spacing: 10))) {
+            HStack(spacing: 10) {
+                ProgressView()
+                Text(message)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(large ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !large { Spacer() }
+            }
             Text("You can keep listening")
                 .font(.caption)
                 .foregroundStyle(AppColors.secondaryText)
@@ -121,25 +129,33 @@ struct SourceOperationBanner: View {
 
 struct TrashUndoBanner: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let undo: TrashUndoState
 
     var body: some View {
-        HStack(spacing: 12) {
+        // At accessibility sizes the buttons take their own row under the title (#1935).
+        let large = dynamicTypeSize.isAccessibilitySize
+        (large
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 12))) {
             Text("Moved \(undo.title) to Recently Deleted")
                 .font(.subheadline)
-                .lineLimit(2)
-            Spacer()
-            // Undo and Dismiss each get a 44 pt hit area, with room between them (#1926).
-            Button(action: model.undoLastTrash) {
-                Text("Undo")
-                    .font(.subheadline.bold())
-                    .minimumTapTarget()
+                .lineLimit(large ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true)
+            if !large { Spacer() }
+            HStack(spacing: 12) {
+                // Undo and Dismiss each get a 44 pt hit area, with room between them (#1926).
+                Button(action: model.undoLastTrash) {
+                    Text("Undo")
+                        .font(.subheadline.bold())
+                        .minimumTapTarget()
+                }
+                .accessibilityIdentifier("trash.undo.button")
+                Button(action: model.dismissTrashUndo) {
+                    TapTargetIcon(systemName: "xmark")
+                }
+                .accessibilityLabel("Dismiss")
             }
-            .accessibilityIdentifier("trash.undo.button")
-            Button(action: model.dismissTrashUndo) {
-                TapTargetIcon(systemName: "xmark")
-            }
-            .accessibilityLabel("Dismiss")
         }
         .padding(12)
         .foregroundStyle(.white)

@@ -77,6 +77,21 @@ final class EndOfMediaStartTests: XCTestCase {
         XCTAssertEqual(outsideAudio.events, ["play@\(Self.durationMs - 500 - 1)"])
     }
 
+    func testAPlacePastTheStoredLengthIsNotTheEnd() throws {
+        // #2189: a stored length can be a little short of the real file (corrections under 1 s are skipped, and a
+        // feed length can miss dynamic ads). A Margin at 0.8 s before the real end sits past that stored length, so
+        // "length minus place" is negative. That is a place the listener meant, not the end.
+        for pastMs in [1, 100, 900] {
+            let (engine, audio) = try pausedEpisode(remainingMs: -pastMs)
+
+            let snapshot = try engine.resumePlayback()
+
+            XCTAssertEqual(audio.events, ["play@\(Self.durationMs + pastMs)"], "\(pastMs) ms past the stored length")
+            XCTAssertNotEqual(snapshot.phase, .finished, "\(pastMs) ms past the stored length")
+            XCTAssertTrue(snapshot.status.isPlaybackActive)
+        }
+    }
+
     func testAPlaceChosenOneSecondFromTheEndStillPlaysThere() throws {
         // #643 and #588: a scrub to 1 s from the end, or a Margin at the last second (0.8 s), is a place the
         // listener meant. Only a position inside the player's own seek tolerance of the end counts as the end.

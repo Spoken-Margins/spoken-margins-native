@@ -71,6 +71,13 @@ public struct ChunkHandOverGapRecorder: Sendable {
         return gap
     }
 
+    /// The seam's next chunk moved to a new generation of the same item (a background seam handed to the bundled
+    /// voice, #1786): its start still closes the gap, so the silence it took is measured.
+    public mutating func pendingMoved(from old: UUID, to new: UUID) {
+        guard pending?.generation == old else { return }
+        pending?.generation = new
+    }
+
     /// The listener paused, so the time until the next start isn't a hand-over.
     public mutating func discardPending() {
         pending = nil

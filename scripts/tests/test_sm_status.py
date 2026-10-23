@@ -551,5 +551,38 @@ class LaneFormatsStayInStep(unittest.TestCase):
         self.assertIn("BOT = ('github-actions[bot]'", self.runner)
 
 
+class RequestHeaders(unittest.TestCase):
+    """The real urllib.request.Request, not a fake client (#2265): a body with no Content-Type is sent form-encoded
+    and GitHub answers 415."""
+
+    def sent(self, call):
+        from unittest import mock
+
+        class Response:
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return b'[]'
+
+        with mock.patch.object(status.urllib.request, 'urlopen', return_value=Response()) as opened:
+            call(status.GitHub(token='t'))
+        return opened.call_args.args[0]
+
+    def test_a_post_with_a_body_says_it_is_json(self):
+        req = self.sent(lambda api: api.post('issues/1/labels', {'labels': ['ready']}))
+        self.assertEqual(req.get_header('Content-type'), 'application/json')
+        self.assertEqual(json.loads(req.data), {'labels': ['ready']})
+
+    def test_a_get_and_a_delete_carry_no_content_type(self):
+        self.assertIsNone(self.sent(lambda api: api.get('issues/1')).get_header('Content-type'))
+        self.assertIsNone(self.sent(lambda api: api.delete('issues/1/labels/x')).get_header('Content-type'))
+
+
 if __name__ == '__main__':
     unittest.main()
