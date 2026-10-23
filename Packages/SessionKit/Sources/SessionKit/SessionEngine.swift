@@ -114,6 +114,9 @@ public final class SessionEngine {
     private var transcriptsDeletedSinceRequest: Set<String> = []
     /// How the last saved Margin chose where its source resumes (#806), for diagnostics.
     private var lastMarginRejoin: String?
+    /// The place the system paused a podcast or recording at, and when, until it is resumed or the listener moves it
+    /// (#1975). Resuming after the interruption steps back from here by how long it lasted.
+    private var systemPause: (sessionId: String, mediaTimeMs: Int, at: Date)?
     /// Where the last Back tap in text landed, so the next one can tell it is a repeat (#1102). Only listening on
     /// from there keeps it: every other change of position calls `forgetBackTapLanding()` (#1122).
     private var lastBackTapLanding: (targetKey: String, charOffset: Int)?
@@ -316,6 +319,7 @@ public final class SessionEngine {
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("pause")
         }
+        systemPause = nil
         session = try syncCurrentPositionFromAudio(session)
         currentSession = session
         try persistSession(session)
@@ -337,13 +341,46 @@ public final class SessionEngine {
         session = try syncCurrentPositionFromAudio(session)
         currentSession = session
         try persistSession(session)
+        systemPause = Self.isTimeBased(session) ? session.position.mediaTimeMs.map { (session.id, $0, now()) } : nil
         publish(status: .paused, phase: session.phase)
         return snapshot
+    }
+
+    /// Resumes after the system ended an interruption. A podcast or recording first steps back by
+    /// `InterruptionRewind` for how long it was paused, so the listener picks up the thread; anything else
+    /// resumes as `resumePlayback()` does. The step happens once: a retry of a refused resume starts from the
+    /// stepped-back place (#1975).
+    @discardableResult
+    public func resumePlaybackAfterInterruption() throws -> SessionSnapshot {
+        defer { systemPause = nil }
+        guard let pause = systemPause, var session = currentSession, snapshot.status == .paused,
+              session.id == pause.sessionId, session.position.mediaTimeMs == pause.mediaTimeMs else {
+            return try resumePlayback()
+        }
+        let rewindMs = InterruptionRewind.rewindMs(pausedForSeconds: now().timeIntervalSince(pause.at))
+        // An episode that ended as the call came in is finished, not replayed from its tail (#2097).
+        if rewindMs > 0, !startsInTheLastInstantOfMedia(session) {
+            forgetBackTapLanding()
+            // Never into a chapter the listener skipped: a tap on chapter 3 followed by a call must not resume in chapter 2.
+            let timeline = currentWatchPackage?.timeline ?? sourceTranscriptTimeline(for: session)
+            let chapterStartMs = timeline.flatMap { mediaChapter(at: pause.mediaTimeMs, timeline: $0)?.startMs } ?? 0
+            session = mediaSession(session, movedTo: max(chapterStartMs, pause.mediaTimeMs - rewindMs))
+            currentSession = session
+            try persistSession(session)
+            protectPlaybackPosition(for: session)
+        }
+        return try resumePlayback()
+    }
+
+    /// Podcasts and recordings are heard on a clock; text is read from a character, and resumes at its sentence.
+    private static func isTimeBased(_ session: Session) -> Bool {
+        session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia
     }
 
     @discardableResult
     public func resumePlayback() throws -> SessionSnapshot {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
+        systemPause = nil
         try requireNavigationAllowed("resumePlayback")
         try requirePlayback("resumePlayback")
         guard var session = currentSession else {

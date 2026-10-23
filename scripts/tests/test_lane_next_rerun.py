@@ -1,11 +1,13 @@
 """#1204: a failing host test is re-run on plain next before the lane blames the PR."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -143,10 +145,10 @@ class RecheckTests(unittest.TestCase):
             api = FakeApi()
             verdict, details = repo.recheck(api)
             self.assertEqual(verdict, 'INCONCLUSIVE')
-            self.assertIn(f'fails on next {repo.next[:7]} too: not this PR', '\n'.join(details))
+            self.assertIn(f'fails on main {repo.next[:7]} too: not this PR', '\n'.join(details))
             self.assertEqual(git(repo.tree, 'rev-parse', 'HEAD'), repo.merge)  # the tree is back on the merge
             (filed,) = api.filed()
-            self.assertIn(f'title=Host test fails on next: {ID}', filed)
+            self.assertIn(f'title=Host test fails on main: {ID}', filed)
             for label in ('ready', 'priority', 'bug', 'regression'):
                 self.assertIn(f'labels[]={label}', filed)
             self.assertIn('milestone=7', filed)
@@ -156,24 +158,55 @@ class RecheckTests(unittest.TestCase):
                 [lane.report('pr5-r1', verdict, 'a' * 40, repo.next, 'auto', 'host only', 1, 'x', details, 'none', '/e',
                              'owner', {'commit': 'a' * 40, 'next': repo.next, 'tier': 'auto', 'tests': []})]))[0], False)
 
+    def test_the_log_shows_the_assertion_that_failed_on_the_trunk(self):
+        # #2535: the log held only the result line, so the cause of #2525/#2526 had to be found in another log.
+        with tempfile.TemporaryDirectory() as folder:
+            repo = Repo(folder, BROKEN, BROKEN)
+            repo.failed_step()
+            repo.recheck(FakeApi())
+            log = (repo.evidence / 'next-rerun.log').read_text()
+            self.assertIn('AssertionError: broken', log)
+            self.assertIn('LANE-NEXT-RERUN {', log)
+
+    def test_the_wording_names_the_trunk_and_the_old_wording_still_matches_the_runners_marker(self):
+        with tempfile.TemporaryDirectory() as folder, mock.patch.dict(os.environ, {'SM_TRUNK': 'trunkx'}):
+            repo = Repo(folder, BROKEN, BROKEN)
+            repo.failed_step()
+            api = FakeApi()
+            verdict, details = repo.recheck(api)
+            text = '\n'.join(details)
+            self.assertIn(f'fails on trunkx {repo.next[:7]} too: not this PR', text)
+            self.assertIn(f'title=Host test fails on trunkx: {ID}', api.filed()[0])
+        # lane-runner.py reads the marker, not the branch name: the old line and the new one are both no lane fault.
+        for line in ('fails on next abc1234 too: not this PR.', 'fails on main abc1234 too: not this PR.',
+                     'fails on trunkx abc1234 too: not this PR.'):
+            with self.subTest(line=line):
+                body = lane.report('pr5-r1', 'INCONCLUSIVE', 'a' * 40, 'b' * 7, 'auto', 'host only', 1, 'x', [line],
+                                   'none', '/e', 'owner', {'commit': 'a' * 40, 'next': 'b' * 7, 'tier': 'auto', 'tests': []})
+                self.assertEqual(lane.lane_report_verdict(body)[0], False)
+
     def test_many_tests_failing_at_once_make_one_issue_not_one_each(self):
         api = FakeApi(milestones=[{'number': 9, 'title': rerun.MILESTONE}])
         tests = [f'test_x.T.test_{n}' for n in range(8)]
         lines = rerun.report_broken_on_next(api, 'o/r', tests, 'a' * 40, 5, 'r1', Path('/log'))
         (filed,) = api.filed()
-        self.assertIn('title=Host tests fail on next: many at once', filed)
+        self.assertIn('title=Host tests fail on main: many at once', filed)
         self.assertIn('milestone=9', filed)
         self.assertEqual(len(lines), 1)
-        again = FakeApi(issues=[{'number': 50, 'title': 'Host tests fail on next: many at once', **OWNER}])
-        rerun.report_broken_on_next(again, 'o/r', tests, 'a' * 40, 6, 'r2', Path('/log'))
-        self.assertEqual(again.filed(), [])
-        self.assertEqual(again.commented()[0][0], 'repos/o/r/issues/50/comments')
+        # An issue filed before #2535 under the old wording is still the one a later run comments on.
+        for title in ('Host tests fail on main: many at once', 'Host tests fail on next: many at once'):
+            with self.subTest(title=title):
+                again = FakeApi(issues=[{'number': 50, 'title': title, **OWNER}])
+                rerun.report_broken_on_next(again, 'o/r', tests, 'a' * 40, 6, 'r2', Path('/log'))
+                self.assertEqual(again.filed(), [])
+                self.assertEqual(again.commented()[0][0], 'repos/o/r/issues/50/comments')
 
     def test_an_open_issue_naming_the_test_gets_a_comment_instead(self):
         with tempfile.TemporaryDirectory() as folder:
             repo = Repo(folder, BROKEN, BROKEN)
             repo.failed_step()
-            for title in (f'Host test fails on next: {ID}', 'DemoTests.test_a fails on the lane Mac'):
+            for title in (f'Host test fails on main: {ID}', f'Host test fails on next: {ID}',
+                          'DemoTests.test_a fails on the lane Mac'):
                 with self.subTest(title=title):
                     api = FakeApi(issues=[{'number': 44, 'title': title, **OWNER},
                                           {'number': 45, 'title': title, 'pull_request': {}, **OWNER}])
@@ -189,7 +222,7 @@ class RecheckTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             repo = Repo(folder, BROKEN, BROKEN)
             repo.failed_step()
-            api = FakeApi(issues=[{'number': 44, 'title': f'Host test fails on next: {ID}', **STRANGER}])
+            api = FakeApi(issues=[{'number': 44, 'title': f'Host test fails on main: {ID}', **STRANGER}])
             verdict, details = repo.recheck(api)
             self.assertEqual(verdict, 'INCONCLUSIVE')
             self.assertEqual(len(api.filed()), 1)
@@ -202,7 +235,7 @@ class RecheckTests(unittest.TestCase):
             api = FakeApi()
             verdict, details = repo.recheck(api)
             self.assertEqual(verdict, 'FAIL')
-            self.assertIn(f'{ID} (passed on next)', '\n'.join(details))
+            self.assertIn(f'{ID} (passed on main)', '\n'.join(details))
             self.assertEqual(api.writes, [])
             self.assertEqual(git(repo.tree, 'rev-parse', 'HEAD'), repo.merge)
 
@@ -213,7 +246,7 @@ class RecheckTests(unittest.TestCase):
             api = FakeApi()
             verdict, details = repo.recheck(api)
             self.assertEqual(verdict, 'FAIL')
-            self.assertIn(f'{ID} (missing on next)', '\n'.join(details))
+            self.assertIn(f'{ID} (missing on main)', '\n'.join(details))
             self.assertEqual(api.writes, [])
 
     def test_a_failure_no_test_explains_is_not_re_run(self):
@@ -231,7 +264,7 @@ class RecheckTests(unittest.TestCase):
             (repo.tree / 'scripts/tests/test_demo.py').write_text(BROKEN + '# edited during the run\n')
             verdict, details = repo.recheck(FakeApi())
             self.assertEqual(verdict, 'FAIL')
-            self.assertIn('not re-run on next: could not check out next', details[-1])
+            self.assertIn('not re-run on main: could not check out main', details[-1])
 
     def test_a_re_run_that_runs_out_of_time_is_no_proof_against_next(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -239,7 +272,7 @@ class RecheckTests(unittest.TestCase):
             repo.failed_step()
             verdict, details = repo.recheck(FakeApi(), runner=lambda command, log, timeout: None)
             self.assertEqual(verdict, 'FAIL')
-            self.assertIn(f'{ID} (missing on next)', '\n'.join(details))
+            self.assertIn(f'{ID} (missing on main)', '\n'.join(details))
             self.assertEqual(git(repo.tree, 'rev-parse', 'HEAD'), repo.merge)
 
     def swift_run(self, statuses):
@@ -271,7 +304,7 @@ class RecheckTests(unittest.TestCase):
                     (command,) = self.commands
                     self.assertEqual(command[:4], ['swift', 'test', '--package-path', 'Packages/SessionKit'])
                     self.assertEqual([args[2] for args in api.filed()],
-                                     [f'title=Host test fails on next: {test}' for test in filed])
+                                     [f'title=Host test fails on main: {test}' for test in filed])
                     self.assertEqual(any('no sound output (#909)' in line for line in details), usable is False)
 
 
@@ -281,7 +314,7 @@ class LaneRunnerTests(unittest.TestCase):
 
         def recheck(evidence, details):
             asked.append(evidence)
-            return 'INCONCLUSIVE', details + ['fails on next abc1234 too: not this PR.']
+            return 'INCONCLUSIVE', details + ['fails on main abc1234 too: not this PR.']
 
         for fast, wanted, rechecked in ((('FAIL', ['host tests failed']), 'INCONCLUSIVE', True),
                                         (('PASS', []), 'PASS', False), (('INCONCLUSIVE', ['lane fault']), 'INCONCLUSIVE', False)):

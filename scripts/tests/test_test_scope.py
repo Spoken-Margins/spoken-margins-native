@@ -1,10 +1,12 @@
 import importlib.util
 import json
 import subprocess
+import os
 import sys
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('test_scope', SCRIPTS / 'test-scope.py')
@@ -268,6 +270,13 @@ class TestScopeTests(unittest.TestCase):
 
 
 class LaneRunnerRoutingTests(unittest.TestCase):
+    def setUp(self):
+        # The Actions runner exports the repository's LANE_HOSTED_* rollout variables; these tests mean the defaults (#2525, #2526).
+        env = {key: value for key, value in os.environ.items() if not key.startswith('LANE_HOSTED_')}
+        patcher = mock.patch.dict(os.environ, env, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def route(self, paths=(), labels=(), online=True, **overrides):
         pr = {'labels': [{'name': label} for label in labels], 'changed_files': len(paths)}
         files = [[{'filename': path} for path in paths]]
