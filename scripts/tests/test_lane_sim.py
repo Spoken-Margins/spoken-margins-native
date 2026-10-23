@@ -1048,7 +1048,16 @@ class BootRetryTests(unittest.TestCase):
                 '{"timestamp":"x"}\n{"captureTime" : "%s"} com.apple.CoreSimulator.SimDevice.%s' % (stamp, UDID))
             real_sleep(min(seconds, 0.01))
 
-        with mock.patch.object(lane_sim.time, 'sleep', side_effect=report_arrives):
+        # Only lane_sim's own sleeps may deliver the report. Patching the shared time module's sleep also caught
+        # subprocess.run(timeout=...), which sleeps while it waits for a child that hasn't exited yet, so on a
+        # loaded Mac the report landed during the boot and stopped it as a crash, not a stall (#2494).
+        class SleepOnlyInLaneSim:
+            sleep = staticmethod(report_arrives)
+
+            def __getattr__(self, name):
+                return getattr(time, name)
+
+        with mock.patch.object(lane_sim, 'time', SleepOnlyInLaneSim()):
             error, info = self.boot(UDID)
         self.assertIsInstance(error, lane_sim.BootError)
         self.assertFalse(error.stall)
