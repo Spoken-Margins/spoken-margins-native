@@ -50,6 +50,37 @@ def condition(text):
     return found.group(1) if found else ''
 
 
+class HostedToolTests(unittest.TestCase):
+    def test_the_hosted_mac_gets_xcodegen_before_the_run(self):
+        # #2557: verify-tests.py runs `xcodegen generate` before a T3 build; the image has none, so every hosted T3
+        # was INCONCLUSIVE ("No such file or directory: 'xcodegen'") and held its PR's merge.
+        titles = [text.splitlines()[0] for text in steps()]
+        found = [text for text in steps() if 'xcodegen' in text and 'brew install xcodegen' in text]
+        self.assertEqual(len(found), 1, 'one step installs XcodeGen on the hosted Mac')
+        self.assertEqual(condition(found[0]), "runner.environment == 'github-hosted'", 'never on the build Macs')
+        self.assertLess(titles.index(found[0].splitlines()[0]), titles.index(next(t for t in titles if 'Run the request' in t)))
+
+    def test_the_hosted_mac_gets_a_crash_report_folder(self):
+        # #2557 audit: verify-tests.py raises "Simulator crash reports are unavailable" when ~/Library/Logs/DiagnosticReports
+        # is missing, and a fresh hosted Mac has none. The step that makes the lane folders makes it, hosted only.
+        folders = step('Hosted Mac - lane folders, Xcode and the iOS runtime')
+        self.assertEqual(condition(folders), "runner.environment == 'github-hosted'")
+        self.assertIn('mkdir -p "$HOME/Library/Logs/DiagnosticReports"', folders)
+
+    def test_the_lane_runs_on_python_3_12_on_the_hosted_mac_only(self):
+        # #2545 / #2557 audit: /usr/bin/python3 on the image is 3.9; setup-python's 3.12 is `python3` on PATH.
+        titles = [text.splitlines()[0] for text in steps()]
+        for title in ('Run the request', 'Tidy up after a cancelled or failed run'):
+            with self.subTest(step=title):
+                text = step(title)
+                self.assertIn("LANE_PYTHON: ${{ runner.environment == 'github-hosted' && 'python3' || '/usr/bin/python3' }}", text)
+                self.assertIn('"$LANE_PYTHON" "$RUNNER_TEMP/lane-runner.py"', text)
+                self.assertNotIn('/usr/bin/python3 "$RUNNER_TEMP', text)
+        self.assertLess(titles.index(step('Hosted Mac - Python 3.12').splitlines()[0]),
+                        titles.index(step('Run the request').splitlines()[0]))
+        self.assertIn("python-version: '3.12'", step('Hosted Mac - Python 3.12'))
+
+
 class RoutingTests(unittest.TestCase):
     def test_unset_or_anything_but_on_keeps_the_mac(self):
         for env in ({}, {'LANE_HOSTED_APP': ''}, {'LANE_HOSTED_APP': 'off'}, {'LANE_HOSTED_APP': 'yes'}):
