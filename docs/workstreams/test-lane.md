@@ -293,7 +293,7 @@ Simulators:
 - **A lane job that ends with no report (#2174).** When the runner is lost, a job runs no step: no report, no tidy-up note, and `lane:queued` stays. lane.yml's `lane-lost` job (on the VPS runner, only after the lane job failed) runs `lane-runner.py --lost` from the base branch. It does nothing if the run already reported or tidied up, the PR moved on, or the request was answered; otherwise it posts `Lane report pr<N>-r<run> — INCONCLUSIVE` naming the run (no tested commit, so the auto-revert never counts it), and takes `lane:queued` and `lane:running` off. Dispatch then reruns it once like any lane fault. A cancelled lane job is not covered.
 - At most two simulator jobs on this 16 GB Mac, and the second only while memory pressure is
   normal (two plus builds filled swap before the owner freed memory, #184). The helper holds a
-  Mac-wide simulator slot from boot until its watcher stops (the stop flag above, or --done). The runner's T3 takes the other slot or waits.
+  Mac-wide simulator slot from boot until its watcher stops (the stop flag above, or --done). The runner's T3 takes the other slot or waits. A job that waits reclaims a slot whose taker has exited and that is over 3 hours old (a desk run that died without --done, #2174): it releases the device as --done does and stops the watcher. A note from before that change names no device, so such a hold is only reported as STALE in the wait message.
   `scripts/lane-sim-boot --second-slot status` says whether a second job may start. When the
   lane switches the second slot off by itself, it comes back on after a cooldown (4 h, doubling
   for each repeat trip that week, at most 24 h) once pressure is normal; `off` by hand stays off
