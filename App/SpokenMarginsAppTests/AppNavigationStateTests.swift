@@ -18,6 +18,25 @@ final class AppNavigationStateTests: XCTestCase {
         XCTAssertEqual(navigation.paths[.margins], [.marginDetail("margin-1")])
     }
 
+    /// #1784: the add sheet's "Search podcasts by name" closes the sheet and asks for the catalog once.
+    func testSearchingPodcastsFromTheAddSheetClosesItAndAsksForTheCatalogOnce() {
+        var navigation = AppNavigationState()
+        navigation.addSourceRoute = .linkOrPodcast
+
+        navigation.searchPodcastsFromAddSheet()
+
+        XCTAssertNil(navigation.addSourceRoute)
+        XCTAssertTrue(navigation.takeCatalogRequest())
+        XCTAssertFalse(navigation.takeCatalogRequest(), "a later dismissal must not reopen the catalog")
+    }
+
+    func testClosingTheAddSheetWithoutSearchingNeverOpensTheCatalog() {
+        var navigation = AppNavigationState()
+        navigation.addSourceRoute = .linkOrPodcast
+        navigation.addSourceRoute = nil
+        XCTAssertFalse(navigation.takeCatalogRequest())
+    }
+
     /// #479: the root view holds Following's place across the screen switches that destroy its list.
     func testFollowingKeepsItsPlaceWhileOtherRootsAreUsed() {
         var navigation = AppNavigationState()

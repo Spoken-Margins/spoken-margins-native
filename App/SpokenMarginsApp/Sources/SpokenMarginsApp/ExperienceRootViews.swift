@@ -11,6 +11,7 @@ enum Build23ExperiencePolishLayout {
 
 struct ExperienceRootTabs: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
     @Binding var navigation: AppNavigationState
     var showsMiniPlayer = false
 
@@ -46,9 +47,13 @@ struct ExperienceRootTabs: View {
         }
         .tabViewStyle(.sidebarAdaptable)
         .tint(AppColors.evergreen)
-        .sheet(item: addSourceRoute) { route in
-            ExperienceAddSourceFlow(initialRoute: route)
-                .environmentObject(model)
+        .sheet(item: addSourceRoute, onDismiss: {
+            if navigation.takeCatalogRequest() { catalogDrawer.present() }
+        }) { route in
+            ExperienceAddSourceFlow(initialRoute: route, onSearchPodcasts: {
+                navigation.searchPodcastsFromAddSheet()
+            })
+            .environmentObject(model)
         }
     }
 

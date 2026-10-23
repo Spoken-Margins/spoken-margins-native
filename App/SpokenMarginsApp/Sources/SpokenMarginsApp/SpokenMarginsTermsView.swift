@@ -30,7 +30,7 @@ struct SpokenMarginsTermsView: View {
 
                 if model.hasAcceptedCurrentTerms {
                     Label("Accepted version \(SpokenMarginsTerms.currentVersion)", systemImage: "checkmark.seal.fill")
-                        .foregroundStyle(.green)
+                        .foregroundStyle(AppColors.green)
                         .accessibilityIdentifier("terms.accepted.status")
                 } else if allowsAcceptance {
                     VStack(alignment: .leading, spacing: 12) {

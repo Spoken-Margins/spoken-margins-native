@@ -8,6 +8,7 @@ import Foundation
 public final class SessionEngine {
     private static let textAnchorShoulderSentenceCount = 4
     private static let mediaClockBackwardToleranceMs = 2_000
+    private static let storedDurationTruncationMs = 999
     public private(set) var profile: RuntimeCapabilityProfile
     public private(set) var snapshot = SessionSnapshot()
     public private(set) var currentSession: Session?
@@ -1897,7 +1898,9 @@ public final class SessionEngine {
                 }
                 let durableDurationMs = try (publisher?.timeline ?? repository.loadTranscriptTimeline(itemId: item.id)?.timeline)?.durationMs
                     ?? playingItem.media?.durationMs
-                guard durableDurationMs.map({ mediaTimeMs <= $0 }) ?? true else {
+                // A stored length is truncated to whole seconds (#2189), so it can sit up to 999 ms under the file's
+                // real length; a Margin made in that last second is still the listener's place, not a bad anchor.
+                guard durableDurationMs.map({ mediaTimeMs <= $0 + Self.storedDurationTruncationMs }) ?? true else {
                     throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
                 }
                 // The plan is made while another item may still be current and its player
@@ -3074,7 +3077,22 @@ public final class SessionEngine {
 
     @discardableResult
     public func buildExport(options: ExportOptions) throws -> SessionExport {
-        let session = try resolveSession(options.sessionId)
+        try buildExport(options: options, source: try loadExportSource(sessionId: options.sessionId))
+    }
+
+    /// What an export reads before it shapes anything: the session, its item (with the whole text), the item's
+    /// transcript timeline (megabytes for a podcast), and the session's Margins and turns. Exporting N Margins of
+    /// one session reads this once (#2508) instead of once per Margin.
+    struct ExportSource {
+        var session: Session
+        var item: Item
+        var sourceTimeline: TranscriptTimeline?
+        var allInterjections: [Interjection]
+        var allTurns: [ConversationTurn]
+    }
+
+    func loadExportSource(sessionId: String?) throws -> ExportSource {
+        let session = try resolveSession(sessionId)
         let item = try repository.loadItem(id: session.itemId)
         let sourceTimeline = try repository.loadTranscriptTimeline(itemId: item.id)?.timeline
         let allInterjections = try repository.loadInterjections(sessionId: session.id)
@@ -3086,6 +3104,13 @@ public final class SessionEngine {
             }
             return Set(turn.sourceInterjectionIds).isSubset(of: activeInterjectionIDs)
         }
+        return ExportSource(session: session, item: item, sourceTimeline: sourceTimeline,
+                            allInterjections: allInterjections, allTurns: allTurns)
+    }
+
+    func buildExport(options: ExportOptions, source: ExportSource) throws -> SessionExport {
+        let session = source.session, item = source.item, sourceTimeline = source.sourceTimeline
+        let allInterjections = source.allInterjections, allTurns = source.allTurns
         let exposesFullSourceText = options.includeFullText && !isNativeAudioSource(item)
         let sourceTranscript = exposesFullSourceText
             ? sourceTimeline?.segments
@@ -4649,6 +4674,8 @@ public final class SessionEngine {
             if previous == beforeStart { break }
             beforeStart = previous
         }
+        // Lines that end no sentence (a heading, a title page's names and emails) are not part of the passage.
+        beforeStart = max(beforeStart, unsentencedBlockEnd(in: text, before: split))
         for _ in 0..<Self.textAnchorShoulderSentenceCount {
             let next = nextBoundary(after: afterEnd, unit: "sentence", text: text)
             if next == afterEnd { break }
@@ -4658,6 +4685,44 @@ public final class SessionEngine {
             slice(text, start: beforeStart, end: split),
             slice(text, start: split, end: afterEnd)
         )
+    }
+
+    /// Where the text just before `offset` stops being sentences: the start of the line after the nearest earlier line
+    /// that doesn't end in sentence punctuation. 0 when every earlier line does, so prose keeps its shoulder across
+    /// paragraph breaks. A PDF's title page is a run of such lines with no full stops (names, affiliations, emails),
+    /// and sentence boundaries alone ran back through it, so a Margin on the abstract kept the author block as the
+    /// context shown for it (#2482).
+    private static let sentenceEndings: Set<Character> = [
+        ".", "?", "!", ":", ";", "…", "—", "\"", "'", "”", "’", "»", ")", "]", "。", "！", "？", "」", "』"
+    ]
+    /// A longer line is prose, not a heading or a name.
+    private static let unsentencedLineLimit = 120
+
+    /// The line starting at `from` goes on from the one before it (a hard-wrapped line): its first letter is lower case.
+    private func continues(_ characters: [Character], from: Int, before limit: Int) -> Bool {
+        var index = from
+        while index < min(limit, characters.count), characters[index].isWhitespace { index += 1 }
+        return index < characters.count && characters[index].isLowercase
+    }
+
+    private func unsentencedBlockEnd(in text: String, before offset: Int) -> Int {
+        let characters = Array(text)
+        var lineStart = min(max(0, offset), characters.count)
+        while lineStart > 0, !characters[lineStart - 1].isNewline { lineStart -= 1 }
+        var following = lineStart // the start of the line after the one being read
+        var end = lineStart
+        while end > 0 {
+            end -= 1 // the line break that ends the previous line
+            var start = end
+            while start > 0, !characters[start - 1].isNewline { start -= 1 }
+            if let last = characters[start..<end].last(where: { !$0.isWhitespace }) {
+                if !Self.sentenceEndings.contains(last), end - start <= Self.unsentencedLineLimit,
+                   !continues(characters, from: following, before: lineStart) { return following }
+                following = start
+            }
+            end = start
+        }
+        return 0
     }
 
     private func completedWordBoundary(in text: String, at rawOffset: Int) -> Int {

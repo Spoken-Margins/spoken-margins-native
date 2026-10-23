@@ -335,7 +335,7 @@ struct InterjectionSharingView: View {
                         Text("All (\(model.sharingState.drafts.count))").tag(ShareMarginDraftFilter.all)
                         Text("Starred (\(starredDraftCount))").tag(ShareMarginDraftFilter.starred)
                     }
-                    .pickerStyle(.segmented)
+                    .segmentedUnlessLargeText()
                     .accessibilityIdentifier("sharing.marginFilter")
                     Text("Stars choose the initial shortlist. Include this Margin is still the final choice for this share. Private sharing notes are shown below but are never sent.")
                         .font(.caption)
@@ -550,7 +550,7 @@ struct InterjectionSharingView: View {
                         .buttonStyle(SecondaryButtonStyle())
                         .accessibilityIdentifier("sharing.transcriptExpansion.\(draft.id)")
                     }
-                    HStack {
+                    AdaptiveStack {
                         Button {
                             model.undoShareDraftEdit(draft.id)
                         } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
@@ -599,9 +599,9 @@ struct InterjectionSharingView: View {
                     }
                     Text("Text only").tag(ShareMarginRepresentationChoice.textOnly)
                 }
-                .pickerStyle(.segmented)
+                .segmentedUnlessLargeText()
 
-                HStack {
+                AdaptiveStack {
                     if let originalURL = model.originalAudioURL(forShareDraft: draft.id) {
                         ShareRevisionAudioPreviewButton(title: "Preview Original", url: originalURL)
                     }

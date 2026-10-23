@@ -175,9 +175,25 @@ struct LiveSessionView: View {
             }
             .filledActionButton()
             .disabled(marginText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            spokenMarginButton
         }
         .padding(16)
         .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    /// Speak a Margin on the phone (#2487). During a call it says to use the Watch: the call holds the microphone.
+    private var spokenMarginButton: some View {
+        Button {
+            if controller.isRecordingSpoken { controller.stopSpokenMargin() } else { controller.startSpokenMargin() }
+        } label: {
+            Label(
+                controller.isRecordingSpoken ? "Stop and Save Spoken Margin" : "Speak Margin",
+                systemImage: controller.isRecordingSpoken ? "stop.circle.fill" : "mic"
+            )
+            .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.bordered)
+        .accessibilityHint(controller.isRecordingSpoken ? "Recording. Tap to stop and save." : "Records a spoken Margin at this moment.")
     }
 
     private func marginList(_ session: LiveSession) -> some View {
@@ -202,6 +218,13 @@ struct LiveSessionView: View {
                             get: { margin.text }, set: { controller.updateText(id: margin.id, text: $0) }
                         ))
                         .textFieldStyle(.roundedBorder)
+                    } else if margin.isSpoken {
+                        Label {
+                            Text(margin.spokenTranscript ?? "Spoken Margin")
+                        } icon: {
+                            Image(systemName: margin.spokenOn == "watch" ? "applewatch" : "mic")
+                        }
+                        .accessibilityLabel("Spoken on the \(margin.spokenOn == "watch" ? "Watch" : "phone"): \(margin.spokenTranscript ?? "not transcribed yet")")
                     } else {
                         Text(margin.text)
                     }

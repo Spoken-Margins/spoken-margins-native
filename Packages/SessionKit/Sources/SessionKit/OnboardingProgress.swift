@@ -201,7 +201,7 @@ public enum OnboardingEvidenceClassifier {
     ]
 
     public static func sourceSteps(
-        items: [Item],
+        items: [some LibraryItemFields],
         seededItemIDs: Set<String> = defaultSeededItemIDs
     ) -> Set<OnboardingStep> {
         let userItems = items.filter { !seededItemIDs.contains($0.id) }
