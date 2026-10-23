@@ -33,6 +33,6 @@ export function esbuildOptions(configuration) {
     sourcemap: false,
     legalComments: "none",
     metafile: true,
-    banner: { js: configuration.banner || "/* Bundled Defuddle 0.19.1; see Defuddle-LICENSE.txt */" }
+    banner: { js: configuration.banner || "/* Bundled Defuddle 0.19.4; see Defuddle-LICENSE.txt */" }
   };
 }

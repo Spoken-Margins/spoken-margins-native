@@ -258,6 +258,22 @@ class Harness:
 # Slot counting: the Dial's Claude slots
 # ---------------------------------------------------------------------------
 
+class WorkerHooksTests(unittest.TestCase):
+    """#2498: the repo has no .claude/settings.json, so the worker must pass its own hooks file."""
+
+    def test_command_passes_the_settings_file(self):
+        cmd = w.claude_command(Path('/tmp/out'))
+        self.assertEqual(cmd[cmd.index('--settings') + 1], str(w.WORKER_SETTINGS))
+        self.assertTrue(w.WORKER_SETTINGS.is_file())
+
+    def test_settings_file_names_all_three_hooks(self):
+        data = json.loads(w.WORKER_SETTINGS.read_text())
+        commands = [h['command'] for entry in data['hooks']['PreToolUse'] for h in entry['hooks']]
+        for name in ('spoken-margins-lane-guard.py', 'spoken-margins-toolchain-guard.py',
+                     'spoken-margins-context-handoff.py'):
+            self.assertEqual(sum(name in c for c in commands), 1, name)
+
+
 class FocusMilestoneTests(unittest.TestCase):
     def rank(self, milestone, focus):
         with unittest.mock.patch.object(w, 'FOCUS_MILESTONES', focus):

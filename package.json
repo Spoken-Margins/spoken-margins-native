@@ -1,13 +1,14 @@
 {
   "name": "spoken-margins-browser-extraction",
   "private": true,
+  "engines": {"node": ">=24"},
   "scripts": {
     "build:browser-extraction": "node Tools/BrowserExtraction/build.mjs",
     "test:browser-extraction": "node --test Tools/BrowserExtraction/browserExtraction.test.mjs Tools/BrowserExtraction/licenseNotices.test.mjs App/SpokenMarginsBrowserTextExtension/Tests/browserTextCapture.test.mjs",
     "test:share-link": "node --test research/B4/server/internal/links/share-link-open.test.mjs"
   },
   "dependencies": {
-    "defuddle": "0.19.1"
+    "defuddle": "0.19.4"
   },
   "devDependencies": {
     "esbuild": "0.28.1",

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Lane tools refresh (#2536): every hour, move the lane's tools copy to origin/main and refresh its .venv and
+  node_modules when the requirements or lockfile changed (ops/lane/README.md). Not installed by the PR.
+  It runs from the tools copy itself, outside ~/Documents, which macOS will not let a launchd job read.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.spokenmargins.lane-tools-refresh</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>@HOME@/Library/Caches/SpokenMarginsLane/tools/ops/lane/sm_lane_tools_refresh.py</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>Nice</key>
+  <integer>10</integer>
+  <key>LowPriorityIO</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>@HOME@/SpokenMarginsOps/lane-tools-refresh/launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>@HOME@/SpokenMarginsOps/lane-tools-refresh/launchd.log</string>
+</dict>
+</plist>

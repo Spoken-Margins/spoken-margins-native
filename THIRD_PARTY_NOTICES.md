@@ -27,7 +27,7 @@ Runs the voice models on the phone. ONNX Runtime's own third-party components (M
 
 Reads and writes .spokenmargins packets.
 
-### Defuddle 0.19.1
+### Defuddle 0.19.4
 
 - Licence: MIT
 - From: Steph Ango
@@ -64,7 +64,7 @@ Compiled into Defuddle's bundle.
 
 Compiled into Defuddle's bundle.
 
-### @xmldom/xmldom 0.9.10
+### @xmldom/xmldom 0.9.12
 
 - Licence: MIT
 - From: Christopher J. Brody and contributors
