@@ -20,7 +20,7 @@ extension Gate1AppModel {
     /// The Library items the Add Margin action offers. Read from the database, not `libraryItems`, because a
     /// shortcut can run before the Library screen has loaded its rows.
     func shortcutItemChoices(startedOnly: Bool, matching query: String? = nil) -> [StoredSessionMargin.ItemChoice] {
-        guard let store, let items = try? store.listItems(), let sessions = try? store.loadSessions() else { return [] }
+        guard let store, let items = try? store.listItemSummaries(), let sessions = try? store.loadSessions() else { return [] }
         return StoredSessionMargin.itemChoices(items: items, sessions: sessions, startedOnly: startedOnly, matching: query)
     }
 }

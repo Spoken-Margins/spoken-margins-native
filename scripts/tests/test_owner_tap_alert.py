@@ -212,6 +212,22 @@ class CheckPr(unittest.TestCase):
             alert.main(['--repo', 'Spoken-Margins/spoken-margins-native', '--pr', '7'])
         self.assertTrue(api.posted[0][1].startswith('@uncomposed '))
 
+    def test_one_pr_is_checked_without_scripts_trunk(self):
+        # #2270: the check failed with "No module named 'trunk'" before it looked at the PR, though a single PR
+        # needs no trunk. Run the script from a folder that holds only it and its comment_trust import.
+        with tempfile.TemporaryDirectory() as folder:
+            for name in ('owner_tap_alert.py', 'comment_trust.py'):
+                (Path(folder) / name).write_text((SCRIPTS / name).read_text())
+            loader = (f"import sys; sys.path.insert(0, {folder!r}); import owner_tap_alert as a; "
+                      "a.GitHubApi = lambda repo: (_ for _ in ()).throw(RuntimeError('reached the API'))\n"
+                      "sys.exit(a.main(sys.argv[1:]))")
+            single = subprocess.run([sys.executable, '-c', loader, '--repo', REPO, '--pr', '7'],
+                                    capture_output=True, text=True)
+            sweep = subprocess.run([sys.executable, '-c', loader, '--repo', REPO], capture_output=True, text=True)
+        self.assertIn('reached the API', single.stderr)  # past the point where the import used to fail
+        self.assertNotIn('trunk', single.stderr)
+        self.assertIn("No module named 'trunk'", sweep.stderr)  # a sweep needs the trunk and says so
+
     def test_mention_must_be_a_plain_login(self):
         with mock.patch.dict('os.environ', {'GH_REPO': REPO}), self.assertRaises(SystemExit), \
                 contextlib.redirect_stderr(io.StringIO()):
@@ -357,7 +373,7 @@ class Workflow(unittest.TestCase):
 
     def test_check_workflows_end_with_an_alert_job_from_the_base(self):
         # hosted-portable.yml took over from linux-t1.yml, whose VPS queue held the alert for an hour or more (#2442).
-        for name, needs in (('hosted-portable.yml', '[portable, sessionkit]'), ('shipped-build-compat.yml', 'compat')):
+        for name, needs in (('hosted-portable.yml', '[portable, sessionkit, mac-rest]'), ('shipped-build-compat.yml', 'compat')):
             with self.subTest(name):
                 text = (SCRIPTS.parent / '.github' / 'workflows' / name).read_text()
                 head, _, job = text.partition('\n  owner-tap-alert:\n')

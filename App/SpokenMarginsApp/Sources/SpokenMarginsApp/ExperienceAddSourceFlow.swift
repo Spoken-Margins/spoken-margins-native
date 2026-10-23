@@ -16,13 +16,19 @@ struct ExperienceAddSourceFlow: View {
     @State private var textImportError: String?
     /// What the last Files pick could not import, shown under the Files button (#2373).
     @State private var fileImportError: String?
+    /// Live session (#1989, #2481, prototype).
+    @State private var showsLiveSession = false
     @FocusState private var focusedField: Field?
 
     private enum Field { case link, title, text }
     private enum FileRequest { case documentOrBook, audiobook, quickFolder }
 
-    init(initialRoute: AddSourceRoute) {
+    /// Closes the sheet and opens the podcast catalog's search by name; nil hides the button (#1784).
+    private let onSearchPodcasts: (() -> Void)?
+
+    init(initialRoute: AddSourceRoute, onSearchPodcasts: (() -> Void)? = nil) {
         _selectedRoute = State(initialValue: initialRoute)
+        self.onSearchPodcasts = onSearchPodcasts
     }
 
     var body: some View {
@@ -203,6 +209,17 @@ struct ExperienceAddSourceFlow: View {
             }
             .buttonStyle(.bordered)
             .accessibilityIdentifier("addSource.route.quickFolder")
+            Button {
+                showsLiveSession = true
+            } label: {
+                Label("Live Session: Margins on a Meeting or Book", systemImage: "clock.badge")
+                    .frame(minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("addSource.route.liveSession")
+            .fullScreenCover(isPresented: $showsLiveSession, onDismiss: { dismiss() }) {
+                LiveSessionView().environmentObject(model)
+            }
         }
     }
 
@@ -287,6 +304,16 @@ struct ExperienceAddSourceFlow: View {
                     .accessibilityIdentifier("sourceLink.import.button")
                 }
                 SourceLinkImportStatusView()
+                if let onSearchPodcasts {
+                    Button {
+                        focusedField = nil
+                        onSearchPodcasts()
+                    } label: {
+                        Label("Search podcasts by name", systemImage: "magnifyingglass")
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }
+                    .accessibilityIdentifier("sourceLink.searchPodcasts.button")
+                }
                 Text("Adding a source never replaces the item already in Now Playing.")
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)

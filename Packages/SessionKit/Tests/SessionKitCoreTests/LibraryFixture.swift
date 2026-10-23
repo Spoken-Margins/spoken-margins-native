@@ -137,6 +137,7 @@ struct LibraryFixture {
         }
 
         try writeMappedPodcast(store, epoch: epoch, random: &random)
+        try writeBackgroundTables(store, epoch: epoch, random: &random)
     }
 
     /// The mapped podcast: a full transcript saved twice, scenes as a Listening Map, Margins, and summary bridge assets.

@@ -519,7 +519,7 @@ struct Build23SenderSharingExperience: View {
                     .font(.subheadline)
             }
 
-            HStack(spacing: 12) {
+            AdaptiveStack(spacing: 12) {
                 Button("Back to selection", systemImage: "arrow.left") {
                     coordinator.send(.returnToSelect)
                 }
@@ -561,7 +561,7 @@ struct Build23SenderSharingExperience: View {
 
             case .ready:
                 if let verifiedPreview = snapshot.verifiedPreview {
-                    HStack(spacing: 12) {
+                    AdaptiveStack(spacing: 12) {
                         Button("Edit selection", systemImage: "arrow.left") {
                             coordinator.send(.returnToSelect)
                         }

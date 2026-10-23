@@ -32,6 +32,11 @@ struct ExperienceMarginDetailView: View {
                         Label(current.attentionDescription, systemImage: "exclamationmark.triangle")
                             .foregroundStyle(AppColors.coral)
                     }
+                    if let mark = row.cutShort {
+                        Label(mark.explanation, systemImage: "scissors")
+                            .foregroundStyle(AppColors.secondaryText)
+                            .accessibilityIdentifier("marginDetail.cutShort.label")
+                    }
                 }
                 if current.interjection.replyTo != nil {
                     Section("Replying to") {
@@ -63,7 +68,7 @@ struct ExperienceMarginDetailView: View {
                     }
                     if current.canPlayRecording {
                         Button(
-                            model.isPlayingInterjectionAudio(current.interjection) ? "Stop playing" : "Play Margin",
+                            model.isPlayingInterjectionAudio(current.interjection) ? "Stop playing" : "Hear my recording",
                             systemImage: model.isPlayingInterjectionAudio(current.interjection) ? "stop.fill" : "play.fill"
                         ) { model.toggleInterjectionAudioPlayback(current.interjection) }
                         .accessibilityIdentifier("marginDetail.playRecording.button")
@@ -102,8 +107,13 @@ struct ExperienceMarginDetailView: View {
                 if let actionFeedback { UserFeedbackBanner(feedback: actionFeedback).padding(.horizontal, 16) }
             }
             .onChange(of: model.feedbackEvent) { _, event in actionFeedback = event }
+            .onDisappear {
+                // Having been opened is what clears the mark (#1976); it stays while the note is on screen.
+                guard CutShortMargins.shared.clear(sessionId: row.interjection.sessionId, interjectionId: row.interjection.id) else { return }
+                model.refreshMarginRows()
+            }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                Button("Play this moment", systemImage: "play.fill") {
+                Button("Go to this moment in the source", systemImage: "arrow.turn.down.right") {
                     pendingNavigation = .moment
                     dismiss()
                 }

@@ -1,0 +1,790 @@
+{
+ "name": "live-sessions",
+ "title": "Live sessions: the iPhone side",
+ "base": "../../../Design/flow-map/flow-map.json",
+ "base_commit": "32173207",
+ "start": "ExperienceLibraryScreen",
+ "summary": "A live session is a stretch of time spent on one thing outside the app. It starts in two taps from the Library's plus, from a Lock Screen control, from Siri or from the Watch, and it is running at once: the position question is a field on the running screen, never a gate. While it runs it is a pinned Live row at the top of the Library and the first group on the Margins tab, and a Live Activity with Record, Mark and End. Ending a meeting is one tap and makes it a Library item at once; an audiobook's end asks one question, where you stopped. Line up is on the item's screen and on any transcript file opened in the app, so it works the next day. A Margin taken with no session running starts a quick session, so nothing waits in a hidden inbox.",
+ "shared_fixes": [
+  "A Margin is filed by its own clock time into the session whose span holds it. A Margin outside every span goes into a quick session for that time, never into 'the most recent session'.",
+  "The Watch and the Lock Screen are told when a Margin is filed, and say 'Filed in <session>' only then. Before that they say 'Saved on Watch, waiting for iPhone'.",
+  "The spoken placing hint is shown while a spoken Margin records, on every surface that records: the session screen, the Live Activity, the Watch.",
+  "A session's position answers are checkpoints: a clock time paired with the source position the listener gave. Start and end are just the first and last checkpoint, so a wrong start can be fixed afterwards and every estimate recomputes."
+ ],
+ "groups": [
+  "Library",
+  "Following",
+  "Margins",
+  "Now Playing",
+  "Live session",
+  "Settings",
+  "Sharing",
+  "Outside the app"
+ ],
+ "screens": [
+  {
+   "id": "ExperienceLibraryScreen",
+   "change": "rename",
+   "title": "Library",
+   "group": "Library",
+   "note": "Gains a pinned Live row at the top while a session runs: kind, name, running clock, Margin count. Finished sessions are ordinary rows, labelled Session with their kind, and 'Not lined up' in words while a meeting has no transcript."
+  },
+  {
+   "id": "ExperienceAddSourceFlow",
+   "change": "rename",
+   "title": "Add Source (choose a type, or Paste)",
+   "group": "Library",
+   "note": "Gains a 'Take Margins on something else' row of four buttons: Meeting, Audiobook, Paper book, Something else. Each one starts a session at once. While a session runs, the row says so and offers Go to it, or End it and start a new one."
+  },
+  {
+   "id": "ExperienceMarginsScreen",
+   "change": "rename",
+   "title": "Margins",
+   "group": "Margins",
+   "note": "A running session is the first group, headed Live. A quick session is a group like any other, named by its day and time, with Rename and Move to another session on its heading."
+  },
+  {
+   "id": "ExperienceItemDetailScreen",
+   "change": "rename",
+   "title": "Item details",
+   "group": "Library",
+   "note": "For a session item: when it ran, its checkpoints (editable), where each Margin came from (phone, Watch, Lock Screen, Siri), Line up with a transcript or recording, and Share as Markdown."
+  },
+  {
+   "id": "LiveSessionScreen",
+   "change": "add",
+   "title": "Live session",
+   "group": "Live session",
+   "kind": "screen",
+   "note": "The running session. Top: name (editable), clock, and 'Where are you now?' with the kind's default filled in (0:00 for a meeting). Then Speak, Write and Mark, the Margins so far with where each came from, and End. When the phone's microphone is busy, Speak says why and points to the Watch or to Write."
+  },
+  {
+   "id": "LiveSessionEndSheet",
+   "change": "add",
+   "title": "End session: where did you stop?",
+   "group": "Live session",
+   "kind": "sheet",
+   "note": "Only for an audiobook or a paper book. One field, filled with the app's estimate, and End. Skip ends without it."
+  },
+  {
+   "id": "LiveSessionLineUpScreen",
+   "change": "add",
+   "title": "Lined up",
+   "group": "Live session",
+   "kind": "screen",
+   "note": "Shown after a transcript or recording is picked. The line-up is already applied, with Undo. Each Margin shows its position and all of its evidence: the estimate, the listener's own setting, the transcript match and how sure it is. The session it was lined up with is named at the top, with Change."
+  },
+  {
+   "id": "OTHER_APP",
+   "change": "add",
+   "title": "The other app (Teams, Zoom, Audible, YouTube...)",
+   "group": "Outside the app",
+   "kind": "external"
+  },
+  {
+   "id": "LIVE_ACTIVITY",
+   "change": "add",
+   "title": "Live Activity (Lock Screen and Dynamic Island)",
+   "group": "Outside the app",
+   "kind": "external",
+   "note": "Clock, Margin count, last filed Margin. Buttons: Record (Stop while recording), Mark, End. Record is hidden when the phone's microphone is known to be busy."
+  },
+  {
+   "id": "LOCK_CONTROL",
+   "change": "add",
+   "title": "Start session control (Control Center, Lock Screen, Action button)",
+   "group": "Outside the app",
+   "kind": "external"
+  },
+  {
+   "id": "SIRI",
+   "change": "add",
+   "title": "Siri",
+   "group": "Outside the app",
+   "kind": "external"
+  },
+  {
+   "id": "WATCH",
+   "change": "add",
+   "title": "Apple Watch app (see WATCH.md)",
+   "group": "Outside the app",
+   "kind": "external"
+  }
+ ],
+ "edges": [
+  {
+   "id": "ls01",
+   "from": "ExperienceAddSourceFlow",
+   "to": "LiveSessionScreen",
+   "control": "Meeting / Audiobook / Paper book / Something else (starts at once)",
+   "control_kind": "button",
+   "presentation": "fullscreen",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "no session running",
+   "notes": "Replaces today's route button, setup card and Start Session. Start position becomes a field on the running screen.",
+   "proposed": true
+  },
+  {
+   "id": "ls02",
+   "from": "ExperienceLibraryScreen",
+   "to": "LiveSessionScreen",
+   "control": "Live row (pinned at the top)",
+   "control_kind": "row",
+   "presentation": "fullscreen",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "a session is running",
+   "notes": "Today the only way back is the plus, then the Live Session route.",
+   "proposed": true
+  },
+  {
+   "id": "ls03",
+   "from": "ExperienceMarginsScreen",
+   "to": "LiveSessionScreen",
+   "control": "Live group heading",
+   "control_kind": "row",
+   "presentation": "fullscreen",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "a session is running",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "ls04",
+   "from": "LiveSessionScreen",
+   "to": "ExperienceItemDetailScreen",
+   "control": "End (meeting or something else: ends at once, with Undo)",
+   "control_kind": "button",
+   "presentation": "screen swap",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "kind is meeting or something else",
+   "notes": "No Save as Notes step: the session is a Library item the moment it ends.",
+   "proposed": true
+  },
+  {
+   "id": "ls05",
+   "from": "LiveSessionScreen",
+   "to": "LiveSessionEndSheet",
+   "control": "End (audiobook or paper book)",
+   "control_kind": "button",
+   "presentation": "sheet",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "kind is audiobook or paper book",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "ls06",
+   "from": "LiveSessionEndSheet",
+   "to": "ExperienceItemDetailScreen",
+   "control": "End (or Skip)",
+   "control_kind": "button",
+   "presentation": "screen swap",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "ls07",
+   "from": "ExperienceItemDetailScreen",
+   "to": "FILES",
+   "control": "Line up with a transcript or recording (the file picker opens at once)",
+   "control_kind": "button",
+   "presentation": "system",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "item is a session",
+   "notes": "Today Line Up exists only on the ended session screen before Save as Notes.",
+   "proposed": true
+  },
+  {
+   "id": "ls08",
+   "from": "FILES",
+   "to": "LiveSessionLineUpScreen",
+   "control": "Pick the transcript or recording",
+   "control_kind": "row",
+   "presentation": "system",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "picked from a session's Line up",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "ls09",
+   "from": "OUTSIDE_APP",
+   "to": "LiveSessionLineUpScreen",
+   "control": "Share or open a .vtt, .srt, .docx or .txt transcript with Spoken Margins",
+   "control_kind": "entry",
+   "presentation": "entry",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "the transcript's times overlap a session; otherwise the screen asks which session",
+   "notes": "Teams and Zoom transcripts often arrive hours later, on a laptop. AirDrop or Files lands here.",
+   "proposed": true
+  },
+  {
+   "id": "ls10",
+   "from": "LiveSessionLineUpScreen",
+   "to": "ExperienceItemDetailScreen",
+   "control": "Done",
+   "control_kind": "button",
+   "presentation": "screen swap",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "ls11",
+   "from": "OTHER_APP",
+   "to": "LIVE_ACTIVITY",
+   "control": "Long-press the Dynamic Island (or wake the Lock Screen)",
+   "control_kind": "long press",
+   "presentation": "system",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "a session is running",
+   "notes": "The long press is the system's own expand gesture; the buttons are in the expanded view.",
+   "proposed": true
+  },
+  {
+   "id": "ls12",
+   "from": "OTHER_APP",
+   "to": "LOCK_CONTROL",
+   "control": "Swipe down for Control Center (or press the Action button)",
+   "control_kind": "gesture",
+   "presentation": "system",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "ls13",
+   "from": "LOCK_CONTROL",
+   "to": "LIVE_ACTIVITY",
+   "control": "Start session (last kind used, 0:00 for a meeting)",
+   "control_kind": "button",
+   "presentation": "system",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "no session running",
+   "notes": "Does not open the app. Name and position can be added later, or never.",
+   "proposed": true
+  },
+  {
+   "id": "ls14",
+   "from": "SIRI",
+   "to": "LIVE_ACTIVITY",
+   "control": "Say 'Start a Spoken Margins session' or 'Add a Margin'",
+   "control_kind": "voice",
+   "presentation": "system",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "Add a Margin with no session starts a quick session.",
+   "proposed": true
+  },
+  {
+   "id": "ls15",
+   "from": "LIVE_ACTIVITY",
+   "to": "LiveSessionScreen",
+   "control": "Tap the Live Activity body",
+   "control_kind": "button",
+   "presentation": "external",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "Leaves the other app.",
+   "proposed": true
+  },
+  {
+   "id": "ls16",
+   "from": "LIVE_ACTIVITY",
+   "to": "ExperienceItemDetailScreen",
+   "control": "End (meeting or something else)",
+   "control_kind": "button",
+   "presentation": "external",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "kind is meeting or something else",
+   "notes": "Ends without opening the app; the item is there next time the app opens. Counted to the item screen for the job's sake.",
+   "proposed": true
+  },
+  {
+   "id": "ls17",
+   "from": "OTHER_APP",
+   "to": "LiveSessionScreen",
+   "control": "Switch to Spoken Margins (app switcher or Home)",
+   "control_kind": "gesture",
+   "presentation": "external",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "a session is running",
+   "notes": "The app reopens on the running session. Leaves the other app.",
+   "proposed": true
+  }
+ ],
+ "removed_edges": [],
+ "jobs": [
+  {
+   "id": "L01",
+   "name": "Start a meeting session in the app",
+   "target": "LiveSessionScreen",
+   "via_edges": [
+    "ls01"
+   ],
+   "final_cost": 0,
+   "final": "Running at once. If the meeting clock isn't 0:00, type it in 'Where are you now?' (optional).",
+   "extra": {
+    "leaves_other_app": "no",
+    "watch": "",
+    "voice": 0,
+    "checks": ""
+   },
+   "today": {
+    "taps": 3,
+    "how": "Plus, Live Session route, Start Session (kind defaults to Meeting)"
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 2,
+    "route": [
+     "Add (plus)",
+     "Meeting / Audiobook / Paper book / Something else (starts at once)"
+    ]
+   }
+  },
+  {
+   "id": "L02",
+   "name": "Start a session without leaving the other app",
+   "start": "OTHER_APP",
+   "target": "LIVE_ACTIVITY",
+   "via_edges": [
+    "ls13"
+   ],
+   "final_cost": 0,
+   "final": "The Live Activity appears with the clock running.",
+   "extra": {
+    "leaves_other_app": "no",
+    "watch": "",
+    "voice": 0,
+    "checks": "C6"
+   },
+   "today": {
+    "taps": null,
+    "how": "Not possible: leave the other app, then 3 taps, then go back"
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 2,
+    "route": [
+     "Swipe down for Control Center (or press the Action button)",
+     "Start session (last kind used, 0:00 for a meeting)"
+    ]
+   }
+  },
+  {
+   "id": "L03",
+   "name": "Start a session by voice",
+   "start": "SIRI",
+   "target": "LIVE_ACTIVITY",
+   "final_cost": 0,
+   "final": "",
+   "extra": {
+    "leaves_other_app": "no",
+    "watch": "",
+    "voice": 1,
+    "checks": "C7"
+   },
+   "today": {
+    "taps": null,
+    "how": "Not possible"
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 1,
+    "route": [
+     "Say 'Start a Spoken Margins session' or 'Add a Margin'"
+    ]
+   }
+  },
+  {
+   "id": "L04",
+   "name": "Add a spoken Margin, session screen open",
+   "start": "LiveSessionScreen",
+   "target": "LiveSessionScreen",
+   "final_cost": 2,
+   "final": "Speak, talk (the placing hint shows while recording), Stop.",
+   "extra": {
+    "leaves_other_app": "already out",
+    "watch": "",
+    "voice": 0,
+    "checks": ""
+   },
+   "today": {
+    "taps": 2,
+    "how": "Speak Margin, Stop and Save (hint only on the written field)"
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 2,
+    "route": []
+   }
+  },
+  {
+   "id": "L05",
+   "name": "Add a spoken Margin without leaving the other app (no call)",
+   "start": "OTHER_APP",
+   "target": "LIVE_ACTIVITY",
+   "final_cost": 2,
+   "final": "Record, talk, Stop. The island then says 'Filed: Margin 4'.",
+   "extra": {
+    "leaves_other_app": "no",
+    "watch": "",
+    "voice": 0,
+    "checks": "C2, C3"
+   },
+   "today": {
+    "taps": null,
+    "how": "Not possible: only a blind Mark"
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 3,
+    "route": [
+     "Long-press the Dynamic Island (or wake the Lock Screen)"
+    ]
+   }
+  },
+  {
+   "id": "L06",
+   "name": "Add a Margin during a call on the phone, no Watch",
+   "start": "OTHER_APP",
+   "target": "LIVE_ACTIVITY",
+   "final_cost": 1,
+   "final": "Mark. Words are added after the call, on the Mark's row.",
+   "extra": {
+    "leaves_other_app": "no",
+    "watch": "",
+    "voice": 0,
+    "checks": ""
+   },
+   "today": {
+    "taps": 2,
+    "how": "Same: long-press the island, Mark"
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 2,
+    "route": [
+     "Long-press the Dynamic Island (or wake the Lock Screen)"
+    ]
+   }
+  },
+  {
+   "id": "L07",
+   "name": "Add a spoken Margin during a call, with a Watch",
+   "start": "WATCH",
+   "target": "WATCH",
+   "final_cost": 2,
+   "final": "Record, talk, Stop on the Watch; it says 'Filed in <session>' when the phone confirms.",
+   "extra": {
+    "leaves_other_app": "no",
+    "watch": "raise wrist, 2 taps (or 1 double-tap gesture each)",
+    "voice": 0,
+    "checks": "C4"
+   },
+   "today": {
+    "taps": 2,
+    "how": "Record, Stop; says 'sent', may land in a hidden inbox"
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 2,
+    "route": []
+   }
+  },
+  {
+   "id": "L08",
+   "name": "Go back to the running session from the other app",
+   "start": "OTHER_APP",
+   "target": "LiveSessionScreen",
+   "final_cost": 0,
+   "final": "",
+   "extra": {
+    "leaves_other_app": "yes",
+    "watch": "",
+    "voice": 0,
+    "checks": ""
+   },
+   "today": {
+    "taps": "1, or 4 if the app was closed",
+    "how": "Switch apps; if the app was closed, also plus, Live Session route"
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 1,
+    "route": [
+     "Switch to Spoken Margins (app switcher or Home)"
+    ]
+   }
+  },
+  {
+   "id": "L09",
+   "name": "End a meeting session",
+   "start": "OTHER_APP",
+   "target": "ExperienceItemDetailScreen",
+   "via_edges": [
+    "ls16"
+   ],
+   "final_cost": 0,
+   "final": "",
+   "extra": {
+    "leaves_other_app": "no",
+    "watch": "",
+    "voice": 0,
+    "checks": ""
+   },
+   "today": {
+    "taps": "4, or 6 if the app was closed",
+    "how": "Switch app, (plus, Live Session route,) End Session, End, Save as Notes"
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 2,
+    "route": [
+     "Long-press the Dynamic Island (or wake the Lock Screen)",
+     "End (meeting or something else)"
+    ]
+   }
+  },
+  {
+   "id": "L10",
+   "name": "End an audiobook session with where you stopped",
+   "target": "ExperienceItemDetailScreen",
+   "via": [
+    "LiveSessionEndSheet"
+   ],
+   "final_cost": 0,
+   "final": "Type the time (the estimate is filled in); End is the sheet's button, counted in the route.",
+   "extra": {
+    "leaves_other_app": "yes: the question needs the app",
+    "watch": "",
+    "voice": 0,
+    "checks": ""
+   },
+   "today": {
+    "taps": "4, or 5 if the app was closed",
+    "how": "(Plus, Live Session route,) End Session, type, End, Save as Notes"
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 3,
+    "route": [
+     "Live row (pinned at the top)",
+     "End (audiobook or paper book)",
+     "End (or Skip)"
+    ]
+   }
+  },
+  {
+   "id": "L11",
+   "name": "Line up with a Teams transcript the next day, from the Library",
+   "target": "LiveSessionLineUpScreen",
+   "via": [
+    "ExperienceItemDetailScreen",
+    "FILES"
+   ],
+   "final_cost": 0,
+   "final": "Applied at once, with Undo and all evidence shown.",
+   "extra": {
+    "leaves_other_app": "n/a",
+    "watch": "",
+    "voice": 0,
+    "checks": ""
+   },
+   "today": {
+    "taps": "6, or impossible once saved",
+    "how": "6 if the session was never saved (plus, Live Session, Line Up, Choose, pick, Save); impossible after Save as Notes"
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 3,
+    "route": [
+     "Library row (title area)",
+     "Line up with a transcript or recording (the file picker opens at once)",
+     "Pick the transcript or recording"
+    ]
+   }
+  },
+  {
+   "id": "L12",
+   "name": "Line up from the transcript file itself",
+   "start": "OUTSIDE_APP",
+   "target": "LiveSessionLineUpScreen",
+   "final_cost": 1,
+   "final": "Share, then Spoken Margins in the share sheet. The session is found by its times.",
+   "extra": {
+    "leaves_other_app": "n/a",
+    "watch": "",
+    "voice": 0,
+    "checks": "C8"
+   },
+   "today": {
+    "taps": null,
+    "how": "Not possible"
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 2,
+    "route": [
+     "Share or open a .vtt, .srt, .docx or .txt transcript with Spoken Margins"
+    ]
+   }
+  },
+  {
+   "id": "L13",
+   "name": "Find yesterday's session",
+   "target": "ExperienceItemDetailScreen",
+   "final_cost": 0,
+   "final": "",
+   "extra": {
+    "leaves_other_app": "n/a",
+    "watch": "",
+    "voice": 0,
+    "checks": ""
+   },
+   "today": {
+    "taps": 1,
+    "how": "Library row, if it was saved"
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 1,
+    "route": [
+     "Library row (title area)"
+    ]
+   }
+  },
+  {
+   "id": "L14",
+   "name": "Export a session as Markdown",
+   "target": "SHARE_SHEET",
+   "via": [
+    "ExperienceMarginsScreen"
+   ],
+   "final_cost": 0,
+   "final": "",
+   "extra": {
+    "leaves_other_app": "n/a",
+    "watch": "",
+    "voice": 0,
+    "checks": ""
+   },
+   "today": {
+    "taps": 2,
+    "how": "Margins tab, Share as Markdown on the session's group"
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 2,
+    "route": [
+     "Margins tab",
+     "doc.text, 'Share Margins from <item> as Markdown'"
+    ]
+   }
+  },
+  {
+   "id": "L15",
+   "name": "Find a Margin taken with no session running",
+   "target": "ExperienceMarginsScreen",
+   "final_cost": 0,
+   "final": "It is in a quick session, the newest group.",
+   "extra": {
+    "leaves_other_app": "n/a",
+    "watch": "",
+    "voice": 0,
+    "checks": ""
+   },
+   "today": {
+    "taps": null,
+    "how": "Not shown anywhere until the next session starts"
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 1,
+    "route": [
+     "Margins tab"
+    ]
+   }
+  },
+  {
+   "id": "L16",
+   "name": "Fix a wrong start position afterwards",
+   "target": "ExperienceItemDetailScreen",
+   "final_cost": 2,
+   "final": "Tap the start checkpoint, type, Done. Every estimate recomputes.",
+   "extra": {
+    "leaves_other_app": "n/a",
+    "watch": "",
+    "voice": 0,
+    "checks": ""
+   },
+   "today": {
+    "taps": null,
+    "how": "Not possible after the session is saved"
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 3,
+    "route": [
+     "Library row (title area)"
+    ]
+   }
+  }
+ ]
+}

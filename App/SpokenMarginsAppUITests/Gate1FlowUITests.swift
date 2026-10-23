@@ -83,6 +83,24 @@ final class Gate1FlowUITests: XCTestCase {
         captureScreen(named: "listening-edition-preview")
     }
 
+    /// #2063: a failed import answers next to the Import button, with no scrolling.
+    func testListeningEditionImportErrorShowsBesideTheImportButton() throws {
+        openLibrarySettings()
+        scrollToButton(containingLabel: "Import Listening Edition").tap()
+        let editor = app.textViews["Listening edition JSON"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.tap()
+        editor.typeText("not json at all")
+        let importButton = app.buttons["listeningEdition.import"]
+        XCTAssertTrue(importButton.waitForExistence(timeout: 5))
+        importButton.tap()
+        let result = element("listeningEdition.result")
+        XCTAssertTrue(result.waitForExistence(timeout: 5), "The import's answer must show without scrolling")
+        XCTAssertTrue(result.isHittable)
+        XCTAssertLessThanOrEqual(result.frame.maxY, importButton.frame.minY + 1, "The answer sits just above the Import button")
+        captureScreen(named: "listening-edition-import-error")
+    }
+
     func testLongTimelineResponseKeepsActionAboveEditorAndStartsPlayback() throws {
         app.buttons["queue.start.item-pill"].tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
@@ -198,6 +216,56 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(scrollToElement("settings.ai.releaseBoundary").exists)
         XCTAssertFalse(element("provider.name").exists)
         XCTAssertFalse(element("provider.apiKey.field").exists)
+    }
+
+    /// #1938: at AX5 the Margins item heading keeps its width, with Share and Share as Markdown on a row below,
+    /// and the scope row's count sits under the scope menu.
+    func testMarginsHeadingAndScopeRowStackAtAccessibilitySizes() throws {
+        app.terminate()
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        app.launch()
+        scrollToElement("queue.start.item-pill").tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        pausePlaybackIfNeeded()
+        scrollToElement("playback.write.button").tap()
+        let editor = app.textViews["writtenMargin.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 4))
+        editor.tap()
+        editor.typeText("A thought to find again.")
+        element("writtenMargin.save.button").tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
+        scrollToElement("playback.margins.button").tap()
+        let open = element("margins.openItem.item-pill")
+        let share = element("margins.shareItem.item-pill")
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        XCTAssertTrue(share.exists)
+        let window = app.windows.firstMatch.frame
+        XCTAssertGreaterThanOrEqual(share.frame.minY, open.frame.maxY - 1, "Share still sits beside the item title")
+        XCTAssertGreaterThanOrEqual(share.frame.height, 44)
+        XCTAssertLessThanOrEqual(share.frame.maxX, window.maxX + 1)
+        XCTAssertGreaterThan(open.frame.width, window.width * 0.6, "The item title is squeezed beside the buttons")
+        captureScreen(named: "margins-heading-accessibility")
+    }
+
+    /// #1935: at AX5 the banner gives its message the full width and puts Undo on its own row, 44 pt tall.
+    func testFeedbackBannerPutsItsButtonsOnTheirOwnRowAtAccessibilitySizes() throws {
+        app.terminate()
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        app.launch()
+        let row = app.buttons["library.row.item-pill"]
+        XCTAssertTrue(row.waitForExistence(timeout: 8))
+        row.press(forDuration: 0.8)
+        app.buttons["Mark Complete"].tap()
+        let undo = element("completion.undo.button")
+        XCTAssertTrue(undo.waitForExistence(timeout: 4))
+        let banner = element("app.feedback.banner")
+        XCTAssertTrue(banner.exists)
+        let window = app.windows.firstMatch.frame
+        XCTAssertGreaterThanOrEqual(undo.frame.minY, banner.frame.maxY - 1, "Undo still sits beside the message")
+        XCTAssertGreaterThanOrEqual(undo.frame.height, 44, "Undo is under 44 pt")
+        XCTAssertLessThanOrEqual(undo.frame.maxX, window.maxX + 1, "Undo runs off the right edge")
+        XCTAssertGreaterThan(banner.frame.width, window.width * 0.6, "The message is squeezed beside the buttons")
+        captureScreen(named: "feedback-banner-accessibility")
     }
 
     func testLibraryUnfinishedCompletionUndoAndSearchDiscovery() throws {
@@ -816,6 +884,29 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertEqual(element("playback.play.button").label, "Pause", "Voice capture cancellation did not resume the source")
     }
 
+    /// #1942: at AX5 with the keyboard up, the editor keeps a usable height and sits inside the screen.
+    func testWrittenMarginEditorStaysUsableAtAccessibilitySizesWithTheKeyboardUp() throws {
+        app.terminate()
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = "A listener's notebook about the art of paying attention, ordinary streets, familiar voices, and everything we might otherwise forget"
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = String(repeating: "Notice the small details along the way. ", count: 80)
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        app.launch()
+        scrollToElement("queue.start.item-ui-text-regression").tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        pausePlaybackIfNeeded()
+        scrollToElement("playback.write.button").tap()
+        XCTAssertTrue(element("writtenMargin.screen").waitForExistence(timeout: 4))
+        let editor = app.textViews["writtenMargin.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 4))
+        editor.tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 4))
+        XCTAssertGreaterThanOrEqual(editor.frame.height, 100, "The editor was squeezed")
+        XCTAssertLessThanOrEqual(editor.frame.maxY, keyboard.frame.minY + 1, "The editor sits under the keyboard")
+        XCTAssertGreaterThanOrEqual(editor.frame.minY, app.windows.firstMatch.frame.minY, "The editor was pushed off the top")
+        captureScreen(named: "written-margin-accessibility-keyboard")
+    }
+
     func testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource() throws {
         app.terminate()
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = "A walk with room to think"
@@ -853,7 +944,7 @@ final class Gate1FlowUITests: XCTestCase {
         note.tap()
         XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["Remember the amber doorway."].exists)
-        XCTAssertFalse(app.buttons["Play Margin"].exists)
+        XCTAssertFalse(app.buttons["Hear my recording"].exists)
         let copy = app.buttons["Copy with Context"]
         XCTAssertTrue(copy.waitForExistence(timeout: 3))
         captureScreen(named: "margin-detail-before-quick-tap")
@@ -1006,6 +1097,27 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("batchExport.export.button").waitForExistence(timeout: 2))
         XCTAssertTrue(element("batchExport.export.button").isHittable)
         XCTAssertFalse(element("batchExport.chooseFolder.button").exists, "Export Sessions has no remembered folder (#1528)")
+    }
+
+    /// #1939: at AX5 the Export Sessions pickers become menus that stay inside the screen.
+    func testBatchExportPickersBecomeMenusAtAccessibilitySizes() throws {
+        app.terminate()
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        app.launch()
+        scrollToElement("queue.start.item-pill").tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        scrollToElement("playback.home.button").tap()
+        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 4))
+        tapRoot("Margins")
+        let exportSessions = scrollToElement("margins.export.button")
+        exportSessions.tap()
+        XCTAssertTrue(element("batchExport.screen").waitForExistence(timeout: 4))
+        let filter = scrollToElement("batchExport.filter.picker")
+        XCTAssertFalse(app.segmentedControls["batchExport.filter.picker"].exists, "Still a segmented control at AX5")
+        let window = app.windows.firstMatch.frame
+        XCTAssertLessThanOrEqual(filter.frame.maxX, window.maxX + 1)
+        XCTAssertGreaterThanOrEqual(filter.frame.height, 44)
+        captureScreen(named: "batch-export-pickers-accessibility")
     }
 
     func testBuild23SenderStagesInvalidateStalePreviewAndUseSystemShare() throws {

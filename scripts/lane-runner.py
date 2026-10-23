@@ -64,6 +64,18 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   run takes them for the portable steps and SessionKitCoreTests and runs only --plan fast-mac-rest on the Mac.
   Anything short of that, and with the variable unset, it runs the whole --plan fast as before. (The VPS's
   linux-t1.yml pair, read from #2160 until the flip, was retired in #2442.)
+- Merging off the Mac (#2459), with LANE_HOSTED_FAST and LANE_HOSTED_MAC_REST both `on` (a rollout guard, off until
+  the hosted Mac-rest check passes on the hosted image): hosted-portable.yml also runs --plan fast-mac-rest on a GitHub-hosted Mac, and test-scope.py routes every automerge job to hosted
+  Linux (--hosted). There a PR held for T3 is reported held in seconds, testing nothing. Otherwise the job waits,
+  on Linux, for all three hosted checks to pass on this head merged onto next, dispatches them once more when next
+  has since moved in ways that matter, and merges on them, running no test itself. A hosted check that failed is
+  the PR's FAIL. When they can't be had (missing, cancelled, never recorded), the job posts nothing and lane.yml's
+  `automerge-mac` job runs it on the build Mac the old way. The T3 PASS's lane job merges on them too, in seconds,
+  when they stand then.
+  With LANE_HOSTED_FAST `on` and LANE_HOSTED_MAC_REST not, every automerge job still starts on hosted Linux: a PR
+  held for T3 is reported held there in seconds, and otherwise the job waits there for the hosted pair on this head.
+  A failed one is the PR's FAIL; once both passed (or can't be had) it hands the run to `automerge-mac`, which runs
+  --plan fast-mac-rest (or the whole --plan fast) and merges, so the build Mac never idles waiting for the pair.
 - Hosted T2 and T3 (#1389 phase 2), only with the LANE_HOSTED_APP repository variable `on` (the same kind of rollout
   guard): test-scope.py routes the lane job to a GitHub-hosted Mac, and lane.yml sets SM_LANE_GITHUB_HOSTED=1 there,
   with the lane state and evidence folders in the job's own temporary folder. This script runs as on the Mac: the
@@ -120,7 +132,8 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
 
 Environment: GH_TOKEN and GH_REPO (the workflow's), SM_LANE_EVIDENCE_DIR (where evidence goes,
 default ~/Library/Caches/SpokenMarginsLane/evidence), SM_LANE_TOOLS (a checkout whose .venv and
-node_modules to link in, default the owner's main checkout).
+node_modules to link in, default ~/Library/Caches/SpokenMarginsLane/tools, a lane-only clone kept out of
+~/Documents, which macOS privacy denies the runners' service process (#2493)).
 Stdlib only, Python 3.9-compatible: it runs under /usr/bin/python3.
 """
 from __future__ import annotations
@@ -274,7 +287,8 @@ def pending_requests(comments: list[dict]) -> tuple[dict | None, bool]:
             continue
         if request['tier'] in RUNNER_TIERS:
             runner_request = (index, dict(request, url=comment.get('html_url'),
-                                          author=(comment.get('user') or {}).get('login')))
+                                          author=(comment.get('user') or {}).get('login'),
+                                          created_at=comment.get('created_at')))
         else:
             desk_request = index
     newest = runner_request[1] if runner_request and runner_request[0] > runner_answered else None
@@ -325,7 +339,7 @@ def github_hosted() -> bool:
 
 def report(request_id: str, verdict: str, head: str, base: str, tier: str, where: str, seconds: float,
            ran: str, details: list[str], crashes: str, evidence: str, not_verified: str, wanted: dict,
-           cc: str = '', base_name: str | None = None, hosted: bool = False) -> str:
+           cc: str = '', base_name: str | None = None, hosted: bool = False, event: str = '') -> str:
     base_name = base_name or trunk()
     location = ('on a GitHub-hosted Linux runner' if hosted else
                 'on a GitHub-hosted Mac; the run\'s `lane-evidence` artifact keeps it for 7 days' if github_hosted()
@@ -336,7 +350,27 @@ def report(request_id: str, verdict: str, head: str, base: str, tier: str, where
              f'not verified: {not_verified}']
     if cc:
         lines.append(cc)
-    return '\n'.join(lines) + f'\n<!-- lane-request: {json.dumps(wanted, sort_keys=True)} -->\n'
+    return '\n'.join(lines) + f'\n<!-- lane-request: {json.dumps(wanted, sort_keys=True)} -->\n' + \
+        (f'{event}\n' if event else '')
+
+
+def event_note(verdict: str, tier: str, head: str, base: str, seconds: float, evidence: Path | None,
+               requested_at: str | None = None, runs: list | None = None) -> str:
+    """The report's hidden lane-event line (lane_event.py, #2378), from this job's step runs and the
+    verify-tests.py manifests under <evidence>. requested_at: when the /lane request was commented (an automerge
+    run has none). runs: this report's own step runs, default all of the job's so far; a run the job starts after
+    another report (the automerge run a T3 PASS releases) passes only its own. Best effort: a report never fails for want of its measurements, and says nothing then."""
+    try:
+        import lane_event
+        waited = None
+        if requested_at:
+            waited = max(0.0, (utc(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())) - utc(requested_at)).total_seconds()
+                         - seconds)
+        records = lane_event.test_records(evidence) if evidence else {}
+        return lane_event.note(lane_event.build(verdict, tier, head, base, seconds, waited, STEP_RUNS if runs is None else runs, records))
+    except Exception as error:  # noqa: BLE001
+        print(f'[lane] no lane-event line: {error!r}')
+        return ''
 
 
 # ---- Step ledger --------------------------------------------------------------------------------
@@ -400,6 +434,17 @@ def manifest_failures(*outputs: Path) -> tuple[list[str], bool, list[str]]:
 
 STALL_ISSUE = 1802  # the evidence log for app startup stalls and simulator boot stalls (#705 is closed)
 BOOT_STALLS = 'boot-stalls.json'  # a T3 boot's stalls (boot_t3_device), for log_recovered_stalls
+FRESH_RERUNS = 'fresh-clone-reruns.json'  # plans rerun on a fresh clone after two startup stalls (#2176)
+
+
+def startup_stalled_out(manifest: dict) -> bool:
+    """Whether a verify-tests.py plan ended INCONCLUSIVE on startup stalls alone: a step stalled twice, no test
+    failed, and no crash flood stopped it. A failing test after the stalls is the PR's FAIL, not this (#2176)."""
+    if manifest.get('status') == 'verified':
+        return False
+    return any(len(step.get('startup_stalls') or []) >= 2 and not step.get('simulator_crash_report')
+               and not any(r.get('status') == 'failed' for r in (step.get('tests') or {}).values())
+               for step in manifest.get('steps', []))
 
 
 def recovered_startup_stalls(manifest: dict) -> list[dict]:
@@ -437,6 +482,52 @@ def boot_stall_note(evidence: Path, pr: int, head: str, report_url: str, verdict
     return '\n'.join(lines)
 
 
+TWO_STALLS_RULE = 'verdict stays INCONCLUSIVE (two stalls, owner 2026-10-11/2026-10-23)'
+
+
+def fresh_rerun_outcome(rerun: dict) -> str:
+    """What the fresh-clone rerun showed, for the report and the evidence log (#2176).
+
+    Owner, 2026-10-23: "Two stalls keep INCONCLUSIVE per my 2026-10-11 call; the fresh-clone rerun is evidence
+    only." So a clean rerun never turns the plan into a PASS. A failing test in the rerun is a FAIL (lead's
+    Default taken on PR #2179): that is a real failure, not a startup stall."""
+    if rerun.get('boot'):
+        return f'the fresh clone did not boot ({rerun["boot"]}); {TWO_STALLS_RULE}'
+    if rerun.get('verdict') == 'FAIL':
+        failed = rerun.get('failed') or []
+        return (f'fresh-clone rerun: {len(failed)} test(s) failed ({", ".join(failed)}); verdict FAIL (a failing '
+                'test, not a startup stall)')
+    if rerun.get('stalled_again'):
+        shown = 'stalled at startup twice too'
+    elif rerun.get('status') == 'verified':
+        shown = f'passed {rerun.get("passed", 0)} tests' + (' after 1 recovered startup stall'
+                                                            if rerun.get('recovered') else '')
+    else:
+        shown = f'ended `{rerun.get("status")}` after {rerun.get("passed", 0)} passing test(s)'
+    return f'fresh-clone rerun: {shown}; {TWO_STALLS_RULE}'
+
+
+def fresh_rerun_notes(evidence: Path, pr: int, head: str, report_url: str) -> list[str]:
+    """The evidence-log comments for plans rerun on a fresh clone after two startup stalls (<evidence>/FRESH_RERUNS)."""
+    try:
+        reruns = json.loads((evidence / FRESH_RERUNS).read_text())
+    except (OSError, ValueError):
+        return []
+    notes = []
+    for rerun in reruns if isinstance(reruns, list) else []:
+        outcome = fresh_rerun_outcome(rerun)
+        notes.append(
+            f'Two startup stalls, plan rerun on a fresh clone in the same job (#2176): the `{rerun.get("plan")}` plan '
+            f'of the T3 run for PR #{pr} at `{head[:7]}` ({report_url}).\n'
+            + ''.join(f'- Launch {stall.get("attempt")} on clone `{rerun.get("stalled")}`: no test output '
+                      f'{stall.get("after_seconds")}s after launch; {stall.get("diagnosis", "no diagnosis")}.\n'
+                      for stall in rerun.get('stalls', []))
+            + f'- Outcome: {outcome} (clone `{rerun.get("fresh")}`).\n'
+            f'- Evidence on the Mac: `{rerun.get("first")}/` (the stalled run) and `{rerun.get("output")}/`.\n'
+            '_Posted by the lane runner (scripts/lane-runner.py)._')
+    return notes
+
+
 def log_recovered_stalls(evidence: Path, pr: int, head: str, report_url: str, post, verdict: str = '') -> int:
     """Post the T3 boot's stalls, and each recovered startup stall in the verify-* manifests under <evidence>,
     on the evidence log (STALL_ISSUE) with post(body).
@@ -451,8 +542,16 @@ def log_recovered_stalls(evidence: Path, pr: int, head: str, report_url: str, po
             posted += 1
         except Exception as error:  # noqa: BLE001 - the report already says the stall happened
             print(f'Could not log the boot stall on #{STALL_ISSUE}: {error!r}', flush=True)
+    for body in fresh_rerun_notes(evidence, pr, head, report_url):
+        try:
+            post(body)
+            posted += 1
+        except Exception as error:  # noqa: BLE001 - the report already says the plan was rerun
+            print(f'Could not log the fresh-clone rerun on #{STALL_ISSUE}: {error!r}', flush=True)
     for output in sorted(evidence.glob('verify-*')):
         plan = output.name.removeprefix('verify-')
+        if output.name.endswith('-fresh'):
+            continue  # a fresh-clone rerun is evidence only, never a PASS; its note above covers it (#2176)
         for found in recovered_startup_stalls(_read_manifest(output)):
             stall = found['stall']
             body = (f'Startup stall recovered on the first retry, counted as a PASS (owner\'s call 2026-10-11): '
@@ -725,10 +824,10 @@ def run_mac_rest(evidence: Path, runner=run_bounded, changed: list[str] | None =
 
 
 def run_host_plan(plan: str, evidence: Path, runner, changed: list[str] | None) -> tuple[str, list[str]]:
-    if runner is run_bounded:  # a real run; tests hand in their own runner, and test the guard on its own
-        pointers = ensure_lfs_files(ROOT)
-        if pointers:
-            return 'INCONCLUSIVE', [pointers]
+    if runner is run_bounded:  # a real run; tests hand in their own runner, and test the guards on their own
+        problem = ensure_lfs_files(ROOT) or tools_python_fault(ROOT)
+        if problem:
+            return 'INCONCLUSIVE', [problem]
     python = ROOT / '.venv/bin/python'
     output, log_path = evidence / 'fast', evidence / 'verify-fast.log'
     command = [str(python if python.exists() else sys.executable), 'scripts/verify-tests.py', '--plan', plan,
@@ -812,6 +911,44 @@ def ensure_lfs_files(tree: Path, run=subprocess.run) -> str | None:
             f'`git lfs checkout` could not restore {"it" if len(left) == 1 else "them"} from this checkout\'s LFS '
             f'cache (exit {restored.returncode}{": " + said[-1] if said else ""}). Run `git lfs pull` in the runner\'s '
             'checkout, then run the lane again; nothing was built or tested.')
+
+
+# ---- The tools checkout's Python (#2493) ---------------------------------------------------------
+# The host tests and T3 run under the .venv Python that link_tools links in from the main checkout in ~/Documents. At
+# 01:18 UTC on 2026-10-23 macOS asked whether runner 2's service process (`node`) could read the Documents folder, the
+# answer was Don't Allow (runner 1's, at 02:25), and from then on every host-test run there died in 6 s with
+# `PermissionError: [Errno 1] Operation not permitted: .../.venv/pyvenv.cfg`, reported as each PR's FAIL. Before any
+# host test or T3, that Python is started once: one that can't start is a runner fault, not the PR.
+
+TOOLS_PYTHON_STEP = 'tools Python'
+TOOLS_PYTHON_FAULT = "runner fault, not the PR (#2493): this runner cannot start the main checkout's .venv Python"
+MACOS_PRIVACY_NOTE = 'a macOS privacy setting blocks this runner from the main checkout'  # NOT_LANE_FAULTS reads it
+
+
+def tools_python_fault(tree: Path, run=None) -> str | None:
+    """None when the tree has no .venv (the plans fall back to this Python, as before) or its Python starts, else the
+    report line. A .venv link whose Python can't be seen is a fault too: falling back would test without its packages."""
+    venv = tree / '.venv'
+    if not venv.is_symlink() and not venv.exists():
+        return None
+    run, started = run or subprocess.run, time.monotonic()
+    try:
+        probe = run([str(venv / 'bin/python'), '-c', 'pass'], capture_output=True, text=True, timeout=60)
+        code, said = probe.returncode, (probe.stderr or probe.stdout or '').strip().splitlines()
+    except (OSError, subprocess.TimeoutExpired) as error:  # no such file, or a Python that hangs at startup
+        code, said = None, [f'{type(error).__name__}: {error}']
+    if code == 0:
+        note_step(TOOLS_PYTHON_STEP, 'PASS', time.monotonic() - started)
+        return None
+    # No fault in 60 days says the guard is waste; its INCONCLUSIVE runs feed the ledger's runner-fault alarm.
+    note_step(TOOLS_PYTHON_STEP, 'INCONCLUSIVE', time.monotonic() - started)
+    observed = f'exit {code}' if code is not None else 'it did not start'
+    line = f'{TOOLS_PYTHON_FAULT} ({os.path.realpath(venv)}): {observed}{": " + said[-1] if said else ""}.'
+    if any('Operation not permitted' in text for text in said):
+        return (f'{line} Most likely {MACOS_PRIVACY_NOTE} (System Settings › Privacy & Security › Files and Folders: '
+                'Documents Folder off for `node`). The lane needs that access, or its tools and evidence moved out of '
+                '~/Documents (#2493); nothing was tested.')
+    return f'{line} Fix or re-create that .venv, then run the lane again; nothing was tested.'
 
 
 NO_APP_BUILD_PER_PR = ('no app build per PR (owner, 2026-10-09): the author builds both targets before pushing, '
@@ -912,12 +1049,23 @@ HOSTED_FAST_SWITCH = 'LANE_HOSTED_FAST'
 # check run name (the job's `name:` in hosted-portable.yml) -> the verify-tests.py plan it ran
 HOSTED_FAST_CHECKS = {'hosted fast: portable': 'fast-portable',
                       'hosted fast: SessionKit core': 'fast-hosted-sessionkit'}
+# #2459: the third hosted check, --plan fast-mac-rest on a GitHub-hosted Mac (hosted-portable.yml `mac-rest`). With
+# it, the automerge job runs on hosted Linux and runs no test itself. Anything but `on` keeps merging on the build Mac.
+HOSTED_REST_SWITCH = 'LANE_HOSTED_MAC_REST'
+HOSTED_REST_CHECK = {'hosted fast: Mac rest': 'fast-mac-rest'}
 HOSTED_TESTED_TITLE = 'lane-hosted-tested'
 HOSTED_TESTED = re.compile(r'^plan=(\S+) tree=([0-9a-f]{40}) parents=([0-9a-f]{40}) ([0-9a-f]{40})\s*$')
 
 
 def hosted_fast_on(env=None) -> bool:
     return (os.environ if env is None else env).get(HOSTED_FAST_SWITCH, '').strip().lower() == 'on'
+
+
+def hosted_rest_on(env=None) -> bool:
+    """Whether merging runs off the Mac on all three hosted checks (#2459): the hosted fast pair is on, and
+    LANE_HOSTED_MAC_REST is `on`. test-scope.py's hosted_merge_routing reads the same two variables."""
+    env = os.environ if env is None else env
+    return hosted_fast_on(env) and env.get(HOSTED_REST_SWITCH, '').strip().lower() == 'on'
 
 
 def hosted_tested(annotations: list[dict]) -> dict | None:
@@ -972,7 +1120,8 @@ NOT_FINISHED = 'had not finished'
 
 def hosted_fast_checks(github, tree: Path, base: str, head: str, base_sha: str, env=None,
                        records=hosted_fast_records, wait: float | None = None, poll: float = HOSTED_FAST_POLL,
-                       clock=time.monotonic, sleep=time.sleep, out=sys.stdout) -> tuple[dict | None, str]:
+                       clock=time.monotonic, sleep=time.sleep, out=sys.stdout,
+                       checks: dict = HOSTED_FAST_CHECKS) -> tuple[dict | None, str]:
     """(the fast checks off the Mac that stand for <head> merged onto <base> at <base_sha>, '') or (None, why the Mac
     runs the whole --plan fast). While none stands and one of them is still running, it waits up to <wait> seconds
     (HOSTED_FAST_WAIT inside a lane job, else none, so tests and local runs never sleep)."""
@@ -981,7 +1130,7 @@ def hosted_fast_checks(github, tree: Path, base: str, head: str, base_sha: str, 
         wait = HOSTED_FAST_WAIT if env.get('GITHUB_ACTIONS') == 'true' else 0
     deadline = clock() + wait
     while True:
-        found, why = _hosted_fast_checks_once(github, tree, base, head, base_sha, env, records)
+        found, why = _hosted_fast_checks_once(github, tree, base, head, base_sha, env, records, checks)
         if found is not None or NOT_FINISHED not in why or clock() + poll > deadline:
             return found, why
         print(f'[lane] waiting for the fast checks off the Mac: {why}', file=out, flush=True)
@@ -989,7 +1138,7 @@ def hosted_fast_checks(github, tree: Path, base: str, head: str, base_sha: str, 
 
 
 def _hosted_fast_checks_once(github, tree: Path, base: str, head: str, base_sha: str, env,
-                             records) -> tuple[dict | None, str]:
+                             records, checks: dict = HOSTED_FAST_CHECKS) -> tuple[dict | None, str]:
     """The GitHub-hosted pair, with the switch on; each record says which runner ('runner').
 
     A run stands when it tested exactly <head> merged onto some next (its merge tree matches the one this
@@ -997,7 +1146,7 @@ def _hosted_fast_checks_once(github, tree: Path, base: str, head: str, base_sha:
     the rule a held PASS meets after next moves (untested_moves)."""
     if not hosted_fast_on(env):
         return None, f'the hosted fast checks are off ({HOSTED_FAST_SWITCH} is not `on`)'
-    found, why = _fast_checks_stand(github, tree, base, head, base_sha, records, HOSTED_FAST_CHECKS)
+    found, why = _fast_checks_stand(github, tree, base, head, base_sha, records, checks)
     if found is None:
         return None, why
     return {name: {**record, 'runner': 'GitHub-hosted'} for name, record in found.items()}, ''
@@ -1026,6 +1175,9 @@ def _fast_checks_stand(github, tree: Path, base: str, head: str, base_sha: str, 
 def hosted_fast_ran(found: dict) -> str:
     bases = sorted({record['base'][:7] for record in found.values()})
     where = sorted({record.get('runner', 'GitHub-hosted') for record in found.values()})
+    if set(HOSTED_REST_CHECK) <= set(found):
+        return (f'host tests ({" and ".join(where)}: --plan fast-portable, SessionKitCoreTests and --plan fast-mac-rest '
+                f'with next at {", ".join(bases)}; none on the Mac)')
     return (f'host tests ({" and ".join(where)}: --plan fast-portable and SessionKitCoreTests with next at {", ".join(bases)}; '
             'Mac: --plan fast-mac-rest)')
 
@@ -1039,6 +1191,101 @@ def hosted_fast_lines(found: dict) -> list[str]:
         lines.append(f'{record.get("runner", "GitHub-hosted")} check "{name}": PASS on this head merged with next at {record["base"][:7]} '
                      f'(tree {record["tree"][:7]}){since}. {record.get("url", "")}'.rstrip())
     return lines
+
+
+# #2459: how long the hosted automerge job waits for the three hosted checks. It waits on GitHub-hosted Linux, which
+# the public repo doesn't pay for and which holds no Mac, so the wait is long enough for the Mac-rest check to queue
+# behind the free plan's 5 concurrent hosted Macs and run (about 8 minutes of tests on the build Mac).
+HOSTED_REST_WAIT = 60 * 60
+# A check run GitHub hasn't created yet looks like a check that never ran. Right after a push the hosted checks can
+# be a few seconds behind the automerge job, so a missing one is waited for this long before the job gives up on it.
+HOSTED_MISSING_GRACE = 5 * 60
+HOSTED_FAILED = re.compile(r'" ended (failure|timed_out) on ')
+HOSTED_MISSING = re.compile(r'^no ".+" check ran on ')
+# What _fast_checks_stand says when a check passed on an older next whose commits since can matter.
+HOSTED_STALE = re.compile(r'" tested (a tree that is not|it on .+ and .+ since: )')
+HOSTED_WORKFLOW = 'hosted-portable.yml'
+HOSTED_REDISPATCHES = 3  # fresh runs per job when next keeps moving under them; then the Mac fallback takes it
+NEEDS_MAC = 'NEEDS_MAC'  # the hosted automerge job's cue to hand the run to lane.yml's automerge-mac job
+MOVED_ON = 'stopped waiting for the hosted checks: '
+
+
+def pr_moved_on(github, head: str) -> str | None:
+    """Why a run waiting on <head> should stop (the PR moved on, lost automerge or closed: a newer run or nobody
+    wants this one), or None. A failed read is no reason to stop."""
+    try:
+        now = github.pull()
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    if now.get('state', 'open') != 'open':
+        return f'{MOVED_ON}the PR is {now.get("state")}'
+    if now['head']['sha'] != head:
+        return f'{MOVED_ON}the PR moved on to {now["head"]["sha"][:7]}, whose own run tests it'
+    if AUTOMERGE not in {label['name'] for label in now.get('labels', [])}:
+        return f'{MOVED_ON}the automerge label is gone'
+    return None
+
+
+def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, alive, dispatch, env=None,
+                       records=hosted_fast_records, wait: float | None = None, poll: float = HOSTED_FAST_POLL,
+                       grace: float = HOSTED_MISSING_GRACE, clock=time.monotonic, sleep=time.sleep,
+                       out=sys.stdout, checks: dict | None = None) -> tuple[dict | None, str]:
+    """(all three hosted checks standing for <head> merged onto <base> at <base_sha>, '') or (None, why not), for the
+    hosted automerge job (#2459). It never runs a test. While a check is still running, or missing within <grace>,
+    it waits, up to <wait> seconds (HOSTED_REST_WAIT in a lane job, else none). When one passed on an older next that
+    has since moved in ways that matter, it calls dispatch() (up to HOSTED_REDISPATCHES times: a fresh run of hosted-portable.yml on the PR's
+    branch, merged onto <base>) and waits for that. alive() names why to stop (the PR moved on, say) or is falsy.
+    checks: the checks to wait for, all three by default; the hosted pair alone (HOSTED_FAST_CHECKS) when the hosted
+    job only waits for them before handing the run to the build Mac (LANE_HOSTED_MAC_REST off)."""
+    env = os.environ if env is None else env
+    if wait is None:
+        wait = HOSTED_REST_WAIT if env.get('GITHUB_ACTIONS') == 'true' else 0
+    checks = {**HOSTED_FAST_CHECKS, **HOSTED_REST_CHECK} if checks is None else checks
+    started = clock()
+    deadline = started + wait
+    dispatches, dispatched_at, running_seen = 0, started, False
+    while True:
+        stop = alive()
+        if stop:
+            return None, stop
+        found, why = _hosted_fast_checks_once(github, tree, base, head, base_sha, env, records, checks)
+        if found is not None or HOSTED_FAILED.search(why):
+            return found, why
+        if NOT_FINISHED in why:
+            running_seen = True
+        elif HOSTED_STALE.search(why):
+            # First time, or the run started again finished and next had moved again meanwhile.
+            if dispatches == 0 or running_seen:
+                if dispatches >= HOSTED_REDISPATCHES:
+                    return None, f'{why} (after {dispatches} fresh runs)'
+                problem = dispatch()
+                if problem:
+                    return None, f'{why}; running them again on {base} failed: {problem}'
+                dispatches, dispatched_at, running_seen = dispatches + 1, clock(), False
+                print(f'[lane] {why}; started them again on the newest {base}', file=out, flush=True)
+            elif clock() - dispatched_at > grace:
+                return None, f'{why}; the run started again {duration(clock() - dispatched_at)} ago has not shown up'
+        elif not (HOSTED_MISSING.search(why) and clock() - started < grace):
+            return None, why
+        if clock() + poll > deadline:
+            return None, f'{why} (waited {duration(clock() - started)})'
+        print(f'[lane] waiting for the hosted checks: {why}', file=out, flush=True)
+        sleep(poll)
+
+
+def hosted_checks_missing(why: str, fallback: str = NEEDS_MAC) -> tuple[str, str, str, list[str]]:
+    """What a run that merges on the hosted checks returns when they don't stand: FAIL when one failed on this head
+    (the PR's code, as the Mac's own run would have shown), else <fallback> with why."""
+    if HOSTED_FAILED.search(why):
+        return 'FAIL', 'hosted checks', 'hosted fast checks: failed', [
+            f'not merged: {why}. Its log is in the PR\'s checks; fix it and push.']
+    return fallback, 'hosted Linux runner', 'nothing', [f'the hosted checks do not stand: {why}']
+
+
+def hosted_rest_ran(evidence: Path, changed=None) -> tuple[str, list[str]]:
+    """run_automerge's mac_rest when the hosted Mac-rest check passed: nothing runs here; hosted_fast_lines says
+    which check ran it."""
+    return 'PASS', []
 
 
 AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
@@ -1389,7 +1636,7 @@ HOST_UNREAD_SCRIPTS = frozenset({
     'scripts/verify-gate2.sh',
     # Runner test modules that aren't readers, so only a lane PR's own run (all runner tests) runs them.
     *(f'scripts/tests/{name}.py' for name in (
-        'test_host_audio', 'test_integration_precheck', 'test_lane_beside_simulator', 'test_lane_dedupe',
+        'test_host_audio', 'test_integration_precheck', 'test_lane_beside_simulator', 'test_lane_dedupe', 'test_lane_event',
         'test_lane_guard', 'test_lane_ledger', 'test_lane_next_moved', 'test_lane_next_rerun', 'test_lane_sim_pool',
         'test_lane_slots', 'test_lane_t3_first', 'test_lane_release_handoff', 'test_merge_audit', 'test_phone_build', 'test_posterboard_repair',
         'test_sessionkit_steps', 'test_test_scope', 'test_ui_test_hooks_debug_only', 'test_xcresult_attachments')),
@@ -1494,12 +1741,21 @@ def checks_stand(checked: dict | None, base_sha: str, head: str) -> bool:
 def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, evidence: Path,
              comments: list[dict], labels=(), attempts: int = MERGE_ATTEMPTS,
              context: AutoRunContext | None = None,
-             checked: dict | None = None, hosted: bool = False) -> tuple[str, str, str, list[str]]:
+             checked: dict | None = None, hosted: bool = False, rest_hosted: bool = False,
+             rest_wait: float | None = None) -> tuple[str, str, str, list[str]]:
     """The automerge run: test the merge commit, and push it to <base> on PASS unless something blocks it.
 
     checked: the checks the automerge run held for T3 (held_checks) or for the audit (audit_held_checks) on this
     head passed. They stand, as after a refused push, when next's commits since touch none of the PR's files and no
     build inputs its checks read (#834, #1461); otherwise this run tests again.
+
+    hosted: the hosted Linux job. A T0 or ops diff runs its tests here; any other runs on the three hosted checks
+    (hosted_rest_on, #2459), as rest_hosted asks anywhere: a PR held for T3 is reported held before any wait, and
+    otherwise the run waits for the checks (hosted_rest_checks, up to <rest_wait>) and runs no test itself. When they
+    can't be had, the hosted job returns NEEDS_MAC and any other run INCONCLUSIVE; a failed one is a FAIL.
+    With only LANE_HOSTED_FAST on, the hosted job does the same up to the merge, on the hosted pair alone: held for
+    T3 is reported held, a failed check is the FAIL, and once the pair passed on this head (or can't be had) it
+    returns NEEDS_MAC, so the build Mac runs --plan fast-mac-rest and merges without idling for the pair.
     """
     notes: list[str] = []
     tested_base, skipped = None, None  # the next the last test ran on; next's commits since, when they can't matter
@@ -1531,25 +1787,54 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             return 'INCONCLUSIVE', 'no simulator', 'nothing', notes + [
                 f'The PR does not merge cleanly into {base} ({base_sha[:7]}): {", ".join(conflicts[:10])}. '
                 f'Merge {base} into your branch and push; the automerge label runs it again.']
+        rest = rest_hosted  # merge on the three hosted checks, testing nothing here (#2459)
+        pair = False  # wait here for the hosted pair, then hand the run to the build Mac (#2459, Mac rest off)
         if hosted:
             # Recheck with the current base's policy on every merge attempt, including reused checks.
             policy = base_policy(ROOT, base, 'scripts/test-scope.py')
             if not policy.hosted_automerge(diff_scope(ROOT, base)):
-                return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', [
-                    'The current diff requires the Mac; remove and re-add automerge to route it again.']
+                if hosted_rest_on():
+                    rest = True
+                elif hosted_fast_on():
+                    pair = True
+                else:
+                    return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', [
+                        'The current diff requires the Mac; remove and re-add automerge to route it again.']
         if skipped is None:
+            if rest or pair:
+                held = t3_gate(comments) if attempt == 1 else None
+                if held:  # the lane job that reports the T3 PASS merges it (merge_after_t3): nothing to test here
+                    return held[0], 'hosted Linux runner', 'nothing', notes + [
+                        f'not merged: {held[1]}.',
+                        'This run tested nothing and took no Mac: the T3 PASS\'s merge runs the host tests then, '
+                        'or merges on the hosted checks that stand for this head.']
+                found, why = hosted_rest_checks(github, ROOT, base, head, base_sha, wait=rest_wait,
+                                                alive=lambda: pr_moved_on(github, head),
+                                                dispatch=lambda: github.dispatch_hosted_checks(pull['head']['ref'],
+                                                                                               base),
+                                                **({'checks': HOSTED_FAST_CHECKS} if pair else {}))
+                if why.startswith(MOVED_ON):
+                    return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', notes + [f'not merged: {why}']
+                if not found:
+                    return hosted_checks_missing(why, NEEDS_MAC if hosted else 'INCONCLUSIVE')
+                if pair:  # the build Mac takes the hosted pair's PASS and runs only --plan fast-mac-rest
+                    return NEEDS_MAC, 'hosted Linux runner', 'nothing', notes + [
+                        f'the hosted fast pair passed on {head[:7]} with {base} at '
+                        f'{", ".join(sorted({record["base"][:7] for record in found.values()}))}; the build Mac runs '
+                        '--plan fast-mac-rest and merges']
             tried.mkdir(parents=True, exist_ok=True)
-            warm = 'no Mac build folders needed' if hosted else host_build_folders(ROOT)
+            warm = 'no Mac build folders needed' if hosted or rest else host_build_folders(ROOT)
             scope = diff_scope(ROOT, base)
             (tried / 'scope.json').write_text(json.dumps(scope, indent=2))
-            found, why = (None, '') if hosted else hosted_fast_checks(github, ROOT, base, head, base_sha)
-            if why:
+            if not rest:
+                found, why = (None, '') if hosted else hosted_fast_checks(github, ROOT, base, head, base_sha)
+            if why and not rest:
                 notes.append(f'the whole --plan fast ran on the Mac: {why}')
             verdict, where, ran, checks = run_automerge(
                 scope, tried, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)),
                 changed=lambda: changed_paths_for_tests(ROOT, base),
-                recheck=recheck_on_base(github, base_sha), **({'hosted': True} if hosted else {}),
-                **({'hosted_fast': found} if found else {}))
+                recheck=recheck_on_base(github, base_sha), **({'hosted': True} if hosted and not rest else {}),
+                **({'hosted_fast': found} if found else {}), **({'mac_rest': hosted_rest_ran} if rest else {}))
             tested = f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR); {warm}'
             if verdict != 'PASS':
                 return verdict, where, ran, [tested] + notes + checks
@@ -1654,7 +1939,7 @@ def handed_off_note(head: str, why: str, reason: str, where: str, now=None) -> s
 
 
 def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evidence: Path, base_sha: str,
-                   why: str, hand_off=None, room=None) -> str | None:
+                   why: str, hand_off=None, room=None, hosted: bool = False) -> str | None:
     """After a T3 PASS on <head>: the automerge run the T3 gate held, run here in the lane job (#421).
 
     When that held run passed its host tests (held_checks), they aren't run again here unless next
@@ -1666,6 +1951,8 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
     hand-off fails, this job tests as before.
     room: the release run passes the build runner's room wait (wait_for_room_to_test_on_host); it is called only
     when the checks have to run.
+    #2459: when the three hosted checks stand for this head right now (hosted_rest_on), nothing is handed off or
+    tested: the merge runs on them, in seconds, wherever this is. hosted: the hosted Linux automerge job calls it.
 
     Only for a PR that is still open on <head> with the automerge label, whose newest automerge report
     was held by the T3 gate, and that the gate no longer holds. It runs here rather than by re-adding the
@@ -1674,6 +1961,7 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
     The automerge job calls it too, after posting a held report: a T3 PASS that landed between its T3 read
     and that post found no held report to release (#421).
     """
+    mark = len(STEP_RUNS)  # the T3 job's own steps come before; this report's lane-event line counts only its own
     pull = github.pull()
     labels = {label['name'] for label in pull.get('labels', [])}
     comments = github.comments()
@@ -1689,7 +1977,15 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
         clean_tree(ROOT)  # the T3 ran in this tree; the merge commit checks out next over it
         base_sha = fetch_base(ROOT, base)
         remember_tested(base, base_sha)
-        reason = retest_reason(checked, base_sha, head) if hand_off or room else None
+        reason = retest_reason(checked, base_sha, head) if hand_off or room or hosted else None
+        rest = False
+        if reason and hosted_rest_on():
+            found, _ = hosted_rest_checks(github, ROOT, base, head, base_sha, alive=lambda: None,
+                                          dispatch=lambda: 'not from here', wait=0)
+            rest = found is not None
+            reason = None if rest else reason
+        if reason and hosted:  # the hosted job never runs the Mac's host tests: the Mac's release run does
+            hand_off = hand_off or (lambda: github.hand_off_release(base, head, ''))
         handed = None
         if reason and hand_off:
             try:
@@ -1720,7 +2016,11 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
             details = [f'{no_room}. Remove and re-add automerge to run it again.']
         else:
             verdict, where, ran, details = run_auto(github, pull, pr, base, head, base_sha, evidence, comments,
-                                                   labels, context=context, checked=checked)
+                                                   labels, context=context, checked=checked,
+                                                   **({'rest_hosted': True, 'rest_wait': 0} if rest else {}),
+                                                   **({'hosted': True} if hosted and not rest else {}))
+            if verdict == NEEDS_MAC:  # the hand-off to the Mac's release run failed above; no Mac here
+                verdict, details = 'INCONCLUSIVE', details + ['Remove and re-add automerge to run it again.']
     except Exception as error:  # noqa: BLE001 - any lane fault is reported, never silent
         verdict, where, ran = 'INCONCLUSIVE', 'lane error', 'nothing'
         details = [f'The lane itself failed: {error!r}. evidence: {evidence}. Remove and re-add automerge to '
@@ -1728,7 +2028,9 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
     base_sha = context.tested_base
     body = report(request_id, verdict, head, base_sha, 'auto', where, time.monotonic() - started, ran,
                   started_by + details, 'none', str(evidence), NOT_VERIFIED, identity('auto', head, base_sha, []),
-                  base_name=base)
+                  base_name=base,
+                  event=event_note(verdict, 'auto', head, base_sha, time.monotonic() - started, evidence,
+                                   runs=STEP_RUNS[mark:]))
     (evidence / 'report.md').write_text(body)
     print(body)
     github.comment(body)
@@ -2158,6 +2460,20 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
         started = time.monotonic()
         manifest = run_plan(plan, selectors, output)
         took = time.monotonic() - started
+        rerun = manifest.get('fresh_clone_rerun')
+        if rerun:
+            stalls = '; '.join(s.get('diagnosis') or 'no diagnosis' for s in rerun.get('stalls', []))
+            if rerun.get('boot'):
+                details.append(f'{plan}: two startup stalls on clone {rerun.get("stalled")} ({stalls}); a rerun on a '
+                               f'fresh clone could not start: {rerun["boot"]}; {TWO_STALLS_RULE} (#2176). '
+                               f'Logged on #{STALL_ISSUE}.')
+            else:
+                if rerun.get('verdict') == 'FAIL':
+                    output = Path(rerun['output'])  # the failing tests' evidence is the rerun's
+                details.append(f'{plan}: two startup stalls on clone {rerun.get("stalled")} ({stalls}), so the plan ran '
+                               f'again on a fresh clone ({rerun.get("fresh")}) in the same job as evidence (#2176): '
+                               f'{fresh_rerun_outcome(rerun)}. Logged on #{STALL_ISSUE}. Stalled run: '
+                               f'{rerun.get("first")}/; rerun: {rerun.get("output")}/')
         summary = summarize_manifest(manifest)
         summaries.append(summary)
         statuses.append(manifest.get('status', 'missing'))
@@ -2195,10 +2511,11 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
             stopped_at = next((step.get('name') for step in manifest.get('steps', []) if step.get('exit_code')),
                               None)  # a readiness step that ran out of time counts too
             gone = not device_available()
-            if gone or stopped_at in READINESS_STEPS:
+            if gone or stopped_at in READINESS_STEPS or (rerun and rerun.get('boot')):
                 summary['device_lost'] = True
                 skipped = [p for p, _ in plans[position + 1:]]
                 why = ('the fresh simulator is gone (no longer listed by `simctl list devices available`)' if gone
+                       else 'the fresh clone for a rerun did not boot' if rerun and rerun.get('boot')
                        else f'the fresh simulator was not ready (verify-tests.py `{stopped_at}`)')
                 details.append(f'{plan}: {why}, so this is the lane\'s fault, not the PR\'s'
                                + (f'; not run: {", ".join(skipped)}.' if skipped else '.'))
@@ -2331,12 +2648,12 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
     where = f'cloned iPhone 17, {runtime.rsplit(".", 1)[-1].replace("iOS-", "iOS ").replace("-", ".")}'
     python = ROOT / '.venv/bin/python'
 
-    def run_plan(plan, selectors, output):
+    def run_plan(plan, selectors, output, log_name=None):
         command = [str(python if python.exists() else sys.executable), 'scripts/verify-tests.py', '--plan', plan,
                    '--device', udid, '--require-build', '--output', str(output)]
         for selector in selectors:
             command += ['--only-testing', selector]
-        with (evidence / f'verify-{plan}.log').open('w') as log:
+        with (evidence / (log_name or f'verify-{plan}.log')).open('w') as log:
             if run_bounded(command, log, T3_TIMEOUT) is None:
                 return {**_read_manifest(output), 'status': 'timed out',
                         'error': f'the runner\'s {duration(T3_TIMEOUT)} budget for the whole verify-tests.py run '
@@ -2347,6 +2664,62 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
         lane_sim.release(stalled)
         with (evidence / 'simulator-clone.log').open('a') as log:
             return lane_sim.clone_temporary(RUNNER_SIMULATOR_PREFIX + request_id, runtime, out=log)
+
+    reruns = []
+    # Only a device with a SpringBoard watcher on it can be stopped by one. A clone marked unsafe for any other
+    # reason (a fresh clone that never booted, say) is not a crash flood and pings nobody (audit on 484c63b).
+    watched_devices = []
+
+    def run_plan_or_rerun_on_a_fresh_clone(plan, selectors, output):
+        """#2176: a plan that ends on its second startup stall runs once more, on a fresh clone, in this job.
+
+        The verdict stays INCONCLUSIVE whatever a clean rerun shows (owner, 2026-10-23: "Two stalls keep
+        INCONCLUSIVE per my 2026-10-11 call; the fresh-clone rerun is evidence only."). The rerun's outcome goes in
+        the report and on the evidence log, as evidence on the stalls' cause. Only a failing test in the rerun
+        changes the verdict, to FAIL: that is a real failure, not a stall (lead's Default taken, PR #2179). Once per
+        job, so a Mac that stalls every launch costs one more plan, not a loop."""
+        nonlocal udid
+        manifest = run_plan(plan, selectors, output)
+        if reruns or not startup_stalled_out(manifest) or lane_sim.unsafe_devices().get(udid):
+            # A clone the SpringBoard watcher stopped "stalls" at every launch after: switching devices then would
+            # get around a simulator crash (AGENTS.md), so the stop decides the verdict below, as before #2176.
+            return manifest
+        stalls = [stall for step in manifest.get('steps', []) for stall in step.get('startup_stalls') or []]
+        rerun = {'plan': plan, 'stalled': udid, 'first': str(output), 'output': str(output.with_name(output.name + '-fresh')),
+                 'stalls': [{k: stall.get(k) for k in ('attempt', 'after_seconds', 'diagnosis')} for stall in stalls]}
+        reruns.append(rerun)
+        try:
+            try:
+                lane_sim.release(udid)
+                with (evidence / 'simulator-clone.log').open('a') as log:
+                    udid = lane_sim.clone_temporary(RUNNER_SIMULATOR_PREFIX + request_id, runtime, out=log)
+                rerun['fresh'] = udid
+                info = {}
+                with (evidence / f'fresh-boot-{plan}.log').open('w') as log:
+                    try:
+                        problem, info = boot_t3_device(udid, log, None, None, info)  # its own boot stall isn't retried
+                    finally:
+                        udid = info.get('udid', udid)
+            except (lane_sim.BootError, OSError, subprocess.SubprocessError) as error:
+                problem = f'the fresh clone failed: {error}'
+            if problem:
+                rerun['boot'] = problem
+                return {**manifest, 'fresh_clone_rerun': rerun}  # the stalled run's INCONCLUSIVE stands
+            lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot', crash_window=info.get('boot_window'))
+            watched_devices.append(udid)
+            # Its own log, so the stalled run's verify-tests.py output stays on record next to it.
+            fresh = run_plan(plan, selectors, Path(rerun['output']), log_name=f'verify-{plan}-fresh.log')
+            shown = summarize_manifest(fresh)
+            rerun.update(status=fresh.get('status', 'missing'), passed=shown['passed'], failed=shown['failed'][:10],
+                         recovered=bool(recovered_startup_stalls(fresh)), stalled_again=startup_stalled_out(fresh))
+            if shown['failed']:
+                rerun['verdict'] = 'FAIL'
+                return {**fresh, 'fresh_clone_rerun': rerun}
+            if shown['flood']:  # still INCONCLUSIVE (nothing failed), but the flood must stop the later plans
+                return {**fresh, 'fresh_clone_rerun': rerun}
+            return {**manifest, 'fresh_clone_rerun': rerun}  # two stalls: the stalled run's INCONCLUSIVE stands
+        finally:
+            (evidence / FRESH_RERUNS).write_text(json.dumps(reruns, indent=2) + '\n')
 
     try:
         boot_started = time.monotonic()
@@ -2366,7 +2739,8 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
             return 'INCONCLUSIVE', where, 'nothing', details, 'watched during boot', ''
         lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot',  # stops the device at a SpringBoard crash
                                crash_window=boot_info.get('boot_window'))
-        summaries, statuses, ran, details = run_plans(grouped, run_plan, evidence,
+        watched_devices.append(udid)
+        summaries, statuses, ran, details = run_plans(grouped, run_plan_or_rerun_on_a_fresh_clone, evidence,
                                                       lambda: lane_sim.is_available(udid))
         details.insert(0, f'boot of the cloned simulator took {duration(boot_seconds)} (memory pressure at boot: '
                           f'{boot_info.get("pressure", "unknown")}, after waiting {boot_info.get("pressure_waited", 0)}s; '
@@ -2382,12 +2756,15 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
                        f'evidence: {evidence}/simulator-clone.log')
     finally:
         lane_sim.release(udid)
-    watched = lane_sim.unsafe_devices().get(udid)
-    if watched and watched['reason'].startswith('late crash report'):
-        # A crash during the boot, reported after it: the device is marked unsafe, but the run itself went on.
-        details.append(f'after the run started, a crash report arrived for a crash during the boot ({watched["reason"]}); '
-                       'the device was marked unsafe and deleted')
-        watched = None
+    watched, unsafe = None, lane_sim.unsafe_devices()
+    for device in dict.fromkeys(watched_devices):  # every clone a plan ran on under the watcher
+        mark = unsafe.get(device)
+        if mark and mark['reason'].startswith('late crash report'):
+            # A crash during the boot, reported after it: the device is marked unsafe, but the run itself went on.
+            details.append(f'after the run started, a crash report arrived for a crash during the boot of {device} '
+                           f'({mark["reason"]}); the device was marked unsafe and deleted')
+        elif mark and not watched:
+            watched = mark
     crash_names = [c for s in summaries for c in s['crashes']]
     flood = any(s['flood'] for s in summaries) or bool(watched)
     crashes = ('crash flood: ' if flood else '') + (', '.join(crash_names) if crash_names else 'none')
@@ -2459,6 +2836,17 @@ class GitHub:
         server = os.environ.get('GITHUB_SERVER_URL', 'https://github.com')
         return f'{server}/{self.repo}/actions/workflows/{LANE_WORKFLOW}?query=event%3Aworkflow_dispatch'
 
+    def dispatch_hosted_checks(self, branch: str, base: str) -> str:
+        """Run hosted-portable.yml again on the PR's <branch>, merged onto <base>'s tip (#2459), and return '' or why
+        it could not. Its check runs land on the branch's head, where hosted_fast_records reads the newest. A
+        branch whose hosted-portable.yml has no `base` input is refused by GitHub, so nothing runs untested there."""
+        try:
+            self.api('-X', 'POST', f'repos/{self.repo}/actions/workflows/{HOSTED_WORKFLOW}/dispatches',
+                     '-f', f'ref={branch}', '-f', f'inputs[base]={base}')
+        except (OSError, subprocess.SubprocessError) as error:
+            return str(error).strip()[:200] or repr(error)
+        return ''
+
 
 # ---- Auto-revert of a lane change that broke the lane (owner rule 2026-10-01) ---------------------
 
@@ -2472,6 +2860,7 @@ REVERTS = re.compile(r'^This reverts commit ([0-9a-f]{40})', re.M)  # git revert
 NOT_LANE_FAULTS = (('does not merge cleanly', 'a merge conflict'),
                    ('names no tests', 'a T3 request with no tests'), ('Nothing to run.', 'nothing to run'),
                    ('lane fault: no audio output', "the Mac's sound output, not a lane change (#909)"),
+                   (MACOS_PRIVACY_NOTE, "the Mac's privacy settings, not a lane change (#2493)"),
                    ('too: not this PR', 'a test broken on the base too, filed as its own issue (#1204)'))
 PENDING_T3_HOLD = re.compile(r'^not merged: held for T3:', re.M)
 LANE_MERGE_LOOKBACK = 300
@@ -2869,7 +3258,8 @@ def report_lost(github: GitHub, pr: int, run_id: str, attempt: str | None, event
                    f'`/lane {request["tier"]}` request with the same `tests:` line and add lane:queued.']
         github.comment(report(name, 'INCONCLUSIVE', event_head, 'unknown', request['tier'], 'no runner', 0,
                               'nothing', details, 'none', 'none', NOT_VERIFIED,
-                              identity(request['tier'], event_head, '', request['tests']), '', base))
+                              identity(request['tier'], event_head, '', request['tests']), '', base,
+                              event=event_note('INCONCLUSIVE', request['tier'], event_head, '', 0, None)))
         changed = True
     else:
         print('No unanswered T2/T3 request; only the labels come off.')
@@ -2923,7 +3313,9 @@ def request_name(pr: int, run_id: str, attempt: str | None) -> str:
 
 
 def tools_source() -> Path:
-    return Path(os.environ.get('SM_LANE_TOOLS') or Path.home() / 'Documents/GitHub/spoken-margins-native')
+    # Not the owner's main checkout in ~/Documents: macOS privacy (TCC) denies the runners' node access to
+    # Documents, and every host-test run died reading .venv/pyvenv.cfg there (#2493).
+    return Path(os.environ.get('SM_LANE_TOOLS') or Path.home() / 'Library/Caches/SpokenMarginsLane/tools')
 
 
 def link_tools(source: Path) -> None:
@@ -3032,16 +3424,18 @@ def main(argv=None) -> int:
         """Release a held automerge run (#421), and return its report if it posted one. Never changes this
         job's result, which is already reported. The lane job off the build runner hands the run's checks to a
         build runner when they have to run (#1209), and returns the hand-off note."""
-        if args.hosted:
+        if args.hosted and not hosted_rest_on():
             return None  # the Mac lane job owns T3 release; never run its host suite on Linux
         hand_off = None
         if explicit and os.environ.get('SM_LANE_RUNNER_ROLE') != 'build':  # a /lane job, not an automerge run
             def hand_off():
                 return github.hand_off_release(args.base, head, t3_report)
         try:
-            link_tools(tools_source())  # the identical-request path returns before the job links them
+            if not args.hosted:
+                link_tools(tools_source())  # the identical-request path returns before the job links them
             return merge_after_t3(github, args.pr, args.base, head, f'{request_id}-auto',
-                                  evidence.parent / f'{request_id}-auto', base_sha, why, hand_off=hand_off)
+                                  evidence.parent / f'{request_id}-auto', base_sha, why, hand_off=hand_off,
+                                  **({'hosted': True} if args.hosted else {}))
         except Exception as error:  # noqa: BLE001 - reported on the PR when GitHub can be reached
             print(f'The automerge run after the T3 PASS stopped: {error!r}')
             try:
@@ -3107,6 +3501,12 @@ def main(argv=None) -> int:
             verdict, where, ran, details = run_auto(github, pull, args.pr, args.base, head, base_sha, evidence,
                                                     comments, labels, context=context,
                                                     checked=audit_checked, **({'hosted': True} if args.hosted else {}))
+            if verdict == NEEDS_MAC:  # no report here: lane.yml's automerge-mac job runs it on the build Mac (#2459)
+                print(f'Handing this automerge run to the build Mac: {"; ".join(details)}', flush=True)
+                if os.environ.get('GITHUB_OUTPUT'):
+                    with open(os.environ['GITHUB_OUTPUT'], 'a') as handle:
+                        handle.write('needs_mac=true\n')
+                return 0
             details = ([beside] if beside else []) + details
             crashes = 'none'
         elif conflicts:
@@ -3116,6 +3516,9 @@ def main(argv=None) -> int:
         elif pointers := ensure_lfs_files(ROOT):
             verdict, where, ran, crashes = 'INCONCLUSIVE', 'no simulator', 'nothing', 'none'
             details = [pointers]
+        elif request['tier'] != 'T2' and (python_fault := tools_python_fault(ROOT)):  # T3 runs verify-tests.py
+            verdict, where, ran, crashes = 'INCONCLUSIVE', 'no simulator', 'nothing', 'none'
+            details = [python_fault]
         elif request['tier'] == 'T2':
             print(prune_lane_folder(evidence.parent), flush=True)
             warm = warm_build_folders(ROOT)
@@ -3142,7 +3545,9 @@ def main(argv=None) -> int:
         wanted = identity('auto', head, base_sha, request['tests'])
     body = report(request_id, verdict, head, base_sha, request['tier'], where, time.monotonic() - started,
                   ran, moved + details, crashes, str(evidence),
-                  NOT_VERIFIED, wanted, cc, args.base, hosted=args.hosted)
+                  NOT_VERIFIED, wanted, cc, args.base, hosted=args.hosted,
+                  event=event_note(verdict, request['tier'], head, base_sha, time.monotonic() - started, evidence,
+                                   request.get('created_at')))
     (evidence / 'report.md').write_text(body)
     print(body)
     t3_url = github.comment(body)  # if this fails, the job fails and the tidy step says so on the PR

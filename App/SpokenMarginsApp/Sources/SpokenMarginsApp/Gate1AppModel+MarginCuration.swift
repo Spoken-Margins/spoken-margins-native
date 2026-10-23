@@ -118,9 +118,11 @@ extension Gate1AppModel {
         run { engine in
             snapshot = try engine.deleteInterjection(interjectionId: interjection.id, sessionId: interjection.sessionId)
             refreshSelectedItem()
+            cutShortMarks().clear(sessionId: interjection.sessionId, interjectionId: interjection.id)
             // Its failed-transcription Retry would otherwise outlive it (#430).
             withdrawRetryOffer(Self.transcriptionRetryKey(interjection))
             reportSuccess("Deleted Margin.")
+            presentMarginDeleteUndo(interjection)
         }
         refreshMarginRows()
     }

@@ -236,7 +236,7 @@ class VerificationTests(unittest.TestCase):
             run.manifest['destination'] = {'udid': 'pool-device'}
             run.crash_baseline = {}
             crashes = [f'WidgetRenderer_Default-2026-09-24-10000{i}.ips' for i in range(3)]
-            with mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}), \
+            with patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}), \
                     patch.object(verification, 'new_crash', side_effect=self.crash_reports(*crashes)), \
                     patch.object(verification.subprocess, 'run', side_effect=shutdown):
                 with self.assertRaises(RuntimeError):
@@ -539,7 +539,7 @@ class VerificationTests(unittest.TestCase):
         # The third-party notices test (#1823) reads the dependency manifests and the generated list.
         self.assertIn('test_third_party_notices', verification.RUNNER_TEST_READERS)
         for path in ('package.json', 'requirements-dev.txt', 'docs/legal/third-party-components.json',
-                     'THIRD_PARTY_NOTICES.md', 'Design/SpokenMarginsOverhaul/package.json'):
+                     'THIRD_PARTY_NOTICES.md', 'Design/UXProposal20260909/package.json'):
             self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
         self.assertEqual(verification.runner_test_scope(['docs/a.md'])[0], 'none')
         # A manifest, model or font file added anywhere must run the check in the PR that adds it, not in the
@@ -742,6 +742,141 @@ class VerificationTests(unittest.TestCase):
             self.assertIn('ran out of its 3s limit', note)
             self.assertIsNotNone(run.manifest['steps'][-1]['load_average_start'])
 
+    def test_the_unfinished_test_is_the_last_one_started_with_no_result_after_it(self):
+        # #1956: the log's last "started" line with no result names the test a hung run is in.
+        started = "Test Case '-[SessionKitTests.%s %s]' started.\n"
+        passed = "Test Case '-[SessionKitTests.%s %s]' passed (0.010 seconds).\n"
+        for log, unfinished in (
+                ('', None),
+                (passed % ('A', 'testA'), None),
+                (started % ('A', 'testA') + passed % ('A', 'testA'), None),
+                (started % ('A', 'testA') + passed % ('A', 'testA') + started % ('B', 'testB'), 'SessionKitTests/B/testB'),
+                (started % ('B', 'testB') + 'some output the test printed\n', 'SessionKitTests/B/testB'),
+                # a result for another test with the same method name does not finish it
+                (started % ('B', 'testB') + passed % ('C', 'testB'), 'SessionKitTests/B/testB'),
+                (started % ('B', 'testB') + "Test Case '-[SessionKitTests.B testB]' failed (1.0 seconds).\n", None)):
+            with self.subTest(log=log):
+                self.assertEqual(verification.unfinished_test(log), unfinished)
+
+    # The shape of a `sample` call graph on this Mac (Xcode 26, 2026-10-20), cut to the frames that matter. The audio
+    # stack is the one #1956's sample of the hung lane run showed.
+    SAMPLE_HEAD = ('Call graph:\n'
+                   '    1275 Thread_50374060   DispatchQueue_1: com.apple.main-thread  (serial)\n'
+                   '    + 1275 start  (in dyld) + 6992  [0x180fdc4e4]\n'
+                   '    +   1275 -[XCTestCase invokeTestMethod:]  (in XCTestCore) + 60  [0x100fb147c]\n'
+                   '    +     1275 @objc RealPlayerMarginMomentTests.testAMarginThatIsNotChimedStartsItsVoiceStraightAway()'
+                   '  (in SessionKitPackageTests) + 44  [0x100d52240]  /<compiler-generated>:0\n'
+                   '    +       1275 RealPlayerMarginMomentTests.testAMarginThatIsNotChimedStartsItsVoiceStraightAway()'
+                   '  (in SessionKitPackageTests) + 52  [0x100d521fc]  RealPlayerMarginMomentTests.swift:88\n')
+    AUDIO_SAMPLE = SAMPLE_HEAD + (
+        '    +         1275 MarginMomentConductor.beginVoice()  (in SessionKitPackageTests) + 300  [0x1]  MarginMomentConductor.swift:209\n'
+        '    +           1275 -[AVAudioPlayer play]  (in AVFAudio) + 44  [0x2]\n'
+        '    +             1275 AudioDeviceStart  (in CoreAudio) + 120  [0x3]\n'
+        '    +               1275 HALB_IOThread::StartAndWaitForState(unsigned int)  (in CoreAudio) + 200  [0x4]\n'
+        '    +                 1275 __psynch_cvwait  (in libsystem_kernel.dylib) + 8  [0x5]\n'
+        '    1275 Thread_50374063\n'
+        '    + 1275 start_wqthread  (in libsystem_pthread.dylib) + 8  [0x6]\n')
+
+    def test_a_hung_xctest_sample_names_the_test_and_the_call_it_waits_in(self):
+        found = verification.hang_diagnosis(self.AUDIO_SAMPLE)
+        self.assertEqual(found['test'], 'RealPlayerMarginMomentTests.testAMarginThatIsNotChimedStartsItsVoiceStraightAway')
+        self.assertEqual(found['waiting_in'], '__psynch_cvwait')  # not the next thread's frames
+        self.assertTrue(found['audio_device'])
+        self.assertIn('stuck in MarginMomentConductor.beginVoice() → … → __psynch_cvwait', found['diagnosis'])
+        self.assertIn('a sound output that never started', found['diagnosis'])
+        plain = verification.hang_diagnosis(self.SAMPLE_HEAD + (
+            '    +         1275 Conductor.wait()  (in SessionKitPackageTests) + 44  [0x1]\n'
+            '    +           1275 semaphore_wait_trap  (in libsystem_kernel.dylib) + 8  [0x2]\n'
+            '    +         3 Conductor.other()  (in SessionKitPackageTests) + 4  [0x3]\n'))
+        self.assertEqual((plain['waiting_in'], plain['audio_device']), ('semaphore_wait_trap', False))
+        self.assertNotIn('test', verification.hang_diagnosis('Call graph:\n    5 Thread_1\n    + 5 start  (in dyld)\n'))
+
+    def hung_host_test_step(self, temporary):
+        """A stand-in "xctest" in its own session hangs after its test starts; returns the stopped step and its pid."""
+        # #1956: SwiftPM starts xctest in a process group of its own. The step's stop left it running under launchd,
+        # and the report named no test. The stand-in is /bin/sleep run under the name xctest (argv[0]), which is what
+        # `ps` shows: a symlink to Python would not do, since the framework Python re-executes itself under Python.app.
+        tools = Path(temporary) / 'toolchain'
+        tools.mkdir()
+        pid_file = Path(temporary) / 'xctest.pid'
+        script = ('import subprocess, sys, time\n'
+                  'print("Test Case \'-[SessionKitTests.RealPlayerMarginMomentTests testHangs]\' started.", flush=True)\n'
+                  f'child = subprocess.Popen([{str(tools / "xctest")!r}, "120"], executable="/bin/sleep", '
+                  'start_new_session=True)\n'
+                  f'open({str(pid_file)!r}, "w").write(str(child.pid))\n'
+                  'child.wait()\n')
+        run = verification.Run(Path(temporary) / 'run', 'test')
+        with self.assertRaises(RuntimeError):
+            run.command('package', [sys.executable, '-c', script], timeout=1, ceiling=60, stall_seconds=2,
+                        tests=True)
+        step = run.manifest['steps'][-1]
+        stray = int(pid_file.read_text())
+        self.assertIn('SessionKitTests/RealPlayerMarginMomentTests/testHangs started and did not finish',
+                      step['errors'][1])
+        self.assertEqual([sample['pid'] for sample in step['hang']['samples']], [stray])
+        self.assertTrue((run.output / 'package-hang' / f'sample-{stray}.txt').is_file())
+        self.assertTrue(step['errors'][2].startswith('stuck: '))
+        deadline = time.monotonic() + 5
+        while verification.process_alive(stray) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertFalse(verification.process_alive(stray))
+        return step, stray
+
+    @unittest.skipUnless(shutil.which('sample'), 'macOS `sample` only; the no-sample case runs everywhere')
+    def test_a_hung_host_test_step_samples_its_xctest_names_the_test_and_leaves_no_stray(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            step, stray = self.hung_host_test_step(temporary)
+            self.assertIsNotNone(step['hang']['samples'][0]['exit'])
+
+    def test_a_hung_host_test_step_without_sample_still_names_its_xctest_and_leaves_no_stray(self):
+        # #1956: the hosted Linux runner has no `sample`. Popen raised FileNotFoundError, the step's hang record lost
+        # every sample, and nothing named the stopped xctest. It now writes a note per xctest instead.
+        real_which = shutil.which
+        with tempfile.TemporaryDirectory() as temporary, patch.object(
+                verification.shutil, 'which', lambda name, *a, **k: None if name == 'sample' else real_which(name, *a, **k)):
+            step, stray = self.hung_host_test_step(temporary)
+        [sample] = step['hang']['samples']
+        self.assertIsNone(sample['exit'])
+        self.assertIn(f'xctest {stray}: no `sample` tool on this host', sample['diagnosis'])
+        self.assertIn('no `sample` tool', step['errors'][2])
+
+    def test_an_audio_device_hang_is_a_lane_fault_only_while_the_output_still_does_not_start(self):
+        # #1956: a stuck output stays stuck after the step stops; a hang in the PR's own audio code ends with its xctest.
+        def command(name, args, **kw):
+            run.manifest['steps'].append({'name': name, 'interrupted': True, 'errors': ['Process exit 124'],
+                                          'hang': {'audio_device': True, 'samples': [{}]}})
+            if name == 'package':
+                raise RuntimeError('Process exit 124')
+
+        for starts, fault in ((False, True), (True, False)):
+            with self.subTest(output_starts_after_the_stop=starts), tempfile.TemporaryDirectory() as temporary, \
+                    patch.dict(verification.os.environ, {}, clear=False):
+                verification.os.environ.pop('CODEX_SANDBOX', None)
+                run = verification.Run(Path(temporary) / 'run', 'fast')
+                with patch.object(run, 'command', side_effect=command), \
+                        patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
+                        patch.object(verification.host_audio, 'output_starts',
+                                     return_value={'starts': starts, 'why': 'probe'}):
+                    with self.assertRaises(RuntimeError) as raised:
+                        run.package_steps({'SessionKitTests/B/testB'})
+                self.assertEqual('lane fault, not the PR' in str(raised.exception), fault)
+                self.assertEqual('stopped starting during package' in run.manifest.get('lane_fault', ''), fault)
+
+    def test_the_sessionkit_script_runs_xctest_unbuffered(self):
+        # #1956: buffered, a hung run's log ended 400-odd results before the test that hung.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'scripts').mkdir()
+            (root / 'Packages/SessionKit').mkdir(parents=True)
+            shutil.copy(SCRIPTS / 'run-sessionkit-tests.sh', root / 'scripts/run-sessionkit-tests.sh')
+            lane = root / 'scripts/host-test-lane'
+            lane.write_text('#!/bin/sh\nprintf "%s" "$NSUnbufferedIO"\n')
+            lane.chmod(0o755)
+            environment = {key: value for key, value in os.environ.items() if key != 'NSUnbufferedIO'}
+            done = subprocess.run(['bash', str(root / 'scripts/run-sessionkit-tests.sh'), '--rest'], env=environment,
+                                  capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.stdout, 'YES', done.stderr)
+
     def test_the_wait_for_the_host_test_slot_is_outside_every_steps_clock(self):
         # #1767 suspected that a step's limit also covered its wait for a host-test slot. fast() takes the slot first
         # and hands it to the step's children (SM_LANE_HOST_SLOT), so a slow wait leaves the step's whole budget.
@@ -791,6 +926,53 @@ class VerificationTests(unittest.TestCase):
         timeout = dict(calls)['runner-tests'].get('timeout', default)
         self.assertGreaterEqual(timeout, 2 * measured)  # the suite grows and runs beside a simulator job
         self.assertGreater(timeout, default)
+
+    def test_runner_tests_still_printing_at_their_budget_go_on_to_a_ceiling(self):
+        # #2488: at load 138-150 the suite was killed at 600 s with its log still a stream of passing dots (#2409).
+        for portable in (False, True):
+            calls = []
+            with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+                verification.os.environ.pop('CODEX_SANDBOX', None)
+                run = verification.Run(Path(temporary) / 'run', 'fast')
+                with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
+                        patch.object(run, 'ops_steps'), patch.object(run, 'skip'), \
+                        patch.object(verification, 'swift_tests', return_value=set()), \
+                        patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
+                        patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                    run.host_steps(portable=portable)
+            step = dict(calls)['runner-tests']
+            self.assertEqual(step['timeout'], verification.RUNNER_TESTS_TIMEOUT)
+            self.assertGreater(step['ceiling'], step['timeout'])
+            self.assertLess(step['stall_seconds'], step['ceiling'] - step['timeout'])  # a hang still stops early
+            self.assertLess(step['ceiling'], 2400)  # the lane's FAST_TIMEOUT still bounds the plan
+        # The readers-only and Mac-rest runs of the same step get the same limits.
+        for scope in ('readers', 'all'):
+            calls = []
+            with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+                verification.os.environ.pop('CODEX_SANDBOX', None)
+                run = verification.Run(Path(temporary) / 'run', 'fast')
+                with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
+                        patch.object(run, 'ops_steps'), patch.object(run, 'skip'), \
+                        patch.object(verification, 'runner_test_scope', return_value=(scope, '')), \
+                        patch.object(verification, 'swift_tests', return_value=set()), \
+                        patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
+                        patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                    run.host_steps()
+            self.assertEqual({k: dict(calls)['runner-tests'][k] for k in verification.RUNNER_TESTS_LIMITS},
+                             verification.RUNNER_TESTS_LIMITS, scope)
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+            verification.os.environ.pop('CODEX_SANDBOX', None)
+            run = verification.Run(Path(temporary) / 'run', 'fast-mac-rest')
+            with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
+                    patch.object(run, 'ops_steps'), patch.object(run, 'skip'), patch.object(run, 'package_steps'), \
+                    patch.object(run, 'shipped_compat'), \
+                    patch.object(verification, 'runner_test_scope', return_value=('all', '')), \
+                    patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification.sessionkit_pass, 'find', return_value=None):
+                run.mac_rest()
+        self.assertEqual({k: dict(calls)['runner-tests'][k] for k in verification.RUNNER_TESTS_LIMITS},
+                         verification.RUNNER_TESTS_LIMITS)
 
     def run_sessionkit_script(self, *args, exit_code=0, **env):
         """Run scripts/run-sessionkit-tests.sh from a copy in a temporary ROOT whose host-test-lane records what it
@@ -866,6 +1048,67 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(verification.log_errors(log), [
             "/src/A.swift:3:1: error: cannot find 'x' in scope", 'failed: SwiftCompile normal arm64 /src/A.swift',
             'failed: (1 failure)'])
+
+    FAILING_UNITTEST = (
+        'import unittest\n'
+        'class Sample(unittest.TestCase):\n'
+        '    def test_equal(self):\n'
+        '        self.assertEqual({"a": 1}, {"a": 2})\n'
+        '    def test_crash(self):\n'
+        '        raise ValueError("nope")\n'
+        '    def test_fine(self):\n'
+        '        pass\n'
+        'unittest.main()\n')
+
+    def test_unittest_failures_are_named_with_their_line_and_message(self):
+        # #2457: runner-tests failed in CI with only "FAILED" because log_errors reads xcodebuild's words.
+        with tempfile.TemporaryDirectory() as temporary:
+            script = Path(temporary) / 'sample.py'
+            script.write_text(self.FAILING_UNITTEST)
+            log = subprocess.run([sys.executable, str(script)], capture_output=True, text=True).stderr
+        failures = verification.unittest_failures(log)
+        self.assertEqual([test for test, _, _ in failures], ['test_crash (__main__.Sample.test_crash)',
+                                                             'test_equal (__main__.Sample.test_equal)'])
+        self.assertTrue(failures[0][1].endswith('sample.py:6'), failures[0])
+        self.assertEqual(failures[0][2], 'ValueError: nope')
+        self.assertTrue(failures[1][1].endswith('sample.py:4'), failures[1])
+        self.assertTrue(failures[1][2].startswith("AssertionError: {'a': 1} != {'a': 2}"), failures[1])
+        self.assertEqual(verification.unittest_failures('Ran 3 tests in 0.1s\n\nOK\n'), [])
+
+    def test_the_last_in_repo_line_and_the_final_chained_exception_are_reported(self):
+        # Review of #2466: a library frame or the first of two chained exceptions must not stand for the failure.
+        here = str(verification.ROOT)
+        log = ('======================================================================\n'
+               'ERROR: test_x (m.C.test_x)\n'
+               '----------------------------------------------------------------------\n'
+               'Traceback (most recent call last):\n'
+               f'  File "{here}/scripts/tests/m.py", line 5, in test_x\n    data["x"]\nKeyError: \'x\'\n\n'
+               'During handling of the above exception, another exception occurred:\n\n'
+               'Traceback (most recent call last):\n'
+               f'  File "{here}/scripts/tests/m.py", line 7, in test_x\n    json.loads("{{")\n'
+               '  File "/usr/lib/python3/json/decoder.py", line 361, in raw_decode\n'
+               'ValueError: Expecting property name\n\n'
+               '----------------------------------------------------------------------\n'
+               'Ran 1 test in 0.1s\n\nFAILED (errors=1)\n')
+        self.assertEqual(verification.unittest_failures(log), [
+            ('test_x (m.C.test_x)', f'{here}/scripts/tests/m.py:7', 'ValueError: Expecting property name')])
+
+    def test_a_failing_runner_test_step_names_each_failing_test(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            script = Path(temporary) / 'sample.py'
+            script.write_text(self.FAILING_UNITTEST)
+            summary = Path(temporary) / 'summary.md'
+            run = verification.Run(Path(temporary) / 'run', 'test')
+            with patch.dict(os.environ, {'GITHUB_STEP_SUMMARY': str(summary)}):
+                with self.assertRaises(RuntimeError) as raised:
+                    run.command('runner-tests', [sys.executable, str(script)])
+            summary_text = summary.read_text()
+        message = str(raised.exception)
+        self.assertIn('Failed: test_equal (__main__.Sample.test_equal) at ', message)
+        self.assertIn('Failed: test_crash (__main__.Sample.test_crash) at ', message)
+        self.assertNotIn('test_fine', message)
+        self.assertIn('2 failing test(s)', summary_text)
+        self.assertIn('`test_equal (__main__.Sample.test_equal)`', summary_text)
 
     def simulator_inventory(self):
         return {
@@ -2059,6 +2302,7 @@ class VerificationTests(unittest.TestCase):
             run = verification.Run(Path(temporary) / 'run', 'test')
             for name in ('browser', 'share-link'):
                 for label, output in (('a TAP summary of zero tests', '# tests 0'),
+                                      ('a spec summary of zero tests', 'ℹ tests 0'),
                                       ('no TAP summary at all', 'npm warn nothing to run')):
                     with self.subTest(name=name, label=label):
                         with self.assertRaisesRegex(RuntimeError, f'{"Browser runner" if name == "browser" else name} '
@@ -2068,6 +2312,10 @@ class VerificationTests(unittest.TestCase):
                         self.assertEqual((step['executed_count'], step['exit_code']), (0, 0))  # it exited 0
                 with self.subTest(name=name, label='a TAP summary of three tests'):
                     run.command(name, [sys.executable, '-c', 'print("TAP version 13\\n# tests 3\\n# pass 3")'])
+                    step = run.manifest['steps'][-1]
+                    self.assertEqual((step['executed_count'], step['errors']), (3, []))
+                with self.subTest(name=name, label='a spec summary of three tests (Node 24)'):
+                    run.command(name, [sys.executable, '-c', 'print("✔ a test (1ms)\\nℹ tests 3\\nℹ pass 3")'])
                     step = run.manifest['steps'][-1]
                     self.assertEqual((step['executed_count'], step['errors']), (3, []))
 

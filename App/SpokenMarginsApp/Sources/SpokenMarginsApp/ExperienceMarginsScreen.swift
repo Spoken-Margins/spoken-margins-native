@@ -15,6 +15,7 @@ struct ExperienceMarginsScreen: View {
 
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
@@ -126,6 +127,75 @@ struct ExperienceMarginsScreen: View {
         }
     }
 
+    /// The item heading, then Share and Share as Markdown. At accessibility sizes the buttons take their own
+    /// row under the title instead of squeezing it (#1938).
+    @ViewBuilder
+    private func groupHeading(_ group: MarginGroup) -> some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 0) {
+                groupOpenItemButton(group)
+                HStack(spacing: 8) {
+                    groupShareButtons(group)
+                    Spacer(minLength: 0)
+                }
+            }
+        } else {
+            HStack(alignment: .top) {
+                groupOpenItemButton(group)
+                Spacer(minLength: 8)
+                groupShareButtons(group)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func groupOpenItemButton(_ group: MarginGroup) -> some View {
+        // The heading opens the item, as the Library row does (#1256). The chevron says it goes somewhere.
+        Button { model.openItem(id: group.itemID) } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(group.itemTitle) \(Text(Image(systemName: "chevron.right")).font(.caption.weight(.bold)).foregroundStyle(AppColors.secondaryText))")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.text)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("\(group.rows.count) Margins")
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+            }
+            .frame(minHeight: 44, alignment: .topLeading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(group.itemTitle), \(group.rows.count) Margins")
+        .accessibilityHint("Opens the item.")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("margins.openItem.\(group.itemID)")
+    }
+
+    @ViewBuilder
+    private func groupShareButtons(_ group: MarginGroup) -> some View {
+        Button { model.openMarginItemExport(itemID: group.itemID) } label: {
+            Label("Share", systemImage: "square.and.arrow.up")
+                .frame(minHeight: 44)
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel("Share Margins from \(group.itemTitle)")
+        .accessibilityIdentifier("margins.shareItem.\(group.itemID)")
+        // Every active Margin of the item, not only those the search shows (#493).
+        Button {
+            markdownFileURL = model.marginMarkdownFileURL(
+                for: model.marginRows.filter { $0.interjection.itemId == group.itemID }.map(\.interjection),
+                asItem: true
+            )
+        } label: {
+            Image(systemName: "doc.text").frame(minWidth: 44, minHeight: 44)
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel("Share Margins from \(group.itemTitle) as Markdown")
+        .accessibilityIdentifier("margins.shareItemMarkdown.\(group.itemID)")
+    }
+
     @ViewBuilder
     private var collection: some View {
         if filteredRows.isEmpty {
@@ -142,49 +212,7 @@ struct ExperienceMarginsScreen: View {
         } else {
             ForEach(groupedRows) { group in
                 VStack(alignment: .leading, spacing: 0) {
-                    HStack(alignment: .top) {
-                    // The heading opens the item, as the Library row does (#1256). The chevron says it goes somewhere.
-                    Button { model.openItem(id: group.itemID) } label: {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("\(group.itemTitle) \(Text(Image(systemName: "chevron.right")).font(.caption.weight(.bold)).foregroundStyle(AppColors.secondaryText))")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(AppColors.text)
-                                .multilineTextAlignment(.leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text("\(group.rows.count) Margins")
-                                .font(.caption)
-                                .foregroundStyle(AppColors.secondaryText)
-                        }
-                        .frame(minHeight: 44, alignment: .topLeading)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("\(group.itemTitle), \(group.rows.count) Margins")
-                    .accessibilityHint("Opens the item.")
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityIdentifier("margins.openItem.\(group.itemID)")
-                    Spacer(minLength: 8)
-                    Button { model.openMarginItemExport(itemID: group.itemID) } label: {
-                        Label("Share", systemImage: "square.and.arrow.up")
-                            .frame(minHeight: 44)
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel("Share Margins from \(group.itemTitle)")
-                    .accessibilityIdentifier("margins.shareItem.\(group.itemID)")
-                    // Every active Margin of the item, not only those the search shows (#493).
-                    Button {
-                        markdownFileURL = model.marginMarkdownFileURL(
-                            for: model.marginRows.filter { $0.interjection.itemId == group.itemID }.map(\.interjection),
-                            asItem: true
-                        )
-                    } label: {
-                        Image(systemName: "doc.text").frame(minWidth: 44, minHeight: 44)
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel("Share Margins from \(group.itemTitle) as Markdown")
-                    .accessibilityIdentifier("margins.shareItemMarkdown.\(group.itemID)")
-                    }
+                    groupHeading(group)
                     .padding(.top, 16)
                     .padding(.bottom, 6)
 
@@ -194,10 +222,21 @@ struct ExperienceMarginsScreen: View {
                                 Image(systemName: row.interjection.isStarredForSharing == true ? "star.fill" : (row.needsAttention ? "exclamationmark.bubble.fill" : (row.isWritten ? "square.and.pencil" : "quote.bubble")))
                                     .foregroundStyle(row.needsAttention ? AppColors.coral : AppColors.evergreen)
                                     .frame(width: 28, height: 32)
+                                    .overlay(alignment: .bottomTrailing) {
+                                        // A starred Margin that needs attention shows the star, so the warning is
+                                        // a second shape and not only coral against evergreen (#1925).
+                                        if row.needsAttention && row.interjection.isStarredForSharing == true {
+                                            Image(systemName: "exclamationmark.circle.fill")
+                                                .font(.caption2.weight(.bold))
+                                                .foregroundStyle(AppColors.coral)
+                                                .background(Circle().fill(AppColors.panel))
+                                                .accessibilityHidden(true)
+                                        }
+                                    }
                                 VStack(alignment: .leading, spacing: 5) {
                                     // Where it was made comes first, then the opening words. A bold one-line gist
                                     // missed the point on 15 of 40 of the owner's real Margins, so none is shown (#777).
-                                    Text(row.needsAttention ? row.attentionDescription : row.placeDescription())
+                                    Text(row.captionDescription())
                                         .font(.subheadline.weight(.semibold))
                                         .foregroundStyle(row.needsAttention ? AppColors.coral : AppColors.text)
                                         .multilineTextAlignment(.leading)
@@ -225,7 +264,7 @@ struct ExperienceMarginsScreen: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("\(row.interjection.replyTo == nil ? "My Margin" : "My reply to a shared Margin"). \(row.needsAttention ? row.attentionDescription.trimmingCharacters(in: CharacterSet(charactersIn: ".")) : row.placeDescription()). \(row.needsAttention && row.preview == row.attentionDescription ? "" : "\(row.preview). ")\(group.itemTitle).")
+                        .accessibilityLabel("\(row.interjection.replyTo == nil ? "My Margin" : "My reply to a shared Margin"). \(row.captionDescription().trimmingCharacters(in: CharacterSet(charactersIn: "."))). \(row.needsAttention && row.preview == row.attentionDescription ? "" : "\(row.preview). ")\(group.itemTitle).")
                         // The star on the row is a picture; the listener hears it as the row's value.
                         .accessibilityValue(row.interjection.isStarredForSharing == true ? "Starred for sharing" : "")
                         .accessibilityIdentifier("margins.row.\(row.id)")
@@ -527,41 +566,50 @@ struct MarginsScopeRow: View {
     let collections: [ItemCollection]
     let items: [LibraryItemRow]
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
-        HStack(spacing: 8) {
-            Menu {
-                Picker("Scope", selection: $selection) {
-                    Text("All items").tag(String?.none)
-                    if !collections.isEmpty {
-                        Section("Collections") {
-                            ForEach(collections) { collection in
-                                Text(collection.name).tag(Optional(MarginCollectionQuery.collectionTagPrefix + collection.id))
-                            }
-                        }
-                    }
-                    Section("Items") {
-                        ForEach(items) { item in Text(item.title).tag(Optional(item.id)) }
-                    }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Text(title)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Image(systemName: "chevron.up.chevron.down").font(.caption2)
-                }
-                .frame(minHeight: 44, alignment: .leading)
-            }
-            .layoutPriority(1)
-            .accessibilityLabel("Scope")
-            .accessibilityValue(title)
-            .accessibilityIdentifier("margins.scope.picker")
-            Spacer(minLength: 8)
+        // At accessibility sizes the count drops under the scope menu so the title keeps the full width (#1938).
+        (dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0))
+            : AnyLayout(HStackLayout(spacing: 8))) {
+            scopeMenu
+            if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 8) }
             Text(countText)
                 .font(.caption).foregroundStyle(AppColors.secondaryText)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
         }
+    }
+
+    private var scopeMenu: some View {
+        Menu {
+            Picker("Scope", selection: $selection) {
+                Text("All items").tag(String?.none)
+                if !collections.isEmpty {
+                    Section("Collections") {
+                        ForEach(collections) { collection in
+                            Text(collection.name).tag(Optional(MarginCollectionQuery.collectionTagPrefix + collection.id))
+                        }
+                    }
+                }
+                Section("Items") {
+                    ForEach(items) { item in Text(item.title).tag(Optional(item.id)) }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(title)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Image(systemName: "chevron.up.chevron.down").font(.caption2)
+            }
+            .frame(minHeight: 44, alignment: .leading)
+        }
+        .layoutPriority(1)
+        .accessibilityLabel("Scope")
+        .accessibilityValue(title)
+        .accessibilityIdentifier("margins.scope.picker")
     }
 }
 

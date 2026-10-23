@@ -187,6 +187,85 @@ final class VoiceModelInstallerTests: XCTestCase {
         XCTAssertEqual(server.requests(for: "/m").last?.headers["range"], "bytes=100000-", "the second install asked only for the rest")
     }
 
+    func testTheLogShowsAResumedFileAndEachRetry() async throws {
+        let model = payload(400_000, seed: 5)
+        let flaky = try startServer { request, _ in LocalHTTPServer.file(model, for: request) }
+        let log = VoiceDownloadLog(fileURL: nil)
+        let installer = VoiceModelInstaller(
+            root: root,
+            transport: CuttingTransport(cutFirstRequestAfter: 150_000),
+            configuration: .init(marginBytes: 0, attemptsPerSource: 3, retryDelay: .zero, availableCapacity: { _ in nil }, log: log)
+        )
+        try await installer.install(voiceId: "v", version: "1", files: [installFile("model.onnx", model, sources: [flaky.url("/m")])])
+
+        let events = log.snapshot
+        XCTAssertEqual(events.map(\.kind), ["file.download", "file.attempt_failed", "file.download", "file.done"])
+        XCTAssertEqual(events[0].fields["resumedFromBytes"], "0")
+        XCTAssertEqual(events[1].fields["attempt"], "1")
+        XCTAssertEqual(events[1].fields["willRetry"], "yes")
+        XCTAssertEqual(events[1].fields["host"], "127.0.0.1")
+        XCTAssertEqual(events[2].fields["resumedFromBytes"], "150000", "the second try says it continued where the cut left off")
+        XCTAssertEqual(events[3].fields["attempt"], "2")
+        XCTAssertEqual(events[3].fields["bytes"], "400000")
+        XCTAssertEqual(events[3].fields["file"], "model.onnx")
+    }
+
+    func testTheLogShowsAFileAlreadyInPlaceAndAFailedSourceBeforeTheNextOne() async throws {
+        let model = payload(40_000, seed: 3)
+        let server = try fileServer(["/mirror/m": model])
+        let log = VoiceDownloadLog(fileURL: nil)
+        let installer = VoiceModelInstaller(
+            root: root,
+            configuration: .init(marginBytes: 0, attemptsPerSource: 3, retryDelay: .zero, availableCapacity: { _ in nil }, log: log)
+        )
+        let files = [installFile("model.onnx", model, sources: [server.url("/upstream/m"), server.url("/mirror/m")])]
+        try await installer.install(voiceId: "v", version: "1", files: files)
+        XCTAssertEqual(log.snapshot.map(\.kind), ["file.download", "file.source_failed", "file.download", "file.done"])
+        XCTAssertEqual(log.snapshot[1].fields["reason"], "the server answered HTTP 404")
+
+        // The same version again with its staged file gone is a fresh install; a staged finished file is "in place".
+        let staged = root.appendingPathComponent(".staging/v@1", isDirectory: true)
+        try FileManager.default.createDirectory(at: staged, withIntermediateDirectories: true)
+        try model.write(to: staged.appendingPathComponent("model.onnx"))
+        let second = VoiceDownloadLog(fileURL: nil)
+        let again = VoiceModelInstaller(
+            root: root,
+            configuration: .init(marginBytes: 0, attemptsPerSource: 3, retryDelay: .zero, availableCapacity: { _ in nil }, log: second)
+        )
+        try await again.install(voiceId: "v", version: "1", files: files)
+        XCTAssertEqual(second.snapshot.map(\.kind), ["file.in_place"])
+    }
+
+    func testTheLogSaysWhenAServerIgnoredTheResumePoint() async throws {
+        let model = payload(250_000, seed: 7)
+        let server = try startServer { request, _ in LocalHTTPServer.file(model, for: request, honoringRange: false) }
+        let log = VoiceDownloadLog(fileURL: nil)
+        let installer = VoiceModelInstaller(
+            root: root,
+            transport: CuttingTransport(cutFirstRequestAfter: 90_000),
+            configuration: .init(marginBytes: 0, attemptsPerSource: 3, retryDelay: .zero, availableCapacity: { _ in nil }, log: log)
+        )
+        try await installer.install(voiceId: "v", version: "1", files: [installFile("model.onnx", model, sources: [server.url("/m")])])
+        let restarted = try XCTUnwrap(log.snapshot.first { $0.kind == "file.restarted" })
+        XCTAssertEqual(restarted.fields["reason"], "the server ignored the resume point")
+    }
+
+    func testTheLogRecordsAChecksumMismatch() async throws {
+        let good = payload(50_000, seed: 8)
+        var corrupted = good
+        corrupted[corrupted.count / 2] ^= 0xFF
+        let server = try fileServer(["/m": corrupted])
+        let log = VoiceDownloadLog(fileURL: nil)
+        let installer = VoiceModelInstaller(
+            root: root,
+            configuration: .init(marginBytes: 0, attemptsPerSource: 3, retryDelay: .zero, availableCapacity: { _ in nil }, log: log)
+        )
+        _ = try? await installer.install(voiceId: "v", version: "1", files: [installFile("model.onnx", good, sources: [server.url("/m")])])
+        let mismatch = try XCTUnwrap(log.snapshot.first { $0.kind == "file.checksum_mismatch" })
+        XCTAssertEqual(mismatch.fields["file"], "model.onnx")
+        XCTAssertEqual(mismatch.fields["continuedPartial"], "no")
+    }
+
     func testAServerThatIgnoresRangeRestartsTheFileFromTheStart() async throws {
         let model = payload(250_000, seed: 7)
         let server = try startServer { request, _ in LocalHTTPServer.file(model, for: request, honoringRange: false) }

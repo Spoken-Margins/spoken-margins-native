@@ -384,6 +384,30 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNotEqual(model.feedbackEvent?.kind, .error)
     }
 
+    /// #2224: the export carries the voice download log from its file, so a download from an earlier launch shows.
+    func testDiagnosticsExportCarriesTheVoiceDownloadLogFromItsFile() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("voice-log-export-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let logFile = VoiceDownloadLog.fileURL(stateFolder: folder)
+        VoiceDownloadLog(fileURL: logFile).record("install.finished", ["voice": "supertonic-3", "bytesOnDisk": "1234"])
+        let fixed = DiagnosticsExport.Fixed(
+            developerBuild: "test", developerRecording: nil, playbackEvents: nil, exportedAt: Date(),
+            playbackStatus: "idle", sessionPhase: "idle", targetType: nil, pendingAIJobs: 0
+        )
+
+        let withLog = try DiagnosticsExportInputs(live: [:], store: nil, fixed: fixed, voiceDownloadLogFile: logFile).writeFile()
+        defer { try? FileManager.default.removeItem(at: withLog) }
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: withLog)) as? [String: String])
+        let log = try XCTUnwrap(payload["voiceDownloads"])
+        XCTAssertTrue(log.contains("install.finished"))
+        XCTAssertTrue(log.contains("\"bytesOnDisk\":\"1234\""))
+
+        let withoutLog = try DiagnosticsExportInputs(live: [:], store: nil, fixed: fixed, voiceDownloadLogFile: folder.appendingPathComponent("none.json")).writeFile()
+        defer { try? FileManager.default.removeItem(at: withoutLog) }
+        let bare = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: withoutLog)) as? [String: String])
+        XCTAssertNil(bare["voiceDownloads"], "no log, no key")
+    }
+
     /// #1191: Share Diagnostics builds the file off the main actor so the button can show a spinner. The file
     /// carries the same safe payload as the synchronous export.
     func testPrepareDiagnosticsExportFileURLBuildsTheSafeFile() async throws {
@@ -4618,6 +4642,29 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot, before)
     }
 
+    func testDeletingAMarginOffersUndoThatBringsTheSameMarginBack() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "margin-delete-undo-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: url)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let store = try SQLiteSessionStore(path: url.path)
+        var margin = shareableInterjection(itemId: "item-pill")
+        margin.id = "undo-me"
+        margin.sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        try store.saveInterjection(margin)
+
+        model.deleteInterjection(margin)
+        XCTAssertEqual(try store.loadInterjections(sessionId: margin.sessionId).first { $0.id == margin.id }?.status, "deleted")
+        let undo = try XCTUnwrap(model.feedbackEvent?.action, "the Deleted Margin banner offers Undo")
+        XCTAssertEqual(undo.title, "Undo")
+
+        undo.perform()
+        XCTAssertEqual(try store.loadInterjections(sessionId: margin.sessionId).first { $0.id == margin.id }, margin)
+    }
+
     func testLateMicrophoneGrantCannotReplaceWrittenCaptureOrRestartCancelledCapture() async throws {
         let gate = MarginPermissionTestGate()
         let model = Gate1AppModel(
@@ -5522,52 +5569,17 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appending(path: "Collected Stories.pdf")
         let storyTitles = (1...20).map { "Story \($0)" }
-        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
-        try renderer.writePDF(to: file) { context in
-            context.beginPage()
-            ("Collected Stories" as NSString).draw(
-                at: CGPoint(x: 40, y: 35),
-                withAttributes: [.font: UIFont.boldSystemFont(ofSize: 26)]
-            )
-            ("Edited by Example Author" as NSString).draw(
-                at: CGPoint(x: 40, y: 78),
-                withAttributes: [.font: UIFont.systemFont(ofSize: 12)]
-            )
-            ("Contents" as NSString).draw(
-                at: CGPoint(x: 40, y: 110),
-                withAttributes: [.font: UIFont.boldSystemFont(ofSize: 18)]
-            )
-            for (index, title) in storyTitles.enumerated() {
-                (title as NSString).draw(
-                    at: CGPoint(x: 55, y: 145 + CGFloat(index * 23)),
-                    withAttributes: [.font: UIFont.boldSystemFont(ofSize: 12)]
-                )
-            }
-
-            for title in storyTitles {
-                context.beginPage()
-                (title as NSString).draw(
-                    at: CGPoint(x: 40, y: 40),
-                    withAttributes: [.font: UIFont.boldSystemFont(ofSize: 20)]
-                )
-                ("This is the readable body of \(title), with enough ordinary prose to establish the document body font size." as NSString).draw(
-                    at: CGPoint(x: 40, y: 85),
-                    withAttributes: [.font: UIFont.systemFont(ofSize: 12)]
-                )
-            }
-        }
-
+        // A PDF drawn here with UIFont.systemFont came back with no chapters on the iOS 27 simulator, which
+        // falls back to TimesNewRoman, while the same file built on macOS kept all 21 on an iOS 27 iPhone
+        // (#2365). The fixture is that file: a printed contents page, then 20 story pages, and an outline
+        // of 20 entries. scripts/fixtures/generate-pdf-outline-fixture.swift writes it.
+        let fixture = try XCTUnwrap(Bundle(for: Gate1AppModelWorkflowTests.self).url(
+            forResource: "pdf-outline-collected-stories",
+            withExtension: "pdf"
+        ))
+        try FileManager.default.copyItem(at: fixture, to: file)
         let document = try XCTUnwrap(PDFDocument(url: file))
-        let outlineRoot = PDFOutline()
-        for (index, title) in storyTitles.enumerated() {
-            let page = try XCTUnwrap(document.page(at: index + 1))
-            let child = PDFOutline()
-            child.label = title
-            child.destination = PDFDestination(page: page, at: CGPoint(x: 40, y: 740))
-            outlineRoot.insertChild(child, at: outlineRoot.numberOfChildren)
-        }
-        document.outlineRoot = outlineRoot
-        XCTAssertTrue(document.write(to: file))
+        XCTAssertEqual(document.outlineRoot?.numberOfChildren, 20, "the fixture carries its outline")
 
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()

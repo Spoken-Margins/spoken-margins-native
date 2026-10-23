@@ -54,6 +54,8 @@ final class MarginCaptureHealthTests: XCTestCase {
         private(set) var restartCount = 0
         private(set) var finishCount = 0
         private(set) var cancelCount = 0
+        /// What the watcher did around the ready cue (#1594), in order: "pause", "cue", "resume:<seconds>".
+        var readyCueEvents: [String] = []
 
         init(capturedMs: Int) { self.capturedMs = capturedMs }
 
@@ -63,6 +65,8 @@ final class MarginCaptureHealthTests: XCTestCase {
             return audioRef ?? "interjections/scripted.m4a"
         }
         func cancelRecording() throws { cancelCount += 1 }
+        func pauseForReadyCue() { readyCueEvents.append("pause") }
+        func resumeAfterReadyCue(after seconds: TimeInterval) { readyCueEvents.append("resume:\(seconds)") }
         func captureReading() -> RecordingCaptureReading? {
             stopped
                 ? RecordingCaptureReading(recorderRunning: false, capturedMs: 0)
@@ -96,11 +100,11 @@ final class MarginCaptureHealthTests: XCTestCase {
         private var nowMs = 0
 
         /// `startFromLiveActivity` begins the Margin with the Lock Screen / Live Activity command instead of the in-app button.
-        init(recorder: ScriptedRecordingClient, startFromLiveActivity: Bool = false) {
+        init(recorder: ScriptedRecordingClient, startFromLiveActivity: Bool = false, readyCue: MarginReadyCuePlaying = MarginReadyCuePlayer()) {
             self.recorder = recorder
             model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: recorder)
             let clock: () -> Int = { [unowned self] in self.nowMs }
-            model.captureWatcher = MarginCaptureWatcher(autoPoll: false, nowMs: clock)
+            model.captureWatcher = MarginCaptureWatcher(autoPoll: false, readyCue: readyCue, nowMs: clock)
             model.resetAndSeed()
             model.startItem(id: "item-pill")
             if startFromLiveActivity {
@@ -120,6 +124,85 @@ final class MarginCaptureHealthTests: XCTestCase {
                 if model.recordingCaptureHealth == .capturing { everShownAsCapturing = true }
             }
         }
+    }
+
+    /// Counts the ready cues the watcher asks for (#1594).
+    @MainActor
+    private final class SpyReadyCue: MarginReadyCuePlaying {
+        private(set) var cueCount = 0
+        var result = "played"
+        /// Where the cue notes that it sounded, so a test can see it came between the recorder's pause and resume.
+        var recorder: ScriptedRecordingClient?
+        func playReadyCue() -> String {
+            cueCount += 1
+            recorder?.readyCueEvents.append("cue")
+            return result
+        }
+    }
+
+    /// #1594: a slow start (Bluetooth) is silent until audio really arrives, then sounds the cue exactly once.
+    func testTheReadyCueSoundsOnceAfterAudioArrivesAndNotBefore() {
+        let recorder = ScriptedRecordingClient(capturedMs: 0)
+        let cue = SpyReadyCue()
+        cue.recorder = recorder
+        let harness = Harness(recorder: recorder, readyCue: cue)
+
+        harness.run(seconds: 1)
+        XCTAssertEqual(cue.cueCount, 0, "the recorder accepted the start but has taken in nothing")
+        XCTAssertEqual(recorder.readyCueEvents, [], "nothing is held still before the cue")
+        XCTAssertEqual(harness.model.recordingCaptureHealth, .starting)
+
+        recorder.capturedMs = 300
+        recorder.growsWithTime = true
+        harness.run(seconds: 3)
+        XCTAssertEqual(harness.model.recordingCaptureHealth, .capturing)
+        XCTAssertEqual(cue.cueCount, 1, "one cue however many polls follow")
+        XCTAssertEqual(harness.model.diagnostics["lastVoiceCapture"]?.contains("readyCue=played"), true)
+        XCTAssertEqual(
+            recorder.readyCueEvents,
+            ["pause", "cue", "resume:\(MarginReadyCueHold.seconds)"],
+            "the recorder is held still for the cue, so the speaker never reaches the saved Margin, and listens again once it is over"
+        )
+    }
+
+    /// A cue that did not sound has nothing to keep out of the file, so the recorder listens again at once.
+    func testTheRecorderListensAgainAtOnceWhenTheCueDidNotSound() {
+        let recorder = ScriptedRecordingClient(capturedMs: 300)
+        recorder.growsWithTime = true
+        let cue = SpyReadyCue()
+        cue.result = "skipped:session_not_recording"
+        cue.recorder = recorder
+        let harness = Harness(recorder: recorder, readyCue: cue)
+
+        harness.run(seconds: 3)
+
+        XCTAssertEqual(cue.cueCount, 1)
+        XCTAssertEqual(recorder.readyCueEvents, ["pause", "cue", "resume:0.0"])
+    }
+
+    func testNoReadyCueWhenTheMicrophoneTakesInNothing() {
+        let cue = SpyReadyCue()
+        let recorder = ScriptedRecordingClient(capturedMs: 22)
+        let harness = Harness(recorder: recorder, readyCue: cue)
+
+        harness.run(seconds: 10)
+
+        XCTAssertEqual(cue.cueCount, 0, "a failed start must not say the microphone is ready")
+        XCTAssertEqual(recorder.readyCueEvents, [], "and must not hold the recorder still")
+    }
+
+    func testNoReadyCueWhenTheMarginIsCancelledBeforeAudioArrives() {
+        let recorder = ScriptedRecordingClient(capturedMs: 0)
+        let cue = SpyReadyCue()
+        let harness = Harness(recorder: recorder, readyCue: cue)
+        harness.run(seconds: 1)
+
+        harness.model.cancelInterjection()
+        recorder.capturedMs = 400
+        harness.run(seconds: 2)
+
+        XCTAssertEqual(cue.cueCount, 0)
+        XCTAssertEqual(recorder.readyCueEvents, [])
     }
 
     func testARecorderThatTakesInNothingIsNeverShownAsRecordingAndIsTriedAgain() {

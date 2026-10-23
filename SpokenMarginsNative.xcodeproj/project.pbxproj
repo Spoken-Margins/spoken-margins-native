@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0FEB83362436FFB1CBA86CE3 /* icon-96.png in Resources */ = {isa = PBXBuildFile; fileRef = B0E665415E1CA9540B3692BC /* icon-96.png */; };
+		10C92B9BE955FDCB492E1130 /* pdf-outline-collected-stories.pdf in Resources */ = {isa = PBXBuildFile; fileRef = FB45D701E0D00156BD56A177 /* pdf-outline-collected-stories.pdf */; };
 		198C6F79A9F04D4B19F2A10B /* browserTextCapture.js in Resources */ = {isa = PBXBuildFile; fileRef = 98C26CB68BDFFFA8A1B7578B /* browserTextCapture.js */; };
 		1D558A9DAF393C1C59BA86EE /* BundledJavaScript-NOTICES.txt in Resources */ = {isa = PBXBuildFile; fileRef = 9DCA8BA796D0A4F2D17C342F /* BundledJavaScript-NOTICES.txt */; };
 		205189A37B2B08E1FAE0B0A2 /* icon-48.png in Resources */ = {isa = PBXBuildFile; fileRef = 534726939CEC57D001157DD9 /* icon-48.png */; };
@@ -31,8 +32,10 @@
 		68EFC63296D10802FDE30831 /* substack-shared-text-post.html in Resources */ = {isa = PBXBuildFile; fileRef = AA3E54540069285190E19D1B /* substack-shared-text-post.html */; };
 		6C3AD65F618F4FBE42AB6A31 /* fixtures in Resources */ = {isa = PBXBuildFile; fileRef = F8F6B4F91AA36C9513801753 /* fixtures */; };
 		76005D25F3CFA0070E96DA24 /* ClipboardIntakeClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCF082C6D01456C6743B188A /* ClipboardIntakeClassifier.swift */; };
+		78065128412B4F94A3B7B6FD /* LiveSessionMarkInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */; };
 		7F0A333F40F542B3E4C42E1A /* Defuddle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 8C1BFB86196C5C1BE2E52BEF /* Defuddle-LICENSE.txt */; };
 		81B60CCA76A6F0E91712933E /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = EE29274792FFFC88EA74C157 /* PrivacyInfo.xcprivacy */; };
+		87FAE6509C5B1511C6555EA9 /* SpokenMarginsWatchApp.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = F4D18E57D6973BBFE094E993 /* SpokenMarginsWatchApp.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		8B40FCEFB4AFABF3E3B52486 /* SessionKitEPUB in Frameworks */ = {isa = PBXBuildFile; productRef = DAEA68EE26E46DA752778D6D /* SessionKitEPUB */; };
 		8D06E1D632D0ED8160FED0A4 /* icon-128.png in Resources */ = {isa = PBXBuildFile; fileRef = 56AD3FBAE5A4EBD7B16F6BFC /* icon-128.png */; };
 		907083EA86D05BC58D2D3A79 /* SessionKitAI in Frameworks */ = {isa = PBXBuildFile; productRef = E7C7184F382A54BFB372015B /* SessionKitAI */; };
@@ -58,8 +61,10 @@
 		E1A30C458CE0DA8DB0031D9C /* Legal in Resources */ = {isa = PBXBuildFile; fileRef = E253416A15B5108380F819E8 /* Legal */; };
 		E3274F151D1933E8743EA4CE /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 968283859946C995CD8FA20C /* popup.html */; };
 		EA3D13B4259566F793F4E0F9 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = BF9501739D9C1D8AAED60132 /* manifest.json */; };
+		EA749D1E3C580CCE4713612F /* pdf-outline-collected-stories.pdf in Resources */ = {isa = PBXBuildFile; fileRef = FB45D701E0D00156BD56A177 /* pdf-outline-collected-stories.pdf */; };
 		EEE29B9A790A870683EE19ED /* SpokenMarginsShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BE41691E3B902A5C377AC70D /* SpokenMarginsShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		F719B3F555F883823A6AEED5 /* SessionKitPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 16898C6F40FB4FDCA4DE8C38 /* SessionKitPersistence */; };
+		FC312F1C0C4954CC4A846A2C /* LiveSessionMarkInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -76,6 +81,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 1D8893BE578C4DB95B466E90;
 			remoteInfo = SpokenMarginsShareExtension;
+		};
+		74270558B487BD1EEA504BAD /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A73E853E04F4F4AC37DBA1E5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 914E4B3BBE2E600E582FBB5C;
+			remoteInfo = SpokenMarginsWatchApp;
 		};
 		963ADC976C25142403CB77BF /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -114,6 +126,17 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		86D7339259B0FB991734870C /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				87FAE6509C5B1511C6555EA9 /* SpokenMarginsWatchApp.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -127,6 +150,7 @@
 		45170E0354730F22BB2E258A /* SharedTextIntake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedTextIntake.swift; sourceTree = "<group>"; };
 		454A82B2CAACCCAED5C33E03 /* catalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = catalog.json; sourceTree = "<group>"; };
 		466DDA96AB529FEFB23D4BEE /* BundledJavaScript-NOTICES.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "BundledJavaScript-NOTICES.txt"; sourceTree = "<group>"; };
+		4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveSessionMarkInbox.swift; sourceTree = "<group>"; };
 		50026D96CAC3D753625277E0 /* substack-shared-text-feed.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = "substack-shared-text-feed.xml"; sourceTree = "<group>"; };
 		534726939CEC57D001157DD9 /* icon-48.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-48.png"; sourceTree = "<group>"; };
 		560C4E54442E123E42855A02 /* SpokenMarginsAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SpokenMarginsAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -155,7 +179,9 @@
 		E3D5265FADF5995640D6FB31 /* SpokenMarginsGate2Widget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SpokenMarginsGate2Widget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		EE29274792FFFC88EA74C157 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		F2A6CC7522887307C67D46AE /* SpokenMarginsBrowserTextExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SpokenMarginsBrowserTextExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		F4D18E57D6973BBFE094E993 /* SpokenMarginsWatchApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SpokenMarginsWatchApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F8F6B4F91AA36C9513801753 /* fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = fixtures; path = Contracts/fixtures; sourceTree = SOURCE_ROOT; };
+		FB45D701E0D00156BD56A177 /* pdf-outline-collected-stories.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = "pdf-outline-collected-stories.pdf"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -166,6 +192,7 @@
 				Gate2CompactCommandURL.swift,
 				Gate2LiveActivityAttributes.swift,
 				Gate2LiveActivityIntents.swift,
+				LiveSessionActivity.swift,
 			);
 			target = 1D8893BE578C4DB95B466E90 /* SpokenMarginsShareExtension */;
 		};
@@ -215,6 +242,15 @@
 			explicitFolders = (
 			);
 			path = App/SpokenMarginsShareExtension/Sources;
+			sourceTree = "<group>";
+		};
+		55C8C367A8A378A5827C0082 /* App/SpokenMarginsWatchApp/Sources */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = App/SpokenMarginsWatchApp/Sources;
 			sourceTree = "<group>";
 		};
 		7EAA8406C6FADC9344D76AE1 /* App/SpokenMarginsAppTests */ = {
@@ -328,6 +364,7 @@
 				F1E5E23AB1BFC1239B25CB8D /* App/SpokenMarginsBrowserTextExtension/Sources */,
 				3E4BA5755D4CEB2C1A8B964E /* App/SpokenMarginsGate2Widget/Sources */,
 				3E62D86AB77A6BE52C64EE08 /* App/SpokenMarginsShareExtension/Sources */,
+				55C8C367A8A378A5827C0082 /* App/SpokenMarginsWatchApp/Sources */,
 				752B37181B93B7748210A0EC /* Config */,
 				8B9C00DF1535B22C10054D68 /* Packages */,
 				460250240FDC5A068A5D5EA9 /* Resources */,
@@ -376,6 +413,7 @@
 			isa = PBXGroup;
 			children = (
 				DCF082C6D01456C6743B188A /* ClipboardIntakeClassifier.swift */,
+				4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */,
 				45170E0354730F22BB2E258A /* SharedTextIntake.swift */,
 			);
 			name = SessionKit;
@@ -422,6 +460,7 @@
 			isa = PBXGroup;
 			children = (
 				1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */,
+				FB45D701E0D00156BD56A177 /* pdf-outline-collected-stories.pdf */,
 				50026D96CAC3D753625277E0 /* substack-shared-text-feed.xml */,
 				AA3E54540069285190E19D1B /* substack-shared-text-post.html */,
 			);
@@ -461,6 +500,7 @@
 				F2A6CC7522887307C67D46AE /* SpokenMarginsBrowserTextExtension.appex */,
 				E3D5265FADF5995640D6FB31 /* SpokenMarginsGate2Widget.appex */,
 				BE41691E3B902A5C377AC70D /* SpokenMarginsShareExtension.appex */,
+				F4D18E57D6973BBFE094E993 /* SpokenMarginsWatchApp.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -583,6 +623,27 @@
 			productReference = 9028714E249043B12F2CD95D /* SpokenMarginsAppUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		914E4B3BBE2E600E582FBB5C /* SpokenMarginsWatchApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 30E5AB701361074513879DD0 /* Build configuration list for PBXNativeTarget "SpokenMarginsWatchApp" */;
+			buildPhases = (
+				69FDFBCB39DA47ED53A00926 /* Sources */,
+				ACD0DFB53EBBD870AFAE03FA /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				55C8C367A8A378A5827C0082 /* App/SpokenMarginsWatchApp/Sources */,
+			);
+			name = SpokenMarginsWatchApp;
+			packageProductDependencies = (
+			);
+			productName = SpokenMarginsWatchApp;
+			productReference = F4D18E57D6973BBFE094E993 /* SpokenMarginsWatchApp.app */;
+			productType = "com.apple.product-type.application";
+		};
 		A7009410088927EF7A55F0A3 /* SpokenMarginsApp */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 4949394CF75C0D346DBBC761 /* Build configuration list for PBXNativeTarget "SpokenMarginsApp" */;
@@ -591,6 +652,7 @@
 				BB06776C42C30ED723DD3416 /* Resources */,
 				CC246B3771C4C2A0697251CC /* Frameworks */,
 				7A3F276E86D032A73B80310B /* Embed Foundation Extensions */,
+				86D7339259B0FB991734870C /* Embed Watch Content */,
 				A0F4DDBEAE50D67B1408AEF6 /* Normalize and Re-sign Embedded Framework */,
 			);
 			buildRules = (
@@ -599,6 +661,7 @@
 				DCF9407AD267D96CE9ECF258 /* PBXTargetDependency */,
 				A4DFF3B9BA456DE9E41A59D6 /* PBXTargetDependency */,
 				94806C0B0475C6A90305E3B3 /* PBXTargetDependency */,
+				CEB94386DA5756E25845C893 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				80D99F51C549D6610240142C /* App/SharedSources */,
@@ -641,6 +704,9 @@
 					62CEABDB2B6F38CA17ED8324 = {
 						TestTargetID = A7009410088927EF7A55F0A3;
 					};
+					914E4B3BBE2E600E582FBB5C = {
+						ProvisioningStyle = Automatic;
+					};
 					A7009410088927EF7A55F0A3 = {
 						ProvisioningStyle = Automatic;
 					};
@@ -669,6 +735,7 @@
 				2C7EDF5AB45695B4BB0520A3 /* SpokenMarginsBrowserTextExtension */,
 				13B5C8F8C12F37E6CB62E6FE /* SpokenMarginsGate2Widget */,
 				1D8893BE578C4DB95B466E90 /* SpokenMarginsShareExtension */,
+				914E4B3BBE2E600E582FBB5C /* SpokenMarginsWatchApp */,
 			);
 		};
 /* End PBXProject section */
@@ -705,6 +772,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		ACD0DFB53EBBD870AFAE03FA /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		BB06776C42C30ED723DD3416 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -728,6 +802,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				4CF539FBC54D635647751674 /* emoji-article-crash-regression.txt in Resources */,
+				EA749D1E3C580CCE4713612F /* pdf-outline-collected-stories.pdf in Resources */,
 				5CDAE601AA8B28F47829D3C6 /* substack-shared-text-feed.xml in Resources */,
 				68EFC63296D10802FDE30831 /* substack-shared-text-post.html in Resources */,
 			);
@@ -745,6 +820,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				CC6A33EA5ED33F43E7A818A4 /* emoji-article-crash-regression.txt in Resources */,
+				10C92B9BE955FDCB492E1130 /* pdf-outline-collected-stories.pdf in Resources */,
 				33700D595D54E56882A7C502 /* substack-shared-text-feed.xml in Resources */,
 				28BF34C07DBB1E26551363BE /* substack-shared-text-post.html in Resources */,
 			);
@@ -779,6 +855,14 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				78065128412B4F94A3B7B6FD /* LiveSessionMarkInbox.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		69FDFBCB39DA47ED53A00926 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -786,6 +870,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FC312F1C0C4954CC4A846A2C /* LiveSessionMarkInbox.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -842,6 +927,11 @@
 			isa = PBXTargetDependency;
 			target = 1D8893BE578C4DB95B466E90 /* SpokenMarginsShareExtension */;
 			targetProxy = 446F72E5035DC94BB70DC60B /* PBXContainerItemProxy */;
+		};
+		CEB94386DA5756E25845C893 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 914E4B3BBE2E600E582FBB5C /* SpokenMarginsWatchApp */;
+			targetProxy = 74270558B487BD1EEA504BAD /* PBXContainerItemProxy */;
 		};
 		DCF9407AD267D96CE9ECF258 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -1013,6 +1103,22 @@
 			};
 			name = Debug;
 		};
+		ACD30275C9823586E4E73CE2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 35;
+				INFOPLIST_FILE = App/SpokenMarginsWatchApp/Info.plist;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native.watchkitapp;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 4;
+			};
+			name = Release;
+		};
 		ADE243F580CD33DEF50E88E5 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 36E0E49E13407DED3533C291 /* Signing.xcconfig */;
@@ -1070,10 +1176,10 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
 			};
 			name = Debug;
 		};
@@ -1095,6 +1201,22 @@
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		D058C9AA4A325A92577E70F9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 35;
+				INFOPLIST_FILE = App/SpokenMarginsWatchApp/Info.plist;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native.watchkitapp;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 4;
 			};
 			name = Debug;
 		};
@@ -1148,10 +1270,10 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
 			};
 			name = Release;
 		};
@@ -1217,6 +1339,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		30E5AB701361074513879DD0 /* Build configuration list for PBXNativeTarget "SpokenMarginsWatchApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D058C9AA4A325A92577E70F9 /* Debug */,
+				ACD30275C9823586E4E73CE2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		4949394CF75C0D346DBBC761 /* Build configuration list for PBXNativeTarget "SpokenMarginsApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

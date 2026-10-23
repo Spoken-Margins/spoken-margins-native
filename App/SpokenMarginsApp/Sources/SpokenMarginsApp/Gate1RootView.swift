@@ -348,7 +348,7 @@ struct InterjectionDetailView: View {
                         model.toggleInterjectionAudioPlayback(current)
                     } label: {
                         Label(
-                            model.isPlayingInterjectionAudio(current) ? "Stop playing" : "Play Margin",
+                            model.isPlayingInterjectionAudio(current) ? "Stop playing" : "Hear my recording",
                             systemImage: model.isPlayingInterjectionAudio(current) ? "stop.fill" : "play.fill"
                         )
                     }
@@ -628,20 +628,6 @@ func sessionProgressDescription(_ session: Session) -> String {
     return "\(session.completionPercent)% complete"
 }
 
-enum AppLinks {
-    static var privacy: URL {
-        URL(string: "https://spokenmargins.proximitytoprogress.com/privacy/") ?? URL(fileURLWithPath: "/")
-    }
-
-    static var support: URL {
-        URL(string: "https://spokenmargins.proximitytoprogress.com/support/") ?? URL(fileURLWithPath: "/")
-    }
-
-    static var versionDescription: String {
-        BuildIdentity.describe(info: Bundle.main.infoDictionary ?? [:])
-    }
-}
-
 enum AppColors {
     static let listeningBackground = dynamicColor(AppSemanticColorRGB.listeningBackground)
     static let captureBackground = dynamicColor(AppSemanticColorRGB.captureBackground)
@@ -669,6 +655,8 @@ enum AppColors {
     static let ochre = dynamicColor(AppSemanticColorRGB.ochre)
     static let coral = dynamicColor(AppSemanticColorRGB.coral)
     static let plum = dynamicColor(AppSemanticColorRGB.plum)
+    static let star = dynamicColor(AppSemanticColorRGB.star)
+    static let watchDanger = dynamicColor(AppSemanticColorRGB.watchDanger)
 
     private static func dynamicColor(_ colors: AppDynamicRGB) -> Color {
         #if canImport(UIKit)
