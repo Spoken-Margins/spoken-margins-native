@@ -21,6 +21,7 @@ from lane_xcresult_attachments import export_failed_attachments
 
 from check_posterboard_repair import crash_snapshot, new_crash
 import host_audio
+import lane_audio_window
 import lane_conditions
 import lane_sim
 import sm_build_cache
@@ -426,6 +427,45 @@ def log_errors(text, limit=3, width=300):
     return [line[:width] for line in dict.fromkeys(found)][:limit]
 
 
+def unittest_failures(text):
+    """Each failing test in a unittest log as (test, "path:line", message), so a red runner or ops step names it.
+
+    unittest prints `FAIL: name (id)` or `ERROR: name (id)` between `=====` rules, then a traceback whose last
+    `File` line is the assertion (or the crash) and whose unindented lines after it are the message (#2457).
+    A subTest failure repeats the header with its parameters, so each is its own entry.
+    """
+    failures = []
+    for block in re.split(r'^={70}$', text, flags=re.M)[1:]:
+        header, _, body = block.strip().partition('\n')
+        if not re.match(r'(FAIL|ERROR): ', header):
+            continue
+        trace = re.split(r'^-{70}$', body, flags=re.M)[1] if body.count('-' * 70) else body  # the last block ends in the summary
+        if 'Traceback (most recent call last):' in trace:  # a chained exception: the last one is the failure
+            trace = trace[trace.rindex('Traceback (most recent call last):'):]
+        frames = re.findall(r'^\s*File "([^"]+)", line (\d+)', trace, re.M)
+        ours = [frame for frame in frames if frame[0].startswith(str(ROOT))]  # the test's line, not a library's
+        where = ('{}:{}'.format(Path((ours or frames)[-1][0]).as_posix(), (ours or frames)[-1][1])
+                 if frames else 'no traceback')
+        message = [line.strip() for line in trace.splitlines() if line.strip() and not line[0].isspace()
+                   and not line.startswith('Traceback')][:2]
+        failures.append((header.split(': ', 1)[1], where, ' | '.join(message)[:300]))
+    return failures
+
+
+def report_unittest_failures(name, failures, limit=10):
+    """The failures as manifest error lines, and (on GitHub) as the job's step summary."""
+    lines = [f'Failed: {test} at {where}' + (f' — {message}' if message else '')
+             for test, where, message in failures]
+    if (summary := os.environ.get('GITHUB_STEP_SUMMARY')) and failures:
+        with open(summary, 'a') as handle:
+            handle.write(f'### {name}: {len(failures)} failing test(s)\n\n'
+                         + ''.join(f'- `{test}` at `{where}`' + (f': {message}' if message else '') + '\n'
+                                   for test, where, message in failures))
+    if len(lines) > limit:
+        lines[limit:] = [f'Failed: and {len(lines) - limit} more (see the step log)']
+    return lines
+
+
 # Codex runs its shell commands under macOS seatbelt and sets CODEX_SANDBOX there. That sandbox refuses
 # to run `ps`, which the lane's own boot tests in scripts/tests need, so runner-tests can't pass inside it
 # (#64's Codex run, 2026-10-01: 2 failures and 12 errors, and the plan stopped before the package step).
@@ -692,6 +732,10 @@ SUPERTONIC_MODEL_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
     'SupertonicNarrationTests/testRealRendersArePacedByWhoAskedNotBySharedState',
     'SupertonicVoiceSelectionTests/testJamesAndLilyReadTheSameSentenceInTheirOwnAudibleVoices',
 ))
+
+# The real speech recognizer needs SpeechTranscriber and a model for the host's locale. GitHub's hosted macOS image
+# has neither, so the test skips there, naming why; the owner's call is that this skip "is expected" (#2469, 2026-10-23).
+SPEECH_MODEL_TESTS = frozenset({'SessionKitTests/RealSpeechTranscriberTests/testRealTranscriberHearsSynthesizedSpeech'})
 
 
 # The one app-hosted test that runs Supertonic's real model, in the adapters plan. The model is a download since #1820,
@@ -1319,12 +1363,15 @@ class Run:
             # The lane's own words (lane-runner.py run_auto), so a local FAIL reads as the queue's would.
             errors.extend(f'hot-file ratchet — {line[len("FAIL "):]}' for line in text.splitlines()
                           if line.startswith('FAIL '))
-        if name == 'runner-tests' or name.startswith('ops-'):
+        if name in ('runner-tests', 'ops') or name.startswith('ops-'):
             match = re.search(r'Ran (\d+) tests? in ', text)
             entry['executed_count'] = int(match[1]) if match else 0
             if not entry['executed_count']:
                 errors.append('Infrastructure runner executed zero tests' if name == 'runner-tests'
                               else f'{name} executed zero tests')
+            if failures := unittest_failures(text):  # name them: CI shows only the manifest's errors (#2457)
+                errors.extend(report_unittest_failures(name, failures))
+                print('\n'.join(error for error in errors if error.startswith('Failed: ')), flush=True)
         if name in ('browser', 'share-link'):
             match = re.search(r'^# tests (\d+)$', text, re.M)
             entry['executed_count'] = int(match[1]) if match else 0
@@ -1580,7 +1627,7 @@ class Run:
                          timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
                          expected=expected - core if split else expected, tests=True,
                          allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus',
-                                        *POCKET_WEIGHT_TESTS, *SUPERTONIC_MODEL_TESTS},
+                                        *POCKET_WEIGHT_TESTS, *SUPERTONIC_MODEL_TESTS, *SPEECH_MODEL_TESTS},
                          probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
         except RuntimeError as error:
             step = self.manifest['steps'][-1]
@@ -1835,11 +1882,23 @@ class Run:
                     derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')
                 self.manifest['settle_before_tests'] = settle_before_tests(chosen['udid'])
                 self.save()
-            self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
-                         'test-without-building', '-parallel-testing-enabled', 'NO',
-                         '-collect-test-diagnostics', 'never',
-                         '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
-                         timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup)
+            # An AudioLoopback test asks the Mac to record what it plays (#1790). A server starts only when the
+            # request names one; in a whole-plan run (Release, a full AudioAdapters) it skips, and that's expected.
+            asked = selectors if scheme == 'SpokenMarginsAppBehavior' else ()
+            with lane_audio_window.serve(self.output, asked) as audio:
+                try:
+                    self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
+                                 'test-without-building', '-parallel-testing-enabled', 'NO',
+                                 '-collect-test-diagnostics', 'never',
+                                 '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
+                                 timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup,
+                                 allowed_skips=lane_audio_window.unasked(expected, asked))
+                finally:  # a failed or skipped test raises here, and its verdict is what the report needs most
+                    if audio:
+                        step = self.manifest['steps'][-1]
+                        step['audio_windows'] = lane_audio_window.attachments(audio)
+                        step.setdefault('attachments', []).extend(step['audio_windows'])
+                        self.save()
         finally:
             if scheme == 'SpokenMarginsAppBehavior':
                 lane_sim.mark_quiet(chosen['udid'])
