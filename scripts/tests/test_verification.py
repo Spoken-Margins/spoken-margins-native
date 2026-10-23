@@ -2302,6 +2302,7 @@ class VerificationTests(unittest.TestCase):
             run = verification.Run(Path(temporary) / 'run', 'test')
             for name in ('browser', 'share-link'):
                 for label, output in (('a TAP summary of zero tests', '# tests 0'),
+                                      ('a spec summary of zero tests', 'ℹ tests 0'),
                                       ('no TAP summary at all', 'npm warn nothing to run')):
                     with self.subTest(name=name, label=label):
                         with self.assertRaisesRegex(RuntimeError, f'{"Browser runner" if name == "browser" else name} '
@@ -2311,6 +2312,10 @@ class VerificationTests(unittest.TestCase):
                         self.assertEqual((step['executed_count'], step['exit_code']), (0, 0))  # it exited 0
                 with self.subTest(name=name, label='a TAP summary of three tests'):
                     run.command(name, [sys.executable, '-c', 'print("TAP version 13\\n# tests 3\\n# pass 3")'])
+                    step = run.manifest['steps'][-1]
+                    self.assertEqual((step['executed_count'], step['errors']), (3, []))
+                with self.subTest(name=name, label='a spec summary of three tests (Node 24)'):
+                    run.command(name, [sys.executable, '-c', 'print("✔ a test (1ms)\\nℹ tests 3\\nℹ pass 3")'])
                     step = run.manifest['steps'][-1]
                     self.assertEqual((step['executed_count'], step['errors']), (3, []))
 
