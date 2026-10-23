@@ -145,8 +145,8 @@ public enum PendingHandoffDrain {
         payloadIDs: [String],
         isolation: isolated (any Actor)? = #isolation,
         importPayload: (String) async throws -> Void,
-        deletePayload: (String) throws -> Void,
-        quarantine: (String, String) throws -> Void,
+        deletePayload: (String) async throws -> Void,
+        quarantine: (String, String) async throws -> Void,
         storeOutcome: (any Error) -> PendingHandoffOutcome? = { _ in nil },
         record: (String, PendingHandoffOutcome) -> Void = { _, _ in }
     ) async -> Report {
@@ -155,15 +155,15 @@ public enum PendingHandoffDrain {
             let outcome: PendingHandoffOutcome
             do {
                 try await importPayload(payloadID)
-                try deletePayload(payloadID)
+                try await deletePayload(payloadID)
                 outcome = .imported
             } catch {
                 let decided = PendingHandoffRetryPolicy.outcome(for: error, storeOutcome: storeOutcome)
                 switch decided {
                 case .deletedInvalidPayload:
-                    try? deletePayload(payloadID)
+                    try? await deletePayload(payloadID)
                 case .quarantined(let reason), .notPlayable(let reason):
-                    try? quarantine(payloadID, reason)
+                    try? await quarantine(payloadID, reason)
                 case .imported, .waitingForNetwork, .missing:
                     break
                 }

@@ -160,6 +160,69 @@ class DeviceTypeTests(unittest.TestCase):
                 self.assertEqual(lane_sim.device_type(), 'com.apple.CoreSimulator.SimDeviceType.iPhone-18')
 
 
+class RuntimePairTests(unittest.TestCase):
+    """The runtime and the phone are chosen together: a runtime that cannot take any usual phone is not picked while
+    another can (the hosted xcode-27 image has iOS 27.0 and 27.1, and 27.1 offered only iPhone-Duo)."""
+
+    PREFIX = 'com.apple.CoreSimulator.'
+
+    def runtimes(self, **versions):
+        """versions: 'iOS-27-1' -> list of supported type names, or None for a runtime that does not list any."""
+        entries = []
+        for name, types in versions.items():
+            platform, *numbers = name.split('-')
+            entry = {'identifier': f'{self.PREFIX}SimRuntime.{name}', 'isAvailable': True, 'platform': platform,
+                     'version': '.'.join(numbers)}
+            if types is not None:
+                entry['supportedDeviceTypes'] = [{'identifier': f'{self.PREFIX}SimDeviceType.{t}'} for t in types]
+            entries.append(entry)
+        return {'runtimes': entries}
+
+    def pick(self, listing, major=27):
+        return lane_sim.pick_runtime(listing, major)
+
+    def test_table(self):
+        rows = [
+            ('the pinned phone is only on the older runtime', {'iOS-27-0': ['iPhone-17', 'iPhone-Air'], 'iOS-27-1': ['iPhone-Duo']},
+             'iOS-27-0'),
+            ('both have it: the newest runtime', {'iOS-27-0': ['iPhone-17'], 'iOS-27-1': ['iPhone-17', 'iPhone-18']}, 'iOS-27-1'),
+            ('no runtime has it: the newest with a plain phone', {'iOS-27-0': ['iPhone-16'], 'iOS-27-1': ['iPhone-18']}, 'iOS-27-1'),
+            ('a Duo-only newest is passed over for a plain phone', {'iOS-27-0': ['iPhone-16', 'iPad-Pro'], 'iOS-27-1': ['iPhone-Duo']},
+             'iOS-27-0'),
+            ('Pro and Air are not plain phones', {'iOS-27-0': ['iPhone-17-Pro', 'iPhone-Air'], 'iOS-27-1': ['iPhone-18-Pro']},
+             'iOS-27-1'),
+            ('a runtime that lists nothing is not limited', {'iOS-27-0': ['iPhone-Duo'], 'iOS-27-1': None}, 'iOS-27-1'),
+            ('no usable phone anywhere: the newest, so the clone step reports it', {'iOS-27-0': ['iPhone-Duo'],
+                                                                                    'iOS-27-1': ['iPad-Pro']}, 'iOS-27-1'),
+            ('other platforms are ignored', {'iOS-27-0': ['iPhone-17'], 'tvOS-27-0': ['Apple-TV-4K']}, 'iOS-27-0'),
+        ]
+        for label, versions, expected in rows:
+            with self.subTest(label):
+                self.assertEqual(self.pick(self.runtimes(**versions)), f'{self.PREFIX}SimRuntime.{expected}')
+
+    def test_only_the_pinned_major_and_available_runtimes_count(self):
+        listing = self.runtimes(**{'iOS-26-4': ['iPhone-17'], 'iOS-27-0': ['iPhone-17']})
+        self.assertEqual(self.pick(listing, 26), f'{self.PREFIX}SimRuntime.iOS-26-4')
+        self.assertIsNone(self.pick(listing, 28))
+        listing['runtimes'][1]['isAvailable'] = False
+        self.assertIsNone(self.pick(listing, 27))
+
+    def test_the_failure_lists_every_runtime_and_its_phones(self):
+        listing = self.runtimes(**{'iOS-27-0': ['iPhone-Duo', 'iPad-Pro'], 'iOS-27-1': ['iPhone-Duo']})
+        with tempfile.TemporaryDirectory() as directory:
+            fake = Path(directory) / 'simctl'
+            fake.write_text('#!/bin/sh\nif [ "$2" = runtimes ]; then echo \'' + json.dumps(listing) + '\'\n'
+                            'else echo \'' + json.dumps(DeviceTypeTests.listing('iPhone-17', 'iPhone-Duo', 'iPad-Pro')) + '\'; fi\n')
+            fake.chmod(0o755)
+            with mock.patch.dict(os.environ, {'SM_LANE_SIMCTL': str(fake), 'SM_LANE_IOS_MAJOR': '27'}):
+                runtime = lane_sim.newest_runtime(27)
+                with self.assertRaises(lane_sim.BootError) as caught:
+                    lane_sim.device_type(runtime)
+        message = str(caught.exception)
+        self.assertIn('iOS-27-0: iPhone-Duo', message)
+        self.assertIn('iOS-27-1: iPhone-Duo', message)
+
+
 class TemplateTests(unittest.TestCase):
     def test_failed_template_is_deleted_without_clone_or_completion_marker(self):
         commands = []
