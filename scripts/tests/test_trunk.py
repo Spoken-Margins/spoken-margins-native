@@ -113,7 +113,7 @@ class WorkflowTrunkTests(unittest.TestCase):
 
     def test_workflows_that_push_or_post_run_only_for_the_trunk(self):
         """A push to any branch but the trunk starts nothing that writes."""
-        gated = {'lane.yml': 4, 'merge-audit.yml': 1, 'hosted-integration.yml': 1, 'substack-canary.yml': 1,
+        gated = {'lane.yml': 5, 'merge-audit.yml': 1, 'hosted-integration.yml': 1, 'substack-canary.yml': 1,
                  'lane-conflicts.yml': 2}
         texts = self.workflows()
         for name, count in gated.items():
@@ -128,7 +128,7 @@ class WorkflowTrunkTests(unittest.TestCase):
 
     def test_lane_jobs_pass_sm_trunk_to_the_runner(self):
         text = self.workflows()['lane.yml']
-        self.assertEqual(text.count("SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}"), 3)
+        self.assertEqual(text.count("SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}"), 4)  # lane, automerge, automerge-mac (#2459), release
 
 
 class LaneRunnerTrunkTests(unittest.TestCase):

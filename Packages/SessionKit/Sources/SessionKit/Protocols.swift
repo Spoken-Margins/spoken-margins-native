@@ -446,12 +446,18 @@ public protocol RecordingClient {
     func recordingInProgressRef() -> String?
     /// Evidence from the closed recording, retained through save retries; nil when unsupported.
     func finalizedRecordingIntegrity() -> FinalizedRecordingIntegrity?
+    /// The ready cue (#1594) is about to play: stop taking audio in, so the cue is not in the saved file.
+    func pauseForReadyCue()
+    /// The cue has started, or did not play (0 seconds): listen again after `seconds`.
+    func resumeAfterReadyCue(after seconds: TimeInterval)
 }
 
 extension RecordingClient {
     public func recordingInProgressRef() -> String? { nil }
     public func finalizedRecordingIntegrity() -> FinalizedRecordingIntegrity? { nil }
     public func captureReading() -> RecordingCaptureReading? { nil }
+    public func pauseForReadyCue() {}
+    public func resumeAfterReadyCue(after seconds: TimeInterval) {}
     public func restartCapture() throws {
         throw SessionKitError.persistenceFailed("recording_restart_unsupported")
     }
