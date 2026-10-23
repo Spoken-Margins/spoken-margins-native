@@ -1099,6 +1099,27 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(element("batchExport.chooseFolder.button").exists, "Export Sessions has no remembered folder (#1528)")
     }
 
+    /// #1939: at AX5 the Export Sessions pickers become menus that stay inside the screen.
+    func testBatchExportPickersBecomeMenusAtAccessibilitySizes() throws {
+        app.terminate()
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        app.launch()
+        scrollToElement("queue.start.item-pill").tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        scrollToElement("playback.home.button").tap()
+        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 4))
+        tapRoot("Margins")
+        let exportSessions = scrollToElement("margins.export.button")
+        exportSessions.tap()
+        XCTAssertTrue(element("batchExport.screen").waitForExistence(timeout: 4))
+        let filter = scrollToElement("batchExport.filter.picker")
+        XCTAssertFalse(app.segmentedControls["batchExport.filter.picker"].exists, "Still a segmented control at AX5")
+        let window = app.windows.firstMatch.frame
+        XCTAssertLessThanOrEqual(filter.frame.maxX, window.maxX + 1)
+        XCTAssertGreaterThanOrEqual(filter.frame.height, 44)
+        captureScreen(named: "batch-export-pickers-accessibility")
+    }
+
     func testBuild23SenderStagesInvalidateStalePreviewAndUseSystemShare() throws {
         launchBuild23SharingFixture()
 

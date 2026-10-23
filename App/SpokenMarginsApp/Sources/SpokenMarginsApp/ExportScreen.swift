@@ -63,7 +63,7 @@ struct ExportScreen: View {
                                 Text("AI Handoff Markdown").tag("markdown")
                                 Text("Full JSON Archive").tag("json")
                             }
-                            .pickerStyle(.segmented)
+                            .segmentedUnlessLargeText()
                             .accessibilityIdentifier("export.format.picker")
                             .onCompatibleChange(of: model.exportFormat) { _ in model.exportOptionsChanged() }
 
@@ -72,7 +72,7 @@ struct ExportScreen: View {
                                 Text("Margins").tag("source_interjections")
                                 Text("Full Session").tag("full_session")
                             }
-                            .pickerStyle(.segmented)
+                            .segmentedUnlessLargeText()
                             .accessibilityIdentifier("export.scope.picker")
                             .onCompatibleChange(of: model.exportScope) { _ in model.exportOptionsChanged() }
 
