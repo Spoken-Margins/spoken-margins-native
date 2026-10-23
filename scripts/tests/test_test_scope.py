@@ -268,13 +268,11 @@ class TestScopeTests(unittest.TestCase):
 
 
 class LaneRunnerRoutingTests(unittest.TestCase):
-    def route(self, paths=(), labels=(), online=True, vps=True, **overrides):
+    def route(self, paths=(), labels=(), online=True, **overrides):
         pr = {'labels': [{'name': label} for label in labels], 'changed_files': len(paths)}
         files = [[{'filename': path} for path in paths]]
         runners = [{'runners': [{'status': 'online' if online else 'offline', 'busy': True,
                                 'labels': [{'name': 'self-hosted'}, {'name': 'sm-lane-priority'}]}]}]
-        if vps:  # the VPS runner the off-Mac automerge job needs (#861)
-            runners[0]['runners'].append({'status': 'online', 'busy': False, 'labels': [{'name': 'sm-vps-t1'}]})
         return scope.runner_routing(overrides.get('pr', pr), overrides.get('files', files),
                                     overrides.get('runners', runners))
 
@@ -310,7 +308,7 @@ class LaneRunnerRoutingTests(unittest.TestCase):
 
     def test_no_online_runner_falls_back_for_both_priority_reasons(self):
         self.assert_normal(self.route([APP + 'Gate1AppModel.swift'], ['priority'], online=False))
-        self.assertEqual(self.route(['ops/claude/sm_claude_worker.py'], online=False)['automerge'], ['sm-vps-t1'])
+        self.assertEqual(self.route(['ops/claude/sm_claude_worker.py'], online=False)['automerge'], ['ubuntu-latest'])
         self.assert_normal(self.route(labels=['priority'], runners=[]))
 
     def test_runner_must_match_all_priority_labels(self):
@@ -385,8 +383,7 @@ class LaneRunnerRoutingTests(unittest.TestCase):
         runners = [self.runner('sm-lane-build', True), self.runner('sm-lane-priority', False)]
         self.assert_priority(self.spill(runners, labels=['priority']))
         self.assert_priority(self.spill(runners, paths=['scripts/lane_slots.py']))
-        self.assertEqual(self.spill(runners + [self.runner('sm-vps-t1', False)], paths=['ops/codex/a.py'])['automerge'],
-                         ['sm-vps-t1'])
+        self.assertEqual(self.spill(runners, paths=['ops/codex/a.py'])['automerge'], ['ubuntu-latest'])
 
     def test_main_runner_counts_as_a_build_runner(self):
         main = self.runner('sm-lane', False)
@@ -431,7 +428,7 @@ class LaneRunnerRoutingTests(unittest.TestCase):
             self.assert_normal(result)
 
     def test_ops_only_goes_hosted_and_lane_only_t1_routes_priority(self):
-        self.assertEqual(self.route(['ops/claude/sm_claude_worker.py'])['automerge'], ['sm-vps-t1'])
+        self.assertEqual(self.route(['ops/claude/sm_claude_worker.py'])['automerge'], ['ubuntu-latest'])
         self.assert_priority(self.route(['scripts/lane_slots.py']))
 
     def test_cli_reads_real_json_files_and_falls_back_on_bad_json(self):
@@ -450,13 +447,14 @@ class LaneRunnerRoutingTests(unittest.TestCase):
     def test_workflow_routes_both_jobs_with_normal_defaults(self):
         workflow = (SCRIPTS.parent / '.github/workflows/lane.yml').read_text()
         route, mac_jobs = workflow.split('\n  lane:\n', 1)
-        # Routing runs on the owner's VPS runner, never a Mac runner, so it can't queue behind lane jobs.
-        self.assertIn('runs-on: [self-hosted, Linux, sm-vps]', route)
+        # Routing runs on a GitHub-hosted Linux runner, never a Mac runner, so it can't queue behind lane jobs.
+        self.assertIn('runs-on: ubuntu-latest', route)
         self.assertNotIn('macOS', route)
         self.assertIn('--paginate --slurp', route)
         self.assertIn('actions/runners?per_page=100', route)
         self.assertIn('pulls/$PR_NUMBER/files?per_page=100', route)
-        self.assertIn('ref: ${{ github.event.pull_request.base.sha }}', route)
+        # The base branch's tip, not the PR's recorded base, which goes stale when the base moves (#2459).
+        self.assertIn('ref: ${{ github.event.pull_request.base.ref }}', route)
         for job, text, normal in [('lane', mac_jobs.split('\n  automerge:\n')[0], 'sm-lane'),
                                   ('automerge', mac_jobs.split('\n  automerge:\n')[1], 'sm-lane-build')]:
             with self.subTest(job=job):

@@ -73,6 +73,10 @@ class Router:
         self.writes.append(('POST', path, body))
         return {}
 
+    def patch(self, path, body):
+        self.writes.append(('PATCH', path, body))
+        return {}
+
     def delete(self, path):
         self.writes.append(('DELETE', path, None))
         return {}
@@ -521,6 +525,17 @@ class ReleasingClaims(unittest.TestCase):
         comment = next(w[2]['body'] for w in writes if w[1].endswith('/comments'))
         self.assertIn('Not set back to `ready`', comment)
 
+    def test_a_validation_hold_label_also_keeps_a_released_claim_off_ready(self):
+        for hold in ('validate-by-use', 'agent-verify', 'status: needs-human-validation'):
+            with self.subTest(hold=hold):
+                router = Router()
+                router.on(r'^issues/60/comments\?since', [])
+                router.on(r'^issues/60$', {'number': 60, 'state': 'open',
+                                           'labels': [{'name': 'in-progress'}, {'name': hold}]})
+                self.assertEqual(sweep.release(router, issue(60, ['in-progress', hold]), 'test', NOW), 'released')
+                self.assertNotIn(('POST', 'issues/60/labels', {'labels': ['ready']}), router.writes)
+                self.assertIn(('DELETE', 'issues/60/labels/in-progress', None), router.writes)
+
     def test_a_comment_that_arrives_before_the_write_stops_the_release(self):
         self.router.on(r'^issues/50/comments\?since', [note(50, 'back at it', at(minutes=1))])
         _, text = self.run_main('--apply')
@@ -549,6 +564,99 @@ class ReleasingClaims(unittest.TestCase):
         _, text = self.run_main('--apply')
         self.assertEqual(self.router.writes, [])
         self.assertIn('no claim was judged stale', text)
+
+
+def merged_pull(number, body, merged_at=None):
+    return {'number': number, 'title': f'PR {number}', 'body': body, 'merged_at': merged_at}
+
+
+class MergedFixStillReady(unittest.TestCase):
+    """Rule 8: a ready issue whose `Closes #N` PR merged is closed by --apply, keeping its validation labels."""
+    MERGED = '2026-10-14T12:00:00Z'
+
+    def build(self, labels=('ready', 'found-on-phone'), pulls=(), open_pr=None, comments=()):
+        router = world(ready=[issue(70, labels, title='Phone bug')], comments=list(comments))
+        router.on(r'^pulls\?state=closed', list(pulls))
+        router.on(r'^issues/70/comments\?since', [])
+        router.on(r'^issues/70$', {'number': 70, 'state': 'open', 'labels': [{'name': n} for n in labels]})
+        rows = [dict(pr(900, None, armed=False), issues=[70], issue=70)] if open_pr else []
+        return router, rows
+
+    def apply(self, router, rows):
+        original = sm_status.snapshot
+        sm_status.snapshot = lambda api, now: snapshot(rows)
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                sweep.main(['--apply'], api=router, now=NOW)
+            return out.getvalue()
+        finally:
+            sm_status.snapshot = original
+
+    def test_a_merged_closes_pr_closes_the_issue_and_keeps_its_labels(self):
+        router, rows = self.build(labels=('ready', 'in-progress', 'found-on-phone', 'priority', 'agent-verify'),
+                                  pulls=[merged_pull(800, 'Closes #70', self.MERGED)])
+        text = self.apply(router, rows)
+        self.assertIn('FIX-MERGED', text)
+        self.assertIn('[closed]', text)
+        self.assertIn(('PATCH', 'issues/70', {'state': 'closed', 'state_reason': 'completed'}), router.writes)
+        comment = next(b['body'] for m, p, b in router.writes if p == 'issues/70/comments')
+        self.assertEqual(comment, 'Closed by scripts/sm_sweep.py: fix merged in #800 on 2026-10-14. Validation labels '
+                                  'stay on; a failed check reopens it (2026-10-22 call).')
+        removed = [p for m, p, b in router.writes if m == 'DELETE']
+        self.assertEqual(removed, ['issues/70/labels/in-progress', 'issues/70/labels/ready'])  # nothing else comes off
+        self.assertEqual([p for m, p, b in router.writes if m == 'POST'], ['issues/70/comments'])  # no label added
+        self.assertNotIn('milestone', json.dumps(router.writes))
+
+    def test_without_apply_it_only_reports(self):
+        router, rows = self.build(pulls=[merged_pull(800, 'Fixes #70', self.MERGED)])
+        facts = sweep.collect(router, NOW, snapshot(rows))
+        actions, _ = sweep.decide(facts)
+        self.assertEqual([a['rule'] for a in actions if a['rule'] == 'fix-merged'], ['fix-merged'])
+        self.assertEqual(router.writes, [])
+
+    def test_part_of_or_refs_only_is_skipped(self):
+        for body in ('Part of #70', 'Refs #70', 'See #70'):
+            with self.subTest(body=body):
+                router, rows = self.build(pulls=[merged_pull(800, body, self.MERGED)])
+                self.apply(router, rows)
+                self.assertEqual(router.writes, [])
+
+    def test_an_unmerged_closed_pr_is_not_a_fix(self):
+        router, rows = self.build(pulls=[merged_pull(800, 'Closes #70', None)])
+        self.apply(router, rows)
+        self.assertEqual(router.writes, [])
+
+    def test_a_merged_fix_with_an_open_follow_up_pr_is_skipped(self):
+        router, rows = self.build(pulls=[merged_pull(800, 'Closes #70', self.MERGED)], open_pr=True)
+        self.apply(router, rows)
+        self.assertEqual(router.writes, [])
+
+    def test_a_recent_claim_or_comment_is_skipped(self):
+        router, rows = self.build(pulls=[merged_pull(800, 'Closes #70', self.MERGED)],
+                                  comments=[claim(70, 'Fix thread', at(minutes=30))])
+        self.apply(router, rows)
+        self.assertEqual(router.writes, [])
+        router, rows = self.build(pulls=[merged_pull(800, 'Closes #70', self.MERGED)],
+                                  comments=[note(70, 'looking at it', at(hours=1))])
+        self.apply(router, rows)
+        self.assertEqual(router.writes, [])
+
+    def test_fixes_and_resolves_also_close_and_an_unreadable_pr_list_writes_nothing(self):
+        for body in ('Fixes #70', 'Resolves #70'):
+            router, rows = self.build(pulls=[merged_pull(800, body, self.MERGED)])
+            self.apply(router, rows)
+            self.assertIn(('PATCH', 'issues/70', {'state': 'closed', 'state_reason': 'completed'}), router.writes)
+        router, rows = self.build()
+        router.on(r'^pulls\?state=closed', sm_status.GitHubError('HTTP 502'))
+        self.apply(router, rows)
+        self.assertEqual(router.writes, [])
+        self.assertIsNone(sweep.collect(router, NOW, snapshot(rows))['merged_fixes'])
+
+    def test_the_closed_pr_read_is_one_batched_call_not_one_per_issue(self):
+        router, rows = self.build(pulls=[merged_pull(800, 'Closes #70', self.MERGED)])
+        sweep.collect(router, NOW, snapshot(rows))
+        self.assertEqual(len([r for r in router.reads if r.startswith('pulls?state=closed')]), 1)
 
 
 class Output(unittest.TestCase):

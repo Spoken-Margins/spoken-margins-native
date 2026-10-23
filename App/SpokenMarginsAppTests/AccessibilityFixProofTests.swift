@@ -228,7 +228,7 @@ final class AccessibilityFixProofTests: XCTestCase {
         model.bootstrapLibraryIfNeeded()
         XCTAssertNotNil(model.libraryAccessError, "precondition: the future schema must not open")
 
-        let mounted = try mount(AnyView(ExperienceLibraryScreen(addSourceRoute: .constant(nil)).environmentObject(model)))
+        let mounted = try mount(AnyView(ExperienceLibraryScreen(addSourceRoute: .constant(nil), scrollMemory: .constant(FollowingScrollMemory())).environmentObject(model)))
         defer { mounted.close() }
         let title = try await mounted.waitForNode("the cannot-open title") { $0.label == LibraryAccessNote.title }
         XCTAssertTrue(title.traits.contains(.header))

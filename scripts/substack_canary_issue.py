@@ -53,6 +53,7 @@ def request(method, path, token, body=None):
         'Accept': 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
         'User-Agent': 'spoken-margins-substack-canary',
+        **({'Content-Type': 'application/json'} if data is not None else {}),  # form-encoded bodies get 415 (#2265)
     })
     with urllib.request.urlopen(req, timeout=30) as response:
         return json.loads(response.read() or b'null')
@@ -83,7 +84,7 @@ def issue_body(report, run_url, sig):
         "(`PublisherNarrationEvidence`) didn't read, or found no voice on any feed. This is the #2024 class: "
         "Substack changed its page format and the app quietly stopped finding the voice.\n\n"
         "What to do: open one of the posts below, compare its page with the parser's expectations, and fix "
-        "the parser in SessionKitFeeds with a fixture of the new format. The canary runs the code on `next`, "
+        "the parser in SessionKitFeeds with a fixture of the new format. The canary runs the code on the trunk (`main`), "
         "so it goes green on the first run after the fix merges. To run it by hand: "
         "`scripts/substack-canary.sh`.\n\n"
         f"Run: {run_url}\n\n{report}\n<!-- substack-canary: {sig} -->\n"
@@ -121,7 +122,7 @@ def main():
         request('POST', f'/repos/{repo}/issues/{issue["number"]}/labels', token, {'labels': ['ready', 'regression']})
     else:
         request('POST', f'/repos/{repo}/issues/{issue["number"]}/comments', token, {
-            'body': f'The canary passes again on `next`. Close this once the fix is confirmed. Run: {args.run_url}\n\n'
+            'body': f'The canary passes again on the trunk (`main`). Close this once the fix is confirmed. Run: {args.run_url}\n\n'
                     f'{report}\n<!-- substack-canary: pass -->\n'})
     return 0
 

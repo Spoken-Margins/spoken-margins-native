@@ -23,8 +23,9 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
         let ticker = try functionBody(source, signature: "func startPlaybackProgressTicker()")
         XCTAssertTrue(ticker.contains("Task {") && ticker.contains("tickPlaybackProgress()"),
                       "the ticker must run the tick")
-        XCTAssertEqual(braceDepth(of: ticker, at: try XCTUnwrap(ticker.range(of: "tickPlaybackProgress()")).lowerBound), 3,
-                       "the ticker's Task loop (Task, while, MainActor.run) must be the caller")
+        XCTAssertEqual(braceDepth(of: ticker, at: try XCTUnwrap(ticker.range(of: "tickPlaybackProgress()")).lowerBound), 4,
+                       "the ticker's Task loop (Task, while, MainActor.run, the tick's hang label) must be the caller")
+        XCTAssertTrue(ticker.contains("hangTelemetry.labels.scoped("), "a stuck tick holds play at starting, so a hang names it (#2255)")
         let reconcile = try functionBody(source, signature: "func reconcilePlaybackProgressTicker()")
         let starts = try XCTUnwrap(reconcile.range(of: "startPlaybackProgressTicker()"), "playback starting must start the ticker")
         let otherBranch = try XCTUnwrap(reconcile.range(of: "else"))

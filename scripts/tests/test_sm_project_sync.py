@@ -1,4 +1,6 @@
 """Project synchronization regression: exercise the dispatcher command, not a label mirror."""
+import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 import importlib.util
 import unittest
 from pathlib import Path
@@ -39,7 +41,7 @@ class API:
         self.calls = self.writes = 0
         self.routes = routes_for(*bundles)
         self.routes['issues?state=open&sort=created&direction=asc'] = [i for i in issues if i['state'] == 'open']
-        self.routes['pulls?state=all&base=next&sort=created&direction=asc'] = [copy.deepcopy(b['pull']) for b in bundles]
+        self.routes['pulls?state=all&base=main&sort=created&direction=asc'] = [copy.deepcopy(b['pull']) for b in bundles]
         for i in issues:
             n = i['number']
             self.routes.update({f'issues/{n}': i, f'issues/{n}/events': [event()],
@@ -291,7 +293,7 @@ class Reconciliation(unittest.TestCase):
                 api.graph_errors['items(first:'] = sm_status.GitHubError('partial GraphQL data')
             else:
                 path = ('issues?state=open&sort=created&direction=asc' if location == 'issues' else
-                        'pulls?state=all&base=next&sort=created&direction=asc')
+                        'pulls?state=all&base=main&sort=created&direction=asc')
                 api.routes[path] = sm_status.GitHubError('incomplete paginated read')
             result = self.run_sync(api, True)
             self.assertTrue(result['unknown'])
@@ -379,7 +381,7 @@ class SafetyEdges(unittest.TestCase):
     def test_pr_merged_during_live_read_uses_fresh_state(self):
         b = merged()
         api = API([issue()], bundles=[b])
-        api.routes['pulls?state=all&base=next&sort=created&direction=asc'][0]['state'] = 'open'
+        api.routes['pulls?state=all&base=main&sort=created&direction=asc'][0]['state'] = 'open'
         result = sync.reconcile(api, now=NOW)
         self.assertEqual(result['changes'][0]['status'], 'Needs your check')
 

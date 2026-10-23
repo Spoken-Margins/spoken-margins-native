@@ -673,6 +673,67 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertTrue(spoken.contains("Samples were collected at three sites"))
     }
 
+    func testV2FindsFootnoteMarkersOnAPageSetAboveTheBodySize() throws {
+        // #2370: PDFKit read one page of "Technology Bottlenecks" (TeX Gyre Pagella, 10.9 pt)
+        // at 11.8 to 12.1 pt. Markers counted only on lines within 0.6 pt of the body size,
+        // so that page had none, and its footnote ("1Appendix A gives…") was read aloud.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10)]
+        let larger: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 11.2)]
+        let marker: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 7)]
+        let note: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 8)]
+        let cited = NSMutableAttributedString(string: "Bottleneck pressure rises as the rest of the job speeds up.", attributes: larger)
+        cited.append(NSAttributedString(string: "1", attributes: marker))
+        cited.append(NSAttributedString(string: " Averaged over tasks,", attributes: larger))
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            for row in 0..<8 {
+                ("Exposure measures ask which work AI can do, line \(row) of the opening page." as NSString)
+                    .draw(at: CGPoint(x: 60, y: 80 + CGFloat(row) * 16), withAttributes: body)
+            }
+            context.beginPage()
+            cited.draw(at: CGPoint(x: 60, y: 80))
+            ("it ranks occupations differently than exposure does." as NSString).draw(at: CGPoint(x: 60, y: 98), withAttributes: larger)
+            ("1 Appendix A gives the conditions under which the measure holds." as NSString).draw(at: CGPoint(x: 60, y: 700), withAttributes: note)
+        }
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: XCTUnwrap(PDFDocument(data: data)))
+        let spoken = StructuredDocumentSpeech.spokenLines(document).joined(separator: " ")
+        XCTAssertFalse(spoken.contains("Appendix A gives the conditions"), spoken)
+        XCTAssertTrue(spoken.contains("it ranks occupations differently"), spoken)
+    }
+
+    func testV2PutsBackSpacesOnlyInAPdfThatLostThem() throws {
+        // #2370: TeX Gyre Pagella has no space glyph, and PDFKit returns its tight lines glued.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10)]
+        func pdf(_ lines: [String]) -> Data {
+            UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792)).pdfData { context in
+                context.beginPage()
+                for (row, line) in lines.enumerated() {
+                    (line as NSString).draw(at: CGPoint(x: 40, y: 80 + CGFloat(row) * 16), withAttributes: body)
+                }
+            }
+        }
+        let glued = pdf([
+            "AIexposuremeasureshavebecomethestandardtoolfordescribingwhichoccupations",
+            "AIislikelytoaffect(Brynjolfsson,Chandar andChen,2025;Webb,2020),andthey",
+            "measurethescopeforAItoperformworkinsteadofwhereitmaypayoffmore.",
+            "Ourindexthereforemeasurespressurefromcapabilitybottlenecks,ratherthanintegration",
+            "Weaskinsteadwherethemarginalvalueofworkmayriseasthejobspeedsup.",
+            "inpostingsthatmentionafeasibletaskandaninfeasibleone,ofallAI-",
+            "infeasiblementionsappearinpostingsthatalsolistafeasibletask.",
+        ])
+        let spaced = try PDFStructuredTextExtractor.structuredDocument(from: XCTUnwrap(PDFDocument(data: glued)))
+        XCTAssertTrue(spaced.text.contains("the standard tool for describing which occupations"), spaced.text)
+        // The broken word's first half is "AI" from the respaced line, not the glued "ofallAI".
+        XCTAssertTrue(spaced.text.contains("infeasible mentions appear in postings"), spaced.text)
+        // A spaced PDF with a long unlisted word keeps its text exactly.
+        let lines = ["Measures of AI exposure have become the standard tool for describing work,",
+                     "and Pneumonoultramicroscopicsilicovolcanoconiosis stays as it is printed."]
+        let plain = try PDFStructuredTextExtractor.structuredDocument(from: XCTUnwrap(PDFDocument(data: pdf(lines))))
+        let unspaced = try PDFStructuredTextExtractor.structuredDocument(from: XCTUnwrap(PDFDocument(data: pdf(lines))), wordListURL: nil)
+        XCTAssertEqual(plain.text, unspaced.text)
+    }
+
     func testV2JudgesAFootnoteLineByItsMainTypeSizeNotItsFirstCharacter() throws {
         // #592 on arXiv 2609.31218 (POPT), sizes from PyMuPDF: body 10 pt, footnote text
         // 8 pt, footnote markers 6 pt, math subscripts 7 pt. A line's size was its first

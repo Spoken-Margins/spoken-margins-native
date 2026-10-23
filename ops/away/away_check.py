@@ -8,7 +8,7 @@ report in four numbered parts:
 
 1. Queue depth against time away: open `ready` issues not `in-progress`, plus open audit
    issues, against the Dial's thread count (#589) times the hours away.
-2. Holds an agent wrote: lines in AGENTS.md on `next` that make work wait, and whether
+2. Holds an agent wrote: lines in AGENTS.md on the trunk (`main`) that make work wait, and whether
    each quotes the owner with a date. A hold with no owner quote is suspect.
 3. Owner-only items: open PRs touching `scripts/lane-runner.py` or `.github/` (his merge
    tap), `needs-owner` issues, and issues whose latest comment asks him to run a command.

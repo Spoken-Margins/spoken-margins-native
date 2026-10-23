@@ -15,7 +15,7 @@ later comment on the same PR whose first line starts "Lane report" and says PASS
 Hand-offs and "in progress" notes don't answer anything, so a check a desk left half done stays on the list.
 
 How the list is built:
-- Closed-unmerged PRs drop out. A merged PR's check runs on next's tip; an open PR's on its head.
+- Closed-unmerged PRs drop out. A merged PR's check runs on the trunk's tip; an open PR's on its head.
   Checks that share a build go in the same batch, so the desk builds and installs once.
 - Cost per check is its steps: the numbered lines of `scenario:`, plus the steps of each journey in
   `run:` (counted from docs/journeys.md). The Test Desks of 2026-10-13 got through 1 to 3 checks each
@@ -207,7 +207,7 @@ def describe(api, requests):
         named = request['commit'][:7]
         request['note'] = ''
         if merged and named:
-            request['note'] = f'the request names {named}; test next\'s tip'
+            request['note'] = f'the request names {named}; test the trunk\'s tip'
         elif head and named and not head.startswith(named):
             request['note'] = f'the request names {named} but the PR head is now {head[:7]}; test the head'
         usable.append(request)
@@ -268,7 +268,7 @@ def age(created, now):
 
 def render(batches, dropped, now, verdict):
     first = batches[0]
-    where = ("next's tip: build it once and install it on one pool device for every check below"
+    where = ("the trunk's tip: build it once and install it on one pool device for every check below"
              if first['target'] == NEXT_TIP else f"commit {first['target']}: build it once and install it on one pool device for every check below")
     lines = [f'# Test Desk work list, {now:%Y-%m-%d %H:%M} UTC', '',
              f'{verdict}', '',

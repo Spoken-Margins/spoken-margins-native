@@ -1,7 +1,7 @@
 """#1492: the lane, workflows, Test Desk, phone build and merge audit name the trunk in one place.
 
-The same code has to work while PRs target next and after they target main, so these tests check the branch
-choice both ways: SM_TRUNK unset (next), and SM_TRUNK=main.
+main became the trunk on 2026-10-20, and the code still has to follow SM_TRUNK if it ever names another branch,
+so these tests check the branch choice both ways: SM_TRUNK unset (main), and SM_TRUNK=next (any other branch).
 """
 import importlib.machinery
 import importlib.util
@@ -26,26 +26,29 @@ lane = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(lane)
 
 MAIN = {'SM_TRUNK': 'main'}
+NEXT = {'SM_TRUNK': 'next'}   # any branch other than the default
 
 
 class TrunkBranchTests(unittest.TestCase):
-    def test_unset_means_next_until_the_switch(self):
-        self.assertEqual(trunk.DEFAULT_TRUNK, 'next')
-        self.assertEqual(trunk.trunk_branch({}), 'next')
-        self.assertEqual(trunk.trunk_branch({'SM_TRUNK': ''}), 'next')
-        self.assertEqual(trunk.trunk_branch({'SM_TRUNK': '  '}), 'next')
-        self.assertEqual(trunk.trunk_ref({}), 'origin/next')
+    def test_unset_means_main(self):
+        self.assertEqual(trunk.DEFAULT_TRUNK, 'main')
+        self.assertEqual(trunk.trunk_branch({}), 'main')
+        self.assertEqual(trunk.trunk_branch({'SM_TRUNK': ''}), 'main')
+        self.assertEqual(trunk.trunk_branch({'SM_TRUNK': '  '}), 'main')
+        self.assertEqual(trunk.trunk_ref({}), 'origin/main')
 
-    def test_sm_trunk_moves_it_to_main(self):
+    def test_sm_trunk_names_the_trunk(self):
         self.assertEqual(trunk.trunk_branch(MAIN), 'main')
         self.assertEqual(trunk.trunk_branch({'SM_TRUNK': ' main\n'}), 'main')
         self.assertEqual(trunk.trunk_ref(MAIN), 'origin/main')
+        self.assertEqual(trunk.trunk_branch(NEXT), 'next')
+        self.assertEqual(trunk.trunk_ref(NEXT), 'origin/next')
 
     def test_it_reads_the_process_environment_by_default(self):
-        with mock.patch.dict(os.environ, MAIN):
-            self.assertEqual(trunk.trunk_branch(), 'main')
-        with mock.patch.dict(os.environ, {}, clear=True):
+        with mock.patch.dict(os.environ, NEXT):
             self.assertEqual(trunk.trunk_branch(), 'next')
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(trunk.trunk_branch(), 'main')
 
     def test_a_name_git_would_not_take_as_a_plain_branch_stops_the_job(self):
         for bad in ('-f', '--force', 'a..b', 'refs/heads/main', 'main/', 'main.', 'x.lock', 'ma in', 'main;rm',
@@ -56,18 +59,22 @@ class TrunkBranchTests(unittest.TestCase):
     def test_is_trunk_takes_a_branch_or_a_ref(self):
         for base in ('next', 'origin/next', 'refs/heads/next', 'refs/remotes/origin/next'):
             with self.subTest(base=base):
-                self.assertTrue(trunk.is_trunk(base, {}))
-                self.assertFalse(trunk.is_trunk(base, MAIN))
-        for base in ('main', 'origin/main', 'refs/heads/main'):
-            with self.subTest(base=base):
                 self.assertFalse(trunk.is_trunk(base, {}))
-                self.assertTrue(trunk.is_trunk(base, MAIN))
+                self.assertTrue(trunk.is_trunk(base, NEXT))
+        for base in ('main', 'origin/main', 'refs/heads/main', 'refs/remotes/origin/main'):
+            with self.subTest(base=base):
+                self.assertTrue(trunk.is_trunk(base, {}))
+                self.assertFalse(trunk.is_trunk(base, NEXT))
         self.assertFalse(trunk.is_trunk('lane-check/x', {}))
-        self.assertFalse(trunk.is_trunk('nextish', {}))
+        self.assertFalse(trunk.is_trunk('mainish', {}))
+        self.assertFalse(trunk.is_trunk('nextish', NEXT))
 
     def test_the_command_line_prints_the_name(self):
         env = {k: v for k, v in os.environ.items() if k != 'SM_TRUNK'}
-        out = subprocess.run([sys.executable, str(SCRIPTS / 'trunk.py')], env={**env, **MAIN},
+        out = subprocess.run([sys.executable, str(SCRIPTS / 'trunk.py')], env={**env, **NEXT},
+                             capture_output=True, text=True, check=True)
+        self.assertEqual(out.stdout.strip(), 'next')
+        out = subprocess.run([sys.executable, str(SCRIPTS / 'trunk.py')], env=env,
                              capture_output=True, text=True, check=True)
         self.assertEqual(out.stdout.strip(), 'main')
 
@@ -105,13 +112,13 @@ class WorkflowTrunkTests(unittest.TestCase):
                         self.assertIn('main', line)
 
     def test_workflows_that_push_or_post_run_only_for_the_trunk(self):
-        """A push to main before the switch (the fast-forward itself) starts nothing that writes."""
-        gated = {'lane.yml': 4, 'merge-audit.yml': 1, 'hosted-integration.yml': 1, 'substack-canary.yml': 1,
+        """A push to any branch but the trunk starts nothing that writes."""
+        gated = {'lane.yml': 5, 'merge-audit.yml': 1, 'hosted-integration.yml': 1, 'substack-canary.yml': 1,
                  'lane-conflicts.yml': 2}
         texts = self.workflows()
         for name, count in gated.items():
             with self.subTest(workflow=name):
-                gates = re.findall(r"(?:base\.ref|ref_name) == \(vars\.SM_TRUNK \|\| 'next'\)", texts[name])
+                gates = re.findall(r"(?:base\.ref|ref_name) == \(vars\.SM_TRUNK \|\| 'main'\)", texts[name])
                 self.assertEqual(len(gates), count)
 
     def test_sparse_checkouts_that_run_a_trunk_reader_carry_trunk_py(self):
@@ -121,7 +128,7 @@ class WorkflowTrunkTests(unittest.TestCase):
 
     def test_lane_jobs_pass_sm_trunk_to_the_runner(self):
         text = self.workflows()['lane.yml']
-        self.assertEqual(text.count("SM_TRUNK: ${{ vars.SM_TRUNK || 'next' }}"), 3)
+        self.assertEqual(text.count("SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}"), 4)  # lane, automerge, automerge-mac (#2459), release
 
 
 class LaneRunnerTrunkTests(unittest.TestCase):
@@ -134,15 +141,15 @@ class LaneRunnerTrunkTests(unittest.TestCase):
             return lane.dispatch_hosted_integration(base), run
 
     def test_hosted_integration_follows_the_trunk(self):
-        said, run = self.dispatch('next', {})
+        said, run = self.dispatch('main', {})
         self.assertIn('-f', run.call_args.args[0])
-        self.assertEqual(run.call_args.args[0][-1], 'ref=next')
-        said, run = self.dispatch('main', MAIN)
         self.assertEqual(run.call_args.args[0][-1], 'ref=main')
-        said, run = self.dispatch('next', MAIN)
+        said, run = self.dispatch('next', NEXT)
+        self.assertEqual(run.call_args.args[0][-1], 'ref=next')
+        said, run = self.dispatch('next', {})
         run.assert_not_called()
         self.assertEqual(said, 'hosted integration not started: it tests main, not next')
-        said, run = self.dispatch('main', {})
+        said, run = self.dispatch('main', NEXT)
         run.assert_not_called()
 
     def test_the_report_names_the_trunk_when_no_base_is_given(self):
@@ -172,19 +179,19 @@ class MergeAuditTrunkTests(unittest.TestCase):
         recent = [self.pr(1, 'm1', 'next'), self.pr(2, 'm2', 'main')]
         self.assertEqual(list(merge_audit.classify_push(['m1', 'm2'], 'm2', recent, 'main')[0]), [2])
         self.assertEqual(list(merge_audit.classify_push(['m1', 'm2'], 'm1', recent, 'next')[0]), [1])
-        with mock.patch.dict(os.environ, MAIN):
-            self.assertEqual(list(merge_audit.classify_push(['m1', 'm2'], 'm2', recent)[0]), [2])
-        with mock.patch.dict(os.environ, {}, clear=True):
+        with mock.patch.dict(os.environ, NEXT):
             self.assertEqual(list(merge_audit.classify_push(['m1', 'm2'], 'm1', recent)[0]), [1])
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(list(merge_audit.classify_push(['m1', 'm2'], 'm2', recent)[0]), [2])
 
     def test_the_sweep_and_the_flag_name_the_base(self):
         import datetime
         now = datetime.datetime(2026, 10, 19, 1)
         recent = [self.pr(1, 'm1', 'next'), self.pr(2, 'm2', 'main')]
         self.assertEqual([p['number'] for p in merge_audit.recently_merged(recent, 2, now, 'main')], [2])
-        self.assertTrue(merge_audit.failure_comment('c' * 40, None, 'main').startswith('Merged into main without'))
+        self.assertTrue(merge_audit.failure_comment('c' * 40, None, 'next').startswith('Merged into next without'))
         with mock.patch.dict(os.environ, {}, clear=True):
-            self.assertTrue(merge_audit.failure_comment('c' * 40).startswith('Merged into next without'))
+            self.assertTrue(merge_audit.failure_comment('c' * 40).startswith('Merged into main without'))
 
 
 class MacJobsTrunkTests(unittest.TestCase):
@@ -201,13 +208,13 @@ class MacJobsTrunkTests(unittest.TestCase):
         return module
 
     def test_the_phone_build_builds_the_trunk(self):
-        self.assertEqual(self.load('phone_build_next', SCRIPTS / 'phone-build', {}).BRANCH, 'next')
-        self.assertEqual(self.load('phone_build_main', SCRIPTS / 'phone-build', MAIN).BRANCH, 'main')
+        self.assertEqual(self.load('phone_build_main', SCRIPTS / 'phone-build', {}).BRANCH, 'main')
+        self.assertEqual(self.load('phone_build_next', SCRIPTS / 'phone-build', NEXT).BRANCH, 'next')
 
     def test_the_integration_run_tests_the_trunk(self):
         path = ROOT / 'ops' / 'testdesk' / 'sm_integration_run.py'
-        self.assertEqual(self.load('integration_next', path, {}).BASE_BRANCH, 'next')
-        self.assertEqual(self.load('integration_main', path, MAIN).BASE_BRANCH, 'main')
+        self.assertEqual(self.load('integration_main', path, {}).BASE_BRANCH, 'main')
+        self.assertEqual(self.load('integration_next', path, NEXT).BASE_BRANCH, 'next')
 
 
 class NoHardCodedNextTests(unittest.TestCase):
@@ -216,7 +223,7 @@ class NoHardCodedNextTests(unittest.TestCase):
     FILES = ['scripts/lane-runner.py', 'scripts/merge_audit.py', 'scripts/phone-build', 'scripts/daily-phone-plan',
              'scripts/sm_status.py', 'scripts/lane_conflicts.py', 'scripts/owner_tap_alert.py',
              'scripts/hot_file_ratchet.py', 'scripts/test-scope.py', 'scripts/split_move.py',
-             'scripts/integration-precheck.py', 'scripts/sim-build-latest', 'scripts/verify-tests.py',
+             'scripts/integration-precheck.py', 'scripts/sim-build-latest', 'scripts/sim_builds.py', 'scripts/verify-tests.py',
              'ops/testdesk/sm_integration_run.py', 'ops/claude/sm_claude_worker.py', 'ops/codex/sm_codex_audit.py',
              'ops/disk/sm_disk_relief.py', 'ops/away/away_check.py']
     # A quoted ref, a query string, or a bare 'next' given as a value (a default, a comparison, an argument). Not

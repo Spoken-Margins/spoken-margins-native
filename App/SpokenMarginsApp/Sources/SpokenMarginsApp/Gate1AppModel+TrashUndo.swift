@@ -108,6 +108,7 @@ extension Gate1AppModel {
             removeDurableGeneratedAudio(for: item)
             removeEpisodeMapArtifacts(itemId: id)
             try store.deleteItem(id: id)
+            removeLiveSessionRecord(itemId: id)
             removeMarginRecordings(recordings, quarantinedAudioPaths: quarantinedRecordings, store: store)
             try refreshLibraryRows(store: store)
             guard !libraryItems.contains(where: { $0.id == id }),
@@ -146,6 +147,7 @@ extension Gate1AppModel {
             items.forEach(removeDurableGeneratedAudio)
             ids.forEach(removeEpisodeMapArtifacts)
             try store.deleteItems(ids: ids)
+            ids.forEach(removeLiveSessionRecord)
             removeMarginRecordings(recordings, quarantinedAudioPaths: quarantinedRecordings, store: store)
             try refreshLibraryRows(store: store)
             guard recentlyDeletedItems.isEmpty,

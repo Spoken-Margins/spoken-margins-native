@@ -25,6 +25,19 @@ spec.loader.exec_module(verification)
 
 
 class VerificationTests(unittest.TestCase):
+    def test_a_step_does_not_inherit_the_trunk_setting(self):
+        # #1492: the lane and the Mac export SM_TRUNK=main; suites written for the default trunk failed under it.
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {'SM_TRUNK': 'main', 'KEEP': '1'}):
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            with patch.object(verification, 'build_slot', return_value=contextlib.nullcontext()), \
+                    patch.object(verification.subprocess, 'Popen') as process:
+                process.return_value.wait.return_value = 0
+                run.command('probe', ['true'])
+            env = process.call_args.kwargs['env']
+            self.assertNotIn('SM_TRUNK', env)
+            self.assertEqual(env['KEEP'], '1')
+            self.assertEqual(os.environ['SM_TRUNK'], 'main')  # the caller's own environment is left alone
+
     def test_test_without_building_does_not_take_a_build_slot(self):
         # #1330: even an empty test run used to queue behind compilers and hold their slot.
         with tempfile.TemporaryDirectory() as temporary:
@@ -778,6 +791,53 @@ class VerificationTests(unittest.TestCase):
         timeout = dict(calls)['runner-tests'].get('timeout', default)
         self.assertGreaterEqual(timeout, 2 * measured)  # the suite grows and runs beside a simulator job
         self.assertGreater(timeout, default)
+
+    def test_runner_tests_still_printing_at_their_budget_go_on_to_a_ceiling(self):
+        # #2488: at load 138-150 the suite was killed at 600 s with its log still a stream of passing dots (#2409).
+        for portable in (False, True):
+            calls = []
+            with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+                verification.os.environ.pop('CODEX_SANDBOX', None)
+                run = verification.Run(Path(temporary) / 'run', 'fast')
+                with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
+                        patch.object(run, 'ops_steps'), patch.object(run, 'skip'), \
+                        patch.object(verification, 'swift_tests', return_value=set()), \
+                        patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
+                        patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                    run.host_steps(portable=portable)
+            step = dict(calls)['runner-tests']
+            self.assertEqual(step['timeout'], verification.RUNNER_TESTS_TIMEOUT)
+            self.assertGreater(step['ceiling'], step['timeout'])
+            self.assertLess(step['stall_seconds'], step['ceiling'] - step['timeout'])  # a hang still stops early
+            self.assertLess(step['ceiling'], 2400)  # the lane's FAST_TIMEOUT still bounds the plan
+        # The readers-only and Mac-rest runs of the same step get the same limits.
+        for scope in ('readers', 'all'):
+            calls = []
+            with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+                verification.os.environ.pop('CODEX_SANDBOX', None)
+                run = verification.Run(Path(temporary) / 'run', 'fast')
+                with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
+                        patch.object(run, 'ops_steps'), patch.object(run, 'skip'), \
+                        patch.object(verification, 'runner_test_scope', return_value=(scope, '')), \
+                        patch.object(verification, 'swift_tests', return_value=set()), \
+                        patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
+                        patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                    run.host_steps()
+            self.assertEqual({k: dict(calls)['runner-tests'][k] for k in verification.RUNNER_TESTS_LIMITS},
+                             verification.RUNNER_TESTS_LIMITS, scope)
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+            verification.os.environ.pop('CODEX_SANDBOX', None)
+            run = verification.Run(Path(temporary) / 'run', 'fast-mac-rest')
+            with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
+                    patch.object(run, 'ops_steps'), patch.object(run, 'skip'), patch.object(run, 'package_steps'), \
+                    patch.object(run, 'shipped_compat'), \
+                    patch.object(verification, 'runner_test_scope', return_value=('all', '')), \
+                    patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification.sessionkit_pass, 'find', return_value=None):
+                run.mac_rest()
+        self.assertEqual({k: dict(calls)['runner-tests'][k] for k in verification.RUNNER_TESTS_LIMITS},
+                         verification.RUNNER_TESTS_LIMITS)
 
     def run_sessionkit_script(self, *args, exit_code=0, **env):
         """Run scripts/run-sessionkit-tests.sh from a copy in a temporary ROOT whose host-test-lane records what it

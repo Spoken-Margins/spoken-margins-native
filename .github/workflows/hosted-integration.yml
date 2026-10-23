@@ -46,7 +46,7 @@ env:
 jobs:
   integration:
     name: 'integration run on ${{ github.ref_name }}'
-    if: vars.LANE_HOSTED_APP == 'on' && github.ref_name == (vars.SM_TRUNK || 'next')
+    if: vars.LANE_HOSTED_APP == 'on' && github.ref_name == (vars.SM_TRUNK || 'main')
     runs-on: xcode-27
     # The Mac takes about 18 min; hosted builds are 2-3.5x slower (hosted-app-macos.yml), plus re-runs and journeys.
     timeout-minutes: 150
@@ -59,7 +59,7 @@ jobs:
           echo "SM_INTEGRATION_HOME=$RUNNER_TEMP/integration-run" >> "$GITHUB_ENV"
 
       # Full history: the report lists the merges since the last PASS.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -67,7 +67,7 @@ jobs:
       # The app bundles the voice models (LFS). Cached, then fetched with the read-only token for this one command.
       - name: List LFS objects
         run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .git/lfs
           key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
@@ -79,7 +79,7 @@ jobs:
           auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
       - name: Python tools
@@ -96,14 +96,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SM_INTEGRATION_IOS: '27'
-          SM_TRUNK: ${{ vars.SM_TRUNK || 'next' }}
+          SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
           SHA: ${{ github.sha }}
         run: python3 ops/testdesk/sm_integration_run.py --hosted --sha "$SHA"
 
       # Logs and manifests only: the script deletes the .xcresult bundles before the upload.
       - name: Keep the evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: hosted-integration-${{ github.sha }}
           path: artifacts/integration-run/
@@ -116,7 +116,7 @@ jobs:
       # Absent when the build failed or wasn't this SHA's.
       - name: Keep the simulator app for desks
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sim-app-${{ github.sha }}
           path: artifacts/sim-app/

@@ -4,6 +4,7 @@ import Foundation
 import XCTest
 @testable import SessionKitAudio
 import SessionKitTestInputs
+import ShazamKit
 
 final class PodcastAssetSignatureGeneratorTests: XCTestCase {
     func testCancelledRequestDoesNotStartSignatureGeneration() async throws {
@@ -30,6 +31,7 @@ final class PodcastAssetSignatureGeneratorTests: XCTestCase {
         try Data("unreadable audio".utf8).write(to: invalid)
         let valid = directory.appending(path: "valid.m4a")
         try SeededNoiseAudio.write(to: valid, seconds: 3)
+        try requirePlainSignature(of: valid)
         let results = SignatureResults()
         let completed = DispatchGroup()
         completed.enter()
@@ -61,6 +63,9 @@ final class PodcastAssetSignatureGeneratorTests: XCTestCase {
         } else {
             episode = try TestInputs.url(.contracts, "fixtures/audio/evidence-length-48k-stereo.mp3")
         }
+        let plainSeconds = try requirePlainSignature(
+            of: TestInputs.url(.contracts, "fixtures/audio/evidence-length-48k-stereo.mp3")
+        )
 
         let poolThreads = ProcessInfo.processInfo.activeProcessorCount
         // Each job signs a 40 s composition, the resolver's probe chunk length. The starvation this guards
@@ -123,12 +128,31 @@ final class PodcastAssetSignatureGeneratorTests: XCTestCase {
                 Thread.sleep(forTimeInterval: 0.02)
             } while completed.wait(timeout: .now()) != .success
         }
-        XCTAssertEqual(completed.wait(timeout: .now() + 60), .success, "signature jobs did not finish")
+        XCTAssertEqual(completed.wait(timeout: .now() + 60), .success, "signature jobs did not finish (one plain signature took \(plainSeconds) s)")
         XCTAssertEqual(probing.wait(timeout: .now() + 2), .success)
         XCTAssertLessThan(try XCTUnwrap(results.heartbeatDelays.max()), 1, "ShazamKit signature jobs starved unrelated async work")
         XCTAssertEqual(results.durations.count, poolThreads + 2, results.errors.joined(separator: "; "))
         XCTAssertTrue(results.durations.allSatisfy { abs($0 - jobSeconds) < 1 }, "\(results.durations)")
-        print("Signature stress: \(poolThreads + 2) real jobs, started \(results.started), heartbeat max \(results.heartbeatDelays.max() ?? -1) s, completed \(results.durations.count)")
+        print("Signature stress: \(poolThreads + 2) real jobs, started \(results.started), heartbeat max \(results.heartbeatDelays.max() ?? -1) s, plain probe \(plainSeconds) s, completed \(results.durations.count)")
+    }
+
+    /// An environment precondition, not the claim under test. On 10-18 the Mac's signature service wedged: 0 of 10 jobs
+    /// finished in 60 s with no code change (#2385). This signs one file with ShazamKit directly, on its own queue and
+    /// never through the generator or the cooperative pool, so a generator that starves the pool or leaks a slot cannot
+    /// make it skip. When the service itself can't sign one file in time, the test skips with an environment message;
+    /// verify-tests.py fails the step on an unexpected skip, naming the test, so a skip that keeps happening is seen.
+    @discardableResult
+    private func requirePlainSignature(of url: URL, within limit: TimeInterval = 15) throws -> TimeInterval {
+        let done = DispatchSemaphore(value: 0)
+        let asset = AVURLAsset(url: url)
+        let started = Date()
+        DispatchQueue(label: "signature-test-environment-probe").async {
+            SHSignatureGenerator.generateSignature(from: asset) { _, _ in done.signal() }
+        }
+        guard done.wait(timeout: .now() + limit) == .success else {
+            throw XCTSkip("signature service did not finish one plain signature in \(Int(limit)) s: environment, not the generator")
+        }
+        return Date().timeIntervalSince(started)
     }
 }
 

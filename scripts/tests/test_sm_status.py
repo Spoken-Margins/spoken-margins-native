@@ -5,6 +5,8 @@ Nothing here touches the network. The PR bundles in scripts/fixtures/sm_status/ 
 #1595 (a PASS on an older head, lane and .github changes), #1590 (PASS on the head, clean audit), #1596 (T3 PASS,
 no audit yet) and #1568. The other cases are those bundles, or small hand-built ones, changed one fact at a time.
 """
+import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 import contextlib
 import copy
 import datetime as dt
@@ -88,8 +90,8 @@ class FakeAPI:
 
 
 def routes_for(*bundles, tip=HEAD):
-    routes = {'pulls?state=open&base=next&sort=created&direction=asc': [b['pull'] for b in bundles],
-              'git/ref/heads/next': {'object': {'sha': tip}}}
+    routes = {'pulls?state=open&base=main&sort=created&direction=asc': [b['pull'] for b in bundles],
+              'git/ref/heads/main': {'object': {'sha': tip}}}
     for b in bundles:
         n, sha = b['pull']['number'], b['pull']['head']['sha']
         routes.update({f'pulls/{n}': b['pull'], f'issues/{n}/comments': b['comments'],
@@ -435,7 +437,7 @@ class Snapshot(unittest.TestCase):
     def test_asking_for_a_pr_that_is_not_open_says_so_instead_of_saying_nothing_is_pending(self):
         snap = status.snapshot(FakeAPI(routes_for(bundle())), NOW, only=[99], sleep=lambda s: None)
         self.assertEqual(snap['missing'], [99])
-        self.assertIn('#99 is not an open PR into next', status.render(snap))
+        self.assertIn('#99 is not an open PR into main', status.render(snap))
         self.assertNotIn('(no open PRs)', status.render(snap))
 
     def test_running_and_failing_checks_show_in_the_line(self):
@@ -458,7 +460,7 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(row['flags'][0]['severity'], status.RED)
 
     def test_an_unreadable_pr_list_exits_2_and_prints_nothing_as_a_status(self):
-        routes = {'pulls?state=open&base=next&sort=created&direction=asc': status.GitHubError('HTTP 401')}
+        routes = {'pulls?state=open&base=main&sort=created&direction=asc': status.GitHubError('HTTP 401')}
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = status.main([], api=FakeAPI(routes), now=NOW)
@@ -547,6 +549,39 @@ class LaneFormatsStayInStep(unittest.TestCase):
         self.assertIn("REQUEST = re.compile(r'^\\s*/lane\\s+(T\\d)\\b', re.M)", self.runner)
         self.assertIn("NOTE = '<!-- lane-note -->'", self.runner)
         self.assertIn("BOT = ('github-actions[bot]'", self.runner)
+
+
+class RequestHeaders(unittest.TestCase):
+    """The real urllib.request.Request, not a fake client (#2265): a body with no Content-Type is sent form-encoded
+    and GitHub answers 415."""
+
+    def sent(self, call):
+        from unittest import mock
+
+        class Response:
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return b'[]'
+
+        with mock.patch.object(status.urllib.request, 'urlopen', return_value=Response()) as opened:
+            call(status.GitHub(token='t'))
+        return opened.call_args.args[0]
+
+    def test_a_post_with_a_body_says_it_is_json(self):
+        req = self.sent(lambda api: api.post('issues/1/labels', {'labels': ['ready']}))
+        self.assertEqual(req.get_header('Content-type'), 'application/json')
+        self.assertEqual(json.loads(req.data), {'labels': ['ready']})
+
+    def test_a_get_and_a_delete_carry_no_content_type(self):
+        self.assertIsNone(self.sent(lambda api: api.get('issues/1')).get_header('Content-type'))
+        self.assertIsNone(self.sent(lambda api: api.delete('issues/1/labels/x')).get_header('Content-type'))
 
 
 if __name__ == '__main__':

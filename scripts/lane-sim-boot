@@ -26,7 +26,9 @@ in the simulator panel (the approval survives an erase). Each run erases the lea
 instead of creating a device; --done shuts it down, erases it and keeps it. A device marked unsafe is
 retired instead (deleted and dropped), and a replacement is created when the next run needs one
 (scripts/lane_sim_pool.py, #688). --fresh stays for one-off devices.
-Always finish with --done: until then the device keeps the simulator slot.
+Always finish with --done: until then the device keeps the simulator slot. A run that dies without it is not
+waited out: a job waiting for a simulator slot reclaims one whose taker has exited and that is over 3 hours old, by
+releasing its device as --done does and stopping its watcher (lane_slots.py, #2174).
 Exit 0 when ready; the UDID is the only thing printed on stdout.
 """
 import argparse

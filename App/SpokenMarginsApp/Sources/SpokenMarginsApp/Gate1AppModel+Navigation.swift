@@ -146,7 +146,7 @@ extension Gate1AppModel {
             activeItemId = id
             selectedItem = try loadItemDetail(id: id, store: store)
             prepareImportedLocalAudioBridges(itemId: id)
-            scheduleTextAudioPrewarmIfNeeded(itemId: id); PublisherAudioTextMapper.resume(itemId: id, store: store, transcriber: sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(id): \($0)" }; fetchCommunityMapIfNeeded(itemId: id)
+            scheduleTextAudioPrewarmIfNeeded(itemId: id); PublisherAudioTextMapper.resume(itemId: id, store: store, transcriber: sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(id): \($0)" }; fetchCommunityMapIfNeeded(itemId: id); retryVoiceoverLookupIfNeeded(itemId: id)
             listeningMapJSON = ""
             screen = .item
             discoverFollowOfferIfEligible(itemId: id, store: store)

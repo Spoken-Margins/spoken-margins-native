@@ -317,7 +317,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(len(files), 2)
         self.assertIn('latest.md', files)
         for text in (latest, out):
-            self.assertIn("next's tip", text)
+            self.assertIn("the trunk's tip", text)
             self.assertIn('## 1. PR #100: Fix 0', text)
             self.assertIn('## 3. PR #102: Fix 2', text)
             self.assertIn('Import the outline test PDF', text)

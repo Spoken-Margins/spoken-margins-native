@@ -68,6 +68,46 @@ final class PKMWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.sessionId, activeSession)
     }
 
+    /// #2373: collections picked from + > Files (real temp files, the picker's URLs) land in the Library like a PDF
+    /// added there, and a JSON file that is not an edition is a clear failure that does not stop the others.
+    func testCollectionFilesPickedFromTheAddSheetLandInTheLibraryAndABadOneSaysSo() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed(); model.declineCurrentTerms()
+        model.importTitle = "Existing"; model.importText = "Keep the ongoing session."
+        model.importTextItem(); model.pause()
+        let activeItem = model.activeItemId
+        let screen = model.screen
+        func make(_ title: String) -> ListeningEdition {
+            ListeningEdition(title: title, text: title + " " + UUID().uuidString, generator: "External model", overview: "Overview",
+                             scenes: [.init(title: "A", description: "Description", summary: "Summary", startBlock: 1, endBlock: 1)])
+        }
+        let first = make("Files one"), second = make("Files two")
+        defer { for e in [first, second] { try? FileManager.default.removeItem(at: ListeningEditionStore.application().file(e.itemID)) } }
+        let directory = FileManager.default.temporaryDirectory.appending(path: "collection-files-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        func write(_ name: String, _ data: Data) throws -> URL {
+            let url = directory.appending(path: name)
+            try data.write(to: url)
+            return url
+        }
+        let oneURL = try write("one.json", try first.encoded())
+        let twoURL = try write("two.json", try second.encoded())
+        let notAnEdition = try write("notes.json", Data(#"{"hello": "world"}"#.utf8))
+
+        XCTAssertTrue(model.importListeningEditionFiles([oneURL, twoURL]))
+        XCTAssertNil(model.lastError)
+        XCTAssertEqual(model.libraryItems.filter { $0.id == first.itemID }.count, 1)
+        XCTAssertEqual(model.libraryItems.filter { $0.id == second.itemID }.count, 1)
+        XCTAssertEqual(try ListeningEditionStore.application().load(itemID: first.itemID), first)
+        XCTAssertEqual(model.screen, screen, "a file added from the sheet opens nothing")
+        XCTAssertEqual(model.activeItemId, activeItem)
+
+        XCTAssertFalse(model.importListeningEditionFiles([notAnEdition]), "a non-edition JSON file is not imported")
+        XCTAssertEqual(model.lastError?.contains("notes.json"), true, model.lastError ?? "no error")
+        XCTAssertEqual(model.libraryItems.filter { $0.id == first.itemID }.count, 1, "nothing else changed")
+    }
+
     func testShortcutIntentImportsAndOpensEditionWithoutURLLaunch() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed(); model.declineCurrentTerms()

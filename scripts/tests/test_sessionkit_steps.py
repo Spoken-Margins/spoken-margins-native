@@ -199,6 +199,21 @@ class ParallelCoreTests(unittest.TestCase):
             # Together they are the same tests the one step expected before.
             self.assertEqual(CORE | REST, host.step('package-core')[1]['expected'] | kw['expected'])
 
+    def test_the_read_meter_tests_that_skip_by_design_are_allowed_in_both_core_steps(self):
+        # #2258: the known-oversized Library read skips on every fast run, and the cost table skips unless asked for.
+        source = (SCRIPTS.parent / 'Packages/SessionKit/Tests/SessionKitCoreTests/StoreReadMeterTests.swift').read_text()
+        skipping = {name for name, body in re.findall(r'func (test\w+)\(\)[^{]*\{(.*?)(?=\n    func |\n    private func |\Z)',
+                                                      source, re.S)
+                    if 'XCTSkip' in body or 'expectKnownOversized(' in body}
+        self.assertEqual(skipping, {'testTheLibraryListDoesNotDecodeEveryArticleText', 'testReadCostTableAtEveryScale'})
+        with tempfile.TemporaryDirectory() as state:
+            host = Host(self, None, fail=['package-core']).run(state)
+            for step in ('package-core', 'package-core-serial'):
+                allowed = host.step(step)[1]['allowed_skips']
+                for test in skipping:
+                    self.assertIn(f'SessionKitCoreTests/StoreReadMeterTests/{test}', allowed, step)
+                self.assertTrue(verification.HANG_PROBE_TIMING_TESTS <= set(allowed), step)
+
     def test_a_failed_parallel_run_is_run_again_serially_and_the_serial_run_decides(self):
         with tempfile.TemporaryDirectory() as state:
             host = Host(self, None, fail=['package-core']).run(state)

@@ -193,6 +193,24 @@ final class ShareLinkOpeningTests: XCTestCase {
         XCTAssertTrue(requested.urls.isEmpty)
     }
 
+    /// J10, the offline check (#1842), opens this link in `docs/journeys.md` and `J10OfflineJourneyUITests`.
+    /// Without a usable key it would fail as damaged before asking the server, so the check would never
+    /// reach the unreachable host it is meant to test.
+    func testTheOfflineCheckLinkAsksTheServerAndSaysOffline() async throws {
+        let text = "https://\(host)/l/\(id)#AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        let link = try XCTUnwrap(ShareLinkURL(url: URL(string: text)!))
+        XCTAssertNotNil(link.key, "J10's link has no usable key")
+        let requested = Requests()
+        let downloader = ShareLinkPacketDownloader { url, maximumBytes in
+            requested.record(url, maximumBytes)
+            throw URLError(.cannotFindHost)
+        }
+
+        await assertFails(downloader, link: link, as: .offline)
+
+        XCTAssertEqual(requested.urls.count, 1, "J10's link never asked the server")
+    }
+
     func testTheWrongKeyADamagedBlobAndAPreviewInThePacketSlotAreAllDamaged() async throws {
         let key = ShareLinkSealing.Key.random()
         let sealed = try ShareLinkSealing.seal(packet: packet, preview: preview, key: key)

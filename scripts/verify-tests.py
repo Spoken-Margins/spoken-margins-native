@@ -55,6 +55,19 @@ BUILD_SLOT_WAIT_SECONDS = 1800
 # about twice the limit (measured: a 1G limit held it to 1.4 GB).
 COMPILATION_CACHE_LIMIT = '3G'
 
+# Settings that describe the machine or the lane job, not the code under test. A step must not inherit them:
+# with SM_TRUNK=main exported (the lane and the Mac set it after #1492), suites whose fixtures were written
+# for the default trunk failed, and every merge run came back INCONCLUSIVE.
+STEP_ENV_DROPS = ('SM_TRUNK',)
+
+
+def step_env(environ=None):
+    """The environment a test step runs in: the caller's, without STEP_ENV_DROPS."""
+    env = dict(os.environ if environ is None else environ)
+    for name in STEP_ENV_DROPS:
+        env.pop(name, None)
+    return env
+
 
 def compilation_cache_settings(root=None):
     """The build settings that turn on Xcode's compilation cache, in the lane's state folder."""
@@ -129,6 +142,24 @@ def narrow_selectors(selectors, planned, available):
         else:
             narrowed.extend(test for test in covered if test in planned)
     return narrowed
+
+
+def t3_selection(only, plan_name, root=None):
+    """The -only-testing selectors for a T3 request of `only` (Class or Class/method) in a test plan, the plan's
+    tests, and the tests the run must complete. A selector that names nothing in the plan is refused, so a
+    misspelled name fails before anything builds instead of running nothing (#2138). Shared with the hosted Mac
+    (scripts/hosted_t3_check.py), so both judge a T3 by one rule."""
+    root = ROOT if root is None else root
+    selectors = [s if s.startswith((f'{APP_TEST_TARGET}/', f'{UI_TEST_TARGET}/')) else f'{APP_TEST_TARGET}/{s}'
+                 for s in only]
+    planned = plan_tests(root, plan_name)
+    unmatched = [s for s in selectors if not any(selected(test, s) for test in planned)]
+    if unmatched:
+        raise RuntimeError(f'Not in the {plan_name} test plan: {", ".join(unmatched)}')
+    selectors = narrow_selectors(selectors, planned,
+                                 {f'{APP_TEST_TARGET}/{test}' for test in target_tests(root, APP_TEST_TARGET)})
+    expected = {test for test in planned if not selectors or any(selected(test, s) for s in selectors)}
+    return selectors, planned, expected
 
 
 def dedicated_simulator(devices, ios=None):
@@ -419,7 +450,9 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        # The accessibility source scans read App/ Swift files (#2041).
                        'test_screen_change_cue', 'test_selected_trait', 'test_screen_title_heading',
                        'test_row_accessibility_actions', 'test_voiceover_label_nits',
-                       'test_increase_contrast_wiring', 'test_reduce_motion', 'test_tap_target_styles')
+                       'test_increase_contrast_wiring', 'test_reduce_motion', 'test_tap_target_styles',
+                       # The article-entry inventory reads App/ Swift files (#2363).
+                       'test_article_entry_followups')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
                       'docs/sharing-test-kit/', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
                       # test_third_party_notices reads the dependency manifests and its own list (#1823).
@@ -539,7 +572,7 @@ def github_glob_matches(pattern, path):
 
 def shipped_compat_needed(changed, root=None):
     """(run, reason) for the compatibility checks. changed=None means no diff information: run, as every other
-    step does, so the Test Desk's run on next's tip and an author's own --plan fast keep them."""
+    step does, so the Test Desk's run on the trunk's tip and an author's own --plan fast keep them."""
     if not changed:
         return True, 'no list of changed paths, so every step runs'
     patterns = shipped_compat_paths(root or ROOT)
@@ -612,6 +645,14 @@ HANG_PROBE_TIMING_TESTS = frozenset(f'SessionKitCoreTests/MainThreadHangProbeTes
     'testNestedLabelsReadOutermostFirstAndAnUnlabelledHangHasNone',
     'testAStoppedProbeRecordsNothingAndASecondHangAfterAFirstIsCounted',
 ))
+
+# StoreReadMeterTests skip by design (#2258): the Library list is a known-oversized read that skips with its measured
+# bytes until #2102's fix fails it on purpose, and the cost table builds the large fixtures only when asked for.
+READ_METER_SKIPS = frozenset(f'SessionKitCoreTests/StoreReadMeterTests/{test}' for test in (
+    'testTheLibraryListDoesNotDecodeEveryArticleText',
+    'testReadCostTableAtEveryScale',
+))
+CORE_ALLOWED_SKIPS = HANG_PROBE_TIMING_TESTS | READ_METER_SKIPS
 
 # Pocket's render tests need ~131 MB of git-ignored weights (research/C2/pocket/fetch_weights.sh). Without them they
 # skip with "skipped: weights not fetched", which is how the lane Mac runs them. The renderer's logic tests, with
@@ -738,6 +779,13 @@ PACKAGE_RUNNER = ['bash', 'scripts/run-sessionkit-tests.sh']
 # was killed (exit 124) and the plan reported "Infrastructure runner executed zero tests", twice on #1103's
 # head (#1110). Its own limit leaves headroom for load and for the suite to keep growing.
 RUNNER_TESTS_TIMEOUT = 600
+# #2488: by 2026-10-22 the step took 482-519 s on a busy day and was killed at 600 s at load 138-150, its log still a
+# stream of passing dots, so two runs of #2409 failed with "executed zero tests". It gets #1767's rule: a run still
+# printing at its budget goes on until the ceiling; one silent for the stall time is a hang and stops.
+RUNNER_TESTS_CEILING = 1200
+RUNNER_TESTS_STALL_SECONDS = PACKAGE_STALL_SECONDS  # one test compiles Swift, silent for minutes at high load
+RUNNER_TESTS_LIMITS = {'timeout': RUNNER_TESTS_TIMEOUT, 'ceiling': RUNNER_TESTS_CEILING,
+                       'stall_seconds': RUNNER_TESTS_STALL_SECONDS}
 
 # #705: the startup stall below follows the simulator having just been busy. On 2026-10-14, in the lane's artifacts:
 # - 18 of the 20 app-plan stalls launched the host app 1-16 s after the simulator finished booting (median 5 s, from
@@ -989,7 +1037,7 @@ class Run:
             finish = xcodebuild_finish.FinishWatch() if tests and args[0] == 'xcodebuild' else None
             finish_offset = 0
             process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
-                                       start_new_session=True)
+                                       start_new_session=True, env=step_env())
             try:
                 while True:
                     if device and (report := new_crash(reports, self.crash_baseline, device)):
@@ -1063,7 +1111,7 @@ class Run:
                         if finish is not None:
                             finish = xcodebuild_finish.FinishWatch()
                         process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
-                                                   start_new_session=True)
+                                                   start_new_session=True, env=step_env())
             except (subprocess.TimeoutExpired, KeyboardInterrupt, InterruptedError, StartupStall) as stopped:
                 # A startup stall is reported as its own reason below, not as the step running out of budget.
                 entry['interrupted'] = not isinstance(stopped, StartupStall)
@@ -1256,7 +1304,7 @@ class Run:
             self.skip('runner-tests', why or 'the diff reaches none of the runner tests that drive Apple tools')
         else:
             self.command('runner-tests', [sys.executable, '-c', MAC_REST_RUNNER_LOADER, *PORTABLE_RUNNER_TESTS_LEFT_OUT],
-                         timeout=RUNNER_TESTS_TIMEOUT)
+                         **RUNNER_TESTS_LIMITS)
         needed, why = ops_tests_needed(self.changed)
         if needed:
             self.ops_steps(only=PORTABLE_OPS_LEFT_OUT)
@@ -1298,7 +1346,7 @@ class Run:
         scope, why = runner_test_scope(self.changed)
         if portable:
             self.command('runner-tests', [sys.executable, '-c', PORTABLE_RUNNER_LOADER, *PORTABLE_RUNNER_TESTS_LEFT_OUT],
-                         timeout=RUNNER_TESTS_TIMEOUT)
+                         **RUNNER_TESTS_LIMITS)
         elif in_codex_sandbox():
             self.skip('runner-tests')
         elif scope == 'none':
@@ -1310,10 +1358,10 @@ class Run:
                       'result = unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromNames(sys.argv[1:])); '
                       'sys.exit(not result.wasSuccessful())')
             self.command('runner-tests', [sys.executable, '-c', loader, *RUNNER_TEST_READERS],
-                         timeout=RUNNER_TESTS_TIMEOUT)
+                         **RUNNER_TESTS_LIMITS)
         else:
             self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'],
-                         timeout=RUNNER_TESTS_TIMEOUT)
+                         **RUNNER_TESTS_LIMITS)
         needed, why = ops_tests_needed(self.changed)
         if portable:
             self.ops_steps(left_out=PORTABLE_OPS_LEFT_OUT)
@@ -1411,7 +1459,7 @@ class Run:
             self.command('package-core', [*PACKAGE_RUNNER, '--core-parallel', str(xunit)],
                          timeout=PARALLEL_CORE_TIMEOUT, ceiling=PARALLEL_CORE_CEILING,
                          stall_seconds=PARALLEL_CORE_STALL_SECONDS, expected=expected, tests=True,
-                         allowed_skips=HANG_PROBE_TIMING_TESTS, record_source=lambda: xunit_records(xunit))
+                         allowed_skips=CORE_ALLOWED_SKIPS, record_source=lambda: xunit_records(xunit))
             return
         except RuntimeError as error:
             step = self.manifest['steps'][-1]
@@ -1424,7 +1472,7 @@ class Run:
             print('package-core: parallel run failed; running SessionKitCoreTests serially', flush=True)
         self.command('package-core-serial', [*PACKAGE_RUNNER, '--core-serial'],
                      timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
-                     expected=expected, tests=True, allowed_skips=HANG_PROBE_TIMING_TESTS)
+                     expected=expected, tests=True, allowed_skips=CORE_ALLOWED_SKIPS)
 
     def skip(self, name, reason=None):
         reason = reason or CODEX_SANDBOX_SKIPS[name]
@@ -1537,14 +1585,7 @@ class Run:
             raise RuntimeError('Inputs changed before Xcode verification')
         scheme, name, timeout = PLANS[plan]
         # T3 runs a few test classes or methods of a plan. Each selector must name tests in the plan.
-        selectors = [s if s.startswith((f'{APP_TEST_TARGET}/', f'{UI_TEST_TARGET}/')) else f'{APP_TEST_TARGET}/{s}'
-                     for s in only]
-        planned = plan_tests(ROOT, name)
-        unmatched = [s for s in selectors if not any(selected(test, s) for test in planned)]
-        if unmatched:
-            raise RuntimeError(f'Not in the {name} test plan: {", ".join(unmatched)}')
-        selectors = narrow_selectors(selectors, planned,
-                                     {f'{APP_TEST_TARGET}/{test}' for test in target_tests(ROOT, APP_TEST_TARGET)})
+        selectors, planned, expected = t3_selection(only, name)
         if selectors:
             self.manifest['only_testing'] = selectors
         if any(test.endswith(SUPERTONIC_APP_MODEL_TEST)
@@ -1607,7 +1648,6 @@ class Run:
                 bundle_id = plistlib.loads((app / 'Info.plist').read_bytes())['CFBundleIdentifier']
                 subprocess.run(['xcrun', 'simctl', 'uninstall', chosen['udid'], bundle_id],
                                cwd=ROOT, capture_output=True, timeout=60)
-            expected = {test for test in planned if not selectors or any(selected(test, s) for s in selectors)}
             on_probation = None if probation is None else {
                 test for test in expected if any(selected(test, s) for s in probation)}
             result_bundle = self.output / 'tests.xcresult'

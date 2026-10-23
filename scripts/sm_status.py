@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A live snapshot of the open PRs into `next` for status replies (#1597). Stdlib, Python 3.9+. Read-only.
+"""A live snapshot of the open PRs into the trunk (`main`) for status replies (#1597). Stdlib, Python 3.9+. Read-only.
 
 Owner rule 2026-10-14 (AGENTS.md "Check before you report"): any status line, and any "armed", "merged" or
 "nothing needs you", rests on a live read of the PR's head checks, latest lane report, audit and mergeable state.
@@ -129,10 +129,12 @@ class GitHub:
     def request(self, method: str, path: str, body: dict | None = None):
         """(parsed JSON, response headers). Retries a dropped connection or a 5xx twice; nothing else."""
         data = json.dumps(body).encode() if body is not None else None
+        # A body without Content-Type goes out as form-encoded, and GitHub answers 415 (#2265).
+        content_type = {'Content-Type': 'application/json'} if data is not None else {}
         for attempt in range(self.retries + 1):
             req = urllib.request.Request(self.url(path), data=data, method=method, headers={
                 'Authorization': f'Bearer {self.token}', 'Accept': 'application/vnd.github+json',
-                'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'sm-status'})
+                'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'sm-status', **content_type})
             try:
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     return json.loads(resp.read() or b'null'), resp.headers
@@ -174,6 +176,9 @@ class GitHub:
 
     def post(self, path: str, body: dict):
         return self.request('POST', path, body)[0]
+
+    def patch(self, path: str, body: dict):
+        return self.request('PATCH', path, body)[0]
 
     def delete(self, path: str):
         return self.request('DELETE', path)[0]
@@ -555,7 +560,7 @@ def analyse(bundle: dict, classify=None) -> dict:
 
 def snapshot(api, now: dt.datetime | None = None, only: list[int] | None = None, classify=None,
              workers: int = 6, sleep=time.sleep) -> dict:
-    """Read every open PR into `next` and judge it. Raises GitHubError when the PR list itself can't be read."""
+    """Read every open PR into the trunk and judge it. Raises GitHubError when the PR list itself can't be read."""
     now = now or dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
     summaries = api.pages(f'pulls?state=open&base={BASE}&sort=created&direction=asc')
     missing = []

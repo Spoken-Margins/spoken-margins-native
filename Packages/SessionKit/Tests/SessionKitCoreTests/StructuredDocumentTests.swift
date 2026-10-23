@@ -192,6 +192,36 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(StructuredDocumentSpeech.spokenLines(doc).first?.hasPrefix("Pittas et al."), true)
     }
 
+    func testAuthorYearCitationsWithThreeOrMoreAuthorsAndYearListsAreCitations() {
+        // #2370: natbib/AER style from "Technology Bottlenecks" (Shukla, 2026); only the
+        // two-author "(Becker and Murphy, 1992)" matched before.
+        let sentences = [
+            "describing which occupations AI is likely to affect (Brynjolfsson, Chandar and Chen, 2025; Webb, 2020), and",
+            "a potential “mini Baumol” effect (Aghion, Jones and Jones, 2019; Baumol, 1967), suggesting that",
+            "the labor that performs them (Agrawal, Gans and Goldfarb, 2019, 2024; Autor, 2024; Imas and Shukla, 2026a).",
+            "task-based models (Acemoglu and Autor, 2011; Autor, Levy and Murnane, 2003) treat",
+            // The same citation from a PDF that lost its spaces, after the spacer (#2370).
+            "likely to affect (Brynjolfsson, Chandar and Chen,2025; Webb,2020)",
+            "as in (Becker and Murphy, 1992).",
+        ]
+        XCTAssertEqual(citationLabels(sentences, references: nil), [
+            "(Brynjolfsson, Chandar and Chen, 2025; Webb, 2020)",
+            "(Aghion, Jones and Jones, 2019; Baumol, 1967)",
+            "(Agrawal, Gans and Goldfarb, 2019, 2024; Autor, 2024; Imas and Shukla, 2026a)",
+            "(Acemoglu and Autor, 2011; Autor, Levy and Murnane, 2003)",
+            "(Brynjolfsson, Chandar and Chen,2025; Webb,2020)",
+            "(Becker and Murphy, 1992)",
+        ])
+        XCTAssertEqual(citationLabels(["GPT-4 ratings from Eloundou et al. (2024) construct a measure."], references: nil), [])
+        XCTAssertEqual(citationLabels(["We tested (1) speed and (2) accuracy."], references: numberedReferences), [])
+        // An author-year paper like this one has no numbered list; with one, "(2)" is a citation (#138).
+        XCTAssertEqual(citationLabels(["In 2019 (2) groups met."], references: nil), [])
+        XCTAssertEqual(citationLabels(["Sales rose (Table 2, 2019) and fell (in 2020)."], references: nil), [])
+        XCTAssertEqual(citationLabels(["The summit (Paris, France, 2019) met."], references: nil), [])
+        XCTAssertEqual(citationLabels(["As shown (Smith, Jones, & Lee, 2019)."], references: nil), ["(Smith, Jones, & Lee, 2019)"])
+        XCTAssertEqual(citationLabels(["As shown (Smith &Jones, 2019)."], references: nil), ["(Smith &Jones, 2019)"])
+    }
+
     private func citationLabels(_ body: [String], references: [String]?) -> [String] {
         var lines = body.map { StructuredDocumentLine(text: $0, role: .body, pageIndex: 0) }
         if let references {
