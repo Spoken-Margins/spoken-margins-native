@@ -3175,15 +3175,13 @@ final class Gate1AppModel: ObservableObject {
 
     func refreshBatchExportRows(store: SQLiteSessionStore) throws {
         let itemsById = Dictionary(uniqueKeysWithValues: try store.listItemSummaries().map { ($0.id, $0) })
+        let activeCounts = try store.activeInterjectionCountsBySession()
         batchExportRows = try store.loadSessions().compactMap { session in
             guard let item = itemsById[session.itemId] else { return nil }
-            let interjectionCount = try store.loadInterjections(sessionId: session.id)
-                .filter { $0.status == "active" }
-                .count
             return BatchSessionExportRow(
                 session: session,
                 itemTitle: item.title,
-                interjectionCount: interjectionCount
+                interjectionCount: activeCounts[session.id] ?? 0
             )
         }
         let availableIds = Set(batchExportRows.map(\.id))
@@ -3191,7 +3189,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func loadDeletedLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {
-        try store.listDeletedItems().map { item in
+        try store.listDeletedItemSummaries().map { item in
             LibraryItemRow(id: item.id, title: item.title, status: "Recently deleted", canDelete: true)
         }
     }
