@@ -21,7 +21,7 @@ extension Gate1AppModel {
         run { engine in
             snapshot = try engine.transcriptionRetryFailed(interjectionId: interjection.id, sessionId: interjection.sessionId, error: failure)
             refreshSelectedItem()
-            refreshMarginRows()
+            refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
         }
     }
 
