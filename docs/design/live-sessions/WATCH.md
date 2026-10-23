@@ -4,6 +4,8 @@ Written 2026-10-23 for #2487 and #2481, answering `BRIEF.md`. A second designer 
 
 **Review note (2026-10-23):** this file is now an appendix to [DESIGN.md](DESIGN.md), which the owner reads. Where the reviewer changed a call here, a review note says so. DESIGN.md holds the merged slice order, the owner's decisions and the defaults taken.
 
+**Second review (2026-10-23):** DESIGN.md was checked against the code on `main` and walked through state by state. It changes these rules here: Home shows only the state line and Record (2.2); the button always says Record (2.8); waiting Margins get Retry and Delete (2.6); Resume follows any End (2.13); the filing rule's id step has a 30-minute limit (3.6); duplicates are checked across all sessions, with a record of deletions (3.6); the fast lane carries details, not audio (3.2); and slice 1 is split into a phone slice and a Watch slice (section 4). Where the two differ, DESIGN.md wins.
+
 ---
 
 ## In one minute
@@ -133,6 +135,8 @@ Fewer is better. There are three, and the listener never navigates between them 
    - "Lecture · on Watch · 14:02" (a watch outline and a moving level meter). The level meter proves the microphone is live. One big **Margin** button. **End** below.
 2. **Recording a Margin.** Full screen. The elapsed time, a level meter, the placing hint in large type, and a big **Stop**. Double-tap is Stop.
 3. **Session start.** Four kind buttons: Meeting, Audiobook, Paper book and Other (lecture, video). Tapping one starts the session at once, as on the phone. Home then shows a **Where are you now?** row, filled in by kind (Meeting 0:00; Audiobook empty, "the time your app shows"; Paper book empty, "page"). Turning the crown on that row sets it, and the checkpoint is stamped at the moment it is set (`SITUATIONS.md` 1.5). It never blocks the start. A switch on Home, off by default, says "Also record the whole session" (section 2.8). **Review note (2026-10-23):** the original asked kind and position on one page before Start, with Lecture as a kind and minutes only. The kinds now match the phone and the code (`ElsewhereKind`: meeting, audiobook, paper, other), a paper book takes a page, and the position is a field, not a step, which matches the phone and saves a tap.
+
+**Second review (2026-10-23):** the first screen is the state line and one big **Record** button only. Mark, End, the position row and the whole-session switch sit below, reached with the crown. The tally shows only when something waits (DESIGN.md section 3).
 
 Blue and orange tint the big button (blue for ready, orange while recording), as today. The words "Record", "Stop" and the icon shape carry the meaning on their own; tint is extra.
 
@@ -346,6 +350,7 @@ Each carries `v` (contract version), `sentAt` (Watch wall time) and `seq` (a cou
    2. else the session its id names, if that session has ended (labelled "after the session ended");
    3. else a new session with that id, if the phone has never seen it (the Watch started it out of range);
    4. else a quick session.
+   **Second review (2026-10-23):** step 2 applies only within 30 minutes of the session's end, and the item our own player was playing comes before a quick session (DESIGN.md section 4, point 6). The phone checks ids across all sessions and keeps a record of deletions, so a retry never brings back a deleted Margin or session.
    An old Margin from before this contract, with no session id, goes through the same rule from step 1, and lands in a quick session for its time if nothing fits.
 5. **Every Margin is visible in exactly one place on each device**: on the Watch in the tally until filed, and on the phone in its session from the moment it is filed.
 6. **Packets and the database.** None of this changes the `.spokenmargins` packet. Live sessions are stored in their own files today; new fields are additions, so the last shipped build still reads them. Standing call: keep packets and databases backward compatible.

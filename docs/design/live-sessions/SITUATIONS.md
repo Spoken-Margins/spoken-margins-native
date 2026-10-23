@@ -4,6 +4,8 @@ Written 2026-10-23 for #2481 and #1989, from [BRIEF.md](BRIEF.md). The Watch its
 
 **Review note (2026-10-23):** this file is now an appendix to [DESIGN.md](DESIGN.md), which the owner reads. Where the reviewer changed a call here, a review note says so. DESIGN.md's decisions and defaults replace section 7's list.
 
+**Second review (2026-10-23):** DESIGN.md was checked against the code on `main` and walked through state by state. Its sections 2, 4, 9 and 11 change rules this file restates: the filing rule, quick sessions, Resume after an End, the meeting's assumed 0:00, and the session store. Where the two differ, DESIGN.md wins.
+
 ## In one minute
 
 1. **A session is a stretch of time spent on one thing outside the app.** A meeting, a book, a lecture, a video. It holds the Margins taken during that time, and what the listener said about where they were.
@@ -56,6 +58,7 @@ The Live Activity's buttons are Record, Mark and End. They need a session alread
 3. The Watch, the Lock Screen and Siri say "Filed in a quick session" when it happens.
 4. On its row and its Margins group there are two actions: **Rename** (name and kind), and **Move to another session**.
 5. Line up works on it the same way, because every Margin keeps its clock time.
+6. **Second review (2026-10-23):** a quick session never blocks a named session, overlapping quick sessions merge, and a named session that covers a quick session's time takes its Margins (DESIGN.md section 2, point 7). While Spoken Margins itself is playing an item, a Margin goes onto that item instead (point 12).
 
 Why this and not a visible inbox list: a quick session needs no new kind of place. It also makes forgetting to start almost free, which is the most common failure in every situation below.
 
@@ -106,6 +109,7 @@ Why this and not a visible inbox list: a quick session needs no new kind of plac
    2. Otherwise, if the id names a session that has ended, it files there, labelled "after the session ended".
    3. Otherwise, if the id names a session the phone has never seen (the Watch started it out of range), the phone creates that session.
    4. Otherwise it starts a quick session (1.4).
+   **Second review (2026-10-23):** step 2 now applies only within 30 minutes of the session's end, and our own player comes before a quick session. The full rule is DESIGN.md section 4, point 6.
    **Review note (2026-10-23):** section 1.9 said time span only, and `WATCH.md` said session id only. Time alone can't place a Margin from a session the Watch started out of range. The id alone files a Margin into an old session after the phone has started a new one. This rule keeps both strengths.
 
 ### 1.9 What in today's code stays, changes, or goes
