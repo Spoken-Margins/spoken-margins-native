@@ -105,7 +105,9 @@ public enum SourceLinkHandoffStoreError: Error, Equatable, LocalizedError {
     }
 }
 
-public struct SourceLinkHandoffStore {
+/// Holds a folder URL and `FileManager.default`, which is safe to use from any thread; the app drains handoffs off
+/// the main thread (#2510).
+public struct SourceLinkHandoffStore: @unchecked Sendable {
     #if SPOKEN_MARGINS_LEGACY
     public static let appGroupIdentifier = "group.com.spokenmargins.native.legacy"
     #else
