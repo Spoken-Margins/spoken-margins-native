@@ -96,9 +96,11 @@ extension Gate1AppModel {
         }
 
         do {
-            try consumePendingSpokenMarginsPackageHandoffs(
-                from: SpokenMarginsPackageHandoffStore.appGroup()
-            )
+            try hangTelemetry.labels.scoped("pendingPackageHandoffs") {
+                try consumePendingSpokenMarginsPackageHandoffs(
+                    from: SpokenMarginsPackageHandoffStore.appGroup()
+                )
+            }
         } catch {
             diagnostics["pendingSpokenMarginsPackageImport"] = "unavailable:\(error.localizedDescription)"
         }
@@ -138,9 +140,11 @@ extension Gate1AppModel {
             diagnostics["pendingBrowserTextPayloads"] = "\(payloadIDs.count)"
             for payloadID in payloadIDs {
                 do {
-                    let handoff = try handoffStore.handoff(payloadID: payloadID)
-                    addedItemIds.append(try importBrowserTextInBackground(handoff))
-                    try handoffStore.deletePayload(payloadID: payloadID)
+                    try hangTelemetry.labels.scoped("pendingBrowserTextImport") {
+                        let handoff = try handoffStore.handoff(payloadID: payloadID)
+                        addedItemIds.append(try importBrowserTextInBackground(handoff))
+                        try handoffStore.deletePayload(payloadID: payloadID)
+                    }
                     diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "imported"
                 } catch Gate5BrowserTextHandoffStoreError.invalidPayload {
                     try? handoffStore.deletePayload(payloadID: payloadID)

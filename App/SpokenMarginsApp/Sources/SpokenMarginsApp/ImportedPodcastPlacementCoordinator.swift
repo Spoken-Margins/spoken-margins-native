@@ -128,18 +128,22 @@ final class ImportedPodcastPlacementCoordinator {
                     itemId: item.id,
                     durationMs: item.media?.durationMs
                 )
-                self.admission[item.id] = nil
-                if self.requestedURL[item.id] == localSourceURL,
-                   (try? PodcastPlacementFile(url: localSourceURL)) == sourceFile {
-                    self.resolve(itemId: item.id, localURL: localSourceURL, recipientTranscriptOverride: timeline)
+                MainThreadOperationLabels.shared.scoped("transientTranscriptResolve") {
+                    self.admission[item.id] = nil
+                    if self.requestedURL[item.id] == localSourceURL,
+                       (try? PodcastPlacementFile(url: localSourceURL)) == sourceFile {
+                        self.resolve(itemId: item.id, localURL: localSourceURL, recipientTranscriptOverride: timeline)
+                    }
+                    try? self.deps.purgeTransientCaches(item.id)
+                    self.deps.recordDiagnostic("recipientAlignmentTranscript:\(item.id)", "consumed_and_deleted")
                 }
-                try? self.deps.purgeTransientCaches(item.id)
-                self.deps.recordDiagnostic("recipientAlignmentTranscript:\(item.id)", "consumed_and_deleted")
             } catch {
-                self.admission[item.id] = nil
-                try? self.deps.purgeTransientCaches(item.id)
-                self.deps.recordDiagnostic(
-                    "recipientAlignmentTranscript:\(item.id)", "failed_and_deleted:\(error.localizedDescription)")
+                MainThreadOperationLabels.shared.scoped("transientTranscriptResolve") {
+                    self.admission[item.id] = nil
+                    try? self.deps.purgeTransientCaches(item.id)
+                    self.deps.recordDiagnostic(
+                        "recipientAlignmentTranscript:\(item.id)", "failed_and_deleted:\(error.localizedDescription)")
+                }
             }
         }
         return true

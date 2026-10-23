@@ -3225,11 +3225,16 @@ final class Gate1AppModel: ObservableObject {
             for link in sortedLinks {
                 do {
                     let data = try await Self.fetchTranscriptLink(link)
-                    if let timeline = try SourceTranscriptParsing.transcriptTimeline(from: data, link: link, itemId: itemId, durationMs: durationMs),
-                       !timeline.segments.isEmpty {
+                    // Parsing a transcript file can be large; it runs off the main thread, like the fetch.
+                    let parsed = try await Task.detached(priority: .userInitiated) {
+                        try SourceTranscriptParsing.transcriptTimeline(from: data, link: link, itemId: itemId, durationMs: durationMs)
+                    }.value
+                    if let timeline = parsed, !timeline.segments.isEmpty {
                         await MainActor.run {
-                            self.diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "attached:\(link.type)"
-                            self.attachSourceTranscriptTimeline(timeline, itemId: itemId)
+                            self.hangTelemetry.labels.scoped("sourceTranscriptAttach") {
+                                self.diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "attached:\(link.type)"
+                                self.attachSourceTranscriptTimeline(timeline, itemId: itemId)
+                            }
                         }
                         return
                     }
@@ -3239,11 +3244,13 @@ final class Gate1AppModel: ObservableObject {
                 }
             }
             await MainActor.run {
-                self.diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "unavailable:\(lastFailure)"
-                self.diagnostics["sourceTranscriptionStatus"] = "unavailable"
-                if self.activeItemId == itemId {
-                    self.sourceTranscriptStatus = "unavailable"
-                    self.snapshot.sourceTranscriptStatus = "unavailable"
+                self.hangTelemetry.labels.scoped("sourceTranscriptUnavailable") {
+                    self.diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "unavailable:\(lastFailure)"
+                    self.diagnostics["sourceTranscriptionStatus"] = "unavailable"
+                    if self.activeItemId == itemId {
+                        self.sourceTranscriptStatus = "unavailable"
+                        self.snapshot.sourceTranscriptStatus = "unavailable"
+                    }
                 }
             }
         }
@@ -3298,23 +3305,27 @@ final class Gate1AppModel: ObservableObject {
                     durationMs: item.media?.durationMs
                 )
                 await MainActor.run {
-                    self.importedPodcastPlacement.releaseFullSourceTranscription(itemId: item.id)
-                    self.attachSourceTranscriptTimeline(timeline, itemId: item.id)
+                    self.hangTelemetry.labels.scoped("sourceTranscriptAttach") {
+                        self.importedPodcastPlacement.releaseFullSourceTranscription(itemId: item.id)
+                        self.attachSourceTranscriptTimeline(timeline, itemId: item.id)
+                    }
                 }
             } catch {
                 await MainActor.run {
-                    self.importedPodcastPlacement.releaseFullSourceTranscription(itemId: item.id)
-                    self.diagnostics["sourceTranscriptionStatus"] = "unavailable"
-                    self.diagnostics["sourceTranscriptionError"] = String(describing: error)
-                    if self.activeItemId == item.id {
-                        self.sourceTranscriptStatus = "unavailable"
-                        self.snapshot.sourceTranscriptStatus = "unavailable"
-                    }
-                    if self.pendingMapGenerationItemId == item.id {
-                        self.pendingMapGenerationItemId = nil
-                    }
-                    if self.activeItemId == item.id, self.lastError == nil {
-                        self.statusMessage = "Audio ready. Source transcript and Listening Map are unavailable; notes will use timestamp context."
+                    self.hangTelemetry.labels.scoped("sourceTranscriptionFailed") {
+                        self.importedPodcastPlacement.releaseFullSourceTranscription(itemId: item.id)
+                        self.diagnostics["sourceTranscriptionStatus"] = "unavailable"
+                        self.diagnostics["sourceTranscriptionError"] = String(describing: error)
+                        if self.activeItemId == item.id {
+                            self.sourceTranscriptStatus = "unavailable"
+                            self.snapshot.sourceTranscriptStatus = "unavailable"
+                        }
+                        if self.pendingMapGenerationItemId == item.id {
+                            self.pendingMapGenerationItemId = nil
+                        }
+                        if self.activeItemId == item.id, self.lastError == nil {
+                            self.statusMessage = "Audio ready. Source transcript and Listening Map are unavailable; notes will use timestamp context."
+                        }
                     }
                 }
             }
