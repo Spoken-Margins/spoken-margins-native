@@ -1401,7 +1401,7 @@ def t3_gate(comments: list[dict]) -> tuple[str, str] | None:
     a PR that asked for T3 with no `tests:` line merges on its other checks (a request that names tests still
     needs a real T3 PASS). Earlier T3 reports still stand.
     """
-    asked, latest, voided = -1, None, -1
+    asked, latest, voided, named = -1, None, -1, -1
     for index, comment in enumerate(comments):
         body = comment.get('body') or ''
         url = comment.get('html_url') or 'an earlier comment'
@@ -1419,8 +1419,12 @@ def t3_gate(comments: list[dict]) -> tuple[str, str] | None:
             request = parse_request(body)
             if request and request['tier'] == 'T3':
                 asked = index
+                if request.get('tests'):
+                    named = index
     if voided > asked:  # the newest request was answered by a report that tested nothing: it is void
-        asked = latest[0] if latest else -1
+        # The runner answers only the newest request, so a named request it never reached stays unanswered: keep
+        # holding for it rather than falling back to an older verdict (the audit of #2556).
+        asked = max(named, latest[0] if latest else -1)
     if asked < 0:
         return None
     again = ('the lane job that reports a T3 PASS on this head merges it, testing again only if next has since '

@@ -1518,6 +1518,12 @@ class MergeTests_Runner(unittest.TestCase):
         named = [comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report(), self.T3_REQUEST]
         self.assertIn('no lane report yet', lane.t3_gate(named)[1])  # a later request that names tests still waits
 
+    def test_a_bare_request_after_a_named_one_does_not_void_the_named_one(self):
+        # The audit of #2556: the runner answers only the newest request, so a no-tests report for a bare request
+        # must not make the earlier request that named tests look answered.
+        comments = [self.T3_REQUEST, comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report()]
+        self.assertIn('no lane report yet', lane.t3_gate(comments)[1])
+
     def test_a_t3_request_still_waiting_for_its_report_holds_the_merge(self):
         old_pass = self.t3_report('PASS', commit=NEWER)
         for comments in ([self.T3_REQUEST], [old_pass, self.T3_REQUEST],
