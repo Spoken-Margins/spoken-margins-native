@@ -313,19 +313,26 @@ def _same(a: str, b: str) -> bool:
     return bool(a and b) and a[:7] == b[:7]
 
 
+def _is_host_test(test: str) -> bool:
+    """A SessionKit test (Module/Class/method) or a Python one (module.Class.method); anything else is an app test,
+    with or without its SpokenMarginsApp module in the name."""
+    return '.' in test or test.startswith('SessionKit')
+
+
 def _closes(failure: dict, later: dict, test: str | None) -> bool:
-    """Whether a later PASS report on the PR ran what the failure ran. A host test is run by any PASS; an app test
-    only by a T3 PASS whose request names the test or its class; a report-level failure by a PASS of its tier."""
+    """Whether a later PASS report on the PR ran what the failure ran. Host tests run only in an `auto` report (T2
+    runs the builds, T3 the app plans); an app test only in a T3 PASS whose request names the test or its class; a
+    report-level failure is closed by a PASS of its own tier."""
     if later['verdict'] != 'PASS' or later['pr'] != failure['pr'] or later['at'] < failure['at']:
         return False
     if test is None:
         return later['tier'] == failure['tier']
-    if test.startswith('SpokenMarginsApp'):
-        parts = test.split('/')
-        return later['tier'] == 'T3' and any(
-            name in later['requested'] for name in ('/'.join(parts[:2]), parts[1] if len(parts) > 1 else '',
-                                                    test, '/'.join(parts[1:])))
-    return True
+    if _is_host_test(test):
+        return later['tier'] == 'auto'
+    parts = test.split('/')
+    parts = parts[1:] if parts[0].startswith('SpokenMarginsApp') else parts
+    return later['tier'] == 'T3' and any(
+        name in later['requested'] for name in (parts[0], '/'.join(parts), test))
 
 
 def _resolve(failure: dict, lanes: list[dict], test: str | None):
@@ -584,7 +591,7 @@ def first_tries(lanes: list[dict]) -> list[dict]:
     """The first lane report for each (PR, head): what the author's push got on its first try."""
     seen, first = set(), []
     for lane in sorted(lanes, key=lambda e: (e['at'], e['id'])):
-        key = (lane['pr'], lane['head'][:7])
+        key = (lane['pr'], lane['head'][:7] or lane['id'])
         if lane['via'] == 'pr' and key not in seen:
             seen.add(key)
             first.append(lane)
@@ -658,7 +665,7 @@ def report(events: list[dict]) -> str:
     same_head = sum((l.get('label') or {}).get('class') in ('flake', 'trunk-moved') for l in fails)
     later = sum(_passed_later_on_head(lane, lanes) for lane in fails)
     out += ['', f'FAIL reports that later passed on the same head: {pct(later, len(fails))} (a PASS of any tier); '
-            f'{pct(same_head, len(fails))} by the stricter test the labels use (a PASS of the same tier).']
+            f'{pct(same_head, len(fails))} by the stricter test the labels use (a PASS of a tier that runs it again).']
 
     # steps
     out += ['', '## Steps (from reports with a lane-event line, and from the `ran:` line of older ones)', '']

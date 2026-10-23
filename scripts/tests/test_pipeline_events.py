@@ -230,6 +230,23 @@ class LabelTests(unittest.TestCase):
                                                     extra='Failed: SessionKitCoreTests/AThingTests/testOne\n'), pr=72))
         self.assertIn('2 failing-test rows are 2 distinct (test, trunk commit) pairs', events.report(found))
 
+    def test_a_host_test_failure_is_closed_only_by_a_later_auto_pass(self):
+        fail = report_body('pr80-r1', 'FAIL', extra='Failed: SessionKitCoreTests/AThingTests/testOne\n')
+        at = ['2026-10-20T10:00:00Z', '2026-10-20T11:00:00Z']
+
+        def failure_class(tier):
+            found = self.run_labels(comment(fail, pr=80, at=at[0]),
+                                    comment(report_body('pr80-r2', 'PASS', tier=tier), pr=80, at=at[1]))
+            return [e for e in found if e['kind'] == 'test-failure'][0]['label']['class']
+        self.assertEqual([failure_class(tier) for tier in ('T2', 'T3', 'auto')], ['unresolved', 'unresolved', 'flake'])
+
+    def test_an_app_test_named_without_its_module_is_still_an_app_test(self):
+        fail = report_body('pr81-r1', 'FAIL', tier='T3', where='iPhone', tests=['Gate1AppModelWorkflowTests'],
+                           extra='Failed: Gate1AppModelWorkflowTests/testX\n')
+        found = self.run_labels(comment(fail, pr=81, at='2026-10-20T10:00:00Z'),
+                                comment(report_body('pr81-r2', 'PASS'), pr=81, at='2026-10-20T11:00:00Z'))
+        self.assertEqual([e['label']['class'] for e in found if e['kind'] == 'test-failure'], ['unresolved'])
+
     def test_one_red_trunk_counts_once_however_many_prs_ran_into_it(self):
         body = report_body('prX-r1', 'FAIL', extra='Failed: SessionKitCoreTests/AThingTests/testOne\n')
         found = self.run_labels(*[comment(body.replace('prX', f'pr{n}'), pr=n) for n in (21, 22, 23)])
