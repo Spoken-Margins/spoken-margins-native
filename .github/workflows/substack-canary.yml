@@ -59,11 +59,11 @@ jobs:
         run: apt-get update -qq && apt-get install -y -qq libsqlite3-dev python3
       # The scheduled run checks the trunk's parser, the code the next phone build carries; a push or a
       # dispatch checks the commit it ran for.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event_name == 'schedule' && (vars.SM_TRUNK || 'main') || github.sha }}
       # Dependency checkouts and their built products. A relative path: inside the container the workspace is /__w/...
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .build-linux
           key: substack-canary-linux-swift6.2.4-${{ hashFiles('Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved') }}
