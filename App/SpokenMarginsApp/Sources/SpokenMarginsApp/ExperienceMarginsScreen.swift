@@ -197,7 +197,7 @@ struct ExperienceMarginsScreen: View {
                                 VStack(alignment: .leading, spacing: 5) {
                                     // Where it was made comes first, then the opening words. A bold one-line gist
                                     // missed the point on 15 of 40 of the owner's real Margins, so none is shown (#777).
-                                    Text(row.needsAttention ? row.attentionDescription : row.placeDescription())
+                                    Text(row.captionDescription())
                                         .font(.subheadline.weight(.semibold))
                                         .foregroundStyle(row.needsAttention ? AppColors.coral : AppColors.text)
                                         .multilineTextAlignment(.leading)
@@ -225,7 +225,7 @@ struct ExperienceMarginsScreen: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("\(row.interjection.replyTo == nil ? "My Margin" : "My reply to a shared Margin"). \(row.needsAttention ? row.attentionDescription.trimmingCharacters(in: CharacterSet(charactersIn: ".")) : row.placeDescription()). \(row.needsAttention && row.preview == row.attentionDescription ? "" : "\(row.preview). ")\(group.itemTitle).")
+                        .accessibilityLabel("\(row.interjection.replyTo == nil ? "My Margin" : "My reply to a shared Margin"). \(row.captionDescription().trimmingCharacters(in: CharacterSet(charactersIn: "."))). \(row.needsAttention && row.preview == row.attentionDescription ? "" : "\(row.preview). ")\(group.itemTitle).")
                         // The star on the row is a picture; the listener hears it as the row's value.
                         .accessibilityValue(row.interjection.isStarredForSharing == true ? "Starred for sharing" : "")
                         .accessibilityIdentifier("margins.row.\(row.id)")

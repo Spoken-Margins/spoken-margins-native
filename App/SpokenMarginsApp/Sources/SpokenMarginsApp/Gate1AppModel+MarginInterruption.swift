@@ -58,6 +58,9 @@ extension Gate1AppModel {
                 recordSavedInterjectionForOnboarding()
                 let interjection = latestInterjectionNeedingTranscription()
                 transcribeAndRecordSavedSpokenMargin()
+                if let id = engine.lastScheduledTranscriptionInterjectionId, let sessionId = snapshot.sessionId {
+                    cutShortMarks().set(event == .routeLost ? .headphonesDisconnected : .interrupted, sessionId: sessionId, interjectionId: id)
+                }
                 diagnostics["lastMarginCutShort"] = "\(interjection?.id ?? "unknown") \(cause) \(String(format: "%.1f", seconds ?? 0))s"
                 reportWarning(event == .routeLost
                     ? "Margin saved. It stopped when your headphones disconnected. Tap Play to continue."

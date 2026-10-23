@@ -298,6 +298,17 @@ struct MarginRow: Identifiable, Equatable, Sendable {
             createdAt: interjection.createdAt, now: now)
     }
 
+    /// Set when a call, Siri, the headphones or a closed app ended this recording early, until the listener opens it (#1976).
+    var cutShort: CutShortMark? {
+        CutShortMargins.shared.mark(sessionId: interjection.sessionId, interjectionId: interjection.id)
+    }
+
+    /// The row's headline: what needs attention, else where it was made, led by "Cut short" or "Recovered" while that
+    /// mark is on. A recovered Margin always waits on its transcript, so the mark can't be shown only when nothing does.
+    func captionDescription(now: Date = Date()) -> String {
+        [cutShort?.tag, needsAttention ? attentionDescription : placeDescription(now: now)].compactMap { $0 }.joined(separator: " · ")
+    }
+
     var targetDescription: String {
         switch interjection.targetType {
         case .item: "Source"
