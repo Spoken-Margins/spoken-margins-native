@@ -225,6 +225,70 @@ final class StoreReadMeterTests: XCTestCase {
         XCTAssertFalse(try store.hasLiveItem(id: fixture.articleItemId), "a trashed item is not live, as listItems() said")
     }
 
+    func testOnboardingAsksTheDatabaseForAnActiveMarginInsteadOfReadingEverySession() throws {
+        let fixture = try build(.small)
+        let meter = StoreReadMeter()
+        let store = try fixture.openStore(meter: meter)
+        meter.reset()
+
+        let answer = try store.hasActiveInterjection()
+        let asked = meter.totals(for: "hasActiveInterjection()")
+        meter.reset()
+        let oldAnswer = try store.loadSessions().contains { session in
+            try store.loadInterjections(sessionId: session.id).contains { $0.status == "active" }
+        }
+        let oldBytes = meter.totals().values.reduce(0) { $0 + $1.bytes }
+
+        XCTAssertTrue(answer)
+        XCTAssertEqual(answer, oldAnswer)
+        XCTAssertEqual(asked.rows, 1, "SQLite stops at the first active Margin (#2506)")
+        XCTAssertEqual(asked.bytes, 0, "no payload is copied for a yes or no")
+        XCTAssertGreaterThan(oldBytes, 0, "the old scan read every session and Margin it passed")
+    }
+
+    func testOneItemsSummaryLeavesItsTextInTheDatabase() throws {
+        let fixture = try build(.small)
+        let meter = StoreReadMeter()
+        let store = try fixture.openStore(meter: meter)
+        meter.reset()
+
+        let summary = try XCTUnwrap(try store.loadItemSummary(id: fixture.articleItemId))
+        let summaryRead = meter.totals(for: "loadItemSummary(id:)")
+        let whole = try store.loadItem(id: fixture.articleItemId)
+        let wholeBytes = whole.text?.utf8.count ?? 0
+
+        XCTAssertEqual(summary, LibraryItemSummary(whole), "the same answer as the whole item gives")
+        XCTAssertEqual(summaryRead.rows, 1)
+        XCTAssertGreaterThan(wholeBytes, 10_000, "the fixture's article has real text")
+        XCTAssertLessThan(summaryRead.bytes, wholeBytes / 4, "the text is cut out in SQLite, not copied and dropped (#2506)")
+        XCTAssertNil(try store.loadItemSummary(id: "no-such-item"))
+        try store.moveItemToTrash(id: fixture.articleItemId)
+        XCTAssertNotNil(try store.loadItemSummary(id: fixture.articleItemId)?.deletedAt, "a trashed item still answers, with its deletedAt")
+    }
+
+    func testAnActiveMarginNeedsItsSessionAndAnActiveStatus() throws {
+        let fixture = try build(.small)
+        let store = try fixture.openStore()
+        for session in try store.loadSessions() {
+            for var margin in try store.loadInterjections(sessionId: session.id) {
+                margin.status = "deleted"
+                try store.saveInterjection(margin)
+            }
+        }
+        XCTAssertFalse(try store.hasActiveInterjection(), "only deleted Margins are left")
+
+        var orphan = try XCTUnwrap(try store.loadInterjections(sessionId: "session-0").first)
+        orphan.id = "orphan-margin"
+        orphan.sessionId = "no-such-session"
+        orphan.status = "active"
+        try store.saveInterjection(orphan)
+        XCTAssertFalse(try store.hasActiveInterjection(), "a Margin whose session is gone never counted")
+
+        orphan.sessionId = "session-0"
+        try store.saveInterjection(orphan)
+        XCTAssertTrue(try store.hasActiveInterjection())
+    }
+
     /// The screens that only need titles, ids and media types read summaries now. The answers must not change.
     func testSummariesGiveTheSameAnswersAsWholeItems() throws {
         let fixture = try build(.small)

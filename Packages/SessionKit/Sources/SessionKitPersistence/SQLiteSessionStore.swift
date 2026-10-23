@@ -380,6 +380,31 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try loadBySession(kind: "interjection", sessionId: sessionId)
     }
 
+    /// Whether any session has a Margin that is still active: the yes or no onboarding wants where it used to decode
+    /// every session and every Margin to look for one (#2506). SQLite stops at the first match and returns no payload.
+    /// A Margin counts when its session is in the store, as when `loadInterjections(sessionId:)` was asked for each session.
+    public func hasActiveInterjection() throws -> Bool {
+        let timer = StoreReadTimer(readMeter, method: #function)
+        var found = false
+        defer { timer?.finish(rows: found ? 1 : 0, bytes: 0) }
+        return try withReadConnection { connection in
+            var statement: OpaquePointer?
+            let sql = """
+                SELECT 1 FROM records AS margin
+                WHERE margin.kind = 'interjection'
+                  AND CASE WHEN json_valid(margin.payload) THEN json_extract(margin.payload, '$.status') = 'active' ELSE 0 END
+                  AND EXISTS (SELECT 1 FROM records AS session WHERE session.kind = 'session' AND session.id = margin.session_id)
+                LIMIT 1;
+                """
+            guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_has_active_interjection")
+            }
+            defer { sqlite3_finalize(statement) }
+            found = sqlite3_step(statement) == SQLITE_ROW
+            return found
+        }
+    }
+
     /// The Margin rows `deleteItem(id:)` removes with the item: every row filed under it.
     public func loadInterjections(itemId: String) throws -> [Interjection] {
         try loadByItem(kind: "interjection", itemId: itemId)
@@ -1257,9 +1282,19 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     /// count only for text with combining marks or joined emoji, and only feeds the listening-time estimate. A payload
     /// that can't be cut or decoded sends the whole read the full way, which sets the broken record aside as before.
     public func listItemSummaries(includeDeleted: Bool = false) throws -> [LibraryItemSummary] {
+        try itemSummaries(onlyId: nil, includeDeleted: includeDeleted, method: #function)
+    }
+
+    /// One item's summary, trashed or not, or nil when `id` is not an item: for a caller that has an id and needs only
+    /// what the Library row knows, not the item's text (#2506). The same cut of the payload as `listItemSummaries`.
+    public func loadItemSummary(id: String) throws -> LibraryItemSummary? {
+        try itemSummaries(onlyId: id, includeDeleted: true, method: #function).first
+    }
+
+    private func itemSummaries(onlyId: String?, includeDeleted: Bool, method: String) throws -> [LibraryItemSummary] {
         var rows: [(payload: String, head: String?, length: Int?)] = []
         var needsFullRead = false
-        let timer = StoreReadTimer(readMeter, method: #function)
+        let timer = StoreReadTimer(readMeter, method: method)
         defer { timer?.finish(rows: rows.count, bytes: rows.reduce(0) { $0 + $1.payload.utf8.count + ($1.head?.utf8.count ?? 0) }) }
         try withReadConnection { connection in
             var statement: OpaquePointer?
@@ -1267,12 +1302,13 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
                 SELECT CASE WHEN json_valid(payload) THEN json_remove(payload, '$.text', '$.documentStructure') END,
                        substr(CASE WHEN json_valid(payload) THEN json_extract(payload, '$.text') END, 1, \(Self.summaryTextHeadLength)),
                        CASE WHEN json_valid(payload) THEN length(json_extract(payload, '$.text')) END
-                FROM records WHERE kind = 'item' ORDER BY updated_at DESC, id;
+                FROM records WHERE kind = 'item'\(onlyId == nil ? "" : " AND id = ?") ORDER BY updated_at DESC, id;
                 """
             guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_item_summaries")
             }
             defer { sqlite3_finalize(statement) }
+            if let onlyId { bind(statement, index: 1, value: onlyId) }
             while true {
                 let step = sqlite3_step(statement)
                 if step == SQLITE_DONE { return }
@@ -1299,7 +1335,9 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
                 sourceURL: item.sourceURL, createdAt: item.createdAt, sourceCompletedAt: item.sourceCompletedAt,
                 hasListenableText: hasText, textCharacterCount: row.length))
         }
-        if needsFullRead { return try listItems(includeDeleted: includeDeleted).map(LibraryItemSummary.init) }
+        if needsFullRead {
+            return try listItems(includeDeleted: includeDeleted).filter { onlyId == nil || $0.id == onlyId }.map(LibraryItemSummary.init)
+        }
         return includeDeleted ? summaries : summaries.filter { $0.deletedAt == nil }
     }
 
