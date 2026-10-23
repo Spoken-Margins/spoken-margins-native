@@ -157,6 +157,8 @@ struct AppNavigationState: Equatable, Sendable {
     var addSourceRoute: AddSourceRoute?
     /// Where Following was scrolled to, kept across the screen switches that destroy its list (#479).
     var followingScroll = FollowingScrollMemory()
+    /// The same for the Library list, whose rows are also destroyed when an item opens (#2395).
+    var libraryScroll = FollowingScrollMemory()
 
     mutating func select(_ root: AppRoot, recordingIsLocked: Bool) {
         guard !recordingIsLocked else { return }
