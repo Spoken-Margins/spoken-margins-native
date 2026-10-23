@@ -43,7 +43,7 @@ What it does:
   check elsewhere (the PR body) stands in. Three or more PRs changing the playback screen's view files are
   one item at the top of the ten minutes ("The playback screen changed"), each PR listed under its own title;
   PRs that share an issue keep their own titles in every list.
-  After those, "Still waiting on your check" lists open issues labelled `status: needs-human-validation` whose
+  After those, "Still waiting on your check" lists issues (open, or closed in the last 60 days: a merged fix closes its issue and the label stays) labelled `status: needs-human-validation` whose
   fix is in this build but wasn't in the changes above, for as long as nobody has checked them (#927). A check
   is read from the issue body or the PR as "Owner check", "Phone check" or a "## Steps" heading, and the newest
   one in the issue's comments wins, including the hourly dispatch's "This needs the owner's headphones: ...";
@@ -572,36 +572,44 @@ def fetch_items(numbers: list[int]) -> dict[int, dict]:
 
 
 WAITING_QUERY = '''query($cursor: String) { repository(owner: "%s", name: "%s") {
-issues(states: OPEN, labels: ["%s"], first: 25, after: $cursor, orderBy: {field: CREATED_AT, direction: ASC}) {
+issues(states: %s, labels: ["%s"], first: 25, after: $cursor%s, orderBy: {field: CREATED_AT, direction: ASC}) {
 pageInfo { hasNextPage endCursor }
-nodes { %s createdAt
+nodes { %s createdAt closedAt
 timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 25) { nodes { ... on CrossReferencedEvent {
 source { ... on PullRequest { number title url body merged } } } } } } } } }'''
 
+CLOSED_WINDOW_DAYS = 60  # a merged fix closes its issue and the label stays (owner, 2026-10-22), so look back this far
+
 
 def fetch_waiting() -> list[dict] | None:
-    """Open issues marked `status: needs-human-validation` (dispatch adds it when their fix merges into next),
-    oldest first, with their comments and the PRs that mention them; None when GitHub can't be reached (#927)."""
+    """Issues marked `status: needs-human-validation` (dispatch adds it when their fix merges into the trunk),
+    oldest first, with their comments and the PRs that mention them: the open ones, plus those closed in the
+    last 60 days, because a merged fix closes its issue and the label stays on it (owner, 2026-10-22).
+    None when GitHub can't be reached (#927)."""
     owner, name = REPO.split('/')
-    query = WAITING_QUERY % (owner, name, MERGED_ON_NEXT, ISSUE_FIELDS)
+    since = (datetime.datetime.now(datetime.timezone.utc)
+             - datetime.timedelta(days=CLOSED_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
     issues: list[dict] = []
-    cursor = None
-    for _ in range(20):  # 500 issues at most
-        raw = gh('api', 'graphql', '-f', f'query={query}', *(['-f', f'cursor={cursor}'] if cursor else []))
-        try:
-            page = json.loads(raw)['data']['repository']['issues'] if raw else None
-        except (ValueError, KeyError, TypeError):
-            page = None
-        if not isinstance(page, dict):
-            return None
-        issues += [issue for issue in page.get('nodes') or [] if issue and issue.get('number')]
-        info = page.get('pageInfo') or {}
-        if not info.get('hasNextPage') or not info.get('endCursor'):
-            break
-        cursor = info['endCursor']
-    else:
-        return None  # Never publish a supposedly complete phone backlog after truncating it (#1600).
-    return issues
+    for states, extra in (('OPEN', ''), ('CLOSED', f', filterBy: {{since: "{since}"}}')):
+        query = WAITING_QUERY % (owner, name, states, MERGED_ON_NEXT, extra, ISSUE_FIELDS)
+        cursor = None
+        for _ in range(20):  # 500 issues at most
+            raw = gh('api', 'graphql', '-f', f'query={query}', *(['-f', f'cursor={cursor}'] if cursor else []))
+            try:
+                page = json.loads(raw)['data']['repository']['issues'] if raw else None
+            except (ValueError, KeyError, TypeError):
+                page = None
+            if not isinstance(page, dict):
+                return None
+            issues += [issue for issue in page.get('nodes') or [] if issue and issue.get('number')
+                       and (states == 'OPEN' or (issue.get('closedAt') or '') >= since)]
+            info = page.get('pageInfo') or {}
+            if not info.get('hasNextPage') or not info.get('endCursor'):
+                break
+            cursor = info['endCursor']
+        else:
+            return None  # Never publish a supposedly complete phone backlog after truncating it (#1600).
+    return sorted(issues, key=lambda issue: issue.get('createdAt') or '')
 
 
 def build_prs(sha: str) -> set[int]:
@@ -976,14 +984,21 @@ def found_on_phone(entry: list[dict]) -> bool:
     return any(FIRST_ON_PHONE & labels(issue) for pr in entry for issue in pr['issues'])
 
 
+STILL_UNCHECKED = {'found-on-phone', 'needs-human-validation', MERGED_ON_NEXT}
+
+
 def passed_on_phone(entry: list[dict]) -> bool:
-    """Every issue the entry fixes is closed, which only happens after the owner's pass, so it never goes on a
+    """Every issue the entry fixes is closed and carries no phone-validation label, so it never goes on a
     plan again (#1100). An entry with no linked issue has nothing to close and stays.
+
+    Since 2026-10-22 a merged fix closes its issue and `found-on-phone` or `needs-human-validation` stays on
+    it, so closed alone no longer means the owner passed it; a failed check reopens the issue instead.
 
     No timestamps: a follow-up PR can merge after its issue closed (#223 closed 10-04, PR #677 merged 10-05) and
     the owner records the pass as a comment, so closedAt never moves past the merge."""
     issues = [issue for pr in entry for issue in pr['issues']]
-    return bool(issues) and all(issue.get('state') == 'CLOSED' for issue in issues)
+    return bool(issues) and all(issue.get('state') == 'CLOSED' and not STILL_UNCHECKED & labels(issue)
+                                for issue in issues)
 
 
 def labels(item: dict) -> set[str]:
@@ -1413,7 +1428,7 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
                             f': needs {needs} on your phone first' if needs else
                             f': needs a test {fix["lacks"]}, not supplied yet' if fix.get('lacks') else ''))
         if len(also_waiting) > ALSO_WAITING:
-            query = 'is%3Aissue+is%3Aopen+label%3A%22' + MERGED_ON_NEXT.replace(':', '%3A').replace(' ', '+') + '%22'
+            query = 'is%3Aissue+label%3A%22' + MERGED_ON_NEXT.replace(':', '%3A').replace(' ', '+') + '%22'
             lines.append(f'- and {len(also_waiting) - ALSO_WAITING} more: '
                          f'[every fix waiting on a check](https://github.com/{REPO}/issues?q={query})')
         lines.append('')
