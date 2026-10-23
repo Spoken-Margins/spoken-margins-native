@@ -13,13 +13,17 @@ Standard library only, so the analysis is host-tested in the fast plan and runs 
 """
 import argparse
 import array
+import contextlib
 import json
 import math
+import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unicodedata
 import wave
 from pathlib import Path
@@ -359,8 +363,138 @@ def tool():
     return str(binary)
 
 
-def transcribe_file(path, locale='en-US'):
-    """One `loopback transcribe` run on one file. Use transcribe() for recordings: this one loses words at pauses."""
+# --- The recorder app (#1790) ---------------------------------------------------------------------------------
+#
+# macOS charges Microphone and Speech Recognition to the "responsible" process: the app that started the
+# command. On the lane that is the GitHub runner's node, which is hardened, has no audio-input entitlement and
+# no usage text, so macOS hands the recorder digital silence and never asks anyone. build-app.sh builds this
+# same tool as SpokenMarginsLaneRecorder.app, and run_app() starts it through LaunchServices (`open`), which
+# makes the app its own responsible process. The owner allows it once (setup-recorder-app.sh).
+#
+# The app never touches the run's evidence folder directly: the repo is under ~/Documents, which macOS
+# protects with a third permission. It works in a job folder under ~/Library/Caches, and run_app() copies
+# what it wrote back (`collect`).
+
+APP_NAME = 'SpokenMarginsLaneRecorder'
+APP_ENV = 'SM_LOOPBACK_APP'      # where the app is installed, when not ~/Applications
+APP_TIMEOUT_STATUS = 124         # app-run's exit when the app never reported its own status
+APP_LAUNCH_STATUS = 125          # app-run's exit when `open` could not start the app
+
+
+def app_path():
+    return Path(os.environ.get(APP_ENV) or Path.home() / 'Applications' / f'{APP_NAME}.app')
+
+
+def installed_app():
+    """The installed recorder app, or None."""
+    app = app_path()
+    return app if (app / 'Contents' / 'MacOS' / APP_NAME).exists() else None
+
+
+def app_is_stale(app):
+    """True when the app was built from a different loopback.swift than this checkout's."""
+    import plistlib
+    try:
+        built = plistlib.loads((Path(app) / 'Contents' / 'Info.plist').read_bytes()).get('SMLoopbackSourceSHA256')
+    except (OSError, ValueError):
+        return True
+    import hashlib
+    return built != hashlib.sha256((HERE / 'loopback.swift').read_bytes()).hexdigest()
+
+
+def jobs_folder():
+    base = Path(os.environ.get('SM_LANE_STATE_DIR') or Path.home() / 'Library/Caches/SpokenMarginsLane')
+    folder = base / 'recorder-jobs'
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def launch_command(app, job, args):
+    """`open` without -W: -W races a short-lived app (it can't find the pid and returns at once), so the
+    caller waits for the job's `status` file instead. -n starts a fresh copy even if one is running."""
+    return ['/usr/bin/open', '-n', '-g', '-a', os.path.abspath(app), '--args', '--job', str(job), *[str(a) for a in args]]
+
+
+def run_app(app, args, timeout, inputs=None, collect=None, relay=None, stop=None, launch=subprocess.run,
+            poll=0.1, clock=time.monotonic, sleep=time.sleep):
+    """Runs one loopback command as the recorder app and waits for it. `{job}` in `args` is the job folder.
+    `inputs` {name: path} are copied in first; `collect` {name: path} are copied out after (`stdout` and
+    `stderr` are the app's own). `relay` gets each stderr line as it appears; `stop` (an Event) asks the app to
+    stop. Returns (status, stdout, stderr); status is None when the app never reported one."""
+    job = Path(tempfile.mkdtemp(prefix='job-', dir=jobs_folder()))
+    try:
+        for name, source in (inputs or {}).items():
+            shutil.copyfile(source, job / name)
+        opened = launch(launch_command(app, job, [str(a).replace('{job}', str(job)) for a in args]),
+                        capture_output=True, text=True, timeout=60)
+        if opened.returncode:
+            return APP_LAUNCH_STATUS, '', f'could not start {app}: {(opened.stderr or opened.stdout).strip()}'
+        deadline, shown, asked = clock() + timeout, 0, None
+
+        def relay_new():
+            nonlocal shown
+            with contextlib.suppress(OSError):
+                lines = (job / 'stderr').read_text(errors='replace').splitlines(keepends=True)
+                for line in lines[shown:]:
+                    if not line.endswith('\n'):
+                        break  # half a line; read it next time
+                    if relay:
+                        relay(line.rstrip('\n'))
+                    shown += 1
+
+        while not (job / 'status').exists():
+            relay_new()
+            if asked is None and ((stop is not None and stop.is_set()) or clock() >= deadline):
+                (job / 'stop').touch()
+                asked = clock()
+            if asked is not None and clock() - asked >= 10:
+                break
+            sleep(poll)
+        relay_new()
+        status = None
+        with contextlib.suppress(OSError, ValueError):
+            status = int((job / 'status').read_text().strip())
+        for name, destination in (collect or {}).items():
+            if (job / name).exists():
+                Path(destination).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(job / name, destination)
+        read = lambda name: (job / name).read_text(errors='replace') if (job / name).exists() else ''
+        return status, read('stdout'), read('stderr')
+    finally:
+        shutil.rmtree(job, ignore_errors=True)
+
+
+def app_run(args):
+    """`loopback.py app-run`: run_app() as a command, so `loopback route -- …` can wrap it. TERM asks the app to
+    stop and waits for it, so route restores the default output only after the recorder has let go."""
+    import signal
+    stop = threading.Event()
+    for signum in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(signum, lambda *_: stop.set())
+    command = args.cmd[1:] if args.cmd[:1] == ['--'] else args.cmd
+    collect = dict(item.split('=', 1) for item in args.collect)
+    status, out, err = run_app(args.app, command, args.timeout, collect=collect, stop=stop,
+                               relay=lambda line: print(line, file=sys.stderr, flush=True))
+    sys.stdout.write(out)
+    if status is None:
+        print(f'loopback.py: the recorder app did not report finishing within {args.timeout:.0f} s', file=sys.stderr)
+        return APP_TIMEOUT_STATUS
+    if status == APP_LAUNCH_STATUS:
+        print('loopback.py: ' + err, file=sys.stderr)
+    return status
+
+
+def transcribe_file(path, locale='en-US', app=None):
+    """One `loopback transcribe` run on one file. Use transcribe() for recordings: this one loses words at pauses.
+    With `app`, it runs as the recorder app (above), so the app's Speech Recognition permission applies."""
+    if app:
+        status, out, err = run_app(app, ['transcribe', '{job}/input.wav', '--locale', locale], timeout=660,
+                                   inputs={'input.wav': path})
+        if status is None:
+            raise RuntimeError('the recorder app did not report finishing its transcription')
+        if status:
+            raise RuntimeError(err.strip() or f'transcription in the recorder app exited {status}')
+        return json.loads(out)
     result = subprocess.run([tool(), 'transcribe', str(path), '--locale', locale], capture_output=True, text=True)
     if result.returncode == -6 or result.returncode == 134:
         # macOS kills a process that asks for Speech Recognition when the app responsible for it (the
@@ -463,6 +597,8 @@ def main(argv=None):
     check.add_argument('--expected', help='file with the text that should have been spoken (implies --transcribe)')
     check.add_argument('--max-wer', type=float, help='fail above this word error rate')
     check.add_argument('--locale', default='en-US')
+    check.add_argument('--via-app', action='store_true',
+                       help='transcribe as the installed recorder app, which holds Speech Recognition (README)')
 
     sc = sub.add_parser('score', help='score a transcript against expected text')
     sc.add_argument('transcript', help='text file, or the JSON `loopback transcribe` printed')
@@ -472,6 +608,7 @@ def main(argv=None):
     tr.add_argument('wav')
     tr.add_argument('--locale', default='en-US')
     tr.add_argument('--silence-db', type=float, default=-45.0)
+    tr.add_argument('--via-app', action='store_true', help='transcribe as the installed recorder app')
 
     capture = sub.add_parser('capture', help='route output to BlackHole, record, and run a command meanwhile')
     capture.add_argument('--seconds', type=float, required=True)
@@ -480,6 +617,13 @@ def main(argv=None):
     capture.add_argument('--no-route', action='store_true',
                          help="record only; leave the default output alone (the source plays to the device itself)")
     capture.add_argument('cmd', nargs=argparse.REMAINDER, help='-- command to run while recording')
+
+    run = sub.add_parser('app-run', help='run one loopback command as the recorder app and wait for it')
+    run.add_argument('--app', default=None, help='the app (default: the installed one)')
+    run.add_argument('--timeout', type=float, default=600, help='ask the app to stop after this (s)')
+    run.add_argument('--collect', action='append', default=[], metavar='NAME=PATH',
+                     help='copy this file from the job folder out afterwards (stdout, stderr, or one it wrote)')
+    run.add_argument('cmd', nargs=argparse.REMAINDER, help='-- the loopback command; {job} is the job folder')
 
     args = parser.parse_args(argv)
     if args.command == 'score':
@@ -490,28 +634,57 @@ def main(argv=None):
         return 0
     if args.command == 'capture':
         return capture_run(args)
+    if args.command == 'app-run':
+        args.app = args.app or installed_app()
+        if not args.app:
+            print(f'loopback.py: no recorder app at {app_path()}; run ops/audio-loopback/setup-recorder-app.sh',
+                  file=sys.stderr)
+            return APP_LAUNCH_STATUS
+        return app_run(args)
     if args.command == 'transcribe':
-        heard = transcribe(args.wav, args.locale, args.silence_db)
+        heard = transcribe(args.wav, args.locale, args.silence_db, run=via_app(args))
         print(json.dumps(heard, indent=2))
         return 0 if heard['text'] else 1
-    report = analyse(args.wav, args.silence_db, args.stall)
-    if args.transcribe or args.expected:
-        try:
-            report['transcript'] = transcribe(args.wav, args.locale, args.silence_db)
-        except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
-            report['transcript_error'] = str(error)
-        if args.expected and 'transcript' in report and not report['transcript']['text'].strip():
-            # An empty transcript of a recording with sound means the words weren't checked; say why.
-            report['transcript_error'] = report['transcript'].get('empty_reason', 'the recogniser returned no words')
-        elif args.expected and 'transcript' in report:
-            report['score'] = score(report['transcript']['text'], Path(args.expected).read_text())
-    report['problems'] = verdict(report, args.max_stall, args.allow_repeats, args.max_wer, args.min_sound, args.allow_trailing)
-    if args.expected and 'transcript_error' in report:
-        # A check that couldn't run is not a pass.
-        report['problems'].append('could not check the words: ' + report['transcript_error'])
-    report['verdict'] = 'FAIL' if report['problems'] else 'PASS'
+    report = check_recording(args.wav, Path(args.expected).read_text() if args.expected else None,
+                             transcribe_too=args.transcribe, locale=args.locale, silence_db=args.silence_db,
+                             stall=args.stall, max_stall=args.max_stall, allow_repeats=args.allow_repeats,
+                             max_wer=args.max_wer, min_sound=args.min_sound, allow_trailing=args.allow_trailing,
+                             run=via_app(args))
     print(json.dumps(report, indent=2))
     return 1 if report['problems'] else 0
+
+
+def check_recording(path, expected=None, transcribe_too=False, locale='en-US', silence_db=-45.0, stall=2.0,
+                    max_stall=None, allow_repeats=False, max_wer=None, min_sound=None, allow_trailing=False,
+                    run=transcribe_file):
+    """The `check` report for one recording: the analysis, the transcript and score when `expected` text is
+    given, `problems` and `verdict`. A words check that couldn't run is a problem, never a pass."""
+    report = analyse(path, silence_db, stall)
+    if transcribe_too or expected is not None:
+        try:
+            report['transcript'] = transcribe(path, locale, silence_db, run=run)
+        except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
+            report['transcript_error'] = str(error)
+        if expected is not None and 'transcript' in report and not report['transcript']['text'].strip():
+            # An empty transcript of a recording with sound means the words weren't checked; say why.
+            report['transcript_error'] = report['transcript'].get('empty_reason', 'the recogniser returned no words')
+        elif expected is not None and 'transcript' in report:
+            report['score'] = score(report['transcript']['text'], expected)
+    report['problems'] = verdict(report, max_stall, allow_repeats, max_wer, min_sound, allow_trailing)
+    if expected is not None and 'transcript_error' in report:
+        report['problems'].append('could not check the words: ' + report['transcript_error'])
+    report['verdict'] = 'FAIL' if report['problems'] else 'PASS'
+    return report
+
+
+def via_app(args):
+    """The transcriber for --via-app: transcribe_file as the installed recorder app."""
+    if not args.via_app:
+        return transcribe_file
+    app = installed_app()
+    if not app:
+        sys.exit(f'no recorder app at {app_path()}; run ops/audio-loopback/setup-recorder-app.sh')
+    return lambda path, locale: transcribe_file(path, locale, app=app)
 
 
 def capture_run(args):
@@ -521,13 +694,18 @@ def capture_run(args):
     record = [binary, 'record', '--device', args.device, '--seconds', str(args.seconds), '--out', args.out]
     command = args.cmd[1:] if args.cmd[:1] == ['--'] else args.cmd
     recorder_cmd = record if args.no_route else [binary, 'route', '--to', args.device, '--', *record]
-    recorder = subprocess.Popen(recorder_cmd)
-    status = 0
-    try:
-        if command:
-            status = subprocess.run(command).returncode
-    finally:
-        recorded = recorder.wait()
+    # A routing capture holds the Mac-wide audio window (window.py), so it never overlaps a lane test's window:
+    # two routes at once would each save the other's BlackHole as "the device to put back".
+    import window
+    with contextlib.nullcontext() if args.no_route else window.audio_lock(f'loopback.py capture (pid {os.getpid()})',
+                                                                          max_wait=window.LOCK_WAIT):
+        recorder = subprocess.Popen(recorder_cmd)
+        status = 0
+        try:
+            if command:
+                status = subprocess.run(command).returncode
+        finally:
+            recorded = recorder.wait()
     return recorded or status
 
 
