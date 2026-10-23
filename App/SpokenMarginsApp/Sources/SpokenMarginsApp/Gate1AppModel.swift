@@ -3424,20 +3424,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func interjectionAudioEvidence(for path: String) -> String {
-        guard let url = resolvedInterjectionAudioURL(for: path) else {
-            return "duration_ms=unknown;bytes=unknown"
-        }
-        let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
-        #if canImport(AVFoundation)
-        if let audioFile = try? AVAudioFile(forReading: url), audioFile.processingFormat.sampleRate > 0 {
-            let durationMs = Int((Double(audioFile.length) / audioFile.processingFormat.sampleRate * 1000).rounded())
-            return "duration_ms=\(durationMs);bytes=\(bytes)"
-        }
-        #endif
-        return "duration_ms=unknown;bytes=\(bytes)"
-    }
-
     func recordAnchorCaptureDiagnostics(for interjection: Interjection) {
         diagnostics[Self.marginDiagnosticKey("interjectionAnchorAtCapture", interjection)] = [
             "type=\(interjection.anchor.anchorType.rawValue)",
