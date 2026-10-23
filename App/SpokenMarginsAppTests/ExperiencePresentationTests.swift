@@ -491,6 +491,22 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertTrue(legacy.needsAttention, "An absent recording must still be distinguished from a written note")
     }
 
+    func testACutShortMarginLeadsItsRowCaptionWithTheMarkUntilItIsCleared() {
+        let note = interjection(transcript: "I was saying")
+        let row = MarginRow(interjection: note, itemTitle: "Source", sessionDate: nil)
+        let marks = CutShortMargins.shared
+        defer { marks.clear(sessionId: note.sessionId, interjectionId: note.id) }
+        XCTAssertEqual(row.captionDescription(), row.placeDescription(), "An ordinary Margin's caption is unchanged")
+        marks.set(.interrupted, sessionId: note.sessionId, interjectionId: note.id)
+        XCTAssertEqual(row.captionDescription(), "Cut short · \(row.placeDescription())")
+        let waiting = MarginRow(interjection: interjection(transcriptionStatus: "failed"), itemTitle: "Source", sessionDate: nil)
+        XCTAssertTrue(waiting.needsAttention)
+        XCTAssertEqual(waiting.captionDescription(), "Cut short · \(waiting.attentionDescription)", "A Margin waiting on its transcript still shows the mark")
+        marks.clear(sessionId: note.sessionId, interjectionId: note.id)
+        XCTAssertEqual(row.captionDescription(), row.placeDescription())
+        XCTAssertEqual(waiting.captionDescription(), waiting.attentionDescription)
+    }
+
     func testMarginRowIdentityComposesSessionAndInterjectionIDs() {
         let first = MarginRow(
             interjection: interjection(id: "margin", sessionId: "session-a"),

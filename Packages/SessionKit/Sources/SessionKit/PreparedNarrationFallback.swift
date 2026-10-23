@@ -64,6 +64,9 @@ public enum PreparedNarrationFallback {
         if let mediaTimeMs = session.position.mediaTimeMs, let timeline, !timeline.segments.isEmpty {
             offset = textOffset(mediaTimeMs: mediaTimeMs, timeline: timeline)
         }
+        // Both the timeline and a media session's saved character offset are interpolated inside a segment by
+        // time share, which lands mid-word; on-device speech starting there would say "entence..." (#2128).
+        offset = wordStart(atOrBefore: offset, in: item.text ?? "")
         offset = max(0, min(offset, textLength))
         var updated = session
         updated.currentTargetType = .itemTextTTS
@@ -73,6 +76,38 @@ public enum PreparedNarrationFallback {
             updated.completionPercent = min(100, max(0, Int((Double(offset) / Double(textLength)) * 100)))
         }
         return updated
+    }
+
+    /// The longest word `wordStart` will back up through. A longer run without whitespace (a pasted URL or
+    /// data) has no word start worth the re-reading, so its offset stays where it is.
+    private static let longestWordBackedUpThrough = 64
+
+    private static let sentenceEnders: Set<Character> = [".", "!", "?", "…", "。", "！", "？"]
+
+    private static func isWrittenWithoutSpaces(_ character: Character) -> Bool {
+        character.unicodeScalars.contains { scalar in
+            scalar.properties.isIdeographic || (0x3040...0x30FF).contains(scalar.value) || (0x0E00...0x0EFF).contains(scalar.value)
+        }
+    }
+
+    /// `offset` moved back to the start of the word it falls inside, so speech begins on a whole word.
+    /// An offset already at a word start, on whitespace, at the end or past it is returned as it is. A word
+    /// is a run of non-whitespace characters, offsets count characters (as `String.count` does), and
+    /// punctuation stays with its word. A sentence-ending mark also ends the word before it (`end.Next`), and
+    /// a script written without spaces (Chinese, Japanese, Thai) has no words to snap to, so it is left as it is.
+    public static func wordStart(atOrBefore offset: Int, in text: String) -> Int {
+        guard offset > 0, offset < text.count else { return offset }
+        var index = text.index(text.startIndex, offsetBy: offset)
+        guard !text[index].isWhitespace, !isWrittenWithoutSpaces(text[index]) else { return offset }
+        var start = offset
+        while start > 0 {
+            let previous = text.index(before: index)
+            if text[previous].isWhitespace || sentenceEnders.contains(text[previous]) { return start }
+            guard offset - start < longestWordBackedUpThrough else { return offset }
+            index = previous
+            start -= 1
+        }
+        return 0
     }
 
     /// The text offset generated narration has reached at `mediaTimeMs`, interpolated within a segment.

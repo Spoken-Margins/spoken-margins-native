@@ -135,9 +135,9 @@ for feed in feeds {
         case .page(let html):
             let parsed = PublisherNarrationEvidence.voiceover(inPostPage: html).map { _ in "voiceover" }
                 ?? PublisherNarrationEvidence.generatedVoice(inPostPage: html).map { _ in "generated_voice" }
-            var appVoice = voiceKind(await coordinator.publisherAudioEntry(for: entry))
+            var appVoice = voiceKind(await coordinator.publisherAudioEntry(for: entry, trigger: .formatCheck))
             // The lookup fetches the page itself; give a network blip there the same one retry.
-            if appVoice == nil, parsed != nil { appVoice = voiceKind(await coordinator.publisherAudioEntry(for: entry)) }
+            if appVoice == nil, parsed != nil { appVoice = voiceKind(await coordinator.publisherAudioEntry(for: entry, trigger: .formatCheck)) }
             let reading = SubstackCanary.AppReading(
                 parserVoice: parsed,
                 absence: PublisherNarrationEvidence.absence(inPostPage: html),

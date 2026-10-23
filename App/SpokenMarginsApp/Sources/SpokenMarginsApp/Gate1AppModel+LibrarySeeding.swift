@@ -62,7 +62,7 @@ extension Gate1AppModel {
             if !UITestingHooks.isActive,
                !UserDefaults.standard.bool(forKey: Self.guidedOnboardingTombstoneKey),
                UserDefaults.standard.integer(forKey: Self.guidedOnboardingSeedVersionKey) < 1,
-               !(try store.listItems()).contains(where: { $0.id == Self.guidedOnboardingItemId }) {
+               !(try store.hasLiveItem(id: Self.guidedOnboardingItemId)) {
                 try store.saveItem(Self.makeBundledGuidedOnboardingItem())
                 try store.saveListeningMap(Self.makeBundledGuidedOnboardingMap())
                 UserDefaults.standard.set(1, forKey: Self.guidedOnboardingSeedVersionKey)
@@ -216,7 +216,7 @@ extension Gate1AppModel {
     func startGuidedOnboarding() {
         do {
             let store = try requireStore()
-            if !(try store.listItems()).contains(where: { $0.id == Self.guidedOnboardingItemId }) {
+            if !(try store.hasLiveItem(id: Self.guidedOnboardingItemId)) {
                 try store.saveItem(Self.makeBundledGuidedOnboardingItem())
                 try store.saveListeningMap(Self.makeBundledGuidedOnboardingMap())
                 UserDefaults.standard.set(1, forKey: Self.guidedOnboardingSeedVersionKey)

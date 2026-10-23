@@ -677,7 +677,8 @@ final class Gate2CompactControlController {
         queuedCommandTask?.cancel()
         queuedCommandTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                self?.drainQueuedWidgetCommands()
+                // Stops once the controller is gone; it used to wake every 400 ms for the rest of the process (#2195).
+                guard self?.drainQueuedWidgetCommands() != nil else { return }
                 try? await Task.sleep(for: .milliseconds(400))
             }
         }
@@ -735,6 +736,15 @@ struct Gate2LiveActivitySystem: Sendable {
             ).id
         }
     )
+
+    /// The default under unit tests: no card, and no call to ActivityKit. Each of those calls waits on a system
+    /// daemon from the main thread, and on a loaded Mac they left 1 to 2.5 s of main-queue work behind the test
+    /// that made them (#2195). Tests of the cards themselves pass a fake system.
+    static let unitTestHost = Gate2LiveActivitySystem(
+        areActivitiesEnabled: { false },
+        activities: { [] },
+        request: { _, _, _ in throw CancellationError() }
+    )
 }
 
 private struct ActivityKitLiveActivityCard: Gate2LiveActivityCard, @unchecked Sendable {
@@ -772,7 +782,7 @@ final class Gate2LiveActivityController: Gate2LiveActivityControlling {
     private(set) var status = "not_started"
 
     #if canImport(ActivityKit)
-    init(system: Gate2LiveActivitySystem = .activityKit) {
+    init(system: Gate2LiveActivitySystem = Gate1AppModel.isRunningUnitTests ? .unitTestHost : .activityKit) {
         self.system = system
     }
     #endif

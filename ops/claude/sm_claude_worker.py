@@ -735,10 +735,16 @@ def keychain_token() -> Optional[str]:
     return (res.stdout.strip() if res.returncode == 0 else '') or None
 
 
+# The repo has no .claude/settings.json (it would double-fire in the owner's own sessions), so the worker
+# passes its own hooks file: lane guard, token limit and toolchain guard (#2498).
+WORKER_SETTINGS = Path(__file__).resolve().with_name('worker-settings.json')
+
+
 def claude_command(out_dir: Path) -> list:
     cmd = [str(CLAUDE), '-p', '-', '--output-format', 'json', '--model', MODEL, '--effort', EFFORT,
            '--permission-mode', 'dontAsk', '--tools', TOOLS, '--allowedTools', TOOLS,
-           '--strict-mcp-config', '--setting-sources', 'project', '--add-dir', str(out_dir),
+           '--strict-mcp-config', '--setting-sources', 'project', '--settings', str(WORKER_SETTINGS),
+           '--add-dir', str(out_dir),
            '--max-budget-usd', str(BUDGET_USD)]
     if MAX_TURNS:   # SM_CLAUDE_WORKER_MAX_TURNS= (empty) leaves the turn cap off; wall time and budget still cap
         cmd += ['--max-turns', str(MAX_TURNS)]

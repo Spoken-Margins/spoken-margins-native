@@ -196,6 +196,18 @@ final class RecordingDraftTests: XCTestCase {
         XCTAssertEqual(try margins(session.id).count, 1)
     }
 
+    func testARecoveredMarginIsReportedToTheCallerWithItsSessionAndId() throws {
+        let (engine, _) = try recordingEngine()
+        let session = try XCTUnwrap(engine.currentSession)
+        _ = try engine.beginInterjection()
+        var recovered: [String] = []
+        _ = try RecordingDraftReconciler(
+            journal: journal, repository: store, applicationSupport: directory, isDecodable: { _ in true },
+            onRecovered: { recovered.append("\($0)::\($1)") }
+        ).reconcile(savedAudioPaths: { try store.allMarginAudioPaths() })
+        XCTAssertEqual(recovered, ["\(session.id)::\(try XCTUnwrap(margins(session.id).first).id)"])
+    }
+
     /// The audit of #1570: a reply recovered after a kill came back as a plain Margin, unthreaded and exported
     /// without its link.
     func testKilledWhileRecordingAReplyRecoversTheMarginWithItsReplyLink() throws {

@@ -287,7 +287,8 @@ def pending_requests(comments: list[dict]) -> tuple[dict | None, bool]:
             continue
         if request['tier'] in RUNNER_TIERS:
             runner_request = (index, dict(request, url=comment.get('html_url'),
-                                          author=(comment.get('user') or {}).get('login')))
+                                          author=(comment.get('user') or {}).get('login'),
+                                          created_at=comment.get('created_at')))
         else:
             desk_request = index
     newest = runner_request[1] if runner_request and runner_request[0] > runner_answered else None
@@ -338,7 +339,7 @@ def github_hosted() -> bool:
 
 def report(request_id: str, verdict: str, head: str, base: str, tier: str, where: str, seconds: float,
            ran: str, details: list[str], crashes: str, evidence: str, not_verified: str, wanted: dict,
-           cc: str = '', base_name: str | None = None, hosted: bool = False) -> str:
+           cc: str = '', base_name: str | None = None, hosted: bool = False, event: str = '') -> str:
     base_name = base_name or trunk()
     location = ('on a GitHub-hosted Linux runner' if hosted else
                 'on a GitHub-hosted Mac; the run\'s `lane-evidence` artifact keeps it for 7 days' if github_hosted()
@@ -349,7 +350,27 @@ def report(request_id: str, verdict: str, head: str, base: str, tier: str, where
              f'not verified: {not_verified}']
     if cc:
         lines.append(cc)
-    return '\n'.join(lines) + f'\n<!-- lane-request: {json.dumps(wanted, sort_keys=True)} -->\n'
+    return '\n'.join(lines) + f'\n<!-- lane-request: {json.dumps(wanted, sort_keys=True)} -->\n' + \
+        (f'{event}\n' if event else '')
+
+
+def event_note(verdict: str, tier: str, head: str, base: str, seconds: float, evidence: Path | None,
+               requested_at: str | None = None, runs: list | None = None) -> str:
+    """The report's hidden lane-event line (lane_event.py, #2378), from this job's step runs and the
+    verify-tests.py manifests under <evidence>. requested_at: when the /lane request was commented (an automerge
+    run has none). runs: this report's own step runs, default all of the job's so far; a run the job starts after
+    another report (the automerge run a T3 PASS releases) passes only its own. Best effort: a report never fails for want of its measurements, and says nothing then."""
+    try:
+        import lane_event
+        waited = None
+        if requested_at:
+            waited = max(0.0, (utc(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())) - utc(requested_at)).total_seconds()
+                         - seconds)
+        records = lane_event.test_records(evidence) if evidence else {}
+        return lane_event.note(lane_event.build(verdict, tier, head, base, seconds, waited, STEP_RUNS if runs is None else runs, records))
+    except Exception as error:  # noqa: BLE001
+        print(f'[lane] no lane-event line: {error!r}')
+        return ''
 
 
 # ---- Step ledger --------------------------------------------------------------------------------
@@ -413,6 +434,17 @@ def manifest_failures(*outputs: Path) -> tuple[list[str], bool, list[str]]:
 
 STALL_ISSUE = 1802  # the evidence log for app startup stalls and simulator boot stalls (#705 is closed)
 BOOT_STALLS = 'boot-stalls.json'  # a T3 boot's stalls (boot_t3_device), for log_recovered_stalls
+FRESH_RERUNS = 'fresh-clone-reruns.json'  # plans rerun on a fresh clone after two startup stalls (#2176)
+
+
+def startup_stalled_out(manifest: dict) -> bool:
+    """Whether a verify-tests.py plan ended INCONCLUSIVE on startup stalls alone: a step stalled twice, no test
+    failed, and no crash flood stopped it. A failing test after the stalls is the PR's FAIL, not this (#2176)."""
+    if manifest.get('status') == 'verified':
+        return False
+    return any(len(step.get('startup_stalls') or []) >= 2 and not step.get('simulator_crash_report')
+               and not any(r.get('status') == 'failed' for r in (step.get('tests') or {}).values())
+               for step in manifest.get('steps', []))
 
 
 def recovered_startup_stalls(manifest: dict) -> list[dict]:
@@ -450,6 +482,52 @@ def boot_stall_note(evidence: Path, pr: int, head: str, report_url: str, verdict
     return '\n'.join(lines)
 
 
+TWO_STALLS_RULE = 'verdict stays INCONCLUSIVE (two stalls, owner 2026-10-11/2026-10-23)'
+
+
+def fresh_rerun_outcome(rerun: dict) -> str:
+    """What the fresh-clone rerun showed, for the report and the evidence log (#2176).
+
+    Owner, 2026-10-23: "Two stalls keep INCONCLUSIVE per my 2026-10-11 call; the fresh-clone rerun is evidence
+    only." So a clean rerun never turns the plan into a PASS. A failing test in the rerun is a FAIL (lead's
+    Default taken on PR #2179): that is a real failure, not a startup stall."""
+    if rerun.get('boot'):
+        return f'the fresh clone did not boot ({rerun["boot"]}); {TWO_STALLS_RULE}'
+    if rerun.get('verdict') == 'FAIL':
+        failed = rerun.get('failed') or []
+        return (f'fresh-clone rerun: {len(failed)} test(s) failed ({", ".join(failed)}); verdict FAIL (a failing '
+                'test, not a startup stall)')
+    if rerun.get('stalled_again'):
+        shown = 'stalled at startup twice too'
+    elif rerun.get('status') == 'verified':
+        shown = f'passed {rerun.get("passed", 0)} tests' + (' after 1 recovered startup stall'
+                                                            if rerun.get('recovered') else '')
+    else:
+        shown = f'ended `{rerun.get("status")}` after {rerun.get("passed", 0)} passing test(s)'
+    return f'fresh-clone rerun: {shown}; {TWO_STALLS_RULE}'
+
+
+def fresh_rerun_notes(evidence: Path, pr: int, head: str, report_url: str) -> list[str]:
+    """The evidence-log comments for plans rerun on a fresh clone after two startup stalls (<evidence>/FRESH_RERUNS)."""
+    try:
+        reruns = json.loads((evidence / FRESH_RERUNS).read_text())
+    except (OSError, ValueError):
+        return []
+    notes = []
+    for rerun in reruns if isinstance(reruns, list) else []:
+        outcome = fresh_rerun_outcome(rerun)
+        notes.append(
+            f'Two startup stalls, plan rerun on a fresh clone in the same job (#2176): the `{rerun.get("plan")}` plan '
+            f'of the T3 run for PR #{pr} at `{head[:7]}` ({report_url}).\n'
+            + ''.join(f'- Launch {stall.get("attempt")} on clone `{rerun.get("stalled")}`: no test output '
+                      f'{stall.get("after_seconds")}s after launch; {stall.get("diagnosis", "no diagnosis")}.\n'
+                      for stall in rerun.get('stalls', []))
+            + f'- Outcome: {outcome} (clone `{rerun.get("fresh")}`).\n'
+            f'- Evidence on the Mac: `{rerun.get("first")}/` (the stalled run) and `{rerun.get("output")}/`.\n'
+            '_Posted by the lane runner (scripts/lane-runner.py)._')
+    return notes
+
+
 def log_recovered_stalls(evidence: Path, pr: int, head: str, report_url: str, post, verdict: str = '') -> int:
     """Post the T3 boot's stalls, and each recovered startup stall in the verify-* manifests under <evidence>,
     on the evidence log (STALL_ISSUE) with post(body).
@@ -464,8 +542,16 @@ def log_recovered_stalls(evidence: Path, pr: int, head: str, report_url: str, po
             posted += 1
         except Exception as error:  # noqa: BLE001 - the report already says the stall happened
             print(f'Could not log the boot stall on #{STALL_ISSUE}: {error!r}', flush=True)
+    for body in fresh_rerun_notes(evidence, pr, head, report_url):
+        try:
+            post(body)
+            posted += 1
+        except Exception as error:  # noqa: BLE001 - the report already says the plan was rerun
+            print(f'Could not log the fresh-clone rerun on #{STALL_ISSUE}: {error!r}', flush=True)
     for output in sorted(evidence.glob('verify-*')):
         plan = output.name.removeprefix('verify-')
+        if output.name.endswith('-fresh'):
+            continue  # a fresh-clone rerun is evidence only, never a PASS; its note above covers it (#2176)
         for found in recovered_startup_stalls(_read_manifest(output)):
             stall = found['stall']
             body = (f'Startup stall recovered on the first retry, counted as a PASS (owner\'s call 2026-10-11): '
@@ -1550,7 +1636,7 @@ HOST_UNREAD_SCRIPTS = frozenset({
     'scripts/verify-gate2.sh',
     # Runner test modules that aren't readers, so only a lane PR's own run (all runner tests) runs them.
     *(f'scripts/tests/{name}.py' for name in (
-        'test_host_audio', 'test_integration_precheck', 'test_lane_beside_simulator', 'test_lane_dedupe',
+        'test_host_audio', 'test_integration_precheck', 'test_lane_beside_simulator', 'test_lane_dedupe', 'test_lane_event',
         'test_lane_guard', 'test_lane_ledger', 'test_lane_next_moved', 'test_lane_next_rerun', 'test_lane_sim_pool',
         'test_lane_slots', 'test_lane_t3_first', 'test_lane_release_handoff', 'test_merge_audit', 'test_phone_build', 'test_posterboard_repair',
         'test_sessionkit_steps', 'test_test_scope', 'test_ui_test_hooks_debug_only', 'test_xcresult_attachments')),
@@ -1875,6 +1961,7 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
     The automerge job calls it too, after posting a held report: a T3 PASS that landed between its T3 read
     and that post found no held report to release (#421).
     """
+    mark = len(STEP_RUNS)  # the T3 job's own steps come before; this report's lane-event line counts only its own
     pull = github.pull()
     labels = {label['name'] for label in pull.get('labels', [])}
     comments = github.comments()
@@ -1941,7 +2028,9 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
     base_sha = context.tested_base
     body = report(request_id, verdict, head, base_sha, 'auto', where, time.monotonic() - started, ran,
                   started_by + details, 'none', str(evidence), NOT_VERIFIED, identity('auto', head, base_sha, []),
-                  base_name=base)
+                  base_name=base,
+                  event=event_note(verdict, 'auto', head, base_sha, time.monotonic() - started, evidence,
+                                   runs=STEP_RUNS[mark:]))
     (evidence / 'report.md').write_text(body)
     print(body)
     github.comment(body)
@@ -2371,6 +2460,20 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
         started = time.monotonic()
         manifest = run_plan(plan, selectors, output)
         took = time.monotonic() - started
+        rerun = manifest.get('fresh_clone_rerun')
+        if rerun:
+            stalls = '; '.join(s.get('diagnosis') or 'no diagnosis' for s in rerun.get('stalls', []))
+            if rerun.get('boot'):
+                details.append(f'{plan}: two startup stalls on clone {rerun.get("stalled")} ({stalls}); a rerun on a '
+                               f'fresh clone could not start: {rerun["boot"]}; {TWO_STALLS_RULE} (#2176). '
+                               f'Logged on #{STALL_ISSUE}.')
+            else:
+                if rerun.get('verdict') == 'FAIL':
+                    output = Path(rerun['output'])  # the failing tests' evidence is the rerun's
+                details.append(f'{plan}: two startup stalls on clone {rerun.get("stalled")} ({stalls}), so the plan ran '
+                               f'again on a fresh clone ({rerun.get("fresh")}) in the same job as evidence (#2176): '
+                               f'{fresh_rerun_outcome(rerun)}. Logged on #{STALL_ISSUE}. Stalled run: '
+                               f'{rerun.get("first")}/; rerun: {rerun.get("output")}/')
         summary = summarize_manifest(manifest)
         summaries.append(summary)
         statuses.append(manifest.get('status', 'missing'))
@@ -2408,10 +2511,11 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
             stopped_at = next((step.get('name') for step in manifest.get('steps', []) if step.get('exit_code')),
                               None)  # a readiness step that ran out of time counts too
             gone = not device_available()
-            if gone or stopped_at in READINESS_STEPS:
+            if gone or stopped_at in READINESS_STEPS or (rerun and rerun.get('boot')):
                 summary['device_lost'] = True
                 skipped = [p for p, _ in plans[position + 1:]]
                 why = ('the fresh simulator is gone (no longer listed by `simctl list devices available`)' if gone
+                       else 'the fresh clone for a rerun did not boot' if rerun and rerun.get('boot')
                        else f'the fresh simulator was not ready (verify-tests.py `{stopped_at}`)')
                 details.append(f'{plan}: {why}, so this is the lane\'s fault, not the PR\'s'
                                + (f'; not run: {", ".join(skipped)}.' if skipped else '.'))
@@ -2544,12 +2648,12 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
     where = f'cloned iPhone 17, {runtime.rsplit(".", 1)[-1].replace("iOS-", "iOS ").replace("-", ".")}'
     python = ROOT / '.venv/bin/python'
 
-    def run_plan(plan, selectors, output):
+    def run_plan(plan, selectors, output, log_name=None):
         command = [str(python if python.exists() else sys.executable), 'scripts/verify-tests.py', '--plan', plan,
                    '--device', udid, '--require-build', '--output', str(output)]
         for selector in selectors:
             command += ['--only-testing', selector]
-        with (evidence / f'verify-{plan}.log').open('w') as log:
+        with (evidence / (log_name or f'verify-{plan}.log')).open('w') as log:
             if run_bounded(command, log, T3_TIMEOUT) is None:
                 return {**_read_manifest(output), 'status': 'timed out',
                         'error': f'the runner\'s {duration(T3_TIMEOUT)} budget for the whole verify-tests.py run '
@@ -2560,6 +2664,62 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
         lane_sim.release(stalled)
         with (evidence / 'simulator-clone.log').open('a') as log:
             return lane_sim.clone_temporary(RUNNER_SIMULATOR_PREFIX + request_id, runtime, out=log)
+
+    reruns = []
+    # Only a device with a SpringBoard watcher on it can be stopped by one. A clone marked unsafe for any other
+    # reason (a fresh clone that never booted, say) is not a crash flood and pings nobody (audit on 484c63b).
+    watched_devices = []
+
+    def run_plan_or_rerun_on_a_fresh_clone(plan, selectors, output):
+        """#2176: a plan that ends on its second startup stall runs once more, on a fresh clone, in this job.
+
+        The verdict stays INCONCLUSIVE whatever a clean rerun shows (owner, 2026-10-23: "Two stalls keep
+        INCONCLUSIVE per my 2026-10-11 call; the fresh-clone rerun is evidence only."). The rerun's outcome goes in
+        the report and on the evidence log, as evidence on the stalls' cause. Only a failing test in the rerun
+        changes the verdict, to FAIL: that is a real failure, not a stall (lead's Default taken, PR #2179). Once per
+        job, so a Mac that stalls every launch costs one more plan, not a loop."""
+        nonlocal udid
+        manifest = run_plan(plan, selectors, output)
+        if reruns or not startup_stalled_out(manifest) or lane_sim.unsafe_devices().get(udid):
+            # A clone the SpringBoard watcher stopped "stalls" at every launch after: switching devices then would
+            # get around a simulator crash (AGENTS.md), so the stop decides the verdict below, as before #2176.
+            return manifest
+        stalls = [stall for step in manifest.get('steps', []) for stall in step.get('startup_stalls') or []]
+        rerun = {'plan': plan, 'stalled': udid, 'first': str(output), 'output': str(output.with_name(output.name + '-fresh')),
+                 'stalls': [{k: stall.get(k) for k in ('attempt', 'after_seconds', 'diagnosis')} for stall in stalls]}
+        reruns.append(rerun)
+        try:
+            try:
+                lane_sim.release(udid)
+                with (evidence / 'simulator-clone.log').open('a') as log:
+                    udid = lane_sim.clone_temporary(RUNNER_SIMULATOR_PREFIX + request_id, runtime, out=log)
+                rerun['fresh'] = udid
+                info = {}
+                with (evidence / f'fresh-boot-{plan}.log').open('w') as log:
+                    try:
+                        problem, info = boot_t3_device(udid, log, None, None, info)  # its own boot stall isn't retried
+                    finally:
+                        udid = info.get('udid', udid)
+            except (lane_sim.BootError, OSError, subprocess.SubprocessError) as error:
+                problem = f'the fresh clone failed: {error}'
+            if problem:
+                rerun['boot'] = problem
+                return {**manifest, 'fresh_clone_rerun': rerun}  # the stalled run's INCONCLUSIVE stands
+            lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot', crash_window=info.get('boot_window'))
+            watched_devices.append(udid)
+            # Its own log, so the stalled run's verify-tests.py output stays on record next to it.
+            fresh = run_plan(plan, selectors, Path(rerun['output']), log_name=f'verify-{plan}-fresh.log')
+            shown = summarize_manifest(fresh)
+            rerun.update(status=fresh.get('status', 'missing'), passed=shown['passed'], failed=shown['failed'][:10],
+                         recovered=bool(recovered_startup_stalls(fresh)), stalled_again=startup_stalled_out(fresh))
+            if shown['failed']:
+                rerun['verdict'] = 'FAIL'
+                return {**fresh, 'fresh_clone_rerun': rerun}
+            if shown['flood']:  # still INCONCLUSIVE (nothing failed), but the flood must stop the later plans
+                return {**fresh, 'fresh_clone_rerun': rerun}
+            return {**manifest, 'fresh_clone_rerun': rerun}  # two stalls: the stalled run's INCONCLUSIVE stands
+        finally:
+            (evidence / FRESH_RERUNS).write_text(json.dumps(reruns, indent=2) + '\n')
 
     try:
         boot_started = time.monotonic()
@@ -2579,7 +2739,8 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
             return 'INCONCLUSIVE', where, 'nothing', details, 'watched during boot', ''
         lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot',  # stops the device at a SpringBoard crash
                                crash_window=boot_info.get('boot_window'))
-        summaries, statuses, ran, details = run_plans(grouped, run_plan, evidence,
+        watched_devices.append(udid)
+        summaries, statuses, ran, details = run_plans(grouped, run_plan_or_rerun_on_a_fresh_clone, evidence,
                                                       lambda: lane_sim.is_available(udid))
         details.insert(0, f'boot of the cloned simulator took {duration(boot_seconds)} (memory pressure at boot: '
                           f'{boot_info.get("pressure", "unknown")}, after waiting {boot_info.get("pressure_waited", 0)}s; '
@@ -2595,12 +2756,15 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
                        f'evidence: {evidence}/simulator-clone.log')
     finally:
         lane_sim.release(udid)
-    watched = lane_sim.unsafe_devices().get(udid)
-    if watched and watched['reason'].startswith('late crash report'):
-        # A crash during the boot, reported after it: the device is marked unsafe, but the run itself went on.
-        details.append(f'after the run started, a crash report arrived for a crash during the boot ({watched["reason"]}); '
-                       'the device was marked unsafe and deleted')
-        watched = None
+    watched, unsafe = None, lane_sim.unsafe_devices()
+    for device in dict.fromkeys(watched_devices):  # every clone a plan ran on under the watcher
+        mark = unsafe.get(device)
+        if mark and mark['reason'].startswith('late crash report'):
+            # A crash during the boot, reported after it: the device is marked unsafe, but the run itself went on.
+            details.append(f'after the run started, a crash report arrived for a crash during the boot of {device} '
+                           f'({mark["reason"]}); the device was marked unsafe and deleted')
+        elif mark and not watched:
+            watched = mark
     crash_names = [c for s in summaries for c in s['crashes']]
     flood = any(s['flood'] for s in summaries) or bool(watched)
     crashes = ('crash flood: ' if flood else '') + (', '.join(crash_names) if crash_names else 'none')
@@ -3094,7 +3258,8 @@ def report_lost(github: GitHub, pr: int, run_id: str, attempt: str | None, event
                    f'`/lane {request["tier"]}` request with the same `tests:` line and add lane:queued.']
         github.comment(report(name, 'INCONCLUSIVE', event_head, 'unknown', request['tier'], 'no runner', 0,
                               'nothing', details, 'none', 'none', NOT_VERIFIED,
-                              identity(request['tier'], event_head, '', request['tests']), '', base))
+                              identity(request['tier'], event_head, '', request['tests']), '', base,
+                              event=event_note('INCONCLUSIVE', request['tier'], event_head, '', 0, None)))
         changed = True
     else:
         print('No unanswered T2/T3 request; only the labels come off.')
@@ -3380,7 +3545,9 @@ def main(argv=None) -> int:
         wanted = identity('auto', head, base_sha, request['tests'])
     body = report(request_id, verdict, head, base_sha, request['tier'], where, time.monotonic() - started,
                   ran, moved + details, crashes, str(evidence),
-                  NOT_VERIFIED, wanted, cc, args.base, hosted=args.hosted)
+                  NOT_VERIFIED, wanted, cc, args.base, hosted=args.hosted,
+                  event=event_note(verdict, request['tier'], head, base_sha, time.monotonic() - started, evidence,
+                                   request.get('created_at')))
     (evidence / 'report.md').write_text(body)
     print(body)
     t3_url = github.comment(body)  # if this fails, the job fails and the tidy step says so on the PR

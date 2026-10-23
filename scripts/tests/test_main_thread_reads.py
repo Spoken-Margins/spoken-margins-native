@@ -18,9 +18,10 @@ ROOT = SCRIPTS.parent
 APIS = mtr.store_apis(ROOT)
 
 
-def scan(**files):
-    """Rows for in-memory Swift sources, keyed `name=source` (an underscore stands for a dot in the file name)."""
-    rows, skipped = mtr.scan([(f'App/X/Sources/{name}.swift', src) for name, src in files.items()], APIS)
+def scan(off_props=frozenset(), **files):
+    """Rows for in-memory Swift sources, keyed `name=source` (an underscore stands for a dot in the file name).
+    `off_props`: model properties whose project.yml flag is false."""
+    rows, skipped = mtr.scan([(f'App/X/Sources/{name}.swift', src) for name, src in files.items()], APIS, off_props)
     return rows
 
 
@@ -209,6 +210,236 @@ class UnlabelledTasks(unittest.TestCase):
         self.assertEqual(scan(Model=MODEL % '    func f() { Task { await Task.yield() } }'), [])
 
 
+class WhatNeverRunsOnTheAppsMainThread(unittest.TestCase):
+    """#2514: the baseline holds only real main-thread work. Each case below says what the scanner leaves out and
+    pairs it with a lookalike that must still be a row, so the ratchet keeps catching a new real instance."""
+
+    def test_a_closure_given_to_a_queue_the_file_made_runs_off_the_main_thread(self):
+        queue = '    let writer = DispatchQueue(label: "w")\n'
+        off = {
+            'serial queue under another name': MODEL % (queue + '    func f() { writer.async { _ = try? self.store?.listItems() } }'),
+            'serial queue with arguments': MODEL % (queue + '    func f() { writer.asyncAfter(deadline: .now()) { _ = try? self.store?.listItems() } }'),
+        }
+        for name, source in off.items():
+            with self.subTest(name):
+                self.assertEqual(scan(Model=source), [])
+        on = {
+            'an alias of the main queue': MODEL % '    let ui = DispatchQueue.main\n    func f() { ui.async { _ = try? self.store?.listItems() } }',
+            'an alias of the main queue, synchronously': MODEL % '    let ui = DispatchQueue.main\n    func f() { ui.sync(flags: .barrier) { _ = try? self.store?.listItems() } }',
+            'an object with an async method': MODEL % '    let scheduler = Scheduler()\n    func f() { scheduler.async { _ = try? self.store?.listItems() } }',
+            'the main queue': MODEL % '    func f() { DispatchQueue.main.async { _ = try? self.store?.listItems() } }',
+        }
+        for name, source in on.items():
+            with self.subTest(name):
+                self.assertTrue(scan(Model=source), 'expected a row')
+
+    def test_a_sendable_closure_is_not_taken_to_leave_the_main_thread(self):
+        # not actor-isolated is not off the main thread: a synchronous closure runs on whoever calls it
+        for name, source in {
+            'literal attribute': MODEL % '    func f() { run { @Sendable in _ = try? store?.listItems() } }',
+            'typed value': MODEL % '    func f() { let work: @Sendable () -> Void = { _ = try? self.store?.listItems() }; work() }',
+            'a main hop out of it': MODEL % '    func f() { DispatchQueue.main.async { @Sendable in _ = try? self.store?.listItems() } }',
+            'stored in a sendable typealias property': ('typealias CheckHandler = @Sendable (URL) throws -> Int\n@MainActor\nfinal class Model {\n'
+                '    var store: SQLiteSessionStore?\n    let check: CheckHandler\n    init(check: CheckHandler? = nil) {\n'
+                '        self.check = check ?? { url in try self.store?.loadItem(id: url.path).id.count ?? 0 }\n    }\n}\n'),
+        }.items():
+            with self.subTest(name):
+                self.assertTrue(scan(Model=source), 'expected a row')
+
+    def test_a_task_row_names_only_a_task_that_starts_on_the_main_thread(self):
+        detached = MODEL % ('    func f() { Task.detached { let x = 1; _ = x\n'
+                            '        await MainActor.run { _ = try? self.store?.listItems() } } }')
+        self.assertEqual([r['class'] for r in scan(Model=detached)], ['store-whole-table-read'])
+        plain = MODEL % '    func f() { Task { _ = try? store?.listItems() } }'
+        self.assertIn('unlabelled-main-task', [r['class'] for r in scan(Model=plain)])
+        # a Task in a type that is not main-actor is background work; the Task it starts on main is the one to name
+        background = ('final class Client {\n    var store: SQLiteSessionStore?\n    func f() {\n'
+                      '        Task { await work()\n            Task { @MainActor in _ = try? self.store?.listItems() } }\n    }\n}\n')
+        rows = scan(Client=background)
+        self.assertEqual(sorted(r['class'] for r in rows), ['store-whole-table-read', 'unlabelled-main-task'])
+        self.assertEqual([r['line'] for r in rows if r['class'] == 'unlabelled-main-task'], [5])
+
+    def test_code_after_a_guard_on_a_flag_that_is_off_never_runs(self):
+        body = ('    var remoteProviderExperienceEnabled = false\n'
+                '    func submit() {\n        guard remoteProviderExperienceEnabled else { _ = try? store?.loadSessions(); return }\n'
+                '        _ = try? store?.listItems()\n    }\n'
+                '    func chapters() async {\n        guard remoteProviderExperienceEnabled, store != nil else { return }\n        _ = try? store?.listItems()\n    }')
+        off = {'remoteProviderExperienceEnabled'}
+        rows = scan(off, Model=MODEL % body)
+        # only the else branch of the guard (the flag is off) still runs
+        self.assertEqual([(r['function'], r['api']) for r in rows], [('Model.submit', 'store.loadSessions')])
+        # with the flag on, or not named in project.yml, both reads are rows again
+        self.assertEqual(len(scan(Model=MODEL % body)), 3)
+        self.assertEqual(len(scan({'someOtherFlag'}, Model=MODEL % body)), 3)
+
+    def test_a_guard_does_not_hide_a_later_switch_case_or_an_else_after_a_closure_in_its_condition(self):
+        flag = 'remoteProviderExperienceEnabled'
+        body = (f'    var {flag} = false\n    func a(_ k: Int) {{\n        switch k {{\n        case 1:\n'
+                f'            guard {flag} else {{ return }}\n            _ = try? store?.loadSessions()\n'
+                f'        default:\n            _ = try? store?.listItems()\n        }}\n    }}\n'
+                f'    func b(_ xs: [Int]) {{\n        guard {flag}, xs.contains(where: {{ $0 > 1 }}) else {{ _ = try? store?.listItems(); return }}\n'
+                f'        _ = try? store?.loadSessions()\n    }}')
+        rows = scan({flag}, Model=MODEL % body)
+        self.assertEqual(sorted((r['function'], r['api']) for r in rows), [('Model.a', 'store.listItems'), ('Model.b', 'store.listItems')])
+
+    def test_an_if_on_the_flag_and_other_conditions_on_it_are_not_dead_code(self):
+        flag = 'remoteProviderExperienceEnabled'
+        body = (f'    var {flag} = false\n    func a() {{\n        if {flag} {{ _ = try? store?.listItems() }}\n    }}\n'
+                f'    func b() {{\n        if !{flag} {{ _ = try? store?.listItems() }}\n    }}\n'
+                f'    func c(other: Bool) {{\n        guard other || {flag} else {{ return }}\n        _ = try? store?.listItems()\n    }}')
+        rows = scan({flag}, Model=MODEL % body)
+        self.assertEqual(sorted(r['function'] for r in rows), ['Model.b', 'Model.c'])
+
+    def test_a_function_only_a_debug_block_calls_is_not_a_row_but_one_with_a_release_caller_is(self):
+        reads = ('    func seed() { _ = try? store?.listItems() }\n    func both() { _ = try? store?.listItems() }\n'
+                 '    func viaButton() { _ = try? store?.listItems() }\n')
+        screen = ('struct Screen: View {\n    var model: Model\n    var body: some View {\n'
+                  '#if DEBUG\n        Button("Seed", action: model.viaButton)\n        Button("Seed") { model.seed(); model.both() }\n#endif\n'
+                  '        Button("Both") { model.both() }\n    }\n}\n')
+        rows = scan(Model=MODEL % reads, Screen=screen)
+        self.assertEqual(sorted(r['function'] for r in rows), ['Model.both'])
+
+    def test_a_name_handed_to_live_code_keeps_the_function_live(self):
+        reads = '    func seed() { _ = try? store?.listItems() }\n'
+        for name, screen in {
+            'a button action': 'struct Screen: View {\n var model: Model\n var body: some View {\n  Button("Seed", action: model.seed)\n }\n}\n',
+            'a selector': 'struct Screen: View {\n var body: some View { Text("x").onAppear(perform: #selector(Model.seed)) }\n}\n',
+            'a call in a live function': 'struct Screen: View {\n var model: Model\n var body: some View { Text("x").onAppear { model.seed() } }\n}\n',
+        }.items():
+            with self.subTest(name):
+                rows = scan(Model=MODEL % reads, Screen=screen)
+                self.assertEqual([r['function'] for r in rows], ['Model.seed'])
+
+    def test_a_function_the_system_or_a_string_can_call_is_never_called_dead(self):
+        screen = 'struct Screen: View {\n var model: Model\n var body: some View {\n#if DEBUG\n  Button("Seed") { model.seed() }\n#endif\n  Text("x")\n }\n}\n'
+        cases = {
+            'objc': ('    @objc func seed() { _ = try? store?.listItems() }\n', ''),
+            'override': ('    override func seed() { _ = try? store?.listItems() }\n', ''),
+            'a selector string in live code': ('    func seed() { _ = try? store?.listItems() }\n', '    func f() { perform(Selector("seed")) }\n'),
+        }
+        for name, (reads, extra) in cases.items():
+            with self.subTest(name):
+                rows = scan(Model=MODEL % (reads + extra), Screen=screen)
+                self.assertIn('Model.seed', [r['function'] for r in rows])
+
+    def test_a_function_with_two_definitions_is_never_called_dead(self):
+        # the callee cannot be told apart without types, so a debug-only call of `seed` proves nothing
+        reads = '    func seed() { _ = try? store?.listItems() }\n'
+        other = 'final class Other {\n    func seed() { }\n}\n'
+        screen = 'struct Screen: View {\n var model: Model\n var body: some View {\n#if DEBUG\n  Button("Seed") { model.seed() }\n#endif\n  Text("x")\n }\n}\n'
+        self.assertEqual([r['function'] for r in scan(Model=MODEL % reads, Other=other, Screen=screen)], ['Model.seed'])
+
+    def test_a_debug_only_chain_is_dead_down_to_its_last_helper(self):
+        reads = '    func outer() { inner() }\n    func inner() { _ = try? store?.listItems() }\n'
+        screen = 'struct Screen: View {\n var model: Model\n var body: some View {\n#if DEBUG\n  Button("Seed") { model.outer() }\n#endif\n  Text("x")\n }\n}\n'
+        self.assertEqual(scan(Model=MODEL % reads, Screen=screen), [])
+        live = screen.replace('#if DEBUG\n', '').replace('#endif\n', '')
+        self.assertEqual([r['function'] for r in scan(Model=MODEL % reads, Screen=live)], ['Model.inner'])
+
+
+class WhatTheAppTargetBuilds(unittest.TestCase):
+    PROJECT = """name: X
+targets:
+  App:
+    type: application
+    platform: iOS
+    sources:
+      - path: App/Main/Sources
+        type: syncedFolder
+        excludes:
+          - Main/Bridge.swift
+          - Legacy
+      - path: App/Shared
+      - path: Packages/Kit/Sources/Kit/One.swift
+    settings:
+      base:
+        SMRemoteProviderExperienceEnabled: false
+  ShareExt:
+    type: app-extension
+    sources:
+      - path: App/ShareExt/Sources
+      - path: App/Shared
+  AppTests:
+    type: bundle.unit-test
+    sources:
+      - path: App/AppTests
+"""
+
+    def test_project_yml_reads_into_targets_sources_and_excludes(self):
+        targets = mtr.parse_project(self.PROJECT)
+        self.assertEqual(sorted(targets), ['App', 'AppTests', 'ShareExt'])
+        self.assertEqual(targets['App']['type'], 'application')
+        self.assertEqual(targets['App']['sources'][0], ('App/Main/Sources', ['Main/Bridge.swift', 'Legacy']))
+        self.assertEqual([p for p, _ in targets['ShareExt']['sources']], ['App/ShareExt/Sources', 'App/Shared'])
+
+    def test_a_file_is_scanned_when_the_app_target_compiles_it(self):
+        built = mtr.app_process_filter(self.PROJECT)
+        for rel, expected in {
+            'App/Main/Sources/Main/Model.swift': True,              # in the app target
+            'App/Shared/Common.swift': True,                        # in the app and the extension: the app's main thread runs it
+            'App/Main/Sources/Main/Bridge.swift': False,            # excluded by name
+            'App/Main/Sources/Legacy/Old.swift': False,             # excluded folder
+            'App/Main/Sources/Main/Bridge2.swift': True,            # a name that merely starts like an exclude
+            'App/ShareExt/Sources/Controller.swift': False,         # the extension's own process
+            'App/Watch/Sources/Watch.swift': False,                 # in no target
+            'Packages/Kit/Sources/Kit/Two.swift': True,             # packages are not judged
+        }.items():
+            with self.subTest(rel):
+                self.assertEqual(built(rel), expected)
+
+    def test_a_source_entry_the_reader_does_not_know_means_every_file_is_scanned(self):
+        for name, entry in {
+            'a key before the path': '      - optional: true\n        path: App/Bar\n',
+            'a name entry': '      - name: Bar\n',
+            'inline excludes': '      - path: App/Bar\n        excludes: [a.swift]\n',
+        }.items():
+            with self.subTest(name):
+                text = 'targets:\n  App:\n    type: application\n    sources:\n      - path: App/Foo\n' + entry
+                self.assertIsNone(mtr.app_process_filter(text))
+        quoted = mtr.app_process_filter('targets:\n  App:\n    type: "application"\n    sources:\n      - path: "App/Foo"\n      - \'App/Bar\'\n')
+        self.assertTrue(quoted('App/Foo/a.swift') and quoted('App/Bar/b.swift') and not quoted('App/Baz/c.swift'))
+
+    def test_the_flag_counts_only_in_the_application_target(self):
+        text = ('targets:\n  App:\n    type: application\n    settings:\n      base:\n        SMRemoteProviderExperienceEnabled: true\n'
+                '  Ext:\n    type: app-extension\n    settings:\n      base:\n        SMRemoteProviderExperienceEnabled: false\n')
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'project.yml').write_text(text)
+            self.assertEqual(mtr.project_build(Path(tmp))[1], frozenset())
+
+    def test_no_application_target_means_every_file_is_scanned(self):
+        self.assertIsNone(mtr.app_process_filter('targets:\n  Ext:\n    type: app-extension\n'))
+
+    def test_read_sources_leaves_out_what_the_app_does_not_build_and_says_so(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'project.yml').write_text(self.PROJECT)
+            for rel in ('App/Main/Sources/Main/Model.swift', 'App/Main/Sources/Main/Bridge.swift',
+                        'App/ShareExt/Sources/Controller.swift', 'App/Watch/Sources/Watch.swift'):
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text('final class C {}\n')
+            left_out = []
+            files = mtr.read_sources(root, left_out)
+            self.assertEqual([rel for rel, _ in files], ['App/Main/Sources/Main/Model.swift'])
+            self.assertEqual(sorted(left_out), ['App/Main/Sources/Main/Bridge.swift', 'App/ShareExt/Sources/Controller.swift',
+                                                'App/Watch/Sources/Watch.swift'])
+            self.assertEqual(mtr.project_build(root)[1], frozenset({'remoteProviderExperienceEnabled'}))
+
+    def test_a_tree_with_no_project_yml_is_scanned_whole_and_no_flag_is_off(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'App/Watch').mkdir(parents=True)
+            (root / 'App/Watch/W.swift').write_text('final class W {}\n')
+            self.assertEqual([rel for rel, _ in mtr.read_sources(root)], ['App/Watch/W.swift'])
+            self.assertEqual(mtr.project_build(root), (None, frozenset()))
+
+    def test_a_flag_that_is_true_or_missing_is_not_off(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for text in (self.PROJECT.replace('Enabled: false', 'Enabled: true'), self.PROJECT.replace('SMRemoteProviderExperienceEnabled: false', '')):
+                (root / 'project.yml').write_text(text)
+                self.assertEqual(mtr.project_build(root)[1], frozenset())
+
+
 class TheRatchet(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -261,6 +492,25 @@ class TheRatchet(unittest.TestCase):
         self.write('    var unrelated = 1\n\n    // a comment\n    func reload() { _ = try? store?.loadItem(id: "a") }')
         self.assertEqual(self.run_main()[0], 0)
 
+    def test_moving_a_read_to_another_file_keeps_its_baseline_row(self):
+        self.run_main('--accept', 'existing')
+        self.source.unlink()
+        (self.source.parent / 'ModelMoved.swift').write_text(MODEL % '    func reload() { _ = try? store?.loadItem(id: "a") }')
+        code, out = self.run_main()
+        self.assertEqual(code, 0, out)
+
+    def test_a_new_read_still_fails_after_a_move_and_names_the_commands(self):
+        self.run_main('--accept', 'existing')
+        self.source.unlink()
+        (self.source.parent / 'ModelMoved.swift').write_text(
+            MODEL % '    func reload() { _ = try? store?.loadItem(id: "a") }\n    func more() { _ = try? store?.listItems() }')
+        code, out = self.run_main()
+        self.assertEqual(code, 1, out)
+        self.assertIn('Model.more', out)
+        self.assertNotIn('Model.reload', out)
+        self.assertIn('--accept "one-line reason"', out)
+        self.assertIn('--update', out)
+
     def test_a_second_call_of_a_baselined_api_in_the_same_function_fails(self):
         self.run_main('--accept', 'existing')
         self.write('    func reload() { _ = try? store?.loadItem(id: "a"); _ = try? store?.loadItem(id: "b") }')
@@ -293,9 +543,18 @@ class TheRepository(unittest.TestCase):
         """The check the fast plan runs. New main-thread store/file/audio work fails here: move the read off the main
         thread, or (a false positive, or a read that must stay) --accept it with a one-line reason."""
         files = mtr.read_sources(ROOT)
-        rows, _ = mtr.scan(files, APIS)
+        rows, _ = mtr.scan(files, APIS, mtr.project_build(ROOT)[1])
         new, _ = mtr.compare(rows, mtr.load_baseline(ROOT / mtr.BASELINE))
         self.assertEqual([(k, extra) for k, extra, _ in new], [], 'run scripts/main_thread_reads.py for the lines')
+
+    def test_the_watch_app_and_the_extensions_are_not_scanned(self):
+        left_out = []
+        mtr.read_sources(ROOT, left_out)
+        names = {Path(rel).name for rel in left_out}
+        self.assertTrue({'WatchOfflineModels.swift', 'Gate3WatchConnectivityController.swift',
+                         'SourceLinkShareViewController.swift'} <= names, names)
+        base_files = {k: e['file'] for k, e in mtr.load_baseline(ROOT / mtr.BASELINE).items()}
+        self.assertEqual([k for k in mtr.load_baseline(ROOT / mtr.BASELINE) if Path(base_files[k]).name in names], [])
 
     def test_every_baseline_entry_has_a_reason(self):
         for entry in mtr.load_baseline(ROOT / mtr.BASELINE).values():
@@ -305,7 +564,7 @@ class TheRepository(unittest.TestCase):
         """#2102, #2184 and #2255 are open or only partly fixed: the rows that describe them must stay in the
         baseline until their fixes delete them."""
         base = mtr.load_baseline(ROOT / mtr.BASELINE)
-        functions = {(k[1], k[2]) for k in base}
+        functions = {(k[0], k[1]) for k in base}
         for name in (('Gate1AppModel.refreshMarginRows', 'store.listItems'),
                      # #2102 swapped the full items for summaries here; it is still a whole-table read on main
                      ('Gate1AppModel.refreshAudioPreparationPresentation', 'store.listItemSummaries'),

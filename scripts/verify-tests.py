@@ -512,7 +512,7 @@ RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validati
                       'docs/sharing-test-kit/', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
                       # test_third_party_notices reads the dependency manifests and its own list (#1823).
                       'docs/legal/', 'THIRD_PARTY_NOTICES.md', 'requirements-dev.txt', 'Site/', 'Tools/',
-                      'Config/', 'fixtures/', 'traces/', 'schemas/', 'Design/SpokenMarginsOverhaul/package.json',
+                      'Config/', 'fixtures/', 'traces/', 'schemas/',
                       'Design/UXProposal20260909/package.json')
 # The ops tests read their own folder and scripts/lane-runner.py (the audit's test), test-scope and the release
 # files, so they follow the ops tools and anything the runner tests follow, plus the build inputs. The Codex
@@ -1373,7 +1373,9 @@ class Run:
                 errors.extend(report_unittest_failures(name, failures))
                 print('\n'.join(error for error in errors if error.startswith('Failed: ')), flush=True)
         if name in ('browser', 'share-link'):
-            match = re.search(r'^# tests (\d+)$', text, re.M)
+            # `node --test` prints the TAP summary "# tests N" on Node 20 and 22 when piped, and the spec reporter's
+            # "ℹ tests N" on 24 (#2480), where TAP is no longer the default.
+            match = re.search(r'^(?:# |ℹ )tests (\d+)$', text, re.M)
             entry['executed_count'] = int(match[1]) if match else 0
             if not entry['executed_count']:
                 errors.append('Browser runner executed zero tests' if name == 'browser'

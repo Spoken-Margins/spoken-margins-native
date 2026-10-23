@@ -765,6 +765,10 @@ struct PlaybackScreen: View {
                             mediaScrubState.finish()
                         }
                     },
+                    onCancelled: {
+                        model.recordDeveloperDiagnostic("scrub.media.cancelled", [:])
+                        mediaScrubState.finish() // slid off the bar and lifted: no seek (#1930)
+                    },
                     barContent: mediaBarContent,
                     barPositionUnit: .seconds,
                     positionAccessibilityValue: "\(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))"
@@ -808,6 +812,10 @@ struct PlaybackScreen: View {
                             model.seekText(toCharOffset: Int(targetOffset.rounded()))
                             textScrubState.finish()
                         }
+                    },
+                    onCancelled: {
+                        model.recordDeveloperDiagnostic("scrub.text.cancelled", [:])
+                        textScrubState.finish() // slid off the bar and lifted: no seek (#1930)
                     },
                     barContent: textBarContent,
                     barPositionUnit: .characters,
@@ -1065,13 +1073,19 @@ struct PlaybackScreen: View {
     }
 
     private var lowerBackgroundAudioToggle: some View {
+        // The icon swaps between a filled check and an empty circle, as the Mix toggle's does, so "on" doesn't
+        // rest on the tint alone (#1923).
         Toggle(
-            "Lower Background Audio",
             isOn: Binding(
                 get: { model.lowersBackgroundAudio },
                 set: { model.setLowersBackgroundAudio($0) }
             )
-        )
+        ) {
+            Label(
+                "Lower Background Audio",
+                systemImage: model.lowersBackgroundAudio ? "checkmark.circle.fill" : "circle"
+            )
+        }
         .font(.subheadline.weight(.semibold))
         .tint(AppColors.ochre)
         .accessibilityIdentifier("playback.lowerBackgroundAudio.toggle")
@@ -1149,7 +1163,7 @@ struct PlaybackScreen: View {
                     Button("Stop", action: model.stopOnDeviceSpeechGeneration)
                         .font(.caption.weight(.bold))
                         .buttonStyle(.bordered)
-                        .tint(.red)
+                        .tint(AppColors.watchDanger)
                         .accessibilityHint("Continues playback with the iOS system voice")
                         .accessibilityIdentifier("playback.onDeviceGeneration.stop")
                 } else if model.canRetryOnDeviceSpeechGeneration {
@@ -2003,7 +2017,7 @@ private struct TimelineInterjectionRow: View {
                 Button(action: toggleStar) {
                     Image(systemName: isStarred ? "star.fill" : "star")
                         .font(.title3.weight(.semibold))
-                        .foregroundStyle(isStarred ? Color.yellow : AppColors.secondaryText)
+                        .foregroundStyle(isStarred ? AppColors.star : AppColors.secondaryText)
                         .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }

@@ -328,31 +328,33 @@ struct ExperienceReactionsScreen: View {
         Button {
             if let entry = playableEntry(in: spot) { request(PlayTarget(layerId: entry.layerId, marginId: entry.marginId)) }
         } label: {
-            HStack(alignment: .top, spacing: 12) {
+            GutterRow(gutterWidth: 52, alignment: .top, spacing: 12) {
                 Text(MarginLayerSynthesis.clock(spot.startMs))
                     .font(.caption.monospacedDigit().weight(.bold))
                     .foregroundStyle(AppColors.evergreen)
-                    .frame(width: 52, alignment: .leading)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(names(spot.senderLabels))
-                        .font(.headline)
-                        .foregroundStyle(AppColors.text)
-                        .multilineTextAlignment(.leading)
-                    ForEach(Array(spot.entries.prefix(3).enumerated()), id: \.offset) { _, entry in
-                        Text("\(entry.senderLabel): \(entry.approvedTranscript)")
-                            .font(.caption)
-                            .foregroundStyle(AppColors.secondaryText)
-                            .lineLimit(2)
+            } content: {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(names(spot.senderLabels))
+                            .font(.headline)
+                            .foregroundStyle(AppColors.text)
                             .multilineTextAlignment(.leading)
+                        ForEach(Array(spot.entries.prefix(3).enumerated()), id: \.offset) { _, entry in
+                            Text("\(entry.senderLabel): \(entry.approvedTranscript)")
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                        }
+                        if spot.entries.count > 3 {
+                            Text("and \(spot.entries.count - 3) more")
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
                     }
-                    if spot.entries.count > 3 {
-                        Text("and \(spot.entries.count - 3) more")
-                            .font(.caption)
-                            .foregroundStyle(AppColors.secondaryText)
-                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "play.fill").foregroundStyle(AppColors.evergreen)
                 }
-                Spacer(minLength: 8)
-                Image(systemName: "play.fill").foregroundStyle(AppColors.evergreen)
             }
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)

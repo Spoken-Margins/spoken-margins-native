@@ -19,9 +19,11 @@ import PDFKit
 
 /// The source-link form: paste, candidate review and reset (#979), moved unchanged out of the central model.
 extension Gate1AppModel {
+    var isResolvingSourceLink: Bool { sourceLinkGate.isBusy }
+
     @discardableResult
     func beginSourceLinkImportFromForm(startSession: Bool = true) -> Bool {
-        guard !isResolvingSourceLink else { return false }
+        guard !sourceLinkGate.isBusy else { return false }
         let submittedURL = sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let parsedURL = URL(string: submittedURL),
               let scheme = parsedURL.scheme?.lowercased(),
@@ -34,7 +36,7 @@ extension Gate1AppModel {
             reportFailure(sourceLinkImportMessage ?? "Enter a valid source URL.")
             return false
         }
-        isResolvingSourceLink = true
+        sourceLinkGate.begin()
         sourceLinkSafariOffer = nil
         sourceLinkImportState = "resolving"
         sourceLinkImportMessage = "Resolving source link…"
@@ -42,6 +44,7 @@ extension Gate1AppModel {
         lastError = nil
         diagnostics["lastSourceLinkButtonTap"] = "registered"
         Task { @MainActor in
+            defer { sourceLinkGate.end() }
             await Task.yield()
             let imported = await importSourceLinkAsync(
                 urlString: parsedURL.absoluteString,
@@ -94,7 +97,7 @@ extension Gate1AppModel {
     }
 
     func resetSourceLinkImportState() {
-        guard !isResolvingSourceLink else { return }
+        guard !sourceLinkGate.isBusy else { return }
         sourceLinkImportState = "idle"
         sourceLinkImportMessage = nil
         sourceLinkSafariOffer = nil

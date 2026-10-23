@@ -155,6 +155,8 @@ struct AppNavigationState: Equatable, Sendable {
     ]
     var taskRoute: AppRoute?
     var addSourceRoute: AddSourceRoute?
+    /// "Search podcasts by name" in the add sheet: the sheet closes first, then the catalog opens (#1784).
+    var opensCatalogAfterAddSheet = false
     /// Where Following was scrolled to, kept across the screen switches that destroy its list (#479).
     var followingScroll = FollowingScrollMemory()
     /// The same for the Library list, whose rows are also destroyed when an item opens (#2395).
@@ -174,6 +176,17 @@ struct AppNavigationState: Equatable, Sendable {
     mutating func present(_ route: AppRoute, recordingIsLocked: Bool) {
         guard !recordingIsLocked else { return }
         taskRoute = route
+    }
+
+    mutating func searchPodcastsFromAddSheet() {
+        addSourceRoute = nil
+        opensCatalogAfterAddSheet = true
+    }
+
+    /// True once per request, so a later dismissal of the sheet doesn't open the catalog again.
+    mutating func takeCatalogRequest() -> Bool {
+        defer { opensCatalogAfterAddSheet = false }
+        return opensCatalogAfterAddSheet
     }
 
     mutating func dismissTask(recordingIsLocked: Bool) {
@@ -296,6 +309,17 @@ struct MarginRow: Identifiable, Equatable, Sendable {
             placeName: place?.chapterName, mediaTimeMs: interjection.anchor.mediaTimeMs,
             paragraph: place?.paragraph, roughPercent: interjection.roughPercent,
             createdAt: interjection.createdAt, now: now)
+    }
+
+    /// Set when a call, Siri, the headphones or a closed app ended this recording early, until the listener opens it (#1976).
+    var cutShort: CutShortMark? {
+        CutShortMargins.shared.mark(sessionId: interjection.sessionId, interjectionId: interjection.id)
+    }
+
+    /// The row's headline: what needs attention, else where it was made, led by "Cut short" or "Recovered" while that
+    /// mark is on. A recovered Margin always waits on its transcript, so the mark can't be shown only when nothing does.
+    func captionDescription(now: Date = Date()) -> String {
+        [cutShort?.tag, needsAttention ? attentionDescription : placeDescription(now: now)].compactMap { $0 }.joined(separator: " · ")
     }
 
     var targetDescription: String {

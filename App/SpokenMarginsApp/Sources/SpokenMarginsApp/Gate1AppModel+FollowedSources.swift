@@ -363,7 +363,7 @@ extension Gate1AppModel {
         do {
             let store = try requireStore()
             let coordinator = requireFollowedSourceCoordinator(store: store)
-            for entry in await coordinator.refreshStale(force: force) { importFollowedSourceEntry(entry) } // "Add every new item" (#466)
+            for entry in await coordinator.refreshStale(force: force) { importFollowedSourceEntry(entry, startedByListener: false) } // "Add every new item" (#466)
             feedSubscriptions = try store.loadFeedSubscriptions()
             followedSourceEntries = try await coordinator.entries()
             diagnostics["followedSourceCount"] = "\(feedSubscriptions.count)"
@@ -373,7 +373,7 @@ extension Gate1AppModel {
         }
     }
 
-    func importFollowedSourceEntry(_ entry: FeedEntry, openWhenFinished: Bool = false, playWhenFinished: Bool = false) {
+    func importFollowedSourceEntry(_ entry: FeedEntry, openWhenFinished: Bool = false, playWhenFinished: Bool = false, startedByListener: Bool = true) {
         guard importingFollowedSourceEntryIds.insert(entry.id).inserted else { return }
         // Opening or playing waits on a fetch; anything the listener opens or starts meanwhile wins (#2124).
         let intent = openWhenFinished || playWhenFinished ? followedPlayIntent.begin() : nil
@@ -388,7 +388,8 @@ extension Gate1AppModel {
                 guard let subscription = try store.loadFeedSubscriptions().first(where: { $0.id == entry.subscriptionId }) else {
                     throw FollowedSourceError.noFeedCandidates
                 }
-                let lookup = await self.followedSourceCoordinator?.publisherAudioLookup(for: entry)
+                if FollowedArticleImport.holdsBackgroundImport(entry, startedByListener: startedByListener) { return }
+                let lookup = await self.followedSourceCoordinator?.publisherAudioLookup(for: entry, trigger: startedByListener ? .listenerAction : .background)
                 let entry = lookup?.entry ?? entry
                 let imported: Bool
                 // Posts with the publisher's own audio (#545) and text-only posts (#641) import as articles.
@@ -406,7 +407,7 @@ extension Gate1AppModel {
                     self.recordFollowedPublisherAudio(lookup?.outcome, itemId: importedItemId, saved: false)
                     if let importedItemId, stillWanted { if openWhenFinished { self.openItem(id: importedItemId) }; if playWhenFinished { self.startItem(id: importedItemId) } } // Play now (#478)
                 } else {
-                    let handoff = self.listeningSignals.followedArticle(try await FollowedArticleImport.handoff(for: entry, url: url, using: self.readablePageExtractor, record: { self.diagnostics.merge($0) { _, new in new } }), for: entry)
+                    let handoff = self.listeningSignals.followedArticle(try await FollowedArticleImport.handoff(for: entry, url: url, startedByListener: startedByListener, using: self.readablePageExtractor, record: { self.diagnostics.merge($0) { _, new in new } }), for: entry)
                     let stillWanted = intent.map { self.followedPlayIntent.finish($0) } ?? false
                     let openWhenFinished = openWhenFinished && stillWanted, playWhenFinished = playWhenFinished && stillWanted
                     // With something already playing, importBrowserText only adds; Add and open still opens it (#567).
