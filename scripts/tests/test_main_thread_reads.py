@@ -492,6 +492,25 @@ class TheRatchet(unittest.TestCase):
         self.write('    var unrelated = 1\n\n    // a comment\n    func reload() { _ = try? store?.loadItem(id: "a") }')
         self.assertEqual(self.run_main()[0], 0)
 
+    def test_moving_a_read_to_another_file_keeps_its_baseline_row(self):
+        self.run_main('--accept', 'existing')
+        self.source.unlink()
+        (self.source.parent / 'ModelMoved.swift').write_text(MODEL % '    func reload() { _ = try? store?.loadItem(id: "a") }')
+        code, out = self.run_main()
+        self.assertEqual(code, 0, out)
+
+    def test_a_new_read_still_fails_after_a_move_and_names_the_commands(self):
+        self.run_main('--accept', 'existing')
+        self.source.unlink()
+        (self.source.parent / 'ModelMoved.swift').write_text(
+            MODEL % '    func reload() { _ = try? store?.loadItem(id: "a") }\n    func more() { _ = try? store?.listItems() }')
+        code, out = self.run_main()
+        self.assertEqual(code, 1, out)
+        self.assertIn('Model.more', out)
+        self.assertNotIn('Model.reload', out)
+        self.assertIn('--accept "one-line reason"', out)
+        self.assertIn('--update', out)
+
     def test_a_second_call_of_a_baselined_api_in_the_same_function_fails(self):
         self.run_main('--accept', 'existing')
         self.write('    func reload() { _ = try? store?.loadItem(id: "a"); _ = try? store?.loadItem(id: "b") }')
@@ -534,7 +553,8 @@ class TheRepository(unittest.TestCase):
         names = {Path(rel).name for rel in left_out}
         self.assertTrue({'WatchOfflineModels.swift', 'Gate3WatchConnectivityController.swift',
                          'SourceLinkShareViewController.swift'} <= names, names)
-        self.assertEqual([k for k in mtr.load_baseline(ROOT / mtr.BASELINE) if Path(k[0]).name in names], [])
+        base_files = {k: e['file'] for k, e in mtr.load_baseline(ROOT / mtr.BASELINE).items()}
+        self.assertEqual([k for k in mtr.load_baseline(ROOT / mtr.BASELINE) if Path(base_files[k]).name in names], [])
 
     def test_every_baseline_entry_has_a_reason(self):
         for entry in mtr.load_baseline(ROOT / mtr.BASELINE).values():
@@ -544,7 +564,7 @@ class TheRepository(unittest.TestCase):
         """#2102, #2184 and #2255 are open or only partly fixed: the rows that describe them must stay in the
         baseline until their fixes delete them."""
         base = mtr.load_baseline(ROOT / mtr.BASELINE)
-        functions = {(k[1], k[2]) for k in base}
+        functions = {(k[0], k[1]) for k in base}
         for name in (('Gate1AppModel.refreshMarginRows', 'store.listItems'),
                      # #2102 swapped the full items for summaries here; it is still a whole-table read on main
                      ('Gate1AppModel.refreshAudioPreparationPresentation', 'store.listItemSummaries'),
