@@ -60,4 +60,37 @@ final class LiveSessionMarkdownTests: XCTestCase {
         XCTAssertEqual(loaded.transcript, original.transcript)
         XCTAssertEqual(loaded.session.margins.map(\.id), original.session.margins.map(\.id))
     }
+
+    // #2485 audit: the item's export follows its Margins as they are now, not as they were saved.
+    func testTheExportFollowsTheItemsMarginsNow() throws {
+        var saved = record()
+        saved.savedMarginIds = ["a": "ij-a", "b": "ij-b"]
+        let now = [
+            // "a" was edited; "b" was deleted; a spoken Margin was added while replaying the recording.
+            LiveSessionRecord.CurrentMargin(id: "ij-a", text: "Travel budget is the real problem", mediaTimeMs: 120_000, createdAt: start),
+            LiveSessionRecord.CurrentMargin(id: "ij-new", text: "Said while replaying", mediaTimeMs: 61_000, createdAt: start.addingTimeInterval(9_000))
+        ]
+        let current = try XCTUnwrap(saved.current(now))
+        let markdown = LiveSessionMarkdown.render(current, includeTranscript: false, timeZone: utc)
+        XCTAssertTrue(markdown.contains("- Margins: 2\n"), markdown)
+        XCTAssertTrue(markdown.contains("## 1. 2:00\n\nTravel budget is the real problem\n"), markdown)
+        XCTAssertFalse(markdown.contains("Johnny was just talking"), markdown)
+        XCTAssertFalse(markdown.contains("_Mark, no words._"), markdown)
+        XCTAssertTrue(markdown.contains("## 2. 1:01\n\nSaid while replaying\n\nPosition: Added after the session, at 1:01 in the recording"), markdown)
+    }
+
+    func testARecordWithoutLinksFallsBackToTheOrdinaryExport() {
+        XCTAssertNil(record().current([]))
+    }
+
+    func testPlacerLinksEachSavedMarginToItsLiveMargin() throws {
+        let item = Item(id: "t", title: "Notes", mediaType: "text", text: "First line.\n\nSecond line.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [:], interjections: [:])
+        let linked = try LiveSessionMarginPlacer.placeLinked(
+            [LiveSessionAlignment.Placed(id: "b", text: "Two", offsetMs: 0, charOffset: 13), LiveSessionAlignment.Placed(id: "a", text: "One", offsetMs: 0, charOffset: 0)],
+            itemId: "t", repository: repo
+        )
+        XCTAssertEqual(linked.map(\.liveId), ["a", "b"])
+        XCTAssertEqual(linked.map(\.saved.displayText), ["One", "Two"])
+    }
 }

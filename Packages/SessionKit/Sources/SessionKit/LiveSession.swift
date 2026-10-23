@@ -254,6 +254,8 @@ public enum LiveSessionAlignment {
         /// A spoken Margin's recording and transcript (#2487); the placer writes it as a spoken Margin.
         public var audioPath: String?
         public var transcript: String?
+        /// A Margin added to the item after the session, placed where the listener took it in the recording.
+        public var addedLater: Bool?
 
         public init(id: String, text: String, offsetMs: Int, clamp: Clamp? = nil, charOffset: Int? = nil) {
             self.id = id

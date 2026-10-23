@@ -121,14 +121,15 @@ final class TranscriptImportTests: XCTestCase {
         ])
     }
 
-    func testATextMatchPinsTheTranscriptAndPlacesTheRest() {
-        // The transcript's zero is 2 minutes before the session started; the spoken Margin was saved 8 minutes in.
-        let live = session([("we should move the launch to April", 480), ("Blind", 600)], blind: [1])
+    func testAgreeingTextMatchesPinTheTranscriptAndPlaceTheRest() {
+        // The transcript's zero is 2 minutes before the session started; two spoken Margins, saved 8 and 13
+        // minutes in, agree on it, so they outrank a wrong rough start (#2485 audit: one match alone doesn't).
+        let live = session([("we should move the launch to April", 480), ("Blind", 600), ("great please share them", 780)], blind: [1])
         let result = TranscriptAlignment.align(session: live, transcript: longTranscript(), roughStart: sessionStart.addingTimeInterval(-9_999))
         XCTAssertEqual(result.method, .textMatch)
-        XCTAssertEqual(result.matches, ["m0": 2])
+        XCTAssertEqual(result.matches, ["m0": 2, "m2": 3])
         XCTAssertEqual(result.transcriptStart, sessionStart.addingTimeInterval(480 - 600))
-        XCTAssertEqual(result.placed.map(\.offsetMs), [600_000, 720_000])
+        XCTAssertEqual(result.placed.map(\.offsetMs), [600_000, 720_000, 900_000])
     }
 
     func testWithoutAMatchTheHeaderDateThenTheRoughStartAreUsed() {
@@ -238,5 +239,78 @@ final class TranscriptHintTests: XCTestCase {
         XCTAssertEqual(result.matches, ["hint": 1])
         XCTAssertEqual(result.placed.first { $0.id == "hint" }?.offsetMs, 120_000)
         XCTAssertEqual(result.placed.first { $0.id == "weak" }?.offsetMs, 200_000)
+    }
+}
+
+/// #2485 audit: one weak or lone text match must never move the other Margins.
+final class TranscriptAnchorAgreementTests: XCTestCase {
+    private let start = Date(timeIntervalSince1970: 1_800_000_000)
+    private let cues = [
+        TranscriptCue(startMs: 0, endMs: 60_000, speaker: "Alice", text: "Welcome everyone, let's start with the budget."),
+        TranscriptCue(startMs: 600_000, endMs: 660_000, speaker: "Ben", text: "I think we should move the launch to April."),
+        TranscriptCue(startMs: 1_500_000, endMs: 1_560_000, speaker: "Cara", text: "Marketing needs another designer before summer."),
+        TranscriptCue(startMs: 2_700_000, endMs: 2_760_000, speaker: "Ben", text: "Hiring plan approved for next quarter."),
+        TranscriptCue(startMs: 3_000_000, endMs: 3_060_000, speaker: "Alice", text: "Thanks all, see you next week.")
+    ]
+
+    private func session(_ margins: [(String, Double)]) -> LiveSession {
+        var live = LiveSession(id: "s", kind: .meeting, startedAt: start, startPositionMs: 0)
+        live.margins = margins.enumerated().map { live.margin(id: "m\($0.offset)", text: $0.element.0, markedAt: start.addingTimeInterval($0.element.1)) }
+        return live
+    }
+
+    func testCommonWordsDoNotMatchAnEarlyCue() {
+        // The audit's case: "the budget is the issue", typed 45 minutes in, scored 3 of 5 on the opening cue.
+        XCTAssertNil(TranscriptAlignment.bestCue(for: "the budget is the issue", in: [cues[0]]))
+        // Repeated words count once.
+        XCTAssertNil(TranscriptAlignment.bestCue(for: "budget budget budget welcome", in: [cues[0]]))
+    }
+
+    func testATypedMarginSharingWordsWithTheOpeningDoesNotShiftTheRest() {
+        let live = session([("the budget is the issue", 2_700), ("remember to follow up", 1_500)])
+        let result = TranscriptAlignment.align(session: live, transcript: ImportedTranscript(format: .webVTT, cues: cues))
+        XCTAssertEqual(result.transcriptStart, start)
+        XCTAssertEqual(result.placed.first { $0.id == "m1" }?.offsetMs, 1_500_000)
+        XCTAssertNotEqual(result.placed.first { $0.id == "m0" }?.offsetMs, 0)
+    }
+
+    func testALoneFarMatchIsKeptAsEvidenceButMovesNothing() {
+        // Four distinctive words of the opening cue, typed 45 minutes in: a confident match, but alone and
+        // 45 minutes from every other estimate.
+        let live = session([("welcome everyone let's start budget", 2_700), ("remember to follow up", 1_500)])
+        let result = TranscriptAlignment.align(session: live, transcript: ImportedTranscript(format: .webVTT, cues: cues))
+        XCTAssertEqual(result.transcriptStart, start)
+        XCTAssertEqual(result.method, .roughStart)
+        XCTAssertEqual(result.placed.first { $0.id == "m1" }?.offsetMs, 1_500_000)
+        let lone = result.placed.first { $0.id == "m0" }
+        XCTAssertEqual(lone?.offsetMs, 2_700_000)
+        XCTAssertEqual(lone?.source, .estimate)
+        XCTAssertEqual(lone?.matchMs, 0, "the match is still reported")
+        XCTAssertEqual(result.setAside, ["m0": 0])
+        XCTAssertTrue(LiveSessionMarkdown.evidence(margin: live.margins[0], placed: lone, session: live)
+            .hasPrefix("Transcript match 100% at 0:00, not used: it disagrees with the other evidence · estimate about 45:00"))
+    }
+
+    func testTwoAgreeingMatchesPinTheTranscript() {
+        // The transcript's zero is 2 minutes before the session; two spoken Margins agree on it.
+        let live = session([("we should move the launch to April", 480), ("marketing needs another designer", 1_380), ("Mark", 2_000)])
+        let result = TranscriptAlignment.align(session: live, transcript: ImportedTranscript(format: .webVTT, cues: cues))
+        XCTAssertEqual(result.method, .textMatch)
+        XCTAssertEqual(result.transcriptStart, start.addingTimeInterval(-120))
+        XCTAssertEqual(result.placed.first { $0.id == "m2" }?.offsetMs, 2_120_000)
+    }
+
+    func testAMatchFarFromTheListenersOwnSettingDoesNotOverrideIt() {
+        var live = session([("we should move the launch to April", 480)])
+        live.margins[0].listenerPositionMs = 3_000_000
+        let result = TranscriptAlignment.align(session: live, transcript: ImportedTranscript(format: .webVTT, cues: cues))
+        let placed = result.placed[0]
+        XCTAssertEqual(placed.source, .listener)
+        XCTAssertEqual(placed.offsetMs, 3_000_000)
+        XCTAssertEqual(placed.matchMs, 600_000)
+    }
+
+    func testContractionsMatchTheirStem() {
+        XCTAssertEqual(TranscriptAlignment.tokens("Let's go, I'm in, we're done"), ["let", "go", "i", "in", "we", "done"])
     }
 }
