@@ -337,7 +337,8 @@ def _closes(failure: dict, later: dict, test: str | None) -> bool:
         return later['tier'] == 'auto'
     parts = _without_module(test.split('/'))
     asked = {'/'.join(_without_module(name.split('/'))) for name in later['requested']}
-    return later['tier'] == 'T3' and (parts[0] in asked or '/'.join(parts) in asked)
+    whole_module = any(name.startswith('SpokenMarginsApp') and '/' not in name for name in later['requested'])
+    return later['tier'] == 'T3' and (whole_module or parts[0] in asked or '/'.join(parts) in asked)
 
 
 def _resolve(failure: dict, lanes: list[dict], test: str | None):

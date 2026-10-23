@@ -251,8 +251,9 @@ class LabelTests(unittest.TestCase):
                 comment(report_body('pr82-r2', 'PASS', tier='T3', tests=list(asked)), pr=82, at='2026-10-20T11:00:00Z'))
             return [e for e in found if e['kind'] == 'test-failure'][0]['label']['class']
         self.assertEqual([failure_class('SpokenMarginsAppTests/ThingTests'), failure_class('ThingTests'),
-                          failure_class('SpokenMarginsAppTests/ThingTests/testIt'), failure_class('OtherTests')],
-                         ['flake', 'flake', 'flake', 'unresolved'])
+                          failure_class('SpokenMarginsAppTests/ThingTests/testIt'), failure_class('OtherTests'),
+                          failure_class('SpokenMarginsAppTests')],
+                         ['flake', 'flake', 'flake', 'unresolved', 'flake'])
 
     def test_an_app_test_named_without_its_module_is_still_an_app_test(self):
         fail = report_body('pr81-r1', 'FAIL', tier='T3', where='iPhone', tests=['Gate1AppModelWorkflowTests'],
