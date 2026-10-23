@@ -3528,8 +3528,9 @@ def passing_manifest(test='T/A'):
 
 
 class FreshCloneRerunTests(unittest.TestCase):
-    """#2176: a plan that ends on its second startup stall runs once more on a fresh clone in the same job, instead of
-    reporting INCONCLUSIVE and going back to the queue (12 of 32 T3 runs stalled on 2026-10-19)."""
+    """#2176: a plan that ends on its second startup stall runs once more on a fresh clone in the same job, as evidence
+    on the stalls' cause (12 of 32 T3 runs stalled on 2026-10-19). Owner, 2026-10-23: two stalls keep INCONCLUSIVE
+    per his 2026-10-11 call, whatever the rerun shows; only a failing test in it makes a FAIL (Default taken)."""
 
     def run_t3(self, manifests, boots_fail=(), grouped=None, unsafe=lambda: {}):
         import lane_sim
@@ -3566,19 +3567,43 @@ class FreshCloneRerunTests(unittest.TestCase):
         outputs = [Path(command[command.index('--output') + 1]).name for command in commands]
         return result, released, devices, outputs, evidence
 
-    def test_two_stalls_then_a_clean_run_on_a_fresh_clone_is_a_pass_in_the_same_job(self):
+    def test_two_stalls_then_a_clean_run_on_a_fresh_clone_stays_inconclusive_with_the_rerun_as_evidence(self):
+        # Owner, 2026-10-23: "Two stalls keep INCONCLUSIVE per my 2026-10-11 call; the fresh-clone rerun is
+        # evidence only." Before this change the clean rerun stood in for the stalled run and reported PASS.
         (verdict, _, ran, details, _, _), released, devices, outputs, evidence = self.run_t3(
             [stalled_out_manifest(), passing_manifest()])
-        self.assertEqual(verdict, 'PASS')
+        self.assertEqual(verdict, 'INCONCLUSIVE')
         self.assertEqual((devices, outputs), (['U1', 'U2'], ['verify-app', 'verify-app-fresh']))
         self.assertEqual(released, ['U1', 'U2'])  # the stalled clone first, the fresh one after the run
         line = next(line for line in details if 'two startup stalls on clone U1' in line)
-        self.assertIn('fresh clone (U2) in the same job', line)
+        self.assertIn('fresh clone (U2) in the same job as evidence', line)
         self.assertIn('no host app process', line)
-        self.assertIn('1 passed', ran)
+        self.assertIn('fresh-clone rerun: passed 1 tests; verdict stays INCONCLUSIVE (two stalls, owner '
+                      '2026-10-11/2026-10-23)', line)
+        self.assertIn('0 passed', ran)  # the verdict rests on the stalled run, not the rerun
         saved = json.loads((evidence / lane.FRESH_RERUNS).read_text())
-        self.assertEqual([(r['plan'], r['stalled'], r['fresh'], r['status']) for r in saved],
-                         [('app', 'U1', 'U2', 'verified')])
+        self.assertEqual([(r['plan'], r['stalled'], r['fresh'], r['status'], r['passed']) for r in saved],
+                         [('app', 'U1', 'U2', 'verified', 1)])
+
+    def test_a_recovered_stall_in_the_rerun_is_still_inconclusive(self):
+        fresh = passing_manifest()
+        fresh['steps'][0].update(startup_recovered=True, startup_stalls=[{'attempt': 1}])
+        (verdict, _, _, details, _, _), *_ = self.run_t3([stalled_out_manifest(), fresh])
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertTrue(any('passed 1 tests after 1 recovered startup stall; verdict stays INCONCLUSIVE' in line
+                            for line in details))
+
+    def test_a_failing_test_in_the_rerun_is_a_fail(self):
+        # Lead's Default taken on PR #2179: a failing test is a real failure, not a startup stall.
+        fresh = passing_manifest()
+        fresh['status'] = 'failed_or_incomplete'
+        fresh['steps'][0]['tests']['T/B'] = {'status': 'failed'}
+        (verdict, _, _, details, _, _), _, devices, _, evidence = self.run_t3([stalled_out_manifest(), fresh])
+        self.assertEqual((verdict, devices), ('FAIL', ['U1', 'U2']))
+        self.assertTrue(any('fresh-clone rerun: 1 test(s) failed (T/B); verdict FAIL' in line for line in details))
+        self.assertTrue(any(line.startswith('T/B — expected: passes') and 'verify-app-fresh/tests.xcresult' in line
+                            for line in details))
+        self.assertEqual(json.loads((evidence / lane.FRESH_RERUNS).read_text())[0]['verdict'], 'FAIL')
 
     def test_a_rerun_that_stalls_too_stays_inconclusive_and_is_not_rerun_again(self):
         (verdict, *_), released, devices, _, _ = self.run_t3([stalled_out_manifest(), stalled_out_manifest()])
@@ -3683,20 +3708,27 @@ class FreshCloneRerunTests(unittest.TestCase):
 
         (verdict, _, _, details, crashes, _), _, devices, _, _ = self.run_t3(
             [stalled_out_manifest(), passing_manifest()], unsafe=unsafe)
-        self.assertEqual((verdict, devices, crashes), ('PASS', ['U1', 'U2'], 'none'))
+        self.assertEqual((verdict, devices, crashes), ('INCONCLUSIVE', ['U1', 'U2'], 'none'))  # two stalls
         self.assertTrue(any('SpringBoard-z.ips' in line and 'U1' in line for line in details))
 
     def test_each_rerun_is_logged_on_the_stall_issue(self):
         with tempfile.TemporaryDirectory() as folder:
             (Path(folder) / lane.FRESH_RERUNS).write_text(json.dumps([{
-                'plan': 'app', 'stalled': 'U1', 'fresh': 'U2', 'status': 'verified', 'first': '/e/verify-app',
-                'output': '/e/verify-app-fresh',
+                'plan': 'app', 'stalled': 'U1', 'fresh': 'U2', 'status': 'verified', 'passed': 195,
+                'first': '/e/verify-app', 'output': '/e/verify-app-fresh',
                 'stalls': [{'attempt': 1, 'after_seconds': 90.1, 'diagnosis': 'no host app process'}]}]))
+            # A recovered stall inside the rerun is not posted as "counted as a PASS": the rerun is evidence only.
+            fresh = Path(folder) / 'verify-app-fresh'
+            fresh.mkdir()
+            recovered = passing_manifest()
+            recovered['steps'][0].update(startup_recovered=True, startup_stalls=[{'attempt': 1}])
+            (fresh / 'manifest.json').write_text(json.dumps(recovered))
             posted = []
             self.assertEqual(lane.log_recovered_stalls(Path(folder), 5, HEAD, 'https://example.test/r', posted.append), 1)
         self.assertIn('the `app` plan of the T3 run for PR #5 at `aaaaaaa` (https://example.test/r)', posted[0])
         self.assertIn('Launch 1 on clone `U1`: no test output 90.1s after launch; no host app process', posted[0])
-        self.assertIn('ended `verified` (clone `U2`)', posted[0])
+        self.assertIn('fresh-clone rerun: passed 195 tests; verdict stays INCONCLUSIVE (two stalls, owner '
+                      '2026-10-11/2026-10-23) (clone `U2`)', posted[0])
 
 class TrustedCommentTests(unittest.TestCase):
     """Once the repository is public, only the owner, collaborators and the project's bot steer the lane (#1719)."""

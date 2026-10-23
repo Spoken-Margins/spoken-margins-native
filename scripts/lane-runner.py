@@ -461,6 +461,31 @@ def boot_stall_note(evidence: Path, pr: int, head: str, report_url: str, verdict
     return '\n'.join(lines)
 
 
+TWO_STALLS_RULE = 'verdict stays INCONCLUSIVE (two stalls, owner 2026-10-11/2026-10-23)'
+
+
+def fresh_rerun_outcome(rerun: dict) -> str:
+    """What the fresh-clone rerun showed, for the report and the evidence log (#2176).
+
+    Owner, 2026-10-23: "Two stalls keep INCONCLUSIVE per my 2026-10-11 call; the fresh-clone rerun is evidence
+    only." So a clean rerun never turns the plan into a PASS. A failing test in the rerun is a FAIL (lead's
+    Default taken on PR #2179): that is a real failure, not a startup stall."""
+    if rerun.get('boot'):
+        return f'the fresh clone did not boot ({rerun["boot"]}); {TWO_STALLS_RULE}'
+    if rerun.get('verdict') == 'FAIL':
+        failed = rerun.get('failed') or []
+        return (f'fresh-clone rerun: {len(failed)} test(s) failed ({", ".join(failed)}); verdict FAIL (a failing '
+                'test, not a startup stall)')
+    if rerun.get('stalled_again'):
+        shown = 'stalled at startup twice too'
+    elif rerun.get('status') == 'verified':
+        shown = f'passed {rerun.get("passed", 0)} tests' + (' after 1 recovered startup stall'
+                                                            if rerun.get('recovered') else '')
+    else:
+        shown = f'ended `{rerun.get("status")}` after {rerun.get("passed", 0)} passing test(s)'
+    return f'fresh-clone rerun: {shown}; {TWO_STALLS_RULE}'
+
+
 def fresh_rerun_notes(evidence: Path, pr: int, head: str, report_url: str) -> list[str]:
     """The evidence-log comments for plans rerun on a fresh clone after two startup stalls (<evidence>/FRESH_RERUNS)."""
     try:
@@ -469,8 +494,7 @@ def fresh_rerun_notes(evidence: Path, pr: int, head: str, report_url: str) -> li
         return []
     notes = []
     for rerun in reruns if isinstance(reruns, list) else []:
-        outcome = (f'the fresh clone did not boot ({rerun["boot"]}), so the plan stays INCONCLUSIVE' if rerun.get('boot')
-                   else f'the rerun on the fresh clone ended `{rerun.get("status")}`')
+        outcome = fresh_rerun_outcome(rerun)
         notes.append(
             f'Two startup stalls, plan rerun on a fresh clone in the same job (#2176): the `{rerun.get("plan")}` plan '
             f'of the T3 run for PR #{pr} at `{head[:7]}` ({report_url}).\n'
@@ -505,6 +529,8 @@ def log_recovered_stalls(evidence: Path, pr: int, head: str, report_url: str, po
             print(f'Could not log the fresh-clone rerun on #{STALL_ISSUE}: {error!r}', flush=True)
     for output in sorted(evidence.glob('verify-*')):
         plan = output.name.removeprefix('verify-')
+        if output.name.endswith('-fresh'):
+            continue  # a fresh-clone rerun is evidence only, never a PASS; its note above covers it (#2176)
         for found in recovered_startup_stalls(_read_manifest(output)):
             stall = found['stall']
             body = (f'Startup stall recovered on the first retry, counted as a PASS (owner\'s call 2026-10-11): '
@@ -2415,12 +2441,15 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
             stalls = '; '.join(s.get('diagnosis') or 'no diagnosis' for s in rerun.get('stalls', []))
             if rerun.get('boot'):
                 details.append(f'{plan}: two startup stalls on clone {rerun.get("stalled")} ({stalls}); a rerun on a '
-                               f'fresh clone could not start: {rerun["boot"]} (#2176). Logged on #{STALL_ISSUE}.')
+                               f'fresh clone could not start: {rerun["boot"]}; {TWO_STALLS_RULE} (#2176). '
+                               f'Logged on #{STALL_ISSUE}.')
             else:
-                output = Path(rerun['output'])  # the rerun's evidence is what the verdict rests on
+                if rerun.get('verdict') == 'FAIL':
+                    output = Path(rerun['output'])  # the failing tests' evidence is the rerun's
                 details.append(f'{plan}: two startup stalls on clone {rerun.get("stalled")} ({stalls}), so the plan ran '
-                               f'again on a fresh clone ({rerun.get("fresh")}) in the same job instead of going back to '
-                               f'the queue (#2176); the stalls are logged on #{STALL_ISSUE}. Stalled run: {rerun.get("first")}/')
+                               f'again on a fresh clone ({rerun.get("fresh")}) in the same job as evidence (#2176): '
+                               f'{fresh_rerun_outcome(rerun)}. Logged on #{STALL_ISSUE}. Stalled run: '
+                               f'{rerun.get("first")}/; rerun: {rerun.get("output")}/')
         summary = summarize_manifest(manifest)
         summaries.append(summary)
         statuses.append(manifest.get('status', 'missing'))
@@ -2620,11 +2649,11 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
     def run_plan_or_rerun_on_a_fresh_clone(plan, selectors, output):
         """#2176: a plan that ends on its second startup stall runs once more, on a fresh clone, in this job.
 
-        Before, it reported INCONCLUSIVE and the PR went to the back of the queue for a rerun, often hours later
-        (12 of 32 T3 runs on 2026-10-19 stalled). The rerun is that requeued run, moved forward: it is a run of its
-        own on a device that never ran the app, judged as any run is (the owner's 2026-10-11 call covers one stall
-        in it), and the stalled run stays on record. Once per job, so a Mac that stalls every launch costs one more
-        plan, not a loop."""
+        The verdict stays INCONCLUSIVE whatever a clean rerun shows (owner, 2026-10-23: "Two stalls keep
+        INCONCLUSIVE per my 2026-10-11 call; the fresh-clone rerun is evidence only."). The rerun's outcome goes in
+        the report and on the evidence log, as evidence on the stalls' cause. Only a failing test in the rerun
+        changes the verdict, to FAIL: that is a real failure, not a stall (lead's Default taken, PR #2179). Once per
+        job, so a Mac that stalls every launch costs one more plan, not a loop."""
         nonlocal udid
         manifest = run_plan(plan, selectors, output)
         if reruns or not startup_stalled_out(manifest) or lane_sim.unsafe_devices().get(udid):
@@ -2656,8 +2685,15 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
             watched_devices.append(udid)
             # Its own log, so the stalled run's verify-tests.py output stays on record next to it.
             fresh = run_plan(plan, selectors, Path(rerun['output']), log_name=f'verify-{plan}-fresh.log')
-            rerun['status'] = fresh.get('status', 'missing')
-            return {**fresh, 'fresh_clone_rerun': rerun}
+            shown = summarize_manifest(fresh)
+            rerun.update(status=fresh.get('status', 'missing'), passed=shown['passed'], failed=shown['failed'][:10],
+                         recovered=bool(recovered_startup_stalls(fresh)), stalled_again=startup_stalled_out(fresh))
+            if shown['failed']:
+                rerun['verdict'] = 'FAIL'
+                return {**fresh, 'fresh_clone_rerun': rerun}
+            if shown['flood']:  # still INCONCLUSIVE (nothing failed), but the flood must stop the later plans
+                return {**fresh, 'fresh_clone_rerun': rerun}
+            return {**manifest, 'fresh_clone_rerun': rerun}  # two stalls: the stalled run's INCONCLUSIVE stands
         finally:
             (evidence / FRESH_RERUNS).write_text(json.dumps(reruns, indent=2) + '\n')
 
