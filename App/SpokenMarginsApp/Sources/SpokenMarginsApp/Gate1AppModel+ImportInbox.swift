@@ -87,6 +87,12 @@ extension Gate1AppModel {
         }
     }
 
+    /// Runs a handoff-folder read or write off the main thread; the folder is shared with the share extension, so
+    /// any of these can wait on it (#2510).
+    nonisolated static func offMain<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try await Task.detached(priority: .userInitiated) { try work() }.value
+    }
+
     private func importPendingHandoffsAsync() async {
         guard !isImportingPendingSourceLinkHandoffs else { return }
         isImportingPendingSourceLinkHandoffs = true
@@ -112,18 +118,18 @@ extension Gate1AppModel {
 
         do {
             let handoffStore = try resolvedSourceLinkHandoffStore()
-            let payloadIDs = try handoffStore.pendingPayloadIDs()
+            let payloadIDs = try await Self.offMain { try handoffStore.pendingPayloadIDs() }
             diagnostics["pendingSourceLinkPayloads"] = "\(payloadIDs.count)"
             // A connection failure leaves the link pending for the next activation or the network's
             // return; anything else is quarantined and the listener is told (#1546).
             let report = await PendingHandoffDrain.run(
                 payloadIDs: payloadIDs,
                 importPayload: { payloadID in
-                    let handoff = try handoffStore.handoff(payloadID: payloadID)
+                    let handoff = try await Self.offMain { try handoffStore.handoff(payloadID: payloadID) }
                     if let itemId = try await self.importSourceLinkInBackground(handoff) { addedItemIds.append(itemId) }
                 },
-                deletePayload: { try handoffStore.deletePayload(payloadID: $0) },
-                quarantine: { try handoffStore.quarantine(payloadID: $0, reason: $1) },
+                deletePayload: { id in try await Self.offMain { try handoffStore.deletePayload(payloadID: id) } },
+                quarantine: { id, reason in try await Self.offMain { try handoffStore.quarantine(payloadID: id, reason: reason) } },
                 storeOutcome: Self.sourceLinkStoreOutcome,
                 record: { self.diagnostics["pendingSourceLinkPayload:\($0)"] = $1.diagnosticValue }
             )
