@@ -91,6 +91,45 @@ def stalling(*udids):
     return processes
 
 
+class DeviceTypeTests(unittest.TestCase):
+    """The phone to create comes from what this Xcode has, not a fixed name (#2557 audit)."""
+
+    @staticmethod
+    def listing(*names):
+        return {'devicetypes': [{'name': n, 'identifier': f'com.apple.CoreSimulator.SimDeviceType.{n}'} for n in names]}
+
+    def test_the_usual_phone_is_kept_when_the_image_has_it(self):
+        listing = self.listing('iPhone-17', 'iPhone-18', 'iPad-Pro')
+        self.assertEqual(lane_sim.pick_device_type(listing), lane_sim.DEVICE_TYPE)
+
+    def test_without_it_the_newest_plain_iPhone_is_used(self):
+        # Pro, Air, SE and the iPad are not what the lane tests on; iPhone-9 must not beat iPhone-18 (numbers, not text).
+        listing = self.listing('iPhone-9', 'iPhone-18', 'iPhone-18-Pro', 'iPhone-Air', 'iPhone-SE-3rd-generation', 'iPad-Pro')
+        self.assertEqual(lane_sim.pick_device_type(listing), 'com.apple.CoreSimulator.SimDeviceType.iPhone-18')
+
+    def test_with_no_plain_iPhone_it_fails_and_names_what_the_image_has(self):
+        with self.assertRaises(lane_sim.BootError) as caught:
+            lane_sim.pick_device_type(self.listing('iPad-Pro', 'Apple-Watch-Series-10'))
+        message = str(caught.exception)
+        self.assertIn('iPhone-17', message)
+        self.assertIn('SimDeviceType.iPad-Pro', message)
+        with self.assertRaises(lane_sim.BootError):
+            lane_sim.pick_device_type({'devicetypes': []})
+
+    def test_a_simctl_that_cannot_list_types_keeps_the_usual_phone(self):
+        for fake in ('true', 'false', 'echo not-json'):
+            with self.subTest(fake=fake), mock.patch.dict(os.environ, {'SM_LANE_SIMCTL': fake}):
+                self.assertEqual(lane_sim.device_type(), lane_sim.DEVICE_TYPE)
+
+    def test_the_listing_from_simctl_decides(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fake = Path(directory) / 'simctl'
+            fake.write_text('#!/bin/sh\necho \'' + json.dumps(self.listing('iPhone-18', 'iPad-Pro')) + '\'\n')
+            fake.chmod(0o755)
+            with mock.patch.dict(os.environ, {'SM_LANE_SIMCTL': str(fake)}):
+                self.assertEqual(lane_sim.device_type(), 'com.apple.CoreSimulator.SimDeviceType.iPhone-18')
+
+
 class TemplateTests(unittest.TestCase):
     def test_failed_template_is_deleted_without_clone_or_completion_marker(self):
         commands = []
