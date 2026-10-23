@@ -15,6 +15,8 @@ public protocol LibraryItemFields {
     var sourceTitle: String? { get }
     var sourceURL: String? { get }
     var createdAt: Date? { get }
+    /// The feed's publication date as written (`Item.publishedAt`), for the Library's Published sort (#1867).
+    var publishedAt: String? { get }
     var sourceCompletedAt: Date? { get }
     /// Whether the item has text with something in it besides whitespace.
     var hasListenableText: Bool { get }
@@ -55,6 +57,7 @@ public struct LibraryItemSummary: LibraryItemFields, Equatable, Sendable {
     public var sourceTitle: String?
     public var sourceURL: String?
     public var createdAt: Date?
+    public var publishedAt: String?
     public var sourceCompletedAt: Date?
     public var hasListenableText: Bool
     public var textCharacterCount: Int?
@@ -72,6 +75,7 @@ public struct LibraryItemSummary: LibraryItemFields, Equatable, Sendable {
         sourceTitle: String? = nil,
         sourceURL: String? = nil,
         createdAt: Date? = nil,
+        publishedAt: String? = nil,
         sourceCompletedAt: Date? = nil,
         hasListenableText: Bool,
         textCharacterCount: Int?
@@ -88,6 +92,7 @@ public struct LibraryItemSummary: LibraryItemFields, Equatable, Sendable {
         self.sourceTitle = sourceTitle
         self.sourceURL = sourceURL
         self.createdAt = createdAt
+        self.publishedAt = publishedAt
         self.sourceCompletedAt = sourceCompletedAt
         self.hasListenableText = hasListenableText
         self.textCharacterCount = textCharacterCount
@@ -99,7 +104,7 @@ public struct LibraryItemSummary: LibraryItemFields, Equatable, Sendable {
             id: item.id, title: item.title, mediaType: item.mediaType, status: item.status,
             externalReference: item.externalReference, externalReferenceType: item.externalReferenceType,
             media: item.media, deletedAt: item.deletedAt, author: item.author, sourceTitle: item.sourceTitle,
-            sourceURL: item.sourceURL, createdAt: item.createdAt, sourceCompletedAt: item.sourceCompletedAt,
-            hasListenableText: item.hasListenableText, textCharacterCount: item.textCharacterCount)
+            sourceURL: item.sourceURL, createdAt: item.createdAt, publishedAt: item.publishedAt,
+            sourceCompletedAt: item.sourceCompletedAt, hasListenableText: item.hasListenableText, textCharacterCount: item.textCharacterCount)
     }
 }

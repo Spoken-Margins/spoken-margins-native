@@ -69,11 +69,12 @@ extension Gate1AppModel {
         }
         do {
             let store = try requireStore()
-            let item = try store.loadItem(id: itemId)
-            guard item.deletedAt == nil, item.sourceCompletedAt == nil,
+            // A summary has everything these checks read; the item's text is not needed to decide (#2506).
+            guard let item = try store.loadItemSummary(id: itemId),
+                  item.deletedAt == nil, item.sourceCompletedAt == nil,
                   !PreparationChunkGate.itemAlreadyListened(try store.loadSessions(itemId: itemId)),
                   LibraryRowBuilder.shouldPrewarmTextAudio(for: item),
-                  item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                  item.hasListenableText else {
                 return
             }
             pendingStartupAudioPreparationItemIds.insert(itemId)

@@ -32,6 +32,18 @@ final class ItemMetadataTests: XCTestCase {
         XCTAssertEqual(ItemMetadata.publishedDateText("2026-09-29T20:00:00Z", now: now, locale: english, timeZone: tokyo), "September 30, 2026")
     }
 
+    func testPublishedDateForSortingAgreesWithTheTextShown() {
+        // #1867: the Published sort and the Item header read one date. Whatever the header refuses sorts as undated.
+        XCTAssertEqual(ItemMetadata.publishedDate("2026-09-29T10:00:00Z", now: now),
+                       ISO8601DateFormatter().date(from: "2026-09-29T10:00:00Z"))
+        XCTAssertEqual(ItemMetadata.publishedDate("Tue, 29 Sep 2026 10:00:00 GMT", now: now),
+                       ISO8601DateFormatter().date(from: "2026-09-29T10:00:00Z"))
+        for raw in [nil, "", "   ", "not a date", "2999-01-01T00:00:00Z", "1850-01-01"] as [String?] {
+            XCTAssertNil(ItemMetadata.publishedDate(raw, now: now), raw ?? "nil")
+            XCTAssertNil(date(raw), raw ?? "nil")
+        }
+    }
+
     func testPublishedDateIsNilForEmptyGarbageAndImplausibleText() {
         for (name, raw) in [("nil", nil), ("empty", ""), ("spaces", "   "), ("garbage", "not a date"),
                             ("a number", "1790675200"), ("month 13", "2026-13-40"), ("half a date", "2026-09"),
