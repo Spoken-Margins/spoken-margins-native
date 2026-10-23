@@ -129,10 +129,12 @@ class GitHub:
     def request(self, method: str, path: str, body: dict | None = None):
         """(parsed JSON, response headers). Retries a dropped connection or a 5xx twice; nothing else."""
         data = json.dumps(body).encode() if body is not None else None
+        # A body without Content-Type goes out as form-encoded, and GitHub answers 415 (#2265).
+        content_type = {'Content-Type': 'application/json'} if data is not None else {}
         for attempt in range(self.retries + 1):
             req = urllib.request.Request(self.url(path), data=data, method=method, headers={
                 'Authorization': f'Bearer {self.token}', 'Accept': 'application/vnd.github+json',
-                'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'sm-status'})
+                'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'sm-status', **content_type})
             try:
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     return json.loads(resp.read() or b'null'), resp.headers
