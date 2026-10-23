@@ -91,7 +91,7 @@ jobs:
           cache-dependency-path: requirements-dev.txt
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: '22'
+          node-version-file: .nvmrc
           cache: npm
       # research/B4/server's tests. Its go.mod `toolchain` line names the exact
       # patch release; setup-go v5's go-version-file reads only the `go` line

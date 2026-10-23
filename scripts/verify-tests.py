@@ -1373,7 +1373,9 @@ class Run:
                 errors.extend(report_unittest_failures(name, failures))
                 print('\n'.join(error for error in errors if error.startswith('Failed: ')), flush=True)
         if name in ('browser', 'share-link'):
-            match = re.search(r'^# tests (\d+)$', text, re.M)
+            # `node --test` prints the TAP summary "# tests N" on Node 20 and 22 when piped, and the spec reporter's
+            # "ℹ tests N" on 24 (#2480), where TAP is no longer the default.
+            match = re.search(r'^(?:# |ℹ )tests (\d+)$', text, re.M)
             entry['executed_count'] = int(match[1]) if match else 0
             if not entry['executed_count']:
                 errors.append('Browser runner executed zero tests' if name == 'browser'
