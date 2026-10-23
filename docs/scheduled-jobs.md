@@ -47,6 +47,7 @@ Times are UTC unless a zone is named. "Pause" is the way to stop that one job wi
 | `disk-relief` (`ops/disk/`) | Every 15 min, and at load | Free space, worktrees, session folders | Deletes rebuildable caches and finished worktrees, moves old artifacts to the external drive | Owner | `launchctl bootout` of the label |
 | `keep-awake` (`ops/power/`) | Every 60 s, and at load | Running builds, agent transcripts | Starts Amphetamine sessions | Owner | `launchctl bootout` of the label, or take out `--lid` for heat |
 | `lane-power-guard` (`ops/lane/`) | Every 15 s, and at load | Power source, lid, runner state | Stops and starts the lane runner services it paused | Owner | `launchctl bootout` of the label |
+| `lane-tools-refresh` (`ops/lane/`, #2536) | Hourly, and at load | The lane tools copy (`SM_LANE_TOOLS`), `origin/main`, the lane's running jobs | Moves the copy to `main`; refreshes its `.venv` and `node_modules` when requirements or the lockfile changed; comments on #337 (once a day per problem) when it cannot | Owner | `launchctl bootout` of the label |
 | GitHub Actions runner services `actions.runner.uncomposed-spoken-margins-native.*` | Always on | Queued jobs | Run `lane.yml` (`lane`, `automerge`, `release`) and `shipped-build-compat.yml` jobs for labels `sm-lane`, `sm-lane-build`, `sm-lane-priority` | Owner; not in this repo | `launchctl bootout` of the service. The power guard restarts only runners it paused itself. |
 
 ### VPS (plists and units in this repo; live state **not checked**)
