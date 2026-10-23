@@ -13,11 +13,17 @@ This scanner is that list (the audit's raw inventory) and the guard that keeps a
   scripts/main_thread_reads.py --update             tighten the baseline: drop fixed rows, lower counts. Never adds.
   scripts/main_thread_reads.py --accept "reason"    add today's new rows to the baseline, each with a one-line reason
 
+What it leaves out (#2514), so a row is worth a person's attention: files project.yml does not compile into the app's
+own process (the Watch app, the excluded Watch bridge, the Share, Browser text and widget extensions, which have
+their own main thread), code behind `guard`/`if` on a flag project.yml sets false (`BUILD_FLAGS`), and functions
+whose every mention (strings included; `@objc` and `override` functions never) sits in `#if DEBUG` or in such code. `--summary` lists the files and counts the rest.
+
 How it decides what runs on the main thread (a heuristic over source text, no compiler; misses are listed below):
 - A scope is main when its type or function is `@MainActor`, the type conforms to View/App/Scene/UIKit classes, or it is
   an extension of such a type in any file (`Gate1AppModel+*.swift`), or its closure is `Task { @MainActor in`,
   `MainActor.run` or `DispatchQueue.main`. It is off the main thread in `Task.detached`, `nonisolated async`
-  functions, actors, `DispatchQueue.global()` and `addTask`. A `Task { }` and every other closure keep their
+  functions, actors, `DispatchQueue.global()`, a queue the file made with `DispatchQueue(label:…)` (`writer.async { }`)
+  and `addTask`. A `Task { }` and every other closure keep their
   surroundings' isolation.
 - A sync helper (`nonisolated`, or in a plain type) runs on its caller's thread. When the main thread calls one, the
   call is a row ("via Type.helper") carrying the helper's own reads, found through up to six levels of calls.
@@ -35,6 +41,10 @@ Known blind spots (each is a heuristic, not a proof; the baseline holds the know
   declared type (`var engine: SessionEngine?` or a parameter, in the file or the enclosing type's files), else a type
   named like it (`sessionEngine` -> SessionEngine, `engine` -> …Engine), else a type containing its name. When the
   first tier that matches still names two types, the call is skipped as `ambiguous-callee` (counted in --summary).
+- A `@Sendable` closure is not taken to run off the main thread: it is not actor-isolated, but a synchronous one runs
+  on whoever calls it.
+- Not seen: code a release build never reaches because a test hook answers no (`UITestingHooks.isActive`, a handler
+  only tests set), a call resolved to the wrong type, and a read that is cheap by construction. Those stay rows.
 - Cost is never judged: `loadItem(id:)` of a short note and of a 1 MB book are the same row. Ranking is step 4
   (#2260) and the read meter is step 2 (#2258).
 - Nothing here can see that a caller uses a title where the callee decodes the whole text (see #2102). The class
@@ -47,6 +57,7 @@ Stdlib only, Python 3.9-compatible.
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import re
 import subprocess
@@ -58,6 +69,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = 'scripts/main_thread_reads_baseline.json'
 SCAN_DIRS = ('App', 'Packages/SessionKit/Sources')
+ARCHIVE_PATHS = SCAN_DIRS + ('project.yml',)
 MAX_HELPER_DEPTH = 6
 STORE_FILES = 'Packages/SessionKit/Sources/SessionKitPersistence'
 
@@ -80,6 +92,91 @@ AREAS = (('answer-it', re.compile(r'margin|interjection|record|review|brief|rejo
          ('pass-it-on', re.compile(r'shar|packet|coop|co-op|layer|export|friend|club|commentary|community|invite', re.I)),
          ('get-it-in', re.compile(r'feed|following|import|subscri|download|quickaccess|source|substack|epub|pdf|link|web|catalog|search|onboard|extension', re.I)),
          ('hear-it-well', re.compile(r'playback|audio|voice|skim|map|episode|player|speech|transcript|chapter|nowplaying|reader|tts|supertonic|kitten|scene|offline|engine|item|queue|lockscreen|watch|speak', re.I)))
+
+# --- What the app target builds ----------------------------------------------------------------------------------
+
+PROJECT = 'project.yml'
+# A plist flag that project.yml sets to false, and the model property that reads it. Code behind `guard <property>`
+# never runs in a build with the flag off (#2514). If project.yml sets the flag true, or drops it, the rows come back.
+BUILD_FLAGS = {'SMRemoteProviderExperienceEnabled': 'remoteProviderExperienceEnabled'}
+
+
+def parse_project(text: str):
+    """The targets of project.yml as {name: {'type': …, 'sources': [(path, [excludes])]}}. A few lines of indentation
+    reading for the one shape XcodeGen specs here use, so the scanner stays stdlib-only."""
+    targets, in_targets, current, section, entry, in_excludes = {}, False, None, None, None, False
+    for raw in text.split('\n'):
+        line = re.sub(r'(^|\s)#.*$', '', raw).rstrip()
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        body = line.strip()
+        if indent == 0:
+            in_targets, current, section = body == 'targets:', None, None
+        elif not in_targets:
+            continue
+        elif indent == 2 and body.endswith(':'):
+            current, section = {'type': '', 'sources': [], 'unparsed': False, 'text': []}, None
+            targets[body[:-1]] = current
+        elif current is None:
+            continue
+        elif indent == 4:
+            section = 'sources' if body == 'sources:' else None
+            if body.startswith('type:'):
+                current['type'] = body.split(':', 1)[1].strip().strip('\'"')
+        elif section == 'sources' and indent == 6 and body.startswith('- '):
+            item = body[2:].strip()
+            if item.startswith('path:'):
+                item = item.split(':', 1)[1].strip()
+            elif re.match(r'[\w-]+\s*:', item) or item.startswith(('[', '{')):
+                current['unparsed'] = True    # a source entry in a shape this reader does not know
+            entry, in_excludes = (item.strip('\'"'), []), False
+            current['sources'].append(entry)
+        elif section == 'sources' and entry and indent == 8:
+            in_excludes = body == 'excludes:'
+            if re.match(r'(?:excludes|includes)\s*:\s*[^\s]', body):
+                current['unparsed'] = True    # `excludes: [a, b]` inline
+        elif section == 'sources' and entry and in_excludes and indent == 10 and body.startswith('- '):
+            entry[1].append(body[2:].strip().strip('\'"'))
+        if current is not None:
+            current['text'].append(body)
+    return targets
+
+
+def app_process_filter(text: str):
+    """A predicate over repo paths: is this file compiled into the app's own process? Files of an extension target
+    (Share, Browser text, widget) run in the extension's process, so the app's main thread never waits on them; files
+    no target lists (the Watch app) or a target excludes are not built at all. Only paths under App/ are judged;
+    None when project.yml names no application target."""
+    apps = [t for t in parse_project(text).values() if t['type'] == 'application']
+    if not apps or any(t['unparsed'] for t in apps):  # an entry this reader does not know: scan everything
+        return None
+    roots = [(path.rstrip('/'), excludes) for t in apps for path, excludes in t['sources']]
+    if not roots:
+        return None
+
+    def built(rel: str) -> bool:
+        if not rel.startswith('App/'):
+            return True
+        for path, excludes in roots:
+            if rel == path or rel.startswith(path + '/'):
+                tail = rel[len(path) + 1:]
+                if not any(tail == e or tail.startswith(e.rstrip('/') + '/') for e in excludes):
+                    return True
+        return False
+    return built
+
+
+def project_build(root: Path):
+    """(built predicate or None, properties whose project.yml flag is false). Both empty when there is no project.yml."""
+    path = root / PROJECT
+    if not path.is_file():
+        return None, frozenset()
+    text = path.read_text(errors='replace')
+    app_text = '\n'.join('\n'.join(t['text']) for t in parse_project(text).values() if t['type'] == 'application')
+    off = frozenset(prop for key, prop in BUILD_FLAGS.items() if re.search(r'^\s*' + key + r':\s*false\s*$', app_text, re.M))
+    return app_process_filter(text), off
+
 
 # --- Source text -------------------------------------------------------------------------------------------------
 
@@ -179,17 +276,21 @@ ATTR_ONLY = re.compile(r'^\s*(?:(?:@\w+(?:\([^)]*\))?|public|private|internal|fi
 LOOP_CALLS = re.compile(r'\.(map|flatMap|compactMap|filter|forEach|reduce|sorted|sort|allSatisfy|first|firstIndex|'
                         r'lastIndex|contains|removeAll|min|max|mapValues|compactMapValues)\s*(\([^)]*\))?\s*$')
 CONTROL = re.compile(r'^(?:\w+:\s*)?(if|guard|for|while|switch|else|do|catch|defer|repeat)\b')
+QUEUE_CALL = re.compile(r'\b(\w+)\s*\.\s*(?:async|asyncAfter|sync)\s*(?:\([^{}]*\))?\s*$')
 TASK_HEADER = re.compile(r'(?<![\w.])Task(?:<[^>]*>)?\s*(?:\([^)]*\))?\s*$')
 
 
 class Scope:
-    __slots__ = ('kind', 'name', 'iso', 'start', 'end', 'async_', 'nonisolated', 'loop', 'labelled', 'ext', 'conforms')
+    __slots__ = ('kind', 'name', 'iso', 'start', 'end', 'async_', 'nonisolated', 'loop', 'labelled', 'ext', 'conforms', 'header', 'parent', 'queue')
 
     def __init__(self, kind, name='', iso=None, start=0):
         self.kind, self.name, self.iso, self.start, self.end = kind, name, iso, start, None
         self.async_ = self.nonisolated = self.loop = self.labelled = False
         self.ext = False
         self.conforms = ()
+        self.header = ''
+        self.parent = None
+        self.queue = None
 
 
 def last_statement(segment: str) -> str:
@@ -267,6 +368,10 @@ def classify(header: str, after: str) -> Scope:
         scope.iso = 'main'
     elif re.search(r'\bDispatchQueue\b|\b\w*[qQ]ueue\w*\s*\.\s*(async|sync|asyncAfter)\b', h):
         scope.iso = 'off'
+    else:
+        queue = QUEUE_CALL.search(h)  # `writer.async { … }`: off the main thread if `writer` is a queue the file made
+        if queue:
+            scope.queue = queue.group(1)
     if re.match(r'\s*(?:\[[^\]]*\]\s*)?@MainActor\b', after):
         scope.iso = 'main'
     if re.search(r'\blabels\s*\.\s*scoped\s*\(|\bhangLabel\b', h):
@@ -283,7 +388,8 @@ def parse_scopes(text: str):
         if c == '{':
             header = last_statement(text[segment:i])
             scope = classify(header, text[i + 1:i + 80])
-            scope.start = i
+            scope.start, scope.header = i, header
+            scope.parent = stack[-1] if stack else None
             scopes.append(scope)
             stack.append(scope)
             segment = i + 1
@@ -381,9 +487,44 @@ class FileScan:
         self.scopes = parse_scopes(self.text)
         self.starts = [0] + [m.end() for m in re.finditer(r'\n', self.text)]
         self.debug = debug_lines(raw)
+        self._by_kind = {}
+        self._words = None
+        self._starts = None
+
+    @property
+    def words(self):
+        """Every word of the source, strings and comments included, as a set (a cheap test for whether a name is mentioned)."""
+        if self._words is None:
+            self._words = set(re.findall(r'\w+', self.raw))
+        return self._words
+
+    def enclosing(self, kind, pos):
+        """The innermost scope of `kind` containing `pos`, or None: stack_at without walking every scope."""
+        if kind not in self._by_kind:
+            scopes = [sc for sc in self.scopes if sc.kind == kind]
+            self._by_kind[kind] = ([sc.start for sc in scopes], scopes)
+        starts, scopes = self._by_kind[kind]
+        i = bisect.bisect_left(starts, pos) - 1
+        while i >= 0:
+            sc = scopes[i]
+            if sc.start < pos < (sc.end if sc.end is not None else 1 << 60):
+                return sc
+            i -= 1
+        return None
 
     def stack_at(self, pos):
-        return [s for s in self.scopes if s.start < pos < (s.end if s.end is not None else 1 << 60)]
+        """Every scope containing `pos`, outermost first."""
+        if self._starts is None:
+            self._starts = [sc.start for sc in self.scopes]
+        i = bisect.bisect_left(self._starts, pos) - 1
+        while i >= 0 and not (self.scopes[i].start < pos < (self.scopes[i].end if self.scopes[i].end is not None else 1 << 60)):
+            i -= 1
+        chain = []
+        sc = self.scopes[i] if i >= 0 else None
+        while sc is not None:
+            chain.append(sc)
+            sc = sc.parent
+        return chain[::-1]
 
 
 def decl_name(stack):
@@ -436,18 +577,26 @@ def is_labelled(stack):
     return any(s.labelled for s in stack)
 
 
-def enclosing_task(stack):
-    """The outermost Task { } scope at or below the first function, if any (the work the hang probe can't name)."""
+def enclosing_task(stack, main_types):
+    """The outermost Task { } scope at or below the first function that itself runs on the main thread (the work
+    the hang probe can't name). A `Task.detached` or a Task in a background type is not one: a main-thread read in
+    a `MainActor.run` hop inside it belongs to no main-thread Task, and neither do its outer Tasks (#2514)."""
     task = None
-    for s in reversed(stack):
+    for i in range(len(stack) - 1, -1, -1):
+        s = stack[i]
         if s.kind in ('func', 'type', 'var'):
             break
         if s.kind == 'task':
+            if context(stack[:i + 1], main_types) != 'main':
+                break
             task = s
     return task
 
 
-def read_sources(root: Path):
+def read_sources(root: Path, left_out=None):
+    """(path, source) of every Swift file the scan covers. `left_out`, if given, collects the files that project.yml
+    says are not part of the app's process (see app_process_filter)."""
+    built, _ = project_build(root)
     files = []
     for top in SCAN_DIRS:
         base = root / top
@@ -457,16 +606,121 @@ def read_sources(root: Path):
             rel = path.relative_to(root).as_posix()
             if re.search(r'Tests?(/|$)|UITests|/\.build/|/Pods/|Preview Content', rel):
                 continue
+            if built and not built(rel):
+                if left_out is not None:
+                    left_out.append(rel)
+                continue
             files.append((rel, path.read_text(errors='replace')))
     return files
 
 
-def scan(files, apis):
-    """All rows for the given (path, source) pairs, and counts of what could not be resolved."""
+class Unreachable:
+    """Positions and functions that never run in a shipping build: after a `guard <flag>` (or in `if <flag> {`) of a
+    BUILD_FLAGS property whose project.yml value is false, inside `#if DEBUG`, or a function whose every call sits in
+    such code. A function counts only when it has one definition in the scan and every mention of its name (a call,
+    a button's `action:`, `#selector`) sits in such code, so a lookalike with a live caller stays a row."""
+
+    def __init__(self, regions, dead_functions):
+        self.regions, self.dead_functions = regions, dead_functions
+
+    def reason(self, fs, pos, stack):
+        if any(a <= pos < b for a, b in self.regions.get(fs.rel, ())):
+            return 'flag-off'
+        fn = next((x.name for x in reversed(stack) if x.kind == 'func'), None)
+        if fn in self.dead_functions:
+            return 'debug-or-flag-off-callers-only'
+        return None
+
+
+def unreachable(scans, by_rel, off_props):
+    regions = defaultdict(list)      # file -> [(start, end)] of text that never runs
+    for fs in scans:
+        for prop in off_props & fs.words:
+            name = r'(?:self\s*\.\s*)?' + prop + r'\b'
+            for m in re.finditer(r'\bguard\s+' + name + r'\s*(?:,|else\b)', fs.text):
+                else_open = re.compile(r'\belse\s*\{').search(fs.text, m.start())
+                else_block = next((x for x in fs.scopes if else_open and x.start == else_open.end() - 1), None)
+                outer = fs.stack_at(m.start())
+                if else_block is not None and else_block.end is not None and outer:
+                    end = outer[-1].end if outer[-1].end is not None else len(fs.text)
+                    case = None
+                    if outer[-1].header.startswith('switch'):  # the guard sits in a case body: the next case is live
+                        case = re.compile(r'\n[ \t]*(?:case\b[^\n]*|default\s*):').search(fs.text, else_block.end, end)
+                    regions[fs.rel].append((else_block.end, case.start() if case else end))
+            for m in re.finditer(r'\bif\s+' + name + r'\s*\{', fs.text):
+                block = next((x for x in fs.scopes if x.start == m.end() - 1), None)
+                if block is not None and block.end is not None:
+                    regions[fs.rel].append((block.start, block.end))
+
+    single = {}                      # function name -> (file scan, scope), for names with exactly one definition
+    count = Counter()
+    for fs in scans:
+        for sc in fs.scopes:
+            if sc.kind == 'func' and sc.name not in ('init', 'deinit', 'subscript'):
+                count[sc.name] += 1
+                single[sc.name] = (fs, sc)
+                if re.search(r'@objc\b|\boverride\b', sc.header):  # the system calls these, with no mention to see
+                    count[sc.name] += 1
+    single = {n: v for n, v in single.items() if count[n] == 1}
+    word = re.compile(r'\w+')
+
+    def static_dead(fs, pos):
+        return line_of(fs.starts, pos) in fs.debug or any(a <= pos < b for a, b in regions.get(fs.rel, ()))
+
+    def names_in(text):
+        return {w for w in word.findall(text) if w in single}  # raw text: a name in a string (`Selector("x")`) is a mention
+
+    # Names that can be dead are the ones mentioned in dead code; a dead function's body then names more of them.
+    candidates = set()
+    for fs in scans:
+        lines = fs.raw.split('\n')
+        candidates |= names_in('\n'.join(lines[n - 1] for n in fs.debug if n <= len(lines)))
+        for a, b in regions.get(fs.rel, ()):
+            candidates |= names_in(fs.raw[a:b])
+    dead = set()
+    while True:
+        uses = defaultdict(list)     # candidate name -> [(file scan, position)]
+        for fs in scans:
+            hit = candidates & fs.words
+            if hit:
+                for m in re.finditer(r'\b(?:' + '|'.join(sorted(hit)) + r')\b', fs.raw):
+                    if not re.search(r'\bfunc\s+$', fs.raw[max(0, m.start() - 8):m.start()]):
+                        uses[m.group(0)].append((fs, m.start()))
+
+        def in_dead_code(fs, pos, others):
+            if static_dead(fs, pos):
+                return True
+            fn = fs.enclosing('func', pos)
+            return fn is not None and fn.name in others
+
+        new = {n for n, sites_ in uses.items() if n not in dead and sites_ and all(in_dead_code(fs, pos, dead - {n}) for fs, pos in sites_)}
+        if not new:
+            break
+        dead |= new
+        for n in new:
+            fs, sc = single[n]
+            candidates |= names_in(fs.raw[sc.start:sc.end])
+    return Unreachable(regions, dead)
+
+
+def mark_serial_queues(scans):
+    """`writer.async { … }` runs on `writer`'s queue when the file made `writer` with `DispatchQueue(label:…)`. A queue
+    that is only an alias (`let ui = DispatchQueue.main`) or a scheduler object with an `.async` method stays main."""
+    for fs in scans:
+        for sc in fs.scopes:
+            if sc.queue and re.search(r'\b(?:let|var)\s+' + re.escape(sc.queue) + r'\b[^=\n]*=\s*DispatchQueue\s*\(', fs.text):
+                sc.iso = 'off'
+
+
+def scan(files, apis, off_props=frozenset()):
+    """All rows for the given (path, source) pairs, and counts of what could not be resolved or never runs
+    (`off_props`: model properties whose project.yml flag is false, see BUILD_FLAGS)."""
     store_rx, other = patterns(apis)
     scans = [FileScan(rel, raw) for rel, raw in files]
     by_rel = {fs.rel: fs for fs in scans}
     main_types = {s.name for fs in scans for s in fs.scopes if s.kind == 'type' and s.iso == 'main' and not s.ext}
+
+    mark_serial_queues(scans)
 
     # Every function that runs on the main thread or on its caller's thread. A nonisolated async function runs
     # elsewhere, so a call to it leaves the main thread and is not followed.
@@ -552,7 +806,7 @@ def scan(files, apis):
                     line = line_of(fs.starts, m.start())
                     rows.append({'file': fs.rel, 'line': line, 'function': decl_name(stack), 'api': api, 'class': klass,
                                  'in_loop': in_loop(stack), 'labelled': is_labelled(stack), 'debug': line in fs.debug,
-                                 'kind': 'direct', 'area': area_of(fs.rel), '_stack': stack})
+                                 'kind': 'direct', 'area': area_of(fs.rel), '_stack': stack, '_pos': m.start()})
         for m in name_rx.finditer(fs.text):
             name = m.group(1)
             if name not in funcs:
@@ -585,7 +839,7 @@ def scan(files, apis):
             if here_key and callee != here_key:
                 calls[here_key].append(callee)
             if ctx == 'main':
-                sites.append((fs, line_of(fs.starts, m.start()), stack, callee, picked[0][2]))
+                sites.append((fs, line_of(fs.starts, m.start()), stack, callee, picked[0][2], m.start()))
 
     # Fixed point: a function's reads include the reads of the functions it calls on its own thread.
     summary = {k: set(v) for k, v in direct.items()}
@@ -602,13 +856,13 @@ def scan(files, apis):
             break
 
     reach = []                        # rows that only feed the unlabelled-Task check
-    for fs, line, stack, callee, callee_ctx in sites:
+    for fs, line, stack, callee, callee_ctx, pos in sites:
         reads = summary.get(callee)
         if not reads:
             continue
         row = {'file': fs.rel, 'line': line, 'function': decl_name(stack), 'in_loop': in_loop(stack),
                'labelled': is_labelled(stack), 'debug': line in fs.debug, 'area': area_of(fs.rel), '_stack': stack,
-               'api': 'via ' + (f'{callee[1]}.' if callee[1] else '') + callee[2],
+               '_pos': pos, 'api': 'via ' + (f'{callee[1]}.' if callee[1] else '') + callee[2],
                'class': min((c for c, _ in reads), key=CLASS_PRIORITY.index),
                'detail': sorted({a for _, a in reads})}
         if callee_ctx == 'caller':
@@ -620,7 +874,7 @@ def scan(files, apis):
     # holds a main-thread read, directly or through a call, and no `labels.scoped(` anywhere around it.
     groups = defaultdict(list)
     for row in rows + reach:
-        task = enclosing_task(row['_stack'])
+        task = enclosing_task(row['_stack'], main_types)
         if task is not None:
             groups[(row['file'], task.start)].append(row)
     extra = []
@@ -633,8 +887,17 @@ def scan(files, apis):
         extra.append({'file': rel, 'line': line, 'function': decl_name(stack), 'api': 'Task {}',
                       'class': 'unlabelled-main-task', 'in_loop': False, 'labelled': False,
                       'debug': line in by_rel[rel].debug, 'kind': 'task', 'area': area_of(rel),
-                      'detail': sorted({r['api'] for r in inner})})
-    final = [{k: v for k, v in r.items() if not k.startswith('_')} for r in rows] + extra
+                      'detail': sorted({r['api'] for r in inner}), '_pos': start, '_stack': stack})
+    # Code that never runs in a shipping build is not main-thread work (#2514).
+    dead = unreachable(scans, by_rel, off_props)
+    kept = []
+    for r in rows + extra:
+        why = dead.reason(by_rel[r['file']], r['_pos'], r['_stack'])
+        if why:
+            skipped[why] += 1
+        else:
+            kept.append(r)
+    final = [{k: v for k, v in r.items() if not k.startswith('_')} for r in kept]
     final.sort(key=lambda r: (r['file'], r['line'], r['api']))
     return final, skipped
 
@@ -698,13 +961,13 @@ def summarize(rows, skipped):
             'debug_only_not_counted': sum(1 for r in rows if r['debug']), 'skipped': dict(skipped)}
 
 
-def scan_ref(root: Path, rev: str):
+def scan_ref(root: Path, rev: str, left_out=None):
     with tempfile.TemporaryDirectory() as tmp:
-        archive = subprocess.run(['git', '-C', str(root), 'archive', rev, *SCAN_DIRS], capture_output=True)
+        archive = subprocess.run(['git', '-C', str(root), 'archive', rev, *ARCHIVE_PATHS], capture_output=True)
         if archive.returncode:
             sys.exit(f'git archive {rev} failed: {archive.stderr.decode()[:200]}')
         subprocess.run(['tar', '-x', '-C', tmp], input=archive.stdout, check=True)
-        return read_sources(Path(tmp)), store_apis(Path(tmp))
+        return read_sources(Path(tmp), left_out), store_apis(Path(tmp)), project_build(Path(tmp))[1]
 
 
 def main(argv=None, root: Path = ROOT):
@@ -719,16 +982,18 @@ def main(argv=None, root: Path = ROOT):
     ap.add_argument('--strict', action='store_true', help='fail on stale baseline rows too')
     args = ap.parse_args(argv)
     root = args.root
+    left_out = []
     if args.ref:
-        files, apis = scan_ref(root, args.ref)
+        files, apis, off_props = scan_ref(root, args.ref, left_out)
     else:
-        files, apis = read_sources(root), store_apis(root)
-    rows, skipped = scan(files, apis)
+        files, apis, off_props = read_sources(root, left_out), store_apis(root), project_build(root)[1]
+    rows, skipped = scan(files, apis, off_props)
     summary = summarize(rows, skipped)
     if args.json_out:
         Path(args.json_out).write_text(json.dumps({'version': 1, 'ref': args.ref or 'worktree', 'summary': summary,
                                                    'rows': rows}, indent=1) + '\n')
     if args.summary or args.ref:
+        summary['not_in_the_app_process'] = sorted(left_out)
         print(json.dumps(summary, indent=2))
         return 0
     baseline_path = root / args.baseline
