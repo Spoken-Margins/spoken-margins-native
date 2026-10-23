@@ -3172,7 +3172,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func refreshBatchExportRows(store: SQLiteSessionStore) throws {
-        let itemsById = Dictionary(uniqueKeysWithValues: try store.listItems().map { ($0.id, $0) })
+        let itemsById = Dictionary(uniqueKeysWithValues: try store.listItemSummaries().map { ($0.id, $0) })
         batchExportRows = try store.loadSessions().compactMap { session in
             guard let item = itemsById[session.itemId] else { return nil }
             let interjectionCount = try store.loadInterjections(sessionId: session.id)

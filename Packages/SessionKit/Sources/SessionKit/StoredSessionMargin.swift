@@ -38,12 +38,12 @@ public enum StoredSessionMargin {
     /// Recently Deleted are never offered. `startedOnly` leaves out items with no session to write on, which is
     /// what a picker suggests; a lookup by a saved id keeps them so the shortcut can say to start the item first.
     /// A non-empty `query` keeps titles that contain it, ignoring case and accents.
-    public static func itemChoices(
-        items: [Item], sessions: [Session], startedOnly: Bool, matching query: String? = nil
+    public static func itemChoices<I: LibraryItemFields>(
+        items: [I], sessions: [Session], startedOnly: Bool, matching query: String? = nil
     ) -> [ItemChoice] {
         let sessionsByItem = Dictionary(grouping: sessions, by: \.itemId)
         let query = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        func lastActivity(_ item: Item) -> Date {
+        func lastActivity(_ item: I) -> Date {
             (sessionsByItem[item.id] ?? []).map { $0.updatedAt ?? $0.createdAt ?? .distantPast }.max() ?? .distantPast
         }
         return items
