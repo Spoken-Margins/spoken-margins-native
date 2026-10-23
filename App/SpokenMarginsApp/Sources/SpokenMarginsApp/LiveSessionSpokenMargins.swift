@@ -14,20 +14,12 @@ enum LiveSessionSpokenMargins {
     /// (a Watch Margin arrived, or a transcript finished).
     static let changedOnDisk = Notification.Name("LiveSessionSpokenMargins.changedOnDisk")
 
-    /// Loads the stored session, lets `body` change it, and saves it when `body` returns true.
+    /// Changes the stored session on the file worker (off the main thread) and, when it changed, tells the open
+    /// screen. `body` returns true when it changed something.
     @MainActor
-    @discardableResult
-    static func updateStored(_ body: (inout LiveSession) -> Bool) -> LiveSession? {
-        guard let directory = Gate1AppModel.liveSessionDirectory,
-              var session = LiveSessionStore.load(from: directory) else { return nil }
-        guard body(&session) else { return session }
-        do {
-            try LiveSessionStore.save(session, in: directory)
-        } catch {
-            return nil
-        }
+    static func updateStored(_ body: @escaping @Sendable (inout LiveSession) -> Bool) async {
+        guard await LiveSessionFileWorker.shared.update(body) != nil else { return }
         NotificationCenter.default.post(name: changedOnDisk, object: nil)
-        return session
     }
 
     /// The on-device transcript of a spoken Margin, or nil when speech recognition isn't allowed or heard nothing.
@@ -40,11 +32,11 @@ enum LiveSessionSpokenMargins {
     /// Transcribes each spoken Margin in the stored session that has no words yet, and files the words in.
     @MainActor
     static func transcribeMissing() async {
-        guard let directory = Gate1AppModel.liveSessionDirectory,
-              let session = LiveSessionStore.load(from: directory) else { return }
+        guard let session = await LiveSessionFileWorker.shared.load() else { return }
         for margin in session.margins where margin.isSpoken && margin.spokenTranscript == nil {
             guard let audioPath = margin.audioPath, let text = await transcribe(audioPath: audioPath) else { continue }
-            updateStored { $0.setTranscript(text, forMarginId: margin.id) }
+            let id = margin.id
+            await updateStored { $0.setTranscript(text, forMarginId: id) }
         }
     }
 
@@ -65,9 +57,11 @@ enum LiveSessionSpokenMargins {
 }
 
 /// Records a spoken Margin on the phone during a live session with the app's Margin recorder (`SystemRecordingClient`),
-/// so the file is made and named exactly as an ordinary spoken Margin's.
-@MainActor
-final class LiveSessionPhoneRecorder {
+/// so the file is made and named exactly as an ordinary spoken Margin's. It is an actor: activating and deactivating
+/// the audio session and finalizing the file block, so they run off the main thread, one call at a time. The caller
+/// checks for a call and the microphone permission (`checkCanRecord`) first, so `start` has no suspension point a
+/// `stop` could slip into.
+actor LiveSessionPhoneRecorder {
     enum Failure: LocalizedError {
         case onACall
         case microphoneDenied
@@ -80,27 +74,41 @@ final class LiveSessionPhoneRecorder {
         }
     }
 
+    struct Recording: Sendable {
+        var audioPath: String
+        var startedAt: Date
+        var durationMs: Int
+    }
+
     private let recorder = SystemRecordingClient(deactivateSessionOnFinish: true)
-    private(set) var startedAt: Date?
+    private var startedAt: Date?
 
-    var isRecording: Bool { startedAt != nil }
-
-    func start() async throws {
+    /// Throws when a call holds the microphone or the listener hasn't allowed it.
+    @MainActor
+    static func checkCanRecord() async throws {
         guard !LiveSessionSpokenMargins.isOnACall else { throw Failure.onACall }
         guard await SystemRecordingClient.requestRecordPermission() else { throw Failure.microphoneDenied }
+    }
+
+    func start() throws {
+        guard startedAt == nil else { return }
         try recorder.beginRecording()
         startedAt = Date()
     }
 
     /// Stops and returns the recording's path, when it started, and how long it ran.
-    func stop() throws -> (audioPath: String, startedAt: Date, durationMs: Int)? {
+    func stop() throws -> Recording? {
         guard let startedAt else { return nil }
         self.startedAt = nil
         let path = try recorder.finishRecording(audioRef: nil)
-        return (path, startedAt, max(0, Int((Date().timeIntervalSince(startedAt) * 1_000).rounded())))
+        return Recording(
+            audioPath: path, startedAt: startedAt,
+            durationMs: max(0, Int((Date().timeIntervalSince(startedAt) * 1_000).rounded()))
+        )
     }
 
     func cancel() {
+        guard startedAt != nil else { return }
         startedAt = nil
         try? recorder.cancelRecording()
     }

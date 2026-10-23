@@ -39,9 +39,10 @@ final class WatchMarginRecorder: NSObject, ObservableObject {
     @Published private(set) var sessionStartPositionMs: Int?
     @Published private(set) var sessionTitle: String?
 
-    private var recorder: AVAudioRecorder?
+    private let capture = WatchMarginCapture()
     private var currentId: String?
-    private var currentURL: URL?
+    /// True while a start or stop is still with the capture actor, so a second tap waits its turn.
+    private var isSwitching = false
 
     func activate() {
         guard WCSession.isSupported() else { return }
@@ -67,7 +68,12 @@ final class WatchMarginRecorder: NSObject, ObservableObject {
     }
 
     func toggle() {
-        if isRecording { stop() } else { Task { await start() } }
+        guard !isSwitching else { return }
+        isSwitching = true
+        Task {
+            if isRecording { await stop() } else { await start() }
+            isSwitching = false
+        }
     }
 
     func start() async {
@@ -76,38 +82,22 @@ final class WatchMarginRecorder: NSObject, ObservableObject {
             state = .failed("Spoken Margins can't use the microphone. Turn it on in the Watch app on your iPhone.")
             return
         }
+        let id = UUID().uuidString.lowercased()
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.record, mode: .default)
-            try session.setActive(true)
-            let id = UUID().uuidString.lowercased()
-            let url = try Self.recordingsDirectory().appending(path: "\(id).m4a")
-            let recorder = try AVAudioRecorder(url: url, settings: [
-                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-                AVSampleRateKey: 22_050,
-                AVNumberOfChannelsKey: 1,
-                AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
-            ])
-            guard recorder.record() else { throw RecorderError.wouldNotStart }
-            self.recorder = recorder
+            try await capture.start(id: id)
             currentId = id
-            currentURL = url
             state = .recording(since: Date())
         } catch {
             state = .failed("Couldn't start recording: \(error.localizedDescription)")
         }
     }
 
-    func stop() {
-        guard case .recording(let since) = state, let recorder, let id = currentId, let url = currentURL else { return }
-        let duration = recorder.currentTime
-        recorder.stop()
-        self.recorder = nil
+    func stop() async {
+        guard case .recording(let since) = state, let id = currentId else { return }
         currentId = nil
-        currentURL = nil
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         state = .idle
-        send(url: url, id: id, wallStart: since, duration: duration)
+        guard let finished = await capture.stop() else { return }
+        send(url: finished.url, id: id, wallStart: since, duration: finished.duration)
     }
 
     private func send(url: URL, id: String, wallStart: Date, duration: TimeInterval) {
@@ -130,14 +120,61 @@ final class WatchMarginRecorder: NSObject, ObservableObject {
         sessionTitle = title?.isEmpty == false ? title : nil
     }
 
-    fileprivate func transferFinished(_ url: URL, error: Error?) {
+    fileprivate func transferFinished(failed: Bool) {
         pendingTransfers = WCSession.default.outstandingFileTransfers.count
-        if error == nil {
-            try? FileManager.default.removeItem(at: url)
+        if !failed {
             lastSent = "Sent to your iPhone."
         } else {
             lastSent = "Couldn't send it to your iPhone. It's kept on the Watch."
         }
+    }
+}
+
+/// The Watch's microphone and recording files (#2487). Activating the audio session, starting and stopping the
+/// recorder block, so they run on this actor, off the main thread; a sent file is removed on WatchConnectivity's queue.
+actor WatchMarginCapture {
+    struct Finished: Sendable {
+        var url: URL
+        var duration: TimeInterval
+    }
+
+    private var recorder: AVAudioRecorder?
+    private var url: URL?
+
+    func start(id: String) throws {
+        guard recorder == nil else { return }
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.record, mode: .default)
+        try session.setActive(true)
+        let url = try Self.recordingsDirectory().appending(path: "\(id).m4a")
+        let recorder = try AVAudioRecorder(url: url, settings: [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 22_050,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
+        ])
+        guard recorder.record() else {
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            throw CaptureError.wouldNotStart
+        }
+        self.recorder = recorder
+        self.url = url
+    }
+
+    /// Stops the recorder and releases the microphone. Nil when nothing was recording.
+    func stop() -> Finished? {
+        guard let recorder, let url else { return nil }
+        let duration = recorder.currentTime
+        recorder.stop()
+        self.recorder = nil
+        self.url = nil
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        return Finished(url: url, duration: duration)
+    }
+
+    /// Removes a recording the phone now has.
+    nonisolated static func removeSent(_ url: URL) {
+        try? FileManager.default.removeItem(at: url)
     }
 
     private static func recordingsDirectory() throws -> URL {
@@ -147,7 +184,7 @@ final class WatchMarginRecorder: NSObject, ObservableObject {
         return directory
     }
 
-    private enum RecorderError: LocalizedError {
+    private enum CaptureError: LocalizedError {
         case wouldNotStart
         var errorDescription: String? { "The microphone didn't start." }
     }
@@ -166,9 +203,10 @@ extension WatchMarginRecorder: WCSessionDelegate {
     }
 
     nonisolated func session(_ session: WCSession, didFinish fileTransfer: WCSessionFileTransfer, error: Error?) {
-        let url = fileTransfer.file.fileURL
         let failed = error != nil
-        Task { @MainActor in self.transferFinished(url, error: failed ? RecorderError.wouldNotStart : nil) }
+        // WatchConnectivity calls this on its own queue: the sent file is removed here, off the main thread.
+        if !failed { WatchMarginCapture.removeSent(fileTransfer.file.fileURL) }
+        Task { @MainActor in self.transferFinished(failed: failed) }
     }
 
     private struct SendableContext: @unchecked Sendable { var value: [String: Any] }
