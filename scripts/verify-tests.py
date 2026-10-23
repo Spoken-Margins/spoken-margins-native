@@ -20,6 +20,7 @@ from lane_xcresult_attachments import export_failed_attachments
 
 from check_posterboard_repair import crash_snapshot, new_crash
 import host_audio
+import lane_audio_window
 import lane_conditions
 import lane_sim
 import sm_build_cache
@@ -1718,11 +1719,23 @@ class Run:
                     derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')
                 self.manifest['settle_before_tests'] = settle_before_tests(chosen['udid'])
                 self.save()
-            self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
-                         'test-without-building', '-parallel-testing-enabled', 'NO',
-                         '-collect-test-diagnostics', 'never',
-                         '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
-                         timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup)
+            # An AudioLoopback test asks the Mac to record what it plays (#1790). A server starts only when the
+            # request names one; in a whole-plan run (Release, a full AudioAdapters) it skips, and that's expected.
+            asked = selectors if scheme == 'SpokenMarginsAppBehavior' else ()
+            with lane_audio_window.serve(self.output, asked) as audio:
+                try:
+                    self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
+                                 'test-without-building', '-parallel-testing-enabled', 'NO',
+                                 '-collect-test-diagnostics', 'never',
+                                 '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
+                                 timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup,
+                                 allowed_skips=lane_audio_window.unasked(expected, asked))
+                finally:  # a failed or skipped test raises here, and its verdict is what the report needs most
+                    if audio:
+                        step = self.manifest['steps'][-1]
+                        step['audio_windows'] = lane_audio_window.attachments(audio)
+                        step.setdefault('attachments', []).extend(step['audio_windows'])
+                        self.save()
         finally:
             if scheme == 'SpokenMarginsAppBehavior':
                 lane_sim.mark_quiet(chosen['udid'])

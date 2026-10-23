@@ -115,6 +115,20 @@ watch for: <the specific risk, e.g. "chunk boundary flips play/pause">
 not needed: <what you already covered, e.g. "T1 green, T2 green on this sha">
 ```
 
+### Audio checks: hearing what the Simulator played (#1790)
+
+A T3 can check what came out of the speakers. Name an `AudioLoopback` test in `tests:`, for example `tests: AudioLoopbackPlaybackTests`. Those tests sit in the AudioAdapters plan.
+
+- **What happens.** `verify-tests.py` starts `ops/audio-loopback/window.py` beside that test run (`scripts/lane_audio_window.py`) and gives the test its folder.
+  - The test asks for a window with the text it expects (`AudioLoopbackWindow` in the app tests).
+  - The server takes the Mac-wide audio lock, so only one window runs at a time. It makes BlackHole 2ch the default output, records a second of pre-roll, and plays a short pilot tone straight to BlackHole.
+  - The recording and the transcription run as a small Mac app, `SpokenMarginsLaneRecorder.app` in `~/Applications`, which the owner allowed once to use Microphone and Speech Recognition. macOS refuses both to the runner itself ([README, The recorder app](../../ops/audio-loopback/README.md#the-recorder-app)).
+  - The test plays its item. When the window ends, the default output goes back to what it was, also on a crash or a timeout. The server then checks the recording: sound time, gaps, repeated audio, and on-device words against the expected text.
+- **The verdict.** It is the test's own result. FAIL means the audio broke an expectation, which is the app's fault. When the lane couldn't listen, the test skips, and the report says INCONCLUSIVE. That happens with no BlackHole, a busy lock, no recorder app or one not allowed yet, a recorder that heard not even the pilot tone, or words that couldn't be transcribed. It also happens when the recording might hold sound that isn't the app's: another simulator job held a lane slot at the window's start or end, or the pre-roll already had sound in it.
+- **The report.** It carries one line per window: `Audio check for <test>: PASS: 9.6 s of sound in 26 s; …; words: heard 28 of 28, word error rate 0.0`. The recording and the full verdict JSON stay in the evidence folder on the Mac.
+- **Its cost.** A window adds its length plus about 10 s to the T3, and it only runs when a request names an `AudioLoopback` test. A whole-plan run (Release, a full AudioAdapters) opens no window: the test skips there, and that skip is allowed. For that time the Mac's own sound goes to BlackHole and is silent.
+- **What it can't catch.** The phone's Lock Screen and background audio, Bluetooth, heat fallbacks, the phone's own voices, and whether a voice sounds good. Those stay on the owner's phone.
+
 ## Report format
 
 The Test Desk (or the runner) replies on the PR:
