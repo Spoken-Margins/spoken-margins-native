@@ -243,6 +243,9 @@ jobs:
             echo "DEVELOPER_DIR=/Applications/Xcode_27.0.app/Contents/Developer"
           } >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/lane-state" "$RUNNER_TEMP/lane-evidence"
+          # A fresh hosted Mac has no crash-report folder, and verify-tests.py stops with "Simulator crash reports are
+          # unavailable" without one (#2557); the build Macs have it from their own use.
+          mkdir -p "$HOME/Library/Logs/DiagnosticReports"
           export DEVELOPER_DIR=/Applications/Xcode_27.0.app/Contents/Developer
           xcodebuild -version
           sysctl -n hw.ncpu hw.memsize
@@ -303,10 +306,14 @@ jobs:
           GH_TOKEN: ''  # the PR's own script and requirements: no token, as for the PR's builds and tests
         run: PYTHON=python3 bash scripts/bootstrap-python-tools.sh
       # ---- end of hosted Mac only ----
+      # The hosted Mac runs the lane on the 3.12 from setup-python, not the image's system Python (3.9): a piece of
+      # 3.10+ syntax in lane-runner.py (#2545) otherwise dies at import. The build Macs keep their system Python.
       - name: Run the request
         id: run
+        env:
+          LANE_PYTHON: ${{ runner.environment == 'github-hosted' && 'python3' || '/usr/bin/python3' }}
         run: >-
-          /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
+          "$LANE_PYTHON" "$RUNNER_TEMP/lane-runner.py" --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
           --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode explicit
       # The check is red only on FAIL (#184): project threads wake when a check on their PR fails, and
       # a FAIL is the PR's code. INCONCLUSIVE (held for T3, no simulator, a flood, a conflict with next)
@@ -327,8 +334,10 @@ jobs:
           fi
       - name: Tidy up after a cancelled or failed run
         if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'
+        env:
+          LANE_PYTHON: ${{ runner.environment == 'github-hosted' && 'python3' || '/usr/bin/python3' }}
         run: >-
-          /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --cleanup --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
+          "$LANE_PYTHON" "$RUNNER_TEMP/lane-runner.py" --cleanup --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
           --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode explicit
       # hosted Mac only: the machine is gone after the job, so the report's evidence goes with the run. Logs, manifests
       # and reports only; result bundles are large and the logs name each failure.
