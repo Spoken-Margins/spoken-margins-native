@@ -3617,6 +3617,36 @@ class FreshCloneRerunTests(unittest.TestCase):
         self.assertTrue(any('not run: adapters' in line for line in details))
         self.assertIn('simctl boot U2 failed', json.loads((evidence / lane.FRESH_RERUNS).read_text())[0]['boot'])
 
+    def test_a_fresh_clone_marked_unsafe_by_its_failed_boot_is_not_a_crash_flood(self):
+        # Audit on 484c63b: the failed boot marks U2 unsafe ('simctl boot failed'). No watcher ever ran on U2, so
+        # the report must not say the SpringBoard watcher stopped it or ping the owner about a crash.
+        marks = {'U2': {'reason': 'simctl boot failed: x'}}
+        (verdict, _, _, _, crashes, cc), _, devices, _, _ = self.run_t3(
+            [stalled_out_manifest()], boots_fail={'U2'}, unsafe=lambda: marks)
+        self.assertEqual((verdict, devices), ('INCONCLUSIVE', ['U1']))
+        self.assertEqual(cc, '')
+        self.assertFalse(crashes.startswith('crash flood'), crashes)
+        self.assertNotIn('SpringBoard watcher', crashes)
+
+    def test_a_watcher_stop_on_the_fresh_clone_is_still_a_crash_flood(self):
+        calls = []
+
+        def unsafe():
+            calls.append(1)
+            return {} if len(calls) == 1 else {'U2': {'reason': 'SpringBoard crashed: SpringBoard-f.ips'}}
+
+        (verdict, _, _, _, crashes, cc), _, devices, _, _ = self.run_t3(
+            [stalled_out_manifest(), passing_manifest()], unsafe=unsafe)
+        self.assertEqual((verdict, devices), ('INCONCLUSIVE', ['U1', 'U2']))
+        self.assertIn('the SpringBoard watcher stopped the device: SpringBoard crashed: SpringBoard-f.ips', crashes)
+        self.assertTrue(cc)
+
+    def test_the_fresh_rerun_keeps_the_stalled_runs_log(self):
+        # Audit on 484c63b (minor): both runs wrote verify-app.log, so the rerun overwrote the stalled run's output.
+        *_, evidence = self.run_t3([stalled_out_manifest(), passing_manifest()])
+        self.assertTrue((evidence / 'verify-app.log').is_file())
+        self.assertTrue((evidence / 'verify-app-fresh.log').is_file())
+
     def test_a_stalled_clone_the_watcher_stopped_is_not_swapped_for_a_fresh_one(self):
         # Audit on 041d4f4: a SpringBoard crash on U1 stops it and marks it unsafe, and the next launch then
         # "stalls" twice. Rerunning on U2 would switch devices to get around a crash and could report PASS.

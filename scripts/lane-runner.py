@@ -2595,12 +2595,12 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
     where = f'cloned iPhone 17, {runtime.rsplit(".", 1)[-1].replace("iOS-", "iOS ").replace("-", ".")}'
     python = ROOT / '.venv/bin/python'
 
-    def run_plan(plan, selectors, output):
+    def run_plan(plan, selectors, output, log_name=None):
         command = [str(python if python.exists() else sys.executable), 'scripts/verify-tests.py', '--plan', plan,
                    '--device', udid, '--require-build', '--output', str(output)]
         for selector in selectors:
             command += ['--only-testing', selector]
-        with (evidence / f'verify-{plan}.log').open('w') as log:
+        with (evidence / (log_name or f'verify-{plan}.log')).open('w') as log:
             if run_bounded(command, log, T3_TIMEOUT) is None:
                 return {**_read_manifest(output), 'status': 'timed out',
                         'error': f'the runner\'s {duration(T3_TIMEOUT)} budget for the whole verify-tests.py run '
@@ -2613,6 +2613,9 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
             return lane_sim.clone_temporary(RUNNER_SIMULATOR_PREFIX + request_id, runtime, out=log)
 
     reruns = []
+    # Only a device with a SpringBoard watcher on it can be stopped by one. A clone marked unsafe for any other
+    # reason (a fresh clone that never booted, say) is not a crash flood and pings nobody (audit on 484c63b).
+    watched_devices = []
 
     def run_plan_or_rerun_on_a_fresh_clone(plan, selectors, output):
         """#2176: a plan that ends on its second startup stall runs once more, on a fresh clone, in this job.
@@ -2650,7 +2653,9 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
                 rerun['boot'] = problem
                 return {**manifest, 'fresh_clone_rerun': rerun}  # the stalled run's INCONCLUSIVE stands
             lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot', crash_window=info.get('boot_window'))
-            fresh = run_plan(plan, selectors, Path(rerun['output']))
+            watched_devices.append(udid)
+            # Its own log, so the stalled run's verify-tests.py output stays on record next to it.
+            fresh = run_plan(plan, selectors, Path(rerun['output']), log_name=f'verify-{plan}-fresh.log')
             rerun['status'] = fresh.get('status', 'missing')
             return {**fresh, 'fresh_clone_rerun': rerun}
         finally:
@@ -2674,6 +2679,7 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
             return 'INCONCLUSIVE', where, 'nothing', details, 'watched during boot', ''
         lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot',  # stops the device at a SpringBoard crash
                                crash_window=boot_info.get('boot_window'))
+        watched_devices.append(udid)
         summaries, statuses, ran, details = run_plans(grouped, run_plan_or_rerun_on_a_fresh_clone, evidence,
                                                       lambda: lane_sim.is_available(udid))
         details.insert(0, f'boot of the cloned simulator took {duration(boot_seconds)} (memory pressure at boot: '
@@ -2691,7 +2697,7 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
     finally:
         lane_sim.release(udid)
     watched, unsafe = None, lane_sim.unsafe_devices()
-    for device in dict.fromkeys([*(rerun['stalled'] for rerun in reruns), udid]):  # every clone a plan ran on
+    for device in dict.fromkeys(watched_devices):  # every clone a plan ran on under the watcher
         mark = unsafe.get(device)
         if mark and mark['reason'].startswith('late crash report'):
             # A crash during the boot, reported after it: the device is marked unsafe, but the run itself went on.
