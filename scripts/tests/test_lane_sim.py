@@ -116,6 +116,36 @@ class DeviceTypeTests(unittest.TestCase):
         with self.assertRaises(lane_sim.BootError):
             lane_sim.pick_device_type({'devicetypes': []})
 
+    def test_only_a_type_the_runtime_supports_is_picked(self):
+        # The hosted xcode-27 image lists iPhone-17 but its iOS 27 runtime rejects it ("Incompatible device", simctl
+        # 403, then exit 147): the first hosted T3 runs never started a simulator (#2557 follow-up).
+        listing = self.listing('iPhone-17', 'iPhone-18', 'iPad-Pro')
+        supported = {'com.apple.CoreSimulator.SimDeviceType.iPhone-18'}
+        self.assertEqual(lane_sim.pick_device_type(listing, supported=supported),
+                         'com.apple.CoreSimulator.SimDeviceType.iPhone-18')
+        with self.assertRaises(lane_sim.BootError) as caught:
+            lane_sim.pick_device_type(listing, supported={'com.apple.CoreSimulator.SimDeviceType.iPad-Pro'})
+        self.assertIn('runtime', str(caught.exception))
+
+    def test_the_runtime_listing_from_simctl_limits_the_types(self):
+        runtime = 'com.apple.CoreSimulator.SimRuntime.iOS-27-1'
+        types = self.listing('iPhone-17', 'iPhone-18')
+        runtimes = {'runtimes': [
+            {'identifier': 'com.apple.CoreSimulator.SimRuntime.iOS-27-0', 'supportedDeviceTypes': [
+                {'identifier': 'com.apple.CoreSimulator.SimDeviceType.iPhone-17'}]},
+            {'identifier': runtime, 'supportedDeviceTypes': [
+                {'identifier': 'com.apple.CoreSimulator.SimDeviceType.iPhone-18'}]}]}
+        with tempfile.TemporaryDirectory() as directory:
+            fake = Path(directory) / 'simctl'
+            fake.write_text('#!/bin/sh\nif [ "$2" = runtimes ]; then echo \'' + json.dumps(runtimes) + '\'\n'
+                            'else echo \'' + json.dumps(types) + '\'; fi\n')
+            fake.chmod(0o755)
+            with mock.patch.dict(os.environ, {'SM_LANE_SIMCTL': str(fake)}):
+                self.assertEqual(lane_sim.device_type(runtime), 'com.apple.CoreSimulator.SimDeviceType.iPhone-18')
+                self.assertEqual(lane_sim.device_type('com.apple.CoreSimulator.SimRuntime.iOS-27-0'), lane_sim.DEVICE_TYPE)
+                # A runtime the listing does not mention (or one with no list) does not limit the choice.
+                self.assertEqual(lane_sim.device_type('com.apple.CoreSimulator.SimRuntime.iOS-99-0'), lane_sim.DEVICE_TYPE)
+
     def test_a_simctl_that_cannot_list_types_keeps_the_usual_phone(self):
         for fake in ('true', 'false', 'echo not-json'):
             with self.subTest(fake=fake), mock.patch.dict(os.environ, {'SM_LANE_SIMCTL': fake}):
