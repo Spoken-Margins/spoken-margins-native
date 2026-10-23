@@ -791,36 +791,54 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual((plain['waiting_in'], plain['audio_device']), ('semaphore_wait_trap', False))
         self.assertNotIn('test', verification.hang_diagnosis('Call graph:\n    5 Thread_1\n    + 5 start  (in dyld)\n'))
 
-    def test_a_hung_host_test_step_samples_its_xctest_names_the_test_and_leaves_no_stray(self):
+    def hung_host_test_step(self, temporary):
+        """A stand-in "xctest" in its own session hangs after its test starts; returns the stopped step and its pid."""
         # #1956: SwiftPM starts xctest in a process group of its own. The step's stop left it running under launchd,
-        # and the report named no test. Here a stand-in "xctest" in its own
-        # session hangs after its test starts. It is /bin/sleep run under the name xctest (argv[0]), which is what `ps`
-        # shows: a symlink to Python would not do, since the framework Python re-executes itself under Python.app.
+        # and the report named no test. The stand-in is /bin/sleep run under the name xctest (argv[0]), which is what
+        # `ps` shows: a symlink to Python would not do, since the framework Python re-executes itself under Python.app.
+        tools = Path(temporary) / 'toolchain'
+        tools.mkdir()
+        pid_file = Path(temporary) / 'xctest.pid'
+        script = ('import subprocess, sys, time\n'
+                  'print("Test Case \'-[SessionKitTests.RealPlayerMarginMomentTests testHangs]\' started.", flush=True)\n'
+                  f'child = subprocess.Popen([{str(tools / "xctest")!r}, "120"], executable="/bin/sleep", '
+                  'start_new_session=True)\n'
+                  f'open({str(pid_file)!r}, "w").write(str(child.pid))\n'
+                  'child.wait()\n')
+        run = verification.Run(Path(temporary) / 'run', 'test')
+        with self.assertRaises(RuntimeError):
+            run.command('package', [sys.executable, '-c', script], timeout=1, ceiling=60, stall_seconds=2,
+                        tests=True)
+        step = run.manifest['steps'][-1]
+        stray = int(pid_file.read_text())
+        self.assertIn('SessionKitTests/RealPlayerMarginMomentTests/testHangs started and did not finish',
+                      step['errors'][1])
+        self.assertEqual([sample['pid'] for sample in step['hang']['samples']], [stray])
+        self.assertTrue((run.output / 'package-hang' / f'sample-{stray}.txt').is_file())
+        self.assertTrue(step['errors'][2].startswith('stuck: '))
+        deadline = time.monotonic() + 5
+        while verification.process_alive(stray) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertFalse(verification.process_alive(stray))
+        return step, stray
+
+    @unittest.skipUnless(shutil.which('sample'), 'macOS `sample` only; the no-sample case runs everywhere')
+    def test_a_hung_host_test_step_samples_its_xctest_names_the_test_and_leaves_no_stray(self):
         with tempfile.TemporaryDirectory() as temporary:
-            tools = Path(temporary) / 'toolchain'
-            tools.mkdir()
-            pid_file = Path(temporary) / 'xctest.pid'
-            script = ('import subprocess, sys, time\n'
-                      'print("Test Case \'-[SessionKitTests.RealPlayerMarginMomentTests testHangs]\' started.", flush=True)\n'
-                      f'child = subprocess.Popen([{str(tools / "xctest")!r}, "120"], executable="/bin/sleep", '
-                      'start_new_session=True)\n'
-                      f'open({str(pid_file)!r}, "w").write(str(child.pid))\n'
-                      'child.wait()\n')
-            run = verification.Run(Path(temporary) / 'run', 'test')
-            with self.assertRaises(RuntimeError):
-                run.command('package', [sys.executable, '-c', script], timeout=1, ceiling=60, stall_seconds=2,
-                            tests=True)
-            step = run.manifest['steps'][-1]
-            stray = int(pid_file.read_text())
-            self.assertIn('SessionKitTests/RealPlayerMarginMomentTests/testHangs started and did not finish',
-                          step['errors'][1])
-            self.assertEqual([sample['pid'] for sample in step['hang']['samples']], [stray])
-            self.assertTrue((run.output / 'package-hang' / f'sample-{stray}.txt').is_file())
-            self.assertTrue(step['errors'][2].startswith('stuck: '))
-            deadline = time.monotonic() + 5
-            while verification.process_alive(stray) and time.monotonic() < deadline:
-                time.sleep(0.1)
-            self.assertFalse(verification.process_alive(stray))
+            step, stray = self.hung_host_test_step(temporary)
+            self.assertIsNotNone(step['hang']['samples'][0]['exit'])
+
+    def test_a_hung_host_test_step_without_sample_still_names_its_xctest_and_leaves_no_stray(self):
+        # #1956: the hosted Linux runner has no `sample`. Popen raised FileNotFoundError, the step's hang record lost
+        # every sample, and nothing named the stopped xctest. It now writes a note per xctest instead.
+        real_which = shutil.which
+        with tempfile.TemporaryDirectory() as temporary, patch.object(
+                verification.shutil, 'which', lambda name, *a, **k: None if name == 'sample' else real_which(name, *a, **k)):
+            step, stray = self.hung_host_test_step(temporary)
+        [sample] = step['hang']['samples']
+        self.assertIsNone(sample['exit'])
+        self.assertIn(f'xctest {stray}: no `sample` tool on this host', sample['diagnosis'])
+        self.assertIn('no `sample` tool', step['errors'][2])
 
     def test_an_audio_device_hang_is_a_lane_fault_only_while_the_output_still_does_not_start(self):
         # #1956: a stuck output stays stuck after the step stops; a hang in the PR's own audio code ends with its xctest.

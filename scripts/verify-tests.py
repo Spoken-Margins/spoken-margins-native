@@ -9,6 +9,7 @@ import json
 import os
 import platform
 import plistlib
+import shutil
 from pathlib import Path
 import re
 import signal
@@ -989,7 +990,9 @@ AUDIO_DEVICE_START = re.compile(r'AudioDeviceStart|HALB_IOThread::StartAndWaitFo
 def descendants(pid):
     """Every live process under `pid` by parent link, whatever its process group, as (pid, command) pairs."""
     try:
-        ps = subprocess.run(['ps', '-axo', 'pid=,ppid=,command='], capture_output=True, text=True, timeout=20).stdout
+        # -A (every process) means the same to BSD and procps ps; the hosted Linux runner uses this too (#1956).
+        ps = subprocess.run(['ps', '-A', '-o', 'pid=,ppid=,command='], capture_output=True, text=True,
+                            timeout=20).stdout
     except (OSError, subprocess.SubprocessError):
         return []
     children = {}
@@ -1028,18 +1031,33 @@ def hang_diagnosis(sample_text):
                          + ('; a sound output that never started' if audio else '')}
 
 
-def hang_evidence(pid, folder, sample_seconds=3):
-    """Best effort, before a hung host test step is stopped: sample each xctest under it. Never raises."""
+def hang_evidence(pid, folder, sample_seconds=3, sampler_tool=None):
+    """Best effort, before a hung host test step is stopped: sample each xctest under it. Never raises.
+
+    macOS's `sample` gives the call graph. A host without it (the hosted Linux runner) still records each hung
+    xctest, with a note file saying why there is no call graph, so the step names the process it stopped and one
+    missing tool or failed sampler never drops the others (#1956)."""
     found, samplers = {}, []
+    tool = sampler_tool if sampler_tool is not None else shutil.which('sample')
     try:
         # A parallel run has an xctest per worker: sample them all at once, so the stop waits one sample, not several.
         for child, command in descendants(pid):
             if command.split(' ', 1)[0].endswith('/xctest'):
                 folder.mkdir(parents=True, exist_ok=True)
                 path = folder / f'sample-{child}.txt'
-                samplers.append((child, path, subprocess.Popen(
-                    ['sample', str(child), str(sample_seconds), '-file', str(path)],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)))
+                sampler, reason = None, f'no `sample` tool on this host ({platform.system()})'
+                if tool:
+                    try:
+                        sampler = subprocess.Popen([tool, str(child), str(sample_seconds), '-file', str(path)],
+                                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except OSError as error:
+                        reason = f'`sample` did not start: {error!r}'
+                if sampler is None:
+                    path.write_text(f'{reason}\n{child} {command}\n')
+                    found.setdefault('samples', []).append(
+                        {'pid': child, 'exit': None, 'diagnosis': f'xctest {child}: {reason}, so no call graph'})
+                    continue
+                samplers.append((child, path, sampler))
         deadline = time.monotonic() + sample_seconds + 30
         for child, path, sampler in samplers:
             try:
