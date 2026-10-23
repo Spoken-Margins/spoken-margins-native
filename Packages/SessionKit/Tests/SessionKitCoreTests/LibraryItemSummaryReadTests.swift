@@ -20,8 +20,11 @@ final class LibraryItemSummaryReadTests: XCTestCase {
     }
 
     private func item(_ id: String, text: String?, media: ItemMedia? = nil, mediaType: String = "text") -> Item {
-        Item(id: id, title: "Title \(id)", mediaType: mediaType, text: text, externalReference: "https://example.com/\(id)",
-             status: "ready", externalReferenceType: "article", media: media, createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        var item = Item(id: id, title: "Title \(id)", mediaType: mediaType, text: text, externalReference: "https://example.com/\(id)",
+                        status: "ready", externalReferenceType: "article", media: media, createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        // Most carry a feed date so the Published sort has something to read; "nil" and "empty" have none (#1867).
+        if id != "nil", id != "empty" { item.publishedAt = "2026-09-29T10:00:00Z" }
+        return item
     }
 
     private let context = StartupAudioContext(hasAcceptedCurrentTerms: true, hasSupertonicVoice: true)
@@ -69,6 +72,11 @@ final class LibraryItemSummaryReadTests: XCTestCase {
         XCTAssertEqual(summaries.first { $0.id == "long-gap" }?.hasListenableText, true, "words after a long gap still count")
         XCTAssertEqual(summaries.first { $0.id == "long-blank" }?.hasListenableText, false)
         XCTAssertEqual(summaries.first { $0.id == "nbsp" }?.hasListenableText, false)
+        // The Published sort reads the feed date off the summary, so it must survive the cut (#1867).
+        let expected = ItemMetadata.publishedDate("2026-09-29T10:00:00Z")
+        XCTAssertNotNil(expected)
+        XCTAssertEqual(fromSummaries.first { $0.id == "plain" }?.publishedAt, expected)
+        XCTAssertNil(fromSummaries.first { $0.id == "nil" }?.publishedAt)
     }
 
     func testTheSummaryReadDoesNotCarryTheTextOrTheDocumentStructure() throws {

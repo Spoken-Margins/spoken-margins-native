@@ -121,6 +121,7 @@ public enum LibraryRowBuilder {
                 lastListenedAt: sessions.compactMap { $0.updatedAt ?? $0.createdAt }.max(),
                 storageRecencyRank: storageRank
             )
+            row.publishedAt = ItemMetadata.publishedDate(item.publishedAt)
             row.usesNewReader = data.structuredDocumentItemIds.contains(item.id)
             row.sharedMargins = data.sharedMarginsByItemId[item.id] ?? .none
             row.canMarkUnfinished = item.sourceCompletedAt != nil && !PreparationChunkGate.itemAlreadyListened(sessions)

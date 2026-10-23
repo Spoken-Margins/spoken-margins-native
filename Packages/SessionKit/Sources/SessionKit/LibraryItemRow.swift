@@ -29,6 +29,8 @@ public struct LibraryItemRow: Identifiable, Hashable, Sendable {
     public var startupAudioCompletedChunkCount: Int
     public var startupAudioTargetChunkCount: Int
     public let addedAt: Date?
+    /// When the publisher released it, for the Published sort (#1867); nil when the feed gave no usable date.
+    public var publishedAt: Date?
     public let lastListenedAt: Date?
     public let storageRecencyRank: Int
     /// A PDF read through the structured-document reader (#359).
