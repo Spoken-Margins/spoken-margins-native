@@ -141,7 +141,9 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     }
 
     public func quarantinedRecordCount() throws -> Int {
-        try withReadConnection { connection in
+        let timer = StoreReadTimer(readMeter, method: #function)
+        defer { timer?.finish(rows: 1, bytes: 0) }
+        return try withReadConnection { connection in
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(connection, "SELECT COUNT(*) FROM quarantined_records;", -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_quarantine_count")
@@ -403,8 +405,8 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     /// still uses a recording before the recording is deleted (#1035), so it fails closed: a row it can't
     /// read, or a read that doesn't reach the end of the table, throws instead of leaving a reference out.
     public func allMarginAudioPaths() throws -> [String] {
-        let live = try marginAudioPaths(sql: "SELECT payload FROM records WHERE kind = 'interjection';")
-        let quarantined = try marginAudioPaths(sql: "SELECT payload FROM quarantined_records WHERE kind = 'interjection';")
+        let live = try marginAudioPaths(sql: "SELECT payload FROM records WHERE kind = 'interjection';", caller: "allMarginAudioPaths()")
+        let quarantined = try marginAudioPaths(sql: "SELECT payload FROM quarantined_records WHERE kind = 'interjection';", caller: "allMarginAudioPaths()")
         return live + quarantined
     }
 
@@ -503,11 +505,15 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         guard try quarantinedRecordCount() > 0 else { return [] }
         return try marginAudioPaths(
             sql: "SELECT payload FROM quarantined_records WHERE kind = 'interjection' AND (\(Self.quarantinedRowBelongsToItem));",
-            bindings: [itemId], skippingUnreadable: true)
+            bindings: [itemId], skippingUnreadable: true, caller: "quarantinedMarginAudioPaths(itemId:)")
     }
 
-    private func marginAudioPaths(sql: String, bindings: [String] = [], skippingUnreadable: Bool = false) throws -> [String] {
-        try withReadConnection { connection in
+    private func marginAudioPaths(sql: String, bindings: [String] = [], skippingUnreadable: Bool = false,
+                                  caller: String) throws -> [String] {
+        let timer = StoreReadTimer(readMeter, method: caller)
+        var rowCount = 0, byteCount = 0
+        defer { timer?.finish(rows: rowCount, bytes: byteCount) }
+        return try withReadConnection { connection in
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_margin_audio_paths")
@@ -521,6 +527,8 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
                 guard step == SQLITE_ROW else {
                     throw SessionKitError.persistenceFailed("step_margin_audio_paths")
                 }
+                rowCount += 1
+                byteCount += Int(sqlite3_column_bytes(statement, 0))
                 guard let raw = sqlite3_column_text(statement, 0),
                       let object = try? JSONSerialization.jsonObject(with: Data(String(cString: raw).utf8)) as? [String: Any] else {
                     if skippingUnreadable { continue }
@@ -1235,6 +1243,8 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     public func listItemSummaries(includeDeleted: Bool = false) throws -> [LibraryItemSummary] {
         var rows: [(payload: String, head: String?, length: Int?)] = []
         var needsFullRead = false
+        let timer = StoreReadTimer(readMeter, method: #function)
+        defer { timer?.finish(rows: rows.count, bytes: rows.reduce(0) { $0 + $1.payload.utf8.count + ($1.head?.utf8.count ?? 0) }) }
         try withReadConnection { connection in
             var statement: OpaquePointer?
             let sql = """
@@ -1923,7 +1933,10 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
     /// The items that have a structured document, read without decoding the
     /// documents, so the Library can mark new-reader PDFs cheaply (#359).
     public func loadStructuredDocumentItemIds() throws -> Set<String> {
-        try withReadConnection { connection in
+        let timer = StoreReadTimer(readMeter, method: #function)
+        var itemIds: Set<String> = []
+        defer { timer?.finish(rows: itemIds.count, bytes: itemIds.reduce(0) { $0 + $1.utf8.count }) }
+        return try withReadConnection { connection in
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(
                 connection,
@@ -1936,7 +1949,6 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
             }
             defer { sqlite3_finalize(statement) }
             bind(statement, index: 1, value: Self.structuredDocumentKind)
-            var itemIds: Set<String> = []
             while sqlite3_step(statement) == SQLITE_ROW {
                 guard let raw = sqlite3_column_text(statement, 0) else { continue }
                 itemIds.insert(String(cString: raw))
