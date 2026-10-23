@@ -83,6 +83,24 @@ final class Gate1FlowUITests: XCTestCase {
         captureScreen(named: "listening-edition-preview")
     }
 
+    /// #2063: a failed import answers next to the Import button, with no scrolling.
+    func testListeningEditionImportErrorShowsBesideTheImportButton() throws {
+        openLibrarySettings()
+        scrollToButton(containingLabel: "Import Listening Edition").tap()
+        let editor = app.textViews["Listening edition JSON"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.tap()
+        editor.typeText("not json at all")
+        let importButton = app.buttons["listeningEdition.import"]
+        XCTAssertTrue(importButton.waitForExistence(timeout: 5))
+        importButton.tap()
+        let result = element("listeningEdition.result")
+        XCTAssertTrue(result.waitForExistence(timeout: 5), "The import's answer must show without scrolling")
+        XCTAssertTrue(result.isHittable)
+        XCTAssertLessThanOrEqual(result.frame.maxY, importButton.frame.minY + 1, "The answer sits just above the Import button")
+        captureScreen(named: "listening-edition-import-error")
+    }
+
     func testLongTimelineResponseKeepsActionAboveEditorAndStartsPlayback() throws {
         app.buttons["queue.start.item-pill"].tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
@@ -198,6 +216,27 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(scrollToElement("settings.ai.releaseBoundary").exists)
         XCTAssertFalse(element("provider.name").exists)
         XCTAssertFalse(element("provider.apiKey.field").exists)
+    }
+
+    /// #1935: at AX5 the banner gives its message the full width and puts Undo on its own row, 44 pt tall.
+    func testFeedbackBannerPutsItsButtonsOnTheirOwnRowAtAccessibilitySizes() throws {
+        app.terminate()
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        app.launch()
+        let row = app.buttons["library.row.item-pill"]
+        XCTAssertTrue(row.waitForExistence(timeout: 8))
+        row.press(forDuration: 0.8)
+        app.buttons["Mark Complete"].tap()
+        let undo = element("completion.undo.button")
+        XCTAssertTrue(undo.waitForExistence(timeout: 4))
+        let banner = element("app.feedback.banner")
+        XCTAssertTrue(banner.exists)
+        let window = app.windows.firstMatch.frame
+        XCTAssertGreaterThanOrEqual(undo.frame.minY, banner.frame.maxY - 1, "Undo still sits beside the message")
+        XCTAssertGreaterThanOrEqual(undo.frame.height, 44, "Undo is under 44 pt")
+        XCTAssertLessThanOrEqual(undo.frame.maxX, window.maxX + 1, "Undo runs off the right edge")
+        XCTAssertGreaterThan(banner.frame.width, window.width * 0.6, "The message is squeezed beside the buttons")
+        captureScreen(named: "feedback-banner-accessibility")
     }
 
     func testLibraryUnfinishedCompletionUndoAndSearchDiscovery() throws {
@@ -853,7 +892,7 @@ final class Gate1FlowUITests: XCTestCase {
         note.tap()
         XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["Remember the amber doorway."].exists)
-        XCTAssertFalse(app.buttons["Play Margin"].exists)
+        XCTAssertFalse(app.buttons["Hear my recording"].exists)
         let copy = app.buttons["Copy with Context"]
         XCTAssertTrue(copy.waitForExistence(timeout: 3))
         captureScreen(named: "margin-detail-before-quick-tap")

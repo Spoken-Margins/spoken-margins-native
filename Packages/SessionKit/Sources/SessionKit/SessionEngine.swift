@@ -371,7 +371,9 @@ public final class SessionEngine {
               !isPartialGeneratedTextPlayback(session),
               let mediaTimeMs = session.position.mediaTimeMs, mediaTimeMs > 0,
               let durationMs = durableMediaDurationMs(for: session), durationMs > 0 else { return false }
-        return durationMs - mediaTimeMs <= Self.endOfMediaStartToleranceMs
+        // A place past the stored length means the stored length is short of the real file (corrections under 1 s
+        // are skipped; a feed length can miss dynamic ads), so it says nothing about the end (#2189).
+        return (0...Self.endOfMediaStartToleranceMs).contains(durationMs - mediaTimeMs)
     }
 
     /// Half a second: inside the player's own seek tolerance (0.25 s either side) of the end there is nothing
@@ -2930,6 +2932,18 @@ public final class SessionEngine {
     public func deleteInterjection(interjectionId: String, sessionId: String? = nil) throws -> SessionSnapshot {
         try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
             interjection.status = "deleted"
+        }
+        publish(status: snapshot.status, phase: snapshot.phase)
+        return snapshot
+    }
+
+    /// Brings back a Margin `deleteInterjection` hid, for the Undo on the "Deleted Margin" banner (#1981). Deleting
+    /// only sets the status, so the words, the recording, the place and the order were never touched. A Margin that
+    /// isn't deleted is left as it is, so a second Undo does nothing.
+    @discardableResult
+    public func restoreInterjection(interjectionId: String, sessionId: String? = nil) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            if interjection.status == "deleted" { interjection.status = "active" }
         }
         publish(status: snapshot.status, phase: snapshot.phase)
         return snapshot

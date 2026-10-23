@@ -4566,6 +4566,29 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot, before)
     }
 
+    func testDeletingAMarginOffersUndoThatBringsTheSameMarginBack() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "margin-delete-undo-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: url)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let store = try SQLiteSessionStore(path: url.path)
+        var margin = shareableInterjection(itemId: "item-pill")
+        margin.id = "undo-me"
+        margin.sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        try store.saveInterjection(margin)
+
+        model.deleteInterjection(margin)
+        XCTAssertEqual(try store.loadInterjections(sessionId: margin.sessionId).first { $0.id == margin.id }?.status, "deleted")
+        let undo = try XCTUnwrap(model.feedbackEvent?.action, "the Deleted Margin banner offers Undo")
+        XCTAssertEqual(undo.title, "Undo")
+
+        undo.perform()
+        XCTAssertEqual(try store.loadInterjections(sessionId: margin.sessionId).first { $0.id == margin.id }, margin)
+    }
+
     func testLateMicrophoneGrantCannotReplaceWrittenCaptureOrRestartCancelledCapture() async throws {
         let gate = MarginPermissionTestGate()
         let model = Gate1AppModel(
