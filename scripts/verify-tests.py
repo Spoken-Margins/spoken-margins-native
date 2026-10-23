@@ -779,6 +779,13 @@ PACKAGE_RUNNER = ['bash', 'scripts/run-sessionkit-tests.sh']
 # was killed (exit 124) and the plan reported "Infrastructure runner executed zero tests", twice on #1103's
 # head (#1110). Its own limit leaves headroom for load and for the suite to keep growing.
 RUNNER_TESTS_TIMEOUT = 600
+# #2488: by 2026-10-22 the step took 482-519 s on a busy day and was killed at 600 s at load 138-150, its log still a
+# stream of passing dots, so two runs of #2409 failed with "executed zero tests". It gets #1767's rule: a run still
+# printing at its budget goes on until the ceiling; one silent for the stall time is a hang and stops.
+RUNNER_TESTS_CEILING = 1200
+RUNNER_TESTS_STALL_SECONDS = PACKAGE_STALL_SECONDS  # one test compiles Swift, silent for minutes at high load
+RUNNER_TESTS_LIMITS = {'timeout': RUNNER_TESTS_TIMEOUT, 'ceiling': RUNNER_TESTS_CEILING,
+                       'stall_seconds': RUNNER_TESTS_STALL_SECONDS}
 
 # #705: the startup stall below follows the simulator having just been busy. On 2026-10-14, in the lane's artifacts:
 # - 18 of the 20 app-plan stalls launched the host app 1-16 s after the simulator finished booting (median 5 s, from
@@ -1297,7 +1304,7 @@ class Run:
             self.skip('runner-tests', why or 'the diff reaches none of the runner tests that drive Apple tools')
         else:
             self.command('runner-tests', [sys.executable, '-c', MAC_REST_RUNNER_LOADER, *PORTABLE_RUNNER_TESTS_LEFT_OUT],
-                         timeout=RUNNER_TESTS_TIMEOUT)
+                         **RUNNER_TESTS_LIMITS)
         needed, why = ops_tests_needed(self.changed)
         if needed:
             self.ops_steps(only=PORTABLE_OPS_LEFT_OUT)
@@ -1339,7 +1346,7 @@ class Run:
         scope, why = runner_test_scope(self.changed)
         if portable:
             self.command('runner-tests', [sys.executable, '-c', PORTABLE_RUNNER_LOADER, *PORTABLE_RUNNER_TESTS_LEFT_OUT],
-                         timeout=RUNNER_TESTS_TIMEOUT)
+                         **RUNNER_TESTS_LIMITS)
         elif in_codex_sandbox():
             self.skip('runner-tests')
         elif scope == 'none':
@@ -1351,10 +1358,10 @@ class Run:
                       'result = unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromNames(sys.argv[1:])); '
                       'sys.exit(not result.wasSuccessful())')
             self.command('runner-tests', [sys.executable, '-c', loader, *RUNNER_TEST_READERS],
-                         timeout=RUNNER_TESTS_TIMEOUT)
+                         **RUNNER_TESTS_LIMITS)
         else:
             self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'],
-                         timeout=RUNNER_TESTS_TIMEOUT)
+                         **RUNNER_TESTS_LIMITS)
         needed, why = ops_tests_needed(self.changed)
         if portable:
             self.ops_steps(left_out=PORTABLE_OPS_LEFT_OUT)
