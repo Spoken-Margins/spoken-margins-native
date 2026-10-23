@@ -98,6 +98,7 @@ struct ReadCostReport {
             ("loadImportedCommentaryLayers(itemId:)", { _ = try store.loadImportedCommentaryLayers(itemId: article) }),
             ("loadImportedCommentaryInterjections(layerId:)", { _ = try store.loadImportedCommentaryInterjections(layerId: "layer-0") }),
             ("isLiveImportedCommentaryLayer(id:)", { _ = try store.isLiveImportedCommentaryLayer(id: "layer-0") }),
+            ("hasImportedWatchSyncEvent(id:)", { _ = try store.hasImportedWatchSyncEvent(id: "watch-event-0") }),
             ("importedCommentaryRecordsMention(_:)", { _ = try store.importedCommentaryRecordsMention("no-such-needle") }),
             ("marginNoteChanges(after:)", { _ = try store.marginNoteChanges(after: "2000-01-01 00:00:00") }),
             ("quarantinedMarginAudioPaths(itemId:)", { _ = try store.quarantinedMarginAudioPaths(itemId: mapped) })

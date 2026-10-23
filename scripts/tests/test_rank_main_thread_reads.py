@@ -70,6 +70,17 @@ class PricingOneRead(unittest.TestCase):
                       "savePodcastDownload (write via persist)", "reset", "seed(item)"):
             self.assertEqual(self.price(entry), ("write", 0.0), entry)
 
+    def test_a_read_that_runs_more_than_once_is_priced_once_and_marked(self):
+        for entry in ("loadItem per trashed item", "loadAudioPreparationJobs (4-7 per chunk)", "loadItem (up to 3)"):
+            self.assertEqual(self.price(entry)[0], "lower", entry)
+        self.assertEqual(self.price("loadItem x2")[0], "read")
+
+    def test_a_space_before_the_qualifier_still_picks_the_row(self):
+        self.assertEqual(self.price("loadSessions (itemId)"), ("read", 0.04))
+
+    def test_a_read_the_fixture_cannot_exercise_is_unpriced(self):
+        self.assertEqual(self.price("quarantinedMarginAudioPaths per item"), ("unpriced", 0.0))
+
     def test_a_read_the_table_lacks_is_unpriced(self):
         self.assertEqual(self.price("ListeningEditionStore file read"), ("unpriced", 0.0))
         self.assertEqual(self.price("SQLiteSessionStore.init"), ("unpriced", 0.0))
@@ -89,6 +100,13 @@ class PricingARow(unittest.TestCase):
         self.assertEqual(change["cost_basis"], "partial")
         self.assertEqual(change["score"], 6)
         self.assertIn("lower bound", change["cost_note"])
+
+    def test_a_plus_entry_prices_both_reads(self):
+        change = rank.price_row(row(["loadSessions + loadItem"]), TABLE)
+        self.assertEqual(change["cost_ms_library"], 6.56)
+
+    def test_a_repeated_read_makes_the_row_a_lower_bound(self):
+        self.assertEqual(rank.price_row(row(["loadItem per trashed item"]), TABLE)["cost_basis"], "partial")
 
     def test_nothing_priced_leaves_the_row_alone(self):
         self.assertIsNone(rank.price_row(row(["saveItem", "ListeningEditionStore file read"]), TABLE))

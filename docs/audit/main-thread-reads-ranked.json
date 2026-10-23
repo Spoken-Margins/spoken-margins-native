@@ -19,7 +19,7 @@
    "loadImportedCommentaryInterjections",
    "loadStructuredDocument"
   ],
-  "cost_ms_library": 9.09,
+  "cost_ms_library": 11.0,
   "cost_basis": "measured",
   "caller_needs": "The whole ItemDetailState for the open item (text, sessions, Margins, chapters, imported layers); the callers assign it to selectedItem, mostly after a change to one thing.",
   "fix_class": "async-store",
@@ -74,7 +74,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 91,
+  "score": 110,
   "area": "background-return",
   "cost_note": "read cost table (#2513): loadCanonicalSource(article) + loadImportedCommentaryInterjections(layerId:) + loadImportedCommentaryLayers() + loadInterjections(itemId: mapped) + loadItem(article) + loadListeningMap(mapped) + loadPortableListeningMapProposals(mapped) + loadResolvedListeningMapProjection(mapped) + loadSessions() + loadStructuredDocument(article) + loadTranscriptTimelineSummary(mapped) + loadTurns(sessionId:)"
  },
@@ -147,7 +147,7 @@
    "loadSessions",
    "deleteAudioPreparationJobs"
   ],
-  "cost_ms_library": 73.64,
+  "cost_ms_library": 83.18,
   "cost_basis": "measured",
   "caller_needs": "Only the jobs named in the open requests, to mark them interrupted; the presentation refresh then rebuilds the whole queue.",
   "fix_class": "async-store",
@@ -208,7 +208,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 2,
-  "score": 74,
+  "score": 83,
   "area": "background-return",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadPreparedAudioManifests() + loadSessions(); 2 write(s) not priced (the meter reads)"
  },
@@ -222,7 +222,7 @@
    "loadAudioPreparationJobs",
    "loadPreparedAudioManifest"
   ],
-  "cost_ms_library": 0.5,
+  "cost_ms_library": 0.3,
   "cost_basis": "measured",
   "caller_needs": "Per open explicit request: job id, state, completed and planned chunk counts, to publish a progress subtitle and to decide whether the run is finished.",
   "fix_class": "cache-once",
@@ -283,7 +283,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 3,
-  "score": 15,
+  "score": 9,
   "area": "background-return",
   "cost_note": "read cost table (#2513): loadAudioPreparationJobs() + loadPreparedAudioManifest(id:)"
  },
@@ -296,7 +296,7 @@
   "meter_reads": [
    "loadAudioPreparationJobs"
   ],
-  "cost_ms_library": 0.11,
+  "cost_ms_library": 0.14,
   "cost_basis": "measured",
   "caller_needs": "One yes or no: is any job eligible for the foreground turn.",
   "fix_class": "summary-read",
@@ -563,7 +563,7 @@
    "loadAudioPreparationJobs",
    "loadSessions"
   ],
-  "cost_ms_library": 75.63,
+  "cost_ms_library": 85.24,
   "cost_basis": "measured",
   "caller_needs": "Only this item's prepared-chunk offline assets, to flag them redundant once the assembled file exists; and fresh Library rows so the item shows ready offline.",
   "fix_class": "summary-read",
@@ -624,7 +624,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 3,
-  "score": 227,
+  "score": 256,
   "area": "background-return",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadItem(article) + loadOwnedOfflineAssets() + loadPreparedAudioManifest(id:) + loadPreparedAudioManifests() + loadSessions() + loadStructuredDocument(article); 1 write(s) not priced (the meter reads)"
  },
@@ -639,7 +639,7 @@
    "loadItem",
    "loadItemDetail reads"
   ],
-  "cost_ms_library": 3.98,
+  "cost_ms_library": 4.46,
   "cost_basis": "measured",
   "caller_needs": "That playback resumed; the retry then reloads the whole item detail only to refresh the screen.",
   "fix_class": "audio-off-main",
@@ -714,7 +714,7 @@
    "loadAudioPreparationJobs",
    "loadSessions"
   ],
-  "cost_ms_library": 74.47,
+  "cost_ms_library": 83.83,
   "cost_basis": "measured",
   "caller_needs": "The tapped item's title, source type and text to decide which offline path applies; the queued preparation then refreshes the Library rows to show it queued.",
   "fix_class": "label-task",
@@ -775,7 +775,7 @@
   "critic": "changed",
   "critic_reason": "Neither flagged row (a 0.04 ms loadItem and an unlabelled Task) is cleared by targeted-refresh; labelling the Task is what clears them.",
   "scanner_rows": 2,
-  "score": 74,
+  "score": 84,
   "area": "library",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadItem(article) + loadPreparedAudioManifest(id:) + loadPreparedAudioManifests() + loadSessions() + loadStructuredDocument(article); 1 write(s) not priced (the meter reads)"
  },
@@ -846,7 +846,7 @@
   "scanner_rows": 1,
   "score": 0,
   "area": "background-return",
-  "cost_note": "read cost table (#2513): loadPodcastDownloads(); 1 read(s) not in the table, so this is a lower bound"
+  "cost_note": "read cost table (#2513): loadPodcastDownloads(); 1 read(s) not in the table or run more than once, so this is a lower bound"
  },
  {
   "fid": "background-return-012",
@@ -859,7 +859,7 @@
    "loadItem",
    "loadItemDetail reads"
   ],
-  "cost_ms_library": 3.98,
+  "cost_ms_library": 4.46,
   "cost_basis": "measured",
   "caller_needs": "That playback started; refreshSelectedItem() then reloads the entire item detail so the item screen shows the new session state.",
   "fix_class": "audio-off-main",
@@ -920,7 +920,7 @@
   "critic": "changed",
   "critic_reason": "The scanner row is the engine call and field data shows engine.run hangs; a refresh swap alone would not clear the row.",
   "scanner_rows": 1,
-  "score": 40,
+  "score": 45,
   "area": "playback",
   "cost_note": "read cost table (#2513): loadItem(article) + screen: ItemDetailLoader.load(article); 1 write(s) not priced (the meter reads)"
  },
@@ -940,7 +940,7 @@
    "loadPreparedAudioManifests",
    "loadAudioPreparationJobs"
   ],
-  "cost_ms_library": 77.64,
+  "cost_ms_library": 87.67,
   "cost_basis": "measured",
   "caller_needs": "The chosen session resumed in the engine; then the item detail and the Library rows, so the playback screen and the shelf agree.",
   "fix_class": "async-store",
@@ -1031,7 +1031,7 @@
   "critic": "changed",
   "critic_reason": "targeted-refresh does not clear the engine rows that make up nearly all of this function's flagged rows.",
   "scanner_rows": 6,
-  "score": 776,
+  "score": 877,
   "area": "playback",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadItem(article) + loadPreparedAudioManifests() + loadSession(id:) + loadSessions() + screen: ItemDetailLoader.load(article); 1 write(s) not priced (the meter reads)"
  },
@@ -1046,7 +1046,7 @@
    "loadItem",
    "loadItemDetail reads"
   ],
-  "cost_ms_library": 3.98,
+  "cost_ms_library": 4.46,
   "cost_basis": "measured",
   "caller_needs": "The saved playback position synced from the player; refreshingItem (default true) then reloads the whole item detail.",
   "fix_class": "targeted-refresh",
@@ -1101,7 +1101,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 12,
+  "score": 13,
   "area": "background-return",
   "cost_note": "read cost table (#2513): loadItem(article) + screen: ItemDetailLoader.load(article); 1 write(s) not priced (the meter reads)"
  },
@@ -1673,7 +1673,7 @@
    "loadStructuredDocumentItemIds",
    "loadSharedMarginTallies"
   ],
-  "cost_ms_library": 74.25,
+  "cost_ms_library": 83.82,
   "cost_basis": "measured",
   "caller_needs": "Every prepared item persisted, then one refreshed Library list and (for an opened or preserved item) its detail; the file's own text is already parsed off the main actor.",
   "fix_class": "write-behind",
@@ -1734,7 +1734,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 3,
-  "score": 223,
+  "score": 251,
   "area": "import",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds(); 3 write(s) not priced (the meter reads)"
  },
@@ -1753,7 +1753,7 @@
    "loadStructuredDocumentItemIds",
    "loadSharedMarginTallies"
   ],
-  "cost_ms_library": 74.25,
+  "cost_ms_library": 83.82,
   "cost_basis": "measured",
   "caller_needs": "The new row in the Library list (and the item detail only when openWhenFinished); the importer is an actor, so the file work is already off the main actor.",
   "fix_class": "targeted-refresh",
@@ -1820,7 +1820,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 223,
+  "score": 251,
   "area": "import",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds()"
  },
@@ -1839,7 +1839,7 @@
    "loadStructuredDocumentItemIds",
    "loadSharedMarginTallies"
   ],
-  "cost_ms_library": 74.25,
+  "cost_ms_library": 83.82,
   "cost_basis": "measured",
   "caller_needs": "The new row in the Library list (and the item detail only when openWhenFinished); the importer is an actor, so the EPUB parse is already off the main actor.",
   "fix_class": "targeted-refresh",
@@ -1906,7 +1906,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 223,
+  "score": 251,
   "area": "import",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds()"
  },
@@ -1927,7 +1927,7 @@
    "loadStructuredDocumentItemIds",
    "loadSharedMarginTallies"
   ],
-  "cost_ms_library": 74.25,
+  "cost_ms_library": 83.82,
   "cost_basis": "measured",
   "caller_needs": "The pasted text stored as an item (plus a deterministic map when it has headings) and one new Library row.",
   "fix_class": "targeted-refresh",
@@ -1988,7 +1988,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 2,
-  "score": 223,
+  "score": 251,
   "area": "import",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds(); 2 write(s) not priced (the meter reads)"
  },
@@ -2011,7 +2011,7 @@
    "loadStructuredDocumentItemIds",
    "loadSharedMarginTallies"
   ],
-  "cost_ms_library": 74.53,
+  "cost_ms_library": 84.12,
   "cost_basis": "measured",
   "caller_needs": "The one subscription (by entry.subscriptionId) for its source kind, the stored publisher audio for the new item, and a refreshed Library row; auto-add runs this once per new entry in a burst.",
   "fix_class": "targeted-refresh",
@@ -2084,7 +2084,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 4,
-  "score": 224,
+  "score": 252,
   "area": "import",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadFeedSubscriptions() + loadPodcastDownloads() + loadPreparedAudioManifests() + loadPublisherAudio(itemId:) + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds(); 2 write(s) not priced (the meter reads)"
  },
@@ -2373,7 +2373,7 @@
    "loadInterjections",
    "loadTurns"
   ],
-  "cost_ms_library": 82.43,
+  "cost_ms_library": 94.1,
   "cost_basis": "measured",
   "caller_needs": "Whether each edition is new, different or identical to what is saved, then the saved editions and one refreshed Library list and selected item.",
   "fix_class": "async-store",
@@ -2428,7 +2428,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 82,
+  "score": 94,
   "area": "import",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadCanonicalSource(article) + loadImportedCommentaryLayers() + loadInterjections(itemId: mapped) + loadItem(article) + loadListeningMap(mapped) + loadPodcastDownloads() + loadPortableListeningMapProposals(mapped) + loadPreparedAudioManifests() + loadResolvedListeningMapProjection(mapped) + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds() + loadTranscriptTimelineSummary(mapped) + loadTurns(sessionId:)"
  },
@@ -2444,7 +2444,7 @@
    "saveListeningMap",
    "loadTranscriptTimeline"
   ],
-  "cost_ms_library": 11.06,
+  "cost_ms_library": 12.06,
   "cost_basis": "measured",
   "caller_needs": "The edition's item, edition file and map saved, and the edition's audio activated when a transcript timeline already exists.",
   "fix_class": "write-behind",
@@ -2505,7 +2505,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 7,
-  "score": 11,
+  "score": 12,
   "area": "import",
   "cost_note": "read cost table (#2513): loadItem(article) + loadTranscriptTimeline(itemId: mapped); 2 write(s) not priced (the meter reads)"
  },
@@ -2584,7 +2584,7 @@
    "loadInterjections",
    "loadTurns"
   ],
-  "cost_ms_library": 82.56,
+  "cost_ms_library": 94.28,
   "cost_basis": "measured",
   "caller_needs": "Fire-and-forget start of the coordinator's confirm, which imports the packet and opens the item.",
   "fix_class": "label-task",
@@ -2621,7 +2621,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 83,
+  "score": 94,
   "area": "import",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadCanonicalSource(article) + loadImportedCommentaryLayer(id:) + loadImportedCommentaryLayers() + loadInterjections(itemId: mapped) + loadItem(article) + loadListeningMap(mapped) + loadPodcastDownloads() + loadPortableListeningMapProposals(mapped) + loadPreparedAudioManifests() + loadResolvedListeningMapProjection(mapped) + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds() + loadTranscriptTimelineSummary(mapped) + loadTurns(sessionId:)"
  },
@@ -2740,7 +2740,7 @@
   "meter_reads": [
    "loadOwnedOfflineAssets"
   ],
-  "cost_ms_library": 1.16,
+  "cost_ms_library": 1.41,
   "cost_basis": "measured",
   "caller_needs": "The checksum of one audiobook item's valid owned file (asset for that item, category audiobook).",
   "fix_class": "summary-read",
@@ -2801,7 +2801,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 3,
+  "score": 4,
   "area": "import",
   "cost_note": "read cost table (#2513): loadOwnedOfflineAssets()"
  },
@@ -2863,7 +2863,7 @@
    "loadImportedCommentaryLayers",
    "loadImportedCommentaryInterjections"
   ],
-  "cost_ms_library": 0.75,
+  "cost_ms_library": 0.56,
   "cost_basis": "measured",
   "caller_needs": "Tell the engine the new local file, and decide whether the downloaded episode needs a transcript or a pending map.",
   "fix_class": "stays",
@@ -2974,7 +2974,7 @@
   "meter_reads": [
    "loadOwnedOfflineAssets"
   ],
-  "cost_ms_library": 1.16,
+  "cost_ms_library": 1.41,
   "cost_basis": "measured",
   "caller_needs": "The path of one audiobook item's valid owned file, found by item id and category audiobook.",
   "fix_class": "summary-read",
@@ -3023,7 +3023,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 12,
+  "score": 14,
   "area": "import",
   "cost_note": "read cost table (#2513): loadOwnedOfflineAssets()"
  },
@@ -3187,7 +3187,7 @@
    "loadStructuredDocumentItemIds",
    "loadSharedMarginTallies"
   ],
-  "cost_ms_library": 74.31,
+  "cost_ms_library": 83.91,
   "cost_basis": "measured",
   "caller_needs": "The imported podcast or episode item (with feed identity filled in), its chapters, and a refreshed Library row.",
   "fix_class": "targeted-refresh",
@@ -3248,7 +3248,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 5,
-  "score": 223,
+  "score": 252,
   "area": "import",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadListeningMap(mapped) + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds(); 1 write(s) not priced (the meter reads)"
  },
@@ -3269,7 +3269,7 @@
    "loadStructuredDocumentItemIds",
    "loadSharedMarginTallies"
   ],
-  "cost_ms_library": 74.31,
+  "cost_ms_library": 83.91,
   "cost_basis": "measured",
   "caller_needs": "The imported item and a refreshed Library row.",
   "fix_class": "targeted-refresh",
@@ -3318,7 +3318,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 223,
+  "score": 252,
   "area": "import",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadListeningMap(mapped) + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds(); 1 write(s) not priced (the meter reads)"
  },
@@ -3395,7 +3395,7 @@
    "loadInterjections",
    "loadTurns"
   ],
-  "cost_ms_library": 82.37,
+  "cost_ms_library": 94.04,
   "cost_basis": "measured",
   "caller_needs": "The imported item, a Library row for it and, when the item is opened or started, its detail.",
   "fix_class": "targeted-refresh",
@@ -3456,7 +3456,7 @@
   "critic": "changed",
   "critic_reason": "The scanner row (line 203) is on the startSession branch only; the common Add tap passes startSession: false and returns at line 186 into the background persist (import-025), so the helper's trigger names the wrong path.",
   "scanner_rows": 1,
-  "score": 247,
+  "score": 282,
   "area": "import",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadCanonicalSource(article) + loadImportedCommentaryLayers() + loadInterjections(itemId: mapped) + loadItem(article) + loadListeningMap(mapped) + loadPodcastDownloads() + loadPortableListeningMapProposals(mapped) + loadPreparedAudioManifests() + loadResolvedListeningMapProjection(mapped) + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds() + loadTranscriptTimelineSummary(mapped) + loadTurns(sessionId:); 1 write(s) not priced (the meter reads)"
  },
@@ -3583,7 +3583,7 @@
    "loadSessions",
    "saveSession"
   ],
-  "cost_ms_library": 5.59,
+  "cost_ms_library": 7.1,
   "cost_basis": "measured",
   "caller_needs": "A session started on the active item if none exists, and the pasted assistant response stored as a turn.",
   "fix_class": "stays",
@@ -3614,7 +3614,7 @@
   "critic": "not rechecked",
   "critic_reason": null,
   "scanner_rows": 2,
-  "score": 6,
+  "score": 7,
   "area": "playback",
   "cost_note": "read cost table (#2513): loadItem(article) + loadSessions(); 1 write(s) not priced (the meter reads)"
  },
@@ -3647,7 +3647,7 @@
    "loadInterjections",
    "loadTurns"
   ],
-  "cost_ms_library": 82.49,
+  "cost_ms_library": 94.19,
   "cost_basis": "measured",
   "caller_needs": "The article stored, one Library row for it and its detail so the item screen can open.",
   "fix_class": "targeted-refresh",
@@ -3708,7 +3708,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 247,
+  "score": 283,
   "area": "import",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadCanonicalSource(article) + loadImportedCommentaryLayers() + loadInterjections(itemId: mapped) + loadItem(article) + loadListeningMap(mapped) + loadPodcastDownloads() + loadPortableListeningMapProposals(mapped) + loadPreparedAudioManifests() + loadResolvedListeningMapProjection(mapped) + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds() + loadTranscriptTimelineSummary(mapped) + loadTurns(sessionId:); 2 write(s) not priced (the meter reads)"
  },
@@ -3776,7 +3776,7 @@
    "loadStructuredDocumentItemIds",
    "loadSharedMarginTallies"
   ],
-  "cost_ms_library": 74.31,
+  "cost_ms_library": 83.88,
   "cost_basis": "measured",
   "caller_needs": "Whether this article's content-hash id is already in the Library; if not, the article stored and a Library row.",
   "fix_class": "targeted-refresh",
@@ -3831,7 +3831,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 5,
-  "score": 223,
+  "score": 252,
   "area": "import",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadItem(article) + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds(); 1 write(s) not priced (the meter reads)"
  },
@@ -4014,7 +4014,7 @@
    "loadImportedCommentaryLayers",
    "loadOwnedOfflineAssets"
   ],
-  "cost_ms_library": 1.26,
+  "cost_ms_library": 1.56,
   "cost_basis": "measured",
   "caller_needs": "A yes/no: do any shared-Margin layers on this file depend on its episode link; it needs this item's audiobook checksum only.",
   "fix_class": "summary-read",
@@ -4075,7 +4075,7 @@
   "critic": "changed",
   "critic_reason": "The helper's narrow-asset-query fix still runs two store reads on every item-screen open of an unlinked audio file, where an early exit on linkedEpisode == nil clears both.",
   "scanner_rows": 3,
-  "score": 13,
+  "score": 16,
   "area": "item-screen",
   "cost_note": "read cost table (#2513): loadImportedCommentaryLayers() + loadOwnedOfflineAssets()"
  },
@@ -4134,7 +4134,7 @@
    "loadImportedCommentaryLayers",
    "loadOwnedOfflineAssets"
   ],
-  "cost_ms_library": 1.32,
+  "cost_ms_library": 1.62,
   "cost_basis": "measured",
   "caller_needs": "A refusal if shared Margins would lose their file when the link changes.",
   "fix_class": "stays",
@@ -4159,7 +4159,7 @@
   "critic": "not rechecked",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 1,
+  "score": 2,
   "area": "item-screen",
   "cost_note": "read cost table (#2513): loadImportedCommentaryLayers() + loadItem(article) + loadOwnedOfflineAssets()"
  },
@@ -4272,7 +4272,7 @@
    "loadImportedCommentaryLayers",
    "loadImportedCommentaryInterjections"
   ],
-  "cost_ms_library": 0.69,
+  "cost_ms_library": 0.5,
   "cost_basis": "measured",
   "caller_needs": "A yes/no: does any record on this item still need a transcript to be placed.",
   "fix_class": "stays",
@@ -4324,7 +4324,7 @@
    "loadItemDetail",
    "refreshMarginRows"
   ],
-  "cost_ms_library": 66.71,
+  "cost_ms_library": 75.29,
   "cost_basis": "measured",
   "caller_needs": "Whether this episode has shared-Margin layers to place; if none the call returns after two by-id reads, if any a placement pass runs.",
   "fix_class": "async-store",
@@ -4397,7 +4397,7 @@
   "critic": "changed",
   "critic_reason": "The helper missed the synchronous full reloads (refreshSelectedItem, refreshMarginRows) the coordinator triggers on main for every placement pass and invalidation.",
   "scanner_rows": 12,
-  "score": 667,
+  "score": 753,
   "area": "import",
   "cost_note": "read cost table (#2513): loadImportedCommentaryInterjections(layerId:) + loadImportedCommentaryLayers() + loadItem(article) + loadResolvedListeningMapProjection(mapped) + screen: ItemDetailLoader.load(article) + screen: refreshMarginRows (MarginCollection.build); 3 write(s) not priced (the meter reads)"
  },
@@ -4732,7 +4732,7 @@
    "saveResolvedListeningMapProjection",
    "loadOwnedOfflineAssets"
   ],
-  "cost_ms_library": 1.16,
+  "cost_ms_library": 1.41,
   "cost_basis": "measured",
   "caller_needs": "Each shared map proposal stored and its projection onto the listener's exact file.",
   "fix_class": "stays",
@@ -4849,7 +4849,7 @@
    "loadInterjections",
    "loadTurns"
   ],
-  "cost_ms_library": 82.46,
+  "cost_ms_library": 94.13,
   "cost_basis": "measured",
   "caller_needs": "The packet's layer and Margins stored against the matching item, then that item opened.",
   "fix_class": "write-behind",
@@ -4904,7 +4904,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 5,
-  "score": 82,
+  "score": 94,
   "area": "import",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadCanonicalSource(article) + loadImportedCommentaryLayer(id:) + loadImportedCommentaryLayers() + loadInterjections(itemId: mapped) + loadItem(article) + loadListeningMap(mapped) + loadPodcastDownloads() + loadPortableListeningMapProposals(mapped) + loadPreparedAudioManifests() + loadResolvedListeningMapProjection(mapped) + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds() + loadTranscriptTimelineSummary(mapped) + loadTurns(sessionId:); 2 write(s) not priced (the meter reads)"
  },
@@ -5222,7 +5222,7 @@
   "meter_reads": [
    "importedCommentaryRecordsMention"
   ],
-  "cost_ms_library": 0.12,
+  "cost_ms_library": 0.1,
   "cost_basis": "measured",
   "caller_needs": "Which leftover extracted-packet folders no imported Margin uses, so they can be deleted.",
   "fix_class": "async-store",
@@ -5296,7 +5296,7 @@
   "meter_reads": [
    "loadOwnedOfflineAssets"
   ],
-  "cost_ms_library": 1.16,
+  "cost_ms_library": 1.41,
   "cost_basis": "measured",
   "caller_needs": "The packet admitted only if the listener's audio file has the sender's exact checksum.",
   "fix_class": "stays",
@@ -5476,7 +5476,7 @@
    "loadPreparedAudioManifests",
    "loadAudioPreparationJobs"
   ],
-  "cost_ms_library": 31.61,
+  "cost_ms_library": 36.72,
   "cost_basis": "measured",
   "caller_needs": "The extracted PDF stored as an item with its structured document; only the re-import upgrade plan runs off the main actor.",
   "fix_class": "write-behind",
@@ -5537,7 +5537,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 6,
-  "score": 95,
+  "score": 110,
   "area": "import",
   "cost_note": "read cost table (#2513): loadAudioPreparationJobs() + loadItem(article) + loadListeningMap(mapped) + loadPreparedAudioManifests() + loadStructuredDocument(article); 3 write(s) not priced (the meter reads)"
  },
@@ -5743,7 +5743,7 @@
    "saveItem",
    "loadLibraryRows"
   ],
-  "cost_ms_library": 125.06,
+  "cost_ms_library": 137.06,
   "cost_basis": "measured",
   "caller_needs": "Whether the library already holds the episode named by the pasted feed, then its id.",
   "fix_class": "summary-read",
@@ -5804,7 +5804,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 125,
+  "score": 137,
   "area": "item-screen",
   "cost_note": "read cost table (#2513): listItems() + loadItem(article) + screen: LibraryReadSnapshot.read(store:); 1 write(s) not priced (the meter reads)"
  },
@@ -6079,7 +6079,7 @@
    "loadOwnedOfflineAssets",
    "saveItem"
   ],
-  "cost_ms_library": 1.32,
+  "cost_ms_library": 1.62,
   "cost_basis": "measured",
   "caller_needs": "The linked episode's title for the confirmation; the link must be refused when linked shared Margins depend on the current one.",
   "fix_class": "label-task",
@@ -6146,7 +6146,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 1,
+  "score": 2,
   "area": "item-screen",
   "cost_note": "read cost table (#2513): loadImportedCommentaryLayers() + loadItem(article) + loadOwnedOfflineAssets(); 1 write(s) not priced (the meter reads)"
  },
@@ -6424,7 +6424,7 @@
    "loadItem(detail)",
    "loadInterjections"
   ],
-  "cost_ms_library": 74.53,
+  "cost_ms_library": 84.1,
   "cost_basis": "measured",
   "caller_needs": "The one item's completion flag cleared and that row and the open detail updated.",
   "fix_class": "targeted-refresh",
@@ -6485,7 +6485,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 224,
+  "score": 252,
   "area": "item-screen",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadInterjections(itemId: mapped) + loadItem(article) + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions(); 1 write(s) not priced (the meter reads)"
  },
@@ -6506,7 +6506,7 @@
    "loadItem(detail)",
    "loadInterjections"
   ],
-  "cost_ms_library": 74.53,
+  "cost_ms_library": 84.1,
   "cost_basis": "measured",
   "caller_needs": "The item's completion flag set, plus the row and detail updated and an undo banner.",
   "fix_class": "targeted-refresh",
@@ -6567,7 +6567,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 224,
+  "score": 252,
   "area": "item-screen",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadInterjections(itemId: mapped) + loadItem(article) + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions(); 1 write(s) not priced (the meter reads)"
  },
@@ -6913,7 +6913,7 @@
    "loadAIJobs",
    "updateAIJob"
   ],
-  "cost_ms_library": 0.03,
+  "cost_ms_library": 0.02,
   "cost_basis": "measured",
   "caller_needs": "Stamps the chosen model on the pending job for diagnostics.",
   "fix_class": "stays",
@@ -6964,7 +6964,7 @@
    "loadSessions(itemId)",
    "loadAIJobs"
   ],
-  "cost_ms_library": 0.06,
+  "cost_ms_library": 0.05,
   "cost_basis": "measured",
   "caller_needs": "Only the jobs left pending or streaming by a kill; usually there are none.",
   "fix_class": "summary-read",
@@ -7034,7 +7034,7 @@
    "saveTurn",
    "loadAIJobs"
   ],
-  "cost_ms_library": 0.05,
+  "cost_ms_library": 0.04,
   "cost_basis": "measured",
   "caller_needs": "Streams a provider response into a turn.",
   "fix_class": "stays",
@@ -7098,7 +7098,7 @@
    "saveItem",
    "loadLibraryRows"
   ],
-  "cost_ms_library": 72.06,
+  "cost_ms_library": 84.06,
   "cost_basis": "measured",
   "caller_needs": "The item's episode identity filled in; the Library list only needs that one row updated.",
   "fix_class": "targeted-refresh",
@@ -7147,7 +7147,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 2,
-  "score": 72,
+  "score": 84,
   "area": "item-screen",
   "cost_note": "read cost table (#2513): loadItem(article) + screen: LibraryReadSnapshot.read(store:); 1 write(s) not priced (the meter reads)"
  },
@@ -7166,7 +7166,7 @@
    "loadListeningMap",
    "loadTranscriptTimelineChapters"
   ],
-  "cost_ms_library": 59.7,
+  "cost_ms_library": 61.24,
   "cost_basis": "measured",
   "caller_needs": "One Margin's status set to failed; the Margins list only needs that row.",
   "fix_class": "targeted-refresh",
@@ -7227,7 +7227,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 60,
+  "score": 61,
   "area": "margins",
   "cost_note": "read cost table (#2513): listItems() + loadInterjections(itemId: mapped) + loadListeningMap(mapped) + loadSessions() + loadTranscriptTimelineChapters(mapped); 1 write(s) not priced (the meter reads)"
  },
@@ -7345,7 +7345,7 @@
    "listItemSummaries",
    "loadItem(detail)"
   ],
-  "cost_ms_library": 53.71,
+  "cost_ms_library": 59.25,
   "cost_basis": "measured",
   "caller_needs": "The transcript stored and attached to one item; the Library list only needs that row's status.",
   "fix_class": "async-store",
@@ -7406,7 +7406,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 161,
+  "score": 178,
   "area": "import",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadItem(article) + loadListeningMap(mapped) + loadSessions() + loadTranscriptTimeline(itemId: mapped); 2 write(s) not priced (the meter reads)"
  },
@@ -7697,7 +7697,7 @@
    "loadItem(detail)",
    "loadCanonicalSource"
   ],
-  "cost_ms_library": 0.34,
+  "cost_ms_library": 0.44,
   "cost_basis": "measured",
   "caller_needs": "Playback moved to the chosen turn chapter; the item screen refresh follows.",
   "fix_class": "stays",
@@ -7918,7 +7918,7 @@
    "loadCanonicalSource",
    "loadPreparedAudioManifests"
   ],
-  "cost_ms_library": 31.32,
+  "cost_ms_library": 36.42,
   "cost_basis": "measured",
   "caller_needs": "Only the prepared-audio manifest changes; the item text and canonical source do not change between ticks.",
   "fix_class": "cache-once",
@@ -7991,7 +7991,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 3,
-  "score": 940,
+  "score": 1093,
   "area": "playback",
   "cost_note": "read cost table (#2513): loadCanonicalSource(article) + loadItem(article) + loadPreparedAudioManifests()"
  },
@@ -8061,7 +8061,7 @@
    "loadPodcastDownloads",
    "loadItem(detail)"
   ],
-  "cost_ms_library": 74.22,
+  "cost_ms_library": 83.8,
   "cost_basis": "measured",
   "caller_needs": "The chosen session inspected and paused on screen; the Library list only needs that item's row.",
   "fix_class": "targeted-refresh",
@@ -8122,7 +8122,7 @@
   "critic": "changed",
   "critic_reason": "openSession is also the path every Margin tap takes through openMarginInTimeline when the Margin's session is not loaded, so it runs more often than the item-screen session row alone.",
   "scanner_rows": 2,
-  "score": 742,
+  "score": 838,
   "area": "item-screen",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadItem(article) + loadListeningMap(mapped) + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSession(id:) + loadSessions()"
  },
@@ -8187,7 +8187,7 @@
    "loadItem(detail)",
    "loadCanonicalSource"
   ],
-  "cost_ms_library": 0.34,
+  "cost_ms_library": 0.44,
   "cost_basis": "measured",
   "caller_needs": "The turn playing; the item screen refresh follows.",
   "fix_class": "stays",
@@ -8249,7 +8249,7 @@
   "meter_reads": [
    "loadAIJobs"
   ],
-  "cost_ms_library": 0.03,
+  "cost_ms_library": 0.02,
   "cost_basis": "measured",
   "caller_needs": "A diagnostics dictionary refreshed on demand.",
   "fix_class": "stays",
@@ -8301,7 +8301,7 @@
    "loadAudioPreparationJobs",
    "loadPodcastDownloads"
   ],
-  "cost_ms_library": 74.08,
+  "cost_ms_library": 83.62,
   "cost_basis": "measured",
   "caller_needs": "Only a change in the onboarding audio or manifest; when the checksum is unchanged nothing needs writing or reloading.",
   "fix_class": "targeted-refresh",
@@ -8368,7 +8368,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 5,
-  "score": 74,
+  "score": 84,
   "area": "item-screen",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadItem(article) + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions(); 3 write(s) not priced (the meter reads)"
  },
@@ -8390,7 +8390,7 @@
    "loadItem(detail)",
    "loadInterjections"
   ],
-  "cost_ms_library": 74.59,
+  "cost_ms_library": 84.19,
   "cost_basis": "measured",
   "caller_needs": "A started session and the playback screen; the Library list only needs this item's progress row.",
   "fix_class": "targeted-refresh",
@@ -8457,7 +8457,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 746,
+  "score": 842,
   "area": "library",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadInterjections(itemId: mapped) + loadItem(article) + loadListeningMap(mapped) + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions(); 1 write(s) not priced (the meter reads)"
  },
@@ -8855,7 +8855,7 @@
    "loadPreparedAudioManifests",
    "loadItem(detail)"
   ],
-  "cost_ms_library": 73.59,
+  "cost_ms_library": 83.1,
   "cost_basis": "measured",
   "caller_needs": "Pasted text becomes a Library item; a pasted link starts the async import instead.",
   "fix_class": "async-store",
@@ -8916,7 +8916,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 221,
+  "score": 249,
   "area": "import",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadItem(article) + loadPreparedAudioManifests() + loadSessions(); 2 write(s) not priced (the meter reads)"
  },
@@ -9026,7 +9026,7 @@
    "loadStructuredDocumentItemIds",
    "loadSharedMarginTallies"
   ],
-  "cost_ms_library": 74.25,
+  "cost_ms_library": 83.82,
   "cost_basis": "measured",
   "caller_needs": "A [LibraryItemRow] list for libraryItems, built from all seven library tables in one pass.",
   "fix_class": "async-store",
@@ -9105,7 +9105,7 @@
   "critic": "changed",
   "critic_reason": "Stated 6.75 ms is loadSessions alone; listItemSummaries (full-payload SQL scan, json_remove over every item) is not in the cost table, so the stated ms covers only part of the reads; field data shows home/loadLibraryRows at about 770 ms per hang on the phone; ~28 call sites also include attachPreparedTextAudio and map generation.",
   "scanner_rows": 1,
-  "score": 742,
+  "score": 838,
   "area": "library",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds()"
  },
@@ -9128,7 +9128,7 @@
    "loadAudioPreparationJobs (again)",
    "loadSessions (again)"
   ],
-  "cost_ms_library": 147.89,
+  "cost_ms_library": 167.0,
   "cost_basis": "measured",
   "caller_needs": "Row presentation (libraryItems, recentlyDeletedItems) plus the audio-preparation queue after one item changed.",
   "fix_class": "targeted-refresh",
@@ -9207,7 +9207,7 @@
   "critic": "changed",
   "critic_reason": "Cost is not 13.5 ms (listItemSummaries (full-payload SQL scan, json_remove over every item) is not in the cost table, so the stated ms covers only part of the reads); field data shows home/loadLibraryRows at about 770 ms per hang on the phone; the foreground handler also calls refreshAudioPreparationPresentation a third time after refreshLibraryRows already did, and playback end (playback/loadLibraryRows 2.9 s) was missing from the triggers.",
   "scanner_rows": 1,
-  "score": 1479,
+  "score": 1670,
   "area": "library",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds()"
  },
@@ -9224,7 +9224,7 @@
    "loadSessions",
    "deleteAudioPreparationJobs"
   ],
-  "cost_ms_library": 73.64,
+  "cost_ms_library": 83.18,
   "cost_basis": "measured",
   "caller_needs": "Fresh Library rows after a session ends; the audio-preparation queue is a side refresh.",
   "fix_class": "async-store",
@@ -9285,7 +9285,7 @@
   "critic": "changed",
   "critic_reason": "The detached read is off main but the main-actor refreshAudioPreparationPresentation that follows re-reads four tables including listItemSummaries (unmeasured), so 6.75 ms understates it.",
   "scanner_rows": 1,
-  "score": 221,
+  "score": 250,
   "area": "library",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadPreparedAudioManifests() + loadSessions(); 1 write(s) not priced (the meter reads)"
  },
@@ -9300,7 +9300,7 @@
    "loadFeedSubscriptions",
    "refreshLibraryRows (full snapshot)"
   ],
-  "cost_ms_library": 72.32,
+  "cost_ms_library": 84.35,
   "cost_basis": "measured",
   "caller_needs": "The item's sourceURL/sourceTitle saved, then the Library row updated and subscriptions reloaded.",
   "fix_class": "targeted-refresh",
@@ -9361,7 +9361,7 @@
   "critic": "changed",
   "critic_reason": "0.32 ms leaves out the full refreshLibraryRows(store:) (snapshot of seven tables plus a second audio-preparation read) that this tap runs on main, and the full-item saveItem write.",
   "scanner_rows": 5,
-  "score": 72,
+  "score": 84,
   "area": "library",
   "cost_note": "read cost table (#2513): loadFeedSubscriptions() + loadItem(article) + screen: LibraryReadSnapshot.read(store:)"
  },
@@ -9450,7 +9450,7 @@
    "loadFeedSubscriptions (twice)",
    "refreshLibraryRows (full snapshot)"
   ],
-  "cost_ms_library": 72.58,
+  "cost_ms_library": 84.64,
   "cost_basis": "measured",
   "caller_needs": "The item's source link saved to the followed feed, then the row and subscription list updated.",
   "fix_class": "targeted-refresh",
@@ -9511,7 +9511,7 @@
   "critic": "changed",
   "critic_reason": "0.6 ms leaves out the full refreshLibraryRows(store:) snapshot on main after saving one item and the full-item saveItem write.",
   "scanner_rows": 5,
-  "score": 73,
+  "score": 85,
   "area": "library",
   "cost_note": "read cost table (#2513): loadFeedSubscriptions() + loadItem(article) + screen: LibraryReadSnapshot.read(store:)"
  },
@@ -9767,7 +9767,7 @@
    "saveSourceSuggestionDecision (per candidate)"
   ],
   "cost_ms_library": 0.01,
-  "cost_basis": "measured",
+  "cost_basis": "partial",
   "caller_needs": "A remembered answer per suggested feed so the card is not offered again.",
   "fix_class": "stays",
   "fix_note": "Keep as is.",
@@ -9805,7 +9805,7 @@
   "scanner_rows": 2,
   "score": 0,
   "area": "library",
-  "cost_note": "read cost table (#2513): loadSourceSuggestionDecision(sourceId:); 1 write(s) not priced (the meter reads)"
+  "cost_note": "read cost table (#2513): loadSourceSuggestionDecision(sourceId:); 1 write(s) not priced (the meter reads); 1 read(s) not in the table or run more than once, so this is a lower bound"
  },
  {
   "fid": "library-011",
@@ -10264,7 +10264,7 @@
    "loadAudioPreparationJobs (x5-6)",
    "loadEpisodeMapPreparationJobs (x4)"
   ],
-  "cost_ms_library": 0.71,
+  "cost_ms_library": 0.86,
   "cost_basis": "measured",
   "caller_needs": "Whether queued audio or episode-map work remains, to decide what the background pass runs and whether to reschedule.",
   "fix_class": "stays",
@@ -10345,8 +10345,8 @@
    "savePreparedAudioManifest",
    "deleteAudioPreparationJob"
   ],
-  "cost_ms_library": 0.97,
-  "cost_basis": "measured",
+  "cost_ms_library": 0.82,
+  "cost_basis": "partial",
   "caller_needs": "The next job and manifest to render, the item's text, and whether more matching jobs remain.",
   "fix_class": "async-store",
   "fix_note": "Run the job, manifest and item bookkeeping behind the PreparedAudioCoordinator actor that already commits chunks, and hand the main actor only the progress it publishes; today every chunk repeats three or more whole-table job reads and a full-text loadItem on main between renders.",
@@ -10436,9 +10436,9 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 29,
-  "score": 29,
+  "score": 25,
   "area": "library",
-  "cost_note": "read cost table (#2513): loadAudioPreparationJobs() + loadItem(article) + loadPreparedAudioManifest(id:) + loadSessions(itemId: article) + loadStructuredDocument(article); 3 write(s) not priced (the meter reads)"
+  "cost_note": "read cost table (#2513): loadAudioPreparationJobs() + loadItem(article) + loadPreparedAudioManifest(id:) + loadSessions(itemId: article) + loadStructuredDocument(article); 3 write(s) not priced (the meter reads); 2 read(s) not in the table or run more than once, so this is a lower bound"
  },
  {
   "fid": "library-022",
@@ -10449,7 +10449,7 @@
   "meter_reads": [
    "loadPreparedAudioManifest (final chunk only)"
   ],
-  "cost_ms_library": 0.39,
+  "cost_ms_library": 0.16,
   "cost_basis": "measured",
   "caller_needs": "The persisted terminal manifest state when the last chunk was just finalised; intermediate chunks use the in-memory manifest.",
   "fix_class": "stays",
@@ -10498,7 +10498,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 12,
+  "score": 5,
   "area": "library",
   "cost_note": "read cost table (#2513): loadPreparedAudioManifest(id:)"
  },
@@ -10513,7 +10513,7 @@
    "deleteAudioPreparationJobs",
    "refreshLibraryRows (full snapshot)"
   ],
-  "cost_ms_library": 72.11,
+  "cost_ms_library": 84.14,
   "cost_basis": "measured",
   "caller_needs": "The queued job ids to delete and the item ids to stop preparing; the Library rows only need their offline state cleared.",
   "fix_class": "targeted-refresh",
@@ -10574,7 +10574,7 @@
   "critic": "changed",
   "critic_reason": "The 6.75 ms is loadSessions alone; the full refreshLibraryRows(store:) also scans listItemSummaries (unmeasured) and re-reads the preparation tables.",
   "scanner_rows": 2,
-  "score": 72,
+  "score": 84,
   "area": "library",
   "cost_note": "read cost table (#2513): loadAudioPreparationJobs() + screen: LibraryReadSnapshot.read(store:); 1 write(s) not priced (the meter reads)"
  },
@@ -10687,7 +10687,7 @@
    "loadStructuredDocument",
    "refreshLibraryRows (full snapshot, twice on the two paths)"
   ],
-  "cost_ms_library": 144.88,
+  "cost_ms_library": 168.73,
   "cost_basis": "measured",
   "caller_needs": "A queued explicit job for one item, and that item's row showing its offline state.",
   "fix_class": "targeted-refresh",
@@ -10748,7 +10748,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 145,
+  "score": 169,
   "area": "library",
   "cost_note": "read cost table (#2513): loadAudioPreparationJobs() + loadPreparedAudioManifest(id:) + loadStructuredDocument(article) + screen: LibraryReadSnapshot.read(store:); 1 write(s) not priced (the meter reads)"
  },
@@ -10895,7 +10895,7 @@
    "saveAudioPreparationJob (per reordered job)",
    "listItemSummaries / loadPreparedAudioManifests / loadAudioPreparationJobs / loadSessions (refreshAudioPreparationPresentation)"
   ],
-  "cost_ms_library": 70.11,
+  "cost_ms_library": 89.14,
   "cost_basis": "measured",
   "caller_needs": "The reordered job list, shown back as the queue.",
   "fix_class": "targeted-refresh",
@@ -10956,7 +10956,7 @@
   "critic": "changed",
   "critic_reason": "6.75 ms is loadSessions alone; refreshAudioPreparationPresentation also reads listItemSummaries (unmeasured) and the manifests.",
   "scanner_rows": 2,
-  "score": 70,
+  "score": 89,
   "area": "library",
   "cost_note": "read cost table (#2513): loadAudioPreparationJobs() + screen: refreshAudioPreparationPresentation; 1 write(s) not priced (the meter reads)"
  },
@@ -10971,7 +10971,7 @@
    "saveAudioPreparationJob",
    "listItemSummaries / loadPreparedAudioManifests / loadAudioPreparationJobs / loadSessions (refreshAudioPreparationPresentation)"
   ],
-  "cost_ms_library": 70.11,
+  "cost_ms_library": 89.14,
   "cost_basis": "measured",
   "caller_needs": "One job re-ranked and the queue shown again.",
   "fix_class": "targeted-refresh",
@@ -11032,7 +11032,7 @@
   "critic": "changed",
   "critic_reason": "6.75 ms is loadSessions alone; refreshAudioPreparationPresentation also reads listItemSummaries (unmeasured) and the manifests.",
   "scanner_rows": 2,
-  "score": 70,
+  "score": 89,
   "area": "library",
   "cost_note": "read cost table (#2513): loadAudioPreparationJobs() + screen: refreshAudioPreparationPresentation; 1 write(s) not priced (the meter reads)"
  },
@@ -11049,7 +11049,7 @@
    "loadSessions",
    "deleteAudioPreparationJobs"
   ],
-  "cost_ms_library": 73.64,
+  "cost_ms_library": 83.18,
   "cost_basis": "measured",
   "caller_needs": "Job titles and a stale-job check for the queue screen; only items' id and title, manifests, jobs and a per-item sessions index are used.",
   "fix_class": "cache-once",
@@ -11134,7 +11134,7 @@
   "critic": "changed",
   "critic_reason": "No caller runs it on opening the Audio Preparation queue screen (grep finds none), the real callers include foreground return and preparation expiry, and 6.75 ms omits the unmeasured listItemSummaries scan.",
   "scanner_rows": 5,
-  "score": 736,
+  "score": 832,
   "area": "library",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadPreparedAudioManifests() + loadSessions(); 1 write(s) not priced (the meter reads)"
  },
@@ -11147,7 +11147,7 @@
   "meter_reads": [
    "loadAudioPreparationJobs"
   ],
-  "cost_ms_library": 0.11,
+  "cost_ms_library": 0.14,
   "cost_basis": "measured",
   "caller_needs": "Only whether any job is eligible, to decide whether to ask iOS for a background task.",
   "fix_class": "summary-read",
@@ -11379,7 +11379,7 @@
    "refreshLibraryRows (full snapshot)",
    "loadItem"
   ],
-  "cost_ms_library": 72.17,
+  "cost_ms_library": 84.2,
   "cost_basis": "measured",
   "caller_needs": "The skipped item's job ids to delete, then its row showing no pending preparation.",
   "fix_class": "targeted-refresh",
@@ -11440,7 +11440,7 @@
   "critic": "changed",
   "critic_reason": "6.79 ms omits the full refreshLibraryRows(store:) it runs on main, whose listItemSummaries scan is unmeasured.",
   "scanner_rows": 2,
-  "score": 72,
+  "score": 84,
   "area": "library",
   "cost_note": "read cost table (#2513): loadAudioPreparationJobs() + loadItem(article) + screen: LibraryReadSnapshot.read(store:); 1 write(s) not priced (the meter reads)"
  },
@@ -11455,7 +11455,7 @@
    "saveListeningMap",
    "refreshLibraryRows (full snapshot)"
   ],
-  "cost_ms_library": 72.0,
+  "cost_ms_library": 84.0,
   "cost_basis": "measured",
   "caller_needs": "A sample item and map saved for developers.",
   "fix_class": "stays",
@@ -11492,7 +11492,7 @@
   "critic": "not rechecked",
   "critic_reason": null,
   "scanner_rows": 2,
-  "score": 72,
+  "score": 84,
   "area": "library",
   "cost_note": "read cost table (#2513): screen: LibraryReadSnapshot.read(store:); 2 write(s) not priced (the meter reads)"
  },
@@ -11511,7 +11511,7 @@
    "loadItemDetail",
    "refreshAudioPreparationPresentation"
   ],
-  "cost_ms_library": 329.45,
+  "cost_ms_library": 387.44,
   "cost_basis": "partial",
   "caller_needs": "The Library rows, the deleted rows, the resumable session and the first item's detail, so the home screen can draw.",
   "fix_class": "cache-once",
@@ -11596,9 +11596,9 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 11,
-  "score": 329,
+  "score": 387,
   "area": "library",
-  "cost_note": "read cost table (#2513): listDeletedItems() + listItems() + loadSessions() + screen: ItemDetailLoader.load(article) + screen: LibraryReadSnapshot.read(store:) + screen: refreshAudioPreparationPresentation; 1 read(s) not in the table, so this is a lower bound"
+  "cost_note": "read cost table (#2513): listDeletedItems() + listItems() + loadSessions() + screen: ItemDetailLoader.load(article) + screen: LibraryReadSnapshot.read(store:) + screen: refreshAudioPreparationPresentation; 1 read(s) not in the table or run more than once, so this is a lower bound"
  },
  {
   "fid": "library-037",
@@ -11612,7 +11612,7 @@
    "seed",
    "loadLibraryRows"
   ],
-  "cost_ms_library": 72.0,
+  "cost_ms_library": 84.0,
   "cost_basis": "partial",
   "caller_needs": "A fresh store reset to one fixture item, deliberately.",
   "fix_class": "stays",
@@ -11649,9 +11649,9 @@
   "critic": "not rechecked",
   "critic_reason": null,
   "scanner_rows": 4,
-  "score": 72,
+  "score": 84,
   "area": "library",
-  "cost_note": "read cost table (#2513): screen: LibraryReadSnapshot.read(store:); 2 write(s) not priced (the meter reads); 1 read(s) not in the table, so this is a lower bound"
+  "cost_note": "read cost table (#2513): screen: LibraryReadSnapshot.read(store:); 2 write(s) not priced (the meter reads); 1 read(s) not in the table or run more than once, so this is a lower bound"
  },
  {
   "fid": "library-038",
@@ -11958,7 +11958,7 @@
    "loadSharedMarginTallies",
    "deleteAudioPreparationJobs"
   ],
-  "cost_ms_library": 74.31,
+  "cost_ms_library": 83.88,
   "cost_basis": "measured",
   "caller_needs": "Only that one item is gone from the Library list and appears in Recently Deleted; it needs the title for the undo toast.",
   "fix_class": "targeted-refresh",
@@ -12055,7 +12055,7 @@
   "critic": "changed",
   "critic_reason": "The proposed fix leaves refreshAudioPreparationPresentation and the main-thread loadItemDetail (line 29, runs when the open item is deleted) on main, so it would not clear the row.",
   "scanner_rows": 2,
-  "score": 223,
+  "score": 252,
   "area": "library",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadItem(article) + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds(); 2 write(s) not priced (the meter reads)"
  },
@@ -12081,8 +12081,8 @@
    "loadSharedMarginTallies",
    "deleteAudioPreparationJobs"
   ],
-  "cost_ms_library": 75.31,
-  "cost_basis": "measured",
+  "cost_ms_library": 84.9,
+  "cost_basis": "partial",
   "caller_needs": "The item, its sessions and its recordings and downloaded audio are gone, and the lists no longer show it; the two verification reads only confirm that.",
   "fix_class": "async-store",
   "fix_note": "Run the whole permanent delete (store deletes, podcast file, generated audio, episode-map folder and margin recordings, which are file removals, plus allMarginAudioPaths, a scan of every Margin row) behind an async boundary with a 'Deleting...' state, drop the two redundant verification reads or run them there, and finish with refreshLibraryRowsInBackground(). NOTE: refreshLibraryRowsInBackground() itself calls refreshAudioPreparationPresentation() on the main actor after the async read (it re-reads listItemSummaries, loadSessions, manifests, jobs and writes deleteAudioPreparationJobs), so the audio-preparation presentation must also move off main or the row only halves.",
@@ -12190,9 +12190,9 @@
   "critic": "changed",
   "critic_reason": "Same hidden main-thread tail: the background refresh still runs refreshAudioPreparationPresentation on main.",
   "scanner_rows": 7,
-  "score": 75,
+  "score": 85,
   "area": "library",
-  "cost_note": "read cost table (#2513): allMarginAudioPaths() + listItemSummaries() + loadAudioPreparationJobs() + loadInterjections(itemId: mapped) + loadItem(article) + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions() + loadSessions(itemId: article) + loadSharedMarginTallies() + loadStructuredDocumentItemIds() + quarantinedMarginAudioPaths(itemId:); 2 write(s) not priced (the meter reads)"
+  "cost_note": "read cost table (#2513): allMarginAudioPaths() + listItemSummaries() + loadAudioPreparationJobs() + loadInterjections(itemId: mapped) + loadItem(article) + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions() + loadSessions(itemId: article) + loadSharedMarginTallies() + loadStructuredDocumentItemIds(); 2 write(s) not priced (the meter reads); 1 read(s) not in the table or run more than once, so this is a lower bound"
  },
  {
   "fid": "library-044",
@@ -12215,8 +12215,8 @@
    "loadSharedMarginTallies",
    "deleteAudioPreparationJobs"
   ],
-  "cost_ms_library": 75.22,
-  "cost_basis": "measured",
+  "cost_ms_library": 84.81,
+  "cost_basis": "partial",
   "caller_needs": "Every trashed item and its files are gone and Recently Deleted is empty; the per-item loadItem calls only check that each one is really in the trash.",
   "fix_class": "async-store",
   "fix_note": "Same shape as the single delete but looping over all trashed items (0.04 ms per loadItem plus a loadInterjections, file removals and a bulk allMarginAudioPaths scan): move it behind an async boundary with progress, and finish with the background library refresh. NOTE: refreshLibraryRowsInBackground() itself calls refreshAudioPreparationPresentation() on the main actor after the async read (it re-reads listItemSummaries, loadSessions, manifests, jobs and writes deleteAudioPreparationJobs), so the audio-preparation presentation must also move off main or the row only halves.",
@@ -12300,9 +12300,9 @@
   "critic": "changed",
   "critic_reason": "Same hidden main-thread tail: the background refresh still runs refreshAudioPreparationPresentation on main.",
   "scanner_rows": 6,
-  "score": 75,
+  "score": 85,
   "area": "library",
-  "cost_note": "read cost table (#2513): allMarginAudioPaths() + listItemSummaries() + loadAudioPreparationJobs() + loadInterjections(itemId: mapped) + loadItem(article) + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds() + quarantinedMarginAudioPaths(itemId:); 2 write(s) not priced (the meter reads)"
+  "cost_note": "read cost table (#2513): allMarginAudioPaths() + listItemSummaries() + loadAudioPreparationJobs() + loadInterjections(itemId: mapped) + loadItem(article) + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds(); 2 write(s) not priced (the meter reads); 3 read(s) not in the table or run more than once, so this is a lower bound"
  },
  {
   "fid": "library-045",
@@ -12322,7 +12322,7 @@
    "loadSharedMarginTallies",
    "deleteAudioPreparationJobs"
   ],
-  "cost_ms_library": 74.31,
+  "cost_ms_library": 83.88,
   "cost_basis": "measured",
   "caller_needs": "The item is back in the Library list and out of Recently Deleted; the title is only for the confirmation message.",
   "fix_class": "targeted-refresh",
@@ -12395,7 +12395,7 @@
   "critic": "changed",
   "critic_reason": "A restored Library row cannot be moved in memory because its status needs the snapshot, and the background refresh keeps a main-thread audio-preparation tail.",
   "scanner_rows": 2,
-  "score": 223,
+  "score": 252,
   "area": "library",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadItem(article) + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds(); 2 write(s) not priced (the meter reads)"
  },
@@ -12805,7 +12805,7 @@
    "updateOwnedOfflineAsset (write, only on a change)",
    "savePodcastDownload (write via persist, podcast items only)"
   ],
-  "cost_ms_library": 1.16,
+  "cost_ms_library": 1.41,
   "cost_basis": "measured",
   "caller_needs": "Only this item's podcast offline asset (and the previously active one) marked or unmarked as protected for active playback.",
   "fix_class": "summary-read",
@@ -12872,7 +12872,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 2,
-  "score": 12,
+  "score": 14,
   "area": "library",
   "cost_note": "read cost table (#2513): loadOwnedOfflineAssets(); 2 write(s) not priced (the meter reads)"
  },
@@ -13008,7 +13008,7 @@
    "loadOfflineStorageReservations (only for stray old URLSession tasks)",
    "deleteOfflineStorageReservation (same)"
   ],
-  "cost_ms_library": 0.02,
+  "cost_ms_library": 0.04,
   "cost_basis": "measured",
   "caller_needs": "Old unscoped background download tasks cancelled and their reservations released, then the network monitor started.",
   "fix_class": "stays",
@@ -13237,7 +13237,7 @@
    "loadOwnedOfflineAssets (whole table)",
    "deleteOwnedOfflineAsset (write)"
   ],
-  "cost_ms_library": 1.16,
+  "cost_ms_library": 1.41,
   "cost_basis": "measured",
   "caller_needs": "The just-moved file removed and its offline-asset row dropped only if it still points at that file.",
   "fix_class": "stays",
@@ -13290,7 +13290,7 @@
    "loadPodcastDownload (by item)",
    "deletePodcastDownload (write)"
   ],
-  "cost_ms_library": 0.06,
+  "cost_ms_library": 0.04,
   "cost_basis": "measured",
   "caller_needs": "The item's downloaded episode file and its asset and download rows removed.",
   "fix_class": "stays",
@@ -13352,7 +13352,7 @@
   "meter_reads": [
    "loadOfflineStorageReservations (whole table)"
   ],
-  "cost_ms_library": 0.02,
+  "cost_ms_library": 0.04,
   "cost_basis": "measured",
   "caller_needs": "Whether a background task from the previous run still has a live reservation, so it can be re-adopted.",
   "fix_class": "stays",
@@ -15031,7 +15031,7 @@
    "loadEditionFingerprintSpine",
    "loadOwnedOfflineAssets"
   ],
-  "cost_ms_library": 12.82,
+  "cost_ms_library": 13.78,
   "cost_basis": "measured",
   "caller_needs": "The finished map pieces (transcript, sketch, spine, proposal, projection) saved in order; each stage saves a job checkpoint.",
   "fix_class": "async-store",
@@ -15140,7 +15140,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 25,
-  "score": 13,
+  "score": 14,
   "area": "maps-skim",
   "cost_note": "read cost table (#2513): loadEditionFingerprintSpine(mapped) + loadOwnedOfflineAssets() + loadTranscriptTimeline(itemId: mapped)"
  },
@@ -15155,7 +15155,7 @@
    "loadEditionFingerprintSpine",
    "loadItem"
   ],
-  "cost_ms_library": 1.11,
+  "cost_ms_library": 0.85,
   "cost_basis": "measured",
   "caller_needs": "The fingerprint signature saved to disk and recorded against the Margin or episode.",
   "fix_class": "async-store",
@@ -15457,7 +15457,7 @@
    "loadEditionFingerprintSpine",
    "loadItem"
   ],
-  "cost_ms_library": 0.72,
+  "cost_ms_library": 0.43,
   "cost_basis": "measured",
   "caller_needs": "The episode's fingerprint spine with one more landmark, and the signature file saved beside it.",
   "fix_class": "async-store",
@@ -15542,7 +15542,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 5,
-  "score": 2,
+  "score": 1,
   "area": "maps-skim",
   "cost_note": "read cost table (#2513): loadEditionFingerprintSpine(mapped) + loadItem(article)"
  },
@@ -15867,7 +15867,7 @@
   "meter_reads": [
    "loadOwnedOfflineAssets"
   ],
-  "cost_ms_library": 1.16,
+  "cost_ms_library": 1.41,
   "cost_basis": "measured",
   "caller_needs": "The item's transient-transcript asset rows deleted along with its Transient folder.",
   "fix_class": "summary-read",
@@ -15934,7 +15934,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 3,
-  "score": 3,
+  "score": 4,
   "area": "maps-skim",
   "cost_note": "read cost table (#2513): loadOwnedOfflineAssets()"
  },
@@ -16211,7 +16211,7 @@
    "loadImportedCommentaryLayers",
    "loadImportedCommentaryInterjections"
   ],
-  "cost_ms_library": 0.75,
+  "cost_ms_library": 0.56,
   "cost_basis": "measured",
   "caller_needs": "Imported Margins placed against the finished download once the session that kept the stream edition ends.",
   "fix_class": "label-task",
@@ -17107,7 +17107,7 @@
    "loadItem",
    "listItemSummaries"
   ],
-  "cost_ms_library": 37.12,
+  "cost_ms_library": 40.15,
   "cost_basis": "measured",
   "caller_needs": "A deterministic map generated and the item and Library list updated.",
   "fix_class": "targeted-refresh",
@@ -17168,7 +17168,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 37,
+  "score": 40,
   "area": "maps-skim",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadItem(article) + loadListeningMap(mapped)"
  },
@@ -17284,7 +17284,7 @@
    "loadPortableListeningMapProposals",
    "loadTranscriptTimelineChapters"
   ],
-  "cost_ms_library": 0.72,
+  "cost_ms_library": 0.75,
   "cost_basis": "measured",
   "caller_needs": "Only whether a non-community proposal or chapters exist.",
   "fix_class": "summary-read",
@@ -17351,7 +17351,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 2,
-  "score": 7,
+  "score": 8,
   "area": "maps-skim",
   "cost_note": "read cost table (#2513): loadPortableListeningMapProposals(mapped) + loadTranscriptTimelineChapters(mapped)"
  },
@@ -17474,7 +17474,7 @@
    "loadEditionFingerprintSpine",
    "loadOwnedOfflineAssets"
   ],
-  "cost_ms_library": 1.86,
+  "cost_ms_library": 1.82,
   "cost_basis": "measured",
   "caller_needs": "Expired or cancelled preparation jobs cleaned up with their folders.",
   "fix_class": "async-store",
@@ -17561,7 +17561,7 @@
    "loadEpisodeMapPreparationJobs",
    "loadOwnedOfflineAssets"
   ],
-  "cost_ms_library": 1.2,
+  "cost_ms_library": 1.45,
   "cost_basis": "measured",
   "caller_needs": "The item's map folder, preparation jobs and transient transcript assets removed.",
   "fix_class": "summary-read",
@@ -17643,7 +17643,7 @@
    "loadListeningMap",
    "loadLibraryRows"
   ],
-  "cost_ms_library": 72.12,
+  "cost_ms_library": 84.15,
   "cost_basis": "measured",
   "caller_needs": "The provider's map validated, saved on the item, and the Library list refreshed.",
   "fix_class": "stays",
@@ -17686,7 +17686,7 @@
   "critic": "not rechecked",
   "critic_reason": null,
   "scanner_rows": 3,
-  "score": 72,
+  "score": 84,
   "area": "maps-skim",
   "cost_note": "read cost table (#2513): loadItem(article) + loadListeningMap(mapped) + screen: LibraryReadSnapshot.read(store:)"
  },
@@ -17700,7 +17700,7 @@
    "loadLibraryRows",
    "loadTranscriptTimeline"
   ],
-  "cost_ms_library": 83.0,
+  "cost_ms_library": 96.0,
   "cost_basis": "measured",
   "caller_needs": "The full source transcript, attached when transcription finishes.",
   "fix_class": "label-task",
@@ -17761,7 +17761,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 83,
+  "score": 96,
   "area": "maps-skim",
   "cost_note": "read cost table (#2513): loadTranscriptTimeline(itemId: mapped) + screen: LibraryReadSnapshot.read(store:)"
  },
@@ -17776,7 +17776,7 @@
    "loadPortableListeningMapProposals",
    "loadTranscriptTimelineChapters"
   ],
-  "cost_ms_library": 0.82,
+  "cost_ms_library": 0.9,
   "cost_basis": "measured",
   "caller_needs": "Only the stored refusal reason on a friend's map layer, when one exists.",
   "fix_class": "cache-once",
@@ -17837,7 +17837,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 8,
+  "score": 9,
   "area": "maps-skim",
   "cost_note": "read cost table (#2513): loadImportedCommentaryLayers() + loadPortableListeningMapProposals(mapped) + loadTranscriptTimelineChapters(mapped)"
  },
@@ -17923,7 +17923,7 @@
   "meter_reads": [
    "loadPublisherAudio"
   ],
-  "cost_ms_library": 0.02,
+  "cost_ms_library": 0.01,
   "cost_basis": "measured",
   "caller_needs": "Only whether the item's publisher-audio record has a text-map status yet.",
   "fix_class": "summary-read",
@@ -18086,7 +18086,7 @@
    "loadImportedCommentaryLayers",
    "loadOwnedOfflineAssets"
   ],
-  "cost_ms_library": 2.69,
+  "cost_ms_library": 3.37,
   "cost_basis": "measured",
   "caller_needs": "This item's projection and proposal, and which scene-summary assets of this item are saved and valid.",
   "fix_class": "summary-read",
@@ -18165,7 +18165,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 4,
-  "score": 27,
+  "score": 34,
   "area": "maps-skim",
   "cost_note": "read cost table (#2513): loadImportedCommentaryLayers() + loadOwnedOfflineAssets() + loadPortableListeningMapProposals(mapped) + loadResolvedListeningMapProjection(mapped)"
  },
@@ -18933,7 +18933,7 @@
   "meter_reads": [
    "loadItemDetail"
   ],
-  "cost_ms_library": 3.92,
+  "cost_ms_library": 4.4,
   "cost_basis": "measured",
   "caller_needs": "the playback snapshot put back (paused or playing as before); nothing stored changed",
   "fix_class": "targeted-refresh",
@@ -18988,7 +18988,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 12,
+  "score": 13,
   "area": "margins",
   "cost_note": "read cost table (#2513): screen: ItemDetailLoader.load(article)"
  },
@@ -20737,7 +20737,7 @@
    "loadSession",
    "loadItem"
   ],
-  "cost_ms_library": 4.39,
+  "cost_ms_library": 4.91,
   "cost_basis": "measured",
   "caller_needs": "an item whose Margins can be reviewed and shared, with its newest session that has Margins",
   "fix_class": "cache-once",
@@ -20792,7 +20792,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 13,
+  "score": 15,
   "area": "margins",
   "cost_note": "read cost table (#2513): loadInterjections(itemId: mapped) + loadItem(article) + loadSession(id:) + screen: ItemDetailLoader.load(article)"
  },
@@ -21269,7 +21269,7 @@
    "loadImportedCommentaryLayers",
    "loadImportedCommentaryInterjections"
   ],
-  "cost_ms_library": 0.69,
+  "cost_ms_library": 0.5,
   "cost_basis": "measured",
   "caller_needs": "Only the count and sender names of unheard shared Margins (the button label and the offer text), plus a yes/no for Continue.",
   "fix_class": "summary-read",
@@ -21348,7 +21348,7 @@
   "critic": "changed",
   "critic_reason": "The item-screen calls pass selectedItem.id so they hit the in-memory branch; the store reads run only for Library Play on another item.",
   "scanner_rows": 2,
-  "score": 7,
+  "score": 5,
   "area": "margins",
   "cost_note": "read cost table (#2513): loadImportedCommentaryInterjections(layerId:) + loadImportedCommentaryLayers()"
  },
@@ -21688,7 +21688,7 @@
    "loadPreparedAudioManifests",
    "loadAudioPreparationJobs"
   ],
-  "cost_ms_library": 77.58,
+  "cost_ms_library": 87.61,
   "cost_basis": "partial",
   "caller_needs": "The scanner row (loadSession by id, under 0.05 ms) is fine; the caller needs the Margin's session loaded and the Timeline shown, not a refreshed Library list.",
   "fix_class": "targeted-refresh",
@@ -21755,9 +21755,9 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 233,
+  "score": 263,
   "area": "margins",
-  "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadPreparedAudioManifests() + loadSession(id:) + loadSessions() + screen: ItemDetailLoader.load(article); 1 read(s) not in the table, so this is a lower bound"
+  "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadPreparedAudioManifests() + loadSession(id:) + loadSessions() + screen: ItemDetailLoader.load(article); 1 read(s) not in the table or run more than once, so this is a lower bound"
  },
  {
   "fid": "margins-054",
@@ -23394,7 +23394,7 @@
    "loadInterjections(sessionId)",
    "loadInterjections(sessionId)"
   ],
-  "cost_ms_library": 2.42,
+  "cost_ms_library": 3.16,
   "cost_basis": "measured",
   "caller_needs": "the remote command needs the engine synced to the player clock before it runs; the other callbacks only log or hand a captured window on",
   "fix_class": "label-task",
@@ -23491,7 +23491,7 @@
   "critic": "changed",
   "critic_reason": "The heard-window Task is not only a log or hand-on: handleHeardSourceWindow writes the heard audio to WAV files and reads Margins on main, a file write the helper did not list.",
   "scanner_rows": 6,
-  "score": 7,
+  "score": 9,
   "area": "playback",
   "cost_note": "read cost table (#2513): loadCanonicalSource(article) + loadInterjections(sessionId:) + loadItem(article) + loadListeningMap(mapped) + loadResolvedListeningMapProjection(mapped) + loadSessions(itemId: article) + loadTranscriptTimelineSummary(mapped)"
  },
@@ -23811,7 +23811,7 @@
    "loadSessions(itemId)",
    "loadInterjections(sessionId)"
   ],
-  "cost_ms_library": 2.07,
+  "cost_ms_library": 2.65,
   "cost_basis": "measured",
   "caller_needs": "the full ItemDetailState of the playing item, so the Playback screen shows chapters, Margins and turns",
   "fix_class": "async-store",
@@ -23866,7 +23866,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 6,
+  "score": 8,
   "area": "playback",
   "cost_note": "read cost table (#2513): loadCanonicalSource(article) + loadInterjections(sessionId:) + loadItem(article) + loadListeningMap(mapped) + loadResolvedListeningMapProjection(mapped) + loadSessions(itemId: article) + loadTranscriptTimelineSummary(mapped)"
  },
@@ -24637,7 +24637,7 @@
    "loadItem",
    "loadStructuredDocument"
   ],
-  "cost_ms_library": 0.83,
+  "cost_ms_library": 0.65,
   "cost_basis": "measured",
   "caller_needs": "a yes or no: is this preparation still the item's current one and is the text unchanged",
   "fix_class": "async-store",
@@ -24718,7 +24718,7 @@
    "loadItem",
    "loadPublisherAudio"
   ],
-  "cost_ms_library": 0.08,
+  "cost_ms_library": 0.07,
   "cost_basis": "measured",
   "caller_needs": "a yes or no: does this item play its publisher's recording",
   "fix_class": "stays",
@@ -24775,7 +24775,7 @@
    "loadItem",
    "loadPublisherAudio"
   ],
-  "cost_ms_library": 0.08,
+  "cost_ms_library": 0.07,
   "cost_basis": "measured",
   "caller_needs": "whether a clipped or added post still needs its publisher voiceover looked up",
   "fix_class": "stays",
@@ -24834,7 +24834,7 @@
    "loadItem",
    "loadItemDetail reads"
   ],
-  "cost_ms_library": 4.03,
+  "cost_ms_library": 4.5,
   "cost_basis": "measured",
   "caller_needs": "the finished summary saved as a turn, queued after the current audio",
   "fix_class": "stays",
@@ -25004,7 +25004,7 @@
    "loadSessions(itemId)",
    "loadInterjections(sessionId)"
   ],
-  "cost_ms_library": 2.07,
+  "cost_ms_library": 2.65,
   "cost_basis": "measured",
   "caller_needs": "the engine paused or resumed to match the system, and the item screen still showing the right state",
   "fix_class": "targeted-refresh",
@@ -25065,7 +25065,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 2,
-  "score": 6,
+  "score": 8,
   "area": "playback",
   "cost_note": "read cost table (#2513): loadCanonicalSource(article) + loadInterjections(sessionId:) + loadItem(article) + loadListeningMap(mapped) + loadResolvedListeningMapProjection(mapped) + loadSessions(itemId: article) + loadTranscriptTimelineSummary(mapped)"
  },
@@ -25084,7 +25084,7 @@
    "loadSessions(itemId)",
    "loadInterjections(sessionId)"
   ],
-  "cost_ms_library": 2.07,
+  "cost_ms_library": 2.65,
   "cost_basis": "measured",
   "caller_needs": "the engine paused or resumed to match the system, and the item screen still showing the right state",
   "fix_class": "targeted-refresh",
@@ -25145,7 +25145,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 2,
-  "score": 6,
+  "score": 8,
   "area": "playback",
   "cost_note": "read cost table (#2513): loadCanonicalSource(article) + loadInterjections(sessionId:) + loadItem(article) + loadListeningMap(mapped) + loadResolvedListeningMapProjection(mapped) + loadSessions(itemId: article) + loadTranscriptTimelineSummary(mapped)"
  },
@@ -25264,7 +25264,7 @@
    "loadSessions(itemId)",
    "loadInterjections(sessionId)"
   ],
-  "cost_ms_library": 2.07,
+  "cost_ms_library": 2.65,
   "cost_basis": "measured",
   "caller_needs": "the system voice restarted with the new settings",
   "fix_class": "targeted-refresh",
@@ -25313,7 +25313,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 6,
+  "score": 8,
   "area": "playback",
   "cost_note": "read cost table (#2513): loadCanonicalSource(article) + loadInterjections(sessionId:) + loadItem(article) + loadListeningMap(mapped) + loadResolvedListeningMapProjection(mapped) + loadSessions(itemId: article) + loadTranscriptTimelineSummary(mapped)"
  },
@@ -25332,7 +25332,7 @@
    "loadSessions(itemId)",
    "loadInterjections(sessionId)"
   ],
-  "cost_ms_library": 2.07,
+  "cost_ms_library": 2.65,
   "cost_basis": "measured",
   "caller_needs": "playback stopped at its place and the new voice's engine built",
   "fix_class": "stays",
@@ -25381,7 +25381,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 6,
+  "score": 8,
   "area": "playback",
   "cost_note": "read cost table (#2513): loadCanonicalSource(article) + loadInterjections(sessionId:) + loadItem(article) + loadListeningMap(mapped) + loadResolvedListeningMapProjection(mapped) + loadSessions(itemId: article) + loadTranscriptTimelineSummary(mapped)"
  },
@@ -25394,7 +25394,7 @@
   "meter_reads": [
    "loadAIJobs"
   ],
-  "cost_ms_library": 0.03,
+  "cost_ms_library": 0.02,
   "cost_basis": "measured",
   "caller_needs": "a yes or no: is an interjection_summary job pending or deferred for this session",
   "fix_class": "cache-once",
@@ -25464,7 +25464,7 @@
    "loadTurns (only if a retryable job exists)",
    "loadInterjections(sessionId) (only if a retryable job exists)"
   ],
-  "cost_ms_library": 0.4,
+  "cost_ms_library": 0.55,
   "cost_basis": "measured",
   "caller_needs": "a yes or no: is there exactly one retryable on-device summary for this target",
   "fix_class": "cache-once",
@@ -25531,7 +25531,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 3,
-  "score": 12,
+  "score": 16,
   "area": "playback",
   "cost_note": "read cost table (#2513): loadAIJobs(sessionId:) + loadInterjections(sessionId:) + loadTurns(sessionId:)"
  },
@@ -25546,7 +25546,7 @@
    "loadTurns",
    "loadInterjections(sessionId)"
   ],
-  "cost_ms_library": 0.4,
+  "cost_ms_library": 0.55,
   "cost_basis": "measured",
   "caller_needs": "the original summary job, turn and Margins, checked unchanged before retrying",
   "fix_class": "stays",
@@ -25601,7 +25601,7 @@
   "critic": "not rechecked",
   "critic_reason": null,
   "scanner_rows": 4,
-  "score": 0,
+  "score": 1,
   "area": "playback",
   "cost_note": "read cost table (#2513): loadAIJobs(sessionId:) + loadInterjections(sessionId:) + loadTurns(sessionId:)"
  },
@@ -25614,7 +25614,7 @@
   "meter_reads": [
    "loadAIJobs"
   ],
-  "cost_ms_library": 0.03,
+  "cost_ms_library": 0.02,
   "cost_basis": "measured",
   "caller_needs": "the newest retryable, pending or deferred job to resubmit",
   "fix_class": "stays",
@@ -25683,7 +25683,7 @@
    "loadTurns",
    "loadAIJobs"
   ],
-  "cost_ms_library": 0.05,
+  "cost_ms_library": 0.04,
   "cost_basis": "measured",
   "caller_needs": "the follow-up saved as a user turn and a provider job queued",
   "fix_class": "stays",
@@ -25735,7 +25735,7 @@
    "loadInterjections(sessionId)",
    "loadAIJobs"
   ],
-  "cost_ms_library": 0.4,
+  "cost_ms_library": 0.55,
   "cost_basis": "measured",
   "caller_needs": "an interjection_summary turn and job created for the current Margins",
   "fix_class": "stays",
@@ -25778,7 +25778,7 @@
   "critic": "not rechecked",
   "critic_reason": null,
   "scanner_rows": 2,
-  "score": 0,
+  "score": 1,
   "area": "playback",
   "cost_note": "read cost table (#2513): loadAIJobs(sessionId:) + loadInterjections(sessionId:) + loadTurns(sessionId:)"
  },
@@ -25853,7 +25853,7 @@
    "loadSessions(itemId)",
    "loadInterjections(sessionId)"
   ],
-  "cost_ms_library": 2.07,
+  "cost_ms_library": 2.65,
   "cost_basis": "measured",
   "caller_needs": "playback stopped, then the engine rebuilt with the on-device voice enabled",
   "fix_class": "stays",
@@ -25902,7 +25902,7 @@
   "critic": "agree",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 2,
+  "score": 3,
   "area": "playback",
   "cost_note": "read cost table (#2513): loadCanonicalSource(article) + loadInterjections(sessionId:) + loadItem(article) + loadListeningMap(mapped) + loadResolvedListeningMapProjection(mapped) + loadSessions(itemId: article) + loadTranscriptTimelineSummary(mapped)"
  },
@@ -26046,7 +26046,7 @@
    "saveResolvedListeningMapProjection (write)",
    "ListeningEditionStore file read"
   ],
-  "cost_ms_library": 74.31,
+  "cost_ms_library": 83.88,
   "cost_basis": "partial",
   "caller_needs": "the new narration attached to the item, and the Library and Item screens showing the narrated state",
   "fix_class": "async-store",
@@ -26119,9 +26119,9 @@
   "critic": "changed",
   "critic_reason": "attachPreparedTextAudio also calls activateListeningEditionAudio (file read, two store writes, a second item reload) and the caller does loadItem plus text canonicalization, none of which the note or meter_reads listed.",
   "scanner_rows": 1,
-  "score": 223,
+  "score": 252,
   "area": "playback",
-  "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadItem(article) + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds(); 3 write(s) not priced (the meter reads); 1 read(s) not in the table, so this is a lower bound"
+  "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadItem(article) + loadPodcastDownloads() + loadPreparedAudioManifests() + loadSessions() + loadSharedMarginTallies() + loadStructuredDocumentItemIds(); 3 write(s) not priced (the meter reads); 1 read(s) not in the table or run more than once, so this is a lower bound"
  },
  {
   "fid": "playback-044",
@@ -26360,7 +26360,7 @@
    "loadSessions(itemId)",
    "loadInterjections(sessionId)"
   ],
-  "cost_ms_library": 76.26,
+  "cost_ms_library": 86.41,
   "cost_basis": "measured",
   "caller_needs": "a new engine bound to the new voice, with the session restored at the same place",
   "fix_class": "async-store",
@@ -26427,7 +26427,7 @@
   "critic": "changed",
   "critic_reason": "Dropping refreshLibraryRows is wrong: the rows depend on the chosen voice (startupAudioContext), so the read must stay and move off main.",
   "scanner_rows": 1,
-  "score": 229,
+  "score": 259,
   "area": "playback",
   "cost_note": "read cost table (#2513): listItemSummaries() + loadAudioPreparationJobs() + loadCanonicalSource(article) + loadInterjections(sessionId:) + loadListeningMap(mapped) + loadPodcastDownloads() + loadPreparedAudioManifests() + loadResolvedListeningMapProjection(mapped) + loadSessions() + loadSessions(itemId: article) + loadSharedMarginTallies() + loadStructuredDocumentItemIds() + loadTranscriptTimelineSummary(mapped)"
  },
@@ -26446,7 +26446,7 @@
    "loadSessions(itemId)",
    "loadInterjections(sessionId)"
   ],
-  "cost_ms_library": 2.07,
+  "cost_ms_library": 2.65,
   "cost_basis": "measured",
   "caller_needs": "generation stopped, the iOS voice reading on, and the screen showing it",
   "fix_class": "stays",
@@ -26489,7 +26489,7 @@
   "critic": "not rechecked",
   "critic_reason": null,
   "scanner_rows": 2,
-  "score": 2,
+  "score": 3,
   "area": "playback",
   "cost_note": "read cost table (#2513): loadCanonicalSource(article) + loadInterjections(sessionId:) + loadItem(article) + loadListeningMap(mapped) + loadResolvedListeningMapProjection(mapped) + loadSessions(itemId: article) + loadTranscriptTimelineSummary(mapped)"
  },
@@ -26779,7 +26779,7 @@
    "loadItem",
    "loadPublisherAudio"
   ],
-  "cost_ms_library": 0.08,
+  "cost_ms_library": 0.07,
   "cost_basis": "measured",
   "caller_needs": "the item still exists, then the found voiceover record saved with the old text map kept",
   "fix_class": "stays",

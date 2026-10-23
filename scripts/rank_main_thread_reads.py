@@ -98,8 +98,21 @@ def count_in(entry: str) -> int:
     return 1
 
 
+# Reads whose table row is an empty-table number: the fixture has nothing for them to scan.
+NOT_EXERCISED = ("quarantinedMarginAudioPaths", "quarantinedRecordCount")
+# "(4-7 per chunk)", "(2-3)", "(up to 3)", "per trashed item": the audit says it runs more than once and we price one.
+MORE_THAN_ONCE = re.compile(r"\bper\b|\d+-\d+|\bup to\b|\(\d")
+
+
 def price_entry(entry: str, table: dict[str, float]) -> tuple[str, float, str]:
-    """(kind, ms, matched row): kind is "read", "write" or "unpriced"."""
+    """(kind, ms, matched row): kind is "read", "lower" (a read run more than once, priced once), "write" or "unpriced"."""
+    kind, ms, matched = price_one(entry, table)
+    if kind == "read" and not re.search(r"\bx\d+|twice", entry) and MORE_THAN_ONCE.search(entry):
+        return "lower", ms, matched
+    return kind, ms, matched
+
+
+def price_one(entry: str, table: dict[str, float]) -> tuple[str, float, str]:
     if SCREEN_LONG_FORM.match(entry):
         key = SCREENS["refreshAudioPreparationPresentation"]
         return ("read", table[key] * count_in(entry), key) if key in table else ("unpriced", 0.0, "")
@@ -111,7 +124,9 @@ def price_entry(entry: str, table: dict[str, float]) -> tuple[str, float, str]:
                 return "read", table[key] * count_in(entry), key
     if name.startswith(WRITE_PREFIXES) or "(write" in entry:
         return "write", 0.0, ""
-    qualifier_match = re.match(r"[A-Za-z0-9_]+\((itemId|sessionId|detail|article|mapped|all sessions|by item)", entry)
+    if name in NOT_EXERCISED:
+        return "unpriced", 0.0, ""
+    qualifier_match = re.match(r"[A-Za-z0-9_]+\s*\((itemId|sessionId|detail|article|mapped|all sessions|by item)", entry)
     qualifier = qualifier_match.group(1) if qualifier_match else ""
     if qualifier == "detail":
         qualifier = "article"
@@ -128,12 +143,15 @@ def price_row(row: dict, table: dict[str, float]) -> dict | None:
     priced = writes = unpriced = 0
     total = 0.0
     used: list[str] = []
-    for entry in row["meter_reads"]:
+    entries = [part.strip() for entry in row["meter_reads"] for part in entry.split(" + ")]
+    for entry in entries:
         kind, ms, matched = price_entry(entry, table)
-        if kind == "read":
+        if kind in ("read", "lower"):
             priced += 1
             total += ms
             used.append(matched)
+            if kind == "lower":
+                unpriced += 1
         elif kind == "write":
             writes += 1
         else:
@@ -145,7 +163,7 @@ def price_row(row: dict, table: dict[str, float]) -> dict | None:
     if writes:
         note += f"; {writes} write(s) not priced (the meter reads)"
     if unpriced:
-        note += f"; {unpriced} read(s) not in the table, so this is a lower bound"
+        note += f"; {unpriced} read(s) not in the table or run more than once, so this is a lower bound"
     return {
         "cost_ms_library": ms,
         "cost_basis": "partial" if unpriced else "measured",

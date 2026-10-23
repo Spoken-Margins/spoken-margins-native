@@ -194,11 +194,11 @@ final class StoreReadMeterTests: XCTestCase {
     /// fixture on purpose; any other read that decodes no row is a read the fixture does not exercise.
     private static let emptyByDesign: Set<String> = [
         "loadWatchAudioPackage", "loadWatchAudioPackages", "loadWatchSyncEvents", "loadWatchSyncEvent",
-        "loadWatchPackageRequests",           // Apple Watch sync is not shipped
+        "loadWatchPackageRequests", "hasImportedWatchSyncEvent",   // Apple Watch sync is not shipped
         "quarantinedRecordCount", "quarantinedMarginAudioPaths",   // nothing is quarantined in a healthy Library
         "importedCommentaryRecordsMention",   // a miss is the common answer: it scans every record
         "marginNoteChanges", "itemRevision", "isLiveImportedCommentaryLayer", "transcriptTimelineStamp",
-        "loadDeletedItems", "listDeletedItems", "loadFeedEntries"   // the trash starts empty; entries are checked below
+        "listDeletedItems"                    // the trash starts empty
     ]
 
     /// Answered from memory, not SQLite: nothing for the meter to see.
@@ -223,7 +223,7 @@ final class StoreReadMeterTests: XCTestCase {
         XCTAssertFalse(files.isEmpty, "the store source moved; update this test")
         let writeVerbs = ["save", "delete", "remove", "update", "apply", "import", "invalidate", "mark", "move", "publish",
                           "restore", "settle", "migrate", "seed", "reset", "sweep", "compose", "plan", "with", "measuring",
-                          "totals", "read", "schemaVersion", "hasImported"]
+                          "totals", "read", "schemaVersion"]
         let regex = try NSRegularExpression(pattern: #"^\s*public func ([A-Za-z0-9_]+)"#, options: [.anchorsMatchLines])
         var reads = Set<String>(), unclassified = Set<String>()
         for file in files {
