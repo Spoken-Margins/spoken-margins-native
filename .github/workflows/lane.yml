@@ -282,11 +282,18 @@ jobs:
           path: ${{ runner.temp }}/lane-state/compilation-cache
           key: xcode-cas-27.0-lane-${{ github.run_id }}
           restore-keys: xcode-cas-27.0-
+      # The image's /usr/bin/python3 is 3.9, and requirements-dev.txt pins jsonschema 4.26.0, which needs 3.10 or newer:
+      # every hosted T3 run died here with "No matching distribution" (#2545). The hosted workflows all use 3.12.
+      - name: Hosted Mac - Python 3.12
+        if: runner.environment == 'github-hosted'
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
       - name: Hosted Mac - Python tools
         if: runner.environment == 'github-hosted'
         env:
           GH_TOKEN: ''  # the PR's own script and requirements: no token, as for the PR's builds and tests
-        run: PYTHON=/usr/bin/python3 bash scripts/bootstrap-python-tools.sh
+        run: PYTHON=python3 bash scripts/bootstrap-python-tools.sh
       # ---- end of hosted Mac only ----
       - name: Run the request
         id: run
