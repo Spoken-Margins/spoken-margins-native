@@ -84,6 +84,11 @@ final class WatchMarginReceiver: NSObject {
     }
 
     private func runPass() async {
+        await transcribe(await fileWaiting())
+    }
+
+    /// Files what is waiting and answers the Watch, without transcribing.
+    private func fileWaiting() async -> [LiveSessionFileWorker.FiledMargin] {
         let marks = drainMarks()
         var changed = false
         if !marks.isEmpty {
@@ -98,7 +103,11 @@ final class WatchMarginReceiver: NSObject {
         send(pass.answers)
         publish(board: await files.watchBoard())
         if changed { announceChange() }
-        for margin in pass.filed {
+        return pass.filed
+    }
+
+    private func transcribe(_ filed: [LiveSessionFileWorker.FiledMargin]) async {
+        for margin in filed {
             guard let text = await transcribe(margin.audioPath) else { continue }
             let id = margin.marginId
             await LiveSessionSpokenMargins.updateStored(in: files, marginId: id) { $0.setTranscript(text, forMarginId: id) }
@@ -121,17 +130,18 @@ final class WatchMarginReceiver: NSObject {
         return true
     }
 
-    /// Applies a message from the Watch, after any filing pass under way, and returns the reply. A filing pass runs
-    /// first, so a Margin whose file has just landed is answered as filed.
+    /// Applies a message from the Watch, after any filing pass under way, and returns the reply. Waiting Margins are
+    /// filed first, so one whose file has just landed is answered as filed; transcribing them waits until the reply
+    /// is out, so the fast lane answers in a second, not after speech recognition.
     @discardableResult
     func handle(_ envelope: WatchEnvelope, now: @escaping @Sendable () -> Date = { Date() }) -> Task<WatchPhoneReply, Never> {
         let previous = lastPass
         let files = files
-        let reply = Task { [weak self] () -> WatchPhoneReply in
+        let work = Task { [weak self] () -> (WatchPhoneReply, [LiveSessionFileWorker.FiledMargin]) in
             await previous?.value
-            await self?.runPass()
+            let filed = await self?.fileWaiting() ?? []
             let reply = await files.applyWatch(envelope, now: now())
-            guard let self else { return reply }
+            guard let self else { return (reply, filed) }
             self.send(reply.answers)
             self.publish(board: reply.board)
             switch envelope.message {
@@ -141,10 +151,13 @@ final class WatchMarginReceiver: NSObject {
             case .hello, .marginDetails:
                 break
             }
-            return reply
+            return (reply, filed)
         }
-        lastPass = Task { _ = await reply.value }
-        return reply
+        lastPass = Task { [weak self] in
+            let (_, filed) = await work.value
+            await self?.transcribe(filed)
+        }
+        return Task { await work.value.0 }
     }
 
     /// The session state the Watch is sent: the board, plus the running session's start and title under the keys the
