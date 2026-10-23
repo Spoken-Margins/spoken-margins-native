@@ -9,7 +9,7 @@ already above its ceiling (after a hot-file-ok) may not grow further.
 Kill rule (the desk's): if most PRs that touch these files get hot-file-ok, the ratchet is wrong
 and gets dropped.
 
-  scripts/hot_file_ratchet.py               this branch's committed files against origin/next
+  scripts/hot_file_ratchet.py               this branch's committed files against the trunk (origin/main)
   scripts/hot_file_ratchet.py --base REF    against another ref
 
 The lane runner runs next's copy of this check in automerge runs, before any build.
@@ -84,8 +84,11 @@ def violations(root: Path, base: str, head: str = 'HEAD', labels=(), start: str 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--base', default='origin/next')
+    parser.add_argument('--base', help='the base ref (default: origin/<trunk>)')
     args = parser.parse_args(argv)
+    if args.base is None:  # #1492: the trunk (scripts/trunk.py)
+        from trunk import trunk_ref
+        args.base = trunk_ref()
     found = violations(ROOT, args.base)
     for path in HOT_FILES:
         print(f'{Path(path).name}: {size_after_merge(ROOT, args.base, "HEAD", path)} lines after merging, ceiling '

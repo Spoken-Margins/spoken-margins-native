@@ -5,6 +5,11 @@ import Foundation
 /// The summary is spoken during Skim, so it must not say anything the scene doesn't: every number and every
 /// capitalised name in it has to appear in the scene's own text. A label that quotes long runs of the source,
 /// or echoes instructions, is rejected. Only scenes the model called editorial keep a summary.
+///
+/// What counts as a name depends on the transcript's language (#2082). In German and the languages written like it
+/// every noun has a capital, so a capital marks no name and only acronyms and words with a capital inside
+/// ("YouTube", "McKinsey") are checked, as the community-map server does (#2081). Every other language, and an
+/// unknown one, keeps the plain rule.
 public enum ListeningMapSummaryValidator {
     public enum Rejection: Error, Equatable, Sendable {
         case empty
@@ -57,7 +62,8 @@ public enum ListeningMapSummaryValidator {
         description rawDescription: String,
         eligibility: PortableSceneEligibility?,
         eligibilityReason rawReason: String?,
-        sourceText: String
+        sourceText: String,
+        language: String? = nil
     ) throws -> SceneLabel {
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let description = rawDescription.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -88,7 +94,8 @@ public enum ListeningMapSummaryValidator {
             throw Rejection.ungroundedNumber(number)
         }
         let sourceWordSet = Set(sourceWords)
-        if let name = capitalisedNames(in: description).first(where: { !sourceWordSet.contains($0.lowercased()) }) {
+        let names = capitalisedNames(in: description, nounsCapitalised: capitalisesNouns(language))
+        if let name = names.first(where: { !sourceWordSet.contains($0.lowercased()) }) {
             throw Rejection.ungroundedName(name)
         }
         return SceneLabel(
@@ -139,8 +146,18 @@ public enum ListeningMapSummaryValidator {
         return trimmed.isEmpty ? "0" : String(trimmed)
     }
 
-    /// Capitalised tokens of two or more letters that don't start a sentence, possessive "'s" removed.
-    static func capitalisedNames(in text: String) -> [String] {
+    /// Whether `language`, a BCP 47 tag ("de", "de-CH", "gsw"), is written with a capital on every noun: German and
+    /// the languages written like it (Swiss German, Luxembourgish, Bavarian). nil, empty or unknown is not.
+    public static func capitalisesNouns(_ language: String?) -> Bool {
+        guard let language else { return false }
+        let primary = language.lowercased().split(whereSeparator: { $0 == "-" || $0 == "_" }).first.map(String.init)
+        return ["de", "gsw", "lb", "bar"].contains(primary ?? "")
+    }
+
+    /// Capitalised tokens of two or more letters that don't start a sentence, possessive "'s" removed. With
+    /// `nounsCapitalised`, for a language that capitalises nouns, only the parts a common noun can't be: acronyms
+    /// ("NASA", "LLMs") and words with a capital inside ("YouTube").
+    static func capitalisedNames(in text: String, nounsCapitalised: Bool = false) -> [String] {
         var names: [String] = []
         var sentenceStart = true
         for rawToken in text.split(whereSeparator: \.isWhitespace) {
@@ -153,10 +170,22 @@ public enum ListeningMapSummaryValidator {
                 && !abbreviations.contains(core.lowercased())
             guard !startsSentence, core.count >= 2, let first = core.first, first.isUppercase else { continue }
             for part in core.split(whereSeparator: { !$0.isLetter }) where part.count >= 2 && part.first!.isUppercase {
+                if nounsCapitalised, !isAcronym(part), !hasInnerCapital(part) { continue }
                 names.append(String(part))
             }
         }
         return names
+    }
+
+    /// All capitals, allowing a plural "s": "NASA", "LLMs".
+    private static func isAcronym(_ name: Substring) -> Bool {
+        let letters = name.last == "s" ? name.dropLast() : name
+        return letters.count >= 2 && letters.allSatisfy { $0.isUppercase || $0.isNumber }
+    }
+
+    /// A capital after a lowercase letter ("YouTube", "McKinsey"), which a German common noun never has.
+    private static func hasInnerCapital(_ word: Substring) -> Bool {
+        zip(word, word.dropFirst()).contains { $0.0.isLowercase && $0.1.isUppercase }
     }
 
     static func words(_ text: String) -> [String] {

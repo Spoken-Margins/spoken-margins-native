@@ -12,7 +12,8 @@ It first takes a simulator slot and the device's background watcher keeps it unt
 always start when no other simulator job runs; it may join one only while memory pressure is normal
 and the second slot is on (on this 16 GB Mac two simulators plus builds filled swap, #184). While
 any simulator job runs, builds get one slot. The lane goes back to one simulator by itself when a
-two-simulator run times out or pressure stays at warn for 10 minutes with two up.
+two-simulator run times out or pressure stays at warn for 10 minutes with two up, and back to two
+after a cooldown once pressure is normal (4 h, doubling per repeat trip that week, at most 24 h).
 One boot at a time Mac-wide, no builds while it boots, never a retry after a failed boot, and a stop
 at the first SpringBoard crash. A boot stall (SpringBoard restarted or vanished while booting) of a --pool or
 --fresh device gets one fresh device in its place: the stalled one is retired, never booted again, and the
@@ -65,7 +66,7 @@ def main(argv):
         elif action == 'off':
             if not reason:
                 parser.error('--second-slot off needs a reason')
-            lane_sim.back_to_one_simulator(f'{reason} (switched off by hand)')
+            lane_sim.back_to_one_simulator(f'{reason} (switched off by hand)', by_hand=True)
         elif action != 'status':
             parser.error('--second-slot takes status, on or off')
         allowed, why = lane_slots.second_slot_status()

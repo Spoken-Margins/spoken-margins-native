@@ -7,16 +7,12 @@ import SessionKit
 
 /// APA-15 (#1042): the only real-render test checked each voice against itself (a sample rate, a length,
 /// a peak above 0.000001), so a renderer that always loaded James's style, or wrote near-silence, passed.
-/// Here the bundled model reads one sentence in each voice. Each must be clearly audible, and Lily's voice
+/// Here the real model (the `supertonicModel` input, a download since #1820) reads one sentence in each voice. Each must be clearly audible, and Lily's voice
 /// must sit clearly higher than James's. The model starts each render from random noise, so two renders
 /// never match sample for sample; the pitch of the voice is what a style changes and the noise doesn't.
 final class SupertonicVoiceSelectionTests: XCTestCase {
     func testJamesAndLilyReadTheSameSentenceInTheirOwnAudibleVoices() async throws {
-        let assets = SupertonicAssetLocation(rootURL: URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appending(path: "App/SpokenMarginsApp/Resources/Supertonic", directoryHint: .isDirectory))
-        guard (try? assets.validate()) != nil else { throw XCTSkip("Supertonic assets not in this checkout") }
+        let assets = try SupertonicTestModel.assets()
         let root = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-voices-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }

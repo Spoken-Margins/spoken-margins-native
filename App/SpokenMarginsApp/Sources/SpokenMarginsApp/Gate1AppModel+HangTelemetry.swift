@@ -16,6 +16,17 @@ extension Gate1AppModel {
         )
     }
 
+    /// What the Play/Pause button shows, so a tap on a pending start reads as the cancel it is (#2098).
+    var playPauseFace: PlayPauseFace {
+        // The branches of `playPause()` that take the tap before the source does.
+        let tapReachesTheSource = playingImportedCommentary == nil
+            && marginMomentConductor?.isPlayingVoice != true
+            && !ownMarginVoiceHasTransport
+            && snapshot.skimBridgeState == nil
+            && snapshot.phase != .finished
+        return PlayPauseFace(status: snapshot.status, isPlaying: activePlaybackIsPlaying, tapReachesTheSource: tapReachesTheSource)
+    }
+
     /// The Play/Pause button on the mini player and the full player. It logs the tap like the Lock Screen
     /// and compact commands do (`origin: app_ui`), then does what the button did before.
     func playPauseTapped() {
@@ -25,6 +36,10 @@ extension Gate1AppModel {
             "requestedMediaTimeMs": "-1"
         ])
         hangTelemetry.noteTap(command: CompactControlCommand.togglePlayPause.rawValue, status: snapshot.status.rawValue)
+        // The recording screen is what the listener sees then, and it hides banners, so the refusal is logged instead.
+        if marginVoiceIsHeldForRecording {
+            recordDeveloperDiagnostic("transport.refused", ["command": CompactControlCommand.togglePlayPause.rawValue, "reason": "margin_recording"])
+        }
         hangTelemetry.labels.scoped("playPauseTapped") { playPause() }
     }
 

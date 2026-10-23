@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitAudio
 
 #if canImport(ActivityKit)
 import ActivityKit
@@ -226,6 +227,19 @@ enum Gate2LiveSpeechNowPlayingPolicy {
     }
 }
 
+/// A finished or abandoned session leaves no card, even one the player holds: the player only rewrites it on its own
+/// events, and a finished episode whose session stays open would keep a stale "finished" card (#58, #943).
+enum Gate2EndedSessionNowPlaying {
+    static func clearPlayerCard(for snapshot: CompactControlSnapshot) {
+        switch snapshot.phase {
+        case .finished, .abandoned:
+            NowPlayingInfoOwnership.shared.clear(as: .mediaPlayer, detail: "session_ended phase=\(snapshot.phase)")
+        default:
+            break
+        }
+    }
+}
+
 enum Gate2NativeMediaNowPlayingPolicy {
     static func shouldPublish(_ snapshot: CompactControlSnapshot) -> Bool {
         guard snapshot.compactSurfaceReady, snapshot.sessionId != nil else { return false }
@@ -416,6 +430,7 @@ final class Gate2CompactControlController {
     }
 
     func reconcileLiveActivities() {
+        NowPlayingInfoOwnership.shared.note("lifecycle_refresh")
         publishCurrentSnapshot(force: true)
     }
 
@@ -537,6 +552,7 @@ final class Gate2CompactControlController {
             "gate2SurfaceProfile": snapshot?.surfaceProfileId ?? "none",
             "gate2NowPlaying": liveSpeechNowPlaying.status,
             "gate2NowPlayingEnabled": nowPlayingEnabled ? "true" : "false",
+            "gate2NowPlayingLedger": NowPlayingInfoOwnership.shared.summary(),
             "gate2NowPlayingOwner": snapshot.map(Gate2LiveSpeechNowPlayingPolicy.isLiveSpeech) == true ? "live_speech_coordinator" : "media_coordinator",
             "gate2LastRemoteCommand": liveSpeechNowPlaying.lastRemoteCommand,
             "gate2LastRemoteCommandDetail": liveSpeechNowPlaying.lastRemoteCommandDetail,
@@ -1115,8 +1131,9 @@ private final class Gate2LiveSpeechNowPlayingController {
         let publishesNativeMediaMetadata = Gate2NativeMediaNowPlayingPolicy.shouldPublish(snapshot)
         guard publishesLiveSpeech || publishesNativeMediaMetadata else {
             if ownsNowPlayingInfo {
-                MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+                NowPlayingInfoOwnership.shared.clear(as: .compactControls, detail: "inactive phase=\(snapshot.phase)")
             }
+            Gate2EndedSessionNowPlaying.clearPlayerCard(for: snapshot)
             uninstallRemoteCommandHandlers()
             ownsNowPlayingInfo = false
             status = "inactive"
@@ -1124,8 +1141,9 @@ private final class Gate2LiveSpeechNowPlayingController {
         }
         guard !publishesLiveSpeech || Gate2LiveSpeechNowPlayingPolicy.shouldPublish(snapshot) else {
             if ownsNowPlayingInfo {
-                MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+                NowPlayingInfoOwnership.shared.clear(as: .compactControls, detail: "live_speech_ended phase=\(snapshot.phase)")
             }
+            Gate2EndedSessionNowPlaying.clearPlayerCard(for: snapshot)
             uninstallRemoteCommandHandlers()
             ownsNowPlayingInfo = false
             status = "inactive"
@@ -1170,13 +1188,22 @@ private final class Gate2LiveSpeechNowPlayingController {
         if let targetId = snapshot.targetId, let url = URL(string: targetId), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
             info[MPNowPlayingInfoPropertyAssetURL] = url
         }
-        let nowPlayingCenter = MPNowPlayingInfoCenter.default()
-        nowPlayingCenter.nowPlayingInfo = info
-        ownsNowPlayingInfo = true
+        let ledger = NowPlayingInfoOwnership.shared
+        let ledgerDetail = "\(publishesLiveSpeech ? "live_speech" : "native_media") phase=\(snapshot.phase)"
+        if publishesLiveSpeech {
+            ledger.write(info, as: .compactControls, detail: ledgerDetail)
+            ownsNowPlayingInfo = true
+        } else {
+            // The player owns a native media card and refreshes it every second. This fills the card only when the
+            // player has none, so it never overwrites the player's or takes a card the player is keeping (#2181).
+            ownsNowPlayingInfo = ledger.writeIfUnheld(info, as: .compactControls, detail: ledgerDetail)
+        }
         if let audioSessionFailure {
             status = "live_speech_audio_session_failed:\(audioSessionFailure)"
+        } else if publishesLiveSpeech {
+            status = "live_speech_published"
         } else {
-            status = publishesLiveSpeech ? "live_speech_published" : "native_media_metadata_published"
+            status = ownsNowPlayingInfo ? "native_media_metadata_published" : "native_media_deferred_to_player"
         }
         #else
         status = "unavailable"
@@ -1204,8 +1231,7 @@ private final class Gate2LiveSpeechNowPlayingController {
     func end() {
         #if canImport(MediaPlayer)
         if ownsNowPlayingInfo {
-            let nowPlayingCenter = MPNowPlayingInfoCenter.default()
-            nowPlayingCenter.nowPlayingInfo = nil
+            NowPlayingInfoOwnership.shared.clear(as: .compactControls, detail: "end")
         }
         uninstallRemoteCommandHandlers()
         #endif

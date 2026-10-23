@@ -2,10 +2,19 @@
 """Build next's tip for the owner's iPhone, ready for the Desktop installer (#384).
 
 Usage:
-  scripts/phone-build                 build origin/next's tip now
+  scripts/phone-build                 build the trunk's tip now (origin/main)
   scripts/phone-build --commit <sha>  build that commit instead
   scripts/phone-build --if-changed    coalesce changed tips to hourly (or sooner after integration PASS)
   scripts/phone-build --plan-only     rewrite latest's test-plan.md against the build installed now
+  scripts/phone-build --source hosted take the GitHub-hosted build instead of building here (#2357)
+
+Where the build comes from (#2357): `--source mac` (the default) builds here, as below. `--source hosted`, or
+SM_PHONE_SOURCE=hosted, or the word `hosted` in ~/SpokenMargins-phone/source (so the launchd job switches
+without a reinstall), runs no xcodebuild: it takes the newest unexpired artifact of a successful
+.github/workflows/phone-build.yml run on the trunk (schedule or by hand), downloads it with `gh run download`,
+gives it the same checks (provisioning profile, codesign --verify, commit in Info.plist) and writes the same
+folder, build.json and test plan, so the Desktop installer is unchanged. Hosted builds come twice a day, before
+the 8:00 and 17:00 Central plans; --if-changed takes a new one when it appears. Delete the file to build here again.
 
 What it does:
 - Builds a signed Release app for a physical iPhone in a persistent detached worktree, through
@@ -95,9 +104,13 @@ ROOT = Path(os.environ.get('SM_PHONE_REPO') or PUBLIC)  # the repo it builds fro
 sys.path.insert(0, str(PUBLIC / 'scripts'))
 import comment_trust  # noqa: E402  (#1822: whose comments the plan believes)
 import lane_slots  # noqa: E402
+from trunk import trunk_branch  # noqa: E402  (#1492: the branch it builds)
 
-REPO = 'uncomposed/spoken-margins-native'
-BRANCH = 'next'
+REPO = 'Spoken-Margins/spoken-margins-native'
+# Issue and PR links written before the move to the org (#2169) still name the old owner.
+# GitHub ignores case in the host, owner and repo name, so these patterns do too.
+REPO_LINK = r'(?i:github\.com/(?:spoken-margins|uncomposed)/spoken-margins-native)'
+BRANCH = trunk_branch()
 REPORTS_ISSUE = 184      # where the integration run and the Test Desk post their lane reports
 DISK_FLOOR_GB = 10
 DISK_PER_BUILD_GB = 4
@@ -105,6 +118,9 @@ PLAN_CHECKS = 8          # about a minute each, plus the install: roughly ten mi
 EXIT_SKIPPED = 75        # EX_TEMPFAIL: a guard said not now
 APP_NAME = 'SpokenMarginsApp.app'
 BUILD_INTERVAL_SECONDS = 3600
+SOURCES = ('mac', 'hosted')  # --source: build here, or download the hosted build (#2357)
+HOSTED_WORKFLOW = 'phone-build.yml'
+HOSTED_EVENTS = ('schedule', 'workflow_dispatch')
 SIGNING_HINTS = [
     ('errSecInternalComponent', 'The keychain is locked or asked for permission. Unlock the Mac, run '
      'scripts/phone-build once from Terminal, and click "Always Allow" when macOS asks for the keychain.'),
@@ -145,7 +161,7 @@ NO_CHECK = re.compile(
     r'|not needed|no (?:(?:owner|phone) )?checks?(?:\s+needed)?)'
     r'\s*(?:[.;:,(\u2014\u2013]|-\s|$))', re.I)
 # "#547" or a link to issue/PR 547 in a check: something it may need on the phone first (#847).
-REFERENCE = re.compile(r'(?<![\w&/])#(\d+)\b|github\.com/' + re.escape(REPO) + r'/(?:issues|pull)/(\d+)\b')
+REFERENCE = re.compile(r'(?<![\w&/])#(\d+)\b|' + REPO_LINK + r'/(?:issues|pull)/(\d+)\b')
 # "**Owner check:**", "**Owner check (phone):**", "4. Owner check:", "**Phone check:**" (#927), "**Owner check.**"
 # (#574) and threads' "2. The owner's phone check:" (#1337). Plain text only at the start of a line or list item:
 # "the phone check covers that" in prose isn't one, nor is a dated report ("Owner phone check, 2026-10-14 ...").
@@ -191,7 +207,7 @@ ATTACH_LIMIT = 50_000_000
 # no file left the owner with nothing to test, twice (2026-09-30, 2026-10-07).
 MATERIAL = re.compile(r'\b(PDF|EPUB|audiobook|packet)s?\b|\.spokenmargins\b', re.I)
 # A link that supplies the file: any URL except an issue or PR, which is a prerequisite, not content.
-SUPPLIED_URL = re.compile(r'https?://(?!(?:www\.)?github\.com/' + re.escape(REPO) + r'/(?:issues|pull)/)\S+')
+SUPPLIED_URL = re.compile(r'https?://(?!(?i:www\.)?' + REPO_LINK + r'/(?:issues|pull)/)\S+')
 # A document the check names but doesn't link: "the arXiv paper" (#1476: #586). A link or repo file supplies it.
 NAMED_DOCUMENT = re.compile(r'\b(?:[Tt]he|[Tt]his|[Tt]hat)\s+(?:[\w.-]+\s+){0,2}(?:paper|whitepaper|thesis)\b')  # not "Paper theme"
 # A check the owner can't run (#1476): lane and agent procedures belong to the lane and the Test Desk, not to
@@ -1592,6 +1608,143 @@ def record_attempt(sha: str, result: str) -> None:
         {'sha': sha, 'result': result, 'at': datetime.datetime.now().isoformat(timespec='seconds')}) + '\n')
 
 
+def check_app(app: Path, sha: str, cwd: Path, log: Path) -> dict:
+    """The checks every phone build passes before the installer may see it; returns its Info.plist."""
+    if not (app / 'embedded.mobileprovision').exists():
+        raise BuildFailed(f'{app} is missing or has no provisioning profile, so a phone would refuse it')
+    if run_logged(['codesign', '--verify', '--strict', str(app)], cwd, log) != 0:
+        raise BuildFailed('the app\'s signature does not verify (codesign --verify)')
+    info = plistlib.loads((app / 'Info.plist').read_bytes())
+    if 'SMBuildCommit' in info and info['SMBuildCommit'] != sha:
+        raise BuildFailed(f'the app says it was built from {info["SMBuildCommit"]!r}, not {sha}')
+    return info
+
+
+def deliver(app: Path, info: dict, sha: str, stamp: str, log: Path, seconds: int, checks: str,
+            built_at: str | None = None, extra: dict | None = None) -> Path:
+    """Put a checked app where the Desktop installer looks, with its build.json and test plan."""
+    folder = phone_dir() / f'{stamp}-{sha[:7]}'
+    folder.mkdir()
+    subprocess.check_call(['ditto', str(app), str(folder / APP_NAME)])
+    shutil.copy(log, folder / 'build.log')
+    size = int(subprocess.check_output(['du', '-sk', str(folder / APP_NAME)]).split()[0]) * 1024
+    details = {'sha': sha, 'sha7': sha[:7], 'subject': git('log', '-1', '--format=%s', sha),
+               'built_at': built_at or datetime.datetime.now().isoformat(timespec='seconds'), 'build_seconds': seconds,
+               'app': APP_NAME, 'app_bytes': size, 'bundle_version': info.get('CFBundleVersion'),
+               'commit_in_app': info.get('SMBuildCommit') or None, 'checks': checks, **(extra or {})}
+    (folder / 'build.json').write_text(json.dumps(details, indent=2) + '\n')
+    plan = write_plan(folder, sha, checks, commit_in_app=bool(info.get('SMBuildCommit')))
+    point_latest(folder)
+    record_attempt(sha, 'built')
+    prune()
+    share_files(folder, sha)
+    say(f'done: {folder}')
+    say(f'app {size / 1e6:.0f} MB, built in {seconds} s; test plan: {plan}')
+    notify_ready(sha, plan)
+    return folder
+
+
+# ---- the hosted build (#2357) ----------------------------------------------------------------------
+
+def source() -> str:
+    """Where the phone build comes from: `mac` (build here) or `hosted` (download .github/workflows/phone-build.yml's).
+
+    SM_PHONE_SOURCE wins, then the first word of ~/SpokenMargins-phone/source, then `mac`. The file lets the
+    launchd job switch without being reinstalled; deleting it goes back to building here."""
+    chosen = os.environ.get('SM_PHONE_SOURCE', '').strip()
+    if not chosen:
+        try:
+            chosen = ((phone_dir() / 'source').read_text().split() or [''])[0]
+        except OSError:
+            chosen = ''
+    return chosen if chosen in SOURCES else 'mac'
+
+
+def gh_json(*args):
+    raw = gh(*args)
+    try:
+        return json.loads(raw) if raw else None
+    except ValueError:
+        return None
+
+
+def hosted_build(commit: str | None = None) -> dict | None:
+    """The newest unexpired hosted phone build of the trunk (or of `commit`): {sha, run_id, artifact, built_at}.
+
+    Only a successful run of the phone-build workflow file itself, started by its schedule or by hand on the
+    trunk, counts: those are the runs its main-only environment lets sign. None when there is none or GitHub
+    is unreachable."""
+    runs = gh_json('api', f'repos/{REPO}/actions/workflows/{HOSTED_WORKFLOW}/runs?branch={BRANCH}&status=success&per_page=20')
+    for run in (runs or {}).get('workflow_runs', []):
+        if (run.get('path') != f'.github/workflows/{HOSTED_WORKFLOW}' or run.get('event') not in HOSTED_EVENTS
+                or run.get('head_branch') != BRANCH or run.get('conclusion') != 'success'):
+            continue
+        sha = run.get('head_sha') or ''
+        if not re.fullmatch(r'[0-9a-f]{40}', sha) or (commit and sha != commit):
+            continue
+        artifacts = gh_json('api', f'repos/{REPO}/actions/runs/{run["id"]}/artifacts')
+        for artifact in (artifacts or {}).get('artifacts', []):
+            if artifact.get('name') == f'phone-build-{sha}' and not artifact.get('expired'):
+                return {'sha': sha, 'run_id': run['id'], 'artifact': artifact['name'],
+                        'run_url': run.get('html_url'), 'built_at': artifact.get('created_at')}
+    return None
+
+
+def local_time(stamp: str | None) -> str | None:
+    """GitHub's UTC time as the naive local time the installer compares build.json's built_at with."""
+    try:
+        moment = datetime.datetime.fromisoformat((stamp or '').replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    return moment.astimezone().replace(tzinfo=None).isoformat(timespec='seconds') if moment.tzinfo else None
+
+
+def fetch_hosted(hosted: dict) -> int:
+    """Download a hosted phone build, check it as a Mac build is checked, and hand it to the installer."""
+    sha = hosted['sha']
+    stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+    work = phone_dir() / '.work' / f'{stamp}-{sha[:7]}'
+    log = work / 'build.log'
+    work.mkdir(parents=True)
+    try:
+        say(f'downloading the hosted phone build of {sha[:7]} ({hosted.get("run_url")})')
+        command = [*os.environ.get('SM_PHONE_GH', 'gh').split(), 'run', 'download', str(hosted['run_id']),
+                   '-R', REPO, '-n', hosted['artifact'], '-D', str(work / 'download')]
+        if run_logged(command, work, log) != 0:
+            raise BuildFailed('gh run download failed')
+        archive = work / 'download' / f'{APP_NAME}.zip'
+        if not archive.is_file():
+            raise BuildFailed(f'the hosted build has no {archive.name}')
+        if run_logged(['ditto', '-x', '-k', str(archive), str(work / 'app')], work, log) != 0:
+            raise BuildFailed(f'could not unpack {archive.name}')
+        app = work / 'app' / APP_NAME
+        info = check_app(app, sha, work, log)
+        hosted_info = read_json(work / 'download' / 'build.json')
+        if hosted_info.get('sha') not in (None, sha):
+            raise BuildFailed(f'the hosted build.json names {hosted_info.get("sha")!r}, not {sha}')
+        if (work / 'download' / 'build.log').is_file():
+            with open(log, 'a') as handle:
+                handle.write('\n--- the hosted build log ---\n')
+                handle.write((work / 'download' / 'build.log').read_text(errors='replace'))
+        evidence = runner_tested(sha)
+        checks = (f'{evidence}; built and signed on a GitHub-hosted Mac ({hosted.get("run_url")})' if evidence else
+                  f'built and signed on a GitHub-hosted Mac ({hosted.get("run_url")}); no lane host-test evidence '
+                  'was found for this commit')
+        deliver(app, info, sha, stamp, log, int(hosted_info.get('build_seconds') or 0), checks,
+                built_at=local_time(hosted.get('built_at')) or local_time(hosted_info.get('built_at')),
+                extra={'built_on': 'github-hosted', 'run_url': hosted.get('run_url')})
+        return 0
+    except (BuildFailed, subprocess.CalledProcessError, OSError) as failure:
+        record_attempt(sha, f'failed: {failure}')
+        if log.exists():
+            shutil.copy(log, phone_dir() / 'last-failure.log')
+        say(f'FAILED to take the hosted build of {sha[:7]}: {failure}')
+        say(f'log: {phone_dir() / "last-failure.log"}; its end:\n{tail(log)}')
+        return 1
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def build(sha: str) -> int:
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     work = phone_dir() / '.work' / f'{stamp}-{sha[:7]}'
@@ -1606,7 +1759,8 @@ def build(sha: str) -> int:
             git('checkout', '--detach', sha, cwd=src)
         else:
             git('worktree', 'add', '--detach', str(src), sha)
-        pointers = [p for p in (src / 'App/SpokenMarginsApp/Resources/Supertonic/onnx').glob('*.onnx')
+        # Kitten is the voice model the app still bundles; Supertonic's is a download since #1820.
+        pointers = [p for p in (src / 'App/SpokenMarginsApp/Resources/Kitten').glob('*.onnx')
                     if p.stat().st_size < 1024 and p.read_bytes().startswith(b'version https://git-lfs')]
         if pointers:
             run_logged(['git', 'lfs', 'pull'], src, log)
@@ -1618,8 +1772,11 @@ def build(sha: str) -> int:
         checks = runner_tested(sha)
         if not checks:
             say('no lane host-test evidence for this commit; running host tests and the simulator build here first')
+            # The hot-file ratchet is a merge rule, not a build check: an unmerged PR that grows a hot file still
+            # goes on the phone (#2175, #2180 audit). The lane judges it, with the PR's labels, before merging.
             if run_logged([str(src / '.venv/bin/python'), 'scripts/verify-tests.py', '--plan', 'fast',
-                           '--output', str(work / 'fast')], src, log) != 0:
+                           '--output', str(work / 'fast')], src, log,
+                          env={**os.environ, 'SM_HOT_FILE_OK': '1'}) != 0:
                 raise BuildFailed('host tests (--plan fast) failed')
             if run_logged([*lane, *project, '-destination', 'generic/platform=iOS Simulator',
                            '-derivedDataPath', str(work / 'dd-sim'), 'build-for-testing'], src, log) != 0:
@@ -1637,36 +1794,13 @@ def build(sha: str) -> int:
             raise BuildFailed('the iPhone build failed' + (f'. Signing needs the owner: {advice}' if advice else ''))
         seconds = int((datetime.datetime.now() - started).total_seconds())
         app = derived / 'Build/Products/Release-iphoneos' / APP_NAME
-        if not (app / 'embedded.mobileprovision').exists():
-            raise BuildFailed(f'{app} is missing or has no provisioning profile, so a phone would refuse it')
-        if run_logged(['codesign', '--verify', '--strict', str(app)], src, log) != 0:
-            raise BuildFailed('the app\'s signature does not verify (codesign --verify)')
-        info = plistlib.loads((app / 'Info.plist').read_bytes())
-        if 'SMBuildCommit' in info and info['SMBuildCommit'] != sha:
-            raise BuildFailed(f'the app says it was built from {info["SMBuildCommit"]!r}, not {sha}')
+        info = check_app(app, sha, src, log)
         release = 'built'
-        folder = phone_dir() / f'{stamp}-{sha[:7]}'
-        folder.mkdir()
-        subprocess.check_call(['ditto', str(app), str(folder / APP_NAME)])
-        shutil.copy(log, folder / 'build.log')
-        size = int(subprocess.check_output(['du', '-sk', str(folder / APP_NAME)]).split()[0]) * 1024
-        details = {'sha': sha, 'sha7': sha[:7], 'subject': git('log', '-1', '--format=%s', sha),
-                   'built_at': datetime.datetime.now().isoformat(timespec='seconds'), 'build_seconds': seconds,
-                   'app': APP_NAME, 'app_bytes': size, 'bundle_version': info.get('CFBundleVersion'),
-                   'commit_in_app': info.get('SMBuildCommit') or None, 'checks': checks}
-        (folder / 'build.json').write_text(json.dumps(details, indent=2) + '\n')
-        plan = write_plan(folder, sha, checks, commit_in_app=bool(info.get('SMBuildCommit')))
-        point_latest(folder)
-        record_attempt(sha, 'built')
+        deliver(app, info, sha, stamp, log, seconds, checks)
         try:
             close_release_failure(sha)  # only once the new build is the latest one
         except Exception as failure:  # noqa: BLE001 - reporting never fails a build
             say(f'could not close the Release failure item: {failure}')
-        prune()
-        share_files(folder, sha)
-        say(f'done: {folder}')
-        say(f'app {size / 1e6:.0f} MB, built in {seconds} s; test plan: {plan}')
-        notify_ready(sha, plan)
         return 0
     except (BuildFailed, RuntimeError, subprocess.CalledProcessError, OSError) as failure:
         record_attempt(sha, f'failed: {failure}')
@@ -1691,11 +1825,37 @@ class BuildFailed(Exception):
     pass
 
 
+def take_hosted(commit: str | None, if_changed: bool) -> int:
+    """--source hosted: no xcodebuild here. Take the newest hosted build (of `commit`, when one is named)."""
+    hosted = hosted_build(commit)
+    if not hosted:
+        say(f'no hosted phone build {"of " + commit[:7] if commit else "of " + BRANCH} yet (or GitHub is '
+            'unreachable); the phone-build workflow makes one')
+        return 0 if if_changed else 1
+    sha = hosted['sha']
+    if latest_build().get('sha') == sha and (if_changed or not commit):
+        say(f'latest is already the hosted build of {sha[:7]}; nothing to do')
+        return 0
+    attempt = read_json(phone_dir() / 'last-attempt.json')
+    if if_changed and attempt.get('sha') == sha and str(attempt.get('result', '')).startswith('failed'):
+        say(f'{sha[:7]} already failed ({attempt["result"]}); waiting for a newer hosted build')
+        return 0
+    free, needed = free_disk_gb(phone_dir()), DISK_FLOOR_GB
+    if free < needed:
+        say(f'skipped: free disk is {free:.1f} GB; taking a phone build needs {needed} GB')
+        return EXIT_SKIPPED
+    clear_work()
+    return fetch_hosted(hosted)
+
+
 def main(argv) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
-    parser.add_argument('--commit', help='build this commit instead of origin/next')
+    parser.add_argument('--commit', help='build this commit instead of the trunk\'s tip')
     parser.add_argument('--if-changed', action='store_true', help='coalesce changed tips to hourly, or after integration PASS')
     parser.add_argument('--plan-only', action='store_true', help="rewrite latest's test-plan.md and stop")
+    parser.add_argument('--source', choices=SOURCES,
+                        help='mac builds here; hosted downloads the GitHub-hosted build (default: SM_PHONE_SOURCE, '
+                             'then ~/SpokenMargins-phone/source, then mac)')
     args = parser.parse_args(argv)
     phone_dir().mkdir(parents=True, exist_ok=True)
     if args.plan_only:
@@ -1716,6 +1876,8 @@ def main(argv) -> int:
         if not os.environ.get('SM_PHONE_NO_FETCH'):
             git('fetch', 'origin', BRANCH, '-q', check=False)
         sha = git('rev-parse', f'{args.commit or "origin/" + BRANCH}^{{commit}}')
+        if (args.source or source()) == 'hosted':
+            return take_hosted(sha if args.commit else None, args.if_changed)
         if args.if_changed:
             if latest_build().get('sha') == sha:
                 say(f'latest is already {sha[:7]}; nothing to do')

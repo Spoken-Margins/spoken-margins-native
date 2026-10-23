@@ -66,6 +66,56 @@ final class SkimBridgeControllerTests: XCTestCase {
         XCTAssertEqual(host.compactRefreshes, 1)
     }
 
+    // MARK: loaded resources
+
+    /// #2184: every reload of the selected item dropped the loaded map, so the next snapshot tick re-read the projection,
+    /// proposals, layers and the owned-asset table on the main thread. They load once per item and map change now.
+    func testResourcesLoadOncePerItemAndMapChange() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "skim-resources-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let host = ScriptedSkimHost()
+        host.store = try SQLiteSessionStore(path: directory.appending(path: "store.sqlite").path)
+        host.source = SkimSource(itemId: "episode", durationMs: 60_000)
+        let controller = makeController(host)
+        var episode = ItemDetailState()
+        episode.id = "episode"
+        episode.listeningMapScenes = [MediaTimelineChapter(id: "scene-0", title: "Opening", startMs: 0, transcriptSegmentId: "s0")]
+        let key = SkimResourceKey(episode)
+
+        controller.updateAvailability(refreshResources: false)
+        XCTAssertEqual(controller.resourceLoadCount, 1)
+
+        var reloaded = episode
+        reloaded.status = "in_progress"
+        reloaded.text = "A saved position, a new Margin."
+        for _ in 0..<5 {
+            controller.itemDetailChanged(from: key, to: SkimResourceKey(reloaded))
+            controller.updateAvailability(refreshResources: false)
+        }
+        XCTAssertEqual(controller.resourceLoadCount, 1, "a reload that leaves the map alone keeps what was loaded")
+
+        var other = ItemDetailState()
+        other.id = "another"
+        controller.itemDetailChanged(from: key, to: SkimResourceKey(other))
+        controller.updateAvailability(refreshResources: false)
+        XCTAssertEqual(controller.resourceLoadCount, 1, "browsing another item keeps the playing item's map")
+
+        controller.itemDetailChanged(from: SkimResourceKey(other), to: key)
+        controller.updateAvailability(refreshResources: false)
+        XCTAssertEqual(controller.resourceLoadCount, 2, "arriving at the playing item reads it once")
+
+        var remapped = episode
+        remapped.listeningMapScenes[0].startMs = 1_000
+        controller.itemDetailChanged(from: key, to: SkimResourceKey(remapped))
+        controller.updateAvailability(refreshResources: false)
+        controller.updateAvailability(refreshResources: false)
+        XCTAssertEqual(controller.resourceLoadCount, 3, "a map change reads it once")
+
+        controller.updateAvailability()
+        XCTAssertEqual(controller.resourceLoadCount, 4, "an explicit refresh still reads it")
+    }
+
     // MARK: a second tap and an unavailable Skim
 
     func testASecondSkimTapCompletesTheBridgeAtItsDestinationInsteadOfResolvingAnother() {
@@ -77,12 +127,145 @@ final class SkimBridgeControllerTests: XCTestCase {
         XCTAssertTrue(host.warnings.isEmpty)
     }
 
-    func testSkimWithNothingToResolveWarnsAndChangesNothing() {
+    func testSkimWithNothingToResolveSaysWhyLogsItAndChangesNothing() {
         let host = ScriptedSkimHost()
         let controller = makeController(host)
         controller.perform(direction: .backward)
-        XCTAssertEqual(host.warnings, ["Skim is unavailable until a verified scene summary is ready."])
+        XCTAssertEqual(host.warnings, [SkimUnavailableReason.noSource.message])
+        XCTAssertEqual(host.records, [["outcome": "no_plan", "direction": "backward", "reason": "no_source"]])
         XCTAssertEqual(host.log, [])
+    }
+
+    /// #2185: an item with no Listening Map says so instead of doing nothing.
+    func testAnItemWithNoMapSaysSo() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "skim-reason-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let host = ScriptedSkimHost()
+        host.store = try SQLiteSessionStore(path: directory.appending(path: "store.sqlite").path)
+        host.source = SkimSource(itemId: "episode", durationMs: 60_000)
+        let controller = makeController(host)
+        controller.updateAvailability()
+        XCTAssertFalse(controller.itemHasMap)
+        XCTAssertEqual(controller.forwardUnavailableReason, .noMap)
+        controller.perform(direction: .forward)
+        XCTAssertEqual(host.warnings, [SkimUnavailableReason.noMap.message])
+        XCTAssertEqual(host.records.last?["reason"], "no_map")
+    }
+
+    func testASecondTapIsLoggedAsCompletingTheBridge() {
+        let host = ScriptedSkimHost()
+        host.bridge = makeBridge()
+        makeController(host).perform(direction: .forward)
+        XCTAssertEqual(host.records, [["outcome": "completed_bridge", "direction": "forward"]])
+    }
+
+    // MARK: a summary prepared on the press (#2185)
+
+    /// A store holding a two-scene map, scene 0 from 0 and scene 1 from 5 s, each with a summary and no audio.
+    private func mappedHost(_ directory: URL) throws -> ScriptedSkimHost {
+        let host = ScriptedSkimHost()
+        let store = try SQLiteSessionStore(path: directory.appending(path: "store.sqlite").path)
+        let bounds = [0, 5_000, 10_000]
+        try store.savePortableListeningMapProposal(PortableListeningMapProposalArtifact(
+            id: "map", createdAt: Date(), generator: "test", scenes: (0..<2).map { index in
+                PortableListeningMapScene(
+                    id: "scene-\(index)", order: index, title: "Scene \(index)", summaryText: "A short recap.",
+                    eligibility: .eligible,
+                    startAnchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: bounds[index]),
+                    endAnchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: bounds[index + 1]))
+            }), itemId: "episode")
+        try store.saveResolvedListeningMapProjection(ResolvedListeningMapProjection(
+            id: "projection", itemId: "episode", proposalId: "map",
+            algorithmVersion: "episode-projection.exact-edition.v1", points: [], intervals: []))
+        host.store = store
+        host.source = SkimSource(itemId: "episode", durationMs: 10_000)
+        return host
+    }
+
+    private func temporaryDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "skim-prepare-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        return directory
+    }
+
+    private func waitForRecords(_ host: ScriptedSkimHost, count: Int) async throws {
+        for _ in 0..<200 where host.records.count < count { try await Task.sleep(for: .milliseconds(10)) }
+    }
+
+    /// The bug: a scene with a summary but no saved audio had no Skim, so the slot silently became Next chapter.
+    func testASceneWithASummaryButNoAudioIsOfferedAndThePressPreparesIt() async throws {
+        let host = try mappedHost(try temporaryDirectory())
+        let controller = makeController(host)
+        controller.updateAvailability()
+        XCTAssertTrue(host.available.forward, "Skim is offered before the summary's audio exists")
+        XCTAssertTrue(controller.itemHasMap)
+        XCTAssertNil(controller.forwardUnavailableReason)
+        XCTAssertEqual(controller.forwardDestinationMs, 5_000)
+
+        controller.perform(direction: .forward)
+        try await waitForRecords(host, count: 2)
+        XCTAssertEqual(host.prepared, ["episode/map/scene-0"], "the summary of the scene being left, under the map's id")
+        XCTAssertEqual(host.records.first, ["outcome": "preparing_summary", "direction": "forward", "reason": "no_audio"])
+        XCTAssertEqual(host.log.first, "succeeded:Preparing the scene summary.")
+    }
+
+    func testAFailedPreparationSaysWhyAndStopsOfferingThatSummary() async throws {
+        let host = try mappedHost(try temporaryDirectory())
+        host.prepareResult = false
+        let controller = makeController(host)
+        controller.updateAvailability()
+        controller.perform(direction: .forward)
+        try await waitForRecords(host, count: 2)
+        XCTAssertEqual(host.records.last?["outcome"], "no_audio")
+        XCTAssertEqual(host.records.last?["reason"], "preparation_failed")
+        XCTAssertEqual(host.warnings, [SkimUnavailableReason.preparationFailed.message])
+        XCTAssertFalse(host.available.forward, "a summary that can't be prepared isn't offered again on every press")
+        XCTAssertEqual(controller.forwardUnavailableReason, .preparationFailed)
+        controller.updateAvailability()
+        XCTAssertTrue(host.available.forward, "a refresh (the item reopened) tries it again")
+    }
+
+    func testAPressWhileTheSameSummaryIsPreparedIsToldToWait() async throws {
+        let host = try mappedHost(try temporaryDirectory())
+        host.prepareDelay = .milliseconds(200)
+        let controller = makeController(host)
+        controller.updateAvailability()
+        controller.perform(direction: .forward)
+        controller.perform(direction: .forward)
+        XCTAssertEqual(host.records.map { $0["outcome"] }, ["preparing_summary", "already_preparing"])
+        XCTAssertTrue(host.log.contains("succeeded:Still preparing the scene summary."))
+        try await waitForRecords(host, count: 3)
+        // The preparation runs in a task, so it is counted only once that task has run and settled.
+        XCTAssertEqual(host.prepared.count, 1, "the second press does not prepare it again")
+    }
+
+    /// Prepared, but a Margin's voice took the listener's ear meanwhile: the summary must not start over it.
+    func testAPreparedSummaryDoesNotStartOverAMarginsVoice() async throws {
+        let host = try mappedHost(try temporaryDirectory())
+        host.prepareDelay = .milliseconds(50)
+        let controller = makeController(host)
+        controller.updateAvailability()
+        controller.perform(direction: .forward)
+        host.mayStartSummary = false
+        try await waitForRecords(host, count: 2)
+        XCTAssertEqual(host.records.last, ["outcome": "no_audio", "direction": "forward", "reason": "moved_on", "detail": "margin_playing"])
+        XCTAssertNil(host.bridge, "nothing started")
+        XCTAssertFalse(host.log.contains("pause"), "the source was not paused for a summary")
+        XCTAssertTrue(host.warnings.isEmpty, "the Margin playing is its own answer")
+    }
+
+    /// Prepared, but saved under another voice than the one now chosen (the listener changed voice meanwhile).
+    func testAPreparedSummaryInAVoiceNoLongerChosenSaysWhy() async throws {
+        let host = try mappedHost(try temporaryDirectory())
+        host.prepareResult = true // the scripted host never has a file, so the summary still has no audio here
+        let controller = makeController(host)
+        controller.updateAvailability()
+        controller.perform(direction: .forward)
+        try await waitForRecords(host, count: 2)
+        XCTAssertEqual(host.records.last?["detail"], "voice_changed")
+        XCTAssertEqual(host.warnings, [SkimUnavailableReason.movedOn.message])
     }
 
     // MARK: completion order
@@ -185,6 +368,11 @@ private final class ScriptedSkimHost: SkimBridgeHost {
     weak var controller: SkimBridgeController?
     var log: [String] = []
     var warnings: [String] = []
+    var records: [[String: String]] = []
+    var prepared: [String] = []
+    var prepareResult = true
+    var prepareDelay: Duration?
+    var mayStartSummary = true
     var failures: [String] = []
     var flagWrites: [String] = []
     var reentrantPasses = 0
@@ -221,12 +409,17 @@ private final class ScriptedSkimHost: SkimBridgeHost {
 
     var skimSourceIsPlaying: Bool { true }
     var skimCurrentMediaTimeMs: Int? { 1_000 }
-    var skimSource: SkimSource? { nil }
-    var skimStore: SQLiteSessionStore? { nil }
+    var source: SkimSource?
+    var store: SQLiteSessionStore?
+    var skimSource: SkimSource? { source }
+    var skimStore: SQLiteSessionStore? { store }
     var skimHasEngine: Bool { hasEngine }
+    var skimMayStartSummary: Bool { mayStartSummary }
     var skimMediaPlaybackRate: Double { 1 }
 
-    func summaryBridgeAssetID(itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String?) -> String { "" }
+    func summaryBridgeAssetID(itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String?) -> String {
+        "summary-\(itemId)-\(proposalId)-\(sceneId)"
+    }
     func resolvedApplicationSupportAssetURL(for path: String) -> URL? { nil }
 
     func skimPauseEngine() throws { log.append("pause") }
@@ -239,6 +432,12 @@ private final class ScriptedSkimHost: SkimBridgeHost {
     func skimEngineCallFailedWhileCancelling() { log.append("kept snapshot") }
     func skimDestinationsWillChange() { destinationsWillChange += 1 }
     func skimDestinationsChangedWithoutAvailabilityChange() { compactRefreshes += 1 }
+    func skimPrepareSummaryAudio(itemId: String, proposalId: String, scene: PortableListeningMapScene) async throws -> Bool {
+        prepared.append("\(itemId)/\(proposalId)/\(scene.id)")
+        if let prepareDelay { try await Task.sleep(for: prepareDelay) }
+        return prepareResult
+    }
+    func skimRecord(_ fields: [String: String]) { records.append(fields) }
     func skimWarn(_ message: String) { warnings.append(message) }
     func skimSucceeded(_ message: String) { log.append("succeeded:\(message)") }
     func skimConfirmed(_ message: String) { log.append("confirmed:\(message)") }

@@ -11,6 +11,7 @@ struct Gate1RootView: View {
     @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
     @State private var navigation = AppNavigationState()
     @State private var keyboardIsPresented = false
+    @StateObject private var supertonicNotice = SupertonicDownloadNotice()
 
     /// The tabs and the Timeline place their own mini player.
     private var showsRootMiniPlayer: Bool {
@@ -36,7 +37,7 @@ struct Gate1RootView: View {
                     ExperienceTimelineRailScreen().announcesScreenChange()
                         .motionTransition(.move(edge: .bottom).combined(with: .opacity))
                 case .settings:
-                    SettingsScreen().announcesScreenChange()
+                    SettingsScreen(supertonicNotice: supertonicNotice).announcesScreenChange()
                 case .offlineStorage:
                     ExperienceStorageScreen().announcesScreenChange()
                 case .export:
@@ -61,14 +62,7 @@ struct Gate1RootView: View {
             navigation.select(root, recordingIsLocked: model.recordingNavigationIsLocked)
             model.requestedExperienceRoot = nil
         }
-        #if canImport(UIKit)
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-            keyboardIsPresented = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            keyboardIsPresented = false
-        }
-        #endif
+        .tracksKeyboard($keyboardIsPresented)
         .sheet(isPresented: $model.isAIDataSharingConsentPresented) {
             AIDataSharingConsentView()
                 .environmentObject(model)
@@ -88,6 +82,7 @@ struct Gate1RootView: View {
             CatalogDrawerView()
                 .environmentObject(catalogDrawer)
         }
+        .modifier(SupertonicDownloadNoticePresentation(notice: supertonicNotice))
         .sheet(isPresented: $model.isHelpPresented) {
             HelpScreen()
                 .environmentObject(model)
@@ -353,7 +348,7 @@ struct InterjectionDetailView: View {
                         model.toggleInterjectionAudioPlayback(current)
                     } label: {
                         Label(
-                            model.isPlayingInterjectionAudio(current) ? "Stop playing" : "Play Margin",
+                            model.isPlayingInterjectionAudio(current) ? "Stop playing" : "Hear my recording",
                             systemImage: model.isPlayingInterjectionAudio(current) ? "stop.fill" : "play.fill"
                         )
                     }

@@ -330,6 +330,12 @@ FAKE_NOTIFY = '''#!/bin/sh
 echo "notify $*" >> "$FAKE_LOG"
 '''
 
+# Off the Mac only (#2268): stand-ins for the two macOS tools phone-build itself runs after the Release build.
+MAC_TOOL_STUBS = {
+    'codesign': '#!/bin/sh\nexit 0\n',  # the fake xcodebuild's ad-hoc signature and phone-build's --verify
+    'ditto': '#!/bin/sh\nexec cp -R "$1" "$2"\n',  # phone-build's one use: copy the .app to a new path
+}
+
 FAKE_GH = r'''#!/usr/bin/python3
 import json, os, sys
 args = sys.argv[1:]
@@ -421,6 +427,16 @@ class PhoneBuildTests(unittest.TestCase):
                     'SM_LANE_MEMORY_PRESSURE': '1', 'FAKE_LOG': str(self.log), 'FAKE_TIP': self.tip,
                     'FAKE_PLIST_KEY': '1', 'SM_PHONE_NOTIFY': str(self.bin / 'notify'),
                     'SM_PHONE_ICLOUD': str(self.tmp / 'icloud' / 'plans')}
+        missing = [tool for tool in MAC_TOOL_STUBS if shutil.which(tool) is None]
+        if missing:
+            # On the VPS's fast-portable run (Linux) there is no codesign or ditto. Stubs let the tests about what
+            # the build decides run anywhere; on the Mac the real tools still sign, verify and copy the app.
+            tools = self.tmp / 'mac-tools'
+            tools.mkdir()
+            for tool in missing:
+                (tools / tool).write_text(MAC_TOOL_STUBS[tool])
+                (tools / tool).chmod(0o755)
+            self.env['PATH'] = f'{tools}{os.pathsep}{os.environ.get("PATH", "")}'
 
     def git(self, *args):
         return subprocess.run(['git', *args], cwd=str(self.repo), check=True, capture_output=True,
@@ -486,6 +502,21 @@ class PhoneBuildTests(unittest.TestCase):
         self.assertIn('fast scripts/verify-tests.py --plan fast', calls)
         self.assertIn('build-for-testing', calls)
         self.assertIn('passed here', json.loads((self.phone / 'latest/build.json').read_text())['checks'])
+
+    def test_host_checks_leave_the_hot_file_ratchet_to_the_merge(self):
+        # The ratchet is a merge rule, not a build check: an unmerged PR that grows a hot file (a compaction the
+        # owner asked to see on his phone first, or a hot-file-ok PR) still gets a phone build (#2180 audit).
+        (self.repo / '.venv/bin').mkdir(parents=True)
+        python = self.repo / '.venv/bin/python'
+        python.write_text('#!/bin/sh\necho "fast hot-file-ok=${SM_HOT_FILE_OK:-unset} $*" >> "$FAKE_LOG"\n'
+                          '[ "$SM_HOT_FILE_OK" = 1 ]\n')
+        python.chmod(0o755)
+        self.git('add', '-f', '.venv/bin/python')
+        self.git('commit', '-q', '-m', 'Grow Gate1RootView.swift for the compaction mockup')
+        self.tip = self.git('rev-parse', 'HEAD')
+        done = self.run_build(FAKE_TIP=self.tip)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('fast hot-file-ok=1 scripts/verify-tests.py --plan fast', self.log.read_text())
 
     def commit_the_host_check_python(self, subject):
         """Commit a fake `.venv/bin/python` (what the build runs verify-tests.py with) as the new tip.
@@ -679,6 +710,119 @@ class PhoneBuildTests(unittest.TestCase):
         with unittest.mock.patch.dict(os.environ, {'SM_PHONE_DIR': str(self.phone)}):
             module.prune()
         self.assertEqual(sorted(p.name for p in self.phone.iterdir()), sorted(names[2:] + ['installed.txt']))
+
+
+FAKE_HOSTED_GH = r"""#!/usr/bin/python3
+import json, os, shutil, subprocess, sys
+args = sys.argv[1:]
+with open(os.environ["FAKE_LOG"], "a") as log:
+    log.write("gh " + " ".join(args) + "\n")
+tip = os.environ["FAKE_TIP"]
+run = {"id": 77, "head_sha": tip, "head_branch": "main", "event": os.environ.get("FAKE_HOSTED_EVENT", "schedule"),
+       "conclusion": "success", "path": os.environ.get("FAKE_HOSTED_PATH", ".github/workflows/phone-build.yml"),
+       "html_url": "https://github.com/x/y/actions/runs/77"}
+if args[:1] == ["api"] and "/actions/workflows/phone-build.yml/runs" in args[1]:
+    print(json.dumps({"workflow_runs": [run]}))
+elif args[:2] == ["api", "repos/Spoken-Margins/spoken-margins-native/actions/runs/77/artifacts"]:
+    print(json.dumps({"artifacts": [{"name": "phone-build-" + tip, "expired": bool(os.environ.get("FAKE_EXPIRED")),
+                                     "created_at": "2026-10-21T12:30:00Z"}]}))
+elif args[:2] == ["run", "download"]:
+    out = args[args.index("-D") + 1]
+    os.makedirs(out)
+    shutil.copy(os.environ["FAKE_HOSTED_ZIP"], os.path.join(out, "SpokenMarginsApp.app.zip"))
+    json.dump({"sha": tip, "build_seconds": 1500}, open(os.path.join(out, "build.json"), "w"))
+    open(os.path.join(out, "build.log"), "w").write("** BUILD SUCCEEDED ** (hosted)\n")
+else:
+    sys.exit(subprocess.call([os.environ["FAKE_BASE_GH"], *args]))
+"""
+
+
+@unittest.skipUnless(shutil.which('ditto') and shutil.which('codesign'), 'needs the Mac\'s ditto and codesign')
+class HostedPhoneBuildTests(unittest.TestCase):
+    """--source hosted (#2357): the Mac takes the GitHub-hosted build instead of building."""
+    setUp_base = PhoneBuildTests.setUp
+    git = PhoneBuildTests.git
+    run_build = PhoneBuildTests.run_build
+
+    def setUp(self):
+        self.setUp_base()
+        (self.bin / 'gh').rename(self.bin / 'gh-base')
+        (self.bin / 'gh').write_text(FAKE_HOSTED_GH)
+        (self.bin / 'gh').chmod(0o755)
+        self.zip = self.make_zip(self.tip)
+        self.env.update({'SM_PHONE_SOURCE': 'hosted', 'FAKE_BASE_GH': str(self.bin / 'gh-base'),
+                         'FAKE_HOSTED_ZIP': str(self.zip)})
+
+    def make_zip(self, commit):
+        """The artifact's app: ad-hoc signed, with a profile and the commit in Info.plist."""
+        app = self.tmp / 'hosted' / commit[:7] / 'SpokenMarginsApp.app'
+        app.mkdir(parents=True)
+        shutil.copy('/usr/bin/true', app / 'SpokenMarginsApp')
+        (app / 'Info.plist').write_bytes(plistlib.dumps({
+            'CFBundleExecutable': 'SpokenMarginsApp', 'CFBundleIdentifier': 'com.example.fake',
+            'CFBundleVersion': '35', 'CFBundlePackageType': 'APPL', 'SMBuildCommit': commit}))
+        (app / 'embedded.mobileprovision').write_text('profile')
+        subprocess.check_call(['codesign', '-s', '-', '--force', str(app)], stderr=subprocess.DEVNULL)
+        archive = app.parent / 'SpokenMarginsApp.app.zip'
+        subprocess.check_call(['ditto', '-c', '-k', '--keepParent', str(app), str(archive)])
+        return archive
+
+    def test_takes_the_hosted_build_without_building_and_writes_the_installers_folder(self):
+        done = self.run_build()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        latest = (self.phone / 'latest').resolve()
+        self.assertTrue(latest.name.endswith(self.tip[:7]))
+        info = json.loads((latest / 'build.json').read_text())
+        self.assertEqual((info['sha'], info['bundle_version'], info['built_on']), (self.tip, '35', 'github-hosted'))
+        self.assertEqual(info['build_seconds'], 1500)
+        self.assertIn('built and signed on a GitHub-hosted Mac (https://github.com/x/y/actions/runs/77)', info['checks'])
+        # The installer compares built_at as a naive local time.
+        self.assertIsNone(datetime.datetime.fromisoformat(info['built_at']).tzinfo)
+        self.assertEqual(plistlib.loads((latest / 'SpokenMarginsApp.app/Info.plist').read_bytes())['SMBuildCommit'],
+                         self.tip)
+        self.assertTrue((latest / 'test-plan.md').exists())
+        self.assertIn('(hosted)', (latest / 'build.log').read_text())
+        calls = self.log.read_text()
+        self.assertIn('gh run download 77 -R Spoken-Margins/spoken-margins-native -n phone-build-' + self.tip, calls)
+        self.assertNotIn('-configuration Release', calls)  # no xcodebuild at all
+        self.assertNotIn('verify-tests.py', calls)
+
+    def test_only_the_workflows_own_schedule_or_dispatch_runs_count(self):
+        for extra in ({'FAKE_HOSTED_EVENT': 'pull_request'}, {'FAKE_HOSTED_EVENT': 'push'},
+                      {'FAKE_HOSTED_PATH': '.github/workflows/other.yml'}, {'FAKE_EXPIRED': '1'}):
+            with self.subTest(**extra):
+                done = self.run_build(**extra)
+                self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+                self.assertIn('no hosted phone build', done.stdout)
+                self.assertFalse((self.phone / 'latest').exists())
+                self.assertNotIn('run download', self.log.read_text())
+
+    def test_if_changed_does_nothing_when_latest_is_the_hosted_build(self):
+        self.assertEqual(self.run_build().returncode, 0)
+        before = self.log.read_text().count('run download')
+        done = self.run_build('--if-changed')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('latest is already the hosted build', done.stdout)
+        self.assertEqual(self.log.read_text().count('run download'), before)
+
+    def test_an_app_from_another_commit_is_refused(self):
+        self.env['FAKE_HOSTED_ZIP'] = str(self.make_zip('f' * 40))
+        done = self.run_build()
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn('the app says it was built from', done.stdout)
+        self.assertFalse((self.phone / 'latest').exists())
+        self.assertTrue(json.loads((self.phone / 'last-attempt.json').read_text())['result'].startswith('failed'))
+
+    def test_the_source_file_switches_and_the_environment_wins(self):
+        del self.env['SM_PHONE_SOURCE']
+        self.phone.mkdir()
+        (self.phone / 'source').write_text('hosted\n')
+        done = self.run_build()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('downloading the hosted phone build', done.stdout)
+        done = self.run_build(SM_PHONE_SOURCE='mac')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('-configuration Release', self.log.read_text())  # built here
 
 
 class PhoneBuildCoalescingTests(unittest.TestCase):
@@ -1069,7 +1213,7 @@ class VerdictTests(unittest.TestCase):
 
     def test_the_integration_report_on_184_for_the_commit_is_found(self):
         self.assertEqual(self.module.latest_verdict('828597e7' + '0' * 32), 'Lane report integration-828597e — PASS')
-        self.assertEqual(self.calls[0][1], 'repos/uncomposed/spoken-margins-native/issues/184/comments')
+        self.assertEqual(self.calls[0][1], 'repos/Spoken-Margins/spoken-margins-native/issues/184/comments')
 
     def test_a_report_for_another_commit_is_not_found(self):
         self.assertIsNone(self.module.latest_verdict('1234567' + '0' * 33))
@@ -1453,6 +1597,7 @@ class PlanGroupingTests(unittest.TestCase):
                 ('Open <https://arxiv.org/pdf/2608.09666> in Safari, Share, Spoken Margins.', None),
                 ('Open https://example.org/book.epub in Safari.', None),
                 ('import a PDF once https://github.com/uncomposed/spoken-margins-native/issues/547 lands', 'PDF'),
+                ('import a PDF once https://GitHub.com/Spoken-Margins/Spoken-Margins-Native/pull/547 lands', 'PDF'),
                 ('Play a podcast and tap Add Margin.', None),
                 ('Read the PDFKit-backed reader page; nothing to import.', None),  # a word, not a file
                 ('', None),
@@ -1490,6 +1635,9 @@ class PlanGroupingTests(unittest.TestCase):
             ('once #547 merges, play it', set(), set(), pr('MERGED'), True),  # merged after this build
             ('once #547 merges, play it', set(), set(), pr('CLOSED'), False),
             ('after https://github.com/uncomposed/spoken-margins-native/issues/547 lands', set(), set(), issue(), True),
+            ('after https://github.com/Spoken-Margins/spoken-margins-native/issues/547 lands', set(), set(), issue(), True),
+            ('after https://github.com/spoken-margins/spoken-margins-native/issues/547 lands', set(), set(), issue(), True),
+            ('after https://GitHub.com/SPOKEN-MARGINS/Spoken-Margins-Native/issues/547 lands', set(), set(), issue(), True),
             ('after #547 is on the phone, play it', set(), set(), None, False),  # GitHub didn't say: keep the check
             ('Build 29 still plays it; tap item 547', set(), set(), issue(), False),
         ]
@@ -1725,7 +1873,7 @@ class PlanGroupingTests(unittest.TestCase):
         still = plan.split('## Still waiting on your check')[1]
         self.assertIn('2. **Waiting 180** (found on your phone)\n   - Check: on a freshly added article with '
                       'Supertonic, record a Margin, then a second one', still)
-        self.assertIn('[issue #180](https://example/issue/180), [PR #257](https://github.com/uncomposed/'
+        self.assertIn('[issue #180](https://example/issue/180), [PR #257](https://github.com/Spoken-Margins/'
                       'spoken-margins-native/pull/257)', still)
         self.assertIn("3. **Waiting 158**\n   - Check: open a podcast's Timeline and tap someone's shared Margin.",
                       still)

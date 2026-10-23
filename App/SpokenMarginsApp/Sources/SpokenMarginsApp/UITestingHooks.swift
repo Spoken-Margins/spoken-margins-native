@@ -29,6 +29,11 @@ enum UITestingHooks {
         )
     }
 
+    /// A keep-library relaunch also imports one friend's Margin onto the seeded podcast (#474).
+    static var importsCoopLayer: Bool {
+        UITestingLaunchSeed.importsCoopLayer(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
+    }
+
     /// The first shared-source fetch fails once, to exercise the retry path.
     static var forcesFirstSharedSourceMiss: Bool {
         isActive && environment("SPOKEN_MARGINS_UI_TEST_FORCE_FIRST_SHARED_SOURCE_MISS") == "1"
@@ -68,6 +73,7 @@ enum UITestingHooks {
     static var isActive: Bool { false }
     static let seed = UITestingLaunchSeed.none
     static var usesStandInAudioServices: Bool { false }
+    static var importsCoopLayer: Bool { false }
     static var forcesFirstSharedSourceMiss: Bool { false }
     static var ambiguousSourceLinkResolver: LinkResolutionClient? { nil }
     static var localFoundationModelClient: (any LocalFoundationModelClient)? { nil }

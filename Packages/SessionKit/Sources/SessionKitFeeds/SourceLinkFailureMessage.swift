@@ -35,6 +35,14 @@ public enum SourceLinkFailureMessage {
             return "That link is not a supported public podcast, RSS feed, or direct audio file."
         case "apple_lookup_failed":
             return "Apple Podcasts did not return a playable public audio file for that episode."
+        case "no_link_resolver_configured":
+            return "That link is not playable in Spoken Margins yet."
+        case "invalid_url":
+            return "That doesn't look like a web link I can use. Check the address."
+        case "rss_feed_empty":
+            return "That feed has no episodes in it yet."
+        case "rss_audio_enclosure_missing":
+            return "I found that episode, but it has no audio file to play."
         case .some(let message):
             return message
         case .none:

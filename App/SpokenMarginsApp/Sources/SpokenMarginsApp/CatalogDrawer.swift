@@ -429,7 +429,7 @@ private struct CatalogShowRowLayout<Details: View, Control: View>: View {
 
 /// One drawer row. It gets its follow state from the list's single pass instead of observing the
 /// drawer, so a Follow tap re-renders only the row whose state changed (#246).
-private struct CatalogDrawerRow: View, Equatable {
+struct CatalogDrawerRow: View, Equatable {
     let entry: SourceCatalogEntry
     let state: CatalogDrawerModel.FollowState?
     let toggleFollow: () -> Void

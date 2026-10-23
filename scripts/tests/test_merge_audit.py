@@ -1,3 +1,5 @@
+import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 import json
 from pathlib import Path
 import sys
@@ -42,7 +44,7 @@ class MergeCheckTests(unittest.TestCase):
                 self.assertFalse(audit.has_merge_check([comment(body)], HEAD, MERGED_AT))
 
     def test_the_failure_comment_is_the_specified_text(self):
-        self.assertEqual(audit.failure_comment(HEAD), 'Merged into next without a triage-desk merge check on 92533d3. '
+        self.assertEqual(audit.failure_comment(HEAD), 'Merged into main without a triage-desk merge check on 92533d3. '
                                                       'If the owner merged this directly, remove the label.')
 
 
@@ -62,9 +64,9 @@ class ClaudeAuditTests(unittest.TestCase):
 
 
 class PushTests(unittest.TestCase):
-    """Which merged PRs a push to next brought in, and whether its tip came from no PR."""
+    """Which merged PRs a push to main brought in, and whether its tip came from no PR."""
 
-    def pr(self, number, merge_sha, base='next', merged=True):
+    def pr(self, number, merge_sha, base='main', merged=True):
         return {'number': number, 'merge_commit_sha': merge_sha, 'base': {'ref': base},
                 'merged_at': MERGED_AT if merged else None, 'head': {'sha': HEAD}}
 
@@ -81,21 +83,21 @@ class PushTests(unittest.TestCase):
         self.assertEqual((sorted(merged), direct), ([254], True))
 
     def test_prs_into_other_branches_are_ignored(self):
-        merged, direct = audit.classify_push(['m1'], 'm1', [self.pr(7, 'm1', base='main')])
+        merged, direct = audit.classify_push(['m1'], 'm1', [self.pr(7, 'm1', base='next')])
         self.assertEqual((merged, direct), ({}, True))
 
 
 class SweepTests(unittest.TestCase):
     """The sweep after each runner merge: the runner's token-made merges start no push run (decision 3)."""
 
-    def test_it_takes_prs_into_next_merged_within_the_window(self):
+    def test_it_takes_prs_into_main_merged_within_the_window(self):
         import datetime
         now = datetime.datetime(2026, 9, 29, 21, 0, 0)
         recent = [
-            {'number': 1, 'merged_at': '2026-09-29T20:30:00Z', 'base': {'ref': 'next'}},
-            {'number': 2, 'merged_at': '2026-09-29T18:30:00Z', 'base': {'ref': 'next'}},
-            {'number': 3, 'merged_at': '2026-09-29T20:50:00Z', 'base': {'ref': 'main'}},
-            {'number': 4, 'merged_at': None, 'base': {'ref': 'next'}},
+            {'number': 1, 'merged_at': '2026-09-29T20:30:00Z', 'base': {'ref': 'main'}},
+            {'number': 2, 'merged_at': '2026-09-29T18:30:00Z', 'base': {'ref': 'main'}},
+            {'number': 3, 'merged_at': '2026-09-29T20:50:00Z', 'base': {'ref': 'next'}},
+            {'number': 4, 'merged_at': None, 'base': {'ref': 'main'}},
         ]
         self.assertEqual([p['number'] for p in audit.recently_merged(recent, 2, now)], [1])
 
@@ -175,7 +177,7 @@ class HandMergeTests(unittest.TestCase):
 
     def test_the_failure_comment_says_what_was_missing(self):
         self.assertEqual(audit.failure_comment(HAND_HEAD, 'no Codex or Claude audit of `f41b1de`'),
-                         'Merged into next without a triage-desk merge check on f41b1de. Hand-merge rule not met '
+                         'Merged into main without a triage-desk merge check on f41b1de. Hand-merge rule not met '
                          'before the merge: no Codex or Claude audit of `f41b1de`. If the owner merged this directly, remove '
                          'the label.')
 
@@ -189,7 +191,7 @@ class FakeGitHub:
     def json_lines(self, path):
         return self.comments
 
-    def flag_pull(self, number, head_sha, gap=None):
+    def flag_pull(self, number, head_sha, gap=None, base=None):
         self.flagged.append((number, gap))
 
 

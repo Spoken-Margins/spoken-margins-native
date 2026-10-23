@@ -24,6 +24,13 @@ struct SettingsScreen: View {
     @State private var hasNoListeningSignals = false
     @AppStorage(CommunityMapUploadService.optInKey) private var helpsMakeListeningMaps = false
     @AppStorage(CommunityMapFetchService.optInKey) private var looksUpCommunityMaps = false
+    /// The Supertonic download card's "Open Voices" lands here and opens Voices (#1820).
+    private let supertonicNotice: SupertonicDownloadNotice?
+    @State private var showsVoices = false
+
+    init(supertonicNotice: SupertonicDownloadNotice? = nil) {
+        self.supertonicNotice = supertonicNotice
+    }
 
     private enum Field {
         case mapModel
@@ -63,6 +70,12 @@ struct SettingsScreen: View {
                     Text("Adds a per-session option to the listening screen. It lets music or other audio continue, but Lock Screen and headphone controls may control the other app. Each listening session starts with this option off.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
+                    NavigationLink {
+                        VoicesSettingsScreen(voices: model.requireVoiceDownloads()).miniPlayerKeepOut()
+                    } label: {
+                        Label("Voices", systemImage: "waveform")
+                    }
+                    .accessibilityIdentifier("settings.voices.link")
                     Picker("App Voice", selection: $model.ttsVoiceSelection) {
                         ForEach(AppTTSVoiceSelection.allCases) { voice in
                             Text(voice.displayName).tag(voice)
@@ -500,6 +513,10 @@ struct SettingsScreen: View {
             .onAppear {
                 model.refreshSpeechVoiceOptions()
                 model.refreshImportInbox()
+                if supertonicNotice?.takeVoicesRequest() == true { showsVoices = true }
+            }
+            .navigationDestination(isPresented: $showsVoices) {
+                VoicesSettingsScreen(voices: model.requireVoiceDownloads()).miniPlayerKeepOut()
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

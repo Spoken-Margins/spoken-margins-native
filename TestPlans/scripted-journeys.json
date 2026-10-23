@@ -27,8 +27,24 @@
       "journey": "J8"
     },
     {
+      "test": "SpokenMarginsAppUITests/J9HearNewMarginsJourneyUITests",
+      "journey": "J9"
+    },
+    {
+      "test": "SpokenMarginsAppUITests/PlaybackDockHitAreaUITests",
+      "journey": "44 pt hit areas of the playback dock, by coordinate taps, on J1's article, J1 step 4's chaptered article and J2's episode (#430, #151)"
+    },
+    {
       "test": "SpokenMarginsAppUITests/VoiceOverAuditUITests",
       "journey": "VoiceOver audit of J1, J3, J5 and adding an item (#207)"
+    },
+    {
+      "test": "SpokenMarginsAppUITests/J10OfflineJourneyUITests",
+      "journey": "J10"
+    },
+    {
+      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testWrittenMarginEditorStaysUsableAtAccessibilitySizesWithTheKeyboardUp",
+      "journey": "J3 written Margin: the editor keeps a usable height at AX5 with the keyboard up (#1942)"
     }
   ]
 }

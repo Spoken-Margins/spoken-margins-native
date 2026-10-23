@@ -1,0 +1,6 @@
+// Every target's signing team (#1841). The team is not in the repository: a device build reads
+// DEVELOPMENT_TEAM from Config/Local.xcconfig, which is git-ignored. Start one from
+// Config/Local.xcconfig.example. Without it, simulator builds work as they are and device builds
+// ask for a team. scripts/xcodebuild-lane and scripts/setup-worktree.sh link the main checkout's
+// copy into each worktree, so one file on a Mac covers every worktree.
+#include? "Local.xcconfig"

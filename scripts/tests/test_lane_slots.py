@@ -38,7 +38,7 @@ class BuildSlotTests(unittest.TestCase):
         fake.chmod(0o755)
         self.record = self.dir / 'record.jsonl'
         self.env = {**os.environ, 'SM_LANE_STATE_DIR': str(self.dir / 'state'), 'SM_LANE_XCODEBUILD': str(fake),
-                    'FAKE_RECORD': str(self.record)}
+                    'FAKE_RECORD': str(self.record), 'SM_BUILD_CACHE': 'off'}  # links nothing in this checkout
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -321,7 +321,9 @@ class VerifyTestsSlotTests(unittest.TestCase):
                     with lane_slots.build_slot('meanwhile', out=open(os.devnull, 'w'), max_wait=0.5) as build:
                         seen['build'] = build['slot']
 
-                with unittest.mock.patch.object(run, 'host_steps', side_effect=host_steps):
+                # The hot-file ratchet is its own step with its own tests; here it would run on this checkout (#2180 audit).
+                with unittest.mock.patch.object(run, 'host_steps', side_effect=host_steps), \
+                        unittest.mock.patch.object(run, 'hot_file_ratchet'):
                     run.fast()
             self.assertEqual(run.manifest['host_test_slot']['slot'], 0)
         self.assertTrue(seen['held'])

@@ -16,10 +16,13 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE = Path.home() / 'SpokenMarginsOps' / 'integration-precheck' / 'state.json'
-REPO = 'uncomposed/spoken-margins-native'
-OWNER = 'uncomposed'
+REPO = 'Spoken-Margins/spoken-margins-native'
+OWNER_LOGIN = 'uncomposed'  # the owner's GitHub login, not the repo's owner (#2169)
 PROMPT_MARKER = '[SM-INTEGRATION-PRECHECK]'
-LEGACY_TASK_PREFIX = 'You are the Spoken Margins integration run, for the repo uncomposed/spoken-margins-native'
+LEGACY_TASK_PREFIXES = tuple(
+    f'You are the Spoken Margins integration run, for the repo {repo}'
+    for repo in ('uncomposed/spoken-margins-native', REPO)
+)
 
 
 def parse_time(value: str) -> dt.datetime:
@@ -73,7 +76,7 @@ def skip_head(comment: dict) -> str | None:
 
 
 def trusted(comment: dict) -> bool:
-    return (comment.get('user') or {}).get('login', '').casefold() == OWNER.casefold()
+    return (comment.get('user') or {}).get('login', '').casefold() == OWNER_LOGIN.casefold()
 
 
 def report_author(comment: dict) -> bool:
@@ -217,10 +220,12 @@ class Ops:
         return subprocess.check_output(command, cwd=ROOT, text=True, stderr=subprocess.PIPE, timeout=120)
 
     def snapshot(self):
-        self.run(['git', 'fetch', '--quiet', 'origin', 'refs/heads/next:refs/remotes/origin/next'])
-        tip = self.run(['git', 'rev-parse', 'origin/next']).strip()
+        from trunk import trunk_branch  # #1492: the branch the integration run tests
+        branch = trunk_branch()
+        self.run(['git', 'fetch', '--quiet', 'origin', f'refs/heads/{branch}:refs/remotes/origin/{branch}'])
+        tip = self.run(['git', 'rev-parse', f'origin/{branch}']).strip()
         if not re.fullmatch(r'[a-f0-9]{40}', tip):
-            raise ValueError('origin/next is not a full commit SHA')
+            raise ValueError(f'origin/{branch} is not a full commit SHA')
         comments = []
         for number in (184, 337):
             pages = json.loads(self.run(['gh', 'api', '--paginate', '--slurp',
@@ -243,7 +248,7 @@ def hook_target(payload: dict) -> bool:
     if not isinstance(prompt, str):
         return False
     text = prompt.lstrip('\ufeff \t\r\n')
-    return text.startswith(PROMPT_MARKER) or text.startswith(LEGACY_TASK_PREFIX)
+    return text.startswith(PROMPT_MARKER) or text.startswith(LEGACY_TASK_PREFIXES)
 
 
 def hook_output(decision: Decision) -> dict:

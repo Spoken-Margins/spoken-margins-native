@@ -275,23 +275,47 @@ public enum StructuredDocumentBuilder {
     /// Round-bracket numbers, Vancouver style `(17)` or `(3–5, 8)`, are citations only when the
     /// document's reference list is numbered and the number is one of its entries (#138).
     /// "we tested (1) speed and (2) accuracy" and "(95% CI)" are prose and stay.
+    ///
+    /// A bracket with a locator, `[7, Lemma A.1]` or `[48, p. 214]`, is one citation (#138).
+    /// Superscripts the extractor flattened onto punctuation ("concept.13 This") are in
+    /// `flattenedSuperscriptMarkers`.
     static func printedCitationMarkers(
         in text: String,
         segments: [StructuredDocument.Segment],
         excluding existing: [StructuredDocument.Marker]
     ) -> [StructuredDocument.Marker] {
-        let numeric = #"\[[0-9]{1,4}(?:\s*[,–-]\s*[0-9]{1,4})*\]"#
-        let authorYear = #"\((?:(?:see|e\.g\.,?|cf\.)\s+)?\p{Lu}[\p{L}'’\-]+(?:,?\s+(?:et\s+al\.|and|&)\s*(?:\p{Lu}[\p{L}'’\-]+)?)?,?\s+(?:19|20)[0-9]{2}[a-z]?(?:\s*[;,]\s*(?:\p{Lu}[\p{L}'’\-]+(?:,?\s+(?:et\s+al\.|and|&)\s*(?:\p{Lu}[\p{L}'’\-]+)?)?,?\s+)?(?:19|20)[0-9]{2}[a-z]?)*\)"#
+        let numeric = #"\[[0-9]{1,4}(?:\s*[,–-]\s*[0-9]{1,4})*(?:,\s*(?i:pp?\.|§|(?:lemma|theorem|thm|corollary|cor|proposition|prop|example|appendix|definition|def|remark|section|sec|chapter|chap|ch|eqs?|equation|fig|figure|table|part|page|pages|claim)\b)\.?\s*[\p{Lu}0-9][^\[\]]{0,40})?\]"#
+        // Any number of authors ("Autor, Levy and Murnane", "Smith et al.") and of years
+        // ("2019, 2024", "2026a"), several works apart by ";" (#2370). A PDF that lost its
+        // spaces prints "Chen,2025", so the comma before a year needs no space.
+        let name = #"(?:(?:van|von|de|der|den|du|da|di|le|la)\s+)*\p{Lu}[\p{L}'’\-]+"#
+        // A list of names ends in "and" or "&", so "(Paris, France, 2019)" stays prose; as before,
+        // the last name may follow with no space ("&Jones", "andChen").
+        let authors = #"\#(name)(?:(?:,\s*\#(name))*,?\s+(?:and|&)\s*\#(name))?(?:,?\s+et\s+al\.)?"#
+        let years = #"(?:19|20)[0-9]{2}[a-z]?(?:\s*,\s*(?:19|20)[0-9]{2}[a-z]?)*"#
+        let work = #"(?:(?:see|e\.g\.,?|cf\.)\s*)?\#(authors)(?:,\s*|\s+)\#(years)"#
+        let authorYear = #"\(\#(work)(?:\s*;\s*(?:\#(work)|\#(years)))*\)"#
         let round = #"\([0-9]{1,4}(?:\s*[,–-]\s*[0-9]{1,4})*\)"#
         let characters = Array(text)
-        let references = numberedReferenceCount(characters: characters, segments: segments)
+        guard let square = try? NSRegularExpression(pattern: #"\[[0-9]{1,4}(?:\s*[,–-]\s*[0-9]{1,4})*\]"#),
+              let otherStyles = try? NSRegularExpression(pattern: #"\([0-9]{1,4}(?:\s*[,–-]\s*[0-9]{1,4})*\)|(?<=\p{L}\p{L})[.,;][0-9]{1,3}(?=\s)"#)
+        else { return [] }
+        let read = segments.filter { StructuredDocumentSpeech.treatment(for: $0.role) == .read }
+        let slices = read.map { String(characters[$0.range.start..<$0.range.end]) }
+        // A paper that cites "[27]" numbers its equations "(8)": round numbers and numbers after
+        // punctuation are citations only when it prints fewer square ones than those (#138).
+        func count(_ regex: NSRegularExpression) -> Int {
+            slices.reduce(0) { $0 + regex.numberOfMatches(in: $1, range: NSRange(location: 0, length: ($1 as NSString).length)) }
+        }
+        let squares = count(square)
+        let citesInSquareBrackets = squares >= 3 && squares > count(otherStyles)
+        let references = citesInSquareBrackets ? 0 : numberedReferenceCount(characters: characters, segments: segments)
         let pattern = references > 0 ? "\(numeric)|\(authorYear)|\(round)" : "\(numeric)|\(authorYear)"
         guard let regex = try? NSRegularExpression(pattern: pattern),
               let enumerator = try? NSRegularExpression(pattern: #"\(([1-9])\)(?=\s*[\p{L}\p{N}“"'(]|,\s*\()"#) else { return [] }
         let taken = existing.map { $0.range.start..<$0.range.end }
         var result: [StructuredDocument.Marker] = []
-        for segment in segments where StructuredDocumentSpeech.treatment(for: segment.role) == .read {
-            let slice = String(characters[segment.range.start..<segment.range.end])
+        for (segment, slice) in zip(read, slices) {
             let nsRange = NSRange(slice.startIndex..<slice.endIndex, in: slice)
             let enumerators = enumeratorRanges(enumerator, in: slice, range: nsRange)
             for match in regex.matches(in: slice, range: nsRange) {
@@ -299,6 +323,9 @@ public enum StructuredDocumentBuilder {
                 if slice[range].hasPrefix("(") && slice[range].dropFirst().first?.isNumber == true {
                     guard roundNumbersAreReferences(slice[range], upTo: references),
                           slice.startIndex < range.lowerBound,
+                          // "t(18)", "dup(10)", "f(2)": a bracket stuck to a short word is notation.
+                          // "mapper(57)" is a citation in a PDF that lost its spaces.
+                          !(1...3).contains(slice[..<range.lowerBound].reversed().prefix { $0.isLetter }.count),
                           !enumerators.contains(match.range),
                           !isReferenceToSomethingElse(before: slice[..<range.lowerBound]) else { continue }
                 }
@@ -313,8 +340,105 @@ public enum StructuredDocumentBuilder {
                 ))
             }
         }
+        guard references > 0 else { return result }
+        return result + flattenedSuperscriptMarkers(
+            read: read,
+            slices: slices,
+            references: references,
+            taken: taken + result.map { $0.range.start..<$0.range.end }
+        )
+    }
+
+    /// Superscript citations the extractor read as plain text, left stuck to the punctuation or
+    /// bracket before them: "a relative concept.13 This", "not Beta,4–6 likely", "Goleman (1998)6
+    /// presents", "values and norms).14 15 Social". Only with a numbered reference list, and only
+    /// numbers that are its entries, in order.
+    ///
+    /// Prose keeps its numbers. After a full stop the number must end the sentence's text, with a new
+    /// sentence or nothing after it, so "BA.1 variant", "rc.2, both" and "class II.1 without" are read.
+    /// After a comma it must too when the document drops the space after commas ("of these,15 were").
+    /// A bracket stuck to a word is a formula or a chemical ("f(x)2", "Pb(NO3)2"), and one holding
+    /// a formula, a pair of letters or a single letter is squared ("(a+b)2", "(a, b)2", "(n)2"). A decimal ("0.18"), "B.1", "Fig.2",
+    /// "No.5", "v7.3" and a number running into a word ("noon.5mg") stay, and a second number after a
+    /// bare space joins only when a new sentence follows ("the dose,3 12 Gy").
+    private static func flattenedSuperscriptMarkers(
+        read: [StructuredDocument.Segment],
+        slices: [String],
+        references: Int,
+        taken: [Range<Int>]
+    ) -> [StructuredDocument.Marker] {
+        let group = #"([0-9]{1,3}(?:\s*[,–-]\s*[0-9]{1,3}|[ ][0-9]{1,3})*)(?=\s|$|[;:,.](?:\s|$))"#
+        guard let regex = try? NSRegularExpression(pattern: #"(?<=\p{L}\p{L})([.,;])"# + group + #"|([)\]”"])[.,;:]?"# + group),
+              let math = try? NSRegularExpression(pattern: #"[+−×÷^=<>/*|]|(?:^|[^\p{L}])[\p{L}0-9]\s*-\s*[\p{L}0-9](?:[^\p{L}]|$)"#),
+              let lostSpace = try? NSRegularExpression(pattern: #"\p{Ll}{2}[,;]\p{Ll}{2}"#),
+              // "(a, b)2", "(x, y)2": a pair of variables, squared.
+              let letters = try? NSRegularExpression(pattern: #"^\s*\p{L}(?:\s*,\s*\p{L})+\s*$"#)
+        else { return [] }
+        let dropsSpaces = slices.reduce(0) { $0 + lostSpace.numberOfMatches(in: $1, range: NSRange(location: 0, length: ($1 as NSString).length)) } >= 3
+        var result: [StructuredDocument.Marker] = []
+        for (segment, slice) in zip(read, slices) {
+            let nsSlice = slice as NSString
+            // Body lines merge into one long segment, so each match looks only at a short window around
+            // it, and offsets advance from the previous match: a book-length segment stays linear.
+            var cursor = (index: slice.startIndex, offset: 0)
+            for match in regex.matches(in: slice, range: NSRange(location: 0, length: nsSlice.length)) {
+                let afterWord = match.range(at: 1).location != NSNotFound
+                var digits = match.range(at: afterWord ? 2 : 4)
+                func following() -> Character? {
+                    let end = digits.location + digits.length
+                    return nsSlice.substring(with: NSRange(location: end, length: min(64, nsSlice.length - end)))
+                        .drop { $0.isWhitespace }.first
+                }
+                // "the dose,3 12 Gy": a number after a bare space joins only if a new sentence follows.
+                let space = (nsSlice.substring(with: digits) as NSString).range(of: "[0-9] [0-9]", options: .regularExpression)
+                if space.location != NSNotFound, following().map({ !$0.isUppercase }) ?? false {
+                    digits.length = space.location + 1
+                }
+                let next = following()
+                let sentenceFollows = next.map { $0.isUppercase || !($0.isLetter || $0.isNumber || "([,.;:-".contains($0)) } ?? true
+                if afterWord {
+                    let start = max(0, match.range.location - 32)
+                    let before = nsSlice.substring(with: NSRange(location: start, length: match.range.location - start))
+                    let word = String(before.reversed().prefix { $0.isLetter }.reversed()).lowercased()
+                    let punctuation = nsSlice.substring(with: match.range(at: 1))
+                    guard !nonCitationWords.contains(word), !nonCitationAbbreviations.contains(word),
+                          sentenceFollows || (punctuation != "." && !dropsSpaces) else { continue }
+                } else if let close = Range(match.range(at: 3), in: slice), "])".contains(slice[close]) {
+                    // What the closing bracket closes, when it opens in this segment.
+                    let open: Character = slice[close] == ")" ? "(" : "["
+                    let window = slice.index(close.lowerBound, offsetBy: -200, limitedBy: slice.startIndex) ?? slice.startIndex
+                    if let start = slice[window..<close.lowerBound].lastIndex(of: open) {
+                        let content = String(slice[slice.index(after: start)..<close.lowerBound])
+                        let previous = start > slice.startIndex ? slice[slice.index(before: start)] : nil
+                        let contentRange = NSRange(location: 0, length: (content as NSString).length)
+                        guard previous?.isLetter != true, previous?.isNumber != true, content.count > 2,
+                              math.firstMatch(in: content, range: contentRange) == nil,
+                              letters.firstMatch(in: content, range: contentRange) == nil
+                        else { continue }
+                    }
+                }
+                let numbers = nsSlice.substring(with: digits).split { !$0.isNumber }.compactMap { Int($0) }
+                guard !numbers.isEmpty, numbers.allSatisfy({ 1...references ~= $0 }), numbers == numbers.sorted(),
+                      let range = Range(digits, in: slice) else { continue }
+                cursor = (range.lowerBound, cursor.offset + slice.distance(from: cursor.index, to: range.lowerBound))
+                let lower = segment.range.start + cursor.offset
+                let upper = lower + slice[range].count
+                guard !taken.contains(where: { $0.overlaps(lower..<upper) }) else { continue }
+                result.append(StructuredDocument.Marker(
+                    kind: .citation,
+                    range: StructuredDocument.TextRange(start: lower, length: upper - lower),
+                    label: String(slice[range])
+                ))
+            }
+        }
         return result
     }
+
+    private static let nonCitationAbbreviations: Set<String> = [
+        "no", "nos", "vol", "vols", "ref", "refs", "p", "pp", "v", "ver", "version", "ch", "chap", "art", "para",
+        "approx", "ca", "vs", "op", "pt", "pts", "ex", "exp", "suppl", "doi", "pmid", "isbn", "tab", "thm", "eqn",
+        "lem", "cor", "prop", "def", "sect", "chr", "nr", "fn",
+    ]
 
     /// The highest entry number of a numbered reference list ("17. Smith J, …", "[17] Smith …"),
     /// or 0 when the reference lines are not numbered. Reference lines of one run share a segment, so each
@@ -330,15 +454,23 @@ public enum StructuredDocumentBuilder {
         for segment in segments where segment.role == .reference {
             let text = String(characters[segment.range.start..<segment.range.end])
             for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
-                let trimmed = line.drop { $0.isWhitespace || $0 == "[" }
-                let digits = trimmed.prefix { $0.isASCII && $0.isNumber }
-                guard (1...3).contains(digits.count), let number = Int(digits),
-                      number == 1 && last == 0 || (last > 0 && (last + 1)...(last + 3) ~= number),
-                      let next = trimmed.dropFirst(digits.count).first,
-                      next == "." || next == "]" || next == ")" || next.isWhitespace
-                else { continue }
-                entries += 1
-                last = number
+                // A column of numbers can come out as one line: "1. 2. 3. 4. Woodworth RS: …" (#138).
+                var rest = line[...]
+                var first = true
+                while true {
+                    let trimmed = rest.drop { $0.isWhitespace || $0 == "[" }
+                    let digits = trimmed.prefix { $0.isASCII && $0.isNumber }
+                    guard (1...3).contains(digits.count), let number = Int(digits),
+                          number == 1 && last == 0 || (last > 0 && (last + 1)...(last + 3) ~= number),
+                          let next = trimmed.dropFirst(digits.count).first,
+                          next == "." || next == "]" || next == ")" || (first && next.isWhitespace)
+                    else { break }
+                    entries += 1
+                    last = number
+                    guard !next.isWhitespace else { break }
+                    rest = trimmed.dropFirst(digits.count + 1)
+                    first = false
+                }
             }
         }
         return entries >= 3 ? last : 0

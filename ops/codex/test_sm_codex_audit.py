@@ -5,6 +5,8 @@ Run: /usr/bin/python3 -m unittest ops/codex/test_sm_codex_audit.py
 The comment fixtures are shaped like GitHub's REST issue comments and copy the
 real first lines seen on PRs #344, #366, #374 and #418 on 2026-09-30.
 """
+import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 
 import ast
 import importlib.util
@@ -71,7 +73,7 @@ FIXTURE = json.loads(r"""
 
 
 def pr(**kw):
-    base = {"number": 366, "headRefOid": HEAD, "isDraft": False, "baseRefName": "next",
+    base = {"number": 366, "headRefOid": HEAD, "isDraft": False, "baseRefName": "main",
             "title": "Take the rendered speech cache out of the ledger", "body": "Closes #313.",
             "closingIssuesReferences": []}
     base.update(kw)
@@ -189,7 +191,7 @@ class CandidateFilter(unittest.TestCase):
         self.assertEqual(A.risky_areas(["App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackScreen.swift"]), [])
 
     LANE_PATHS = [
-        ".github/workflows/lane.yml", ".github/workflows/linux-t1.yml", "scripts/lane-runner.py",
+        ".github/workflows/lane.yml", ".github/workflows/hosted-portable.yml", "scripts/lane-runner.py",
         "scripts/lane_sim.py", "scripts/lane_slots.py", "scripts/lane_guard.py", "scripts/lane-sim-boot",
         "scripts/xcodebuild-lane", "scripts/host-test-lane", "scripts/install-lane-guard.py",
         "scripts/test-scope.py", "scripts/hot_file_ratchet.py", "scripts/merge_audit.py",
@@ -824,6 +826,66 @@ class OwnerTapAlertDispatch(unittest.TestCase):
         self.assertIn(f"github.event.label.name == '{A.OWNER_TAP_LABEL}'",
                       (root / ".github" / "workflows" / "owner-tap-alert.yml").read_text())
         self.assertIn(f"LABEL = '{A.OWNER_TAP_LABEL}'", (root / "scripts" / "owner_tap_alert.py").read_text())
+
+
+class OwnerTapPrAudit(unittest.TestCase):
+    """A PR only the owner merges is never armed, so it gets no lane report; its finished checks stand in (#2052)."""
+    TAP_FILES = [{"filename": ".github/workflows/hosted-portable.yml", "additions": 3, "deletions": 1}]
+    APP_FILES = [{"filename": "docs/x.md", "additions": 3, "deletions": 1}]
+    OLD_LANE = {"created_at": "2026-10-09T10:00:00Z",
+                "body": "Lane report pr366-r1 — PASS | commit 13b6e29 (tested merged with next at 77b3426)"}
+    FAIL_LANE = {"created_at": "2026-10-09T10:00:00Z",
+                 "body": f"Lane report pr366-r1 — FAIL | commit {HEAD[:7]} (tested merged with next at 77b3426)"}
+    AUDIT = {"created_at": "2026-10-09T11:00:00Z", "body": f"**Claude audit on `{HEAD[:7]}`**\n\nNo blocking findings."}
+
+    def find(self, comments, files, state="ok", prs=None):
+        with patch.object(A, "fetch_comments", return_value=comments), patch.object(A, "fetch_files", return_value=files), \
+             patch.object(A, "head_checks_state", return_value=(state, [])), patch.object(A, "FAILURES", {}):
+            return A.find_candidates(prs or [pr()])
+
+    def test_an_owner_tap_pr_with_finished_checks_is_audited_without_a_lane_report(self):
+        for comments in ([], [self.OLD_LANE]):
+            with self.subTest(comments=comments):
+                cands, skips, decisions = self.find(comments, self.TAP_FILES)
+                self.assertEqual([c["number"] for c in cands], [366])
+                self.assertEqual(skips, {})
+
+    def test_it_is_skipped_while_checks_run_or_after_one_failed(self):
+        for state in ("pending", "failed"):
+            with self.subTest(state=state):
+                cands, skips, _ = self.find([], self.TAP_FILES, state)
+                self.assertEqual((cands, skips), ([], {f"owner-tap PR, checks {state}": 1}))
+
+    def test_a_draft_a_lane_fail_or_an_audited_head_is_skipped(self):
+        cands, skips, _ = self.find([], self.TAP_FILES, prs=[pr(isDraft=True)])
+        self.assertEqual((cands, skips), ([], {"draft": 1}))
+        cands, skips, _ = self.find([self.FAIL_LANE], self.TAP_FILES)
+        self.assertEqual((cands, skips), ([], {"lane FAIL": 1}))
+        cands, skips, _ = self.find([self.AUDIT], self.TAP_FILES)
+        self.assertEqual((cands, skips), ([], {"audited": 1}))
+
+    def test_a_pr_that_is_not_owner_tap_still_needs_its_lane_pass(self):
+        cands, skips, _ = self.find([], self.APP_FILES)
+        self.assertEqual((cands, skips), ([], {"no lane report": 1}))
+
+    def test_the_checks_are_read_only_for_a_pr_that_could_be_audited(self):
+        with patch.object(A, "head_checks_state") as checks:
+            self.find([self.AUDIT], self.TAP_FILES)  # audited: no checks call, one audit per head
+            self.find([], self.APP_FILES)
+            checks.assert_not_called()
+
+    def test_head_checks_state_reads_runs_and_statuses_and_treats_none_as_pending(self):
+        runs = '{"name": "t1", "status": "completed", "conclusion": "success"}\n{"name": "owner-tap-alert", "status": "in_progress"}'
+        with patch.object(A, "run", return_value=SimpleNamespace(stdout=runs)), patch.object(A, "gh_json_lines", return_value=[]):
+            self.assertEqual(A.head_checks_state(HEAD), ("ok", []))
+        with patch.object(A, "run", return_value=SimpleNamespace(stdout="")), patch.object(A, "gh_json_lines", return_value=[]):
+            self.assertEqual(A.head_checks_state(HEAD)[0], "pending")
+        own = '{"name": "owner-tap-alert", "status": "in_progress"}'  # the alert's own job alone is no checks
+        with patch.object(A, "run", return_value=SimpleNamespace(stdout=own)), patch.object(A, "gh_json_lines", return_value=[]):
+            self.assertEqual(A.head_checks_state(HEAD)[0], "pending")
+        failed = '{"name": "t1", "status": "completed", "conclusion": "failure"}'
+        with patch.object(A, "run", return_value=SimpleNamespace(stdout=failed)), patch.object(A, "gh_json_lines", return_value=[]):
+            self.assertEqual(A.head_checks_state(HEAD), ("failed", ["t1"]))
 
 
 class UsageRecording(unittest.TestCase):

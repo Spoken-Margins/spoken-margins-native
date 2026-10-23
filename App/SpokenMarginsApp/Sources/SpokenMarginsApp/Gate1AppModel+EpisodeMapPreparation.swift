@@ -31,8 +31,12 @@ extension Gate1AppModel {
         set { episodeMapPreparer.pendingRequestItemId = newValue }
     }
 
-    func prepareEpisodeMap(itemId: String? = nil, policy: PreparationJobPolicy = .explicit) {
-        episodeMapPreparer.prepare(itemId: itemId ?? activeItemId, policy: policy)
+    func prepareEpisodeMap(
+        itemId: String? = nil,
+        policy: PreparationJobPolicy = .explicit,
+        trigger: EpisodeMapPreparationTrigger = .listenerRequest
+    ) {
+        episodeMapPreparer.prepare(itemId: itemId ?? activeItemId, policy: policy, trigger: trigger)
     }
 
     func episodeMapDirectory(itemId: String) throws -> URL {
@@ -41,14 +45,49 @@ extension Gate1AppModel {
             .appending(path: safePodcastEvidenceComponent(itemId), directoryHint: .isDirectory)
     }
 
-    private func currentSummaryBridgeVoiceKey() -> String {
+    /// James or Lily is chosen but Supertonic isn't downloaded (#1820): the bundled Kitten voice speaks the summary,
+    /// as it does the narration. The asset ID names the voice that rendered it, so once the listener downloads
+    /// Supertonic the summary is prepared again in their chosen voice instead of reusing Kitten's.
+    private var summaryBridgeUsesKitten: Bool {
+        ttsVoiceSelection.supertonicVoice != nil && !supertonicModel.isModelPresent
+    }
+
+    private func currentSummaryBridgeVoiceKey(usesKitten: Bool) -> String {
+        if usesKitten {
+            return safePodcastEvidenceComponent("\(KittenNarrationRenderer.engine)--\(SummaryBridgeRatePolicy.cacheVersion)")
+        }
         let systemIdentifier = ttsVoiceSelection == .system ? speechVoiceIdentifier : ""
         return safePodcastEvidenceComponent("\(ttsVoiceSelection.rawValue)-\(systemIdentifier)-\(SummaryBridgeRatePolicy.cacheVersion)")
     }
 
     func summaryBridgeAssetID(itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String? = nil) -> String {
-        let voiceKey = suppliedAssetId.map { "supplied-\(safePodcastEvidenceComponent($0))" } ?? currentSummaryBridgeVoiceKey()
-        return "summary-bridge-\(safePodcastEvidenceComponent(itemId))-\(safePodcastEvidenceComponent(proposalId))-\(safePodcastEvidenceComponent(sceneId))-\(voiceKey)"
+        summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: sceneId, suppliedAssetId: suppliedAssetId,
+                             usesKitten: summaryBridgeUsesKitten)
+    }
+
+    /// `usesKitten` is read once by the caller, so an ID and the voice that renders under it can't disagree if the
+    /// Supertonic download lands or is removed in between.
+    private func summaryBridgeAssetID(itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String?, usesKitten: Bool) -> String {
+        Self.summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: sceneId, suppliedAssetId: suppliedAssetId,
+                                  voiceKey: currentSummaryBridgeVoiceKey(usesKitten: usesKitten))
+    }
+
+    /// The asset ID of each scene's summary for one item, with the voice read once, so a pass can name a long map's
+    /// summaries off the main thread (#2255).
+    func summaryBridgeAssetIDs(itemId: String) -> @Sendable (_ proposalId: String, _ scene: PortableListeningMapScene) -> String {
+        let voiceKey = currentSummaryBridgeVoiceKey(usesKitten: summaryBridgeUsesKitten)
+        return { proposalId, scene in
+            Gate1AppModel.summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id,
+                                               suppliedAssetId: scene.summaryAssetId, voiceKey: voiceKey)
+        }
+    }
+
+    private nonisolated static func summaryBridgeAssetID(
+        itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String?, voiceKey: String
+    ) -> String {
+        let safe = PodcastAnchorEvidencePaths.safeComponent
+        let key = suppliedAssetId.map { "supplied-\(safe($0))" } ?? voiceKey
+        return "summary-bridge-\(safe(itemId))-\(safe(proposalId))-\(safe(sceneId))-\(key)"
     }
 
     func prepareSummaryBridgeAsset(
@@ -59,10 +98,14 @@ extension Gate1AppModel {
     ) async throws -> OwnedOfflineAsset? {
         guard let summary = scene.summaryText?.trimmingCharacters(in: .whitespacesAndNewlines),
               !summary.isEmpty else { return nil }
-        let assetID = summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id, suppliedAssetId: scene.summaryAssetId)
-        if let existing = try store.loadOwnedOfflineAssets().first(where: {
-            $0.id == assetID && $0.integrity == .valid
-        }), resolvedApplicationSupportAssetURL(for: existing.relativePath) != nil { return existing }
+        let usesKitten = summaryBridgeUsesKitten
+        let assetID = summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id,
+                                           suppliedAssetId: scene.summaryAssetId, usesKitten: usesKitten)
+        // The whole asset table, read off the main thread (#2255).
+        let saved = try await Task.detached(priority: .userInitiated) {
+            try store.loadOwnedOfflineAssets().first(where: { $0.id == assetID && $0.integrity == .valid })
+        }.value
+        if let existing = saved, resolvedApplicationSupportAssetURL(for: existing.relativePath) != nil { return existing }
         // An authored voice is part of the imported experience, not a request
         // to silently synthesize replacement speech in the current system voice.
         guard scene.summaryAssetId == nil else { return nil }
@@ -76,7 +119,11 @@ extension Gate1AppModel {
         )
         do {
             let sourceURL: URL
-            if let voice = ttsVoiceSelection.supertonicVoice {
+            if usesKitten {
+                // The asset ID above was built from this same reading, so it names the voice that gets saved.
+                guard let kitten = makeKittenRenderer() else { throw KittenNarrationError.missingAsset("Kitten") }
+                sourceURL = try await kitten.render(text: summary).audioURL
+            } else if let voice = ttsVoiceSelection.supertonicVoice {
                 let renderer = try makeSupertonicRenderer()
                 let result = try await renderer.render(
                     text: summary,
@@ -187,6 +234,10 @@ extension Gate1AppModel: EpisodeMapPreparerHost {
 
     func recordEpisodeMapDiagnostic(_ key: String, _ value: String) {
         diagnostics[key] = value
+    }
+
+    func episodeMapDeviceConditions() -> SpeechEngineConditions {
+        preparationSeams.deviceConditions()
     }
 
     func episodeMapTranscribed(itemId: String, timeline: TranscriptTimeline, store: SQLiteSessionStore) {

@@ -4,24 +4,23 @@
  "rule": {
   "words_per_page": 20.0,
   "text_single_letter_share": 0.1941,
-  "bib_line_share": 0.1107,
+  "bib_line_share": 0.09,
   "short_line_share": 0.6637
  },
  "in_sample": {
   "hard": 13,
-  "caught": 8,
-  "recall": 0.615,
-  "easy": 53,
+  "caught": 9,
+  "recall": 0.692,
+  "easy": 52,
   "false_alarms": 4,
-  "false_alarm_rate": 0.075,
-  "flagged": 12,
-  "share_of_flags_wrong": 0.333,
+  "false_alarm_rate": 0.077,
+  "flagged": 13,
+  "share_of_flags_wrong": 0.308,
   "missed": [
    "arxiv-2609.07965v1",
    "pmc-pmc10755645",
    "pmc-pmc11154291",
-   "pmc-pmc11326079",
-   "pmc-pmc11843480"
+   "pmc-pmc11326079"
   ],
   "false_alarm_papers": [
    "arxiv-2607.07895v1",
@@ -32,30 +31,40 @@
  },
  "leave_one_out": {
   "hard": 13,
-  "caught": 5,
-  "recall": 0.385,
-  "easy": 53,
-  "false_alarms": 6,
-  "false_alarm_rate": 0.113,
-  "flagged": 11,
-  "share_of_flags_wrong": 0.545,
+  "caught": 6,
+  "recall": 0.462,
+  "easy": 52,
+  "false_alarms": 17,
+  "false_alarm_rate": 0.327,
+  "flagged": 23,
+  "share_of_flags_wrong": 0.739,
   "missed": [
    "arxiv-2506.00390v1",
    "arxiv-2605.07149v1",
-   "arxiv-2606.21736v1",
    "arxiv-2609.07965v1",
    "pmc-pmc10755645",
+   "pmc-pmc11150781",
    "pmc-pmc11154291",
-   "pmc-pmc11326079",
-   "pmc-pmc11843480"
+   "pmc-pmc11326079"
   ],
   "false_alarm_papers": [
    "arxiv-2506.00268v2",
    "arxiv-2607.07895v1",
    "arxiv-2609.19108v1",
+   "arxiv-2609.31565v1",
+   "pmc-pmc10711437",
+   "pmc-pmc10756530",
+   "pmc-pmc10756544",
    "pmc-pmc10756880",
+   "pmc-pmc10756881",
+   "pmc-pmc10775890",
+   "pmc-pmc10950207",
+   "pmc-pmc11314421",
    "pmc-pmc11639692",
-   "pmc-pmc5315332"
+   "pmc-pmc13305550",
+   "pmc-pmc13612741",
+   "pmc-pmc5315332",
+   "pmc-pmc5315337"
   ]
  },
  "papers": {
@@ -199,7 +208,7 @@
    "bib_line_share": 0.034,
    "numeric_line_share": 0.1957,
    "text_single_letter_share": 0.0389,
-   "hard": true,
+   "hard": false,
    "words_per_page": 485.5,
    "flagged": false
   },
@@ -391,9 +400,9 @@
    "bib_line_share": 0.0926,
    "numeric_line_share": 0.1298,
    "text_single_letter_share": 0.0319,
-   "hard": false,
+   "hard": true,
    "words_per_page": 867.4,
-   "flagged": false
+   "flagged": true
   },
   "pmc-pmc11148707": {
    "pages": 10,
@@ -538,22 +547,6 @@
    "hard": false,
    "words_per_page": 405.5,
    "flagged": true
-  },
-  "pmc-pmc13560010": {
-   "pages": 25,
-   "chars_per_page": 2920,
-   "math_share": 0.0014,
-   "single_letter_share": 0.0132,
-   "short_line_share": 0.2531,
-   "hyphen_end_share": 0.0168,
-   "two_column_share": 0.1011,
-   "words": 6972,
-   "bib_line_share": 0.0774,
-   "numeric_line_share": 0.1263,
-   "text_single_letter_share": 0.0156,
-   "hard": false,
-   "words_per_page": 278.9,
-   "flagged": false
   },
   "pmc-pmc13305550": {
    "pages": 20,

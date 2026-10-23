@@ -38,14 +38,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-REPO = os.environ.get('SM_DIAL_REPO', 'uncomposed/spoken-margins-native')
+REPO = os.environ.get('SM_DIAL_REPO', 'Spoken-Margins/spoken-margins-native')
 DIAL_ISSUE = int(os.environ.get('SM_DIAL_ISSUE', '589'))
 STATUS_ISSUE = int(os.environ.get('SM_DIAL_STATUS_ISSUE', '337'))
 CONFIG_DIR = Path(os.environ.get('SM_DIAL_CONFIG', '/etc/sm-dial'))
 STATE_FILE = Path(os.environ.get('SM_DIAL_STATE', '/var/lib/sm-dial/state.json'))
 
 MARGIN = 3                      # points below the stop line where new work holds
-TREND_SLACK = 5                 # Paced may run this many points ahead of the trend line
+TREND_SLACK = 10                # Paced may run this many points ahead of the trend line (owner 2026-10-19)
 RESET_WEEKDAY = int(os.environ.get('SM_DIAL_RESET_WEEKDAY', '5'))   # Saturday (Mon=0)
 RESET_HOUR_UTC = int(os.environ.get('SM_DIAL_RESET_HOUR', '11'))    # 07:00 EDT
 FINISH_BY = {'reset': 0, 'fri noon': 19, 'fri 7': 24}             # hours before the reset

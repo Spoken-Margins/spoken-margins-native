@@ -11,7 +11,8 @@ import SessionKitSharing
 /// The coordinator reaches the app only through `Environment`, so its tests run with a real SQLite store and real
 /// packet files but without a `Gate1AppModel`.
 /// - Success keeps `SpokenMargins/IncomingPackages/<uuid>/assets` for good. The folder is removed only by
-///   `cancel`, a failed stage, duplicate staging and the model's restore-audio task.
+///   `cancel`, a failed stage, duplicate staging and the model's restore-audio task, and by the launch sweep for a
+///   folder an app kill left behind that no imported Margin uses (#2154).
 /// - One review shows at a time (#2122). A packet opened while one is showing, or importing, waits behind it in
 ///   `PacketReviewQueue` and comes up when that one is imported or cancelled; it is never replaced or dropped.
 /// - The file a packet was opened from is released (the Share inbox copy deleted) only when the packet is imported,
@@ -77,6 +78,9 @@ final class SpokenMarginsPackageImportCoordinator {
 
     private let environment: Environment
     private var isAdoptingFromViews = false
+    private var didSweepOrphanedFolders = false
+    /// Folders handed to a restore-audio task that has not finished with them; the sweep leaves them alone.
+    private var restoringFolders: Set<String> = []
 
     /// Told to the listener when a packet waits behind the one already showing (#2122).
     static let waitingMessage = "Another shared packet is waiting. It opens after you finish this one."
@@ -164,6 +168,7 @@ final class SpokenMarginsPackageImportCoordinator {
                 environment.openItem(itemId)
                 releaseSource?()
                 if let item = try? store.loadItem(id: itemId), item.mediaType == "audiobook" {
+                    restoringFolders.insert(root.lastPathComponent)
                     return .restoreAudio(RestoreAudio(item: item, contents: contents, directory: root))
                 }
                 if let localURL = environment.validatedLocalURL(itemId) {
@@ -196,6 +201,7 @@ final class SpokenMarginsPackageImportCoordinator {
 
     /// The model's restore-audio task: places an already-imported listening package on the listener's audio.
     func restoreAudio(_ restore: RestoreAudio) async {
+        defer { restoringFolders.remove(restore.directory.lastPathComponent) }
         do {
             try await placeOnOwnedAudio(
                 restore.item, contents: restore.contents,
@@ -203,6 +209,31 @@ final class SpokenMarginsPackageImportCoordinator {
             environment.reportSuccess("Restored this listening package. Playback has not started.")
         } catch {
             environment.reportFailure(error, "Restoring listening package failed")
+        }
+    }
+
+    // MARK: Launch sweep
+
+    /// Removes the staged folders an app kill left behind (#2154): each launch reopens a packet that waits in the
+    /// Share inbox into a fresh folder, so the one the killed run made would otherwise stay for good. It runs once,
+    /// before the first stage of the run, and leaves any folder a review or restore here owns and any folder an
+    /// imported layer or Margin names (those play from it). It opens the Library only when a folder is there to
+    /// check, and tries again if the Library won't open.
+    func sweepOrphanedFoldersOnce() {
+        guard !didSweepOrphanedFolders, let support = try? environment.applicationSupportDirectory() else { return }
+        let incoming = support.appending(path: "SpokenMargins/IncomingPackages", directoryHint: .isDirectory)
+        let hasFolders = ((try? FileManager.default.contentsOfDirectory(atPath: incoming.path)) ?? [])
+            .contains { UUID(uuidString: $0) != nil }
+        // Nothing staged before: leave the Library closed, as it is on most launches.
+        guard hasFolders else { didSweepOrphanedFolders = true; return }
+        // Opening the store first would skip the root view's bootstrap, as in `stage`.
+        environment.bootstrapLibrary()
+        guard let store = try? environment.requireStore() else { return }
+        didSweepOrphanedFolders = true
+        let owned = Set(([queue.showing].compactMap { $0 } + queue.waiting).map { $0.extractionDirectory.lastPathComponent })
+        let outcome = IncomingPackageSweep.sweep(directory: incoming, keeping: owned.union(restoringFolders), store: store)
+        if !outcome.removed.isEmpty {
+            environment.recordDiagnostic("lastIncomingPackageSweep", "removed:\(outcome.removed.count):kept:\(outcome.kept.count)")
         }
     }
 

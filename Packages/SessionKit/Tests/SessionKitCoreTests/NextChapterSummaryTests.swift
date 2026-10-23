@@ -90,8 +90,9 @@ final class NextChapterSummaryTests: XCTestCase {
         }
         // chapters + a Skim row with forward enabled: Skim is the one forward control
         XCTAssertEqual(forward(true, row: true, canForward: true), .skim)
-        // the end of the map, a feed chapter still ahead: Next chapter takes the slot
-        XCTAssertEqual(forward(true, row: true, canForward: false), .nextChapter)
+        // the end of the map, a feed chapter still ahead: Next chapter takes the slot, marked as standing in for Skim
+        // so a plain jump never looks like a Skim (#2185)
+        XCTAssertEqual(forward(true, row: true, canForward: false), .nextChapterInSkimSlot)
         // the last chapter and no scene ahead: the slot stays, dimmed (#1666: no empty slot)
         XCTAssertEqual(forward(false, row: true, canForward: false), .skimDisabled)
         // the last chapter with a summary still ahead inside it

@@ -349,7 +349,7 @@ public enum CommunityMapFetchOutcome: Equatable, Sendable {
 }
 
 public struct CommunityMapFetcher: Sendable {
-    public static let mapsURL = URL(string: "https://spokenmargins.proximitytoprogress.com/api/v1/maps/")!
+    public static let mapsURL = ProductServer.url(path: "/api/v1/maps/")
     /// A map is a few dozen short scenes; this is far above the biggest the server can make.
     public static let maximumBytes = 64 * 1_024
     /// An unanswered request is dropped with no message to the listener.

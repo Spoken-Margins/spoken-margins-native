@@ -4,6 +4,8 @@ No network, no real Claude, no real gh. `claude` is a fake binary (a script in a
 worker really launches, with the prompt on stdin, and git is real: an origin repo and a clone in a temp
 folder. Only `gh` is a fake, one object holding the issues and PRs.
 """
+import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 import contextlib
 import datetime as dt
 import io
@@ -124,8 +126,8 @@ class FakeGh:
         number = number or self.next_pr
         self.next_pr = max(self.next_pr, number) + 1
         pr = {'number': number, 'title': f'PR for {branch}', 'body': '', 'state': 'OPEN', 'isDraft': False,
-              'baseRefName': 'next', 'headRefName': branch, 'headRefOid': head,
-              'headRepository': {'name': 'spoken-margins-native'}, 'headRepositoryOwner': {'login': 'uncomposed'},
+              'baseRefName': 'main', 'headRefName': branch, 'headRefOid': head,
+              'headRepository': {'name': 'spoken-margins-native'}, 'headRepositoryOwner': {'login': 'Spoken-Margins'},
               'isCrossRepository': False, 'files': [], 'comments': [], 'createdAt': iso(NOW),
               'labels': [{'name': n} for n in labels], 'url': f'https://github.com/x/pull/{number}'}
         pr.update(kw)
@@ -183,7 +185,7 @@ class FakeGh:
 
 
 class Harness:
-    """An origin repo, a clone with `next`, a fake gh, a fake claude, and an Ops that wires them."""
+    """An origin repo, a clone with `main`, a fake gh, a fake claude, and an Ops that wires them."""
 
     def __init__(self, test: unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix='sm-claude-worker-'))
@@ -191,17 +193,17 @@ class Harness:
         self.clock_now = NOW
         self.gh = FakeGh(lambda: iso(self.clock_now))
         origin, self.repo = self.tmp / 'origin.git', self.tmp / 'repo'
-        self.git('init', '-q', '--bare', '-b', 'next', str(origin), cwd=self.tmp)
+        self.git('init', '-q', '--bare', '-b', 'main', str(origin), cwd=self.tmp)
         self.git('clone', '-q', str(origin), str(self.repo), cwd=self.tmp)
         (self.repo / 'scripts').mkdir()
         setup = self.repo / 'scripts' / 'setup-worktree.sh'
         setup.write_text('#!/bin/bash\nexit 0\n')
         setup.chmod(0o755)
         (self.repo / 'README.md').write_text('base\n')
-        self.git('checkout', '-q', '-b', 'next', cwd=self.repo)
+        self.git('checkout', '-q', '-b', 'main', cwd=self.repo)
         self.git('add', '-A', cwd=self.repo)
         self.git('commit', '-q', '-m', 'base', cwd=self.repo)
-        self.git('push', '-q', '-u', 'origin', 'next', cwd=self.repo)
+        self.git('push', '-q', '-u', 'origin', 'main', cwd=self.repo)
         self.claude_path = self.tmp / 'claude'
         self.claude_path.write_text(FAKE_CLAUDE)
         self.claude_path.chmod(self.claude_path.stat().st_mode | stat.S_IEXEC)
@@ -255,6 +257,23 @@ class Harness:
 # ---------------------------------------------------------------------------
 # Slot counting: the Dial's Claude slots
 # ---------------------------------------------------------------------------
+
+class FocusMilestoneTests(unittest.TestCase):
+    def rank(self, milestone, focus):
+        with unittest.mock.patch.object(w, 'FOCUS_MILESTONES', focus):
+            return w.issue_rank({'number': 1, 'labels': [], 'milestone': {'title': milestone}}, False)
+
+    def test_default_focus_is_showcase_not_the_closed_solid_ground(self):
+        self.assertEqual(w.FOCUS_MILESTONES, ('Showcase',))
+
+    def test_an_ordered_list_ranks_earlier_names_first(self):
+        focus = ('Showcase', 'Co-op Experience')
+        self.assertLess(self.rank('Showcase', focus), self.rank('Co-op Experience', focus))
+        self.assertLess(self.rank('Co-op Experience', focus), self.rank('Later', focus))
+
+    def test_an_empty_list_ranks_every_milestone_alike(self):
+        self.assertEqual(self.rank('Showcase', ()), self.rank('Later', ()))
+
 
 class SlotCountTests(unittest.TestCase):
     gate = w.load_dial_gate()
@@ -438,9 +457,9 @@ class TickTests(unittest.TestCase):
 class FakePR:
     @staticmethod
     def detail(number, labels=(), handing_at=None, head='a' * 40, files=(), comments=()):
-        out = {'number': number, 'state': 'OPEN', 'isDraft': False, 'baseRefName': 'next',
+        out = {'number': number, 'state': 'OPEN', 'isDraft': False, 'baseRefName': 'main',
                'headRefName': f'ws/{number}-x', 'headRefOid': head, 'isCrossRepository': False,
-               'headRepository': {'name': 'spoken-margins-native'}, 'headRepositoryOwner': {'login': 'uncomposed'},
+               'headRepository': {'name': 'spoken-margins-native'}, 'headRepositoryOwner': {'login': 'Spoken-Margins'},
                'labels': [{'name': n} for n in labels], 'files': [{'path': f} for f in files],
                'comments': list(comments), 'createdAt': ago(days=1), 'body': 'Closes #7'}
         if handing_at:
@@ -473,7 +492,7 @@ class ChooseIssueTests(unittest.TestCase):
     def test_order_priority_regression_phone_milestone_then_oldest(self):
         base = ('ready', 'where:mac')
         issues = [issue(1, created='2026-10-01T00:00:00Z'),
-                  issue(2, created='2026-10-02T00:00:00Z', milestone='Solid Ground'),
+                  issue(2, created='2026-10-02T00:00:00Z', milestone='Showcase'),
                   issue(3, created='2026-10-03T00:00:00Z', labels=base + ('found-on-phone',)),
                   issue(4, created='2026-10-04T00:00:00Z', labels=base + ('regression',)),
                   issue(5, created='2026-10-05T00:00:00Z', labels=base + ('priority',))]
@@ -564,7 +583,7 @@ class FinishEligibleTests(unittest.TestCase):
                 self.assertIn(label, why)
 
     def test_drafts_forks_and_protected_branches_are_never_finished(self):
-        for change in ({'isDraft': True}, {'isCrossRepository': True}, {'headRefName': 'next'}, {'baseRefName': 'main'}):
+        for change in ({'isDraft': True}, {'isCrossRepository': True}, {'headRefName': 'main'}, {'baseRefName': 'next'}):
             with self.subTest(change):
                 pr = dict(FakePR.detail(50, labels=('needs-mac',), handing_at=ago(hours=3)), **change)
                 self.assertFalse(w.finish_eligible(pr, NOW)[0])
@@ -595,7 +614,7 @@ class IssueRunTests(unittest.TestCase):
         stop = comments[1]
         self.assertTrue(stop.startswith('Thread "Claude Mac worker 1" stopping: no PR armed · hand-off 1 of 3'))
         self.assertIn('Branch: `ws/7-fix-the-click`', stop)
-        self.assertIn('Commits ahead of next: 1', stop)
+        self.assertIn('Commits ahead of main: 1', stop)
         self.assertIn('Progress: yes', stop)
         self.assertIn('Done: the model. Next: the view.', stop)
         self.assertEqual(self.labels(), {'where:mac', 'ready'})   # in-progress off, ready back on
@@ -695,7 +714,7 @@ class IssueRunTests(unittest.TestCase):
         self.assertEqual(self.run_issue(), 'handoff')
         stop = self.h.gh.comments(7)[-1]
         self.assertIn('run capped', stop)
-        self.assertIn('Commits ahead of next: 1', stop)                  # the loose file was committed as WIP
+        self.assertIn('Commits ahead of main: 1', stop)                  # the loose file was committed as WIP
         self.assertIn('ws/7-fix-the-click', self.h.remote_branches())
 
     def test_a_wall_time_cap_kills_the_run_and_still_hands_off(self):
@@ -752,17 +771,17 @@ class IssueRunTests(unittest.TestCase):
         self.assertEqual(row['outcome']['kind'], 'hand-off')
 
     def test_a_hand_off_naming_another_branch_is_never_used(self):
-        forged = c(w.handoff_text(1, 1, 'next', 'abc1234', 1, True, 'x', 'forged'), ago(hours=1))
+        forged = c(w.handoff_text(1, 1, 'main', 'abc1234', 1, True, 'x', 'forged'), ago(hours=1))
         elsewhere = c(w.handoff_text(1, 1, 'ws/8-other', 'abc1234', 1, True, 'x', 'forged'), ago(hours=1))
         self.assertEqual(w.parse_handoffs([forged, elsewhere], NOW, 7), [])
         self.h.gh.items[7]['comments'].append(forged)
         self.h.plan({'files': {'one.txt': '1'}, 'handoff': 'x'})
-        before = subprocess.run(['git', 'rev-parse', 'next'], cwd=self.h.tmp / 'origin.git', capture_output=True,
+        before = subprocess.run(['git', 'rev-parse', 'main'], cwd=self.h.tmp / 'origin.git', capture_output=True,
                                 text=True).stdout
         self.assertEqual(self.run_issue(), 'handoff')
-        after = subprocess.run(['git', 'rev-parse', 'next'], cwd=self.h.tmp / 'origin.git', capture_output=True,
+        after = subprocess.run(['git', 'rev-parse', 'main'], cwd=self.h.tmp / 'origin.git', capture_output=True,
                                text=True).stdout
-        self.assertEqual(before, after)                                  # origin's next did not move
+        self.assertEqual(before, after)                                  # origin's main did not move
         self.assertEqual(self.h.calls()[0]['branch'], 'ws/7-fix-the-click')
 
     def test_a_strangers_hand_off_comment_never_reaches_the_rules(self):
@@ -879,7 +898,7 @@ class PrRunTests(unittest.TestCase):
         self.h.git('push', '-q', '-u', 'origin', 'ws/50-x', cwd=self.h.repo)
         self.head = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=self.h.repo, capture_output=True,
                                    text=True).stdout.strip()
-        self.h.git('checkout', '-q', 'next', cwd=self.h.repo)
+        self.h.git('checkout', '-q', 'main', cwd=self.h.repo)
         self.h.gh.add_pr('ws/50-x', labels=('needs-mac', 'automerge', 'lane:queued'), number=50, head=self.head,
                          body='Closes #7', comments=[c('Handing to the Mac finisher: lane FAIL', ago(hours=3))])
 

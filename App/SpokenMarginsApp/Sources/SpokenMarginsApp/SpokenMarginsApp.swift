@@ -36,6 +36,10 @@ final class SpokenMarginsAppDelegate: NSObject, UIApplicationDelegate {
         handleEventsForBackgroundURLSession identifier: String,
         completionHandler: @escaping () -> Void
     ) {
+        if identifier == BackgroundVoiceModelTransport.sessionIdentifier {
+            BackgroundVoiceModelTransport.shared.handleBackgroundEvents(completion: completionHandler)
+            return
+        }
         guard identifier == PodcastDownloadCoordinator.backgroundSessionIdentifier else {
             completionHandler()
             return
@@ -101,6 +105,10 @@ struct SpokenMarginsApp: App {
         // The same refresh as in the foreground, with the same six-hour staleness (#170).
         FollowedSourceBackgroundRefreshController.shared.install { [weak model] in await model?.performFollowedSourceRefresh(force: false) }
         #endif
+        // A voice download iOS finished or woke the app for in the background carries on (#1819).
+        BackgroundVoiceModelTransport.shared.onBackgroundEvents = { [weak model] in
+            Task { @MainActor in await model?.requireVoiceDownloads().resumePending() }
+        }
         _model = StateObject(wrappedValue: model)
         _playbackStartCue = StateObject(wrappedValue: PlaybackStartCue(model: model, pinned: pinnedDiagnostics))
         _bridge = StateObject(wrappedValue: BridgeService(store: BridgeService.makeStore()))

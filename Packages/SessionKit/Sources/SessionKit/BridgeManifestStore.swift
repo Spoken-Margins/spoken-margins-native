@@ -8,9 +8,9 @@ import Foundation
 
 public struct BridgeManifestPolicy: Equatable, Sendable {
     public static let production = BridgeManifestPolicy(
-        configURL: URL(string: "https://spokenmargins.proximitytoprogress.com/api/v1/config.json")!,
-        manifestURL: URL(string: "https://spokenmargins.proximitytoprogress.com/bridge/v1/manifest.json")!,
-        trustedHost: "spokenmargins.proximitytoprogress.com"
+        configURL: ProductServer.url(path: "/api/v1/config.json"),
+        manifestURL: ProductServer.url(path: "/bridge/v1/manifest.json"),
+        trustedHost: ProductServer.host
     )
 
     public var configURL: URL

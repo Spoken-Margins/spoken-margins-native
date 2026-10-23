@@ -177,6 +177,136 @@ final class RealPlayerMarginMomentTests: XCTestCase {
         XCTAssertEqual(fixture.events.filter { $0 == "voice:shared" }.count, 1, "the voice started once")
     }
 
+    // MARK: Review new Margins (#474)
+
+    /// Each Margin gets a hop to its own lead-in, its voice, and then the source goes back to where the listener left off.
+    func testAReviewHopsToEachLeadInPlaysEachVoiceAndGoesBackToWhereTheListenerLeftOff() throws {
+        let fixture = try ReviewFixture(margins: [("a", 20_000), ("b", 60_000)], returnTo: 500_000, resumes: true)
+        defer { fixture.cleanUp() }
+
+        fixture.conductor.start()
+        XCTAssertEqual(fixture.events, ["seek:10000"], "the first lead-in starts ten seconds before the first Margin")
+        fixture.reach(20_000)
+        XCTAssertEqual(fixture.events, ["seek:10000", "pause", "voice:a"])
+        try fixture.pump(until: { fixture.events.last == "resume" }, "the source hops to b's lead-in and plays on")
+        XCTAssertEqual(Array(fixture.events.suffix(3)), ["voice:a", "seek:50000", "resume"], "the stretch between a and b is skipped")
+
+        fixture.reach(60_000)
+        try fixture.pump(until: { fixture.events.last == "resume" }, "after the last Margin the source goes back and plays on")
+        XCTAssertEqual(Array(fixture.events.suffix(3)), ["voice:b", "seek:500000", "resume"])
+        XCTAssertEqual(fixture.conductor.sequence.phase, .listening)
+    }
+
+    /// Two Margins at the same place both play, one after the other, with the source paused throughout.
+    func testAReviewPlaysTwoMarginsAtTheSamePlaceBackToBack() throws {
+        let fixture = try ReviewFixture(margins: [("a", 30_000), ("b", 30_000)], returnTo: nil, resumes: false)
+        defer { fixture.cleanUp() }
+
+        fixture.conductor.start()
+        fixture.reach(30_000)
+        try fixture.pump(until: { fixture.events.contains("voice:b") }, "b follows a")
+        XCTAssertEqual(fixture.events, ["seek:20000", "pause", "voice:a", "voice:b"], "no resume or seek between the two")
+        XCTAssertEqual(fixture.log.resumed, 0)
+        try fixture.pump(until: { fixture.conductor.sequence.phase == .listening }, "the review ends")
+        XCTAssertEqual(fixture.log.resumed, 0, "the review stops after the last Margin; nothing plays on by itself")
+    }
+
+    func testStoppingAReviewGoesBackToWhereTheListenerLeftOffWithoutPlayingOn() throws {
+        let fixture = try ReviewFixture(margins: [("a", 20_000), ("b", 60_000)], returnTo: 500_000, resumes: true)
+        defer { fixture.cleanUp() }
+
+        fixture.conductor.start()
+        fixture.reach(20_000)
+        XCTAssertTrue(fixture.conductor.isPlayingVoice)
+        fixture.conductor.stopReview()
+        XCTAssertFalse(fixture.conductor.isPlayingVoice)
+        XCTAssertEqual(Array(fixture.events.suffix(2)), ["pause", "seek:500000"])
+        fixture.pump(forSeconds: 1.2)
+        XCTAssertFalse(fixture.events.contains("voice:b"), "nothing else plays after Stop")
+        XCTAssertEqual(fixture.log.resumed, 0)
+    }
+
+    /// A Margin whose recording is missing is reported and skipped; the review carries on to the next one.
+    func testAReviewSkipsAMarginWhoseRecordingIsMissing() throws {
+        let fixture = try ReviewFixture(margins: [("a", 20_000), ("b", 60_000)], returnTo: nil, resumes: false, missing: ["a"])
+        defer { fixture.cleanUp() }
+
+        fixture.conductor.start()
+        fixture.reach(20_000)
+        XCTAssertEqual(fixture.log.unavailable, ["a:recording_missing"])
+        XCTAssertEqual(Array(fixture.events.suffix(3)), ["pause", "seek:50000", "resume"])
+        fixture.reach(60_000)
+        try fixture.pump(until: { fixture.events.contains("voice:b") }, "b still plays")
+    }
+
+    @MainActor
+    private final class ReviewFixture {
+        final class Log {
+            var events: [String] = []
+            var resumed = 0
+            var unavailable: [String] = []
+        }
+
+        let conductor: MarginMomentConductor
+        let log = Log()
+        private let directory: URL
+
+        var events: [String] { log.events }
+
+        init(margins: [(String, Int)], returnTo: Int?, resumes: Bool, missing: Set<String> = []) throws {
+            let directory = FileManager.default.temporaryDirectory
+                .appending(path: "margin-review-\(UUID().uuidString)", directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            self.directory = directory
+            var urls: [String: URL] = [:]
+            for (id, _) in margins where !missing.contains(id) {
+                urls[id] = try RealPlayerMarginMomentTests.writeTone(to: directory.appending(path: "\(id).caf"), seconds: 0.3, hz: 440)
+            }
+            let log = self.log
+            let sequence = try XCTUnwrap(MarginMomentSequence(
+                itemId: "episode",
+                reviewing: margins.map { MarginMomentAnchor(marginId: $0.0, mediaTimeMs: $0.1) },
+                returnToMediaTimeMs: returnTo,
+                resumesAtEnd: resumes
+            ))
+            conductor = MarginMomentConductor(
+                sequence: sequence,
+                source: .init(
+                    pause: { log.events.append("pause") },
+                    resume: { log.resumed += 1; log.events.append("resume") },
+                    seek: { log.events.append("seek:\($0)") }
+                ),
+                voiceURL: { urls[$0] }
+            )
+            conductor.voiceVolume = 0
+            conductor.onVoiceStarted = { log.events.append("voice:\($0)") }
+            conductor.onVoiceUnavailable = { log.unavailable.append("\($0):\($1)") }
+        }
+
+        /// Playback arrives at `mediaTimeMs` over two progress ticks.
+        func reach(_ mediaTimeMs: Int) {
+            conductor.observe(mediaTimeMs: mediaTimeMs - 200)
+            conductor.observe(mediaTimeMs: mediaTimeMs + 200)
+        }
+
+        func pump(forSeconds seconds: TimeInterval) {
+            RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+        }
+
+        func pump(until condition: () -> Bool, _ what: String, timeout: TimeInterval = 5) throws {
+            let deadline = Date().addingTimeInterval(timeout)
+            while !condition() {
+                guard Date() < deadline else { return XCTFail("timed out waiting until \(what)") }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            }
+        }
+
+        func cleanUp() {
+            conductor.cancel()
+            try? FileManager.default.removeItem(at: directory)
+        }
+    }
+
     /// A conductor for one shared Margin at 5 s with real chime and voice players, both silent.
     @MainActor
     private final class ChimeFixture {

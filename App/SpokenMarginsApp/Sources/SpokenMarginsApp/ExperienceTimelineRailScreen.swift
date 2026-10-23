@@ -15,19 +15,24 @@ struct ExperienceTimelineRailScreen: View {
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
     @State private var entries: [TimelineRailEntry] = []
+    @State private var playbackTick = 0 // bumped by each progress tick: the current row follows the playhead (#2074)
     @FocusState private var responseEditorFocused: Bool
     @ScaledMetric(relativeTo: .body) private var responseEditorHeight: CGFloat = 160
 
     var body: some View {
-        if onReturnToPlayback != nil {
-            content.environment(\.colorScheme, .dark)
-        } else {
-            NavigationStack {
-                content
-                    .navigationTitle("Timeline")
-                    .navigationBarTitleDisplayMode(.inline)
+        let _ = playbackTick
+        Group {
+            if onReturnToPlayback != nil {
+                content.environment(\.colorScheme, .dark)
+            } else {
+                NavigationStack {
+                    content
+                        .navigationTitle("Timeline")
+                        .navigationBarTitleDisplayMode(.inline)
+                }
             }
         }
+        .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
     }
 
     private var content: some View {

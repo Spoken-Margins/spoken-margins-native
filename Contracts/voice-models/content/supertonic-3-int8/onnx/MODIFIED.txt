@@ -1,0 +1,16 @@
+Notice of modification (BigScience Open RAIL-M, paragraph 4(c))
+
+The files duration_predictor.onnx, text_encoder.onnx, vector_estimator.onnx
+and vocoder.onnx in this folder are modified derivatives of Supertone's
+Supertonic 3 model (https://huggingface.co/Supertone/supertonic-3, revision
+3cadd1ee6394adea1bd021217a0e650ede09a323).
+
+They were changed as follows:
+1. The k2-fsa sherpa-onnx project quantized Supertone's public ONNX graphs to
+   INT8 (archive sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2).
+2. Spoken Margins renamed the quantized graph files to match the official
+   Supertonic Swift runtime and packaged them with the official configuration,
+   Unicode index and preset voice styles, which are unchanged.
+
+The model remains licensed under BigScience Open RAIL-M; see
+../licenses/SUPERTONIC_MODEL_OPENRAIL-M.txt and ../licenses/THIRD_PARTY_NOTICES.txt.

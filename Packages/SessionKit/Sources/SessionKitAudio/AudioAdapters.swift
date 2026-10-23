@@ -1807,6 +1807,15 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     public var playbackStallTraceHandler: (@Sendable ([String: String]) -> Void)?
     private var stallDetector = PlaybackStallDetector()
     private var stallWatchdog: Timer?
+    /// Overrules a frozen clock with the decoded audio's own media time (#2094).
+    private var clockGuard = DecodedAudioClockGuard()
+    /// The decoded audio's position when the listener paused during a clock freeze, kept until the next seek.
+    private var pausedTrustedMediaTimeMs: Int?
+    private var lastClockRecoveryUptimeMs: Int?
+    /// One re-seek per this long at most, so a clock that freezes again can't make the audio stutter.
+    static let clockRecoveryIntervalMs = 60_000
+    /// Tests only: hold AVPlayer's raw clock at this time, as on the phone in #2094, until the next seek.
+    var frozenPlayerClockForTesting: Int?
     private var mediaSeekStartedUptime: TimeInterval?
     /// Tests only: drop AVPlayer's seek completions, as happened on a stream in #166.
     var withholdsSeekCompletionsForTesting = false
@@ -1839,7 +1848,15 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var mixesWithOtherAudio = false
     private var lowersBackgroundAudio = false
     private var playbackVolume: Float = 1
-    private var paused = true
+    /// Every way playback pauses (the listener, a phone call or announcement, a lost route, the end of the item)
+    /// passes through here, so each keeps where the audio was during a clock freeze, not the frozen time (#2094).
+    private var paused = true {
+        willSet {
+            guard newValue, !paused else { return }
+            pausedTrustedMediaTimeMs = decodedAudioMediaTimeMs(overruling: reportedMediaTimeMs())
+            clockGuard.notePaused()
+        }
+    }
     private var remoteCommandHandlingEnabled = true
     private var interruptionResumePolicy = AudioPlaybackInterruptionResumePolicy()
     /// Background time while an interruption waits to end, so a backgrounded app isn't suspended before iOS says
@@ -1969,11 +1986,13 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         let traceStartedAt = ProcessInfo.processInfo.systemUptime
         let rebuildsItem = activeTargetId != targetId || activePlaybackURL != url || player == nil
         if activeTargetId != targetId || activePlaybackURL != url || player == nil {
+            let setupLabel = MainThreadOperationLabels.shared.push("avPlayer.itemSetup") // names a slow setup in a hang (#2255)
+            defer { MainThreadOperationLabels.shared.pop(setupLabel) }
             cancelPostResumeEvidenceCapture(reason: "playback_item_changed")
             removePlayerStateObserver()
             removeCompletionObserver()
             removeTimeObserver()
-            let item = AVPlayerItem(url: url)
+            let item = AVPlayerItem(asset: Self.playbackAsset(for: url))
             player = AVPlayer(playerItem: item)
             player?.volume = playbackVolume
             player?.automaticallyWaitsToMinimizeStalling = true
@@ -2008,6 +2027,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         playbackComplete = false
         completedTargetId = nil
         paused = false
+        pausedTrustedMediaTimeMs = nil
         if !continuesNavigationSeek {
             let seekGeneration = beginMediaSeek(
                 targetId: targetId,
@@ -2038,6 +2058,21 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     public func seek(toMediaTimeMs mediaTimeMs: Int) throws {
         _ = try requestMediaSeek(toMediaTimeMs: mediaTimeMs)
     }
+
+    #if canImport(AVFoundation)
+    /// A downloaded episode asks for precise timing (#2094). Without it, a seek in a VBR MP3 played audio up to
+    /// about five minutes from where the clock said, on macOS with real decoding, while the clock read the
+    /// requested time; with it every seek landed within 13 ms. The cost on a local file is a frame scan only when
+    /// the MP3 has no Xing header (about 1.2 s for an hour). Streams keep the default until it is measured how
+    /// much of the file precise timing makes AVFoundation fetch before playing.
+    static func playbackAsset(for url: URL) -> AVURLAsset {
+        AVURLAsset(url: url, options: url.isFileURL ? [AVURLAssetPreferPreciseDurationAndTimingKey: true] : nil)
+    }
+
+    var currentItemProvidesPreciseTimingForTesting: Bool? {
+        (player?.currentItem?.asset as? AVURLAsset)?.providesPreciseDurationAndTiming
+    }
+    #endif
 
     public func requestMediaSeek(toMediaTimeMs mediaTimeMs: Int) throws -> MediaSeekRequest {
         #if canImport(AVFoundation)
@@ -2213,17 +2248,45 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     public func currentMediaTimeMs() -> Int? {
+        let reported = reportedMediaTimeMs()
+        if paused { return pausedTrustedMediaTimeMs ?? reported }
+        return decodedAudioMediaTimeMs(overruling: reported) ?? reported
+    }
+
+    /// The pending seek's target, else the player's own clock: what AVPlayer claims, before any evidence check.
+    private func reportedMediaTimeMs() -> Int {
         if let pendingMediaSeek = mediaSeekLifecycle.pending,
            pendingMediaSeek.targetId == activeTargetId {
             return pendingMediaSeek.mediaTimeMs
         }
         #if canImport(AVFoundation)
-        guard let player else { return lastRequestedMediaTimeMs }
-        let seconds = player.currentTime().seconds
-        guard seconds.isFinite else { return lastRequestedMediaTimeMs }
-        return max(0, Int((seconds * 1000).rounded()))
+        guard player != nil else { return lastRequestedMediaTimeMs }
+        return observedPlayerMediaTimeMs() ?? lastRequestedMediaTimeMs
         #else
         return lastRequestedMediaTimeMs
+        #endif
+    }
+
+    /// The media time the decoded audio shows the listener at, when the reported time has frozen behind it
+    /// while playing (#2094). Anything that reads the position (a new Margin's anchor, its rejoin, the saved
+    /// resume position, Now Playing) then follows the audio rather than a stale clock.
+    private func decodedAudioMediaTimeMs(overruling reported: Int) -> Int? {
+        guard player != nil, !paused else { return nil }
+        return clockGuard.observe(
+            reportedMediaTimeMs: reported,
+            rawClockMediaTimeMs: observedPlayerMediaTimeMs(),
+            decoded: latestDecodedAudioSample(),
+            uptimeMs: DecodedAudioClockGuard.uptimeMs()
+        )
+    }
+
+    private func latestDecodedAudioSample() -> DecodedAudioClockGuard.DecodedSample? {
+        #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
+        guard let context = postResumeEvidenceTapContext,
+              postResumeEvidenceItem != nil, postResumeEvidenceItem === player?.currentItem else { return nil }
+        return context.latestDecodedSample
+        #else
+        return nil
         #endif
     }
 
@@ -2341,6 +2404,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         playbackComplete = false
         mediaSeekFailure = nil
         paused = true
+        pausedTrustedMediaTimeMs = nil
+        clockGuard = DecodedAudioClockGuard()
         clearNowPlaying()
         #if os(iOS)
         if mixesWithOtherAudio, lowersBackgroundAudio { try? PlaybackAudioSessionPolicy.releaseDucking() }
@@ -2363,6 +2428,9 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             )
         }
         mediaSeekFailure = nil
+        frozenPlayerClockForTesting = nil
+        pausedTrustedMediaTimeMs = nil
+        clockGuard.noteSeek(uptimeMs: DecodedAudioClockGuard.uptimeMs())
         let uptime = ProcessInfo.processInfo.systemUptime
         mediaSeekStartedUptime = uptime
         return mediaSeekLifecycle.begin(
@@ -2413,6 +2481,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private func checkForStall() {
         let uptime = ProcessInfo.processInfo.systemUptime
         abandonOverrunMediaSeek(uptime: uptime)
+        // Also keeps the guard's view of the clock current when nothing else reads the position.
+        let decodedMediaTimeMs = decodedAudioMediaTimeMs(overruling: reportedMediaTimeMs())
         guard let event = stallDetector.observe(
             uptimeMs: Int(uptime * 1_000),
             mediaTimeMs: observedPlayerMediaTimeMs(),
@@ -2422,6 +2492,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         switch event {
         case .stalled(let atMediaTimeMs, let forMs):
             fields = ["event": "stalled", "atMs": String(atMediaTimeMs), "forMs": String(forMs)]
+            if let decodedMediaTimeMs {
+                fields["decodedMs"] = String(decodedMediaTimeMs)
+                fields["decodeLeadMs"] = String(clockGuard.decodeLeadMs)
+            }
         case .ended(let fromMediaTimeMs, let toMediaTimeMs, let stalledForMs):
             fields = [
                 "event": "ended", "fromMs": String(fromMediaTimeMs),
@@ -2430,6 +2504,41 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         }
         fields.merge(playerStateFields(uptime: uptime)) { current, _ in current }
         playbackStallTraceHandler?(fields)
+        if case .stalled(let atMediaTimeMs, _) = event, let decodedMediaTimeMs {
+            recoverFrozenClock(at: decodedMediaTimeMs, frozenAtMs: atMediaTimeMs, uptime: uptime)
+        }
+    }
+
+    /// The audio played on while AVPlayer's clock stood still (#2094). Seek to where the audio is, so the
+    /// player's own timeline, the scrubber and Now Playing follow it again; the position is already reported
+    /// from the decoded audio until then.
+    private func recoverFrozenClock(at mediaTimeMs: Int, frozenAtMs: Int, uptime: TimeInterval) {
+        #if canImport(AVFoundation)
+        let uptimeMs = DecodedAudioClockGuard.uptimeMs()
+        if let last = lastClockRecoveryUptimeMs, uptimeMs - last < Self.clockRecoveryIntervalMs { return }
+        guard let player, let activeTargetId else { return }
+        lastClockRecoveryUptimeMs = uptimeMs
+        let superseded = mediaSeekLifecycle.pending
+        let generation = beginMediaSeek(targetId: activeTargetId, mediaTimeMs: mediaTimeMs, purpose: .playbackStart)
+        if let superseded, superseded.purpose == .navigation {
+            // The audio is past that seek's target, so it landed; its completion just never said so.
+            storeNavigationSeekResolution(.accepted(mediaTimeMs: mediaTimeMs), for: superseded.requestId)
+        }
+        lastRequestedMediaTimeMs = mediaTimeMs
+        let tolerance = CMTime(seconds: 0.25, preferredTimescale: 600)
+        player.seek(
+            to: CMTime(seconds: Double(mediaTimeMs) / 1_000, preferredTimescale: 600),
+            toleranceBefore: tolerance, toleranceAfter: tolerance
+        ) { [weak self] finished in
+            DispatchQueue.main.async { [weak self] in
+                self?.finishMediaSeek(generation: generation, targetId: activeTargetId, finished: finished)
+            }
+        }
+        var fields = ["event": "clock_recovered", "fromMs": String(frozenAtMs), "toMs": String(mediaTimeMs),
+                      "decodeLeadMs": String(clockGuard.decodeLeadMs)]
+        fields.merge(playerStateFields(uptime: uptime)) { current, _ in current }
+        playbackStallTraceHandler?(fields)
+        #endif
     }
 
     /// AVPlayer's own state right now, in the fields the stall trace carries, plus `uptimeMs` (#835). Unlike
@@ -2546,6 +2655,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     private func observedPlayerMediaTimeMs() -> Int? {
         #if canImport(AVFoundation)
+        if let frozenPlayerClockForTesting, player != nil { return frozenPlayerClockForTesting }
         guard let seconds = player?.currentTime().seconds, seconds.isFinite else { return nil }
         return max(0, Int((seconds * 1_000).rounded()))
         #else
@@ -2594,7 +2704,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             let install = {
                 guard let self, let item, self.player?.currentItem === item else { return }
                 MainActor.assumeIsolated {
-                    if self.installContinuousPodcastEvidenceTapIfPossible(on: item) {
+                    // Unlabeled main-thread work hid what froze a mapped episode's start (#2255).
+                    if MainThreadOperationLabels.shared.scoped("avPlayer.evidenceTap", { self.installContinuousPodcastEvidenceTapIfPossible(on: item) }) {
                         self.continuousEvidenceTapTracksObservation?.invalidate()
                         self.continuousEvidenceTapTracksObservation = nil
                     }
@@ -2857,7 +2968,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     /// `awaitsEnd` is false for a lost route, which never reports an end: nothing to wait for.
-    private func pauseForSystemInterruption(awaitsEnd: Bool) {
+    /// Internal so host tests can stand in for the iOS-only interruption and route-change notifications.
+    func pauseForSystemInterruption(awaitsEnd: Bool) {
         let wasPlaying = activeTargetId != nil && !paused
         guard interruptionResumePolicy.began(wasPlaying: wasPlaying) else { return }
         if awaitsEnd {
@@ -2954,7 +3066,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
            url.scheme?.isEmpty == false {
             info[MPNowPlayingInfoPropertyAssetURL] = url
         }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        NowPlayingInfoOwnership.shared.write(info, as: .mediaPlayer, detail: nowPlayingLedgerDetail())
         configureRemoteCommandAvailability(canSeek: durationSeconds != nil)
         #if canImport(UIKit)
         Task { @MainActor in
@@ -2964,11 +3076,19 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         #endif
     }
 
+    /// Removes this player's card. A card another writer holds (live speech, a shared Margin) stays: this player
+    /// clears on every tick while its remote commands are off, and used to take those cards down with it (#2181).
     private func clearNowPlaying() {
         #if canImport(MediaPlayer) && os(iOS)
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        NowPlayingInfoOwnership.shared.clear(as: .mediaPlayer, detail: nowPlayingLedgerDetail())
         #endif
     }
+
+    #if canImport(MediaPlayer) && os(iOS)
+    private func nowPlayingLedgerDetail() -> String {
+        "targets=\(remoteCommandTargets.count) commands=\(remoteCommandHandlingEnabled ? "on" : "off") player=\(player.map { String($0.timeControlStatus.rawValue) } ?? "none")"
+    }
+    #endif
 
     private func installRemoteCommandHandlers() {
         #if canImport(MediaPlayer) && os(iOS)
@@ -3312,6 +3432,12 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
     /// A Margin is being captured: from `beginRecording` until it is finished or cancelled.
     private var isCaptureActive = false
     private var captureRestarts = 0
+    /// The recorder is paused while the ready cue plays (#1594), so the cue is not in the file. It is still a
+    /// running capture: the poll reads it as running, and a restart must not replace it.
+    private var recorderHeldForCue = false
+    /// Names one hold, so a resume timer from an earlier hold or recording can't restart a recorder that was
+    /// finished, cancelled, interrupted or replaced in the meantime.
+    private var cueHoldToken = 0
     /// The most `currentTime` the current recorder has shown. A stopped `AVAudioRecorder` reads 0, but
     /// the audio it took in is still in its file.
     private var capturedHighWaterMs = 0
@@ -3447,6 +3573,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         recorderDelegate = delegate
         capturedHighWaterMs = 0
         stoppedMeasurement = nil
+        recorderHeldForCue = false
         return (recorder, url)
     }
 
@@ -3550,7 +3677,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         peakPowerDb = max(peakPowerDb ?? peak, peak)
         capturedHighWaterMs = max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded()))
         var durationKnown = true
-        if recorder.isRecording {
+        if isCapturing(recorder) {
             stoppedMeasurement = nil
         } else {
             // The polls can miss audio taken in just before the stop, and a stopped recorder reads 0. The
@@ -3571,7 +3698,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         let inputRoute: String? = nil
         #endif
         return RecordingCaptureReading(
-            recorderRunning: recorder.isRecording,
+            recorderRunning: isCapturing(recorder),
             capturedMs: capturedHighWaterMs,
             durationKnown: durationKnown,
             peakPowerDb: peak,
@@ -3591,7 +3718,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         // thread (#1041). A running recorder says how much it has taken in until the moment it stops. One that
         // had already stopped has a background measurement the poll started; if that hasn't landed, the length
         // is unknown, which means keep.
-        let hadStopped = recorder.map { !$0.isRecording } ?? false
+        let hadStopped = recorder.map { !isCapturing($0) } ?? false
         if let recorder, !hadStopped {
             capturedHighWaterMs = max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded()))
         }
@@ -3637,7 +3764,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         #if canImport(AVFoundation)
         var fields: [String: String] = ["captureRestarts": String(captureRestarts), "inputPolicy": inputChoice.rawValue]
         if let recorder {
-            fields["recorderRunning"] = String(recorder.isRecording)
+            fields["recorderRunning"] = String(isCapturing(recorder))
             fields["capturedMs"] = String(max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded())))
             switch stoppedMeasurement?.outcome {
             case nil: fields["stoppedFile"] = stoppedMeasurement == nil ? "recording" : "measuring"
@@ -3662,6 +3789,44 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
 
     public func finalizedRecordingIntegrity() -> FinalizedRecordingIntegrity? { finalizedIntegrity }
 
+    public func pauseForReadyCue() {
+        #if canImport(AVFoundation)
+        guard isCaptureActive, !recorderHeldForCue, let recorder, recorder.isRecording else { return }
+        recorder.pause()
+        recorderHeldForCue = true
+        cueHoldToken += 1
+        #endif
+    }
+
+    public func resumeAfterReadyCue(after seconds: TimeInterval) {
+        #if canImport(AVFoundation)
+        guard recorderHeldForCue else { return }
+        guard seconds > 0 else { return resumeHeldRecorder(token: cueHoldToken) }
+        let token = cueHoldToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            self?.resumeHeldRecorder(token: token)
+        }
+        #endif
+    }
+
+    #if canImport(AVFoundation)
+    /// Running, or held still on purpose for the ready cue: either way the capture is alive.
+    private func isCapturing(_ recorder: AVAudioRecorder) -> Bool { recorder.isRecording || recorderHeldForCue }
+
+    private func resumeHeldRecorder(token: Int) {
+        guard recorderHeldForCue, token == cueHoldToken else { return }
+        recorderHeldForCue = false
+        guard isCaptureActive, let recorder else { return }
+        recorder.record()
+    }
+
+    /// A finish, cancel, interruption or restart ends a hold; the resume timer then does nothing.
+    private func dropCueHold() {
+        recorderHeldForCue = false
+        cueHoldToken += 1
+    }
+    #endif
+
     public func finishRecording(audioRef: String?) throws -> String {
         #if canImport(AVFoundation)
         guard let recorder, let currentURL else {
@@ -3670,6 +3835,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         }
         let reportedMs = max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded()))
         isCaptureActive = false
+        dropCueHold()
         finalizedIntegrity = RecordingFileFinalizer.finish(url: currentURL, reportedMs: reportedMs) { recorder.stop() }
         recorderDelegate = nil
         self.recorder = nil
@@ -3692,6 +3858,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         finalizedIntegrity = nil
         let url = currentURL
         isCaptureActive = false
+        dropCueHold()
         recorderDelegate = nil
         recorder?.stop()
         recorder?.deleteRecording()
@@ -3736,6 +3903,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
                 // While waiting for an end that may never come, a new interruption is reported
                 // too, so the app drops the stale resume.
                 guard self.recordingStartedAt != nil || self.awaitsInterruptionEnd else { return }
+                self.dropCueHold() // iOS has stopped the recorder: a held one must not be restarted into the call
                 if !self.awaitsInterruptionEnd { self.headphonesWhenInterrupted = Self.headphoneOutputs() }
                 self.awaitsInterruptionEnd = true
                 self.onInterruption?(.interruptionBegan, self.recordedSeconds)

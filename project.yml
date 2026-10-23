@@ -3,6 +3,10 @@ options:
   bundleIdPrefix: com.spokenmargins
   deploymentTarget:
     iOS: "26.0"
+# The signing team comes from the untracked Config/Local.xcconfig, through this file (#1841).
+configFiles:
+  Debug: Config/Signing.xcconfig
+  Release: Config/Signing.xcconfig
 packages:
   SessionKit:
     path: Packages/SessionKit
@@ -20,6 +24,10 @@ targets:
         type: syncedFolder
       - path: App/SharedSources
         type: syncedFolder
+      # The Lock Screen Mark inbox (#2481), host-tested in SessionKit; LiveSessionActivity.swift uses it in the
+      # app and the widget, which doesn't link SessionKit.
+      - path: Packages/SessionKit/Sources/SessionKit/LiveSessionMarkInbox.swift
+      # Supertonic's licences and modification notice only; the model is a download from Settings › Voices (#1820).
       - path: App/SpokenMarginsApp/Resources/Supertonic
         type: folder
         buildPhase: resources
@@ -27,6 +35,12 @@ targets:
         type: folder
         buildPhase: resources
       - path: App/SpokenMarginsApp/Resources/Legal
+        type: folder
+        buildPhase: resources
+      - path: App/SpokenMarginsApp/Resources/VoiceCatalog
+        type: folder
+        buildPhase: resources
+      - path: Contracts/voice-models/licenses
         type: folder
         buildPhase: resources
       - path: App/SharedResources/browserTextCapture.js
@@ -67,7 +81,6 @@ targets:
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsApp/SpokenMarginsApp.entitlements
         CODE_SIGN_STYLE: Automatic
         CURRENT_PROJECT_VERSION: "35"
-        DEVELOPMENT_TEAM: J8SWC6J3VY
         INFOPLIST_FILE: App/SpokenMarginsApp/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Spoken Margins
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
@@ -152,13 +165,13 @@ targets:
         type: syncedFolder
       - path: App/Gate2Shared/Sources
         type: syncedFolder
+      - path: Packages/SessionKit/Sources/SessionKit/LiveSessionMarkInbox.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.gate2widget
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsGate2Widget/SpokenMarginsGate2Widget.entitlements
         CODE_SIGN_STYLE: Automatic
         CURRENT_PROJECT_VERSION: "35"
-        DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         MARKETING_VERSION: "0.1"
         SWIFT_VERSION: "6.0"
@@ -190,7 +203,6 @@ targets:
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements
         CODE_SIGN_STYLE: Automatic
         CURRENT_PROJECT_VERSION: "35"
-        DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsBrowserTextExtension/Info.plist
         MARKETING_VERSION: "0.1"
@@ -215,13 +227,13 @@ targets:
           - Gate2CompactCommandURL.swift
           - Gate2LiveActivityAttributes.swift
           - Gate2LiveActivityIntents.swift
+          - LiveSessionActivity.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.share
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements
         CODE_SIGN_STYLE: Automatic
         CURRENT_PROJECT_VERSION: "35"
-        DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsShareExtension/Info.plist
         MARKETING_VERSION: "0.1"
@@ -290,7 +302,6 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-        DEVELOPMENT_TEAM: J8SWC6J3VY
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.tests
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/SpokenMarginsApp.app/SpokenMarginsApp"
         BUNDLE_LOADER: "$(TEST_HOST)"

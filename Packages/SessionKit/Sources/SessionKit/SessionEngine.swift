@@ -141,6 +141,9 @@ public final class SessionEngine {
     /// the "is the listener in this item?" check, so a test can open the item at exactly the point the check
     /// guards, with no dependence on how the scheduler orders main-actor tasks. Nil in the app.
     var afterStructuredUpgradePlannedForTesting: (() throws -> Void)?
+    /// Test seam (#2384): runs in the same task as a re-imported PDF's upgrade plan, just before it, so a test can
+    /// prove the plan is off the main actor by waiting there for something only the main actor can do. Nil in the app.
+    var whileStructuredUpgradeIsPlannedForTesting: (@Sendable () -> Void)?
 
     private struct PlaybackProgress {
         var sourcePercent: Int
@@ -346,10 +349,37 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("resumePlayback")
         }
         session = try readingTextIfNarrationFileIsMissing(session)
+        if startsInTheLastInstantOfMedia(session) {
+            // Nothing is left to play, and a stream's seek into its last instant took 28 s on the owner's phone
+            // while the start sat pending and the X on the pill did nothing (#2097). It is the end: finish here,
+            // as a natural end would, so the next Play starts the item again from the top (#643).
+            let finished = markPlaybackComplete(session, item: currentItem)
+            currentSession = finished
+            try persistSession(finished)
+            publish(status: .paused, phase: finished.phase)
+            return snapshot
+        }
         try playCurrentTarget(session)
         publishPlaybackStart(for: session, phase: session.phase)
         return snapshot
     }
+
+    /// A podcast or recording saved within `endOfMediaStartToleranceMs` of its end, with a known length. A saved
+    /// position at 0 is a fresh start, whatever the length.
+    private func startsInTheLastInstantOfMedia(_ session: Session) -> Bool {
+        guard session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia,
+              !isPartialGeneratedTextPlayback(session),
+              let mediaTimeMs = session.position.mediaTimeMs, mediaTimeMs > 0,
+              let durationMs = durableMediaDurationMs(for: session), durationMs > 0 else { return false }
+        // A place past the stored length means the stored length is short of the real file (corrections under 1 s
+        // are skipped; a feed length can miss dynamic ads), so it says nothing about the end (#2189).
+        return (0...Self.endOfMediaStartToleranceMs).contains(durationMs - mediaTimeMs)
+    }
+
+    /// Half a second: inside the player's own seek tolerance (0.25 s either side) of the end there is nothing
+    /// worth seeking to. Wider would take a deliberate place from the listener: a scrub to 1 s from the end, or a
+    /// Margin recorded at the last second (0.8 s), still plays from there (#643, #588).
+    static let endOfMediaStartToleranceMs = 500
 
     @discardableResult
     public func restartPlaybackFromCurrentPosition() throws -> SessionSnapshot {
@@ -932,7 +962,11 @@ public final class SessionEngine {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
         var outcome = try browserTextImportOutcome(handoff, structuredDocument: structuredDocument, upgrade: .deferred)
         if case .upgradeCandidate(let job) = outcome {
-            let planned = await Task.detached(priority: .userInitiated) { try? job.plan() }.value
+            let whilePlanned = whileStructuredUpgradeIsPlannedForTesting
+            let planned = await Task.detached(priority: .userInitiated) {
+                whilePlanned?()
+                return try? job.plan()
+            }.value
             try afterStructuredUpgradePlannedForTesting?()
             if case .success(let upgrade)? = planned, currentSession?.itemId != job.existing.id, currentItem?.id != job.existing.id {
                 do {
@@ -1575,6 +1609,17 @@ public final class SessionEngine {
         return reading
     }
 
+    /// The ready cue is about to play (#1594): the recorder stops taking audio in, so the cue is not in the saved Margin.
+    public func pauseRecordingForReadyCue() {
+        guard currentSession?.phase == .recordingInterjection else { return }
+        recorder.pauseForReadyCue()
+    }
+
+    /// The cue has started, or did not play (0 seconds): the recorder listens again after `seconds`.
+    public func resumeRecordingAfterReadyCue(after seconds: TimeInterval) {
+        recorder.resumeAfterReadyCue(after: seconds)
+    }
+
     /// Starts a new recorder after one that never got audio; the session stays in `recordingInterjection`.
     public func restartRecordingCapture() throws {
         guard currentSession?.phase == .recordingInterjection else {
@@ -1928,6 +1973,7 @@ public final class SessionEngine {
             // both its durable target and adapter setup succeed. Restore its
             // stored position before returning to the prior source.
             try? repository.saveSession(storedForm(of: plan.originalSession))
+            lastSavedMediaTimeMs[plan.originalSession.id] = nil // the next write compares with the restored row
             currentSession = previousSession
             currentItem = previousItem
             currentMap = previousMap
@@ -2891,6 +2937,18 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// Brings back a Margin `deleteInterjection` hid, for the Undo on the "Deleted Margin" banner (#1981). Deleting
+    /// only sets the status, so the words, the recording, the place and the order were never touched. A Margin that
+    /// isn't deleted is left as it is, so a second Undo does nothing.
+    @discardableResult
+    public func restoreInterjection(interjectionId: String, sessionId: String? = nil) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            if interjection.status == "deleted" { interjection.status = "active" }
+        }
+        publish(status: snapshot.status, phase: snapshot.phase)
+        return snapshot
+    }
+
     /// Stops caller-owned inline audio before closing the source, even if teardown fails.
     /// The callback must cancel playback without resuming the source (#651).
     @discardableResult
@@ -3350,6 +3408,7 @@ public final class SessionEngine {
             "pendingAiJobs": "\(try currentSession.map { try repository.loadAIJobs(sessionId: $0.id).filter { $0.status != "complete" }.count } ?? 0)",
             "recentFailure": snapshot.lastFailure ?? "none",
             "lastMarginRejoin": lastMarginRejoin ?? "none",
+            "lastBackwardPositionWrite": lastBackwardPositionWrite ?? "none",
             "sessionId": sessionId
         ]
     }
@@ -5946,7 +6005,42 @@ public final class SessionEngine {
         sentenceUnits(in: text, includeTrailingFragment: false)
     }
 
-    private func persistSession(_ session: Session) throws {
+    /// A saved media position that moves back by more than this is logged with the command that wrote it (#2186).
+    static let backwardPositionLogThresholdMs = 60_000
+
+    /// Receives the fields of a `position.backward` event. The app records them in Diagnostics.
+    public var positionDiagnosticHandler: (([String: String]) -> Void)?
+    /// The last backward write, for `diagnostics()`.
+    private var lastBackwardPositionWrite: String?
+    /// The media position last saved for each session, so a write can be compared with what the previous one left.
+    private var lastSavedMediaTimeMs: [String: Int] = [:]
+
+    /// Logs a media position write that goes back by more than a minute. Every legitimate move back (a seek,
+    /// a skip back, Play from the beginning) enters through a command, whose name is `source`; one that
+    /// arrives from `syncPlaybackProgress` or a pause is a player sample that rewound the listener (#2186).
+    private func noteMediaPositionWrite(_ session: Session, source: String) {
+        guard session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia,
+              let newMs = session.position.mediaTimeMs else { return }
+        let previousMs = lastSavedMediaTimeMs[session.id]
+            ?? (try? repository.loadSession(id: session.id))?.position.mediaTimeMs
+        guard let previousMs, previousMs - newMs > Self.backwardPositionLogThresholdMs else { return }
+        let fields = [
+            "event": "position_backward",
+            "source": source,
+            "sessionId": session.id,
+            "itemId": session.itemId,
+            "fromMs": "\(previousMs)",
+            "toMs": "\(newMs)",
+            "playerMs": audio.currentMediaTimeMs().map(String.init) ?? "none",
+            "status": snapshot.status.rawValue,
+            "positionPending": hasPendingPlaybackPosition(for: session) ? "yes" : "no"
+        ]
+        lastBackwardPositionWrite = fields.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
+        positionDiagnosticHandler?(fields)
+    }
+
+    private func persistSession(_ session: Session, source: String = #function) throws {
+        noteMediaPositionWrite(session, source: source)
         var stamped = session
         let timestamp = now()
         if stamped.createdAt == nil {
@@ -5957,6 +6051,7 @@ public final class SessionEngine {
             stamped.completedAt = timestamp
         }
         try repository.saveSession(storedForm(of: stamped))
+        lastSavedMediaTimeMs[stamped.id] = stamped.position.mediaTimeMs
         if stamped.completionPercent > 98,
            completionPercentIsMeasured(stamped),
            var item = try? repository.loadItem(id: stamped.itemId),

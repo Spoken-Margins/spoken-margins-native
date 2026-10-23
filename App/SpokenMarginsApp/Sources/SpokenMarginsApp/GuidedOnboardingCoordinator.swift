@@ -27,8 +27,8 @@ enum GuidedOnboardingError: Error, LocalizedError {
 }
 
 actor GuidedOnboardingCoordinator {
-    static let productionManifestURL = URL(string: "https://spokenmargins.proximitytoprogress.com/onboarding/v1/manifest.json")!
-    private static let expectedHost = "spokenmargins.proximitytoprogress.com"
+    static let productionManifestURL = ProductServer.url(path: "/onboarding/v1/manifest.json")
+    private static let expectedHost = ProductServer.host
     private static let maximumManifestBytes = 128 * 1_024
     private static let maximumAudioBytes: Int64 = 64 * 1_024 * 1_024
 

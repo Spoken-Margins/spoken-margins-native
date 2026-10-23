@@ -181,6 +181,7 @@ def contains(haystack, needle):
 def evaluate(expression, context, cancelled=False):
     functions = {
         'contains': contains,
+        'startswith': lambda text, prefix: str(text or '').lower().startswith(str(prefix or '').lower()),
         'fromjson': lambda text: json.loads(text),
         'cancelled': lambda: cancelled,
         'always': lambda: True,
@@ -229,8 +230,11 @@ def job_output(job, name):
 REPO = 'owner/repo'
 
 
-def pull_request_context(labels, action='synchronize', label='', head_repo=REPO, route=None):
+def pull_request_context(labels, action='synchronize', label='', head_repo=REPO, route=None, base='main',
+                         trunk=None):
+    """<trunk> is the SM_TRUNK repository variable (#1492): None while it is unset, so the trunk is main."""
     return {
+        'vars': {} if trunk is None else {'SM_TRUNK': trunk},
         'github': {
             'repository': REPO,
             'event': {
@@ -238,6 +242,7 @@ def pull_request_context(labels, action='synchronize', label='', head_repo=REPO,
                 'label': {'name': label},
                 'pull_request': {
                     'head': {'repo': {'full_name': head_repo}},
+                    'base': {'ref': base},
                     'labels': [{'name': name} for name in labels],
                 },
             },
@@ -271,6 +276,15 @@ def skip_rows(label_name, skip_output):
         row('no labels at all', False, labels=[]),
         row('another label was just added', False, labels=[label_name, 'bug'], action='labeled', label='bug'),
         row('the run was cancelled', False, cancelled=True),
+        # #1492: only PRs into the trunk (SM_TRUNK, main while unset) or a lane-check base start a Mac job.
+        row('a PR into the retired next', False, base='next'),
+        row('a PR into main with SM_TRUNK set', True, base='main', trunk='main'),
+        row('a PR into next with SM_TRUNK=main', False, base='next', trunk='main'),
+        row('SM_TRUNK set to next', True, base='next', trunk='next'),
+        row('a PR into main with SM_TRUNK=next', False, base='main', trunk='next'),
+        row('a lane-check base', True, base='lane-check/try-it'),
+        row('a lane-check base with SM_TRUNK set', True, base='lane-check/try-it', trunk='main'),
+        row('a lane-check lookalike', False, base='main-lane-check/x'),
         row('cancelled and the route skips', False, cancelled=True, route={skip_output: 'true'}),
     ]
 
@@ -411,7 +425,15 @@ class EvaluatorBehavesLikeActions(unittest.TestCase):
         with self.assertRaises(ValueError):
             evaluate('github.event.x < 3', {})
         with self.assertRaises(ValueError):
-            evaluate("startsWith('a', 'a')", {})
+            evaluate("endsWith('a', 'a')", {})
+
+    def test_startswith_ignores_case_and_reads_null_as_empty(self):
+        self.check("startsWith('lane-check/x', 'lane-check/')", True)
+        self.check("startsWith('Lane-Check/x', 'lane-check/')", True)
+        self.check("startsWith('next', 'lane-check/')", False)
+        self.check("startsWith(github.x, 'lane-check/')", False)
+        self.check("vars.SM_TRUNK || 'main'", 'main')
+        self.check("vars.SM_TRUNK || 'main'", 'next', {'vars': {'SM_TRUNK': 'next'}})
 
 
 class WorkflowShape(unittest.TestCase):

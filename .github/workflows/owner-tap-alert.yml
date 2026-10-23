@@ -8,8 +8,8 @@
 # app pushes mentions.
 #
 # Where the alert is decided:
-# - Mostly at the end of linux-t1.yml and shipped-build-compat.yml, in their own `owner-tap-alert` job, so it comes
-#   when a PR's checks finish. Their push event fires while the checks are still running, and check_suite,
+# - Mostly at the end of hosted-portable.yml (linux-t1.yml while LANE_HOSTED_FAST is off, #2442) and
+#   shipped-build-compat.yml, in their own `owner-tap-alert` job, so it comes when a PR's checks finish. Their push event fires while the checks are still running, and check_suite,
 #   workflow_run and workflow_dispatch all take their triggers from main, which doesn't carry this file until
 #   #1492. After #1492 those jobs can move here as a `workflow_run` or `check_suite` trigger.
 # - Here, when a PR touching those paths gets the `owner-tap-check` label, is marked ready for review or is
@@ -25,7 +25,7 @@ name: owner-tap-alert
 
 on:
   pull_request:
-    branches: [next]
+    branches: [next, main]  # either trunk (#1492); the checks read the PR's own base
     # Not opened or synchronize: the head's checks have only just started, and their own last job decides.
     types: [reopened, ready_for_review, labeled]
     paths: ['.github/**', 'scripts/lane-runner.py']
@@ -33,7 +33,7 @@ on:
   workflow_dispatch:
     inputs:
       pr:
-        description: 'Check only this PR (default: every open PR into next)'
+        description: 'Check only this PR (default: every open PR into the trunk)'
         required: false
         type: string
 
@@ -57,10 +57,10 @@ jobs:
       github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft &&
        (github.event.action != 'labeled' || github.event.label.name == 'owner-tap-check'))
-    runs-on: [self-hosted, Linux, sm-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # Policy and code from the base, never PR code.
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
@@ -68,11 +68,13 @@ jobs:
           sparse-checkout: |
             scripts/owner_tap_alert.py
             scripts/comment_trust.py
+            scripts/trunk.py
           sparse-checkout-cone-mode: false
       - name: Alert the owner about PRs ready for his merge tap
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
           ONLY_PR: ${{ inputs.pr || github.event.pull_request.number }}
           CLEAR: ${{ github.event.label.name == 'owner-tap-check' && 'owner-tap-check' || '' }}
         run: |

@@ -10,6 +10,8 @@ struct ExperienceItemDetailScreen: View {
     @State private var confirmsTrash = false
     @State private var confirmsNewSession = false
     @State private var showsAdvanced = false
+    /// Set while Continue waits on the "hear new Margins first?" question (#474).
+    @State private var newMarginsOfferItemId: String?
     @State private var episodeLinkStatus = ImportedFileEpisodeLinker.Status()
     @State private var asksForEpisodeLink = false
     @State private var episodeLinkText = ""
@@ -137,6 +139,7 @@ struct ExperienceItemDetailScreen: View {
             } message: {
                 Text("Your existing listening position and Margins remain in their current session.")
             }
+            .newMarginsOffer(itemId: $newMarginsOfferItemId)
             .miniPlayerKeepOut()
         }
     }
@@ -257,7 +260,7 @@ struct ExperienceItemDetailScreen: View {
 
     @ViewBuilder
     private var secondaryActions: some View {
-        if model.selectedItemPreferredContinuationSession != nil || !itemMargins.isEmpty {
+        if model.selectedItemPreferredContinuationSession != nil || hasItemMargins || !newSharedMargins.isEmpty {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) { secondaryActionButtons }
                 VStack(alignment: .leading, spacing: 8) { secondaryActionButtons }
@@ -305,7 +308,7 @@ struct ExperienceItemDetailScreen: View {
             .accessibilityIdentifier("item.start.preparing")
         }
         Button {
-                model.startItem(id: model.selectedItem.id)
+                model.continueListening(itemId: model.selectedItem.id) { newMarginsOfferItemId = $0 }
             } label: {
                 Label([.waiting, .preparing].contains(model.selectedItemStartupAudioState) ? "Listen now" : primaryPlaybackLabel, systemImage: "play.fill")
                     .frame(maxWidth: .infinity, minHeight: 52)
@@ -316,6 +319,17 @@ struct ExperienceItemDetailScreen: View {
 
     @ViewBuilder
     private var secondaryActionButtons: some View {
+        if !newSharedMargins.isEmpty {
+            Button {
+                model.reviewNewMargins(itemId: model.selectedItem.id, thenContinue: false)
+            } label: {
+                Label("Review new Margins (\(newSharedMargins.count))", systemImage: "person.2")
+                    .frame(minHeight: 40)
+            }
+            .filledActionButton()
+            .accessibilityIdentifier("item.reviewNewMargins.button")
+        }
+
         if model.selectedItemPreferredContinuationSession != nil {
             Button {
                 confirmsNewSession = true
@@ -329,7 +343,7 @@ struct ExperienceItemDetailScreen: View {
             .accessibilityIdentifier("item.startNew.button")
         }
 
-        if !itemMargins.isEmpty {
+        if hasItemMargins {
             Button {
                 model.marginCollectionQuery = MarginCollectionQuery(itemID: model.selectedItem.id)
                 model.openMargins()
@@ -652,6 +666,16 @@ struct ExperienceItemDetailScreen: View {
         .padding(16)
         .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay { RoundedRectangle(cornerRadius: 18).stroke(AppColors.border) }
+    }
+
+    /// `!itemMargins.isEmpty` without building and sorting the rows, for the checks `body` makes on every render.
+    private var hasItemMargins: Bool {
+        model.selectedItem.interjections.contains { $0.status == "active" }
+    }
+
+    /// Shared Margins on this item that the listener hasn't heard (#474).
+    private var newSharedMargins: [SharedMarginReview.Entry] {
+        model.newSharedMargins(itemId: model.selectedItem.id)
     }
 
     private var itemMargins: [MarginRow] {

@@ -49,7 +49,7 @@ final class EpisodeMapStoredNamesTests: XCTestCase {
             XCTAssertEqual(Array(job.id.unicodeScalars), Array(entry.jobID.unicodeScalars),
                            entry.itemID.debugDescription)
             XCTAssertEqual(job.stage, .verifySource)
-            XCTAssertEqual(model.diagnostics["episodeMapPreparation:\(entry.itemID)"], "waiting_for_local_audio")
+            XCTAssertTrue(model.diagnostics["episodeMapPreparation:\(entry.itemID)"]?.hasPrefix("waiting_for_local_audio:trigger=listener_request:at=") == true)
         }
     }
 
@@ -71,15 +71,15 @@ final class EpisodeMapStoredNamesTests: XCTestCase {
             "SpokenMargins/EpisodeMaps/p19-extensionless-996/SummaryBridges/summary-bridge-p19-extensionless-996-p19-map-996-p19-scene-1-system-com.apple.voice.test-en_US-natural-rate-v2.caf")
     }
 
-    func testJamesSummarySavesVoiceRawValueAndEmptySystemIdentifier() async throws {
-        // Summary preparation has no Supertonic injection seam. The lane renders this short text
-        // with the bundled voice; the supplied system identifier must not appear in James's ID.
+    func testJamesSummaryWithoutSupertonicDownloadSavesKittenKeyAndEmptySystemIdentifier() async throws {
+        // Supertonic's model is a download (#1820), so on the lane James has none and the bundled Kitten voice speaks
+        // the summary. The asset ID names Kitten, not James, and the supplied system identifier must not appear in it.
         let asset = try await importSummary(itemID: "p19-james-996",
             safeItemDirectory: "p19-james-996", voice: .james)
         XCTAssertEqual(asset.id,
-            "summary-bridge-p19-james-996-p19-map-996-p19-scene-1-supertonic-M2--natural-rate-v2")
+            "summary-bridge-p19-james-996-p19-map-996-p19-scene-1-kitten--natural-rate-v2")
         XCTAssertEqual(asset.relativePath,
-            "SpokenMargins/EpisodeMaps/p19-james-996/SummaryBridges/summary-bridge-p19-james-996-p19-map-996-p19-scene-1-supertonic-M2--natural-rate-v2.wav")
+            "SpokenMargins/EpisodeMaps/p19-james-996/SummaryBridges/summary-bridge-p19-james-996-p19-map-996-p19-scene-1-kitten--natural-rate-v2.wav")
     }
 
     func testSuppliedAuthorSummarySavesSuppliedKeyAndM4AImportPath() async throws {
@@ -146,6 +146,9 @@ final class EpisodeMapStoredNamesTests: XCTestCase {
         try store.saveOwnedOfflineAsset(OwnedOfflineAsset(id: "p19-source", itemId: itemID,
             category: .audiobook, relativePath: sourcePath, byteCount: Int64(bytes.count),
             checksumSHA256: digest, isReproducible: false))
+        // These tests expect Kitten to speak James's summary; with a Supertonic download present, James would.
+        try XCTSkipIf(voice == .james && model.supertonicModel.isModelPresent,
+            "a Supertonic download is present, so James would render the summary himself")
         if voice == .james { model.acceptCurrentTermsAndEnableOnDeviceVoice() }
         model.ttsVoiceSelection = voice
         model.speechVoiceIdentifier = "com.apple.voice.test:en_US"
@@ -187,7 +190,7 @@ final class EpisodeMapStoredNamesTests: XCTestCase {
         }
         XCTAssertFalse(model.isImportingSpokenMarginsPackage)
         XCTAssertNil(model.spokenMarginsPackageImportError)
-        // The injected renderer is immediate; James also has to load its bundled model on a busy lane.
+        // The injected renderer is immediate; James's summary is rendered by Kitten, which loads its bundled model on a busy lane.
         let bridgePolls = voice == .james ? 3_000 : 500
         for _ in 0..<bridgePolls where model.diagnostics["localAudioSkim:\(itemID)"] != "ready"
             && model.diagnostics["localAudioSkim:\(itemID)"]?.hasPrefix("failed:") != true {

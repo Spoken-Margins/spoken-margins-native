@@ -203,7 +203,8 @@ class PrecheckTests(unittest.TestCase):
     def test_hook_only_targets_initial_integration_prompts(self):
         cases = [(precheck.PROMPT_MARKER + '\nRun the integration procedure.', True),
                  ('\ufeff  ' + precheck.PROMPT_MARKER, True),
-                 (precheck.LEGACY_TASK_PREFIX + " on the owner's Mac.", True),
+                 (precheck.LEGACY_TASK_PREFIXES[0] + " on the owner's Mac.", True),
+                 (precheck.LEGACY_TASK_PREFIXES[1] + " on the owner's Mac.", True),
                  ('Explain ' + precheck.PROMPT_MARKER, False),
                  ('Please retry the failed test from this session.', False),
                  ('SM Mac tick', False), ('', False)]

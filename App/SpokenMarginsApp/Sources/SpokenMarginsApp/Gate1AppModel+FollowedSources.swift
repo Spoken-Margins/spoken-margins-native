@@ -327,6 +327,7 @@ extension Gate1AppModel {
                 self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
             } catch {
+                await self.recordFollowFailure(error)
                 self.reportFailure(error, context: "Follow suggestion failed")
             }
         }
@@ -374,6 +375,8 @@ extension Gate1AppModel {
 
     func importFollowedSourceEntry(_ entry: FeedEntry, openWhenFinished: Bool = false, playWhenFinished: Bool = false) {
         guard importingFollowedSourceEntryIds.insert(entry.id).inserted else { return }
+        // Opening or playing waits on a fetch; anything the listener opens or starts meanwhile wins (#2124).
+        let intent = openWhenFinished || playWhenFinished ? followedPlayIntent.begin() : nil
         Task { [weak self] in
             guard let self else { return }
             defer { self.importingFollowedSourceEntryIds.remove(entry.id) }
@@ -398,11 +401,14 @@ extension Gate1AppModel {
                         sourceSurface: "followed_source",
                         startSession: false
                     ), feedEntry: entry, subscription: subscription)
+                    let stillWanted = intent.map { self.followedPlayIntent.finish($0) } ?? false
                     imported = importedItemId != nil
                     self.recordFollowedPublisherAudio(lookup?.outcome, itemId: importedItemId, saved: false)
-                    if let importedItemId { if openWhenFinished { self.openItem(id: importedItemId) }; if playWhenFinished { self.startItem(id: importedItemId) } } // Play now (#478)
+                    if let importedItemId, stillWanted { if openWhenFinished { self.openItem(id: importedItemId) }; if playWhenFinished { self.startItem(id: importedItemId) } } // Play now (#478)
                 } else {
                     let handoff = self.listeningSignals.followedArticle(try await FollowedArticleImport.handoff(for: entry, url: url, using: self.readablePageExtractor, record: { self.diagnostics.merge($0) { _, new in new } }), for: entry)
+                    let stillWanted = intent.map { self.followedPlayIntent.finish($0) } ?? false
+                    let openWhenFinished = openWhenFinished && stillWanted, playWhenFinished = playWhenFinished && stillWanted
                     // With something already playing, importBrowserText only adds; Add and open still opens it (#567).
                     if openWhenFinished, !playWhenFinished, !entry.hasPublisherAudio, !self.hasActiveSession {
                         let itemId = self.importBrowserTextItem(handoff).map { self.listeningSignals.followedArticleImported($0, for: entry) }

@@ -46,14 +46,19 @@ struct PlaybackPositionSlider: UIViewRepresentable {
         view.setNeedsLayout()
     }
 
-    /// The bar is exactly as tall as the slider, whatever height it is offered: the dock sits in a
-    /// bottom safe-area inset, so any extra height here is taken from the Now pane (#1475).
+    /// The bar is as tall as a 44 pt touch target (or the slider, if taller), whatever height it is offered: the dock
+    /// sits in a bottom safe-area inset, so any extra height here is taken from the Now pane (#1475). The slider fills
+    /// the bar and centres its track, so the extra height is room to touch, not a taller track (#430).
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: PlaybackBarAccessibilityView, context: Context) -> CGSize? {
         Self.fittedSize(proposedWidth: proposal.width, slider: uiView.slider.intrinsicContentSize)
     }
 
+    /// How far the bar reaches into the dock's 4 pt row gaps above and below it, so the touch height costs the dock
+    /// only what the gaps can't give and never overlaps the chapter row or the transport (#430).
+    static let rowGapOverlap: CGFloat = 4
+
     static func fittedSize(proposedWidth: CGFloat?, slider: CGSize) -> CGSize {
-        let height = slider.height > 0 ? slider.height : 31
+        let height = max(slider.height > 0 ? slider.height : 31, TapTarget.minimum)
         guard let width = proposedWidth, width.isFinite else {
             return CGSize(width: slider.width > 0 ? slider.width : 120, height: height)
         }

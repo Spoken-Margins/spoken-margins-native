@@ -6,7 +6,9 @@ Usage: scripts/xcodebuild-lane <xcodebuild arguments>
 - Waits for one of the two Mac-wide build slots (scripts/lane_slots.py), so stream sessions and
   the lane never run more than two builds at once. Queued builds print who holds the slots.
 - Adds `-derivedDataPath <worktree>/.build/dd` unless the arguments already name one. A shared
-  DerivedData across branches produces false "does not conform" errors (AGENTS.md).
+  DerivedData across branches produces false "does not conform" errors (AGENTS.md). In a worktree under
+  ~/Documents, `.build` is first linked to its own folder in ~/Library/Caches/SpokenMarginsBuilds, where
+  the disk-relief job can clear it (scripts/sm_build_cache.py).
 - Adds `ARCHS=arm64` to a generic iOS Simulator build on Apple silicon, unless the arguments set
   ARCHS or -arch. A generic destination builds every architecture: each Swift file, packages
   included, was compiled for x86_64 too, a simulator no Mac here runs (#1326).
@@ -14,6 +16,8 @@ Usage: scripts/xcodebuild-lane <xcodebuild arguments>
   scripts/xcodebuild_finish.py's grace period is stopped, says so, and returns the result its summary shows (#2053).
   That is a pass only when the summary covers the whole run (one bundle selected, or xcodebuild's own banner).
 - Information-only calls (-version, -list, -showBuildSettings, -exportArchive, ...) skip all three.
+- Every call first links the main checkout's git-ignored Config/Local.xcconfig, the signing team, into a
+  worktree that has none (#1841), so device builds and archives in any worktree sign as the main checkout does.
 """
 import contextlib
 import os
@@ -26,6 +30,7 @@ import threading
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lane_slots import build_slot  # noqa: E402
+import sm_build_cache  # noqa: E402
 import xcodebuild_finish  # noqa: E402
 
 NO_BUILD_FLAGS = {'-version', '-list', '-showsdks', '-showBuildSettings', '-showdestinations',
@@ -42,6 +47,28 @@ def worktree_root():
         return Path.cwd()
 
 
+def link_local_config(root, log=None):
+    """Link the main checkout's Config/Local.xcconfig into worktree `root` if it has none; the link, or None."""
+    target = Path(root) / 'Config' / 'Local.xcconfig'
+    if not target.parent.is_dir() or target.exists() or target.is_symlink():
+        return None
+    try:
+        common = subprocess.check_output(['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+                                         cwd=root, text=True, stderr=subprocess.DEVNULL).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    source = Path(common).parent / 'Config' / 'Local.xcconfig'
+    if source.parent.parent.resolve() == Path(root).resolve() or not source.is_file():
+        return None
+    try:
+        target.symlink_to(source)
+    except OSError:  # a parallel call linked it first, or the folder is read-only: build on without it
+        return None
+    if log:
+        log(f'[lane] Config/Local.xcconfig: linked to {source} (the signing team, #1841)')
+    return target
+
+
 def simulator_arch(args, machine=None):
     """['ARCHS=arm64'] for a generic iOS Simulator build on Apple silicon that sets no architecture, else []."""
     destinations = [args[i + 1].replace(' ', '') for i, arg in enumerate(args[:-1]) if arg == '-destination']
@@ -52,11 +79,14 @@ def simulator_arch(args, machine=None):
 
 def main(argv):
     xcodebuild = os.environ.get('SM_LANE_XCODEBUILD', 'xcodebuild')
+    link_local_config(worktree_root(), log=lambda line: print(line, file=sys.stderr, flush=True))
     if any(arg in NO_BUILD_FLAGS for arg in argv):
         os.execvp(xcodebuild, [xcodebuild, *argv])
     args = list(argv)
     if '-derivedDataPath' not in args:
-        args += ['-derivedDataPath', str(worktree_root() / '.build/dd')]
+        root = worktree_root()
+        sm_build_cache.ensure_links(root, log=lambda line: print(line, file=sys.stderr, flush=True))
+        args += ['-derivedDataPath', str(root / '.build/dd')]
     args += simulator_arch(args)
     derived = args[args.index('-derivedDataPath') + 1]
     action = next((a for a in reversed(argv) if not a.startswith('-') and '=' not in a

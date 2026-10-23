@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 import SessionKit
 @testable import SpokenMarginsApp
@@ -52,11 +53,23 @@ final class FailedSharedArticleTests: XCTestCase {
 
     func testAnUnreadablePayloadStaysQuiet() async throws {
         let (model, store) = try makeModel(failing: [], mismatched: ["bad-payload"])
+        // Every banner the drain presents is recorded, so a shared-article banner that a later one (such as the
+        // fixture's "Library bootstrap failed", which lands on its own schedule) replaced is still caught, and
+        // that unrelated banner can't fail this test (#2360).
+        var presented: [String] = []
+        let recording = model.$feedbackEvent.sink { event in
+            if let event { presented.append(event.message) }
+        }
+        defer { recording.cancel() }
 
         model.importPendingSourceLinkHandoffs()
         try await waitFor("the drain") { model.diagnostics["pendingBrowserTextPayload:bad-payload"] != nil }
 
-        XCTAssertNil(model.feedbackEvent)
+        XCTAssertEqual(model.diagnostics["pendingBrowserTextPayload:bad-payload"], "deleted_invalid_payload")
+        XCTAssertEqual(
+            presented.filter { $0.contains("shared article") }, [],
+            "An unreadable payload is dropped without a shared-article banner"
+        )
         XCTAssertEqual(try store.failedHandoffs().count, 0)
     }
 

@@ -27,6 +27,21 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         XCTAssertNotEqual(before.digest, after.digest, "Mutable assets must not use the immutable bundle cache")
     }
 
+    // #1820: Supertonic is a download now, and an installed voice folder never changes in place, so its 145 MB are
+    // hashed once per run like the bundle's were, not on every play and preparation pass.
+    func testADownloadedVoiceFolderIsHashedOncePerRun() throws {
+        let assets = try SupertonicTestAssets.installPlaceholderDownload(in: self)
+        guard assets.rootURL.lastPathComponent == SupertonicTestAssets.placeholderVersion else {
+            throw XCTSkip("a real Supertonic download is on this simulator, and this test edits the files it hashes")
+        }
+        let first = try SupertonicRenderIdentity.make(assets: assets, voice: .m2)
+        let graph = assets.onnxDirectoryURL.appending(path: "vocoder.onnx")
+        let size = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: graph.path)[.size] as? Int)
+        try Data(repeating: 0x2a, count: size).write(to: graph)  // an in-place edit the installer never makes
+        let second = try SupertonicRenderIdentity.make(assets: assets, voice: .m2)
+        XCTAssertEqual(first.assetManifestHash, second.assetManifestHash, "the model folder's hash came from the cache")
+    }
+
     func testChunkPlanCacheReusesOnlyExactSource() {
         let cache = PreparedChunkPlanCache()
         var builds = 0
@@ -154,6 +169,38 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         try fixture.store.saveItem(Item(id: "item", title: "PDF", mediaType: "pdf", text: "First chunk. Second chunk.", externalReference: nil, status: "ready"))
         try await coordinator.complete(itemId: "item", signature: signature("one"), prepared: prepared)
         XCTAssertEqual(try fixture.store.loadPreparedAudioManifest(id: manifest.id)?.state, .readyOffline)
+    }
+
+    func testNarrationFinishedAfterStopOrAVoiceChangeIsNotMarkedReady() async throws {
+        // #2134: assembly runs for a while; a Stop or a new voice that landed meanwhile was overwritten
+        // by complete(), which marked the old voice's audio ready.
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let text = "First chunk. Second chunk."
+        let artifact = fixture.root.appending(path: "complete.wav")
+        try Data([1, 2, 3, 4, 5, 6]).write(to: artifact)
+        let prepared = PreparedTextAudio(
+            normalizedText: text,
+            media: ItemMedia(sourceType: .generatedTTSPrerendered, url: artifact.absoluteString, durationMs: 2_000),
+            timeline: TranscriptTimeline(segments: [], chapters: [], durationMs: 2_000)
+        )
+
+        let stopped = try await coordinator.begin(itemId: "item", sourceText: text, signature: signature("one"), plan: plans())
+        try await coordinator.stop(itemId: "item", signature: signature("one"))
+        let refusedAfterStop = try await coordinator.refusesCompletion(itemId: "item", signature: signature("one"))
+        XCTAssertTrue(refusedAfterStop)
+        let afterStop = try await coordinator.complete(itemId: "item", signature: signature("one"), prepared: prepared)
+        XCTAssertFalse(afterStop)
+        XCTAssertEqual(try fixture.store.loadPreparedAudioManifest(id: stopped.id)?.state, .stopped)
+        XCTAssertNil(try fixture.store.loadPreparedAudioManifest(id: stopped.id)?.artifact)
+
+        // A new voice retires the old one's manifest; the old assembly finishing must not revive it.
+        _ = try await coordinator.begin(itemId: "item", sourceText: text, signature: signature("two"), plan: plans())
+        let afterVoiceChange = try await coordinator.complete(itemId: "item", signature: signature("one"), prepared: prepared)
+        XCTAssertFalse(afterVoiceChange)
+        XCTAssertEqual(try fixture.store.loadPreparedAudioManifest(id: stopped.id)?.state, .needsRepreparation)
+        XCTAssertNil(try fixture.store.loadPreparedAudioManifest(id: stopped.id)?.artifact)
     }
 
     func testAChunkRenderedFromTextTheItemNoLongerHasIsNotSaved() async throws {
@@ -543,8 +590,8 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         try store.saveItem(Item(id: itemId, title: "Article near the limit", mediaType: "text", text: text, externalReference: nil, status: "ready"))
         let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         let preparedRoot = support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
-        let resources = try XCTUnwrap(Bundle.main.resourceURL).appending(path: "Supertonic", directoryHint: .isDirectory)
-        let signature = try SupertonicRenderIdentity.make(assets: SupertonicAssetLocation(rootURL: resources), voice: voice)
+        let assets = try SupertonicTestAssets.installPlaceholderDownload(in: self) // the renderer is a stand-in (#1820)
+        let signature = try SupertonicRenderIdentity.make(assets: assets, voice: voice)
         let plan = PreparedChunkPlan.articlePlan(text)
         XCTAssertGreaterThanOrEqual(plan.count, 5)
         let manifest = try await PreparedAudioCoordinator(repository: store, rootDirectory: preparedRoot)
@@ -768,8 +815,8 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         try store.saveItem(Item(id: itemId, title: "Warm article", mediaType: "text", text: text, externalReference: nil, status: "ready"))
         let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         let preparedRoot = support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
-        let resources = try XCTUnwrap(Bundle.main.resourceURL).appending(path: "Supertonic", directoryHint: .isDirectory)
-        let signature = try SupertonicRenderIdentity.make(assets: SupertonicAssetLocation(rootURL: resources), voice: voice)
+        let assets = try SupertonicTestAssets.installPlaceholderDownload(in: self) // the renderer is a stand-in (#1820)
+        let signature = try SupertonicRenderIdentity.make(assets: assets, voice: voice)
         let plan = PreparedChunkPlan.articlePlan(text)
         XCTAssertGreaterThanOrEqual(plan.count, 5)
         let manifest = try await PreparedAudioCoordinator(repository: store, rootDirectory: preparedRoot)

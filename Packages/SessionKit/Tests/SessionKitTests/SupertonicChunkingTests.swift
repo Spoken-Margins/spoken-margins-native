@@ -21,19 +21,10 @@ final class SupertonicChunkingTests: XCTestCase {
     number of samples it needs while keeping its judgments close to those of human raters.
     """
 
-    private static var supertonicAssets: SupertonicAssetLocation? {
-        let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appending(path: "App/SpokenMarginsApp/Resources/Supertonic", directoryHint: .isDirectory)
-        let assets = SupertonicAssetLocation(rootURL: root)
-        return (try? assets.validate()) == nil ? nil : assets
-    }
-
     /// The real model renders every chunk the app plans for a number-heavy table span. None may
     /// come near the ~28 s babble point. Build 29's chunker gives two chunks of about 29 s here.
     func testNumberHeavyTableSpanRendersNoChunkNearTheBabbleLength() async throws {
-        guard let assets = Self.supertonicAssets else { throw XCTSkip("Supertonic assets not in this checkout") }
+        let assets = try SupertonicTestModel.assets()
         let output = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-chunking-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: output) }
@@ -97,7 +88,7 @@ final class SupertonicChunkingTests: XCTestCase {
     /// A chunk that fails the check is read by the iOS voice into a file with Supertonic's exact
     /// format, so the player and the prepared-audio assembler accept it.
     func testSystemVoiceReadsAFlaggedChunkInSupertonicsFormat() async throws {
-        guard let assets = Self.supertonicAssets else { throw XCTSkip("Supertonic assets not in this checkout") }
+        let assets = try SupertonicTestModel.assets()
         let output = FileManager.default.temporaryDirectory
             .appending(path: "system-voice-chunk-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: output) }

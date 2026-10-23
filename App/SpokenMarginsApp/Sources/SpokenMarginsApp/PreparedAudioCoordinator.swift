@@ -54,11 +54,22 @@ private final class BundledModelHashCache: @unchecked Sendable {
     private let lock = NSLock()
     private var hashes: [URL: String] = [:]
 
+    /// Folders whose files never change while the app runs: the app bundle, and the downloaded voices (#1820). The
+    /// voice installer verifies each file's hash and moves a whole version folder into place; a new version gets a
+    /// new folder and a removed one is deleted, so a folder's bytes never change in place. Without this, every play
+    /// and preparation pass would hash Supertonic's 145 MB again now that it is a download.
+    private static let immutableRoots: [String] = {
+        var roots = [Bundle.main.bundleURL]
+        if let support = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false) {
+            roots.append(VoiceCatalogCoordinator.voicesRoot(supportDirectory: support))
+        }
+        return roots.map { $0.resolvingSymlinksInPath().standardizedFileURL.path + "/" }
+    }()
+
     func value(at url: URL, compute: () throws -> String) rethrows -> String {
-        // Only installed bundle resources are immutable for this process.
-        // Imported/test assets must be rehashed, including same-size edits.
-        let root = Bundle.main.bundleURL.standardizedFileURL.path + "/"
-        guard url.standardizedFileURL.path.hasPrefix(root) else { return try compute() }
+        // Imported and test assets elsewhere must be rehashed, including same-size edits.
+        let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+        guard Self.immutableRoots.contains(where: { path.hasPrefix($0) }) else { return try compute() }
         lock.lock()
         let cached = hashes[url]
         lock.unlock()
@@ -73,75 +84,35 @@ private final class BundledModelHashCache: @unchecked Sendable {
 
 enum SupertonicRenderIdentity {
     private static let bundledHashes = BundledModelHashCache()
-    static let modelRevision = "supertonic-3-int8"
-    static let normalizationVersion = "speech-normalizer.v3"
-    static let chunkingVersion = NarrationChunkPlanner.version
+    /// The model's hashes as the app's `asset-manifest.json` pins them, read once.
+    private static let pinned: SupertonicModelHashes? = Bundle.main
+        .url(forResource: "asset-manifest", withExtension: "json", subdirectory: "Supertonic")
+        .flatMap { try? SupertonicModelHashes.load(from: $0) }
 
     static func make(
         assets: SupertonicAssetLocation,
         voice: SupertonicVoiceID,
-        language: String = "en",
-        synthesisSteps: Int = 8,
-        speed: Float = 1,
         fileManager: FileManager = .default
     ) throws -> TTSRenderSignature {
         let assetHash = try bundledHashes.value(at: assets.onnxDirectoryURL) {
-            try treeHash(at: assets.onnxDirectoryURL, fileManager: fileManager)
+            try SupertonicModelHashes.onnxTreeHash(at: assets.onnxDirectoryURL, fileManager: fileManager)
         }
-        let voiceHash = try fileHash(at: assets.voiceStyleURL(for: voice), fileManager: fileManager)
-        let parameters = "language=\(language)\u{1f}steps=\(synthesisSteps)\u{1f}synthesisSpeed=\(speed)"
-        let parametersHash = sha256(Data(parameters.utf8))
-        let canonical = [
-            modelRevision,
-            assetHash,
-            voiceHash,
-            parametersHash,
-            normalizationVersion,
-            chunkingVersion,
-            "prepared-audio-manifest.v2"
-        ].joined(separator: "\u{1f}")
-        return TTSRenderSignature(
-            engine: "supertonic",
-            modelRevision: modelRevision,
-            assetManifestHash: assetHash,
-            voiceStyleHash: voiceHash,
-            synthesisParametersHash: parametersHash,
-            normalizationVersion: normalizationVersion,
-            chunkingVersion: chunkingVersion,
-            digest: sha256(Data(canonical.utf8))
-        )
+        let voiceHash = try SupertonicModelHashes.fileHash(at: assets.voiceStyleURL(for: voice), fileManager: fileManager)
+        return SupertonicRenderSignature.make(onnxTreeHash: assetHash, voiceStyleHash: voiceHash)
     }
 
-    private static func treeHash(at directory: URL, fileManager: FileManager) throws -> String {
-        let urls = try fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ).filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-        var digest = SHA256()
-        for url in urls {
-            digest.update(data: Data(url.lastPathComponent.utf8))
-            digest.update(data: Data([0]))
-            let handle = try FileHandle(forReadingFrom: url)
-            defer { try? handle.close() }
-            while let block = try handle.read(upToCount: 64 * 1_024), !block.isEmpty {
-                digest.update(data: block)
-            }
-            digest.update(data: Data([0]))
+    /// The identity of `voice`'s saved audio whether or not the model is on the phone (#1820): from its files when
+    /// they are there, otherwise from the pinned hashes, which name the same bytes. Throws only when neither is there.
+    static func current(voice: SupertonicVoiceID, assets: SupertonicAssetLocation? = SupertonicAssetResolver.location()) throws -> TTSRenderSignature {
+        if let assets { return try make(assets: assets, voice: voice) }
+        guard let pinned, let signature = SupertonicRenderSignature.make(pinnedBy: pinned, voice: voice) else {
+            throw SupertonicNarrationError.missingAsset("Supertonic")
         }
-        return digest.finalize().map { String(format: "%02x", $0) }.joined()
-    }
-
-    private static func fileHash(at url: URL, fileManager: FileManager) throws -> String {
-        guard fileManager.fileExists(atPath: url.path) else {
-            throw SupertonicNarrationError.missingAsset(url.lastPathComponent)
-        }
-        return sha256(try Data(contentsOf: url, options: [.mappedIfSafe]))
+        return signature
     }
 
     static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        SupertonicModelHashes.sha256(data)
     }
 }
 
@@ -297,6 +268,14 @@ actor PreparedAudioCoordinator {
         })
     }
 
+    /// True when a Stop, a failure or a new voice has retired this manifest, so audio finished for it
+    /// must not be attached or marked ready (#2134). A manifest that does not exist is not refused.
+    func refusesCompletion(itemId: String, signature: TTSRenderSignature) throws -> Bool {
+        let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
+        guard let manifest = try repository.loadPreparedAudioManifest(id: manifestId) else { return false }
+        return !PreparedAudioEnqueue.mayComplete(manifest.state)
+    }
+
     /// False when the manifest is gone or was retired by a re-import meanwhile (#344 audit).
     @discardableResult
     func complete(itemId: String, signature: TTSRenderSignature, prepared: PreparedTextAudio) throws -> Bool {
@@ -307,7 +286,8 @@ actor PreparedAudioCoordinator {
               url.isFileURL else { return false }
         let data = try Data(contentsOf: url, options: [.mappedIfSafe])
         // Loaded after the hash, which a re-import can overtake (#344 audit).
-        guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId) else { return false }
+        guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId),
+              PreparedAudioEnqueue.mayComplete(manifest.state) else { return false }
         manifest.artifact = PreparedAudioArtifact(
             relativePath: relativePath(url),
             byteCount: Int64(data.count),
@@ -317,15 +297,16 @@ actor PreparedAudioCoordinator {
         manifest.state = .readyOffline
         manifest.failureCode = nil
         manifest.updatedAt = Date()
-        guard try saveUnlessRetired(manifest, stillCurrent: { Self.isMade(from: (try? PreparedAudioEnqueue.preparedText(item: $0, repository: repository)) ?? "", manifest) }) else { return false }
+        guard try saveUnlessRetired(manifest, stillCurrent: { Self.isMade(from: (try? PreparedAudioEnqueue.preparedText(item: $0, repository: repository)) ?? "", manifest) },
+                                    stillAllowed: { PreparedAudioEnqueue.mayComplete($0.state) }) else { return false }
         return true
     }
 
     /// Saves progress/completion and its job atomically with the retirement check.
     /// File copying and hashing happen before entering this short transaction.
-    private func saveUnlessRetired(_ manifest: PreparedAudioManifest, stillCurrent: (Item) -> Bool, commitFile: (() throws -> Void)? = nil) throws -> Bool {
-        try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: repository) { _, item in
-            guard stillCurrent(item) else { return false }
+    private func saveUnlessRetired(_ manifest: PreparedAudioManifest, stillCurrent: (Item) -> Bool, stillAllowed: (PreparedAudioManifest) -> Bool = { _ in true }, commitFile: (() throws -> Void)? = nil) throws -> Bool {
+        try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: repository) { saved, item in
+            guard stillCurrent(item), stillAllowed(saved) else { return false }
             try commitFile?()
             try repository.savePreparedAudioManifest(manifest)
             if manifest.state == .readyOffline {

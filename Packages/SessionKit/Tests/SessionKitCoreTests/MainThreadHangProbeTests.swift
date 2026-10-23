@@ -37,40 +37,106 @@ final class MainThreadHangProbeTests: XCTestCase {
         wait(for: [done], timeout: 5)
     }
 
+    /// How late this host ran a 10 ms sleep, at worst, while a test was running (#2210). The probe measures the main
+    /// queue against wall-clock time, so on a Mac under heavy load (load average above 40) its own timer fires late
+    /// and every reading is off by more than the windows below allow, though the probe is right. Each timing test
+    /// keeps its checks until it has seen how busy the host was: a busy host skips it, a calm one judges it.
+    private final class SchedulerJitter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var worstLateMs = 0.0
+        private var running = true
+
+        init() {
+            let sampler = Thread { [self] in
+                while isRunning {
+                    let before = ProcessInfo.processInfo.systemUptime
+                    usleep(10_000)
+                    record((ProcessInfo.processInfo.systemUptime - before) * 1000 - 10)
+                }
+            }
+            // Default quality of service, like the queues the probe is timed on: a busy host delays those most.
+            sampler.start()
+        }
+
+        private var isRunning: Bool { lock.lock(); defer { lock.unlock() }; return running }
+
+        private func record(_ lateMs: Double) {
+            lock.lock()
+            worstLateMs = max(worstLateMs, lateMs)
+            lock.unlock()
+        }
+
+        /// Stops sampling and returns the worst lateness seen, in milliseconds.
+        func stop() -> Double {
+            lock.lock()
+            defer { lock.unlock() }
+            running = false
+            return worstLateMs
+        }
+    }
+
+    private func startJitterSampling() -> SchedulerJitter {
+        let jitter = SchedulerJitter()
+        addTeardownBlock { _ = jitter.stop() }  // a test that ends early must not leave the sampler running
+        return jitter
+    }
+
+    /// A 10 ms sleep that ran this much late means the probe's timer was just as late. The probe's duration
+    /// windows below are about 70 ms wide on each side, so past this the verdict would say nothing about the probe.
+    private static let busyHostLateMs = 40.0
+
+    /// Skips the test if the host was too busy to judge it, else runs the checks it kept.
+    private func conclude(_ jitter: SchedulerJitter, _ checks: [() -> Void]) throws {
+        let late = jitter.stop()
+        try XCTSkipIf(late > Self.busyHostLateMs, "the host ran a 10 ms sleep \(Int(late)) ms late, too busy to time the probe")
+        for check in checks { check() }
+    }
+
     /// The check runs every 100 ms, so the same block lands at a different point of the cycle each time; the
     /// delays below walk it across the cycle.
     private let cyclePhases = [100, 130, 160, 190, 220, 250, 280, 310]
 
-    func testAFourHundredMillisecondBlockRecordsOneHangWithItsLabel() {
+    func testAFourHundredMillisecondBlockRecordsOneHangWithItsLabel() throws {
+        let jitter = startJitterSampling()
         let hangs = Hangs()
         let probe = makeProbe(into: hangs)
         probe.start(intervalMs: 100)
         defer { probe.stop() }
+        var checks: [() -> Void] = []
         for (round, phase) in cyclePhases.enumerated() {
             settle(phase)
             block(400, label: "refreshLibraryRows")
             settle(250)
-            XCTAssertEqual(hangs.value.count, round + 1, "one hang per block (phase \(phase))")
-            let hang = hangs.value.last
-            XCTAssertTrue((330...550).contains(hang?.durationMs ?? 0), "was \(String(describing: hang?.durationMs)) (phase \(phase))")
-            XCTAssertEqual(hang?.operation, "refreshLibraryRows")
+            let seen = hangs.value
+            checks.append {
+                XCTAssertEqual(seen.count, round + 1, "one hang per block (phase \(phase))")
+                let hang = seen.last
+                XCTAssertTrue((330...550).contains(hang?.durationMs ?? 0), "was \(String(describing: hang?.durationMs)) (phase \(phase))")
+                XCTAssertEqual(hang?.operation, "refreshLibraryRows")
+            }
         }
+        try conclude(jitter, checks)
     }
 
-    func testAThreeHundredFiftyMillisecondBlockIsStillRecorded() {
+    func testAThreeHundredFiftyMillisecondBlockIsStillRecorded() throws {
+        let jitter = startJitterSampling()
         let hangs = Hangs()
         let probe = makeProbe(into: hangs)
         probe.start(intervalMs: 100)
         defer { probe.stop() }
+        var checks: [() -> Void] = []
         for (round, phase) in cyclePhases.enumerated() {
             settle(phase)
             block(350)
             settle(250)
-            XCTAssertEqual(hangs.value.count, round + 1, "phase \(phase)")
+            let count = hangs.value.count
+            checks.append { XCTAssertEqual(count, round + 1, "phase \(phase)") }
         }
+        try conclude(jitter, checks)
     }
 
-    func testAHundredMillisecondBlockRecordsNothing() {
+    func testAHundredMillisecondBlockRecordsNothing() throws {
+        let jitter = startJitterSampling()
         let hangs = Hangs()
         let probe = makeProbe(into: hangs)
         probe.start(intervalMs: 100)
@@ -80,10 +146,12 @@ final class MainThreadHangProbeTests: XCTestCase {
             block(100, label: "run")
         }
         settle(250)
-        XCTAssertEqual(hangs.value, [])
+        let seen = hangs.value
+        try conclude(jitter, [{ XCTAssertEqual(seen, []) }])
     }
 
-    func testNestedLabelsReadOutermostFirstAndAnUnlabelledHangHasNone() {
+    func testNestedLabelsReadOutermostFirstAndAnUnlabelledHangHasNone() throws {
+        let jitter = startJitterSampling()
         let hangs = Hangs()
         let probe = makeProbe(into: hangs)
         probe.start(intervalMs: 100)
@@ -98,10 +166,12 @@ final class MainThreadHangProbeTests: XCTestCase {
         wait(for: [done], timeout: 5)
         block(400)
         settle()
-        XCTAssertEqual(hangs.value.map(\.operation), ["run>refreshSelectedItem", ""])
+        let operations = hangs.value.map(\.operation)
+        try conclude(jitter, [{ XCTAssertEqual(operations, ["run>refreshSelectedItem", ""]) }])
     }
 
-    func testAStoppedProbeRecordsNothingAndASecondHangAfterAFirstIsCounted() {
+    func testAStoppedProbeRecordsNothingAndASecondHangAfterAFirstIsCounted() throws {
+        let jitter = startJitterSampling()
         let hangs = Hangs()
         let probe = makeProbe(into: hangs)
         probe.start(intervalMs: 100)
@@ -110,12 +180,17 @@ final class MainThreadHangProbeTests: XCTestCase {
         settle(100)
         block(350)
         settle(100)
-        XCTAssertEqual(hangs.value.count, 2)
+        let beforeStop = hangs.value.count
         probe.stop()
-        XCTAssertFalse(probe.isRunning)
+        let stopped = probe.isRunning
         block(400)
         settle()
-        XCTAssertEqual(hangs.value.count, 2)
+        let afterStop = hangs.value.count
+        try conclude(jitter, [
+            { XCTAssertEqual(beforeStop, 2) },
+            { XCTAssertFalse(stopped) },
+            { XCTAssertEqual(afterStop, 2) },
+        ])
     }
 
     func testLabelStackIgnoresAnEntryAlreadyGoneAndKeepsTheOthers() {

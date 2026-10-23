@@ -713,8 +713,15 @@ extension ListeningMapSummaryValidator {
             description: label.description,
             eligibility: label.eligibility,
             eligibilityReason: label.eligibilityReason,
-            sourceText: sourceText
+            sourceText: sourceText,
+            language: transcriptLanguage(of: sourceText)
         )
+    }
+
+    /// The scene's language as a BCP 47 tag ("de"), or nil when it can't be told. Transcripts don't record one, and
+    /// a German scene's role nouns are not names (#2082).
+    static func transcriptLanguage(of text: String) -> String? {
+        NLLanguageRecognizer.dominantLanguage(for: text)?.rawValue
     }
 }
 

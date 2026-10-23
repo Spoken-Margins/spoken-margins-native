@@ -41,12 +41,7 @@ extension Gate1AppModel {
                 try Task.checkCancellation()
                 guard let self, self.screen == .home,
                       self.libraryPresentationRevision == revision else { return }
-                let rows = LibraryRowBuilder.rows(from: data, context: self.startupAudioContext)
-                if self.libraryItems != rows { self.libraryItems = rows }
-                self.recentlyDeletedItems = data.items.filter { $0.deletedAt != nil }
-                    .sorted { ($0.deletedAt ?? .distantPast) > ($1.deletedAt ?? .distantPast) }.map {
-                    LibraryItemRow(id: $0.id, title: $0.title, status: "Recently deleted", canDelete: true)
-                }
+                self.publishLibrary(data)
             } catch is CancellationError {
             } catch {
                 self?.diagnostics["homeLibraryRefreshError"] = String(describing: error)
@@ -138,5 +133,27 @@ extension Gate1AppModel {
             ?? selectedItem.sessions.first?.id
         screen = .export
         refreshExportPreview(reportStatus: false)
+    }
+
+    func openItem(id: String) {
+        let diagnosticStart = ProcessInfo.processInfo.systemUptime
+        recordDeveloperDiagnostic("item.open.begin", ["item": DeveloperDiagnosticRecording.token(id)])
+        defer { recordDeveloperDiagnostic("item.open.end", ["durationMs": String(Int((ProcessInfo.processInfo.systemUptime - diagnosticStart) * 1000))]) }
+        guard !rejectNavigationOrSessionMutationWhileRecording("open_item") else { return }
+        followedPlayIntent.cancel() // the listener moved on: a pending Play now must not take over (#2124)
+        do {
+            let store = try requireStore()
+            activeItemId = id
+            selectedItem = try loadItemDetail(id: id, store: store)
+            prepareImportedLocalAudioBridges(itemId: id)
+            scheduleTextAudioPrewarmIfNeeded(itemId: id); PublisherAudioTextMapper.resume(itemId: id, store: store, transcriber: sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(id): \($0)" }; fetchCommunityMapIfNeeded(itemId: id); retryVoiceoverLookupIfNeeded(itemId: id)
+            listeningMapJSON = ""
+            screen = .item
+            discoverFollowOfferIfEligible(itemId: id, store: store)
+            offerFollowSuggestionIfEligible(itemId: id, store: store)
+            reportSuccess("Opened \(selectedItem.title).")
+        } catch {
+            reportFailure(error, context: "Open item failed")
+        }
     }
 }

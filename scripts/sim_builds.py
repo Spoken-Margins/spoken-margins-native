@@ -22,6 +22,8 @@ import re
 import shutil
 import subprocess
 import time
+
+from trunk import trunk_branch  # (#1492: older build records name no branch)
 from typing import Callable, Optional
 import zipfile
 
@@ -34,7 +36,7 @@ LATEST = 'latest'
 SHA_RE = re.compile(r'[0-9a-f]{40}')
 ARTIFACT_PREFIX = 'sim-app-'         # hosted-integration.yml: sim-app-<full sha>
 PACKED_APP = APP_NAME + '.zip'       # ditto's zip inside the artifact: upload-artifact drops modes and symlinks
-REPO = os.environ.get('SM_INTEGRATION_REPO', 'uncomposed/spoken-margins-native')
+REPO = os.environ.get('SM_INTEGRATION_REPO', 'Spoken-Margins/spoken-margins-native')
 
 
 def root() -> Path:
@@ -170,7 +172,7 @@ def unpack(artifact_zip: Path, folder: Path, *, free_bytes: int) -> dict:
                 shutil.copyfileobj(src, dst)
         subprocess.run(['ditto', '-x', '-k', str(work / PACKED_APP), str(work / 'app')], check=True,
                        timeout=900, stdin=subprocess.DEVNULL, capture_output=True)
-        return store(work / 'app' / APP_NAME, sha, record.get('branch', 'next'), folder,
+        return store(work / 'app' / APP_NAME, sha, record.get('branch') or trunk_branch(), folder,
                      free_bytes=free_bytes, now=record.get('built_at'), built_by=record.get('built_by'))
 
 

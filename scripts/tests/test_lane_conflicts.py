@@ -432,10 +432,10 @@ class TokenHandlingTests(unittest.TestCase):
 class WorkflowWiringTests(unittest.TestCase):
     workflow = (Path(__file__).resolve().parents[2] / '.github' / 'workflows' / 'lane-conflicts.yml')
 
-    def test_it_runs_on_the_vps_from_the_base_branch_and_cannot_push(self):
+    def test_it_runs_hosted_from_the_base_branch_and_cannot_push(self):
         text = self.workflow.read_text()
-        self.assertIn('runs-on: [self-hosted, Linux, sm-vps]', text)
-        self.assertIn('ref: ${{ github.event.pull_request.base.sha || github.sha }}', text)
+        self.assertIn('runs-on: ubuntu-latest', text)
+        self.assertIn("ref: ${{ github.event.pull_request.base.ref || vars.SM_TRUNK || 'main' }}", text)
         self.assertIn('persist-credentials: false', text)
         self.assertIn('contents: read', text)
         self.assertNotIn('contents: write', text)
@@ -445,7 +445,7 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_it_starts_when_next_moves_and_when_a_lane_label_or_push_lands(self):
         text = self.workflow.read_text()
         self.assertIn('ONLY_PR: ${{ inputs.pr }}', text)  # a PR event sweeps everything; only a dispatch narrows
-        for needle in ('push:', 'branches: [next]', 'pull_request:', 'types: [labeled, synchronize, reopened]',
+        for needle in ('push:', 'branches: [next, main]', 'pull_request:', 'types: [labeled, synchronize, reopened]',
                        'workflow_dispatch:', "'automerge'", "'lane:queued'"):
             self.assertIn(needle, text)
 

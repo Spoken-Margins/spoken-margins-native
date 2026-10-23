@@ -53,10 +53,8 @@ extension Gate1AppModel {
         run { engine in
             snapshot = try endEngineSession(engine, reason: navigateHome ? .doneButton : .miniPlayerClose)
             activeItemId = SessionCloseSelection.itemId(closing: closedItemId, pageOnScreen: screen == .item ? selectedItem.id : nil, navigatesHome: navigateHome)
-            refreshSelectedItem()
-            if let store {
-                try refreshLibraryRows(store: store)
-            }
+            refreshSelectedItemInBackground()
+            refreshLibraryRowsInBackground()
             reportConfirmation(successMessage)
         }
         streamingSpeechQueue.stopAndClear()

@@ -102,7 +102,7 @@ extension Gate1AppModel {
         saveSpeechSettings()
         if changed {
             _ = rebuildEngineForCurrentSettings()
-        } else if ttsVoiceSelection.supertonicVoice != nil, audioPlaybackClientOverride == nil {
+        } else if ttsVoiceSelection.isOnDeviceVoice, audioPlaybackClientOverride == nil {
             applySupertonicPlaybackRate()
         } else if !isMediaPlaybackSnapshot {
             run { engine in
@@ -118,7 +118,7 @@ extension Gate1AppModel {
     }
 
     func ttsVoiceSelectionChanged() {
-        if ttsVoiceSelection.supertonicVoice != nil, !hasAcceptedCurrentTerms {
+        if ttsVoiceSelection.isOnDeviceVoice, !hasAcceptedCurrentTerms {
             pendingTermsVoiceSelection = ttsVoiceSelection
             UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: Self.supertonicVoicePendingTermsKey)
             ttsVoiceSelection = .system
@@ -128,6 +128,7 @@ extension Gate1AppModel {
             statusMessage = "Review the Terms of Use to enable an on-device voice."
             return
         }
+        stopSpeechPreviews() // a preview rendering in the old voice must not play under the new name (#2125)
         sanitizeTTSMode()
         settingsValueChanged()
         saveSpeechSettings()
@@ -136,8 +137,7 @@ extension Gate1AppModel {
             refreshSelectedItem()
         }
         _ = rebuildEngineForCurrentSettings()
-        if ttsVoiceSelection == .system, let renderer = supertonicRenderer {
-            supertonicRenderer = nil
+        if ttsVoiceSelection.supertonicVoice == nil, let renderer = supertonicModel.reset(retiring: false) {
             Task { await renderer.unload() }
         }
         if ttsVoiceSelection == .system, let renderer = kittenRenderer {
@@ -153,6 +153,10 @@ extension Gate1AppModel {
 
     func previewAppVoice() {
         saveSpeechSettings()
+        if ttsVoiceSelection == .kitten {
+            previewKittenVoice()
+            return
+        }
         if let voice = ttsVoiceSelection.supertonicVoice {
             previewSupertonicVoice(voice)
             return
@@ -179,27 +183,77 @@ extension Gate1AppModel {
         isRenderingSupertonicPreview = true
         statusMessage = "Preparing \(ttsVoiceSelection.displayName)…"
         let speed = Float(speechRate / 0.5)
+        let request = supertonicPreviewRequest.begin(voice: voice)
+        let preview = makeOnDeviceVoicePreview()
         Task { [weak self] in
             guard let self else { return }
             do {
-                let renderer = try self.makeSupertonicRenderer()
-                let result = try await renderer.render(
-                    text: "Spoken Margins is ready to read with your selected on-device voice.",
-                    voice: voice,
-                    speed: speed,
-                    synthesisSteps: 8
-                )
-                try Task.checkCancellation()
+                let outcome = try await preview.render(
+                    text: "Spoken Margins is ready to read with your selected on-device voice.", voice: voice, speed: speed)
+                guard case let .rendered(result, supertonicMissing) = outcome else {
+                    // Neither Supertonic nor Kitten can speak: the iOS voice is what reads now (#2219).
+                    self.isRenderingSupertonicPreview = false
+                    guard self.supertonicPreviewRequest.mayPlay(request, selectedVoice: self.ttsVoiceSelection.supertonicVoice, otherAudioActive: self.isOtherAudioActiveForPreview) else {
+                        self.diagnostics["supertonicPreview"] = "dropped_stale"
+                        return
+                    }
+                    self.diagnostics["supertonicPreview"] = "\(SupertonicModelNotDownloaded.fallbackCode):system_voice"
+                    self.previewSpeech(label: "app voice and rate", mode: .appVoice(
+                        voiceIdentifier: self.speechVoiceIdentifier.isEmpty ? nil : self.speechVoiceIdentifier,
+                        rate: Float(self.speechRate)))
+                    return
+                }
+                // Rendering takes seconds: play only if the listener hasn't moved on meanwhile (#2125).
+                guard self.supertonicPreviewRequest.mayPlay(request, selectedVoice: self.ttsVoiceSelection.supertonicVoice, otherAudioActive: self.isOtherAudioActiveForPreview) else {
+                    self.diagnostics["supertonicPreview"] = "dropped_stale"
+                    await self.discardPreviewAudio(at: result.audioURL)
+                    self.isRenderingSupertonicPreview = false
+                    return
+                }
                 try self.playSupertonicPreview(url: result.audioURL)
+                self.diagnostics["supertonicPreview"] = supertonicMissing ? SupertonicModelNotDownloaded.fallbackCode : "played"
+                self.diagnostics["supertonicPreviewEngine"] = result.engine
                 self.diagnostics["supertonicPreviewRenderSeconds"] = String(format: "%.3f", result.renderDuration)
                 self.diagnostics["supertonicPreviewDurationSeconds"] = String(format: "%.3f", result.duration)
                 self.diagnostics["supertonicSessionLoadCount"] = "\(result.sessionLoadCount)"
-                self.reportSuccess("Playing \(self.ttsVoiceSelection.displayName).")
+                self.reportSuccess(supertonicMissing
+                    ? SupertonicModelNotDownloaded.previewMessage(voiceName: self.ttsVoiceSelection.displayName)
+                    : "Playing \(self.ttsVoiceSelection.displayName).")
             } catch {
                 self.reportFailure(error, context: "On-device voice preview failed")
             }
             self.isRenderingSupertonicPreview = false
         }
+    }
+
+    /// The sample's voice follows the files on the phone (#2219): Supertonic once downloaded, the bundled Kitten voice
+    /// until then, as the player does.
+    private func makeOnDeviceVoicePreview() -> OnDeviceVoicePreview {
+        OnDeviceVoicePreview(
+            isModelPresent: { [supertonicModel] in supertonicModel.isModelPresent },
+            supertonic: { @MainActor [weak self] text, voice, speed in
+                guard let self else { throw SupertonicNarrationError.missingAsset("Supertonic") }
+                let renderer = try self.makeSupertonicRenderer()
+                return try await renderer.render(text: text, voice: voice, speed: speed, synthesisSteps: 8)
+            },
+            kitten: { @MainActor [weak self] in
+                guard let renderer = self?.makeKittenRenderer() else { return nil }
+                return { text in try await renderer.render(text: text) }
+            }
+        )
+    }
+
+    /// Each renderer deletes only files it wrote, so asking both removes the sample whichever voice made it.
+    func discardPreviewAudio(at url: URL) async {
+        await supertonicRenderer?.discardGeneratedAudio(at: url)
+        await kittenRenderer?.discardGeneratedAudio(at: url)
+    }
+
+    /// Narration, a Margin's voice, a recording or a microphone request: a voice preview must not play over any of them (#2125).
+    var isOtherAudioActiveForPreview: Bool {
+        snapshot.status.isPlaybackActive || snapshot.isRecording || isRequestingRecordingPermission
+            || (marginVoicePlayer.ownMarginID != nil && !marginVoicePlayer.ownIsPaused)
+            || (marginVoicePlayer.sharedMargin != nil && !marginVoicePlayer.sharedIsPaused)
     }
 
     func verifyCurrentTermsForOnDeviceVoice() throws {
@@ -274,7 +328,8 @@ extension Gate1AppModel {
 
     var speechVoiceDescription: String {
         if ttsVoiceSelection != .system {
-            return "\(ttsVoiceSelection.displayName) (Supertonic \(ttsVoiceSelection.supertonicVoice?.rawValue ?? ""))"
+            guard let voice = ttsVoiceSelection.supertonicVoice else { return ttsVoiceSelection.displayName }
+            return "\(ttsVoiceSelection.displayName) (Supertonic \(voice.rawValue))"
         }
         guard !speechVoiceIdentifier.isEmpty else {
             return "System Spoken Content Voice (Siri falls back)"
@@ -288,6 +343,9 @@ extension Gate1AppModel {
     var speechRateDescription: String {
         if ttsVoiceSelection.supertonicVoice != nil {
             return String(format: "Supertonic %.2fx", speechPlaybackRateMultiplier)
+        }
+        if ttsVoiceSelection == .kitten {
+            return String(format: "Kitten %.2fx", speechPlaybackRateMultiplier)
         }
         return String(format: "System %.2fx", speechPlaybackRateMultiplier)
     }
@@ -306,4 +364,34 @@ extension Gate1AppModel {
     var hasConfiguredProviderAPIKey: Bool {
         !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+
+    #if canImport(AVFoundation)
+    func stopSpeechPreviews() {
+        supertonicPreviewRequest.cancel() // a preview still rendering must not start later (#2125)
+        if speechPreviewSynthesizer.isSpeaking {
+            speechPreviewSynthesizer.stopSpeaking(at: .immediate)
+        }
+        supertonicPreviewPlayer?.stop()
+    }
+
+    func playSupertonicPreview(url: URL) throws {
+        stopSpeechPreviews()
+        if let priorURL = supertonicPreviewURL {
+            Task { await discardPreviewAudio(at: priorURL) }
+        }
+        #if os(iOS)
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try AVAudioSession.sharedInstance().setActive(true)
+        #endif
+        supertonicPreviewPlayer = try AVAudioPlayer(contentsOf: url)
+        supertonicPreviewPlayer?.prepareToPlay()
+        guard supertonicPreviewPlayer?.play() == true else {
+            throw SupertonicNarrationError.unsafeAudio("preview_playback_failed")
+        }
+        supertonicPreviewURL = url
+    }
+
+    #else
+    func stopSpeechPreviews() { supertonicPreviewRequest.cancel() }
+    #endif
 }

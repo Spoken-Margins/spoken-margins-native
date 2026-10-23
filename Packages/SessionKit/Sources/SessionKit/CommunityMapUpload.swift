@@ -400,7 +400,7 @@ public enum CommunityMapUploadOutcome: Equatable, Sendable {
 public typealias CommunityMapUploadPost = @Sendable (_ url: URL, _ body: Data) async throws -> Int
 
 public struct CommunityMapUploader: Sendable {
-    public static let transcriptsURL = URL(string: "https://spokenmargins.proximitytoprogress.com/api/v1/maps/transcripts")!
+    public static let transcriptsURL = ProductServer.url(path: "/api/v1/maps/transcripts")
 
     private let url: URL
     private let post: CommunityMapUploadPost

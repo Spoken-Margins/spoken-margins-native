@@ -137,23 +137,31 @@ class SameRulesAsTheRunner(unittest.TestCase):
 
 
 class FakeApi:
-    def __init__(self, heads=(HEAD, HEAD), comments=CLEAN):
+    def __init__(self, heads=(HEAD, HEAD), comments=CLEAN, labels=(), files=None, runs=None, closed=()):
         self.repo, self.heads, self.comments, self.posted, self.labels = REPO, list(heads), list(comments), [], []
+        self.tap_ops, self.pr_labels, self.files, self.runs, self.closed = [], list(labels), files, runs, list(closed)
 
     def get(self, path):
-        return pr(head={'sha': self.heads.pop(0), 'repo': {'full_name': REPO}})
+        return pr(head={'sha': self.heads.pop(0), 'repo': {'full_name': REPO}},
+                  labels=[{'name': n} for n in self.pr_labels])
 
     def get_all(self, path):
         if path.startswith('pulls/7/files'):
-            return WORKFLOW
+            return WORKFLOW if self.files is None else self.files
         if '/check-runs' in path:
-            return GREEN
+            return GREEN if self.runs is None else self.runs
         if '/statuses' in path:
             return []
         return self.comments
 
     def comment(self, number, body):
         self.posted.append((number, body))
+
+    def add_tap_label(self, number):
+        self.tap_ops.append(('add', number))
+
+    def closed_with_tap_label(self):
+        return self.closed
 
     def readd_label(self, number, label):
         self.labels.append(('readd', number, label))
@@ -198,11 +206,11 @@ class CheckPr(unittest.TestCase):
         self.assertEqual(len(api.posted), 1)
         self.assertEqual(api.labels, [('remove', 7, 'owner-tap-check')])
 
-    def test_mention_defaults_to_the_repository_owner(self):
-        api = FakeApi()
+    def test_mention_defaults_to_the_owner_login_not_the_org(self):
+        api = FakeApi()  # the repo's owner is the Spoken-Margins org after #2169; the owner is a person
         with mock.patch.object(alert, 'GitHubApi', return_value=api), contextlib.redirect_stdout(io.StringIO()):
-            alert.main(['--repo', REPO, '--pr', '7'])
-        self.assertTrue(api.posted[0][1].startswith('@owner '))
+            alert.main(['--repo', 'Spoken-Margins/spoken-margins-native', '--pr', '7'])
+        self.assertTrue(api.posted[0][1].startswith('@uncomposed '))
 
     def test_mention_must_be_a_plain_login(self):
         with mock.patch.dict('os.environ', {'GH_REPO': REPO}), self.assertRaises(SystemExit), \
@@ -210,12 +218,127 @@ class CheckPr(unittest.TestCase):
             alert.main(['--mention', 'uncomposed team'])
 
 
+class PersistentLabel(unittest.TestCase):
+    """`needs-owner-tap` stays on a PR exactly while it waits for the owner's tap (owner, 2026-10-22)."""
+    TAP = alert.TAP_LABEL
+    ALERTED = [{'user': BOT, 'author_association': 'NONE', 'created_at': '2026-10-18T09:00:00Z',
+                'body': alert.alert_body(pr(), ['.github/workflows/lane.yml'], 'uncomposed', audited=True)}] + CLEAN
+
+    def check(self, **kw):
+        api = FakeApi(**kw)
+        alert.check_pr(api, 7, 'uncomposed', dry_run=False)
+        return api
+
+    def test_a_ready_pr_gets_the_label_and_the_alert(self):
+        api = self.check()
+        self.assertEqual((api.tap_ops, len(api.posted)), ([('add', 7)], 1))
+
+    def test_an_alerted_pr_keeps_the_label_and_gets_no_second_comment_or_churn(self):
+        api = self.check(comments=self.ALERTED)
+        self.assertEqual((api.tap_ops, api.posted), ([('add', 7)], []))
+        api = self.check(comments=self.ALERTED, labels=[self.TAP])
+        self.assertEqual((api.tap_ops, api.labels, api.posted), ([], [], []))
+
+    def test_a_pr_that_stops_qualifying_loses_the_label(self):
+        for name, over in [('failing check', dict(runs=[run('lane', conclusion='failure')])),
+                           ('pending check', dict(runs=[run('lane', 'in_progress', None)])),
+                           ('blocking audit', dict(comments=[audit(HEAD, '1. High: it loses data')]))]:
+            with self.subTest(name):
+                api = self.check(labels=[self.TAP], **over)
+                self.assertEqual((api.labels, api.tap_ops), ([('remove', 7, self.TAP)], []))
+
+    def test_a_pr_no_longer_touching_the_paths_loses_the_label(self):
+        api = self.check(labels=[self.TAP], files=[{'filename': 'README.md'}])
+        self.assertEqual(api.labels, [('remove', 7, self.TAP)])
+        api = self.check(files=[{'filename': 'README.md'}])
+        self.assertEqual((api.labels, api.tap_ops), ([], []))
+
+    def test_dry_run_and_unknown_mergeability_leave_the_label_alone(self):
+        api = FakeApi(labels=[self.TAP], runs=[run('lane', conclusion='failure')])
+        alert.check_pr(api, 7, 'uncomposed', dry_run=True)
+        self.assertEqual(api.labels, [])
+        api = FakeApi(labels=[self.TAP])
+        api.get = lambda path: pr(mergeable=None, labels=[{'name': self.TAP}])
+        alert.check_pr(api, 7, 'uncomposed', dry_run=False)
+        self.assertEqual(api.labels, [])
+
+    def test_a_failing_label_write_does_not_stop_the_alert(self):
+        api = FakeApi()
+        def boom(number):
+            raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 403')
+        api.add_tap_label = boom
+        with contextlib.redirect_stdout(io.StringIO()):
+            alert.check_pr(api, 7, 'uncomposed', dry_run=False)
+        self.assertEqual(len(api.posted), 1)
+
+    def test_a_full_sweep_clears_closed_prs_but_a_single_pr_run_does_not(self):
+        api = FakeApi(closed=[41, 42])
+        api.get_all = lambda path, base=api.get_all: [{'number': 7}] if path.startswith('pulls?state=open') else base(path)
+        with mock.patch.object(alert, 'GitHubApi', return_value=api), contextlib.redirect_stdout(io.StringIO()):
+            alert.main(['--repo', REPO, '--base', 'main'])
+        self.assertEqual([op for op in api.labels if op[0] == 'remove'], [('remove', 41, self.TAP), ('remove', 42, self.TAP)])
+        api = FakeApi(closed=[41])
+        with mock.patch.object(alert, 'GitHubApi', return_value=api), contextlib.redirect_stdout(io.StringIO()):
+            alert.main(['--repo', REPO, '--pr', '7'])
+        self.assertEqual(api.labels, [])
+
+    def test_label_is_blue_and_described(self):
+        self.assertNotIn(alert.TAP_LABEL_COLOR, {'d73a4a', 'ff0000', '0e8a16', '00ff00'})
+        self.assertIn('merge tap', alert.TAP_LABEL_DESCRIPTION)
+
+
+class AuditFollowUp(unittest.TestCase):
+    """An alert posted before the audit says so; the audit that lands later gets one follow-up (#2052)."""
+    FIRST = {'user': BOT, 'author_association': 'NONE', 'created_at': '2026-10-18T09:00:00Z',
+             'body': alert.alert_body(pr(), ['.github/workflows/lane.yml'], 'uncomposed', audited=False)}
+
+    def check(self, comments, **kw):
+        api = FakeApi(comments=comments)
+        result = alert.check_pr(api, 7, 'uncomposed', dry_run=False, **kw)
+        return api, result
+
+    def test_a_clean_audit_after_the_alert_is_followed_up_once(self):
+        api, result = self.check([self.FIRST] + CLEAN)
+        self.assertEqual(result, 'audit follow-up posted')
+        body = api.posted[0][1]
+        self.assertIn('no blocking findings', body)
+        self.assertEqual(alert.FOLLOWUP_RE.findall(body), [HEAD])
+        again = {'user': BOT, 'author_association': 'NONE', 'created_at': '2026-10-18T11:00:00Z', 'body': body}
+        api, result = self.check([self.FIRST, again] + CLEAN)
+        self.assertEqual((api.posted, result), ([], f'already alerted on {HEAD[:7]}'))
+
+    def test_a_blocking_audit_after_the_alert_says_to_hold_the_tap(self):
+        api, _ = self.check([self.FIRST, audit(HEAD, '1. High: it loses data')])
+        self.assertIn('hold your tap', api.posted[0][1])
+        self.assertIn('it loses data', api.posted[0][1])
+
+    def test_no_follow_up_without_an_audit_of_this_head_or_after_an_audited_alert(self):
+        api, result = self.check([self.FIRST, audit(OLD, 'No blocking findings.')])
+        self.assertEqual((api.posted, result), ([], f'already alerted on {HEAD[:7]}'))
+        audited = {'user': BOT, 'author_association': 'NONE', 'created_at': '2026-10-18T09:00:00Z',
+                   'body': alert.alert_body(pr(), ['.github/x.yml'], 'uncomposed', audited=True)}
+        api, result = self.check([audited] + CLEAN)
+        self.assertEqual((api.posted, result), ([], f'already alerted on {HEAD[:7]}'))
+
+    def test_via_label_and_dry_run_post_nothing(self):
+        api, result = self.check([self.FIRST] + CLEAN, via_label=alert.LABEL)
+        self.assertEqual((api.posted, api.labels), ([], [('readd', 7, 'owner-tap-check')]))
+        api = FakeApi(comments=[self.FIRST] + CLEAN)
+        self.assertIn('dry run', alert.check_pr(api, 7, 'uncomposed', dry_run=True))
+        self.assertEqual(api.posted, [])
+
+    def test_a_head_that_moved_posts_nothing(self):
+        api = FakeApi(heads=(HEAD, OLD), comments=[self.FIRST] + CLEAN)
+        self.assertEqual(alert.check_pr(api, 7, 'uncomposed', dry_run=False), 'head moved during the check')
+        self.assertEqual(api.posted, [])
+
+
 class Workflow(unittest.TestCase):
     def setUp(self):
         self.text = (SCRIPTS.parent / '.github' / 'workflows' / 'owner-tap-alert.yml').read_text()
 
-    def test_runs_on_the_vps_from_the_base_with_no_kept_credentials(self):
-        self.assertIn('runs-on: [self-hosted, Linux, sm-vps]', self.text)
+    def test_runs_hosted_from_the_base_with_no_kept_credentials(self):
+        self.assertIn('runs-on: ubuntu-latest', self.text)  # off the owner's VPS since #2442
         self.assertIn('ref: ${{ github.event.pull_request.base.sha || github.sha }}', self.text)
         self.assertIn('persist-credentials: false', self.text)
         self.assertIn('github.event.pull_request.head.repo.full_name == github.repository', self.text)
@@ -233,7 +356,8 @@ class Workflow(unittest.TestCase):
                       self.text)
 
     def test_check_workflows_end_with_an_alert_job_from_the_base(self):
-        for name, needs in (('linux-t1.yml', '[sessionkit-core, portable]'), ('shipped-build-compat.yml', 'compat')):
+        # hosted-portable.yml took over from linux-t1.yml, whose VPS queue held the alert for an hour or more (#2442).
+        for name, needs in (('hosted-portable.yml', '[portable, sessionkit, mac-rest]'), ('shipped-build-compat.yml', 'compat')):
             with self.subTest(name):
                 text = (SCRIPTS.parent / '.github' / 'workflows' / name).read_text()
                 head, _, job = text.partition('\n  owner-tap-alert:\n')
@@ -242,7 +366,7 @@ class Workflow(unittest.TestCase):
                 self.assertIn(f'    needs: {needs}\n', job)
                 self.assertIn('    if: always() && github.event.pull_request.head.repo.full_name == github.repository\n',
                               job)
-                self.assertIn('    runs-on: [self-hosted, Linux, sm-vps]\n', job)
+                self.assertIn('    runs-on: ubuntu-latest\n', job)
                 self.assertIn('      issues: write\n', job)
                 self.assertNotIn('actions: write', job)
                 self.assertIn('ref: ${{ github.event.pull_request.base.sha }}', job)
@@ -254,7 +378,7 @@ class Workflow(unittest.TestCase):
 
     def test_a_base_without_the_script_skips_quietly(self):
         # Before this merges, the base has no script: the job must pass with a note, not fail (PR #2054's first run).
-        for name in ('owner-tap-alert.yml', 'linux-t1.yml', 'shipped-build-compat.yml'):
+        for name in ('owner-tap-alert.yml', 'hosted-portable.yml', 'shipped-build-compat.yml'):
             with self.subTest(name):
                 text = (SCRIPTS.parent / '.github' / 'workflows' / name).read_text()
                 step = text[text.index('          if [ ! -f scripts/owner_tap_alert.py ]; then'):]

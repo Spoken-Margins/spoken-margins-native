@@ -62,8 +62,23 @@ struct VoicePreferencesSnapshot {
     }
 }
 
+private final class MainQueueDrainFlag: @unchecked Sendable { var done = false } // set and read on the main thread only
+
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    /// Several of these tests leave a second or more of blocking main-queue work behind (#2195). A synchronous test
+    /// never spins the run loop, so that work used to run during whichever later test waited first, and could push a
+    /// short wait in another class past its timeout (#2104). Running it here keeps it inside the test that queued it.
+    override func tearDown() {
+        let start = Date()
+        let drained = MainQueueDrainFlag()
+        DispatchQueue.main.async { DispatchQueue.main.async { drained.done = true } }
+        while !drained.done, Date().timeIntervalSince(start) < 30 {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+        super.tearDown()
+    }
+
     func testRichClipboardRestoresOnlyExplicitHTMLHeadings() {
         let plain = "Article & notes\nA paragraph.\nNext section\nMore prose."
         let html = "<h1>Article &amp; notes</h1><p>A paragraph.</p><h2><em>Next section</em></h2><p>More prose.</p>"
@@ -211,6 +226,49 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(modelNotifications, 0)
         XCTAssertEqual(diagnosticNotifications, 1)
         withExtendedLifetime((modelObserver, diagnosticObserver)) {}
+    }
+
+    /// #2074: the progress tick used to publish through the model twice a second and re-run every screen's `body`.
+    func testPlaybackTicksReachTheClockAndNotEveryScreen() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        var screenNotifications = 0
+        var clockNotifications = 0
+        let screenObserver = model.objectWillChange.sink { screenNotifications += 1 }
+        let clockObserver = model.playbackClock.objectWillChange.sink { clockNotifications += 1 }
+        var held = model.snapshot
+        held.status = .paused
+        held.chapterTitle = "Chapter one"
+        held.preparedTextAudioStatus = "ready"
+        held.sourceTranscriptStatus = "ready"
+        held.currentMediaTimeMs = 1_000
+        model.snapshot = held
+        XCTAssertGreaterThan(screenNotifications, 0, "a change of state still reaches every screen")
+
+        screenNotifications = 0
+        clockNotifications = 0
+        for ms in stride(from: 1_500, through: 5_000, by: 500) {
+            held.currentMediaTimeMs = ms
+            held.currentTextStart = ms / 10
+            held.currentTextEnd = ms / 10 + 40
+            model.snapshot = held
+        }
+        XCTAssertEqual(screenNotifications, 0, "a progress tick must not re-run every screen")
+        XCTAssertEqual(clockNotifications, 8, "each tick still moves the playhead for the views that follow it")
+        XCTAssertEqual(model.playbackClock.position.mediaTimeMs, 5_000)
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, 5_000)
+
+        held.sourceProgressPercent = 7
+        model.snapshot = held
+        XCTAssertEqual(screenNotifications, 1, "a new whole percent reaches every screen")
+        screenNotifications = 0
+        held.currentMediaTimeMs = 5_500
+        held.chapterTitle = "Chapter two"
+        model.snapshot = held
+        XCTAssertEqual(screenNotifications, 1, "a chapter change reaches every screen even as the position moves")
+        screenNotifications = 0
+        model.snapshot = held
+        XCTAssertEqual(screenNotifications, 1, "writing the same snapshot still makes screens look again")
+        withExtendedLifetime((screenObserver, clockObserver)) {}
     }
 
     func testDeferredHomeRefreshCannotReplaceNewerLibraryPresentation() async throws {
@@ -1746,7 +1804,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.sessionRows.map(\.interjectionCount), [0])
         model.marginCollectionQuery = MarginCollectionQuery(itemID: b.id)
         XCTAssertTrue(model.visiblePrivateMarginRows.isEmpty, "B's Margins list is empty")
-        XCTAssertEqual(try model.loadLibraryRows(store: store).first { $0.id == b.id }, bLibraryRow,
+        // Without the storage rank: it is B's place in the store's updated_at order, so it moves whenever A's
+        // record gets a later timestamp, and it is not a badge (#2164).
+        let bLibraryRowAfter = try XCTUnwrap(model.loadLibraryRows(store: store).first { $0.id == b.id })
+        XCTAssertEqual(libraryRowFieldsExceptStorageRank(bLibraryRowAfter), libraryRowFieldsExceptStorageRank(bLibraryRow),
                        "B's Library status and progress badges do not change")
         model.openItem(id: "item-pill")
         XCTAssertEqual(model.selectedItem.interjections.map(\.id), [saved.id])
@@ -3786,6 +3847,32 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["playbackLifecycleSync"], "saved")
     }
 
+    /// #2184: leaving the foreground saves the position but does not re-read the item on the main thread. On the owner's
+    /// phone that read decoded a mapped episode's transcript as iOS waited for the app to settle, and iOS killed it.
+    func testLeavingTheForegroundSavesThePositionWithoutReloadingTheItem() throws {
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio)
+        defer { OnDeviceVoiceGovernor.app.setAppBackgrounded(false) } // the background handler sets it app-wide
+        model.resetAndSeed()
+        model.importTitle = "Long Item"
+        model.importText = "One. Two. Three."
+        model.importTextItem()
+        let shownOffset = try XCTUnwrap(model.selectedItem.sessions.last).position.charOffset
+        let sessionID = try XCTUnwrap(model.snapshot.sessionId)
+
+        audio.currentOffset = "One. Two. ".count
+        model.handleAppBecameInactiveOrBackground(entersBackground: true)
+
+        XCTAssertEqual(model.diagnostics["playbackLifecycleSync"], "saved")
+        let stored = try XCTUnwrap(model.store?.loadSessions(itemId: model.selectedItem.id).first { $0.id == sessionID })
+        XCTAssertEqual(stored.position.charOffset, "One. Two. ".count, "the position is saved before the app is suspended")
+        XCTAssertEqual(model.selectedItem.sessions.last?.position.charOffset, shownOffset, "the item is not re-read on the way out")
+        XCTAssertNotEqual(shownOffset, "One. Two. ".count, "precondition: a reload would have shown the new position")
+
+        model.syncPlaybackProgressForLifecycle()
+        XCTAssertEqual(model.selectedItem.sessions.last?.position.charOffset, "One. Two. ".count, "coming back re-reads it")
+    }
+
     func testCompletingFinalAudioRetainsFinishedSessionForReview() throws {
         let audio = WorkflowCompletionAudioClient()
         let model = Gate1AppModel(audioPlaybackClient: audio)
@@ -4063,6 +4150,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// have caught it is this one: the action, with the stored session rate and the shown rate disagreeing.
     func testPlayThisMomentPlaysAtTheShownRateNotTheMarginsStoredSessionRate() throws {
         for (shown, stored) in [(1.0, 1.5), (1.5, 1.0)] {
+            UserDefaults.standard.removeObject(forKey: "mediaPlaybackRate")
             defer { UserDefaults.standard.removeObject(forKey: "mediaPlaybackRate") }
             let root = FileManager.default.temporaryDirectory.appending(path: "margin-moment-rate-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -4096,9 +4184,19 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
             XCTAssertEqual(model.snapshot.playbackRate, shown, "the source plays at the speed shown (stored \(stored))")
             XCTAssertEqual(model.mediaPlaybackRate, shown)
-            XCTAssertEqual(model.diagnostics["marginVoice.rate"],
-                           String(format: "moment;voice=%.2f;source=%.2f;shown=%.2f;player=n/a;voicePlayer=n/a", shown, shown, shown),
-                           "the Margin's voice reads the same rate, and Diagnostics say so")
+            // Parse the Diagnostics line instead of matching it whole: the fix guarantees the kind and that the Margin's
+            // voice and the source both ran at the shown rate; the other fields may change format freely.
+            let parts = try XCTUnwrap(model.diagnostics["marginVoice.rate"]).split(separator: ";").map(String.init)
+            XCTAssertEqual(parts.first, "moment")
+            var fields: [String: String] = [:]
+            for part in parts.dropFirst() {
+                let pair = part.split(separator: "=", maxSplits: 1).map(String.init)
+                if pair.count == 2 { fields[pair[0]] = pair[1] }
+            }
+            let voice = try XCTUnwrap(fields["voice"].flatMap(Double.init), "voice rate in \(parts)")
+            let source = try XCTUnwrap(fields["source"].flatMap(Double.init), "source rate in \(parts)")
+            XCTAssertEqual(voice, shown, accuracy: 0.001, "the Margin's voice reads the shown rate (stored \(stored))")
+            XCTAssertEqual(source, shown, accuracy: 0.001, "Diagnostics report the source at the shown rate")
         }
     }
 
@@ -4466,6 +4564,29 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(try store.loadInterjections(sessionId: foreign.sessionId).first?.status, "deleted")
         XCTAssertEqual(try store.loadInterjections(sessionId: original.sessionId).first, original)
         XCTAssertEqual(model.snapshot, before)
+    }
+
+    func testDeletingAMarginOffersUndoThatBringsTheSameMarginBack() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "margin-delete-undo-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: url)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let store = try SQLiteSessionStore(path: url.path)
+        var margin = shareableInterjection(itemId: "item-pill")
+        margin.id = "undo-me"
+        margin.sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        try store.saveInterjection(margin)
+
+        model.deleteInterjection(margin)
+        XCTAssertEqual(try store.loadInterjections(sessionId: margin.sessionId).first { $0.id == margin.id }?.status, "deleted")
+        let undo = try XCTUnwrap(model.feedbackEvent?.action, "the Deleted Margin banner offers Undo")
+        XCTAssertEqual(undo.title, "Undo")
+
+        undo.perform()
+        XCTAssertEqual(try store.loadInterjections(sessionId: margin.sessionId).first { $0.id == margin.id }, margin)
     }
 
     func testLateMicrophoneGrantCannotReplaceWrittenCaptureOrRestartCancelledCapture() async throws {
@@ -5524,6 +5645,41 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNil(try store.loadSourceSuggestionDecision(sourceId: source.id))
     }
 
+    /// #1961: a failed Follow from a suggestion card left `followSourceFailure` empty, while the
+    /// Follow button and the candidate list already recorded theirs (#244).
+    func testAFailedFollowFromASuggestionRecordsTheFollowFailure() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try model.libraryStoreForTesting()
+        addTeardownBlock { [weak model, weak store] in
+            // Never unlink an open SQLite/WAL file; see testFollowDiscoveryRechecksSubscriptionsBeforePublishing.
+            if model == nil, store == nil {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        model.followCandidateDiscoveryHandler = { _, _ in [] }
+        try store.saveItem(Item(id: "article", title: "Article", mediaType: "text", text: "Source text.", externalReference: "https://example.com/article", status: "ready"))
+        model.openHome()
+        model.openItem(id: "article")
+        // An empty feed link is not a URL, so following it throws before any request is made.
+        let source = SourceIdentity(id: "source", kind: .articleFeed, canonicalURL: "", host: "example.com")
+        let candidate = SourceCandidateEvidence(id: "candidate", source: source, evidenceURL: "https://example.com/article", relation: "html_alternate", confidence: 1)
+        model.sourceFollowSuggestionItemId = "article"
+        model.storedSourceFollowSuggestionCandidates = [candidate]
+        XCTAssertEqual(model.sourceFollowSuggestionCandidates.map(\.id), ["candidate"])
+        XCTAssertNil(model.diagnostics["followSourceFailure"])
+
+        model.acceptSourceFollowSuggestion(candidate)
+
+        try await waitFor("follow failure recorded") { model.diagnostics["followSourceFailure"] != nil }
+        XCTAssertEqual(model.diagnostics["followSourceFailure"]?.hasPrefix("invalid_url host="), true)
+        XCTAssertTrue(model.feedSubscriptions.isEmpty)
+        XCTAssertNil(try store.loadSourceSuggestionDecision(sourceId: source.id), "a failed follow records no decision")
+    }
+
     /// #539: diagnostics showed a Follow failure for Noahpinion, which the owner follows. Its
     /// article on www.noahpinion.blog wasn't matched to the followed www.noahpinion.blog/feed, so
     /// opening it ran discovery again and recorded an error.
@@ -5852,6 +6008,13 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             model.listeningMapGenerationAvailabilityDescription,
             "This podcast already includes publisher chapters. A generated Listening Map is unnecessary."
         )
+    }
+
+    /// Every field of a Library row except `storageRecencyRank`, so a new field is still compared.
+    private func libraryRowFieldsExceptStorageRank(_ row: LibraryItemRow) -> [String] {
+        Mirror(reflecting: row).children
+            .filter { $0.label != "storageRecencyRank" }
+            .map { "\($0.label ?? "?")=\(String(describing: $0.value))" }
     }
 
     private func waitFor(

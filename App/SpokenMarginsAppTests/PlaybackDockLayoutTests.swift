@@ -15,15 +15,44 @@ final class PlaybackDockLayoutTests: XCTestCase {
         ("iPhone SE class", CGSize(width: 375, height: 667)),
     ]
 
-    func testHostedPlaybackBarIsOnlyAsTallAsTheSlider() throws {
-        let sliderHeight = TrackingPlaybackSlider().intrinsicContentSize.height
+    /// The bar is one touch target tall: 44 points, or the slider's own height if that is ever more (#430).
+    private static var barHeight: CGFloat { max(TrackingPlaybackSlider().intrinsicContentSize.height, TapTarget.minimum) }
+
+    func testHostedPlaybackBarIsOnlyAsTallAsATouchTarget() throws {
         let host = UIHostingController(rootView: PlaybackPositionSlider(
             value: .constant(10), range: 0...100, onEditingChanged: { _ in },
             barContent: PlaybackBarContent(length: 100, chapterStarts: [25, 50], marks: [.init(id: "m", position: 40, kind: .own)])
         ))
         let fitted = host.sizeThatFits(in: CGSize(width: 300, height: 800))
-        XCTAssertEqual(fitted.height, sliderHeight, accuracy: 4,
-                       "Offered 800 points, the bar must keep the slider's height instead of stretching")
+        XCTAssertEqual(fitted.height, Self.barHeight, accuracy: 0.5,
+                       "Offered 800 points, the bar must keep a touch target's height instead of stretching")
+    }
+
+    /// #430: the scrubber was the slider's own height, about 31 points, so a touch 16 points off the track missed it.
+    /// The bar is now 44 points, reaching into the 4-point row gaps either side, and the slider fills it. This asks
+    /// UIKit which view takes a touch 20 points above and below the track's centre on the mounted screen.
+    func testScrubberTakesTouchesAcrossA44PointHeight() async throws {
+        for phone in Self.phones {
+            let builds: [(String, () -> Gate1AppModel)] = [
+                ("article", { self.makeArticleModel() }), ("podcast", { self.makePodcastModel() }),
+            ]
+            for (kind, build) in builds {
+                let mounted = try mount(build(), size: phone.size)
+                defer { mounted.close() }
+                let bar = try await waitForBar(in: mounted)
+                let frame = bar.convert(bar.bounds, to: mounted.window)
+                let track = bar.slider.trackRect(forBounds: bar.slider.bounds)
+                let trackMidY = bar.slider.convert(CGPoint(x: track.midX, y: track.midY), to: mounted.window).y
+                for offset: CGFloat in [-20, 0, 20] {
+                    let point = CGPoint(x: frame.midX, y: trackMidY + offset)
+                    let hit = mounted.window.hitTest(point, with: nil)
+                    XCTAssertTrue(hit.map { $0 === bar.slider || $0.isDescendant(of: bar.slider) } ?? false,
+                                  "\(phone.name), \(kind): a touch \(offset) points from the track's centre went to "
+                                  + "\(hit.map { String(describing: type(of: $0)) } ?? "nothing"), not the scrubber "
+                                  + "(bar \(frame.minY)–\(frame.maxY))")
+                }
+            }
+        }
     }
 
     func testDockStaysCompactAndNowPaneKeepsRealHeightForAnArticle() async throws {
@@ -154,6 +183,22 @@ final class PlaybackDockLayoutTests: XCTestCase {
         XCTAssertEqual(dimmed, skim, accuracy: 0.5, "a dimmed Skim must keep its place")
         XCTAssertEqual(idealWidth(backward: .skim, forward: .nextChapter), skim, accuracy: 0.5,
                        "Next chapter takes Skim forward's slot, no wider")
+        XCTAssertEqual(idealWidth(backward: .skimDisabled, forward: .nextChapterInSkimSlot), skim, accuracy: 0.5,
+                       "Next chapter standing in for Skim keeps the slot's size too")
+    }
+
+    /// #2185: forward Skim that couldn't be pressed became Next chapter with a near-identical arrow, so a plain chapter
+    /// jump passed for a Skim. Standing in for Skim, Next chapter has its own arrow and says why.
+    func testNextChapterStandingInForSkimLooksAndReadsUnlikeSkim() {
+        typealias Row = PlaybackChapterRowView
+        XCTAssertNotEqual(Row.nextChapterInSkimSlotSymbol, Row.skimForwardSymbol)
+        XCTAssertNotEqual(Row.nextChapterInSkimSlotSymbol, Row.nextChapterSymbol)
+        XCTAssertFalse(Row.nextChapterInSkimSlotSymbol.hasPrefix("forward.end"), "not a variant of Skim's own arrow")
+        XCTAssertNotNil(UIImage(systemName: Row.nextChapterInSkimSlotSymbol), "the symbol exists on this OS")
+        XCTAssertEqual(Row.nextChapterInSkimSlotLabel(.noSceneSummary),
+                       "Next chapter. " + SkimUnavailableReason.noSceneSummary.message, "VoiceOver hears why it isn't Skim")
+        XCTAssertEqual(Row.nextChapterInSkimSlotLabel(.suppliedSummaryMissing),
+                       "Next chapter. " + SkimUnavailableReason.suppliedSummaryMissing.message)
     }
 
     /// #1933: at accessibility sizes the chapter title was one line between two 44-point buttons and showed a few
@@ -211,13 +256,13 @@ final class PlaybackDockLayoutTests: XCTestCase {
     private func assertCompactDock(_ mounted: Mounted, phone: String, size: CGSize) async throws {
         let bar = try await waitForBar(in: mounted)
         let frame = bar.convert(bar.bounds, to: mounted.window)
-        let sliderHeight = TrackingPlaybackSlider().intrinsicContentSize.height
-        XCTAssertEqual(frame.height, sliderHeight, accuracy: 4,
-                       "\(phone): the playback bar must stay slider height; it was \(frame.height) points")
-        // The dock above the bar is the pane switch (52), the chapter row (44), two 4-point gaps and 6 points of top
-        // padding: 110 points at default text size. Allowing 140 keeps 30 points of slack and still asks for a
-        // Now pane over 40% of the screen. The build 32 fault put the bar's top near 130 on any phone.
-        let dockAboveBar: CGFloat = 110
+        XCTAssertEqual(frame.height, Self.barHeight, accuracy: 0.5,
+                       "\(phone): the playback bar must stay one touch target tall; it was \(frame.height) points")
+        // The dock above the bar is the pane switch (52), the chapter row (44), one 4-point gap and 6 points of top
+        // padding: 106 points at default text size, because the bar reaches into the gap under the chapter row (#430).
+        // Allowing 140 keeps slack and still asks for a Now pane over 40% of the screen. The build 32 fault put the
+        // bar's top near 130 on any phone.
+        let dockAboveBar: CGFloat = 106
         let estimatedDockShare = (size.height - (frame.minY - dockAboveBar)) / size.height
         print("PlaybackDockLayout \(phone) \(Int(size.width))x\(Int(size.height)): bar top \(frame.minY), bar height \(frame.height), estimated dock share \(Int((estimatedDockShare * 100).rounded()))%")
         XCTAssertGreaterThan(frame.minY, size.height * 0.4 + 140,

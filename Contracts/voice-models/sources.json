@@ -19,8 +19,6 @@
       "minimumMemoryMegabytes": 4096,
       "status": "available",
       "bundled": false,
-      "mirrorDir": "supertonic-3-int8/2026-05-11/",
-      "mirrorFrom": "App/SpokenMarginsApp/Resources/Supertonic/",
       "upstreamArchives": [
         {
           "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2",
@@ -33,52 +31,35 @@
           "path": "onnx/duration_predictor.onnx",
           "byteCount": 3700147,
           "sha256": "c3eb91414d5ff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325db",
-          "mirrored": true,
-          "licenseId": "supertonic-model-openrail-m",
-          "origin": {
-            "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2",
-            "note": "Member of the pinned sherpa-onnx INT8 archive (sha256 82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427)."
-          }
+          "upstream": "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/duration_predictor.int8.onnx",
+          "licenseId": "supertonic-model-openrail-m"
         },
         {
           "path": "onnx/text_encoder.onnx",
           "byteCount": 36416150,
           "sha256": "c7befd5ea8c3119769e8a6c1486c4edc6a3bc8365c67621c881bbb774b9902ff",
-          "mirrored": true,
-          "licenseId": "supertonic-model-openrail-m",
-          "origin": {
-            "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2",
-            "note": "Member of the pinned sherpa-onnx INT8 archive (sha256 82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427)."
-          }
+          "upstream": "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/text_encoder.int8.onnx",
+          "licenseId": "supertonic-model-openrail-m"
         },
         {
           "path": "onnx/vector_estimator.onnx",
           "byteCount": 78400833,
           "sha256": "20cd86fa5c6effedfda0e7cffe5b0569ca401c440a0c3a1d72bf39286c0db3fd",
-          "mirrored": true,
-          "licenseId": "supertonic-model-openrail-m",
-          "origin": {
-            "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2",
-            "note": "Member of the pinned sherpa-onnx INT8 archive (sha256 82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427)."
-          }
+          "upstream": "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/vector_estimator.int8.onnx",
+          "licenseId": "supertonic-model-openrail-m"
         },
         {
           "path": "onnx/vocoder.onnx",
           "byteCount": 25991073,
           "sha256": "e923d60f53f95eb1ce235f1dc33ec56d9c057823c96fa6f8acf98f32b0da6152",
-          "mirrored": true,
-          "licenseId": "supertonic-model-openrail-m",
-          "origin": {
-            "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2",
-            "note": "Member of the pinned sherpa-onnx INT8 archive (sha256 82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427)."
-          }
+          "upstream": "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/vocoder.int8.onnx",
+          "licenseId": "supertonic-model-openrail-m"
         },
         {
           "path": "onnx/tts.json",
           "byteCount": 8253,
           "sha256": "42078d3aef1cd43ab43021f3c54f47d2d75ceb4e75f627f118890128b06a0d09",
           "upstream": "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/onnx/tts.json",
-          "mirrored": true,
           "licenseId": "supertonic-model-openrail-m"
         },
         {
@@ -86,21 +67,19 @@
           "byteCount": 277676,
           "sha256": "9bf7346e43883a81f8645c81224f786d43c5b57f3641f6e7671a7d6c493cb24f",
           "upstream": "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/onnx/unicode_indexer.json",
-          "mirrored": true,
           "licenseId": "supertonic-model-openrail-m"
         },
         {
           "path": "onnx/MODIFIED.txt",
           "byteCount": 876,
           "sha256": "c909635a97090f19fa5ce22742edd9ac467d7c34da76df90fd41b5b5e57e8ee8",
-          "mirrored": true
+          "contentFile": "content/supertonic-3-int8/onnx/MODIFIED.txt"
         },
         {
           "path": "voice_styles/F1.json",
           "byteCount": 292046,
           "sha256": "bbdec6ee00231c2c742ad05483df5334cab3b52fda3ba38e6a07059c4563dbc2",
           "upstream": "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/F1.json",
-          "mirrored": true,
           "licenseId": "supertonic-model-openrail-m"
         },
         {
@@ -108,7 +87,6 @@
           "byteCount": 292423,
           "sha256": "7c722c6a72707b1a77f035d67f0d1351ba187738e06f7683e8c72b1df3477fc6",
           "upstream": "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/F2.json",
-          "mirrored": true,
           "licenseId": "supertonic-model-openrail-m"
         },
         {
@@ -116,7 +94,6 @@
           "byteCount": 290794,
           "sha256": "12f6ef2573baa2defa1128069cb59f203e3ab67c92af77b42df8a0e3a2f7c6ab",
           "upstream": "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/F3.json",
-          "mirrored": true,
           "licenseId": "supertonic-model-openrail-m"
         },
         {
@@ -124,7 +101,6 @@
           "byteCount": 291808,
           "sha256": "c2fa764c1225a76dfc3e2c73e8aa4f70d9ee48793860eb34c295fff01c2e032b",
           "upstream": "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/F4.json",
-          "mirrored": true,
           "licenseId": "supertonic-model-openrail-m"
         },
         {
@@ -132,7 +108,6 @@
           "byteCount": 291479,
           "sha256": "45966e73316415626cf41a7d1c6f3b4c70dbc1ba2bee5c1978ef0ce33244fc8d",
           "upstream": "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/F5.json",
-          "mirrored": true,
           "licenseId": "supertonic-model-openrail-m"
         },
         {
@@ -140,7 +115,6 @@
           "byteCount": 291748,
           "sha256": "e35604687f5d23694b8e91593a93eec0e4eca6c0b02bb8ed69139ab2ea6b0a5b",
           "upstream": "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/M1.json",
-          "mirrored": true,
           "licenseId": "supertonic-model-openrail-m"
         },
         {
@@ -148,7 +122,6 @@
           "byteCount": 292055,
           "sha256": "b76cbf62bac707c710cf0ae5aba5e31eea1a6339a9734bfae33ab98499534a50",
           "upstream": "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/M2.json",
-          "mirrored": true,
           "licenseId": "supertonic-model-openrail-m"
         },
         {
@@ -156,7 +129,6 @@
           "byteCount": 290198,
           "sha256": "ea1ac35ccb91b0d7ecad533a2fbd0eec10c91513d8951e3b25fbba99954e159b",
           "upstream": "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/M3.json",
-          "mirrored": true,
           "licenseId": "supertonic-model-openrail-m"
         },
         {
@@ -164,7 +136,6 @@
           "byteCount": 291522,
           "sha256": "ca8eefad4fcd989c9379032ff3e50738adc547eeb5e221b82593a6d7b3bac303",
           "upstream": "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/M4.json",
-          "mirrored": true,
           "licenseId": "supertonic-model-openrail-m"
         },
         {
@@ -172,35 +143,34 @@
           "byteCount": 291469,
           "sha256": "dd22b92740314321f8ae11c5e87f8dd60d060f15dd3a632b5adf77f471f77af2",
           "upstream": "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/M5.json",
-          "mirrored": true,
           "licenseId": "supertonic-model-openrail-m"
         },
         {
           "path": "licenses/ONNXRUNTIME_MIT.txt",
           "byteCount": 1073,
           "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
-          "mirrored": true,
+          "upstream": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.2/LICENSE",
           "licenseId": "onnxruntime-mit"
         },
         {
           "path": "licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt",
           "byteCount": 325054,
           "sha256": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",
-          "mirrored": true,
+          "upstream": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.2/ThirdPartyNotices.txt",
           "licenseId": "onnxruntime-mit"
         },
         {
           "path": "licenses/SHERPA_ONNX_APACHE-2.0.txt",
           "byteCount": 11358,
           "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-          "mirrored": true,
+          "upstream": "https://www.apache.org/licenses/LICENSE-2.0.txt",
           "licenseId": "sherpa-onnx-apache-2-0"
         },
         {
           "path": "licenses/SUPERTONIC_CODE_MIT.txt",
           "byteCount": 1070,
           "sha256": "0dfe0d0ba84416fe3879d9a34f4909d8d0137c78d1e95834177b0414ac096fa2",
-          "mirrored": true,
+          "upstream": "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/LICENSE",
           "licenseId": "supertonic-code-mit"
         },
         {
@@ -208,14 +178,13 @@
           "byteCount": 15007,
           "sha256": "0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f",
           "upstream": "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/LICENSE",
-          "mirrored": true,
           "licenseId": "supertonic-model-openrail-m"
         },
         {
           "path": "licenses/THIRD_PARTY_NOTICES.txt",
           "byteCount": 1142,
           "sha256": "b076bc0ff98d8233ffdf03426889395d67228d0428d3f2bf735c475603d35578",
-          "mirrored": true
+          "contentFile": "content/supertonic-3-int8/licenses/THIRD_PARTY_NOTICES.txt"
         }
       ],
       "licenses": [

@@ -31,6 +31,8 @@ final class MarginCaptureCoordinator: ObservableObject {
     /// The shared Margin the spoken Margin being started answers (#473). Not published, like the request ID: the
     /// recording screen is redrawn by `presentationContext`, which is always set after this. It goes with the context.
     private(set) var pendingReply: MarginReplyDraft?
+    /// The compact control's microphone request (#2126): Cancel or a newer request makes a late grant stale.
+    private var compactRequest = CurrentRequest()
 
     // MARK: A spoken Margin's microphone request
 
@@ -38,6 +40,7 @@ final class MarginCaptureCoordinator: ObservableObject {
     func beginVoiceRequest() -> UUID {
         let id = UUID()
         pendingVoiceRequestID = id
+        compactRequest.cancel() // the newest request wins; a compact grant still out must not start a second Margin (#2126)
         permissionDenied = false
         isRequestingPermission = true
         return id
@@ -85,6 +88,7 @@ final class MarginCaptureCoordinator: ObservableObject {
     /// Cancel, or the pencil, while a request waits: the primer, the request and the screen's context go. It does
     /// not clear a denial and does not put the source back; the callers decide that.
     func abandonVoiceRequest() {
+        compactRequest.cancel() // a compact control's grant that lands after Cancel starts nothing (#2126)
         primer.cancel()
         pendingVoiceRequestID = nil
         isRequestingPermission = false
@@ -92,13 +96,22 @@ final class MarginCaptureCoordinator: ObservableObject {
         pendingReply = nil
     }
 
-    // MARK: A compact control's request (no request ID, no fence, as before)
+    // MARK: A compact control's request (#2126: fenced like the in-app request)
 
-    func beginCompactRequest() {
+    /// A Live Activity, widget or headphone tap asked for a Margin. The token goes through the permission prompt.
+    @discardableResult
+    func beginCompactRequest() -> CurrentRequest.Token {
         isRequestingPermission = true
+        return compactRequest.begin()
+    }
+
+    /// Whether the compact request is still wanted: no Cancel and no newer request since. Writes nothing.
+    func isCurrentCompactRequest(_ token: CurrentRequest.Token) -> Bool {
+        compactRequest.isCurrent(token)
     }
 
     func endCompactRequest() {
+        compactRequest.cancel()
         isRequestingPermission = false
     }
 

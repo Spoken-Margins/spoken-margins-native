@@ -29,8 +29,8 @@ public struct SourceCatalogManifest: Codable, Equatable, Sendable {
 
 public struct SourceCatalogPolicy: Equatable, Sendable {
     public static let production = SourceCatalogPolicy(
-        manifestURL: URL(string: "https://spokenmargins.proximitytoprogress.com/onboarding/catalog/v1/manifest.json")!,
-        trustedHost: "spokenmargins.proximitytoprogress.com",
+        manifestURL: ProductServer.url(path: "/onboarding/catalog/v1/manifest.json"),
+        trustedHost: ProductServer.host,
         catalogId: "onboarding-top-podcasts"
     )
 

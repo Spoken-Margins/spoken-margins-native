@@ -16,7 +16,8 @@ import onnxruntime as ort
 ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parents[1]
 ONNX = ROOT / "models" / "sherpa-onnx-supertonic-3-tts-int8-2026-05-11"
-RES = REPO / "App" / "SpokenMarginsApp" / "Resources" / "Supertonic"
+# The app no longer bundles Supertonic (#1820): `scripts/voice-catalog fetch supertonic-3-int8` puts the same files here.
+RES = REPO / "artifacts" / "voice-catalog" / "files" / "supertonic-3-int8"
 
 _REPLACE = {"–": "-", "‑": "-", "—": "-", "_": " ", "“": '"', "”": '"',
             "‘": "'", "’": "'", "´": "'", "`": "'", "[": " ", "]": " ", "|": " ",

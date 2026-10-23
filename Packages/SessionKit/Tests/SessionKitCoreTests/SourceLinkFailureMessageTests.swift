@@ -22,8 +22,12 @@ final class SourceLinkFailureMessageTests: XCTestCase {
             ("rss_episode_ambiguous", nil, "I found the feed, but could not identify one episode to play."),
             ("unsupported_link_type", nil, "That link is not a supported public podcast, RSS feed, or direct audio file."),
             ("apple_lookup_failed", nil, "Apple Podcasts did not return a playable public audio file for that episode."),
+            ("invalid_url", nil, "That doesn't look like a web link I can use. Check the address."),
+            ("rss_feed_empty", nil, "That feed has no episodes in it yet."),
+            ("rss_audio_enclosure_missing", nil, "I found that episode, but it has no audio file to play."),
+            ("no_link_resolver_configured", nil, "That link is not playable in Spoken Margins yet."),
         ]
-        XCTAssertEqual(table.count, 15)
+        XCTAssertEqual(table.count, 19)
         for row in table {
             XCTAssertEqual(
                 SourceLinkFailureMessage.text(status: "needs_review", reason: row.reason, provider: row.provider),
@@ -56,7 +60,7 @@ final class SourceLinkFailureMessageTests: XCTestCase {
     }
 
     func testAnUnknownReasonPassesThroughUnchanged() {
-        for reason in ["Feed is empty.", "invalid_url", "", " pdf_document", "PDF_DOCUMENT"] {
+        for reason in ["Feed is empty.", "Invalid_url", "", " pdf_document", "PDF_DOCUMENT"] {
             XCTAssertEqual(SourceLinkFailureMessage.text(status: "unsupported", reason: reason, provider: "spotify"), reason)
         }
     }

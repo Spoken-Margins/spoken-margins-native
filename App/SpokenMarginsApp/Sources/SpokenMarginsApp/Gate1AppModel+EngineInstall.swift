@@ -22,6 +22,10 @@ extension Gate1AppModel {
     func installEngine(_ engine: SessionEngine) {
         self.engine = engine
         engine.recordingDraftJournal = makeRecordingDraftJournal()
+        // A saved podcast position that moves back by more than a minute, with the command that wrote it (#2186).
+        engine.positionDiagnosticHandler = { [weak self] fields in
+            Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("position.backward", fields) }
+        }
         for record in podcastDownloadRecords.values where record.state == .availableOffline {
             guard let path = record.localRelativePath,
                   let url = try? applicationSupportDirectory()

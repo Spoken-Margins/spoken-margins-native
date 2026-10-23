@@ -192,6 +192,36 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(StructuredDocumentSpeech.spokenLines(doc).first?.hasPrefix("Pittas et al."), true)
     }
 
+    func testAuthorYearCitationsWithThreeOrMoreAuthorsAndYearListsAreCitations() {
+        // #2370: natbib/AER style from "Technology Bottlenecks" (Shukla, 2026); only the
+        // two-author "(Becker and Murphy, 1992)" matched before.
+        let sentences = [
+            "describing which occupations AI is likely to affect (Brynjolfsson, Chandar and Chen, 2025; Webb, 2020), and",
+            "a potential “mini Baumol” effect (Aghion, Jones and Jones, 2019; Baumol, 1967), suggesting that",
+            "the labor that performs them (Agrawal, Gans and Goldfarb, 2019, 2024; Autor, 2024; Imas and Shukla, 2026a).",
+            "task-based models (Acemoglu and Autor, 2011; Autor, Levy and Murnane, 2003) treat",
+            // The same citation from a PDF that lost its spaces, after the spacer (#2370).
+            "likely to affect (Brynjolfsson, Chandar and Chen,2025; Webb,2020)",
+            "as in (Becker and Murphy, 1992).",
+        ]
+        XCTAssertEqual(citationLabels(sentences, references: nil), [
+            "(Brynjolfsson, Chandar and Chen, 2025; Webb, 2020)",
+            "(Aghion, Jones and Jones, 2019; Baumol, 1967)",
+            "(Agrawal, Gans and Goldfarb, 2019, 2024; Autor, 2024; Imas and Shukla, 2026a)",
+            "(Acemoglu and Autor, 2011; Autor, Levy and Murnane, 2003)",
+            "(Brynjolfsson, Chandar and Chen,2025; Webb,2020)",
+            "(Becker and Murphy, 1992)",
+        ])
+        XCTAssertEqual(citationLabels(["GPT-4 ratings from Eloundou et al. (2024) construct a measure."], references: nil), [])
+        XCTAssertEqual(citationLabels(["We tested (1) speed and (2) accuracy."], references: numberedReferences), [])
+        // An author-year paper like this one has no numbered list; with one, "(2)" is a citation (#138).
+        XCTAssertEqual(citationLabels(["In 2019 (2) groups met."], references: nil), [])
+        XCTAssertEqual(citationLabels(["Sales rose (Table 2, 2019) and fell (in 2020)."], references: nil), [])
+        XCTAssertEqual(citationLabels(["The summit (Paris, France, 2019) met."], references: nil), [])
+        XCTAssertEqual(citationLabels(["As shown (Smith, Jones, & Lee, 2019)."], references: nil), ["(Smith, Jones, & Lee, 2019)"])
+        XCTAssertEqual(citationLabels(["As shown (Smith &Jones, 2019)."], references: nil), ["(Smith &Jones, 2019)"])
+    }
+
     private func citationLabels(_ body: [String], references: [String]?) -> [String] {
         var lines = body.map { StructuredDocumentLine(text: $0, role: .body, pageIndex: 0) }
         if let references {
@@ -238,6 +268,78 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(citationLabels(["The year (2020) began."], references: listed), [])
         XCTAssertEqual(citationLabels(["Cells divide (2)."], references: Array(numberedReferences.prefix(2))), [], "two entries are not a list")
         XCTAssertEqual(citationLabels(["Cells divide (4)."], references: Array(numberedReferences.suffix(10))), [], "a list that does not start at 1")
+    }
+
+    func testSuperscriptCitationsFlattenedOntoPunctuationAreCitations() {
+        // #138: the extractor missed these superscripts, so "concept.13 This" read "thirteen".
+        let body = [
+            "Exclusion is a relative concept.13 This means a lot.",
+            "Integration covers values and norms).14 15 Social exclusion grew.",
+            "Protection held for Alpha but not Beta,4–6 likely due to escape.",
+            "This holds in the retina,3,4 where stimuli vary.",
+            "Goleman (1998)6 presents five components.",
+            "It escaped Alpha and Beta (B.1.351)3; vaccines still worked.",
+            "And it ends the paragraph.17",
+        ]
+        XCTAssertEqual(citationLabels(body, references: numberedReferences), ["13", "14 15", "4–6", "3,4", "6", "3", "17"])
+        let doc = document([
+            StructuredDocumentLine(text: "Exclusion is a relative concept.13 This means a lot.", role: .body, pageIndex: 0),
+            StructuredDocumentLine(text: "References", role: .heading, pageIndex: 1, level: 2),
+        ] + numberedReferences.map { StructuredDocumentLine(text: $0, role: .reference, pageIndex: 1) })
+        XCTAssertEqual(StructuredDocumentSpeech.spokenLines(doc).first, "Exclusion is a relative concept. This means a lot.")
+        // The number column read as one line, before the first entry's text.
+        let stacked = ["1. 2. 3. 4. 5. 6. 7. 8. Woodworth RS: Psychology. 1940.", "Lewis M: Self-conscious emotions. 2008.", "9. 10. Cherniss C. 2001."]
+        XCTAssertEqual(citationLabels(["It was revived,9 he said."], references: stacked), ["9"])
+        XCTAssertEqual(citationLabels(["It was revived,9 he said."], references: ["1. 2 mg doses. 2019.", "Lewis M. 2008.", "Cherniss C. 2001."]), [],
+                       "a number after a space is the entry's text, not the next entry")
+    }
+
+    func testNumbersAfterPunctuationThatAreProseAreStillRead() {
+        let listed = numberedReferences
+        XCTAssertEqual(citationLabels(["Exclusion is a relative concept.13 This means a lot."], references: nil), [], "no reference list")
+        XCTAssertEqual(citationLabels(["Exclusion is a relative concept.45 This means a lot."], references: listed), [], "no such entry")
+        XCTAssertEqual(citationLabels(["The dose was 0.18 mg, and 3,4 more.", "COVID-19.2 cases rose."], references: listed), [])
+        XCTAssertEqual(citationLabels(["Strain B.1 was common, see Fig.2 and No.5 and ref.3 here."], references: listed), [])
+        XCTAssertEqual(citationLabels(["We used MSigDB v7.3 today.", "The ratio was 3:1 then."], references: listed), [])
+        XCTAssertEqual(citationLabels(["Then x = (a+b)2 holds, and (n)2 too, and (a, b)2 and (x,y)2."], references: listed), [],
+                       "a square, not a citation")
+        XCTAssertEqual(citationLabels(["Patients left the cohort.3 12 patients stayed."], references: listed), [],
+                       "after a full stop, a number followed by more numbers is not the end of a sentence")
+        XCTAssertEqual(citationLabels(["It took a dose,3 12 more."], references: listed), ["3"],
+                       "a second number after a space joins the citation only when a new sentence follows")
+        XCTAssertEqual(citationLabels(["Doses were given at noon.5mg each."], references: listed), [], "the number runs into a word")
+        XCTAssertEqual(citationLabels(["Omicron BA.1 variants, and Omicron BA.1 (p < 0.01).", "We used DSH 0.1.5-rc.2, both times.",
+                                       "Most were class I or II.1 without pain.", "The Sah:1 equation."], references: listed), [],
+                       "after a full stop a citation ends the sentence")
+        XCTAssertEqual(citationLabels(["Lead nitrate Pb(NO3)2 was used, and f(x)2 is smooth; log(|R|)3 too."], references: listed), [],
+                       "a bracket stuck to a word is a formula")
+        XCTAssertEqual(citationLabels(["See Tab.2 Here, Thm.3 There and Eqn.4 Now."], references: listed), [])
+        XCTAssertEqual(citationLabels(["Of these,15 were male.", "The PDF lost spaces,as here,and here,and there."], references: listed), [],
+                       "a document that drops the space after commas")
+        XCTAssertEqual(citationLabels(["Translocations t(18) and dup(10) and inv(22) were seen."], references: listed), [],
+                       "a bracket stuck to a short word is notation")
+        XCTAssertEqual(citationLabels(["We used the mapper(17),atool.", "It self-cleaves(3,4),as shown."], references: listed), ["(17)", "(3,4)"],
+                       "a PDF that lost its spaces still cites")
+        XCTAssertEqual(citationLabels(["Cells divide [3], [4] and [5].", "It held.6 Then it fell.7 Later.8 Again.9 More."], references: listed),
+                       ["[3]", "[4]", "[5]", "6", "7", "8", "9"], "mostly flattened superscripts, with a few square brackets")
+        XCTAssertEqual(citationLabels(["Cells divide [3].", "As in [4] and [5], [6], [7] and [8].", "By Eqs (2)–(4) and (8) and (9), it holds.", "It held.6 Then it fell."],
+                                      references: listed), ["[3]", "[4]", "[5]", "[6]", "[7]", "[8]"],
+                       "a paper that cites in square brackets numbers its equations in round ones")
+    }
+
+    func testSquareBracketCitationsWithALocatorAreCitations() {
+        // #138: "[7, Lemma A.1]" read "seven, Lemma A one" in maths papers.
+        let body = [
+            "The minimiser is unique (see [7, Lemma A.1]). Moreover it is even.",
+            "Existence is guaranteed by [1, Theorem 2.1]. Next we show it.",
+            "Sparser models keep their accuracy [48, p. 214].",
+            "The following properties hold (see [2, Lemma 3 and Theorem 7]).",
+        ]
+        XCTAssertEqual(citationLabels(body, references: nil),
+                       ["[7, Lemma A.1]", "[1, Theorem 2.1]", "[48, p. 214]", "[2, Lemma 3 and Theorem 7]"])
+        XCTAssertEqual(citationLabels(["Pick a point in [1, x] or [2, the end]."], references: nil), [], "no locator word")
+        XCTAssertEqual(citationLabels(["Take [1, part of the set] and [0, section] here."], references: nil), [],
+                       "a locator word with no number or label after it is an interval")
     }
 
     func testDocumentRoundTripsAsI13JSON() throws {

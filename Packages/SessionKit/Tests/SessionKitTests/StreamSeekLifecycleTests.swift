@@ -203,6 +203,102 @@ final class StreamSeekLifecycleTests: XCTestCase {
             + (heldWhilePlaying.map { "\(Int($0 * 1_000)) ms" } ?? "no measurable time"))
     }
 
+    /// #2094: on the phone, AVPlayer's clock stood still for 66 s and 137 s after a Margin's rejoin seek while the
+    /// audio played on at 1.5×. The next Margin took the frozen time, and its rejoin sent the listener back over
+    /// all of it. A Margin, the saved pause position and the player's own clock must follow the decoded audio.
+    func testPositionFollowsTheAudioWhenThePlayerClockFreezesAfterARejoinSeek() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "stream-frozen-clock-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let episodeURL = try Self.writeTone(to: directory.appending(path: "episode.caf"), seconds: 40, hz: 220)
+        let client = AVPlayerStreamPlaybackClient()
+        try client.setPlaybackVolume(0)
+        try client.configureMediaContext(PlaybackMediaContext(
+            itemId: "episode", targetType: .transcriptBackedMedia, targetId: "episode-target",
+            title: "Test episode", playbackURL: episodeURL.absoluteString, durationMs: 40_000,
+            sourceType: .nativeMediaFile
+        ))
+        defer { try? client.stop() }
+        let trace = TraceLines()
+        client.playbackStallTraceHandler = { fields in trace.append(fields) }
+        try client.setPlaybackRate(1.5)
+        try client.play(targetId: "episode-target", fromMediaTimeMs: 0)
+        XCTAssertTrue(spin(until: 8) { (client.currentMediaTimeMs() ?? 0) >= 5_000 }, "the episode plays")
+        XCTAssertTrue(client.hasPodcastEvidenceTapOnCurrentItem, "precondition: the decoded-audio tap is attached")
+        XCTAssertEqual(client.currentItemProvidesPreciseTimingForTesting, true,
+                       "a downloaded episode seeks precisely, so a VBR MP3's audio lands where the clock says")
+
+        // The Margin's rejoin: back 3 s, then the clock freezes where the seek landed.
+        let rejoinMs = (client.currentMediaTimeMs() ?? 0) - 3_000
+        _ = try client.requestMediaSeek(toMediaTimeMs: rejoinMs)
+        XCTAssertTrue(spin(until: 5) { (client.currentMediaTimeMs() ?? 0) >= rejoinMs + 300 }, "the rejoin seek lands")
+        let frozenAtMs = try XCTUnwrap(client.playbackStateTraceFields()["playerMs"].flatMap(Int.init))
+        client.frozenPlayerClockForTesting = frozenAtMs
+
+        // 3 s later, at 1.5×, the listener has heard about 4.5 s more. A Margin started now is anchored here.
+        // The scrubber reads the position all along, as in the app.
+        _ = spin(until: 3) { _ = client.currentMediaTimeMs(); return false }
+        let anchorMs = try XCTUnwrap(client.currentMediaTimeMs())
+        XCTAssertGreaterThan(anchorMs, frozenAtMs + 3_000, "a Margin anchors where the audio is, not at the frozen clock")
+        XCTAssertLessThan(anchorMs, frozenAtMs + 6_500, "and not ahead of the audio")
+
+        // The watchdog notices the freeze and re-seeks to the audio, so AVPlayer's own clock moves again.
+        XCTAssertTrue(spin(until: 8) { trace.lines.contains { $0["event"] == "clock_recovered" } },
+                      "the frozen clock is recovered")
+        let recovered = try XCTUnwrap(trace.lines.first { $0["event"] == "clock_recovered" })
+        // The stall detector reports its last reading that moved 300 ms or more, so up to that much before.
+        XCTAssertLessThanOrEqual(abs((recovered["fromMs"].flatMap(Int.init) ?? 0) - frozenAtMs), 400)
+        XCTAssertGreaterThan(recovered["toMs"].flatMap(Int.init) ?? 0, anchorMs)
+        XCTAssertTrue(spin(until: 4) {
+            (client.playbackStateTraceFields()["playerMs"].flatMap(Int.init) ?? 0) > (recovered["toMs"].flatMap(Int.init) ?? .max)
+        }, "AVPlayer's own clock moves on from the recovered position")
+
+        // Freeze again and pause: the saved resume position is the audio's, not the frozen clock's.
+        let secondFreezeMs = try XCTUnwrap(client.playbackStateTraceFields()["playerMs"].flatMap(Int.init))
+        client.frozenPlayerClockForTesting = secondFreezeMs
+        _ = spin(until: 2.5) { _ = client.currentMediaTimeMs(); return false }
+        try client.pause()
+        RunLoop.main.run(until: Date().addingTimeInterval(1))
+        let pausedMs = try XCTUnwrap(client.currentMediaTimeMs())
+        XCTAssertGreaterThan(pausedMs, secondFreezeMs + 2_000, "pausing during a freeze keeps the audio's position")
+        XCTAssertEqual(trace.lines.filter { $0["event"] == "clock_recovered" }.count, 1,
+                       "at most one re-seek a minute")
+    }
+
+    /// #2109 audit: a phone call, an announcement or a lost Bluetooth route pauses playback without `pause()`.
+    /// During a clock freeze that path must also keep where the audio was, or resuming sends the listener back.
+    func testASystemPauseDuringAClockFreezeKeepsTheAudiosPosition() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "stream-frozen-system-pause-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let episodeURL = try Self.writeTone(to: directory.appending(path: "episode.caf"), seconds: 30, hz: 220)
+        let client = AVPlayerStreamPlaybackClient()
+        try client.setPlaybackVolume(0)
+        try client.configureMediaContext(PlaybackMediaContext(
+            itemId: "episode", targetType: .transcriptBackedMedia, targetId: "episode-target",
+            title: "Test episode", playbackURL: episodeURL.absoluteString, durationMs: 30_000,
+            sourceType: .nativeMediaFile
+        ))
+        defer { try? client.stop() }
+        try client.setPlaybackRate(1.5)
+        try client.play(targetId: "episode-target", fromMediaTimeMs: 0)
+        XCTAssertTrue(spin(until: 8) { (client.currentMediaTimeMs() ?? 0) >= 3_000 }, "the episode plays")
+        XCTAssertTrue(client.hasPodcastEvidenceTapOnCurrentItem, "precondition: the decoded-audio tap is attached")
+
+        // The clock freezes, and the listener hears about 3.75 s more before the headset drops, inside the
+        // watchdog's first 5 s, so no recovery seek has moved the clock yet.
+        let frozenAtMs = try XCTUnwrap(client.playbackStateTraceFields()["playerMs"].flatMap(Int.init))
+        client.frozenPlayerClockForTesting = frozenAtMs
+        _ = spin(until: 2.5) { _ = client.currentMediaTimeMs(); return false }
+        client.pauseForSystemInterruption(awaitsEnd: false)
+        RunLoop.main.run(until: Date().addingTimeInterval(1))
+        let pausedMs = try XCTUnwrap(client.currentMediaTimeMs())
+        XCTAssertGreaterThan(pausedMs, frozenAtMs + 2_000, "a system pause during a freeze keeps the audio's position")
+        XCTAssertLessThan(pausedMs, frozenAtMs + 5_500, "and not ahead of the audio")
+    }
+
     private func spin(until seconds: TimeInterval, _ condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {

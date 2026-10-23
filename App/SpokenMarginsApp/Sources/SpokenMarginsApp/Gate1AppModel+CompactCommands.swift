@@ -30,34 +30,41 @@ extension Gate1AppModel {
         // Only from Now Playing: a stale queued widget command must not save a Margin. A save already
         // under way from the screen is not asked twice. Bluetooth headphones switching to the hands-free
         // profile for the microphone send a `play` nobody pressed, so one in the first moment of a recording
-        // or just after the route changed is logged and ignored (#1708).
+        // or just after the route changed is logged and ignored (#1708). A bare `play` on a hands-free input is
+        // that profile's noise at any time, so it never ends a Margin (#2182).
         if snapshot.isRecording, command.endsRecordingMargin, origin.hasPrefix("now_playing") {
             guard !isFinishingInterjection else { return }
             let recordingMs = captureWatcher.elapsedMs
             let sinceRouteChangeMs = captureWatcher.msSinceRouteChange
-            if case .ignore(let reason) = RecordingTransportGuard.verdict(recordingMs: recordingMs, sinceRouteChangeMs: sinceRouteChangeMs) {
-                recordDeveloperDiagnostic("transport.ignored_during_recording", [
-                    "command": command.rawValue,
-                    "origin": origin,
-                    "reason": reason.rawValue,
-                    "recordingMs": String(recordingMs),
-                    "sinceRouteChangeMs": sinceRouteChangeMs.map(String.init) ?? "none",
-                ])
-                return
-            }
-            recordDeveloperDiagnostic("transport.ends_margin", [
+            let onHandsFree = recordingInputIsBluetoothHandsFree
+            // Where the command arrived, so a false end can be told from a real one in the export (#2182).
+            let context: [String: String] = [
                 "command": command.rawValue,
                 "origin": origin,
                 "recordingMs": String(recordingMs),
-            ])
+                "sinceRouteChangeMs": sinceRouteChangeMs.map(String.init) ?? "none",
+                "handsFreeInput": onHandsFree ? "true" : "false",
+                "appState": Gate2AppState.isInBackground() ? "background" : "foreground",
+                "lowPowerMode": String(ProcessInfo.processInfo.isLowPowerModeEnabled),
+            ]
+            let verdict = RecordingTransportGuard.verdict(
+                command: command, recordingMs: recordingMs, sinceRouteChangeMs: sinceRouteChangeMs, onHandsFreeProfile: onHandsFree
+            )
+            if case .ignore(let reason) = verdict {
+                recordDeveloperDiagnostic("transport.ignored_during_recording", context.merging(["reason": reason.rawValue]) { $1 })
+                return
+            }
+            recordDeveloperDiagnostic("transport.ends_margin", context)
             performGate2CompactCommand(.finishInterjection, origin: origin)
             return
         }
         if command == .beginInterjection {
             guard !recordingNavigationIsLocked else { return }
-            marginCapture.beginCompactRequest()
+            let request = marginCapture.beginCompactRequest()
             microphoneAccess.recordFromCompactControl(ask: { [weak self] in await self?.requestMicrophonePermission() ?? false }) { [weak self] granted in
                 guard let self else { return }
+                // Cancelled in the app, or overtaken by a newer request, while iOS asked: start nothing (#2126).
+                guard marginCapture.isCurrentCompactRequest(request) else { return }
                 if granted { performGate2CompactCommand(command, chapterId: chapterId, mediaTimeMs: mediaTimeMs, playbackRate: playbackRate, origin: origin) }
                 marginCapture.endCompactRequest()
                 if !granted { reportFailure("Microphone access is required to record Margins from compact controls.") }
@@ -65,6 +72,15 @@ extension Gate1AppModel {
             return
         }
         performGate2CompactCommand(command, chapterId: chapterId, mediaTimeMs: mediaTimeMs, playbackRate: playbackRate, origin: origin)
+    }
+
+    /// The Margin is recording from a Bluetooth headset's hands-free port (#2182).
+    private var recordingInputIsBluetoothHandsFree: Bool {
+        #if canImport(AVFoundation) && os(iOS)
+        AVAudioSession.sharedInstance().currentRoute.inputs.contains { $0.portType == .bluetoothHFP }
+        #else
+        false
+        #endif
     }
 
     func handleGate2CompactURL(_ url: URL) {

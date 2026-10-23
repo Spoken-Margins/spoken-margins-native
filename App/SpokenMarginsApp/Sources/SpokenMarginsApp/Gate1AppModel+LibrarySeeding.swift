@@ -36,7 +36,8 @@ extension Gate1AppModel {
             purgeExpiredEpisodeMapPreparationJobs(store: store)
             let seed = pendingUITestingSeed ?? UITestingLaunchSeed.none; pendingUITestingSeed = nil
             switch seed {
-            case .none, .keepLibrary: break
+            case .none: break
+            case .keepLibrary: try UITestingLaunchSeedWriter.importCoopLayerIfRequested(into: store)
             case .fixture: resetAndSeed(); return
             case .importedPDF: resetAndSeed(); try importObsidianMarkdownFiles(urls: [UITestingLaunchSeedWriter.writePDF()]); return
             case .text, .offlinePodcast:
@@ -104,6 +105,7 @@ extension Gate1AppModel {
             } else {
                 selectedItem = ItemDetailState()
             }
+            settleReviewPlacesAtLaunch()
             writtenMarginNotice = restoreUnfinishedWrittenMargin(store: store, availableItemIDs: availableItemIDs)
             refreshMarginRows()
             tryRefreshOfflineStorageUsage()

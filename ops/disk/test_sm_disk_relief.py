@@ -2,6 +2,8 @@
 
 Run: python3 -m unittest ops/disk/test_sm_disk_relief.py
 """
+import os
+os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 import fcntl
 import json
 import os
@@ -16,6 +18,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import sm_disk_relief as d  # noqa: E402
 import sm_lane_prune as lane_prune  # noqa: E402
+import sm_build_cache  # noqa: E402
+from unittest import mock  # noqa: E402
 
 MiB = 1024 ** 2
 # The fake clock and expected offload folders must agree after October 1 too.
@@ -134,6 +138,8 @@ class Base(unittest.TestCase):
             launch_agents=home / 'Library/LaunchAgents',
             claude_projects=home / '.claude/projects',
             codex_sessions=home / '.codex/sessions',
+            codex_worktrees=home / '.codex/worktrees',
+            build_cache_dir=home / 'Library/Caches/SpokenMarginsBuilds',
             claude_tmp=home / 'tmp/claude-501',
             claude_sessions=home / '.claude/sessions',
             tmp_root=home / 'tmp',
@@ -150,12 +156,12 @@ class Base(unittest.TestCase):
     def make_repo(self, *worktrees):
         repo = self.cfg.repo
         repo.mkdir(parents=True, exist_ok=True)
-        git(repo, 'init', '-q', '-b', 'next')
+        git(repo, 'init', '-q', '-b', 'main')
         write(repo / 'README.md', 10)
         (repo / '.gitignore').write_text('.build/\nartifacts/\nPackages/SessionKit/.build/\n.venv\nnode_modules\n.swiftpm\n')
         git(repo, 'add', '.')
         git(repo, 'commit', '-qm', 'one')
-        git(repo, 'update-ref', 'refs/remotes/origin/next', 'HEAD')
+        git(repo, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
         paths = []
         for name in worktrees:
             path = repo / '.claude/worktrees' / name
@@ -324,23 +330,17 @@ class NeverTouch(Base):
         self.assertIn(runner, d.runner_dirs(agents))
         protected = self.cfg.protected()
         self.assertTrue(d.is_protected(runner / '_work/repo/.build/dd', protected))
-        self.assertTrue(d.is_protected(self.cfg.home / '.codex/worktrees/x/.build', protected))
+        self.assertFalse(d.is_protected(self.cfg.home / '.codex/worktrees/x/.build', protected),
+                         'owner, 2026-10-19: Codex worktrees follow the same rules as Claude\'s')
         self.assertTrue(d.is_protected(self.cfg.home / 'Library/Developer/CoreSimulator/Devices/U', protected))
         self.assertTrue(d.is_protected(self.cfg.home / 'Library', protected), 'a parent of a protected path')
         self.assertFalse(d.is_protected(self.cfg.repo / '.build/dd', protected))
 
-    def test_protected_worktrees_are_not_planned_and_forced_candidates_are_refused(self):
-        repo, _ = self.make_repo()
-        codex = self.cfg.home / '.codex/worktrees/proj/spoken-margins-native'
-        git(repo, 'worktree', 'add', '-q', '--detach', str(codex))
-        codex_cache = self.cache(codex, MiB)
+    def test_forced_candidates_in_protected_folders_are_refused(self):
         sim = write(self.cfg.home / 'Library/Developer/CoreSimulator/Devices/U/data', MiB)
         m = FakeMachine(self.cfg, base_free=10 * MiB)
-        plan = d.make_plan(self.cfg, m)
-        self.assertNotIn(codex_cache, {c.path for c in plan.candidates})
-        plan.candidates = [d.Candidate('cache', codex_cache, MiB, 'forced'), d.Candidate('cache', sim.parent, MiB, 'forced')]
+        plan = d.Plan(candidates=[d.Candidate('cache', sim.parent, MiB, 'forced')])
         d.execute(self.cfg, m, plan, self.log, 10 * MiB)
-        self.assertTrue(codex_cache.exists())
         self.assertTrue(sim.exists())
 
 
@@ -698,7 +698,7 @@ class Worktrees(Base):
         write(dirty / 'wip.txt', 10)
         write(evidence / 'artifacts/run/report.md', 10)
         git(repo, 'worktree', 'lock', str(locked))
-        git(ahead, 'commit', '-q', '--allow-empty', '-m', 'not in next yet')
+        git(ahead, 'commit', '-q', '--allow-empty', '-m', 'not in main yet')
         for tree in (dirty, busy, evidence, locked, session, ahead, desk, elsewhere):
             age_tree(tree, 2 * DAY)
         self.cfg.claude_sessions.mkdir(parents=True)
@@ -728,6 +728,154 @@ class Worktrees(Base):
         write(done / 'new-idea.txt', 10)
         d.execute(self.cfg, m, plan, self.log, 10 * MiB)
         self.assertTrue((done / 'new-idea.txt').exists())
+
+
+class CodexWorktrees(Base):
+    """Owner, 2026-10-19: Codex app worktrees (~/.codex/worktrees/<id>/<name>) follow the same rules."""
+
+    def codex(self, repo: Path, name: str) -> Path:
+        path = self.cfg.codex_worktrees / name / 'spoken-margins-native'
+        git(repo, 'worktree', 'add', '-q', '--detach', str(path))
+        return path
+
+    def test_found_by_their_git_file_without_git_worktree_list(self):
+        repo, _ = self.make_repo()
+        mine = self.codex(repo, 'a1')
+        other = self.cfg.codex_worktrees / 'b2/other'
+        (other).mkdir(parents=True)
+        (other / '.git').write_text('gitdir: /somewhere/else/.git/worktrees/x\n')
+        flat = self.cfg.codex_worktrees / 'tonight-journeys'
+        git(repo, 'worktree', 'add', '-q', '--detach', str(flat))
+        self.assertEqual(d.codex_worktrees(self.cfg, [repo]), [mine, flat])
+        self.assertTrue(d.in_codex_worktrees(self.cfg, flat) and d.in_codex_worktrees(self.cfg, mine))
+        self.assertFalse(d.in_codex_worktrees(self.cfg, d.real(self.cfg.codex_worktrees)))
+
+    def test_a_finished_codex_worktree_goes_whole_with_its_id_folder(self):
+        repo, _ = self.make_repo()
+        done = self.codex(repo, 'a1')
+        self.cache(done, MiB)
+        age_tree(done, 2 * DAY)
+        m = FakeMachine(self.cfg, base_free=10 * MiB)
+        plan = d.make_plan(self.cfg, m)
+        self.assertEqual([(c.step, c.path) for c in plan.candidates], [('worktree', done)])
+        d.run(self.cfg, m, self.log)
+        self.assertFalse(done.parent.exists(), 'left the empty <id> folder behind')
+        self.assertTrue((repo / 'README.md').exists())
+
+    def test_a_codex_worktree_in_use_keeps_itself_and_an_idle_one_loses_its_cache(self):
+        repo, _ = self.make_repo()
+        dirty = self.codex(repo, 'a1')
+        write(dirty / 'wip.txt', 10)
+        cache = self.cache(dirty, MiB)
+        recent = self.codex(repo, 'b2')
+        age_tree(dirty, 2 * DAY)
+        m = FakeMachine(self.cfg, base_free=10 * MiB)
+        plan = d.make_plan(self.cfg, m)
+        self.assertEqual([(c.step, c.path) for c in plan.candidates], [('cache', cache)])
+        self.assertIn('24 hours', dict(plan.stale_worktrees)[recent])
+        d.run(self.cfg, m, self.log)
+        self.assertFalse(cache.exists())
+        self.assertTrue((dirty / 'wip.txt').exists() and recent.exists())
+
+
+class BuildCacheFolder(Base):
+    """Worktrees under ~/Documents keep their build folders in ~/Library/Caches/SpokenMarginsBuilds
+    (scripts/sm_build_cache.py), because this job can't read ~/Documents (2026-10-19: 20 GiB, 0 cleared)."""
+
+    def setUp(self):
+        super().setUp()
+        env = {'SM_BUILD_CACHE_ROOT': str(self.cfg.build_cache_dir),
+               'SM_BUILD_CACHE_UNDER': str(self.cfg.home / 'Documents'), 'SM_BUILD_CACHE': ''}
+        patcher = mock.patch.dict(os.environ, env)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop('GITHUB_ACTIONS', None)
+
+    def linked(self, tree: Path, size=MiB, age=DAY) -> Path:
+        (tree / 'Packages/SessionKit').mkdir(parents=True)
+        sm_build_cache.ensure_links(tree)
+        self.assertTrue((tree / '.build').is_symlink())
+        self.cache(tree, size, age=age)
+        self.cache(tree, size, sub='Packages/SessionKit/.build', age=age)
+        write(tree / '.build/verification.lock', 0)
+        slot = sm_build_cache.slot_for(tree)
+        age_tree(slot, age)
+        return slot
+
+    def test_an_idle_worktrees_cache_is_emptied_and_its_links_still_work(self):
+        _, (a,) = self.make_repo('a')
+        slot = self.linked(a)
+        m = FakeMachine(self.cfg, base_free=10 * MiB)
+        plan = d.make_plan(self.cfg, m)
+        self.assertEqual(sorted(c.path for c in plan.candidates), [slot / 'root/dd', slot / 'sessionkit'],
+                         'a linked .build was also planned through the worktree, or the lock file was')
+        d.run(self.cfg, m, self.log)
+        self.assertFalse((slot / 'root/dd').exists())
+        self.assertEqual(list((slot / 'sessionkit').iterdir()), [])
+        self.assertTrue((slot / 'root/verification.lock').exists() and (slot / 'owner.txt').exists())
+        self.assertTrue((a / 'Packages/SessionKit/.build').is_dir(), 'the SessionKit link dangles')
+        self.assertTrue((a / '.build').is_dir())
+
+    def test_a_slot_whose_worktree_is_gone_goes_whole(self):
+        repo, (a, b) = self.make_repo('a', 'b')
+        gone = self.linked(a)
+        kept = self.linked(b)
+        git(repo, 'worktree', 'remove', '--force', str(a))
+        m = FakeMachine(self.cfg, base_free=10 * MiB)
+        plan = d.make_plan(self.cfg, m)
+        self.assertIn(gone, {c.path for c in plan.candidates})
+        d.run(self.cfg, m, self.log)
+        self.assertFalse(gone.exists())
+        self.assertTrue((kept / 'owner.txt').exists())
+
+    def test_busy_recent_or_testing_slots_stay(self):
+        _, (busy, recent, testing) = self.make_repo('a', 'b', 'c')
+        busy_slot = self.linked(busy)
+        recent_slot = self.linked(recent, age=10 * 60)
+        testing_slot = self.linked(testing)
+        m = FakeMachine(self.cfg, base_free=10 * MiB, procs=[d.Proc(7, str(busy / 'App'), 'zsh')])
+        with open(testing_slot / 'root/verification.lock', 'a') as held:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            plan = d.make_plan(self.cfg, m)
+            d.execute(self.cfg, m, plan, self.log, 10 * MiB)
+        self.assertEqual([c.path for c in plan.candidates], [])
+        for slot in (busy_slot, recent_slot, testing_slot):
+            self.assertTrue((slot / 'root/dd/Build/blob').exists(), slot)
+
+    def test_a_slot_whose_worktree_a_live_agent_has_locked_stays(self):
+        # A sub-agent's worktree, locked with its pid while the agent itself works from another folder:
+        # its DerivedData must survive between build-for-testing and test-without-building (finding 3).
+        repo, (a, b) = self.make_repo('a', 'b')
+        locked_slot = self.linked(a)
+        dead_slot = self.linked(b)
+        git(repo, 'worktree', 'lock', '--reason', 'claude agent x (pid 42 start Thu)', str(a))
+        git(repo, 'worktree', 'lock', '--reason', 'claude agent y (pid 43 start Thu)', str(b))
+        m = FakeMachine(self.cfg, base_free=10 * MiB, live_pids={42})
+        plan = d.make_plan(self.cfg, m)
+        planned = {c.path for c in plan.candidates}
+        self.assertFalse({locked_slot / 'root/dd', locked_slot / 'sessionkit'} & planned, planned)
+        self.assertIn(dead_slot / 'root/dd', planned)
+        self.assertTrue(any('live agent' in s for s in plan.skipped), plan.skipped)
+
+    def test_a_worktree_this_job_may_not_look_into_is_not_counted_as_gone(self):
+        _, (a,) = self.make_repo('a')
+        slot = self.linked(a)
+        a.parent.chmod(0)
+        try:
+            self.assertFalse(d.worktree_gone(str(a)))
+        finally:
+            a.parent.chmod(0o755)
+        self.assertTrue(d.worktree_gone(str(a.parent / 'never-existed')))
+        self.assertTrue(d.worktree_gone(None))
+        self.assertTrue((slot / 'owner.txt').exists())
+
+    def test_dry_run_lists_the_moved_caches(self):
+        _, (a,) = self.make_repo('a')
+        slot = self.linked(a)
+        text = '\n'.join(d.dry_run(self.cfg, FakeMachine(self.cfg, base_free=10 * MiB), None))
+        self.assertIn(str(slot / 'root/dd'), text)
+        self.assertIn(str(slot / 'sessionkit'), text)
+        self.assertTrue((slot / 'root/dd/Build/blob').exists())
 
 
 class TmpFolders(Base):
@@ -806,6 +954,14 @@ class LaneFolder(Base):
         d.run(self.cfg, m, self.log)
         self.assertFalse(self.spare.exists())
         self.assertTrue(self.newest.exists(), 'the newest cache of a live checkout stays')
+
+    def test_disk_relief_prunes_to_the_cap_with_no_room_for_a_build(self):
+        # Only the lane runner's call, just before a build, leaves room under the cap (#1775).
+        self.lane_fixture()
+        m = FakeMachine(self.cfg, base_free=500 * MiB, open_prs={3})
+        plan = d.plan_lane(self.cfg, m)
+        self.assertEqual(plan.room, 0)
+        self.assertEqual(plan.cap, self.cfg.lane_cap_bytes)
 
     def test_dry_run_lists_the_lane_step_and_changes_nothing(self):
         self.lane_fixture()

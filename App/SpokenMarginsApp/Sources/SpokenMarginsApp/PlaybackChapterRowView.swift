@@ -10,6 +10,8 @@ struct PlaybackChapterRowView: View {
     var forward: NextChapterSummaryRule.ChapterRowControl = .hidden
     var skimBackwardTitle = ""
     var skimForwardTitle = ""
+    /// Why forward Skim can't be pressed, said by the Next chapter that stands in for it (#2185).
+    var skimForwardUnavailable: SkimUnavailableReason?
     /// A recording locks Skim, as it did when the arrows sat in the transport.
     var skimLocked = false
     /// What the silence is while playback starts. It takes the title's place in this fixed-height row, so the
@@ -21,6 +23,15 @@ struct PlaybackChapterRowView: View {
     var skimForward: () -> Void = {}
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    static let skimBackwardSymbol = "backward.end.alt.fill"
+    static let skimForwardSymbol = "forward.end.alt.fill"
+    static let nextChapterSymbol = "forward.end"
+    /// An arrow to a line, unlike Skim's filled triangle and bar, so the plain jump never passes for Skim (#2185).
+    static let nextChapterInSkimSlotSymbol = "arrow.right.to.line"
+    static func nextChapterInSkimSlotLabel(_ reason: SkimUnavailableReason?) -> String {
+        "Next chapter. " + (reason ?? .noSceneSummary).message
+    }
 
     var body: some View {
         Group {
@@ -71,6 +82,8 @@ struct PlaybackChapterRowView: View {
                 Text(PlaybackSourceLabels.chapterTitle(title, sourceTitle: sourceTitle))
                     .lineLimit(titleLineLimit, reservesSpace: reservesTitleSpace)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    // A plain button takes taps only on what it draws: a short title left most of the row dead (#430).
+                    .contentShape(Rectangle())
             }
             .accessibilityIdentifier("playback.dock.chapter.button")
         }
@@ -88,10 +101,18 @@ struct PlaybackChapterRowView: View {
             skimButton(backward: false, enabled: forward == .skim)
         case .nextChapter:
             Button(action: nextChapter) {
-                Image(systemName: "forward.end")
-                    .frame(minWidth: 44, minHeight: 44)
+                Image(systemName: Self.nextChapterSymbol)
+                    .minimumTapTarget()
             }
             .accessibilityLabel("Next chapter")
+            .accessibilityIdentifier("playback.nextChapter.button")
+        case .nextChapterInSkimSlot:
+            // Skim can't be pressed here, so this is a plain chapter jump: its own arrow, never Skim's (#2185).
+            Button(action: nextChapter) {
+                Image(systemName: Self.nextChapterInSkimSlotSymbol)
+                    .minimumTapTarget()
+            }
+            .accessibilityLabel(Self.nextChapterInSkimSlotLabel(skimForwardUnavailable))
             .accessibilityIdentifier("playback.nextChapter.button")
         case .hidden:
             EmptyView()
@@ -101,8 +122,8 @@ struct PlaybackChapterRowView: View {
     /// A compact Skim arrow. It says where it goes ("Skim to 36:11") for VoiceOver; a dimmed one reads as unavailable.
     private func skimButton(backward isBackward: Bool, enabled: Bool) -> some View {
         Button(action: isBackward ? skimBackward : skimForward) {
-            Image(systemName: isBackward ? "backward.end.alt.fill" : "forward.end.alt.fill")
-                .frame(minWidth: 44, minHeight: 44)
+            Image(systemName: isBackward ? Self.skimBackwardSymbol : Self.skimForwardSymbol)
+                .minimumTapTarget()
         }
         .disabled(!enabled || skimLocked)
         .opacity(enabled ? 1 : 0.35)

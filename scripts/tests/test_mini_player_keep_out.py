@@ -34,6 +34,7 @@ NO_PILL = {
     ("PlaybackTimelineSourceView.swift", "*"): "inside Now Playing, which hides the mini player",
     ("PlaybackScreen.swift", "*"): "Now Playing hides the mini player",
     ("SharingExperience.swift", "*"): "sharing sheets",
+    ("VoicesSettingsScreen.swift", "VoiceAgreementSheet"): "the licence agreement sheet before a voice download (#1819)",
 }
 
 STRUCT = re.compile(r"^\s*(?:@\w+\s+)*(?:(?:private|fileprivate|public)\s+)?struct\s+(\w+)", re.M)

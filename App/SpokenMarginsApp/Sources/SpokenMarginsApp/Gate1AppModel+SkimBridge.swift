@@ -94,6 +94,11 @@ extension Gate1AppModel: SkimBridgeHost {
 
     var skimHasEngine: Bool { engine != nil }
 
+    var skimMayStartSummary: Bool {
+        !snapshot.isRecording && playingImportedCommentary == nil && playingInterjectionAudioId == nil
+            && heldMarginVoice == nil && marginMomentConductor?.isPlayingVoice != true
+    }
+
     var skimMediaPlaybackRate: Double { mediaPlaybackRate }
 
     func skimPauseEngine() throws {
@@ -113,11 +118,12 @@ extension Gate1AppModel: SkimBridgeHost {
     }
 
     func skimBridgeDidFinish() {
-        refreshSelectedItem()
+        refreshSelectedItemAfterTransport()
     }
 
     func skimEngineCallFailedWhileCancelling() {
-        snapshot = snapshot
+        let current = snapshot
+        snapshot = current // re-publish; a stored property rejects a bare self-assignment
     }
 
     func skimDestinationsWillChange() {
@@ -126,6 +132,15 @@ extension Gate1AppModel: SkimBridgeHost {
 
     func skimDestinationsChangedWithoutAvailabilityChange() {
         updateGate2CompactState()
+    }
+
+    func skimPrepareSummaryAudio(itemId: String, proposalId: String, scene: PortableListeningMapScene) async throws -> Bool {
+        guard let store else { return false }
+        return try await prepareSummaryBridgeAsset(itemId: itemId, proposalId: proposalId, scene: scene, store: store) != nil
+    }
+
+    func skimRecord(_ fields: [String: String]) {
+        recordDeveloperDiagnostic("skim.press", fields)
     }
 
     func skimWarn(_ message: String) {

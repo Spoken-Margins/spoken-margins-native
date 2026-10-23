@@ -9,6 +9,7 @@ struct PlaybackLivePassageView: View {
     @State private var sourceIndex = PlaybackLivePassage.SourceIndex(TimelineSourceContent(text: ""))
     @State private var margins: [PlaybackLivePassage.Margin] = []
     @State private var rows: [Row] = []
+    @State private var playbackTick = 0 // bumped by each progress tick: the current sentence follows the source offset (#2074)
 
     private struct Input: Equatable {
         let itemID: String
@@ -30,6 +31,7 @@ struct PlaybackLivePassageView: View {
     }
 
     var body: some View {
+        let _ = playbackTick
         VStack(spacing: 0) {
             if let sourceOffset, !rows.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
@@ -92,6 +94,7 @@ struct PlaybackLivePassageView: View {
         .onChange(of: model.marginRows) { _, _ in updateMargins() }
         .onChange(of: model.sharedMarginRows) { _, _ in updateMargins() }
         .onChange(of: sourceOffset) { _, _ in updateWindow() }
+        .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
     }
 
     private func rebuild() {

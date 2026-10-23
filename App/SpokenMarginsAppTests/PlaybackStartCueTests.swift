@@ -132,7 +132,9 @@ final class PlaybackStartCueTests: XCTestCase {
         model.refreshDiagnostics() // the Settings button
         let restored = expectation(description: "pinned lines put back on the next main-queue turn")
         DispatchQueue.main.async { DispatchQueue.main.async { restored.fulfill() } }
-        wait(for: [restored], timeout: 2)
+        // Main-queue work left by earlier suites can hold the queue for 2-3 s on a loaded lane Mac (#2104), so the
+        // wait is generous; it returns at the first free turn.
+        wait(for: [restored], timeout: 10)
 
         XCTAssertEqual(model.diagnostics["firstAudioMs:article"], "0")
         XCTAssertEqual(model.diagnostics["lastFirstAudioMs"], "0")

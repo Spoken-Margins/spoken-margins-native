@@ -1,0 +1,27 @@
+Spoken Margins on-device voice notices
+
+Supertonic 3 model and preset voice styles
+Copyright (c) 2026 Supertone Inc.
+Licensed under BigScience Open RAIL-M. The complete license is included as
+SUPERTONIC_MODEL_OPENRAIL-M.txt.
+
+Supertonic Swift inference code
+Copyright (c) 2026 Supertone Inc.
+Adapted from https://github.com/supertone-inc/supertonic and licensed under
+the MIT License included as SUPERTONIC_CODE_MIT.txt.
+
+INT8 model conversion
+The bundled ONNX graphs are modified, quantized derivatives of Supertonic 3.
+They were produced by the k2-fsa sherpa-onnx project from Supertone's public
+ONNX assets. Spoken Margins renamed the graph files for the official Swift
+runtime contract and packaged them with the official configuration, Unicode
+index, and preset voice-style files. The sherpa-onnx Apache 2.0 license is
+included as SHERPA_ONNX_APACHE-2.0.txt.
+
+ONNX Runtime
+Copyright (c) Microsoft Corporation.
+Licensed under the MIT License included as ONNXRUNTIME_MIT.txt. Notices for
+its bundled third-party software are included in
+ONNXRUNTIME_THIRD_PARTY_NOTICES.txt.
+
+No Supertone, sherpa-onnx, or Microsoft endorsement is implied.

@@ -18,7 +18,8 @@ So each boot:
 The whole simulator job holds a Mac-wide simulator slot (lane_slots.py). A second job (say the
 runner's T3 beside the Test Desk's T4) may start only while memory pressure is normal; the watcher
 goes back to one simulator if pressure sits at warn for 10 minutes with two up, and the runner does
-when a two-simulator run times out (the lead's brake, #184). After the boot, a background watcher
+when a two-simulator run times out (the lead's brake, #184); that switch-off expires after a cooldown
+once pressure is normal (#2157). After the boot, a background watcher
 (`lane-sim-boot --watch`) keeps watching SpringBoard, shuts the device down and marks it unsafe at
 the first crash, and holds the job's simulator slot until the device is gone.
 `lane-sim-boot --done <udid>` tells the watcher a shutdown is coming, so it isn't counted as a
@@ -45,7 +46,7 @@ import subprocess
 import sys
 import time
 
-from lane_slots import (build_slot_file, disable_second_slot, memory_pressure_level, simulator_boot_lock,
+from lane_slots import (build_slot_file, disable_second_slot, memory_pressure_level, second_slot_back_on_at, simulator_boot_lock,
                         simulator_jobs_running, state_dir, PRESSURE_NAMES, SLOTS)
 
 # iOS 27's Apple Intelligence services crash-flood on this Mac (#184). A GitHub-hosted Mac (lane.yml, #1389) sets
@@ -57,7 +58,7 @@ LOCK_WAIT = 1800
 MAX_BOOTED = 2  # hard cap; lane_slots decides when a second simulator job may start (#184)
 # Back to one simulator if pressure sits at warn this long while two are up (the lead's brake, #184).
 TWO_SIMULATOR_WARN_LIMIT = 600
-LANE_REPO = 'uncomposed/spoken-margins-native'
+LANE_REPO = 'Spoken-Margins/spoken-margins-native'
 LANE_ISSUE = 184
 RELEASE_WAIT = 130
 # Both boots the watcher stopped on 2026-09-29 happened under memory pressure (#184), so a boot first
@@ -540,13 +541,24 @@ def announce(text: str, issue: int = LANE_ISSUE) -> None:
         pass
 
 
-def back_to_one_simulator(reason: str) -> bool:
-    """Switch the second simulator slot off, and say so on the tracking issue the first time."""
-    if not disable_second_slot(reason):
+def back_to_one_simulator(reason: str, by_hand: bool = False) -> bool:
+    """Switch the second simulator slot off, and say so on the tracking issue the first time.
+
+    An automatic switch-off comes back on by itself after its cooldown, once memory pressure is
+    normal (#2157); one made by hand stays off until `--second-slot on`.
+    """
+    if not disable_second_slot(reason, by_hand=by_hand):
         return False
     record_event('lane', f'second simulator slot switched off: {reason}')
-    announce(f'**Lane: back to one simulator.** {reason}\n\nThe second slot stays off until someone runs '
-             '`scripts/lane-sim-boot --second-slot on` after looking at why.')
+    back_on = second_slot_back_on_at()
+    if back_on is None:
+        after = 'The second slot stays off until someone runs `scripts/lane-sim-boot --second-slot on`.'
+    else:
+        after = (f'The second slot comes back on by itself after '
+                 f'{datetime.datetime.fromtimestamp(back_on).strftime("%Y-%m-%d %H:%M")}, once memory pressure '
+                 'is normal; each repeat trip within a week doubles the wait (at most 24 h). '
+                 '`scripts/lane-sim-boot --second-slot on` switches it on sooner.')
+    announce(f'**Lane: back to one simulator.** {reason}\n\n{after}')
     return True
 
 

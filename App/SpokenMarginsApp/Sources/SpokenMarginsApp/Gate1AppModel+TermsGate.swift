@@ -15,7 +15,7 @@ extension Gate1AppModel {
         // Only text read by James or Lily needs the Terms; a podcast never does (#781).
         guard PlaybackTermsGate.requiresTerms(
             for: item, termsAccepted: hasAcceptedCurrentTerms,
-            bundledVoicePending: pendingTermsVoiceSelection?.supertonicVoice != nil
+            bundledVoicePending: pendingTermsVoiceSelection?.isOnDeviceVoice == true
         ) else {
             return false
         }

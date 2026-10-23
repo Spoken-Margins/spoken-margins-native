@@ -4,6 +4,7 @@ import MediaPlayer
 import UIKit
 import XCTest
 @testable import SessionKit
+import SessionKitAudio
 @testable import SpokenMarginsApp
 
 @MainActor
@@ -1210,6 +1211,103 @@ final class Gate2CompactControlTests: XCTestCase {
                        "Skim forward is offered while a Margin is recording")
         XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skipBack) == true,
                       "the overlay only removes Skim; time skips are not its to change")
+    }
+
+    /// #2181: the Lock Screen card of a podcast or publisher recording belongs to the player. The compact controls
+    /// republish on every lifecycle change and end() on a Margin's voice, and used to overwrite or clear that card.
+    private func makeNativeMediaCompactControls() throws -> (controller: Gate2CompactControlController, snapshot: SessionSnapshot) {
+        let profile = RuntimeCapabilityProfile(
+            id: "now-playing-ownership",
+            displayName: "Now Playing ownership",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"],
+                "timeline": ["chapter_timing"],
+                "remoteControl": ["display_snapshot", "send_transport_commands"]
+            ]
+        )
+        let repository = InMemorySessionRepository(items: [
+            "episode": Item(
+                id: "episode",
+                title: "Episode",
+                mediaType: "audio",
+                text: nil,
+                externalReference: nil,
+                status: "ready",
+                media: ItemMedia(sourceType: .nativeMediaFile, url: "file:///tmp/episode.m4a", durationMs: 600_000)
+            )
+        ])
+        let engine = SessionEngine(profile: profile, repository: repository, audio: NoopAudioPlaybackClient())
+        _ = try engine.startSession(itemId: "episode")
+        let controller = Gate2CompactControlController(liveActivity: RecordingLiveActivityController())
+        controller.configure(
+            canonicalRuntime: engine,
+            surfaceProfile: profile,
+            skipUnit: "time_15s",
+            commandHandler: { _, _, _, _, _ in }
+        )
+        return (controller, engine.snapshot)
+    }
+
+    private func releaseNowPlayingLedger() {
+        for writer in [NowPlayingWriter.mediaPlayer, .compactControls, .sharedMargin] {
+            NowPlayingInfoOwnership.shared.clear(as: writer)
+        }
+    }
+
+    func testCompactControlsNeverOverwriteOrClearTheMediaPlayersNowPlayingCard() throws {
+        releaseNowPlayingLedger()
+        defer { releaseNowPlayingLedger() }
+        let (controller, snapshot) = try makeNativeMediaCompactControls()
+        let ledger = NowPlayingInfoOwnership.shared
+        ledger.write([MPMediaItemPropertyTitle: "Held by the player"], as: .mediaPlayer)
+
+        controller.update(snapshot: snapshot)
+        controller.reconcileLiveActivities() // the move to the background
+        controller.setNowPlayingEnabled(false) // a Margin's voice takes the transport
+        controller.endLiveActivities()
+
+        XCTAssertEqual(ledger.currentHolder, .mediaPlayer)
+        XCTAssertEqual(
+            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] as? String,
+            "Held by the player",
+            "the compact controls replaced or removed the player's card; recent: \(ledger.summary())"
+        )
+    }
+
+    func testAFinishedSessionTakesDownTheCardThePlayerHolds() {
+        releaseNowPlayingLedger()
+        defer { releaseNowPlayingLedger() }
+        let ledger = NowPlayingInfoOwnership.shared
+        var snapshot = compactSnapshot(
+            targetType: TargetType.transcriptBackedMedia.rawValue,
+            availableCommands: [.togglePlayPause],
+            durationMs: 120_000
+        )
+
+        ledger.write([MPMediaItemPropertyTitle: "Held by the player"], as: .mediaPlayer)
+        Gate2EndedSessionNowPlaying.clearPlayerCard(for: snapshot)
+        XCTAssertEqual(ledger.currentHolder, .mediaPlayer, "a playing session keeps the player's card")
+
+        snapshot.phase = .finished
+        Gate2EndedSessionNowPlaying.clearPlayerCard(for: snapshot)
+        XCTAssertNil(ledger.currentHolder, ledger.summary())
+        XCTAssertNil(MPNowPlayingInfoCenter.default().nowPlayingInfo)
+    }
+
+    func testCompactControlsFillTheNativeMediaCardWhenThePlayerHasNoneAndTakeItDownAtTheEnd() throws {
+        releaseNowPlayingLedger()
+        defer { releaseNowPlayingLedger() }
+        let (controller, snapshot) = try makeNativeMediaCompactControls()
+        let ledger = NowPlayingInfoOwnership.shared
+
+        controller.update(snapshot: snapshot)
+        XCTAssertEqual(ledger.currentHolder, .compactControls, ledger.summary())
+        XCTAssertEqual(MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] as? String, "Episode")
+
+        controller.endLiveActivities()
+        XCTAssertNil(ledger.currentHolder)
+        XCTAssertNil(MPNowPlayingInfoCenter.default().nowPlayingInfo)
     }
 
     func testNowPlayingPoliciesKeepNativeMediaMetadataWithoutSharingCommandOwnership() {

@@ -68,7 +68,12 @@ final class EpisodeMapPreparerTests: XCTestCase {
         model.prepareEpisodeMap(itemId: itemId)
         XCTAssertEqual(model.episodeMapPreparationStatus, "Preparing")
         XCTAssertEqual(model.episodeMapPreparationItemId, itemId)
-        XCTAssertEqual(model.diagnostics["episodeMapPreparation:\(itemId)"], "started")
+        XCTAssertTrue(
+            model.diagnostics["episodeMapPreparation:\(itemId)"]?.hasPrefix(
+                "started:trigger=listener_request:policy=explicit:stage=verify_source:unit=0:heat="
+            ) == true,
+            model.diagnostics["episodeMapPreparation:\(itemId)"] ?? "nil"
+        )
         let task = try XCTUnwrap(model.episodeMapPreparationTask)
         await task.value
 
@@ -169,6 +174,118 @@ final class EpisodeMapPreparerTests: XCTestCase {
         XCTAssertEqual(calls, 2, "the cancelled run left no transcript to reuse, so the second run transcribed again")
     }
 
+    // MARK: heat and background time pause the job instead of cancelling it (#2092)
+
+    func testSeriousHeatDuringTranscriptionPausesTheRunAndTheNextPassFinishesIt() async throws {
+        let fixture = try makeFixture(hangFirstTranscription: true)
+        let model = fixture.model, store = fixture.store, itemId = fixture.itemId
+        let device = DeviceBox()
+        model.preparationSeams.deviceConditions = { device.conditions }
+        model.episodeMapPreparer.heatCheckInterval = .milliseconds(10)
+
+        model.prepareEpisodeMap(itemId: itemId)
+        try await waitUntil("the run reaches the transcriber") { model.episodeMapPreparationStatus == "Transcribing on device" }
+        device.conditions = SpeechEngineConditions(thermal: .serious)
+        try await waitUntil("serious heat pauses the run mid-transcription") {
+            model.episodeMapPreparationStatus == "Paused while the phone is warm"
+        }
+        try await waitUntil("the run ends") { model.episodeMapPreparationTask == nil }
+
+        let job = try XCTUnwrap(store.loadEpisodeMapPreparationJobs().first { $0.itemId == itemId })
+        XCTAssertFalse(job.isCancelled, "a heat pause keeps the job for a later pass")
+        XCTAssertEqual(job.lastFailureCode, "paused:heat_serious")
+        XCTAssertEqual(job.stage, .transcribe)
+        XCTAssertTrue(
+            model.diagnostics["episodeMapPreparation:\(itemId)"]?.hasPrefix("paused:heat_serious:stage=transcribe:at=") == true,
+            model.diagnostics["episodeMapPreparation:\(itemId)"] ?? "nil"
+        )
+        XCTAssertNil(try store.loadEditionFingerprintSpine(itemId: itemId), "a paused run publishes nothing")
+
+        device.conditions = SpeechEngineConditions(thermal: .fair)
+        model.prepareEpisodeMap(itemId: itemId, policy: job.policy, trigger: .backgroundPass)
+        XCTAssertTrue(
+            model.diagnostics["episodeMapPreparation:\(itemId)"]?.hasPrefix(
+                "started:trigger=background_pass:policy=explicit:stage=transcribe:unit=0:heat=fair:at="
+            ) == true,
+            model.diagnostics["episodeMapPreparation:\(itemId)"] ?? "nil"
+        )
+        XCTAssertNil(model.diagnostics["episodeMapPreparationInterrupted:\(itemId)"], "the pause was recorded, so it is no interruption")
+        await (try XCTUnwrap(model.episodeMapPreparationTask)).value
+        XCTAssertEqual(model.episodeMapPreparationStatus, "Fingerprint map ready; scene summaries unavailable")
+        XCTAssertEqual(try store.loadEpisodeMapPreparationJobs(), [], "the resumed job finished and was deleted")
+    }
+
+    func testIOSEndingBackgroundTimePausesTheJobInsteadOfCancellingIt() async throws {
+        let fixture = try makeFixture(hangFirstTranscription: true)
+        let model = fixture.model, store = fixture.store, itemId = fixture.itemId
+
+        model.prepareEpisodeMap(itemId: itemId, trigger: .backgroundPass)
+        let task = try XCTUnwrap(model.episodeMapPreparationTask)
+        try await waitUntil("the run reaches the transcriber") { model.episodeMapPreparationStatus == "Transcribing on device" }
+        model.episodeMapPreparer.pause(.backgroundTimeExpired)
+        await task.value
+
+        let job = try XCTUnwrap(store.loadEpisodeMapPreparationJobs().first { $0.itemId == itemId })
+        XCTAssertFalse(job.isCancelled, "the background pass can pick it up again")
+        XCTAssertEqual(job.lastFailureCode, "paused:background_time_expired")
+        XCTAssertEqual(
+            BackgroundPreparationPlanner.eligibleEpisodeJobs([job], episodePolicy: .off, hasLocalAudio: { _ in true }),
+            [job]
+        )
+        XCTAssertTrue(
+            model.diagnostics["episodeMapPreparation:\(itemId)"]?.hasPrefix("paused:background_time_expired:stage=transcribe:at=") == true,
+            model.diagnostics["episodeMapPreparation:\(itemId)"] ?? "nil"
+        )
+    }
+
+    /// Audit on #2093: a pause and the listener's stop can both land before the transcriber unwinds. The listener's
+    /// stop must win in either order, or a map they removed comes back as a live job.
+    func testTheListenersCancelWinsOverAPauseInEitherOrder() async throws {
+        for pauseFirst in [true, false] {
+            let fixture = try makeFixture(hangFirstTranscription: true)
+            let model = fixture.model, store = fixture.store, itemId = fixture.itemId
+
+            model.prepareEpisodeMap(itemId: itemId)
+            let task = try XCTUnwrap(model.episodeMapPreparationTask)
+            try await waitUntil("the run reaches the transcriber") { model.episodeMapPreparationStatus == "Transcribing on device" }
+            if pauseFirst {
+                model.episodeMapPreparer.pause(.heat(.serious))
+                model.episodeMapPreparer.cancel(itemId: itemId)
+            } else {
+                model.episodeMapPreparer.cancel(itemId: itemId)
+                model.episodeMapPreparer.pause(.heat(.serious))
+            }
+            await task.value
+
+            let order = pauseFirst ? "pause then cancel" : "cancel then pause"
+            let job = try XCTUnwrap(store.loadEpisodeMapPreparationJobs().first { $0.itemId == itemId }, order)
+            XCTAssertTrue(job.isCancelled, order)
+            XCTAssertEqual(job.lastFailureCode, "cancelled", order)
+            XCTAssertEqual(model.episodeMapPreparationStatus, "Cancelled", order)
+            XCTAssertEqual(
+                BackgroundPreparationPlanner.eligibleEpisodeJobs([job], episodePolicy: .off, hasLocalAudio: { _ in true }),
+                [], "\(order): a cancelled job is never picked up again"
+            )
+        }
+    }
+
+    func testARunThatEndedWithoutRecordingIsNamedOnTheNextRequest() async throws {
+        let fixture = try makeFixture()
+        let model = fixture.model, store = fixture.store, itemId = fixture.itemId
+        try store.saveEpisodeMapPreparationJob(EpisodeMapPreparationJob(
+            id: "episode-map-job-\(itemId)", itemId: itemId, policy: .explicit, stage: .transcribe,
+            lastFailureCode: EpisodeMapRunGuard.runningCode
+        ))
+
+        model.prepareEpisodeMap(itemId: itemId)
+        XCTAssertEqual(
+            model.diagnostics["episodeMapPreparationInterrupted:\(itemId)"],
+            "previous_run_ended_unrecorded:stage=transcribe:unit=0"
+        )
+        await (try XCTUnwrap(model.episodeMapPreparationTask)).value
+        XCTAssertEqual(try store.loadEpisodeMapPreparationJobs(), [])
+    }
+
     // MARK: waiting for a download, and the one pending request
 
     func testWaitingForADownloadHoldsOnePendingRequestAndTellsObserversBeforeTheStatusChanges() throws {
@@ -205,6 +322,11 @@ final class EpisodeMapPreparerTests: XCTestCase {
         model.pendingMapGenerationItemId = nil
         XCTAssertNil(model.pendingMapGenerationItemId)
     }
+}
+
+@MainActor
+private final class DeviceBox {
+    var conditions = SpeechEngineConditions()
 }
 
 private final class StageBox {
@@ -260,5 +382,25 @@ private struct UnavailableFoundationModel: LocalFoundationModelClient {
     }
     func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String {
         throw LocalFoundationModelError.unavailable("test")
+    }
+}
+
+/// #2082: the phone's name check follows the scene's language, so a German summary's role nouns are not refused.
+final class ListeningMapSummaryLanguageTests: XCTestCase {
+    private let german = """
+    Der Gast erklärt, warum die Stadt in diesem Jahr so viele neue Wohnungen baut. \
+    Der Sprecher findet, dass die neuen Regeln für den Wohnungsbau sehr geholfen haben.
+    """
+
+    func testTheSceneLanguageIsRecognisedForGermanAndEnglish() {
+        XCTAssertEqual(ListeningMapSummaryValidator.transcriptLanguage(of: german), "de")
+        XCTAssertEqual(ListeningMapSummaryValidator.transcriptLanguage(of: "The mayor explains why the city is building so many new homes this year."), "en")
+    }
+
+    func testAGermanSceneKeepsASummaryWithARoleNounItNeverSays() throws {
+        let label = LocalListeningMapLabel(
+            title: "Neue Wohnungen", description: "Der Moderator lobt den Wohnungsbau der Stadt.",
+            eligibility: .eligible)
+        XCTAssertNoThrow(try ListeningMapSummaryValidator.validate(label, sourceText: german))
     }
 }

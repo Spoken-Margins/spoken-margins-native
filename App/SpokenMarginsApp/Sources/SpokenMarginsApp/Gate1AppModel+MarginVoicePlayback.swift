@@ -180,10 +180,12 @@ extension Gate1AppModel {
     }
 
     func reconcileImportedCommentary(previous: SessionSnapshot, current: SessionSnapshot) {
-        // Margins crossed together are offered one after another (#918).
+        // Margins crossed together are offered one after another (#918). None is offered over a review of new
+        // Margins (#474): its lead-ins cross Margins already heard, and an offer would pause the review.
         guard let prompt = sharedMarginOffers.nextOffer(
             previous: previous, current: current, selectedItemID: selectedItem.id,
             canOffer: pendingImportedCommentary == nil && playingImportedCommentary == nil
+                && marginMomentConductor?.sequence.isReview != true
                 && marginMomentConductor?.isPlayingVoice != true, // a moment's voice is not cut mid-sentence (#1671)
             prompts: importedCommentaryPrompts(includeAnnounced: true)
         ) else { return }
@@ -346,13 +348,16 @@ extension Gate1AppModel: MarginVoicePlayerHost {
         }
         endMarginMoment()
         startMarginMoment(
-            itemId: itemID,
-            target: MarginMomentAnchor(marginId: playedIdentity, mediaTimeMs: playedMs),
-            otherMargins: anchors,
+            sequence: MarginMomentSequence(
+                itemId: itemID,
+                resumingAtMediaTimeMs: position,
+                playedMargin: MarginMomentAnchor(marginId: playedIdentity, mediaTimeMs: playedMs),
+                otherMargins: anchors
+            ),
             voiceURLs: voiceURLs,
             title: "Your Margin",
             isApproximate: false,
-            resumingAtMediaTimeMs: position
+            listening: true
         )
     }
 
@@ -392,9 +397,12 @@ extension Gate1AppModel {
             if let path = margin.audioPath { voiceURLs[Self.marginIdentity(margin)] = resolvedInterjectionAudioURL(for: path) }
         }
         startMarginMoment(
-            itemId: interjection.itemId,
-            target: anchors.target,
-            otherMargins: anchors.others,
+            sequence: MarginMomentSequence(
+                itemId: interjection.itemId,
+                target: anchors.target,
+                otherMargins: anchors.others,
+                tickAdvanceLimitMs: clock.tickAdvanceLimitMs
+            ),
             voiceURLs: voiceURLs,
             title: "Your Margin",
             isApproximate: false,

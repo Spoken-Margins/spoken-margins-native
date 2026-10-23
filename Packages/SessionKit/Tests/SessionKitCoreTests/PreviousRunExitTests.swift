@@ -115,6 +115,36 @@ final class PreviousRunExitTests: XCTestCase {
         XCTAssertEqual(tooLong.fields["crashTermination"], "other")
     }
 
+    /// #2184: a watchdog kill was reported as `other` because its reason is a long description with an app name in it.
+    func testATerminationReasonKeepsTheSystemsCodeAndNothingElseOfIt() {
+        func termination(_ reason: String) -> String? {
+            let escaped = reason.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+            let json = #"{ "crashDiagnostics" : [ { "diagnosticMetaData" : { "terminationReason" : "\#(escaped)" } } ] }"#
+            return PreviousRunExit.summarize(diagnosticPayloads: [data(json)], metricPayloads: []).fields["crashTermination"]
+        }
+        let table: [(String, String)] = [
+            ("Namespace SIGNAL, Code 0x5", "Namespace SIGNAL, Code 0x5"),
+            ("Namespace FRONTBOARD, Code 0x8badf00d", "Namespace FRONTBOARD, Code 0x8badf00d"),
+            ("<RBSTerminateContext| domain:10 code:0x8BADF00D explanation:[application<com.example.Margins>:221] failed to terminate gracefully>",
+             "domain:10, code:0x8BADF00D"),
+            ("Namespace RUNNINGBOARD, Code 0xdead10cc; opening /private/var/mobile/Notes.pdf", "Namespace RUNNINGBOARD, Code 0xdead10cc"),
+            ("(code:12 /private/x)", "code:12"),
+            ("(Namespace Smith /private/x)", "other"),
+            ("(Domain 2 notes /private/x)", "other"),
+            ("(my code 1234 /private/x)", "other"),
+            ("Open \"My Private Notes.pdf\" failed at /private/var/mobile/x", "other"),
+            ("code:0x" + String(repeating: "f", count: 17) + " /private/x", "other"),
+            ("barcode:12 of /private/x", "other"),
+            ("/private/x code:abc", "other"),
+            ("<>", "other"),
+        ]
+        for (reason, expected) in table {
+            XCTAssertEqual(termination(reason), expected, reason)
+        }
+        let leaked = termination("<RBSTerminateContext| domain:10 code:0x8BADF00D explanation:[application<com.example.Margins>:221]>") ?? ""
+        XCTAssertFalse(leaked.contains("com.example"))
+    }
+
     func testBackgroundExitCountsNameTheReasonAndLeaveOutWhatTheReportOmits() {
         let exit = PreviousRunExit.summarize(diagnosticPayloads: [], metricPayloads: [data(exits)])
         XCTAssertEqual(exit.fields["reason"], "background_cpu_limit,background_watchdog")

@@ -8,7 +8,10 @@ import XCTest
 /// text the listener reads must not drift when a type moves to another file.
 final class Gate1ValueTypeContractTests: XCTestCase {
     func testPersistedRawValuesDoNotChange() {
-        XCTAssertEqual(AppTTSVoiceSelection.allCases.map(\.rawValue), ["supertonic:M2", "supertonic:F2", "system"])
+        // Kitten (#2226) joined after the three Build 29 wrote; their spelling and the picker order are unchanged.
+        XCTAssertEqual(AppTTSVoiceSelection.allCases.map(\.rawValue), ["supertonic:M2", "supertonic:F2", "kitten:jasper", "system"])
+        XCTAssertEqual(AppTTSVoiceSelection.allCases.map(\.rawValue), ReadingVoiceChoice.allCases.map(\.rawValue),
+                       "the app's list and SessionKit's host-tested one are the same list")
         XCTAssertEqual(AIDataSharingConsent(rawValue: "unknown"), .unknown)
         XCTAssertEqual(AIDataSharingConsent(rawValue: "grantedV1"), .grantedV1)
         XCTAssertEqual(AIDataSharingConsent(rawValue: "declined"), .declined)
@@ -97,10 +100,12 @@ final class Gate1ValueTypeContractTests: XCTestCase {
     func testVoiceSelectionNamesAndDetailsKeepTheirText() {
         XCTAssertEqual(AppTTSVoiceSelection.james.displayName, "James")
         XCTAssertEqual(AppTTSVoiceSelection.lily.displayName, "Lily")
+        XCTAssertEqual(AppTTSVoiceSelection.kitten.displayName, "Kitten (Jasper)")
         XCTAssertEqual(AppTTSVoiceSelection.system.displayName, "iOS System Voice")
         // U+00B7 MIDDLE DOT, written as an escape so retyping the file can't change it.
         XCTAssertEqual(AppTTSVoiceSelection.james.detail, "Deep, calm \u{00B7} M2")
         XCTAssertEqual(AppTTSVoiceSelection.lily.detail, "Bright, cheerful \u{00B7} F2")
+        XCTAssertEqual(AppTTSVoiceSelection.kitten.detail, "Built into the app \u{00B7} no download")
         XCTAssertEqual(AppTTSVoiceSelection.system.detail, "Uses the selected voice installed in iOS")
     }
 }

@@ -11,7 +11,7 @@ The app is in private testing on TestFlight. There is no public App Store releas
 ## What works today
 
 - **Getting things in:** web articles (share sheet, Safari extension, pasted links), text-based PDFs, EPUB, plain text and Markdown (including Obsidian clips), podcast links, and followed podcast feeds and sites. Readwise Reader and Raindrop.io can be connected to bring saved items in.
-- **Listening:** installed iOS voices, plus voices that run on the phone. Kitten, the fallback voice, is bundled. Supertonic (the James and Lily voices) is bundled today and is moving to an optional download (#1820). Podcasts play from the publisher's audio. Lock Screen controls and a Live Activity work while listening. Podcast chapters and deterministic Listening Maps built on the phone help you move around.
+- **Listening:** installed iOS voices, plus voices that run on the phone. Kitten, the fallback voice, is bundled. Supertonic (the James and Lily voices) is an optional download from Settings › Voices. Podcasts play from the publisher's audio. Lock Screen controls and a Live Activity work while listening. Podcast chapters and deterministic Listening Maps built on the phone help you move around.
 - **Margins:** record or type a Margin while listening, find it again from a timeline, and, where the phone supports it, summarize notes with Apple's on-device model.
 - **Sharing:** export a session or share Margins as packets (files) with another listener.
 
@@ -36,7 +36,7 @@ Everything else the app fetches comes from the sources you choose (feeds, articl
 
 ## What works offline
 
-With the item already in your Library, listening with Kitten, Supertonic or an installed voice, recording and replaying Margins, speech recognition (it runs on the phone), and importing or exporting packet files all work without a connection. Adding a new source, refreshing a feed, streaming an episode that isn't downloaded, and anything in the previous section need a connection.
+With the item already in your Library, listening with Kitten, a downloaded Supertonic voice or an installed voice, recording and replaying Margins, speech recognition (it runs on the phone), and importing or exporting packet files all work without a connection. Adding a new source, refreshing a feed, streaming an episode that isn't downloaded, and anything in the previous section need a connection.
 
 _Checked against `next` on 2026-10-17. When this list and the app disagree, the app is right; please open an issue._
 
@@ -46,7 +46,7 @@ The active recovery boundary is:
 
 - iPhone/iPad on iOS/iPadOS 26+
 - article, podcast, Safari/share-sheet, plain-text/Markdown, Obsidian, and text-based PDF intake
-- installed system voices through `AVSpeechSynthesizer`, plus the Supertonic voices after terms acceptance and the bundled Kitten fallback voice
+- installed system voices through `AVSpeechSynthesizer`, plus the Supertonic voices, downloaded after terms acceptance and the bundled Kitten fallback voice
 - native lock-screen transport through Now Playing for podcasts, prepared audio, and immediate live speech
 - a Live Activity control surface while listening, including live-fallback speech
 - Apple Foundation Models for scoped on-device interjection summaries when supported by the device

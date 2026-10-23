@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test each new tip of origin/next with --plan app, unattended and without a model (#1178).
+"""Test each new tip of the trunk (origin/main) with --plan app, unattended and without a model (#1178).
 
 Stdlib only, Python 3.9+. launchd ticks every 10 minutes. A tip is tested once, by whoever
 reports first on #184, when the Mac has room and no lane app tests are waiting for the simulator. Failing tests are re-run twice on the same build
@@ -27,11 +27,12 @@ from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 import sm_paths  # noqa: E402
+from trunk import trunk_branch  # noqa: E402  (#1492: the branch it tests)
 
-REPO = os.environ.get('SM_INTEGRATION_REPO', 'uncomposed/spoken-margins-native')
+REPO = os.environ.get('SM_INTEGRATION_REPO', 'Spoken-Margins/spoken-margins-native')
 REPO_ROOT = sm_paths.repo(__file__)                      # the public checkout it tests (SM_REPO)
 HOME_DIR = Path(os.environ.get('SM_INTEGRATION_HOME') or sm_paths.state_dir('integration-run'))
-BASE_BRANCH = 'next'
+BASE_BRANCH = trunk_branch()
 REPORT_ISSUE = 184
 RUN_BY = 'integration script'
 HOSTED_RUN_BY = 'hosted integration'   # hosted-integration.yml on a GitHub-hosted Mac (#1389)
@@ -421,7 +422,7 @@ def diagnoses(answer: Optional[dict], failed: list[str]) -> list[dict]:
 
 def diagnosis_prompt(sha: str, failed: list[str], suspects: list[str], evidence: Path) -> str:
     return '\n'.join([
-        'You are diagnosing confirmed test failures on the merged tip of `next` for Spoken Margins.',
+        'You are diagnosing confirmed test failures on the merged tip of the trunk (`main`) for Spoken Margins.',
         'Read AGENTS.md first. You are read-only: read the failing tests, the code they exercise and the',
         f'evidence logs under {evidence} (xcode-tests.log in each plan folder). Each test below failed in',
         f'the first run and in {RERUNS} re-runs on the same build, so treat it as real, not flaky.',
@@ -528,6 +529,20 @@ class Ops:
         if res.returncode:
             raise RuntimeError(f'{" ".join(map(str, cmd[:4]))} failed: {(res.stderr or res.stdout)[-400:]}')
         return res
+
+    def clear_scratch_worktree(self, wt: Path) -> None:
+        """Take away this job's scratch worktree, however it was left. `git worktree remove` refuses a folder it
+        has no registration for ("is not a working tree"), which an interrupted tick or a pruned registration
+        leaves behind; the folder is then deleted by hand, and a registration with no folder is pruned, so the
+        next `worktree add` finds neither (#2397)."""
+        if wt.exists():
+            removed = self.run(['git', 'worktree', 'remove', '--force', str(wt)], cwd=self.repo_root)
+            if not removed.returncode:
+                return  # git knew it and it is gone: nothing else of the repository's worktrees is touched
+            self.log('worktree removal failed: ' + (removed.stderr or removed.stdout)[:300])
+            if wt.parent == self.home:  # only the scratch folder this job made, never a path from elsewhere
+                shutil.rmtree(wt)
+        self.must(['git', 'worktree', 'prune'])
 
     def gh_json(self, args: list):
         return json.loads(self.must(['gh', *args]).stdout or 'null')
@@ -970,8 +985,7 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
         added = False
         result = summarize({'error': 'run stopped before completion'})
         try:
-            if wt.exists():  # only this job's scratch worktree, left by an interrupted tick
-                ops.must(['git', 'worktree', 'remove', '--force', str(wt)])
+            ops.clear_scratch_worktree(wt)  # whatever an interrupted tick left of this job's scratch worktree
             ops.must(['git', 'worktree', 'add', '--detach', str(wt), sha])
             added = True
             ops.must(['scripts/setup-worktree.sh'], cwd=wt)
@@ -1026,9 +1040,10 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
             return result['verdict']
         finally:
             if added or wt.exists():
-                removed = ops.run(['git', 'worktree', 'remove', '--force', str(wt)], cwd=ops.repo_root)
-                if removed.returncode:
-                    ops.log('worktree removal failed: ' + removed.stderr[:300])
+                try:
+                    ops.clear_scratch_worktree(wt)
+                except Exception as error:  # noqa: BLE001 - the report and state are already written
+                    ops.log('worktree removal failed: ' + str(error)[:300])
             prune_evidence(evidence_root)
 
 
@@ -1099,8 +1114,7 @@ def defer_to_hosted(ops: Ops, state: dict, path: Path, comments: list[dict], rep
         say(f'handling the hosted FAIL on {sha7}: {", ".join(failed)}')
         added, confirm, error, culprit = False, 'unknown', '', None
         try:
-            if wt.exists():
-                ops.must(['git', 'worktree', 'remove', '--force', str(wt)])
+            ops.clear_scratch_worktree(wt)  # whatever an interrupted tick left of this job's scratch worktree
             ops.must(['git', 'worktree', 'add', '--detach', str(wt), sha])
             added = True
             ops.must(['scripts/setup-worktree.sh'], cwd=wt)
@@ -1138,9 +1152,10 @@ def defer_to_hosted(ops: Ops, state: dict, path: Path, comments: list[dict], rep
             handled[sha7] = record
             save_state(path, state)
             if added or wt.exists():
-                removed = ops.run(['git', 'worktree', 'remove', '--force', str(wt)], cwd=ops.repo_root)
-                if removed.returncode:
-                    ops.log('worktree removal failed: ' + removed.stderr[:300])
+                try:
+                    ops.clear_scratch_worktree(wt)
+                except Exception as error:  # noqa: BLE001 - the report and state are already written
+                    ops.log('worktree removal failed: ' + str(error)[:300])
             prune_evidence(evidence_root)
 
 
@@ -1189,7 +1204,7 @@ def main(argv=None) -> int:
     ap.add_argument('--dry-run', action='store_true', help='print the decision; run no tests and change nothing')
     ap.add_argument('--hosted', action='store_true',
                     help='test this checkout once on a GitHub-hosted Mac and post the report (hosted-integration.yml)')
-    ap.add_argument('--sha', help="with --hosted: the full SHA of next's tip, which this checkout must be at")
+    ap.add_argument('--sha', help="with --hosted: the full SHA of the trunk's tip, which this checkout must be at")
     args = ap.parse_args(argv)
     if args.hosted:
         if not re.fullmatch(r'[0-9a-f]{40}', args.sha or ''):

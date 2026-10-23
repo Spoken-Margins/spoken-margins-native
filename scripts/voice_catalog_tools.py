@@ -27,10 +27,17 @@ SIGNING_CONTEXT = b"SpokenMargins-VoiceModelCatalog-v1\n"
 TEST_KEY_ID = "sm-test-1"
 OTHER_KEY_ID = "sm-unknown-key"
 
-# Where the files are mirrored on the owner's site (scripts/voice-catalog publish uploads them). Not published
-# yet. They live under voices/files/ so the site deploy can leave that folder alone. Only files whose licence
-# allows redistribution list it; Contracts/voice-models/sources.json is the source of truth for the same URLs.
-MIRROR_BASE = "https://spokenmargins.proximitytoprogress.com/voices/files/supertonic-3-int8/2026-05-11/"
+# Every file comes from its publisher at a pinned revision, never from the owner's server (owner, 2026-10-19;
+# #2055 audit 2). The four INT8 graphs are in the sherpa-onnx author's Hugging Face repo, named *.int8.onnx;
+# Contracts/voice-models/sources.json is the source of truth for the same URLs.
+SHERPA_INT8_BASE = "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/"
+ONNXRUNTIME_BASE = "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.2/"
+LICENSE_FILE_SOURCES = {
+    "licenses/ONNXRUNTIME_MIT.txt": ONNXRUNTIME_BASE + "LICENSE",
+    "licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt": ONNXRUNTIME_BASE + "ThirdPartyNotices.txt",
+    "licenses/SHERPA_ONNX_APACHE-2.0.txt": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+    "licenses/SUPERTONIC_CODE_MIT.txt": SHERPA_INT8_BASE + "LICENSE",
+}
 HF_BASE = "https://huggingface.co/Supertone/supertonic-3/resolve/"
 
 # The Terms of Use bind listeners to paragraph 5 and Attachment A of the Open RAIL-M licence.
@@ -64,7 +71,6 @@ def _license_file_hash(name: str) -> str:
 def build_supertonic_draft() -> dict:
     manifest = json.loads((SUPERTONIC / "asset-manifest.json").read_text(encoding="utf-8"))
     revision = manifest["modelRevision"]
-    archive = manifest["quantizedArchive"]
     licenses = [
         {
             "id": "supertonic-model-openrail-m",
@@ -116,26 +122,21 @@ def build_supertonic_draft() -> dict:
     files = []
     for entry in manifest["files"]:
         path, provenance = entry["path"], entry["provenance"]
-        sources = []
-        origin = None
-        if provenance == "supertonicModel":
+        file = {"path": path, "byteCount": entry["bytes"], "sha256": entry["sha256"]}
+        if provenance == "localNotice":
+            # Our own short text, which no publisher serves: the catalog carries it.
+            file["content"] = (SUPERTONIC / path).read_text(encoding="utf-8")
+        elif provenance == "supertonicModel":
             # The pinned upstream revision serves these bytes as they are.
             upstream_path = "LICENSE" if path == "licenses/SUPERTONIC_MODEL_OPENRAIL-M.txt" else path
-            sources.append(f"{HF_BASE}{revision}/{upstream_path}")
+            file["sources"] = [f"{HF_BASE}{revision}/{upstream_path}"]
         elif provenance == "sherpaInt8Archive":
-            # Only the repackaged archive has the INT8 files, never one at a time, so the file itself
-            # comes from our mirror and the archive is named as where it was taken from.
-            origin = {
-                "url": archive["url"],
-                "note": f"Member of the pinned sherpa-onnx INT8 archive (sha256 {archive['sha256']}).",
-            }
-        sources.append(MIRROR_BASE + path)
-        file = {"path": path, "byteCount": entry["bytes"], "sha256": entry["sha256"], "sources": sources}
+            file["sources"] = [SHERPA_INT8_BASE + path.rsplit("/", 1)[-1].replace(".onnx", ".int8.onnx")]
+        else:
+            file["sources"] = [LICENSE_FILE_SOURCES[path]]
         license_id = license_file_ids.get(path) or license_for_provenance.get(provenance)
         if license_id and provenance != "localNotice":
             file["licenseId"] = license_id
-        if origin:
-            file["origin"] = origin
         files.append(file)
 
     return {
@@ -163,10 +164,11 @@ def build_supertonic_draft() -> dict:
 
 
 def check_draft_matches_manifest() -> list[str]:
-    """The draft's files are exactly the bundled Supertonic files, by path, size and SHA-256.
+    """The draft's files are exactly the Supertonic files the manifest lists, by path, size and SHA-256.
 
-    scripts/validate-supertonic-assets.py holds the manifest to the bundled bytes, so this holds the
-    draft to them too: audio already rendered with the bundled voice stays valid once it downloads.
+    Those are the files the app bundled until #1820. scripts/validate-supertonic-assets.py holds the kept
+    files to their bytes, and this holds the draft to the manifest: audio already rendered with the bundled
+    voice stays valid once it downloads.
     """
     errors: list[str] = []
     manifest = json.loads((SUPERTONIC / "asset-manifest.json").read_text(encoding="utf-8"))

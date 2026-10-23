@@ -55,7 +55,7 @@ final class MemoryFootprintRecorder {
     /// Records the launch sample, then follows the model's playback and the system's memory warnings.
     func start(observing model: Gate1AppModel) {
         record(.launch, mediaType: nil)
-        model.$snapshot
+        model.playbackClock.snapshots
             .sink { [weak self, weak model] snapshot in
                 guard let self, let model else { return }
                 self.observe(snapshot, mediaType: { model.libraryItems.first { $0.id == snapshot.itemId }?.mediaType })

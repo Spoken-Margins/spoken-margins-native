@@ -281,6 +281,12 @@ class Decide(unittest.TestCase):
         self.assertFalse(r['fire'])
         self.assertIn('ahead of the trend', r['why'])
 
+    def test_paced_fires_eight_points_ahead_of_trend(self):
+        # 2026-10-19: the worker held all evening at 44% against a 36% line while the breaker allowed 10.
+        dial = g.parse_dial(BODY.replace('- [x] Fri noon', '- [ ] Fri noon'))  # finish at the reset: line ~70% now
+        usage = g.parse_usage([tick(78, NOW - dt.timedelta(minutes=30))])
+        self.assertTrue(self.decide(dial=dial, usage_info=usage)['fire'])
+
     def test_paced_fires_when_within_slack_of_trend(self):
         self.assertTrue(self.decide()['fire'])  # Fri noon: line ~79%, usage 82%
 

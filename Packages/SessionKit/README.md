@@ -38,13 +38,14 @@ The package's sources read nothing outside it. Some tests read files the package
 - `Site/`: the onboarding catalog the website publishes.
 - `research/`: recorded fixtures and reference vectors.
 - `voiceAssets`: the bundled Kitten voice (`App/SpokenMarginsApp/Resources/Kitten`). `SESSIONKIT_VOICE_ASSETS_DIR` can point somewhere else.
+- `supertonicModel`: Supertonic's model, a download in neither the repository nor the app (#1820). `scripts/voice-catalog fetch supertonic-3-int8` puts it in `artifacts/voice-catalog/files/supertonic-3-int8`, checked against `Contracts/voice-models/sources.json`, and `SESSIONKIT_SUPERTONIC_DIR` can point somewhere else. Without it the Supertonic render tests skip and say how to fetch it; `SM_REQUIRE_MODELS` makes them fail instead.
 - The app's sources and tests, for a few guards that check the app still calls an extracted helper.
 
 Inside the spoken-margins-native checkout all of them are found. In a package checked out alone, a test that needs one is reported as skipped, with the input named; it never passes silently. `scripts/sessionkit_pass.py` lists the same folders, so the lane's cached-pass key changes when any of them does.
 
 The Kitten tests (`KittenFrontEndTests`, `KittenRendererTests`) read the voice and the reference vectors through these inputs. `speech-bench` takes `--kitten <folder>` and `--supertonic <folder>` and has no default.
 
-Not converted yet: the Supertonic and Pocket tests still find their models in `App/SpokenMarginsApp/Resources/` and `research/C2/` on their own. They move to the download registry with #1391 and #1392, and `scripts/tests/test_sessionkit_pass.py` lists them until then.
+Not converted yet: the Pocket tests still find their model in `research/C2/` on their own. They move to the download registry with #1392, and `scripts/tests/test_sessionkit_pass.py` lists them until then.
 
 ## Versions
 

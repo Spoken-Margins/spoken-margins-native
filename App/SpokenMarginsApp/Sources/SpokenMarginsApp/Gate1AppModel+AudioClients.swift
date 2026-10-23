@@ -41,16 +41,21 @@ extension Gate1AppModel {
             diagnostics["speechVoiceAvailability"] = "unavailable"
             throw SessionKitError.persistenceFailed("selected_speech_voice_unavailable")
         }
-        if let voice = ttsVoiceSelection.supertonicVoice {
-            let renderer = try makeSupertonicRenderer()
+        if ttsVoiceSelection.isOnDeviceVoice {
+            // Supertonic's model is a download (#1820). The player follows the files live: Kitten reads until they
+            // arrive, and after a download or a Remove the next play gets the right voice without a rebuild.
+            // Kitten picked as the voice (#2226) uses the same player held on Kitten: Supertonic never renders and
+            // none of its saved audio plays. `voice` then only gives saved Kitten audio its identity, as for James.
+            let selection = ttsVoiceSelection
+            let voice = selection.supertonicVoice ?? .m2
+            try verifyCurrentTermsForOnDeviceVoice()
+            let renderer = SupertonicDownloadedModelRenderer(model: self)
             let supportDirectory = try applicationSupportDirectory()
             guard let store else { throw SessionKitError.persistenceFailed("prepared_audio_store_unavailable") }
-            guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
-                throw SupertonicNarrationError.missingAsset("Supertonic")
-            }
-            let assets = SupertonicAssetLocation(rootURL: resourceRoot)
-            let signatureTask = Task.detached(priority: .userInitiated) {
-                try SupertonicRenderIdentity.make(assets: assets, voice: voice)
+            // Saved audio's identity needs no model files, so saved Supertonic chunks and Kitten's stand-ins play before
+            // the download too.
+            let signatureTask = Task.detached(priority: .userInitiated) { () throws -> TTSRenderSignature in
+                try SupertonicRenderIdentity.current(voice: voice)
             }
             let coordinator = PreparedAudioCoordinator(
                 repository: store,
@@ -60,7 +65,7 @@ extension Gate1AppModel {
             let hooks = PreparedSpeechHooks(store: store, coordinator: coordinator, signatureTask: signatureTask) // #336
             Task { [weak self] in
                 guard let signature = try? await signatureTask.value,
-                      let self, self.ttsVoiceSelection.supertonicVoice == voice else { return }
+                      let self, self.ttsVoiceSelection == selection, !selection.choice.bundledVoiceIsChosen else { return }
                 self.currentSupertonicRenderSignature = signature
             }
             let diskCache: RenderedSpeechDiskCache
@@ -75,7 +80,20 @@ extension Gate1AppModel {
                 renderedSpeechDiskCache = created
                 diskCache = created
             }
-            diagnostics["sessionTTS"] = "Supertonic 3 INT8 \(voice.rawValue)"
+            let supertonicModel = supertonicModel
+            let kittenIsChosen = selection.choice.bundledVoiceIsChosen
+            var savedSupertonicLookup: SupertonicSpeechPlaybackClient.PreparedChunkLookup?
+            if selection.choice.playsSavedSupertonicAudio {
+                savedSupertonicLookup = { await hooks.lookup(itemId: $0, articleIdentity: $1, plan: $2) }
+            }
+            let renderingAllowed: @Sendable () -> Bool
+            if kittenIsChosen {
+                renderingAllowed = { return false }
+                diagnostics["sessionTTS"] = "Kitten (chosen)"
+            } else {
+                renderingAllowed = supertonicModel.renderingAllowed(when: SupertonicModelNotDownloaded.governorAllowsRendering)
+                refreshSupertonicSessionDiagnostics(voice: voice)
+            }
             diagnostics["renderedSpeechCacheLimitMB"] = "\(renderedSpeechCacheLimitMB)"
             diagnostics["renderedSpeechCacheBytes"] = "\(diskCache.sizeBytes)"
             return SupertonicSpeechPlaybackClient(
@@ -84,9 +102,10 @@ extension Gate1AppModel {
                 speed: Float(speechRate / 0.5),
                 fallbackVoiceIdentifier: selectedVoice.isEmpty ? nil : selectedVoice,
                 fallbackRate: Float(speechRate),
-                diskCache: diskCache,
+                diskCache: selection.choice.playsSavedSupertonicAudio ? diskCache : nil,
                 preparedAudioDirectory: supportDirectory.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory),
                 voiceChangeCue: { [chime = NarrationVoiceChangeChime()] in _ = chime.play() },
+                onDeviceRenderingAllowed: renderingAllowed,
                 pressureRenderer: makeKittenRenderer(),
                 interruptionHandler: { [weak self] event in
                     Task { @MainActor [weak self] in
@@ -103,7 +122,7 @@ extension Gate1AppModel {
                 onPreparationPlan: { await hooks.planned(itemId: $0, articleIdentity: $1, plan: $2) },
                 onPreparedChunk: { await hooks.rendered(itemId: $0, articleIdentity: $1, plan: $2, audioURL: $3, durationMs: $4, engine: $5) },
                 articleText: { hooks.articleText(itemId: $0) },
-                preparedChunkLookup: { await hooks.lookup(itemId: $0, articleIdentity: $1, plan: $2) },
+                preparedChunkLookup: savedSupertonicLookup,
                 bundledVoiceChunkLookup: { await hooks.lookup(itemId: $0, articleIdentity: $1, plan: $2, engine: KittenNarrationRenderer.engine) },
                 onPreparedAudio: { [weak self] itemId, prepared in
                     Task { @MainActor [weak self] in
@@ -112,6 +131,10 @@ extension Gate1AppModel {
                               let item = try? store.loadItem(id: itemId),
                               let canonical = prepared.canonicalized(toItemText: item.text) else {
                             self.diagnostics["supertonicPreparedCanonicalization:\(itemId)"] = "source_mismatch"
+                            return
+                        }
+                        if (try? await coordinator.refusesCompletion(itemId: itemId, signature: signature)) == true {
+                            self.diagnostics["supertonicPreparedCanonicalization:\(itemId)"] = "preparation_stopped" // #2134
                             return
                         }
                         let attached = self.attachPreparedTextAudio(
@@ -168,8 +191,17 @@ extension Gate1AppModel {
                         self.diagnostics["supertonicFallbackRestored"] = itemId
                     }
                 },
+                onVoiceRestored: { [weak self] fields in
+                    Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("voice.restored", fields) }
+                },
                 onBundledVoice: { [weak self] block, offset, _ in
-                    Task { @MainActor [weak self] in self?.reportBundledVoiceTookOver(block: block, offset: offset) }
+                    Task { @MainActor [weak self] in
+                        // Kitten is the listener's choice, not a stand-in: nothing changed that needs explaining (#2226).
+                        if kittenIsChosen { self?.diagnostics["bundledVoice"] = "chosen"; return }
+                        // Not downloaded is not a warm-phone warning; the one-time download card explains it (#1820).
+                        if !supertonicModel.isModelPresent { self?.diagnostics["supertonicFallback"] = SupertonicModelNotDownloaded.fallbackCode; return }
+                        self?.reportBundledVoiceTookOver(block: block, offset: offset)
+                    }
                 },
                 onStall: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
                 onSystemPause: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
@@ -189,28 +221,32 @@ extension Gate1AppModel {
         )
     }
 
+    /// The renderer for the Supertonic model on the phone now (#1820): the same one while the files stay, a new one
+    /// after a download, and `missingAsset` when there is none. Every caller gets the files as they are.
     func makeSupertonicRenderer() throws -> SupertonicNarrationRenderer {
         try verifyCurrentTermsForOnDeviceVoice()
-        if let supertonicRenderer { return supertonicRenderer }
-        guard let resourceRoot = Bundle.main.resourceURL?.appending(
-            path: "Supertonic",
-            directoryHint: .isDirectory
-        ) else {
-            throw SupertonicNarrationError.missingAsset("Supertonic")
+        return try supertonicModel.renderer { assets in
+            let cachesDirectory = try FileManager.default.url(
+                for: .cachesDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            )
+            return try SupertonicNarrationRenderer(
+                assets: assets,
+                outputDirectory: cachesDirectory.appending(path: "SupertonicPlayback", directoryHint: .isDirectory),
+                governor: .app
+            )
         }
-        let cachesDirectory = try FileManager.default.url(
-            for: .cachesDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        let renderer = try SupertonicNarrationRenderer(
-            assets: SupertonicAssetLocation(rootURL: resourceRoot),
-            outputDirectory: cachesDirectory.appending(path: "SupertonicPlayback", directoryHint: .isDirectory),
-            governor: .app
-        )
-        supertonicRenderer = renderer
-        return renderer
+    }
+
+    var supertonicRenderer: SupertonicNarrationRenderer? { supertonicModel.current }
+
+    /// What diagnostics show as the session's voice, from the files on the phone now.
+    func refreshSupertonicSessionDiagnostics(voice: SupertonicVoiceID? = nil) {
+        guard let voice = voice ?? ttsVoiceSelection.supertonicVoice, audioPlaybackClientOverride == nil else { return }
+        diagnostics["sessionTTS"] = supertonicModel.isModelPresent
+            ? "Supertonic 3 INT8 \(voice.rawValue)" : SupertonicModelNotDownloaded.sessionDescription
     }
 
     /// Unloads both narration voices' sessions: Supertonic and the bundled Kitten fallback (#849).

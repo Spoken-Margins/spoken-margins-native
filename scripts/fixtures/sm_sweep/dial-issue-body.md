@@ -24,7 +24,7 @@ Tap one box in each group. That's all you need to do; there's nothing to type.
 - [ ] 1 thread left
 - [ ] No threads left
 
-**Finish by** (Paced follows a straight line from the week's start to the stop line at this time, and holds if it gets more than 5 points ahead)
+**Finish by** (Paced follows a straight line from the week's start to the stop line at this time, and holds if it gets more than 10 points ahead)
 - [x] Sat 7 AM (the weekly reset)
 - [ ] Fri noon
 - [ ] Fri 7 AM

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mechanical Claude audit for Spoken Margins PRs into `next`.
+"""Mechanical Claude audit for Spoken Margins PRs into the trunk (`main`).
 
 Since 2026-10-09 (#1195) the audit runs on headless Claude, read-only, not on Codex; the
 script keeps its old name so the loaded launchd job and its log files carry on. The gating
@@ -7,10 +7,13 @@ is plain code, so an idle run makes a handful of `gh` calls and nothing else: no
 no model call.
 
 A PR is audited when all of these hold:
-  * it is open, not a draft, and targets `next`;
+  * it is open, not a draft, and targets the trunk (`main`);
   * no audit comment (a headless Claude heading or a legacy Codex heading,
     the lane runner's own match) names its current head sha7;
-  * the newest "Lane report ... — PASS/FAIL" comment is PASS for the current head;
+  * the newest "Lane report ... — PASS/FAIL" comment is PASS for the current head, or the PR is one only
+    the owner can merge (it touches scripts/lane-runner.py or .github/, which the runner never merges and
+    nobody arms) and the head's check runs and commit statuses have all finished with none failed, with no
+    lane report on the head at all (#2052). A lane FAIL on the head still blocks it;
   * its changed files touch a risky area (sharing/packets, persistence/SQLite/
     migrations/ledger, audio session/players/Supertonic, the lane: workflows,
     the runner and its helpers, owner rule 2026-10-01), or the lane runner's
@@ -78,8 +81,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ledger import usage
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import sm_paths
+from trunk import trunk_branch  # #1492: the branch whose PRs it audits
 sys.path.insert(0, str(sm_paths.repo(__file__) / "scripts"))  # the public checkout's lane modules (SM_REPO)
 import comment_trust
+import owner_tap_alert
 from lane_dedupe import GitHubApi, automerge_holds_a_slot
 from lane_audit_policy import PERSISTENCE_PATTERNS, NEVER_RISKY_RE
 import lane_inherited_holds as inherited
@@ -88,8 +93,8 @@ import lane_inherited_holds as inherited
 # Configuration
 # ---------------------------------------------------------------------------
 
-REPO = "uncomposed/spoken-margins-native"
-BASE_BRANCH = "next"
+REPO = "Spoken-Margins/spoken-margins-native"
+BASE_BRANCH = trunk_branch()
 AUTOMERGE = "automerge"
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = sm_paths.repo(__file__)  # the public checkout it audits (SM_REPO)
@@ -168,7 +173,7 @@ RISKY_PATTERNS = {
         r"^\.github/workflows/",
         r"^scripts/lane",
         r"^scripts/(xcodebuild-lane|host-test-lane|install-lane-guard\.py|test-scope\.py"
-        r"|hot_file_ratchet\.py|merge_audit\.py|verify-tests\.py)$",
+        r"|hot_file_ratchet\.py|merge_audit\.py|verify-tests\.py|trunk\.py)$",
         r"^TestPlans/(AppBehavior|AudioAdapters)\.xctestplan$",
     ],
 }
@@ -479,9 +484,19 @@ def evaluate_pr(pr: dict, comments: list[dict], files: list[dict] | None,
     return ok, why
 
 
+def lane_report_missing_for_head(why: str) -> bool:
+    """lane_pass_for_head said there is no lane report on the head (a FAIL on it is not that)."""
+    return why == "no lane report" or why.startswith("newest lane report is on")
+
+
 def evaluate(pr: dict, comments: list[dict], files: list[dict] | None,
-             issue_comments: list[dict] | None = None, force: bool = False) -> tuple[bool, str, dict | None]:
-    """evaluate_pr, plus the re-audit plan (reaudit_trigger) when the head is audited again, else None."""
+             issue_comments: list[dict] | None = None, force: bool = False,
+             tap_checks_done: bool = False) -> tuple[bool, str, dict | None]:
+    """evaluate_pr, plus the re-audit plan (reaudit_trigger) when the head is audited again, else None.
+
+    `tap_checks_done` (#2052): the caller found the PR touches an owner-tap path and the head's checks have
+    finished with none failed. Such a PR gets no lane report PASS (nothing arms it), so that stands in for one.
+    """
     head = pr["headRefOid"]
     if pr.get("isDraft"):
         return False, "draft", None
@@ -493,10 +508,15 @@ def evaluate(pr: dict, comments: list[dict], files: list[dict] | None,
         if plan is None:
             return False, reason, None
     ok, why = lane_pass_for_head(comments, head)
+    tap_only = False
     if not ok:
-        return False, why, None
+        if not (tap_checks_done and lane_report_missing_for_head(why)):
+            return False, why, None
+        tap_only = True
     if files is None:
         return False, "need files", None
+    if tap_only and not plan:
+        return True, "owner-tap PR, checks finished", None
     if plan:  # an audited head was audited because it was risky or asked for; the trigger decides now
         return True, reason, plan
     areas = risky_areas([f.get("filename") or f.get("path") or "" for f in files])
@@ -659,6 +679,21 @@ def fetch_files(number: int) -> list[dict]:
     return gh_json_lines(f"repos/{REPO}/pulls/{number}/files?per_page=100")
 
 
+def head_checks_state(head: str) -> tuple[str, list[str]]:
+    """('failed' | 'pending' | 'ok', names) for the head's check runs and commit statuses (#2052).
+
+    Read as the owner-tap alert reads them (owner_tap_alert.checks_state). A head with neither a check run nor
+    a status has not started its checks yet, which is pending, not ok.
+    """
+    res = run(["gh", "api", "--paginate", f"repos/{REPO}/commits/{head}/check-runs?filter=latest&per_page=100",
+               "--jq", ".check_runs[]"], cwd=REPO_ROOT)
+    runs = [json.loads(line) for line in res.stdout.splitlines() if line.strip()]
+    statuses = gh_json_lines(f"repos/{REPO}/commits/{head}/statuses?per_page=100")
+    if not [r for r in runs if r.get("name") not in owner_tap_alert.OWN_CHECKS] and not statuses:
+        return "pending", ["no checks yet"]  # the alert's own job is ignored, so it alone is no checks
+    return owner_tap_alert.checks_state(runs, statuses)
+
+
 def fetch_label_events(number: int) -> list[dict]:
     return gh_json_lines(f"repos/{REPO}/issues/{number}/events?per_page=100")
 
@@ -763,15 +798,26 @@ def find_candidates(prs: list[dict], force: bool = False) -> tuple[list[dict], d
         else:
             comments = fetch_comments(n)
             ok, why, plan = evaluate(pr, comments, None, force=force)
-            if why == "need files":
+            files = None
+            tap_checks_done = False
+            if lane_report_missing_for_head(why):  # an owner-tap PR is never armed, so it gets no lane report (#2052)
                 files = fetch_files(n)
-                ok, why, plan = evaluate(pr, comments, files, force=force)
+                if touches_owner_tap(files):
+                    state, _ = head_checks_state(pr["headRefOid"])
+                    if state == "ok":
+                        tap_checks_done = True
+                    else:
+                        why = f"owner-tap PR, checks {state}"
+            if why == "need files" or tap_checks_done:
+                files = files or fetch_files(n)
+                ok, why, plan = evaluate(pr, comments, files, force=force, tap_checks_done=tap_checks_done)
                 issue_comments: list[dict] = []
                 issues = linked_issue_numbers(pr)
                 if not ok and why == "not risky, no request":
                     for inum in issues:
                         issue_comments += fetch_comments(inum)
-                    ok, why, plan = evaluate(pr, comments, files, issue_comments, force=force)
+                    ok, why, plan = evaluate(pr, comments, files, issue_comments, force=force,
+                                             tap_checks_done=tap_checks_done)
                 if ok and failed_count(FAILURES, n, plan["key"] if plan else pr["headRefOid"]) >= MAX_FAILED_AUDITS:
                     ok, why = False, "audit failed twice on this head"
                 if ok:
@@ -983,8 +1029,8 @@ def build_prompt(batch: list[dict], blocks: list[str], base_sha: str) -> str:
     nums = ", ".join(f"#{c['number']}" for c in batch)
     head = [
         f"You are auditing {'this pull request' if len(batch) == 1 else 'these pull requests'} "
-        f"({nums}) into `next` of Spoken Margins, read-only.",
-        f"The working directory is a checkout of origin/next at {base_sha}. Each PR's diff, its "
+        f"({nums}) into `{BASE_BRANCH}` of Spoken Margins, read-only.",
+        f"The working directory is a checkout of origin/{BASE_BRANCH} at {base_sha}. Each PR's diff, its "
         "changed files as they are at its head, and the diffs since earlier audited heads are "
         "files named below. Read AGENTS.md first; its hard rules apply.",
         "You can only read files (Read, Grep, Glob); you cannot run commands or git. Do not ask to. "

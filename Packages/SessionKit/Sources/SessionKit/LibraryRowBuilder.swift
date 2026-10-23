@@ -124,15 +124,15 @@ public enum LibraryRowBuilder {
             row.usesNewReader = data.structuredDocumentItemIds.contains(item.id)
             row.sharedMargins = data.sharedMarginsByItemId[item.id] ?? .none
             row.canMarkUnfinished = item.sourceCompletedAt != nil && !PreparationChunkGate.itemAlreadyListened(sessions)
-            row.textCharacterCount = row.hasNativeAudio ? nil : ListeningTimeEstimator.characterCount(of: item.text)
+            row.textCharacterCount = row.hasNativeAudio ? nil : item.textCharacterCount
             return row
         }
     }
 
     /// Where an item's opening audio stands: waiting, preparing, ready, paused (the device is too
     /// hot), failed, or not required, with the chunks done and the target.
-    public static func startupAudioPresentation(
-        item: Item,
+    public static func startupAudioPresentation<Fields: LibraryItemFields>(
+        item: Fields,
         manifest: PreparedAudioManifest?,
         job: AudioPreparationJob?,
         context: StartupAudioContext
@@ -141,7 +141,7 @@ public enum LibraryRowBuilder {
               context.hasSupertonicVoice,
               !context.suppressedItemIds.contains(item.id),
               !context.liveSpeechFallbackItemIds.contains(item.id),
-              item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+              item.hasListenableText else {
             return (.notRequired, 0, 0)
         }
         if item.media?.sourceType == .generatedTTSPrerendered,
@@ -175,7 +175,7 @@ public enum LibraryRowBuilder {
     }
 
     /// The status line under a Library row's title.
-    public static func statusLabel(for item: Item) -> String {
+    public static func statusLabel<Fields: LibraryItemFields>(for item: Fields) -> String {
         guard item.status == "ready" else {
             switch item.status {
             case "needs_listening_map": return "Ready to listen · map optional"
@@ -193,8 +193,8 @@ public enum LibraryRowBuilder {
 
     /// Whether the item's text should be narrated ahead of time: it has text, doesn't play its own
     /// audio, and has no (or only a starter, or a missing) prepared narration file.
-    public static func shouldPrewarmTextAudio(for item: Item) -> Bool {
-        guard item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
+    public static func shouldPrewarmTextAudio<Fields: LibraryItemFields>(for item: Fields) -> Bool {
+        guard item.hasListenableText,
               !LibraryAudioPreparationAdmission.playsItsOwnAudio(item) else { return false }
         guard item.media?.sourceType == .generatedTTSPrerendered else { return true }
         return PreparedNarrationFallback.isMissing(item.media) || isStarterPreparedTextMedia(item.media)

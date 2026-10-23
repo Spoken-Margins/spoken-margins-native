@@ -246,11 +246,11 @@ def deliver(now, state, state_path, on_request=False):
     sha = info.get('sha', '')
     if not re.fullmatch(r'[0-9a-f]{40}', sha) or not (folder / phone.APP_NAME).is_dir():
         raise RuntimeError('no complete rolling phone build')
-    # Release cuts may hold latest on a candidate; require ancestry in next, without fetching or building.
-    ancestor = subprocess.run(['git', 'merge-base', '--is-ancestor', sha, 'origin/next'],
+    # Release cuts may hold latest on a candidate; require ancestry in the trunk, without fetching or building.
+    ancestor = subprocess.run(['git', 'merge-base', '--is-ancestor', sha, f'origin/{phone.BRANCH}'],
                               cwd=str(phone.ROOT), capture_output=True)
     if ancestor.returncode:
-        raise RuntimeError('rolling binary is not proven to be in origin/next')
+        raise RuntimeError(f'rolling binary is not proven to be in origin/{phone.BRANCH}')
     items, prior = collect(sha, state.get('issues', []))
     numbers = [item['number'] for item in items]
     new_fixes = {item['number'] for item in items if item['in_build']} - set(state.get('issues', []))
