@@ -119,6 +119,19 @@ class PricingARow(unittest.TestCase):
         self.assertEqual(rows[0]["cost_ms_library"], 1.0)
         self.assertEqual(rows[2]["cost_basis"], "measured")
 
+    def test_an_unmeasured_row_with_a_placeholder_floor_is_priced(self):
+        floor = row(["loadSessions"])
+        floor["cost_ms_library"] = 0.04
+        rank.apply_prices([floor], TABLE)
+        self.assertEqual((floor["cost_ms_library"], floor["cost_basis"]), (6.5, "measured"))
+
+    def test_an_estimated_row_with_no_number_is_priced(self):
+        empty = row(["loadSessions"], basis="estimated")
+        empty["cost_ms_library"] = None
+        self.assertEqual(len(rank.apply_prices([empty], TABLE)), 1)
+        self.assertEqual(empty["cost_ms_library"], 6.5)
+        self.assertEqual(empty["cost_basis"], "measured")
+
 
 class TheCommittedAudit(unittest.TestCase):
     def test_the_markdown_is_what_the_script_renders_from_the_json(self):

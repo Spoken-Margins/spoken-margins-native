@@ -2307,8 +2307,8 @@
   "meter_reads": [
    "loadItem"
   ],
-  "cost_ms_library": null,
-  "cost_basis": "estimated",
+  "cost_ms_library": 0.06,
+  "cost_basis": "measured",
   "caller_needs": "Each picked file's bytes (up to 8 MB) decoded into an edition entry before the batch runs.",
   "fix_class": "file-off-main",
   "fix_note": "Read the picked files (resourceValues plus Data(contentsOf:), up to 8 MB each) in a detached task and pass the decoded entries to importListeningEditions, so several large files never block the main actor before any progress shows.",
@@ -2345,7 +2345,8 @@
   "critic_reason": null,
   "scanner_rows": 1,
   "score": 0,
-  "area": "import"
+  "area": "import",
+  "cost_note": "read cost table (#2513): loadItem(article)"
  },
  {
   "fid": "import-010",
@@ -5155,8 +5156,8 @@
    "listItems",
    "loadOwnedOfflineAssets"
   ],
-  "cost_ms_library": null,
-  "cost_basis": "estimated",
+  "cost_ms_library": 54.5,
+  "cost_basis": "measured",
   "caller_needs": "A verified, unpacked packet and a review of what it would import; the copy and the unpack are only to read it.",
   "fix_class": "file-off-main",
   "fix_note": "Run the copy (copyItem of the whole file), SpokenMarginsPackageArchive.read with asset extraction and digest verification in a detached task, then hop to the main actor for the by-digest store reads and the review; a packet with voice Margins can be tens of MB.",
@@ -5210,8 +5211,9 @@
   "critic": "not rechecked",
   "critic_reason": null,
   "scanner_rows": 8,
-  "score": 0,
-  "area": "import"
+  "score": 54,
+  "area": "import",
+  "cost_note": "read cost table (#2513): listItems() + loadImportedCommentaryLayer(id:) + loadItem(article) + loadOwnedOfflineAssets()"
  },
  {
   "fid": "import-058",
@@ -6159,8 +6161,8 @@
   "meter_reads": [
    "loadItem"
   ],
-  "cost_ms_library": null,
-  "cost_basis": "estimated",
+  "cost_ms_library": 0.06,
+  "cost_basis": "measured",
   "caller_needs": "Only the stored summary for the open item, plus removal of summaries whose item or cited Margin is gone.",
   "fix_class": "file-off-main",
   "fix_note": "Each sheet open reads and decodes every stored summary JSON and does a loadItem per summary (0.04 ms each) before showing one; load only the open item's summary on main and run the orphan sweep as a background task.",
@@ -6203,7 +6205,8 @@
   "critic_reason": null,
   "scanner_rows": 5,
   "score": 0,
-  "area": "item-screen"
+  "area": "item-screen",
+  "cost_note": "read cost table (#2513): loadItem(article)"
  },
  {
   "fid": "item-screen-011",
@@ -7592,8 +7595,8 @@
   "meter_reads": [
    "loadLibraryRows (importClippedPage)"
   ],
-  "cost_ms_library": null,
-  "cost_basis": "estimated",
+  "cost_ms_library": 84.0,
+  "cost_basis": "measured",
   "caller_needs": "The handed-off article or link, read from the shared payload file, then imported.",
   "fix_class": "file-off-main",
   "fix_note": "The store-backed handoff reads a JSON payload file (article text, up to the extension's size cap) on main, and importClippedPage then imports synchronously; the two non-store handoff(from:) rows at 2340 and 2369 only parse the URL, and the Task at 2342 is a false positive for file I/O. Read and decode the payload in a detached task.",
@@ -7635,8 +7638,9 @@
   "critic": "not rechecked",
   "critic_reason": null,
   "scanner_rows": 5,
-  "score": 0,
-  "area": "import"
+  "score": 252,
+  "area": "import",
+  "cost_note": "read cost table (#2513): screen: LibraryReadSnapshot.read(store:)"
  },
  {
   "fid": "item-screen-035",
@@ -8930,8 +8934,8 @@
    "loadSessions",
    "loadInterjections"
   ],
-  "cost_ms_library": null,
-  "cost_basis": "estimated",
+  "cost_ms_library": 7.46,
+  "cost_basis": "measured",
   "caller_needs": "A diagnostics file URL to present in the share sheet.",
   "fix_class": "stays",
   "fix_note": "None.",
@@ -8961,8 +8965,9 @@
   "critic": "not rechecked",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 0,
-  "area": "item-screen"
+  "score": 7,
+  "area": "item-screen",
+  "cost_note": "read cost table (#2513): loadInterjections(itemId: mapped) + loadSessions()"
  },
  {
   "fid": "item-screen-058",
@@ -16952,8 +16957,8 @@
    "loadItem",
    "loadListeningMap"
   ],
-  "cost_ms_library": null,
-  "cost_basis": "estimated",
+  "cost_ms_library": 0.15,
+  "cost_basis": "measured",
   "caller_needs": "A hand-pasted map attached to the item.",
   "fix_class": "stays",
   "fix_note": "Nothing to change.",
@@ -17002,7 +17007,8 @@
   "critic_reason": null,
   "scanner_rows": 4,
   "score": 0,
-  "area": "maps-skim"
+  "area": "maps-skim",
+  "cost_note": "read cost table (#2513): loadItem(article) + loadListeningMap(mapped)"
  },
  {
   "fid": "maps-skim-033",
@@ -19260,8 +19266,8 @@
    "transcriptTimelineStamp",
    "loadTranscriptTimeline"
   ],
-  "cost_ms_library": null,
-  "cost_basis": "estimated",
+  "cost_ms_library": 12.26,
+  "cost_basis": "measured",
   "caller_needs": "the granted or denied answer, then the recording start (classified in margins-016)",
   "fix_class": "stays",
   "fix_note": "No change here; the recording start is margins-016.",
@@ -19297,8 +19303,9 @@
   "critic": "not rechecked",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 0,
-  "area": "margins"
+  "score": 12,
+  "area": "margins",
+  "cost_note": "read cost table (#2513): loadTranscriptTimeline(itemId: mapped) + transcriptTimelineStamp(mapped)"
  },
  {
   "fid": "margins-015",
@@ -19379,8 +19386,8 @@
   "meter_reads": [
    "transcriptTimelineStamp"
   ],
-  "cost_ms_library": null,
-  "cost_basis": "estimated",
+  "cost_ms_library": 0.26,
+  "cost_basis": "measured",
   "caller_needs": "the source paused, a locked anchor, and the recorder running",
   "fix_class": "audio-off-main",
   "fix_note": "engine.beginInterjection pauses the player, writes the session, builds the anchor from the already cached timeline and starts the recorder (AVAudioSession activation) all on the main actor; the #1696 comment records a 16 s stall on a phone. Move recorder start and audio-session activation to an audio queue and publish 'recording' when it reports started.",
@@ -19440,8 +19447,9 @@
   "critic": "changed",
   "critic_reason": "The full timeline load is a cache hit while a podcast plays; the cost that matters is the synchronous recorder and audio-session start.",
   "scanner_rows": 1,
-  "score": 0,
-  "area": "margins"
+  "score": 1,
+  "area": "margins",
+  "cost_note": "read cost table (#2513): transcriptTimelineStamp(mapped)"
  },
  {
   "fid": "margins-017",
@@ -20679,8 +20687,8 @@
   "meter_reads": [
    "allMarginAudioPaths"
   ],
-  "cost_ms_library": null,
-  "cost_basis": "estimated",
+  "cost_ms_library": 0.51,
+  "cost_basis": "measured",
   "caller_needs": "which recordings no remaining Margin uses, so only unused files are removed",
   "fix_class": "async-store",
   "fix_note": "After the delete commits, removeMarginRecordings scans the payload of every Margin (and quarantined ones) in the store, resolves and canonicalises every surviving path, and SHA-256 hashes each deleted recording (removeCopies) on the main actor; it is clean-up the screen does not wait for, so run it in a detached task after the Library refresh.",
@@ -20722,8 +20730,9 @@
   "critic": "not rechecked",
   "critic_reason": null,
   "scanner_rows": 3,
-  "score": 0,
-  "area": "margins"
+  "score": 1,
+  "area": "margins",
+  "cost_note": "read cost table (#2513): allMarginAudioPaths()"
  },
  {
   "fid": "margins-039",
@@ -21213,8 +21222,8 @@
   "meter_reads": [
    "loadOwnedOfflineAssets"
   ],
-  "cost_ms_library": null,
-  "cost_basis": "estimated",
+  "cost_ms_library": 1.41,
+  "cost_basis": "measured",
   "caller_needs": "The item's identity (type, link, title and two SHA-256 digests of its text) for the packet; the scanner's file-io label is wrong, the work is hashing the item text in memory, plus one loadOwnedOfflineAssets for audiobooks.",
   "fix_class": "async-store",
   "fix_note": "Moves with exportSharedInterjections; the digests run over the full item text (a few MB for a book), so they should not run on main; the offline-assets table is unmeasured.",
@@ -21256,8 +21265,9 @@
   "critic": "not rechecked",
   "critic_reason": null,
   "scanner_rows": 1,
-  "score": 0,
-  "area": "margins"
+  "score": 1,
+  "area": "margins",
+  "cost_note": "read cost table (#2513): loadOwnedOfflineAssets()"
  },
  {
   "fid": "margins-047",
@@ -24902,8 +24912,8 @@
   "meter_reads": [
    "transcriptTimelineStamp (media only)"
   ],
-  "cost_ms_library": null,
-  "cost_basis": "estimated",
+  "cost_ms_library": 0.26,
+  "cost_basis": "measured",
   "caller_needs": "whether the current audio just finished, to decide whether to auto-play the new turn",
   "fix_class": "stays",
   "fix_note": "",
@@ -24940,7 +24950,8 @@
   "critic_reason": null,
   "scanner_rows": 1,
   "score": 0,
-  "area": "playback"
+  "area": "playback",
+  "cost_note": "read cost table (#2513): transcriptTimelineStamp(mapped)"
  },
  {
   "fid": "playback-026",

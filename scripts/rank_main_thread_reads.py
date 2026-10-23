@@ -15,7 +15,7 @@ lists for it (`meter_reads`):
 - anything else (file reads, store opens, AV work) is not priced. A row with some priced reads and some unpriced
   ones is "partial": its cost is a lower bound. A row with no priced read stays "unmeasured".
 
-Rows already "measured" or "estimated" are left alone: the table is a second opinion on them, not a replacement.
+Rows that already carry a number ("measured" or "estimated") are left alone: the table is a second opinion on them, not a replacement. A row with no number is priced whatever basis it was filed under (some were "estimated" with the cost left empty), and so is one filed "unmeasured" with only a placeholder floor.
 
     scripts/rank_main_thread_reads.py --cost-table table.md --write     # price, then rewrite the .json and .md
     scripts/rank_main_thread_reads.py --render --write                  # only re-render the .md from the .json
@@ -173,11 +173,11 @@ def price_row(row: dict, table: dict[str, float]) -> dict | None:
 
 
 def apply_prices(rows: list[dict], table: dict[str, float]) -> list[dict]:
-    """Prices every unmeasured row the table can. Returns the rows that changed, as {before, after}."""
+    """Prices every row that has no number and that the table can. Returns the rows that changed, as {before, after}."""
     moved = []
     for row in rows:
-        if row["cost_basis"] != "unmeasured":
-            continue
+        if row["cost_ms_library"] is not None and row["cost_basis"] != "unmeasured":
+            continue   # a measured or estimated number: the table is a second opinion, not a replacement
         change = price_row(row, table)
         if change is None:
             continue
@@ -288,7 +288,7 @@ def what_changed(rows: list[dict]) -> list[str]:
            "- The seeded tables are assumptions (see `LibraryFixtureTables.swift`): no export of the owner's job, manifest or "
            "download counts exists. Treat a cost that rests on them (prepared audio manifests above all) as an order of magnitude "
            "until a Mac-side count replaces the assumption.",
-           "- Rows already `measured` or `estimated` were left as they were.", "",
+           "- Rows that already had a measured or estimated number were left as they were.", "",
            "Highest scores among the newly priced functions:", "",
            "| score | function | freq | ms | fix class |", "|---:|---|---|---:|---|"]
     for r in movers:
