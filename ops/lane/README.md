@@ -149,3 +149,18 @@ launchctl kickstart gui/$(id -u)/actions.runner.uncomposed-spoken-margins-native
 ```zsh
 python3 -m unittest discover -s ~/Documents/GitHub/spoken-margins-native/ops/lane
 ```
+
+# Lane tools refresh
+
+`sm_lane_tools_refresh.py` keeps the lane's tools copy on `main` (#2536). The runners take `.venv` and `node_modules` from that copy (`SM_LANE_TOOLS`, default `~/Library/Caches/SpokenMarginsLane/tools`) because macOS denies their `node` access to `~/Documents` (#2493). Lane scripts come from each PR's own checkout, so the copy only has to supply the two install folders; they go stale when `requirements-dev.txt` or `package-lock.json` changes.
+
+Hourly (launchd label `com.spokenmargins.lane-tools-refresh`, run from the copy itself so it never reads `~/Documents`) it:
+
+1. fetches `main` at depth 1 and resets the copy to it (the copy is a throwaway clone; nobody edits it);
+2. runs `scripts/bootstrap-python-tools.sh` if `requirements-dev.txt` differs from the copy in `.venv/.requirements-dev.txt`, and `npm ci` if `package-lock.json` differs from the stamp `node_modules/.sm-package-lock.sha256`. Installs wait while a `lane-runner.py` process runs, so a test never sees a half-installed `.venv`;
+3. checks that `.venv/pyvenv.cfg` and the two folders do not point into `~/Documents`;
+4. comments on #337, at most once a day per problem, when a fetch, install or check fails, or when a needed install has waited more than 6 hours.
+
+Run it by hand: `python3 ~/Library/Caches/SpokenMarginsLane/tools/ops/lane/sm_lane_tools_refresh.py --no-post`. Install: `python3 ops/install-launchd.py --install lane-tools-refresh` (not installed by the PR). Tests: `python3 -m unittest ops/lane/test_sm_lane_tools_refresh.py`.
+
+**Cost and catch.** One `git fetch --depth 1` an hour (a few KB when nothing changed), no tokens, no owner clicks; an install only when inputs changed. It catches the 2026-10-23 situation: the copy built for #2493 sat at `0a9743f` while `main` moved, and a changed requirement or lockfile would have failed host tests on the Mac only. Waste signal: it logs "tools copy is current" for weeks while neither input file changes in `main`; then drop it to daily.
