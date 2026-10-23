@@ -61,6 +61,21 @@ struct PlaybackScreen: View {
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var followUpFocused: Bool
 
+    /// Back to the Library while playback goes on. The Library label lower down stays; this one is where a listener
+    /// looks first.
+    private var libraryExitButton: some View {
+        Button(action: model.openLibrary) {
+            if selectedPane == .timeline {
+                Label("Library", systemImage: "books.vertical")
+            } else {
+                Label("Library", systemImage: "chevron.left").labelStyle(.titleAndIcon)
+            }
+        }
+        .accessibilityLabel("Library")
+        .accessibilityHint("Leaves this screen. Playback keeps going.")
+        .accessibilityIdentifier("playback.exit.button")
+    }
+
     var body: some View {
         let _ = playbackTick
         NavigationStack {
@@ -174,6 +189,8 @@ struct PlaybackScreen: View {
             .toolbarBackground(AppColors.listeningBackground, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
+                // A way out that needs no gesture, in the nav bar's own empty space, so the screen gets no taller
+                // (#2262). Timeline's leading slot already goes back to Now, so its exit sits at the other end.
                 if selectedPane == .timeline {
                     ToolbarItem(placement: .topBarLeading) {
                         Button { selectedPane = .now } label: {
@@ -181,6 +198,9 @@ struct PlaybackScreen: View {
                         }
                         .accessibilityIdentifier("timeline.nowPlaying.button")
                     }
+                    ToolbarItem(placement: .topBarTrailing) { libraryExitButton }
+                } else {
+                    ToolbarItem(placement: .topBarLeading) { libraryExitButton }
                 }
                 if selectedPane != .timeline {
                     ToolbarItemGroup(placement: .keyboard) {
