@@ -3424,22 +3424,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    /// A diagnostics string only, so it reads the file (size, and an `AVAudioFile` open for the length) away from
-    /// the main actor (#2510).
-    nonisolated static func interjectionAudioEvidence(for path: String, applicationSupportDirectory: URL?) -> String {
-        guard let url = resolvedInterjectionAudioURL(for: path, applicationSupportDirectory: applicationSupportDirectory) else {
-            return "duration_ms=unknown;bytes=unknown"
-        }
-        let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
-        #if canImport(AVFoundation)
-        if let audioFile = try? AVAudioFile(forReading: url), audioFile.processingFormat.sampleRate > 0 {
-            let durationMs = Int((Double(audioFile.length) / audioFile.processingFormat.sampleRate * 1000).rounded())
-            return "duration_ms=\(durationMs);bytes=\(bytes)"
-        }
-        #endif
-        return "duration_ms=unknown;bytes=\(bytes)"
-    }
-
     func recordAnchorCaptureDiagnostics(for interjection: Interjection) {
         diagnostics[Self.marginDiagnosticKey("interjectionAnchorAtCapture", interjection)] = [
             "type=\(interjection.anchor.anchorType.rawValue)",
