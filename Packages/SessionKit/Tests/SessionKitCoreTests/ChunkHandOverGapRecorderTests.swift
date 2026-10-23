@@ -22,6 +22,19 @@ final class ChunkHandOverGapRecorderTests: XCTestCase {
         XCTAssertEqual(recorder.longest, gap)
     }
 
+    // #1786: a background seam handed to the bundled voice moves the item to a new generation; the silence until
+    // the bundled voice's chunk starts is still the seam's gap. Another seam's pending gap isn't moved.
+    func testAGapMovedToANewGenerationIsStillMeasured() throws {
+        var recorder = ChunkHandOverGapRecorder()
+        let bundled = UUID()
+        recorder.chunkFinished(at: 10, generation: generation, boundary: .sentence, nextChunkWasReady: false)
+        recorder.pendingMoved(from: UUID(), to: bundled)
+        recorder.pendingMoved(from: generation, to: bundled)
+        let gap = try XCTUnwrap(recorder.chunkStarted(at: 12.5, generation: bundled))
+        XCTAssertEqual(gap.seconds, 2.5, accuracy: 0.0001)
+        XCTAssertFalse(gap.nextChunkWasReady)
+    }
+
     func testOnlyAGapLongerThanTheLongestIsReported() throws {
         var recorder = ChunkHandOverGapRecorder()
         recorder.chunkFinished(at: 0, generation: generation, boundary: .sentence, nextChunkWasReady: true)

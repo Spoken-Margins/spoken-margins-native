@@ -2344,10 +2344,11 @@ class MainFlowTests(unittest.TestCase):
         # Every Mac job checks out the Git LFS models: --plan fast's contracts check reads them (#301). The third is
         # the release job a T3 PASS hands to a build runner (#1209). The lane job checks them out on the Mac, and on a
         # GitHub-hosted Mac fetches them from a cache instead (#1389 phase 2, test_lane_hosted_app.py).
-        self.assertEqual(workflow.count('lfs: true'), 1)
+        self.assertEqual(workflow.count('lfs: true'), 2)  # the release job and the automerge-mac fallback (#2459)
         self.assertIn("lfs: ${{ runner.environment != 'github-hosted' }}", workflow)
         self.assertIn("lfs: ${{ !contains(fromJSON(needs.route.outputs.automerge || '[]'), 'ubuntu-latest') }}", workflow)
-        self.assertEqual(workflow.count('persist-credentials: false'), 4)  # hosted routing plus the three Mac jobs
+        # hosted routing plus the four Mac jobs (automerge-mac, #2459)
+        self.assertEqual(workflow.count('persist-credentials: false'), 5)
         self.assertIn("if: steps.run.outputs.reported == 'true'", workflow)
         self.assertIn("if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'", workflow)
 
@@ -2371,8 +2372,9 @@ class MainFlowTests(unittest.TestCase):
         # stays green with a warning, and the report and the lane:done relabel carry it to the dispatcher.
         # In 13 hours on 2026-09-30, 29 of the lane's 46 red checks were INCONCLUSIVE, 20 of them held for T3.
         scripts = self.verdict_steps()
-        self.assertEqual(len(scripts), 3)  # the lane job's, the automerge job's and the release job's (#1209)
-        for job, script in zip(('lane', 'automerge', 'release'), scripts):
+        # the lane job's, the automerge job's, its automerge-mac fallback's (#2459) and the release job's (#1209)
+        self.assertEqual(len(scripts), 4)
+        for job, script in zip(('lane', 'automerge', 'automerge-mac', 'release'), scripts):
             # The release job's check sits on main's tip, not on the PR (#1209): a FAIL there stays a warning.
             fail = ('FAIL', 0, '::warning title=Lane FAIL') if job == 'release' else ('FAIL', 1, '::error title=Lane FAIL')
             for verdict, code, annotation in (('PASS', 0, None), ('INCONCLUSIVE', 0, '::warning title=Lane INCONCLUSIVE'),

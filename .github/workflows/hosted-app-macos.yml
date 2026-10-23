@@ -94,29 +94,21 @@ jobs:
       - name: Start the clock
         run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
 
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # The lane's own selection rule (verify-tests.py t3_selection, through scripts/hosted_t3_check.py): only
+      # class and method names, each of which must name tests in the plan. A misspelled name fails here, before
+      # the build, instead of running nothing (#2138).
       - name: Check the tests input
         id: tests
         env:
           TESTS: ${{ inputs.tests }}
+          PLAN: ${{ inputs.plan || 'AppBehavior' }}
         run: |
-          # Only class and method names reach xcodebuild: each entry is Class or Class/method.
-          selectors=()
-          IFS=',' read -ra entries <<< "$TESTS"
-          for raw in "${entries[@]}"; do
-            entry=$(echo "$raw" | xargs)
-            [ -z "$entry" ] && continue
-            if ! [[ "$entry" =~ ^[A-Za-z_][A-Za-z0-9_]*(/[A-Za-z_][A-Za-z0-9_]*(\(\))?)?$ ]]; then
-              echo "::error::Not a test class or Class/method: '$entry'"
-              exit 1
-            fi
-            selectors+=("-only-testing:SpokenMarginsAppTests/$entry")
-          done
-          echo "count=${#selectors[@]}" >> "$GITHUB_OUTPUT"
-          printf '%s\n' "${selectors[@]}" > "$RUNNER_TEMP/selectors.txt"
-
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+          python3 scripts/hosted_t3_check.py select --tests "$TESTS" --plan "$PLAN" --out "$RUNNER_TEMP"
+          echo "count=$(grep -c . "$RUNNER_TEMP/selectors.txt" || true)" >> "$GITHUB_OUTPUT"
 
       # The voice models are LFS files (about 200 MB) that the app bundles. Cache them so every run doesn't
       # spend that from the LFS bandwidth quota.
@@ -125,7 +117,7 @@ jobs:
         run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
       # Restore and save are separate steps so a failed test still saves what the build fetched and compiled: the
       # combined action saves only when the job succeeds, and four failing trials in a row each built cold (#1389).
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         id: lfs-cache
         with:
           path: .git/lfs
@@ -139,14 +131,14 @@ jobs:
           auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         id: spm-cache
         with:
           path: ${{ env.SPM }}
           key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
           restore-keys: spm-
       # Rolling key: every run saves its cache, the next restores the newest. Xcode bounds the store itself.
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.CAS }}
           key: xcode-cas-27.0-${{ github.run_id }}
@@ -266,44 +258,40 @@ jobs:
             break
           done
           echo "BUNDLE=$bundle" >> "$GITHUB_ENV"
+          echo "TESTS_LOG=$log" >> "$GITHUB_ENV"
           exit "$status"
 
       # After T2, whatever T3 did: the build's caches are worth keeping even when a test fails. A key that already
       # exists is skipped; a run that never reached its builds has nothing worth saving.
       - name: Save the LFS cache
         if: always() && steps.lfs-cache.outputs.cache-hit != 'true' && steps.t2-sim.outcome != 'skipped'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .git/lfs
           key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
       - name: Save the package cache
         if: always() && steps.spm-cache.outputs.cache-hit != 'true' && steps.t2-sim.outcome != 'skipped'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.SPM }}
           key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
       - name: Save the compilation cache
         if: always() && steps.t2-sim.outcome != 'skipped'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.CAS }}
           key: xcode-cas-27.0-${{ github.run_id }}
 
-      - name: T3 - test counts
-        if: always() && env.BUNDLE != ''
+      # Passes only when every requested test completed and passed: a missing, skipped or failed test, a test
+      # outside the request, or a run that completed nothing fails (#2138), by verify-tests.py's reconcile. It runs
+      # whenever tests were requested, so a T3 step that never wrote a bundle or log fails here too.
+      - name: T3 - check every requested test ran and passed
+        if: always() && steps.tests.outputs.count != '0' && steps.tests.outputs.count != ''
         run: |
-          xcrun xcresulttool get test-results summary --path "$BUNDLE" --compact > "$RESULTS/summary.json"
-          python3 - "$RESULTS/summary.json" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
-          import json, sys
-          s = json.load(open(sys.argv[1]))
-          total = s.get('totalTestCount', 0)
-          print(f"T3: {s.get('result')}, {total} tests: {s.get('passedTests', 0)} passed, "
-                f"{s.get('failedTests', 0)} failed, {s.get('skippedTests', 0)} skipped.")
-          for failure in s.get('testFailures', [])[:20]:
-              print(f"- {failure.get('testIdentifierString') or failure.get('testName')}: {failure.get('failureText', '')[:200]}")
-          # A named test that ran nothing is a failure, as in verify-tests.py.
-          sys.exit(1 if total == 0 else 0)
-          PY
+          set -o pipefail
+          python3 scripts/hosted_t3_check.py reconcile --expected "$RUNNER_TEMP/expected.json" \
+            --log "${TESTS_LOG:-$RESULTS/tests-1.log}" --bundle "${BUNDLE:-$RESULTS/tests-1.xcresult}" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Shut down the simulator
         if: always() && env.UDID != ''
@@ -311,12 +299,11 @@ jobs:
 
       - name: Keep the logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: hosted-app-macos-${{ github.run_id }}
           path: |
             .build/hosted-results/*.log
-            .build/hosted-results/summary.json
           if-no-files-found: ignore
           retention-days: 7
 

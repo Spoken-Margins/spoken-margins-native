@@ -6,6 +6,8 @@ extension Gate1AppModel {
     /// "Share as Markdown" (#493): the notes-folder note of one Margin, or of an item's Margins, as a
     /// named `.md` file in a temporary folder, for the share sheet.
     func marginMarkdownFileURL(for margins: [Interjection], asItem: Bool) -> URL? {
+        // An item made from a live session shares the session's own Markdown, with its position evidence (#2481).
+        if asItem, let itemId = margins.first?.itemId, let url = liveSessionMarkdownFileURL(itemId: itemId, margins: margins) { return url }
         var url: URL?
         run { engine in
             let file = asItem ? try MarginMarkdownShare.file(forItemMargins: margins, engine: engine)

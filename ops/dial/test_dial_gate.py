@@ -540,5 +540,27 @@ class PerProviderSlots(unittest.TestCase):
         self.assertIn('Codex workers active: 2', text)
 
 
+class RequestHeaderTests(unittest.TestCase):
+    def test_a_write_says_it_is_json_and_a_read_does_not(self):
+        from unittest import mock
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return b'{}'
+
+        with mock.patch.object(g.urllib.request, 'urlopen', return_value=Response()) as opened:
+            g.gh('POST', 'repos/o/r/issues/1/comments', 't', {'body': 'x'})
+            g.gh('GET', 'repos/o/r/issues/1', 't')
+        write, read = (call.args[0] for call in opened.call_args_list)
+        self.assertEqual(write.get_header('Content-type'), 'application/json')  # form-encoded gets 415 (#2265)
+        self.assertIsNone(read.get_header('Content-type'))
+
+
 if __name__ == '__main__':
     unittest.main()
