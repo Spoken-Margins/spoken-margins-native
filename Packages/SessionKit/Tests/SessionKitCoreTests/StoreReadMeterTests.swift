@@ -166,6 +166,33 @@ final class StoreReadMeterTests: XCTestCase {
         XCTFail("Within budget now: remove expectKnownOversized for \(issue) so the limit is enforced. \(message)", file: file, line: line)
     }
 
+    func testSharingAnItemsMarginsAsMarkdownReadsTheItemOncePerSession() throws {
+        let fixture = try build(.small)
+        let meter = StoreReadMeter()
+        let store = try fixture.openStore(meter: meter)
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(id: "phone", displayName: "Phone", capabilities: ["sync": ["canonical_persistence"]]),
+            repository: store)
+        let margins = try store.loadInterjections(itemId: LibraryFixture.mappedItemId).filter(MarginMarkdownShare.hasNote)
+        XCTAssertGreaterThan(margins.count, 5, "the mapped podcast has Margins with notes")
+        let sessions = Set(margins.map(\.sessionId)).count
+        XCTAssertLessThan(sessions, margins.count, "the test only bites when Margins share a session")
+
+        // What it did before: one whole export per Margin, each re-reading the item and the transcript timeline.
+        var oneByOne: [(Interjection, String)] = []
+        for margin in margins { oneByOne.append((margin, try MarginMarkdownShare.note(for: margin, engine: engine).1)) }
+        XCTAssertEqual(meter.totals(for: "loadItem(id:)").calls, margins.count)
+        meter.reset()
+
+        let file = try XCTUnwrap(try MarginMarkdownShare.file(forItemMargins: margins, engine: engine))
+
+        XCTAssertEqual(meter.totals(for: "loadItem(id:)").calls, sessions, "the item is read once per session (#2508)")
+        XCTAssertEqual(meter.totals(for: "loadTranscriptTimeline(itemId:)").calls, sessions)
+        // The notes are the same text the per-Margin exports gave, (sorted, so a dropped or duplicated note shows).
+        let expected = oneByOne.map(\.1).filter { !$0.isEmpty }
+        XCTAssertEqual(file.markdown.components(separatedBy: MarginMarkdownShare.separator).sorted(), expected.sorted())
+    }
+
     func testOneSourcesFeedEntriesReadOnlyThatSourcesRows() throws {
         let fixture = try build(.small)
         let meter = StoreReadMeter()
