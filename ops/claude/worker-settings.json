@@ -1,0 +1,36 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Monitor|mcp__terminal__.*|mcp__.*[Ss]imulator.*",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/spoken-margins-lane-guard.py\" --repo \"${SM_REPO:-$HOME/Documents/GitHub/spoken-margins-native}\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Monitor|mcp__terminal__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/spoken-margins-toolchain-guard.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/spoken-margins-context-handoff.py\""
+          }
+        ]
+      }
+    ]
+  }
+}
