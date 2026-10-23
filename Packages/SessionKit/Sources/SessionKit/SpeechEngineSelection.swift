@@ -80,15 +80,16 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
     }
 
     /// One line for the player when the app's own backup voice, not the iOS voice, reads in place of the chosen
-    /// voice (#849). Only heat and memory send narration there; anything else gets the general line.
+    /// voice (#849). Only heat and memory send narration there; anything else gets the general line. The backup voice
+    /// keeps the item to its end (#1786, `NarrationVoiceHold`), so no line promises the voice back at the next play.
     public var bundledVoiceExplanation: String {
         switch self {
         case .deviceTooWarm:
-            "Using the app's backup voice while this iPhone is too warm. Your voice comes back the next time you press play after it cools."
+            "Using the app's backup voice while this iPhone is too warm. It reads the rest of this item, so the voice doesn't keep changing. Your voice comes back with the next item."
         case .memoryWarning:
-            "Using the app's backup voice after an iOS memory warning. Your voice comes back the next time you press play, after about a minute."
+            "Using the app's backup voice after an iOS memory warning. It reads the rest of this item. Your voice comes back with the next item."
         case .renderTooSlow, .playbackFailed, .playerStalled, .backgroundGap, .listenerStoppedGeneration:
-            "Using the app's backup voice for now. Your voice comes back the next time you press play."
+            "Using the app's backup voice for the rest of this item. Your voice comes back with the next item."
         }
     }
 
@@ -96,7 +97,7 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
     public var listenerExplanation: String {
         switch self {
         case .deviceTooWarm:
-            "Using the iOS voice while this iPhone is too warm. Your voice comes back the next time you press play after it cools."
+            "Using the iOS voice while this iPhone is too warm. It reads the rest of this item, so the voice doesn't keep changing. Your voice comes back with the next item."
         case .memoryWarning:
             "Using the iOS voice after an iOS memory warning. Your voice comes back the next time you press play, after about a minute."
         case .renderTooSlow:
@@ -106,7 +107,7 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
         case .playerStalled:
             "Using the iOS voice because the on-device voice stopped playing. Your voice comes back the next time you press play."
         case .backgroundGap:
-            "Using the iOS voice because the on-device voice wasn't ready for the next passage while the app was in the background. Your voice comes back the next time you press play."
+            "Using the iOS voice because the on-device voice wasn't ready for the next passage while the app was in the background. It reads the rest of this item. Your voice comes back with the next item."
         case .listenerStoppedGeneration:
             "Generation stopped · using the iOS system voice"
         }

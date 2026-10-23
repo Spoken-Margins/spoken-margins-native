@@ -11,7 +11,7 @@ act on what it prints, then reply:
   scripts/sm_sweep.py --json           the same facts for scripts
   scripts/sm_sweep.py --status-json F  use a saved `scripts/sm_status.py --json` output (F or - for stdin)
 
-It looks for seven things:
+It looks for eight things:
   1. free Claude slots against the Dial (#589): its Threads box less the Claude threads active from their claim
      and stop notes (ops/dial/dial_gate.py's own reading), with the ready issues to start; Codex workers are
      counted against Codex's box and never against Claude's
@@ -24,6 +24,13 @@ It looks for seven things:
   6. `needs-mac` PRs with no finisher comment or commit for an hour after the hand-off
   7. open issues with no milestone, however old (2026-10-16: the daily triage looked only at issues filed since its
      last run, so 136 piled up unseen); the daily routine milestones and labels every one
+  8. ready issues whose fix already merged (2026-10-22): a `Closes`, `Fixes` or `Resolves #N` PR is merged into the
+     trunk, no open PR touches the issue and no claim is recent
+
+--apply also closes those (rule 8), commenting once and removing only `ready` and `in-progress`. Every other label,
+including `found-on-phone`, `needs-human-validation`, `agent-verify`, `validate-by-use` and `priority`, stays on the
+closed issue, and a failed validation reopens it with `regression` (owner, 2026-10-22). Readers of validation work
+must therefore read closed issues too (#2448).
 
 --apply releases a stale claim by removing `in-progress`, adding `ready` (unless the issue is `blocked`,
 `needs-owner`, `deferred`, `validate-by-use`, `agent-verify` or `status: needs-human-validation`) and commenting why. It re-reads the issue's comments just before writing and does
@@ -54,6 +61,7 @@ sys.path.insert(0, str(HERE.parent / 'ops' / 'dial'))
 import comment_trust  # noqa: E402  (#1822: only the owner's, collaborators' and the bot's comments are believed)
 import dial_gate  # noqa: E402  (the Dial's own reading of the tick boxes, claim notes and usage breaker)
 import sm_status  # noqa: E402
+from trunk import trunk_branch  # noqa: E402
 
 DIAL_ISSUE, TICK_ISSUE, DESK_ISSUE = 589, 337, 184
 STALE_AFTER = dt.timedelta(hours=6)          # a claim with no sign of life this long is released (2026-10-14)
@@ -70,6 +78,7 @@ OUTSIDE_LABEL = 'needs-triage-review'          # an issue by an untrusted author
 HOLD_LABELS = {'blocked', 'needs-owner', 'deferred', 'validate-by-use', 'agent-verify',
                'status: needs-human-validation'}   # a released claim isn't made `ready` with one of these
 DEAD = ('mac-tick-stale',)
+MERGED_PR_PAGES = 3                            # the newest 300 closed PRs into the trunk are as far back as a fix is looked for
 
 RED, LOOK = sm_status.RED, sm_status.LOOK
 
@@ -205,6 +214,65 @@ def release_note(issue, why, window=STALE_AFTER):
             f'claim it again.')
 
 
+def merged_fix_note(pr_number, merged_at):
+    return (f'Closed by scripts/sm_sweep.py: fix merged in #{pr_number} on {merged_at[:10]}. Validation labels stay on; '
+            'a failed check reopens it (2026-10-22 call).')
+
+
+def release_merged_fix(api, row, now, window=STALE_AFTER):
+    """Close one ready issue whose fix merged, keeping its labels but `ready` and `in-progress`. Re-reads the issue
+    and its comments first; never raises."""
+    number = row['number']
+    try:
+        since = (now - window).strftime('%Y-%m-%dT%H:%M:%SZ')
+        if api.pages(f'issues/{number}/comments?since={since}'):
+            return 'skipped: a comment arrived while the sweep ran'
+        current = api.get(f'issues/{number}')
+        names = {label['name'] for label in current.get('labels', [])}
+        if current.get('state') != 'open' or 'ready' not in names:
+            return 'skipped: no longer an open ready issue'
+        api.post(f'issues/{number}/comments', {'body': merged_fix_note(row['pr'], row['merged_at'])})
+        api.patch(f'issues/{number}', {'state': 'closed', 'state_reason': 'completed'})
+        if 'in-progress' in names:
+            api.delete(f'issues/{number}/labels/in-progress')
+        api.delete(f'issues/{number}/labels/ready')
+        return 'closed'
+    except sm_status.GitHubError as error:
+        return f'error: {error}'
+
+
+def merged_fixes(api, ready, ctx):
+    """Ready issues a merged trunk PR says it closes, with no open PR on them and no recent claim: [{..issue, pr, merged_at}].
+
+    One batched read of the newest closed PRs into the trunk, not a search per issue. Returns None when it can't be read.
+    """
+    if not ready:
+        return []
+    try:
+        pulls = api.pages(f'pulls?state=closed&base={urllib.parse.quote(trunk_branch())}&sort=updated&direction=desc',
+                          limit=MERGED_PR_PAGES, partial=True)
+    except sm_status.GitHubError:
+        return None
+    fixed = {}
+    for pull in pulls:
+        if not pull.get('merged_at'):
+            continue
+        for number in {int(n) for n in sm_status.CLOSING.findall(f'{pull.get("title") or ""}\n{pull.get("body") or ""}')}:
+            if number not in fixed or pull['merged_at'] > fixed[number]['merged_at']:
+                fixed[number] = {'pr': pull['number'], 'merged_at': pull['merged_at']}
+    found = []
+    for row in ready:
+        fix = fixed.get(row['number'])
+        if not fix or ctx['pr_for_issue'].get(row['number']):
+            continue
+        evidence = {'last_comment_at': ctx['last_comment'].get(row['number']),
+                    'thread_active': ctx['thread_for_issue'].get(row['number'])}
+        if claim_state(evidence, ctx['now'])[0] == 'active':
+            continue
+        found.append(dict(row, **fix))
+    return found
+
+
 def release(api, issue, why, now, window=STALE_AFTER):
     """Release one stale claim. Re-reads the issue's comments first; returns what happened, never raises."""
     number = issue['number']
@@ -282,6 +350,8 @@ def collect(api, now, snapshot=None):
            'pr_for_issue': {n: row['number'] for row in snapshot['prs']
                             for n in (row.get('issues') or ([row['issue']] if row.get('issue') else []))},
            'thread_for_issue': {n: t['title'] for t in active + codex_active for n in t['issues']}}
+    ctx['now'] = now
+    merged = merged_fixes(api, ready, ctx)
     claims = []
     for issue in in_progress:
         evidence = gather_claim(api, issue['number'], now, ctx)
@@ -289,7 +359,7 @@ def collect(api, now, snapshot=None):
         claims.append(dict(issue, state=state, why=why, last_seen=last))
 
     return {'now': now, 'snapshot': snapshot, 'dial': dial, 'dial_now': dial_now(status_comments), 'usage': usage,
-            'tick': latest_tick(tick_comments), 'ready': ready, 'in_progress': claims, 'untriaged': untriaged, 'outside': outside,
+            'tick': latest_tick(tick_comments), 'ready': ready, 'in_progress': claims, 'untriaged': untriaged, 'outside': outside, 'merged_fixes': merged,
             'claude_active': [t['title'] for t in active], 'codex_active': [t['title'] for t in codex_active],
             'desk_seen': desk_seen, 'comments_complete': comments_complete}
 
@@ -370,6 +440,10 @@ def decide(facts, window=STALE_AFTER):
             f'read them and add `ready` by hand ({OUTSIDE_LABEL}); triage never does (#1822).',
             issues=[row['number'] for row in outside[:10]])
 
+    for fix in facts.get('merged_fixes') or []:
+        act('fix-merged', LOOK, f'#{fix["number"]} {fix["title"][:60]}: fix merged in #{fix["pr"]} on '
+            f'{fix["merged_at"][:10]} and the issue is still `ready`; close it, keeping its validation labels', issues=[fix['number']], fix=fix)
+
     for claim in claims:
         if claim['state'] == 'stale':
             act('stale-claim', LOOK, f'#{claim["number"]} {claim["title"][:60]}: {claim["why"]}; release to `ready`',
@@ -433,12 +507,12 @@ def as_json(facts, actions, slot):
     return {'as_of': facts['now'].strftime('%Y-%m-%dT%H:%M:%SZ'), 'slots': slot, 'tick': facts['tick'],
             'dial_now': facts['dial_now'], 'counts': {'ready': len(facts['ready']), 'in_progress':
                                                       len(facts['in_progress'])},
-            'actions': [{k: v for k, v in a.items() if k != 'claim'} for a in actions]}
+            'actions': [{k: v for k, v in a.items() if k not in ('claim', 'fix')} for a in actions]}
 
 
 def main(argv=None, api=None, now=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
-    parser.add_argument('--apply', action='store_true', help='release the stale claims (the only write)')
+    parser.add_argument('--apply', action='store_true', help='release stale claims and close ready issues whose fix merged (the only writes)')
     parser.add_argument('--json', action='store_true', help='print the actions as JSON')
     parser.add_argument('--status-json', metavar='FILE', help='a saved `sm_status.py --json` output; - is stdin')
     parser.add_argument('--repo', default=sm_status.REPO)
@@ -462,6 +536,8 @@ def main(argv=None, api=None, now=None):
             for action in actions:
                 if action['rule'] == 'stale-claim':
                     action['applied'] = release(api, action['claim'], action['claim']['why'], now)
+                elif action['rule'] == 'fix-merged':
+                    action['applied'] = release_merged_fix(api, action['fix'], now)
     except (sm_status.GitHubError, OSError, ValueError) as error:
         print(f'ERROR: {error}', file=sys.stderr)
         return 2

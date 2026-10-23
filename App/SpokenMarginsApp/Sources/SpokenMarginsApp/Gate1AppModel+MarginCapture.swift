@@ -28,7 +28,9 @@ extension Gate1AppModel {
         captureWatcher.start(
             reading: { [weak self] in self?.engine?.recordingCaptureReading() },
             restart: { [weak self] in try self?.engine?.restartRecordingCapture() },
-            changed: { [weak self] health, restarts in self?.captureHealthChanged(health, restarts: restarts) }
+            changed: { [weak self] health, restarts in self?.captureHealthChanged(health, restarts: restarts) },
+            holdRecorder: { [weak self] in self?.engine?.pauseRecordingForReadyCue() },
+            releaseRecorder: { [weak self] seconds in self?.engine?.resumeRecordingAfterReadyCue(after: seconds) }
         )
     }
 
@@ -45,6 +47,7 @@ extension Gate1AppModel {
         var fields = engine?.recordingCaptureDiagnostics() ?? [:]
         fields["health"] = health.diagnosticName
         fields["restarts"] = String(restarts)
+        if let readyCue = captureWatcher.readyCueResult { fields["readyCue"] = readyCue }
         recordDeveloperDiagnostic("margin.capture.health", fields)
         diagnostics["lastVoiceCapture"] = Self.captureSummary(fields)
         switch health {
