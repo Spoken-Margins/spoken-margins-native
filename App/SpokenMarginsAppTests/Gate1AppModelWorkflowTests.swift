@@ -66,17 +66,36 @@ private final class MainQueueDrainFlag: @unchecked Sendable { var done = false }
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
-    /// Several of these tests leave a second or more of blocking main-queue work behind (#2195). A synchronous test
-    /// never spins the run loop, so that work used to run during whichever later test waited first, and could push a
-    /// short wait in another class past its timeout (#2104). Running it here keeps it inside the test that queued it.
+    /// Several of these tests used to leave a second or more of blocking main-queue work behind (#2195). A synchronous
+    /// test never spins the run loop, so that work ran during whichever later test waited first, and could push a
+    /// short wait in another class past its timeout (#2104). Draining here keeps it inside the test that queued it.
+    /// A second or more is a blocked call, such as a SQLite write waiting out the store's 1 s busy timeout, so it
+    /// fails the test that left it; the target is under 0.3 s, and the lane log names any test above that.
+    override func setUp() {
+        super.setUp()
+        let inherited = Self.drainMainQueue(label: "before \(name)") // work an earlier class left behind isn't this test's
+        if inherited > 0.3 { print("Main-queue backlog \(String(format: "%.2f", inherited)) s before \(name) (#2195)") }
+    }
+
     override func tearDown() {
+        let elapsed = Self.drainMainQueue(label: "after \(name)")
+        if elapsed > 0.3 { print("Main-queue backlog \(String(format: "%.2f", elapsed)) s after \(name) (#2195)") }
+        XCTAssertLessThan(elapsed, 1.0, "this test left a second or more of blocking main-queue work behind (#2195)")
+        super.tearDown()
+    }
+
+    /// Spins the main run loop until two main-queue hops complete (at most 30 s) and returns how long that took.
+    /// Past half a second it prints the main thread's stack, so the lane log shows what the backlog is.
+    private static func drainMainQueue(label: String) -> TimeInterval {
         let start = Date()
+        let watch = MainThreadStallWatch(label: label)
+        defer { watch.finish() }
         let drained = MainQueueDrainFlag()
         DispatchQueue.main.async { DispatchQueue.main.async { drained.done = true } }
         while !drained.done, Date().timeIntervalSince(start) < 30 {
             RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
         }
-        super.tearDown()
+        return Date().timeIntervalSince(start)
     }
 
     func testRichClipboardRestoresOnlyExplicitHTMLHeadings() {
@@ -2788,6 +2807,39 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let reopened = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
         reopened.bootstrapLibraryIfNeeded()
         XCTAssertTrue(try XCTUnwrap(reopened.libraryItems.first { $0.id == itemID }).isCompleted)
+    }
+
+    /// #2195: the offline-services startup held its model strongly, so a dropped model lived on and its SQLite
+    /// calls ran later on the main thread, during whatever came next. Each could wait out the 1 s busy timeout.
+    func testDroppedModelIsReleasedAndItsOfflineServicesStartupIsCancelled() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "dropped-model-startup-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        weak var dropped: Gate1AppModel?
+        var startup: [Task<Void, Never>] = []
+        do {
+            let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+            model.resetAndSeed()
+            startup = model.offlineServicesStartupTasks
+            dropped = model
+        }
+
+        XCTAssertFalse(startup.isEmpty)
+        XCTAssertNil(dropped, "nothing queued may keep a dropped model alive")
+        XCTAssertTrue(startup.allSatisfy(\.isCancelled), "the model's deinit cancels its startup")
+    }
+
+    /// #2195: every model a test built published Live Activity cards through the real ActivityKit. Those calls wait
+    /// on a system daemon from the main thread, and on a loaded Mac they left 1 to 2.5 s of main-queue work behind
+    /// tests that never touch a card. Under unit tests the default system shows no card and calls nothing.
+    func testAModelUnderUnitTestsMakesNoActivityKitCalls() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+
+        XCTAssertEqual(model.gate2CompactControls.diagnostics()["gate2LiveActivity"], "disabled")
     }
 
     func testExplicitOfflinePreparationJobsSortAheadOfAutomaticWork() {

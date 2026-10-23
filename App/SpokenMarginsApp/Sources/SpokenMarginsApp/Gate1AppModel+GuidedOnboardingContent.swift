@@ -36,4 +36,57 @@ extension Gate1AppModel {
             ]
         )
     }
+
+    /// Saves a downloaded tour over the bundled one. The download happens in `startOfflineServices` without holding
+    /// the model, so a model dropped meanwhile is never kept alive for these writes (#2195).
+    func applyGuidedOnboardingRefresh(_ refreshed: Result<GuidedOnboardingPayload, Error>) {
+        guard let store else { return }
+        do {
+            let payload = try refreshed.get()
+            let priorChecksum = UserDefaults.standard.string(forKey: "guidedOnboardingAudioChecksum")
+            var item = (try? store.loadItem(id: Self.guidedOnboardingItemId)) ?? Self.makeBundledGuidedOnboardingItem()
+            item.title = payload.manifest.title
+            item.sourceTitle = "Spoken Margins"
+            item.media = ItemMedia(
+                sourceType: .nativeMediaFile,
+                url: payload.audioURL.absoluteString,
+                nativeMediaId: "guided-onboarding-audio"
+            )
+            try store.saveItem(item)
+            try store.saveAudioAsset(AudioAsset(
+                id: "guided-onboarding-audio",
+                itemId: item.id,
+                audioSourceType: .nativeMediaFile,
+                availability: .localPhone,
+                url: payload.audioURL.absoluteString,
+                title: payload.manifest.title
+            ))
+            try store.saveTranscriptTimeline(SourceTranscriptTimeline(
+                id: "timeline-guided-onboarding",
+                itemId: item.id,
+                createdAt: Date(),
+                timeline: TranscriptTimeline(
+                    segments: [],
+                    chapters: [
+                        MediaTimelineChapter(
+                            id: "guided-onboarding-core-loop",
+                            title: "The Core Loop",
+                            startMs: 0,
+                            transcriptSegmentId: "guided-onboarding-core-loop"
+                        )
+                    ]
+                )
+            ))
+            UserDefaults.standard.set(payload.manifest.audioChecksumSHA256, forKey: "guidedOnboardingAudioChecksum")
+            if payload.audioChanged, priorChecksum != nil, snapshot.itemId == item.id {
+                _ = try? engine?.stopPlayback()
+                snapshot = SessionSnapshot()
+                diagnostics["guidedOnboardingProgress"] = "reset_for_audio_change"
+            }
+            try refreshLibraryRows(store: store)
+            diagnostics["guidedOnboardingRemote"] = "ready:v\(payload.manifest.contentVersion)"
+        } catch {
+            diagnostics["guidedOnboardingRemote"] = "fallback:\(String(describing: type(of: error)))"
+        }
+    }
 }
