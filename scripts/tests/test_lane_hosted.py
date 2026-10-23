@@ -23,19 +23,19 @@ class HostedRoutingTests(unittest.TestCase):
             for labels in ([], ['priority']):
                 with self.subTest(paths=paths, labels=labels):
                     result = self.route(paths, labels=labels, online=False)
-                    self.assertEqual(result['automerge'], ['sm-vps-t1'])
-                    self.assertEqual(result['lane'], self.route(paths, labels=labels, online=False, vps=False)['lane'])
+                    self.assertEqual(result['automerge'], ['ubuntu-latest'])
 
     def test_ops_only_explicit_lane_requests_keep_their_priority_route(self):
         self.assertEqual(self.route(['ops/dial/a.py'])['lane'], ['self-hosted', 'sm-lane-priority'])
 
-    def test_no_online_vps_runner_keeps_docs_and_ops_on_the_mac(self):
-        offline = [{'runners': [{'status': 'offline', 'busy': False, 'labels': [{'name': 'sm-vps-t1'}]},
-                                {'status': 'online', 'busy': False, 'labels': [{'name': 'sm-lane-build'}]}]}]
+    def test_hosted_route_does_not_depend_on_the_runner_list(self):
+        # GitHub-hosted runners never appear in the repo's runner list (#2442), so any readable list will do.
+        other = [{'runners': [{'status': 'offline', 'busy': False, 'labels': [{'name': 'sm-vps-t1'}]},
+                              {'status': 'online', 'busy': False, 'labels': [{'name': 'sm-lane-build'}]}]}]
         for paths in (['docs/plan.md'], ['ops/dial/dial_gate.py']):
             with self.subTest(paths=paths):
-                self.assertIn('self-hosted', self.route(paths, vps=False)['automerge'])
-                self.assertIn('self-hosted', self.route(paths, vps=False, runners=offline)['automerge'])
+                self.assertEqual(self.route(paths)['automerge'], ['ubuntu-latest'])
+                self.assertEqual(self.route(paths, runners=other)['automerge'], ['ubuntu-latest'])
 
     def test_every_lane_path_and_mixed_diff_stays_on_mac(self):
         for path in sorted(scope.LANE_FILES) + ['.github/workflows/lane.yml', 'scripts/lane_new.py',
@@ -62,7 +62,7 @@ class HostedRoutingTests(unittest.TestCase):
                                  ('scripts/lane_guard.py', 'docs/a.md', False)]:
             with self.subTest(old=old, new=new):
                 result = self.route([new], files=[[{'filename': new, 'previous_filename': old}]])
-                self.assertEqual(result['automerge'] == ['sm-vps-t1'], hosted)
+                self.assertEqual(result['automerge'] == ['ubuntu-latest'], hosted)
         self.assert_normal(self.route(['docs/a.md'], files=[[{
             'filename': 'docs/a.md', 'status': 'renamed'}]]))
 
@@ -122,7 +122,7 @@ class HostedMainTests(unittest.TestCase):
         self.assertTrue(auto.call_args.kwargs['hosted'])
         self.auto_revert.assert_not_called()
         drop.assert_not_called()
-        self.assertIn('(on the VPS runner)', github.posted[0])
+        self.assertIn('(on a GitHub-hosted Linux runner)', github.posted[0])
         self.assertEqual(github.label_changes, [('lane:done', 'lane:done')])
 
 

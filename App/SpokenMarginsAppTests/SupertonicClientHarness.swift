@@ -58,7 +58,8 @@ final class SupertonicClientHarness {
         distinctTones: Bool = false,
         applicationIsActive: (@Sendable () -> Bool)? = nil,
         applicationIsInBackground: (@Sendable () -> Bool)? = nil,
-        notificationCenter: NotificationCenter = .default
+        notificationCenter: NotificationCenter = .default,
+        pressureRenderer: (any BundledVoiceRendering)? = nil
     ) throws {
         root = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-harness-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -84,6 +85,7 @@ final class SupertonicClientHarness {
                 player.playImmediately(atRate: rate)
             },
             observesPlayerLifecycle: true,
+            pressureRenderer: pressureRenderer,
             fallbackClient: systemVoice,
             onFallback: { reason, _, _ in fallbackReasons.add(reason) },
             // The activation timing is a diagnostic, not a stall; a slow simulator must not add it to the lists tests compare.
