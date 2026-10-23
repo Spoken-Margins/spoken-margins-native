@@ -23,6 +23,8 @@ final class WatchLink: NSObject, ObservableObject {
     @Published private(set) var lastMarginId: String?
 
     private var seq = 0
+    /// Messages made before WatchConnectivity finished activating, sent as soon as it has.
+    private var beforeActivation: [WatchEnvelope] = []
     private var activated = false
     private var retryLoop: Task<Void, Never>?
     private var contentPendingObservation: NSKeyValueObservation?
@@ -214,8 +216,12 @@ final class WatchLink: NSObject, ObservableObject {
 
     /// The sure lane always; the fast lane as well when the phone is reachable.
     private func send(_ message: WatchMessage) {
-        guard WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
+        guard WCSession.isSupported() else { return }
         let wrapped = envelope(message)
+        guard WCSession.default.activationState == .activated else {
+            beforeActivation.append(wrapped)
+            return
+        }
         WCSession.default.transferUserInfo(wrapped.dictionary)
         sendFast(wrapped)
     }
@@ -319,6 +325,12 @@ extension WatchLink: WCSessionDelegate {
         Task { @MainActor in
             if let board { self.apply(board: board) }
             self.isReachable = reachable
+            let waiting = self.beforeActivation
+            self.beforeActivation = []
+            for wrapped in waiting {
+                WCSession.default.transferUserInfo(wrapped.dictionary)
+                self.sendFast(wrapped)
+            }
             if WKApplication.shared().applicationState == .active {
                 self.sayHello()
             }
