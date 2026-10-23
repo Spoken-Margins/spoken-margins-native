@@ -355,10 +355,11 @@ def report(request_id: str, verdict: str, head: str, base: str, tier: str, where
 
 
 def event_note(verdict: str, tier: str, head: str, base: str, seconds: float, evidence: Path | None,
-               requested_at: str | None = None) -> str:
+               requested_at: str | None = None, runs: list | None = None) -> str:
     """The report's hidden lane-event line (lane_event.py, #2378), from this job's step runs and the
     verify-tests.py manifests under <evidence>. requested_at: when the /lane request was commented (an automerge
-    run has none). Best effort: a report never fails for want of its measurements, and says nothing then."""
+    run has none). runs: this report's own step runs, default all of the job's so far; a run the job starts after
+    another report (the automerge run a T3 PASS releases) passes only its own. Best effort: a report never fails for want of its measurements, and says nothing then."""
     try:
         import lane_event
         waited = None
@@ -366,7 +367,7 @@ def event_note(verdict: str, tier: str, head: str, base: str, seconds: float, ev
             waited = max(0.0, (utc(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())) - utc(requested_at)).total_seconds()
                          - seconds)
         records = lane_event.test_records(evidence) if evidence else {}
-        return lane_event.note(lane_event.build(verdict, tier, head, base, seconds, waited, STEP_RUNS, records))
+        return lane_event.note(lane_event.build(verdict, tier, head, base, seconds, waited, STEP_RUNS if runs is None else runs, records))
     except Exception as error:  # noqa: BLE001
         print(f'[lane] no lane-event line: {error!r}')
         return ''
@@ -1895,6 +1896,7 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
     The automerge job calls it too, after posting a held report: a T3 PASS that landed between its T3 read
     and that post found no held report to release (#421).
     """
+    mark = len(STEP_RUNS)  # the T3 job's own steps come before; this report's lane-event line counts only its own
     pull = github.pull()
     labels = {label['name'] for label in pull.get('labels', [])}
     comments = github.comments()
@@ -1962,7 +1964,8 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
     body = report(request_id, verdict, head, base_sha, 'auto', where, time.monotonic() - started, ran,
                   started_by + details, 'none', str(evidence), NOT_VERIFIED, identity('auto', head, base_sha, []),
                   base_name=base,
-                  event=event_note(verdict, 'auto', head, base_sha, time.monotonic() - started, evidence))
+                  event=event_note(verdict, 'auto', head, base_sha, time.monotonic() - started, evidence,
+                                   runs=STEP_RUNS[mark:]))
     (evidence / 'report.md').write_text(body)
     print(body)
     github.comment(body)
