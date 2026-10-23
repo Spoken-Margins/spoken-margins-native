@@ -678,6 +678,10 @@ SUPERTONIC_MODEL_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
     'SupertonicVoiceSelectionTests/testJamesAndLilyReadTheSameSentenceInTheirOwnAudibleVoices',
 ))
 
+# The real speech recognizer needs SpeechTranscriber and a model for the host's locale. GitHub's hosted macOS image
+# has neither, so the test skips there, naming why; the owner's call is that this skip "is expected" (#2469, 2026-10-23).
+SPEECH_MODEL_TESTS = frozenset({'SessionKitTests/RealSpeechTranscriberTests/testRealTranscriberHearsSynthesizedSpeech'})
+
 
 # The one app-hosted test that runs Supertonic's real model, in the adapters plan. The model is a download since #1820,
 # so the run fetches it (pinned by sha256 in Contracts/voice-models/sources.json) into a cache outside the checkout,
@@ -1425,7 +1429,7 @@ class Run:
                          timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
                          expected=expected - core if split else expected, tests=True,
                          allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus',
-                                        *POCKET_WEIGHT_TESTS, *SUPERTONIC_MODEL_TESTS},
+                                        *POCKET_WEIGHT_TESTS, *SUPERTONIC_MODEL_TESTS, *SPEECH_MODEL_TESTS},
                          probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
         except RuntimeError as error:
             step = self.manifest['steps'][-1]
