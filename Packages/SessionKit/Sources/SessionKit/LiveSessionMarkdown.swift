@@ -95,7 +95,9 @@ public enum LiveSessionMarkdown {
         var parts: [String] = []
         if let matchMs = placed?.matchMs {
             let score = placed?.matchScore.map { " \(Int(($0 * 100).rounded()))%" } ?? ""
-            parts.append("Transcript match\(score) at \(LiveSessionPositionMap.clock(matchMs))")
+            // A match that disagreed with the other evidence is still shown, marked as not used (#2485 audit).
+            let unused = placed?.source == .transcriptMatch ? "" : ", not used: it disagrees with the other evidence"
+            parts.append("Transcript match\(score) at \(LiveSessionPositionMap.clock(matchMs))\(unused)")
         }
         if let listener = placed?.listenerMs ?? margin.listenerPositionMs {
             parts.append("you set \(LiveSessionPositionMap.clock(listener))")
