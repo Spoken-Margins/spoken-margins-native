@@ -9,6 +9,7 @@ import json
 import os
 import platform
 import plistlib
+import shutil
 from pathlib import Path
 import re
 import signal
@@ -285,6 +286,20 @@ def test_records(log):
     return records
 
 
+TEST_STARTED = re.compile(r"Test Case '-\[(\w+)\.(\w+) (test\w+)\]' started\.")
+
+
+def unfinished_test(log):
+    """The last XCTest test that printed "started" and no result after it, as Module/Class/method, or None (#1956)."""
+    started = list(TEST_STARTED.finditer(log))
+    if not started:
+        return None
+    module, name, method = started[-1].groups()
+    finished = re.search(rf"Test Case '-\[{module}\.{name} {method}\]' (?:passed|failed|skipped)",
+                         log[started[-1].end():])
+    return None if finished else f'{module}/{name}/{method}'
+
+
 def xunit_records(path):
     """Test results from a `swift test --xunit-output` file, keyed like test_records (Module/Class/method).
 
@@ -485,7 +500,7 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_lane_runner.OnlyTestingTests', 'test_lane_runner.ScopeClassTests',
                        'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
                        'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved',
-                       'test_building_md', 'test_third_party_notices',
+                       'test_building_md', 'test_third_party_notices', 'test_main_thread_reads',
                        'test_starter_catalog',
                        # The accessibility source scans read App/ Swift files (#2041).
                        'test_screen_change_cue', 'test_selected_trait', 'test_screen_title_heading',
@@ -509,7 +524,7 @@ OPS_TEST_TRIGGERS = ('ops/', 'scripts/', '.github/', 'project.yml', 'TestPlans/'
 # Linux job (.github/workflows/hosted-portable.yml). Every step the fast plan can run is named here, either to
 # run (PORTABLE_STEPS) or with the reason it is left out (PORTABLE_LEFT_OUT); the run prints the left-out ones as
 # skipped. test_verification fails when the plan code names a step that is in neither table.
-PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'browser', 'share-link', 'research')
+PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'browser', 'share-link', 'research')
 PORTABLE_LEFT_OUT = {
     'package-build': 'needs the Swift toolchain on macOS; hosted-sessionkit-linux.yml builds the Foundation-only modules on Linux',
     'package-core': 'needs the Swift toolchain on macOS (SessionKitCoreTests also run in hosted-sessionkit-linux.yml)',
@@ -767,22 +782,42 @@ def load_average():
         return None
 
 
+def process_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
 def stop_process_group(process, grace=10):
-    # The group may already be gone (or, on macOS, hold only zombies, which gives EPERM); that
-    # must not replace the error that brought us here.
-    with contextlib.suppress(ProcessLookupError, PermissionError):
-        os.killpg(process.pid, signal.SIGTERM)
+    # #1956: SwiftPM runs xctest in a process group of its own, so the group's signal alone left a hung xctest
+    # running under launchd. Its descendants in other groups get the same signals, found before the group stops.
+    # Best effort: looking for them must not replace the error that brought us here.
+    try:
+        strays = [pid for pid, _ in descendants(process.pid)]
+    except Exception:  # noqa: BLE001
+        strays = []
+
+    def signal_all(number):
+        # The group may already be gone (or, on macOS, hold only zombies, which gives EPERM); that
+        # must not replace the error that brought us here.
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(process.pid, number)
+        for pid in strays:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(pid, number)
+    signal_all(signal.SIGTERM)
     # Wait for the whole group, not just its leader: a leader that exits on SIGTERM can leave a
     # descendant that ignores it (Codex audit P2 on dd3e0a4).
     deadline = time.monotonic() + grace
     while time.monotonic() < deadline:
         process.poll()  # reap the leader, so a zombie leader doesn't count as alive
-        if not process_group_alive(process.pid):
+        if not process_group_alive(process.pid) and not any(process_alive(pid) for pid in strays):
             break
         time.sleep(0.1)
     else:
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(process.pid, signal.SIGKILL)
+        signal_all(signal.SIGKILL)
     process.wait()
 
 
@@ -986,6 +1021,109 @@ def stall_evidence(udid, folder, sample_seconds=3, result_bundle=None):
     return found
 
 
+# #1956: in every hung package run the log ended at "409 results" with PublicPodcastLinkResolverTests next, but the test
+# that hung ran later (RealPlayerMarginMomentTests, stuck starting a sound output that never started): XCTest's output to
+# a file is block-buffered, so its last lines never reached the log. And SwiftPM starts xctest in a process group of
+# its own, so stopping the step's group left that xctest running under launchd. A host test step that runs out of time
+# now samples its xctest first and says which test is stuck and in what call; the step's stop reaches the xctest too.
+TEST_FRAME = re.compile(r'^([ +!:|]*)\d+ (\w+)\.(test\w*)\(\) +\(in ', re.M)
+SAMPLE_FRAME = re.compile(r'^([ +!:|]*)\d+ (.+?) +\(in ')
+AUDIO_DEVICE_START = re.compile(r'AudioDeviceStart|HALB_IOThread::StartAndWaitForState|AudioOutputUnitStart')
+
+
+def descendants(pid):
+    """Every live process under `pid` by parent link, whatever its process group, as (pid, command) pairs."""
+    try:
+        # -A (every process) means the same to BSD and procps ps; the hosted Linux runner uses this too (#1956).
+        ps = subprocess.run(['ps', '-A', '-o', 'pid=,ppid=,command='], capture_output=True, text=True,
+                            timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    children = {}
+    for line in ps.splitlines():
+        fields = line.split(None, 2)
+        if len(fields) >= 2 and fields[0].isdigit() and fields[1].isdigit():
+            children.setdefault(int(fields[1]), []).append((int(fields[0]), fields[2] if len(fields) == 3 else ''))
+    found, queue = [], [pid]
+    while queue:
+        for child in children.get(queue.pop(), []):
+            found.append(child)
+            queue.append(child[0])
+    return found
+
+
+def hang_diagnosis(sample_text):
+    """Where a hung xctest is stuck, from its `sample` call graph: the test method, the call it waits in, and
+    whether that call is a sound output starting."""
+    test = TEST_FRAME.search(sample_text)
+    if not test:
+        return {'diagnosis': 'no XCTest test method in the sample\'s call graph'}
+    # The calls it made follow it, each indented further; sample lists the busiest branch first at each level.
+    calls, depth = [], len(test.group(1))
+    for line in sample_text[test.start():].splitlines()[1:]:
+        frame = SAMPLE_FRAME.match(line)
+        if not frame or len(frame.group(1)) <= depth:
+            break
+        calls.append(frame.group(2))
+        depth = len(frame.group(1))
+    name = f'{test.group(2)}.{test.group(3)}'
+    waiting = calls[-1] if calls else 'its own body'
+    audio = bool(AUDIO_DEVICE_START.search('\n'.join(calls)))
+    first = f'{calls[0]} → … → ' if len(calls) > 1 else ''
+    return {'test': name, 'waiting_in': waiting[:160], 'audio_device': audio,
+            'diagnosis': f'{name} is stuck in {first}{waiting[:160]}'
+                         + ('; a sound output that never started' if audio else '')}
+
+
+def hang_evidence(pid, folder, sample_seconds=3, sampler_tool=None):
+    """Best effort, before a hung host test step is stopped: sample each xctest under it. Never raises.
+
+    macOS's `sample` gives the call graph. A host without it (the hosted Linux runner) still records each hung
+    xctest, with a note file saying why there is no call graph, so the step names the process it stopped and one
+    missing tool or failed sampler never drops the others (#1956)."""
+    found, samplers = {}, []
+    tool = sampler_tool if sampler_tool is not None else shutil.which('sample')
+    try:
+        # A parallel run has an xctest per worker: sample them all at once, so the stop waits one sample, not several.
+        for child, command in descendants(pid):
+            if command.split(' ', 1)[0].endswith('/xctest'):
+                folder.mkdir(parents=True, exist_ok=True)
+                path = folder / f'sample-{child}.txt'
+                sampler, reason = None, f'no `sample` tool on this host ({platform.system()})'
+                if tool:
+                    try:
+                        sampler = subprocess.Popen([tool, str(child), str(sample_seconds), '-file', str(path)],
+                                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except OSError as error:
+                        reason = f'`sample` did not start: {error!r}'
+                if sampler is None:
+                    path.write_text(f'{reason}\n{child} {command}\n')
+                    found.setdefault('samples', []).append(
+                        {'pid': child, 'exit': None, 'diagnosis': f'xctest {child}: {reason}, so no call graph'})
+                    continue
+                samplers.append((child, path, sampler))
+        deadline = time.monotonic() + sample_seconds + 30
+        for child, path, sampler in samplers:
+            try:
+                code = sampler.wait(timeout=max(0.1, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                sampler.kill()
+                code = sampler.wait()
+            text = path.read_text(errors='replace') if path.is_file() else ''
+            found.setdefault('samples', []).append({'pid': child, 'exit': code, **hang_diagnosis(text)})
+        samples = found.get('samples', [])
+        found['diagnosis'] = '; '.join(s['diagnosis'] for s in samples) or 'no xctest process under the step'
+        found['audio_device'] = any(s.get('audio_device') for s in samples)
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        found['error'] = repr(error)
+    finally:
+        for _, _, sampler in samplers:
+            if sampler.poll() is None:
+                sampler.kill()
+                sampler.wait()
+    return found
+
+
 # The SessionKit tests that need a running audio output (#909).
 REAL_PLAYER_TEST = re.compile(r'/(?:RealPlayer[A-Z]\w*Tests|StreamSeekLifecycleTests)/')
 
@@ -1160,7 +1298,11 @@ class Run:
                 # A startup stall is reported as its own reason below, not as the step running out of budget.
                 entry['interrupted'] = not isinstance(stopped, StartupStall)
                 entry['signalled'] = isinstance(stopped, KeyboardInterrupt)  # the lane stopped this run, not the step's own limit
-                stop_process_group(process)
+                try:
+                    if isinstance(stopped, subprocess.TimeoutExpired) and tests and not device and args[0] != 'xcodebuild':
+                        entry['hang'] = hang_evidence(process.pid, self.output / f'{name}-hang')  # #1956, before the stop
+                finally:
+                    stop_process_group(process)
                 result = 124
                 if entry.get('simulator_crash_report'):
                     # A pool device that flooded is retired, not erased and reused (#688): mark it first.
@@ -1255,6 +1397,8 @@ class Run:
             errors.insert(0, f'Process exit {result}')
             if entry.get('timeout_note'):
                 errors.insert(1, entry['timeout_note'])
+            if entry.get('hang', {}).get('samples'):
+                errors.insert(2, f'stuck: {entry["hang"]["diagnosis"]} (samples under {name}-hang/)')
         entry['errors'] = errors
         self.save()
         print(f'{name}: {entry["seconds"]}s — {"FAILED" if errors else "passed"}', flush=True)
@@ -1265,7 +1409,8 @@ class Run:
     def timeout_note(self, name, elapsed, timeout, ceiling, stall_seconds, silent):
         """Why a step was stopped, for the lane's report: how long it ran, how far its tests got, how busy the Mac was,
         and how long the plan waited for its host-test slot (before any step's clock starts; #1767)."""
-        results = len(re.findall(r"^Test Case '.*' (?:passed|failed)", (self.output / f'{name}.log').read_text(errors='replace'), re.M))
+        log = (self.output / f'{name}.log').read_text(errors='replace')
+        results = len(re.findall(r"^Test Case '.*' (?:passed|failed)", log, re.M))
         if ceiling and elapsed >= ceiling:
             why = f'still running at its {ceiling}s ceiling'
         elif ceiling and silent >= stall_seconds:
@@ -1275,7 +1420,10 @@ class Run:
         waited = self.manifest.get('host_test_slot', {}).get('waited_seconds')
         slot = '' if waited is None else f'; waited {waited:.0f}s for the host-test slot before the steps, not counted'
         load = load_average()
-        return (f'{name} {why}: {results} test results in the log, load average {load[0] if load else "unknown"}{slot}')
+        unfinished = unfinished_test(log)
+        running = f', {unfinished} started and did not finish' if unfinished else ''
+        return (f'{name} {why}: {results} test results in the log{running}, '
+                f'load average {load[0] if load else "unknown"}{slot}')
 
     def fast(self):
         if self.manifest['plan'] == 'fast-portable':
@@ -1422,6 +1570,8 @@ class Run:
         self.command('public-tree', [sys.executable, 'scripts/check-public-tree.py'])
         self.command('surfaces', [sys.executable, 'scripts/validate-surface-contracts.py'])
         self.command('inventory', [sys.executable, 'scripts/test_inventory.py'])
+        # New main-thread store, file or audio work fails here, in seconds, instead of on the phone (#2257).
+        self.command('main-thread-reads', [sys.executable, 'scripts/main_thread_reads.py'], timeout=120)
         if not (ROOT / 'node_modules').exists():
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         self.command('browser', ['npm', 'run', 'test:browser-extraction'])
@@ -1483,6 +1633,17 @@ class Run:
                          probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
         except RuntimeError as error:
             step = self.manifest['steps'][-1]
+            # #1956: an output that stops starting during the run hangs a real-player test; its sample says so. A hang
+            # the PR's own audio code caused ends with its xctest, so only an output that still won't start is the Mac.
+            if step.get('hang', {}).get('audio_device') and not in_codex_sandbox():
+                probe = step['hang']['output_after_stop'] = host_audio.output_starts()
+                self.save()
+                if not probe['starts']:
+                    self.manifest['lane_fault'] = (f'no audio output: the sound output stopped starting during '
+                                                   f'{step["name"]} ({probe["why"]}). Restart Core Audio '
+                                                   '(sudo killall coreaudiod) or choose another output in Sound settings')
+                    self.save()
+                    raise RuntimeError(f'lane fault, not the PR: {self.manifest["lane_fault"]}; {error}') from error
             failed = [test for test, record in step.get('tests', {}).items() if record['status'] == 'failed']
             # Only test failures: a crash, a timeout or tests that never ran are not explained by the sound.
             only_failures = (not step.get('interrupted')

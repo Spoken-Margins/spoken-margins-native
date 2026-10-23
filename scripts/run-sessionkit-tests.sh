@@ -21,6 +21,10 @@ cd "$PACKAGE"
 # targets serially (--rest), because they hold real-time AVFoundation tests that need the machine to themselves.
 # --core-serial is the fallback when the parallel run fails. --skip-build alone runs every test serially.
 # A filter is a regex on "Module.Class/test", so each group is anchored on its module names.
+#
+# #1956: XCTest's output to a file is block-buffered, so a hung run's log ended hundreds of results before the test
+# that hung. Unbuffered, each test's "started" line reaches the log as it starts.
+export NSUnbufferedIO=YES
 SANDBOX=()
 if [[ -n "${CODEX_SANDBOX:-}" ]]; then
   SANDBOX=(--disable-sandbox)
