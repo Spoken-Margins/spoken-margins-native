@@ -57,7 +57,7 @@ class RoutingTests(unittest.TestCase):
                 self.assertEqual(scope.hosted_app_routing(dict(NORMAL), env), NORMAL)
 
     def test_on_moves_only_the_lane_job(self):
-        priority = {'lane': ['self-hosted', 'sm-lane-priority'], 'automerge': ['sm-vps-t1']}
+        priority = {'lane': ['self-hosted', 'sm-lane-priority'], 'automerge': ['ubuntu-latest']}
         for result in (NORMAL, priority):
             with self.subTest(result=result):
                 routed = scope.hosted_app_routing(dict(result), {'LANE_HOSTED_APP': ' On '})

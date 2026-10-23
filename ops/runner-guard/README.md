@@ -19,7 +19,7 @@ It is one of three layers. The other two are repository settings changed when th
 
 ## Install (owner's machines, at flip time)
 
-On each runner (the Mac's `sm-lane*` runners, the VPS's `sm-vps` and `sm-vps-t1`), add one line to
+On each runner (the Mac's `sm-lane*` runners, the VPS's `sm-vps`, and `sm-vps-t1` if it is still registered), add one line to
 the `.env` file in the runner's folder, then restart the runner service:
 
 ```
