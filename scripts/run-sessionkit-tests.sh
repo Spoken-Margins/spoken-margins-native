@@ -24,6 +24,10 @@ cd "$PACKAGE"
 #
 # --tools builds and tests Packages/SessionKitTools, the developer tools built on SessionKit (#1873). Its build goes
 # inside SessionKit's .build, which worktrees and the lane link to a warm cache that disk relief can clear.
+#
+# #1956: XCTest's output to a file is block-buffered, so a hung run's log ended hundreds of results before the test
+# that hung. Unbuffered, each test's "started" line reaches the log as it starts.
+export NSUnbufferedIO=YES
 SANDBOX=()
 if [[ -n "${CODEX_SANDBOX:-}" ]]; then
   SANDBOX=(--disable-sandbox)

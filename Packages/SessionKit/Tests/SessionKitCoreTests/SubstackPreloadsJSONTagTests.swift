@@ -40,13 +40,13 @@ final class SubstackPreloadsJSONTagTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(entry.bodyWordCount ?? 0, PublisherAudioDetector.minimumBodyWords)
         XCTAssertFalse(entry.hasPublisherAudio, "the feed alone doesn't say the post has Substack's voice")
 
-        let lookup = await coordinator.publisherAudioLookup(for: entry)
+        let lookup = await coordinator.publisherAudioLookup(for: entry, trigger: .listenerAction)
         XCTAssertEqual(lookup.outcome, "found:generated_voice")
         XCTAssertTrue(lookup.entry.hasPublisherAudio)
         XCTAssertEqual(PublisherAudioDetector.publisherAudio(for: lookup.entry, itemId: "item-browser-zvi"), PublisherAudio(
             itemId: "item-browser-zvi", audioURL: Self.mp3, durationMs: nil, detectedFrom: "substack_post_generated_voice"
         ))
-        let cached = await coordinator.publisherAudioEntry(for: entry)
+        let cached = await coordinator.publisherAudioEntry(for: entry, trigger: .listenerAction)
         XCTAssertTrue(cached.hasPublisherAudio, "the confirmed entry was saved, so a second add finds it too")
     }
 
@@ -68,12 +68,46 @@ final class SubstackPreloadsJSONTagTests: XCTestCase {
             ("already confirmed", entry(confirmed: true), "already_confirmed"),
         ]
         for (name, entry, expected) in cases {
-            let outcome = await coordinator.publisherAudioLookup(for: entry).outcome
+            let outcome = await coordinator.publisherAudioLookup(for: entry, trigger: .listenerAction).outcome
             XCTAssertEqual(outcome, expected, name)
         }
         ZviURLProtocol.pageStatus = 403
-        let blocked = await coordinator.publisherAudioLookup(for: entry()).outcome
+        let blocked = await coordinator.publisherAudioLookup(for: entry(), trigger: .listenerAction).outcome
         XCTAssertEqual(blocked, "fetch_failed:http_403")
+    }
+
+    /// #2368: an import nobody started (Following's "Add every new item") must not read the publisher's post page.
+    /// The voiceover is looked up when the listener opens or plays the item, so the page is read only then.
+    func testABackgroundImportNeverReadsTheSubstackPostPage() async throws {
+        let coordinator = try Self.coordinator(InMemorySessionRepository())
+        let entry = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: Self.post, title: "Post", bodyWordCount: 2_413, publisherPlatform: "substack")
+        ZviURLProtocol.postPageRequests = 0
+
+        let background = await coordinator.publisherAudioLookup(for: entry, trigger: .background)
+        XCTAssertEqual(background.outcome, "deferred_until_opened")
+        XCTAssertEqual(background.entry, entry, "the entry is left as the feed gave it")
+        let backgroundEntry = await coordinator.publisherAudioEntry(for: entry, trigger: .background)
+        XCTAssertEqual(backgroundEntry, entry)
+        XCTAssertEqual(ZviURLProtocol.postPageRequests, 0, "no request reached the post page")
+
+        let tapped = await coordinator.publisherAudioLookup(for: entry, trigger: .listenerAction)
+        XCTAssertEqual(tapped.outcome, "found:generated_voice")
+        XCTAssertEqual(ZviURLProtocol.postPageRequests, 1, "a tap reads the page once")
+
+        let other = FeedEntry(id: "o", subscriptionId: "s", canonicalURL: "https://example.com/p/x", title: "Post", bodyWordCount: 2_413, publisherPlatform: "ghost")
+        let elsewhere = await coordinator.publisherAudioLookup(for: other, trigger: .background)
+        XCTAssertEqual(elsewhere.outcome, "not_substack:other", "other platforms keep their own token")
+    }
+
+    /// The feed's own text is what a background import of a Substack post reads (#2368).
+    func testTheFeedBodyHandoffNeedsOnlyTheFeedText() {
+        func entry(_ body: String?, confirmed: Bool? = nil) -> FeedEntry {
+            FeedEntry(id: "e", subscriptionId: "s", canonicalURL: Self.post, title: "Post", fullBody: body, publisherNarrationConfirmed: confirmed)
+        }
+        XCTAssertEqual(PublisherAudioDetector.feedBodyHandoff(for: entry("Full text."))?.text, "Full text.")
+        XCTAssertNil(PublisherAudioDetector.feedBodyHandoff(for: entry(nil)))
+        XCTAssertNil(PublisherAudioDetector.feedBodyHandoff(for: entry("  \n ")))
+        XCTAssertNil(PublisherAudioDetector.articleHandoff(for: entry("Full text.")), "the older rule still needs a confirmed voice")
     }
 
     /// Neighbouring shapes of the script tag: quoting, attribute order, case, whitespace, and lookalike ids.
@@ -125,6 +159,7 @@ final class SubstackPreloadsJSONTagTests: XCTestCase {
 /// and a page about another post.
 private final class ZviURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var pageStatus = 200
+    nonisolated(unsafe) static var postPageRequests = 0
     nonisolated(unsafe) static var feed = Data()
     nonisolated(unsafe) static var page = Data()
 
@@ -133,6 +168,7 @@ private final class ZviURLProtocol: URLProtocol, @unchecked Sendable {
 
     override func startLoading() {
         let path = request.url?.path ?? ""
+        if path.hasPrefix("/p/") { Self.postPageRequests += 1 }
         var status = 200
         let data: Data
         let type: String

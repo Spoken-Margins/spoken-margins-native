@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationXML)
+import FoundationXML
+#endif
 import ZIPFoundation
 
 /// The paragraphs of a Word .docx as plain text, one per line (#2481): Teams and Google Meet transcripts come

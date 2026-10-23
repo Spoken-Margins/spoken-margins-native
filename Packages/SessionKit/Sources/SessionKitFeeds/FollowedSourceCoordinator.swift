@@ -48,6 +48,18 @@ public struct PublisherAudioLookup: Equatable, Sendable {
     public let outcome: String
 }
 
+/// Why a publisher's post page is being read (#2368). Only a listener's own action, or the format check that runs
+/// without any listener, may fetch one; an import that nobody asked for (Following's "Add every new item") reads the
+/// feed and nothing else, and the page is looked up the first time the listener opens or plays the item.
+public enum PublisherPageFetchTrigger: Sendable {
+    /// The listener tapped Add, Add and open, or Play on this post.
+    case listenerAction
+    /// The scheduled Substack format check reads a handful of public pages.
+    case formatCheck
+    /// A refresh imported the entry by itself.
+    case background
+}
+
 public actor FollowedSourceCoordinator {
     private static let maximumFeedBytes = FeedParserLimits.defaultMaximumBytes
     public static let maximumRetainedSuggestionsPerFeed = 25
@@ -307,15 +319,19 @@ public actor FollowedSourceCoordinator {
 
     /// An ambiguous enclosure remains a podcast if corroboration fails. Public page metadata
     /// identifies narration without extracting or replacing subscriber feed text.
-    public func publisherAudioEntry(for entry: FeedEntry) async -> FeedEntry {
-        await publisherAudioLookup(for: entry).entry
+    public func publisherAudioEntry(for entry: FeedEntry, trigger: PublisherPageFetchTrigger) async -> FeedEntry {
+        await publisherAudioLookup(for: entry, trigger: trigger).entry
     }
 
     /// `publisherAudioEntry`, with a short token saying what the lookup found or why it kept no publisher voice,
     /// for the `followedPublisherAudio` diagnostic (#2024). Tokens carry no address or page text.
-    public func publisherAudioLookup(for entry: FeedEntry) async -> PublisherAudioLookup {
+    public func publisherAudioLookup(for entry: FeedEntry, trigger: PublisherPageFetchTrigger) async -> PublisherAudioLookup {
         if entry.publisherNarrationConfirmed == true {
             return PublisherAudioLookup(entry: entry, outcome: "already_confirmed")
+        }
+        // No page is read for an import the listener didn't start (#2368); opening the item looks it up then.
+        if trigger == .background, entry.publisherPlatform == "substack" {
+            return PublisherAudioLookup(entry: entry, outcome: "deferred_until_opened")
         }
         guard entry.publisherPlatform == "substack" else {
             return PublisherAudioLookup(entry: entry, outcome: "not_substack:\(entry.publisherPlatform == nil ? "none" : "other")")
