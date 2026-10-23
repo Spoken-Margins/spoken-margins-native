@@ -45,7 +45,7 @@ public enum MarginMarkdownShare {
     static func note(for margin: Interjection, engine: SessionEngine, source: SessionEngine.ExportSource? = nil) throws -> (SessionExport, String) {
         let options = ExportOptions.marginNote(sessionId: margin.sessionId, marginId: margin.id)
         let export = try source.map { try engine.buildExport(options: options, source: $0) } ?? engine.buildExport(options: options)
-        let session = try source?.session ?? engine.loadSession(id: margin.sessionId)
+        let session = try engine.loadSession(id: margin.sessionId)
         let recordedAt = margin.recordedAt(in: session)
         return (export, SessionExportMarkdownRenderer.renderMargin(export, createdAt: recordedAt))
     }
