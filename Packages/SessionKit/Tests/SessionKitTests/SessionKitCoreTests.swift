@@ -4120,7 +4120,8 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.targetType, TargetType.itemTextTTS.rawValue, file: file, line: line)
         XCTAssertEqual(audio.playedTargets.last, fixture.item.id, "reads the article text", file: file, line: line)
         XCTAssertEqual(audio.preparedTexts.last, fixture.item.text, file: file, line: line)
-        XCTAssertEqual(engine.currentSession?.position.charOffset, 24, "from the saved position", file: file, line: line)
+        // Character 24 is inside "sentence." (it starts at 23): reading starts on its first letter (#2128).
+        XCTAssertEqual(engine.currentSession?.position.charOffset, 23, "from the saved position, at the start of its word", file: file, line: line)
         XCTAssertEqual(snapshot.playbackRate, 1.25, file: file, line: line)
         let saved = try XCTUnwrap(try repo.loadSession(id: fixture.session.id), file: file, line: line)
         XCTAssertEqual(saved.currentTargetType, .itemTextTTS, file: file, line: line)
@@ -4325,8 +4326,10 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(try repo.loadItem(id: item.id).media, mediaB, "the healthy current render is kept")
         XCTAssertEqual(opened.targetType, TargetType.transcriptBackedMedia.rawValue)
         XCTAssertEqual(opened.targetId, presentB.absoluteString, "the session moves to B")
-        XCTAssertEqual(engine.currentSession?.position.charOffset, 24, "at the character the listener reached")
-        XCTAssertEqual(opened.currentMediaTimeMs, 3_300, "B's time for character 24")
+        // Character 24 is inside "sentence." (it starts at 23); the place moved off a missing render is snapped to the
+        // start of its word (#2128), and B's time for character 23 is 2,000 + 7/16 of its 2,600 ms.
+        XCTAssertEqual(engine.currentSession?.position.charOffset, 23, "at the start of the word the listener reached")
+        XCTAssertEqual(opened.currentMediaTimeMs, 3_138, "B's time for character 23")
         XCTAssertFalse(audio.playedTargets.contains(missingA.absoluteString))
     }
 
