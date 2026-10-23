@@ -119,4 +119,56 @@ final class MarginSourceContextTests: XCTestCase {
             XCTAssertEqual(anchor.anchorBefore, "Opening words\(ending)", ending)
         }
     }
+
+    /// #2527: a PDF's lines are cut at the page's width, so a sentence can run on to a line that starts in capitals.
+    func testHardWrappedPDFLinesKeepTheirShoulderWhateverTheNextLineStartsWith() throws {
+        let rows: [(name: String, text: String, kept: String)] = [
+            ("capital after a function word",
+             "Title Line\nThe dominant models rely on a new simple network architecture, the\nTransformer, based solely on attention mechanisms. We went on.",
+             "The dominant models rely on a new simple network architecture, the\nTransformer, based solely on attention mechanisms."),
+            ("capital after a hyphenated break",
+             "Title Line\nThe dominant models rely on state-of-the-\nArt systems that were tuned by hand. We went on.",
+             "The dominant models rely on state-of-the-\nArt systems that were tuned by hand."),
+            ("capital after a comma on a long line",
+             "Title Line\nThe dominant models rely on a new simple network architecture, as shown before,\nGoogle Brain later did the same. We went on.",
+             "The dominant models rely on a new simple network architecture, as shown before,\nGoogle Brain later did the same."),
+            ("a footnote number after the full stop",
+             "Title Line\nThe dominant models rely on a new network architecture, as noted.1\nAnother sentence follows it here. We went on.",
+             "The dominant models rely on a new network architecture, as noted.1\nAnother sentence follows it here."),
+            ("an indented continuation on the Margin's own line",
+             "Title Line\nThe dominant models rely on a new simple network architecture that\n   works well in practice. We went on.",
+             "The dominant models rely on a new simple network architecture that\n   works well in practice."),
+        ]
+        for row in rows {
+            let start = (row.text as NSString).range(of: "We went on").location
+            let anchor = try writtenMargin(atOffset: start, in: row.text)
+            XCTAssertEqual(anchor.anchorBefore, row.kept, row.name)
+        }
+    }
+
+    func testAHeadingBeforeWrappedProseStillEndsTheShoulder() throws {
+        let rows = [
+            "Attention Is All You Need",
+            "1 Introduction",
+            "Abstract",
+            "author@example.com",
+        ]
+        for heading in rows {
+            let text = "\(heading)\nThe dominant models rely on a new simple network architecture, the\nTransformer, based on attention. We went on."
+            let start = (text as NSString).range(of: "We went on").location
+            let anchor = try writtenMargin(atOffset: start, in: text)
+            XCTAssertEqual(
+                anchor.anchorBefore,
+                "The dominant models rely on a new simple network architecture, the\nTransformer, based on attention.", heading)
+        }
+    }
+
+    func testTheShoulderOfALongTextIsFourSentencesAndTheScanStopsAtTheirStart() throws {
+        let sentences = (1...400).map { "Sentence number \($0) ends here." }
+        let text = sentences.joined(separator: "\n")
+        let start = (text as NSString).range(of: "Sentence number 399").location
+        let anchor = try writtenMargin(atOffset: start, in: text)
+
+        XCTAssertEqual(anchor.anchorBefore, sentences[394...397].joined(separator: "\n"))
+    }
 }
