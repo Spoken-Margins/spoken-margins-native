@@ -132,7 +132,8 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
 
 Environment: GH_TOKEN and GH_REPO (the workflow's), SM_LANE_EVIDENCE_DIR (where evidence goes,
 default ~/Library/Caches/SpokenMarginsLane/evidence), SM_LANE_TOOLS (a checkout whose .venv and
-node_modules to link in, default the owner's main checkout).
+node_modules to link in, default ~/Library/Caches/SpokenMarginsLane/tools, a lane-only clone kept out of
+~/Documents, which macOS privacy denies the runners' service process (#2493)).
 Stdlib only, Python 3.9-compatible: it runs under /usr/bin/python3.
 """
 from __future__ import annotations
@@ -737,10 +738,10 @@ def run_mac_rest(evidence: Path, runner=run_bounded, changed: list[str] | None =
 
 
 def run_host_plan(plan: str, evidence: Path, runner, changed: list[str] | None) -> tuple[str, list[str]]:
-    if runner is run_bounded:  # a real run; tests hand in their own runner, and test the guard on its own
-        pointers = ensure_lfs_files(ROOT)
-        if pointers:
-            return 'INCONCLUSIVE', [pointers]
+    if runner is run_bounded:  # a real run; tests hand in their own runner, and test the guards on their own
+        problem = ensure_lfs_files(ROOT) or tools_python_fault(ROOT)
+        if problem:
+            return 'INCONCLUSIVE', [problem]
     python = ROOT / '.venv/bin/python'
     output, log_path = evidence / 'fast', evidence / 'verify-fast.log'
     command = [str(python if python.exists() else sys.executable), 'scripts/verify-tests.py', '--plan', plan,
@@ -824,6 +825,44 @@ def ensure_lfs_files(tree: Path, run=subprocess.run) -> str | None:
             f'`git lfs checkout` could not restore {"it" if len(left) == 1 else "them"} from this checkout\'s LFS '
             f'cache (exit {restored.returncode}{": " + said[-1] if said else ""}). Run `git lfs pull` in the runner\'s '
             'checkout, then run the lane again; nothing was built or tested.')
+
+
+# ---- The tools checkout's Python (#2493) ---------------------------------------------------------
+# The host tests and T3 run under the .venv Python that link_tools links in from the main checkout in ~/Documents. At
+# 01:18 UTC on 2026-10-23 macOS asked whether runner 2's service process (`node`) could read the Documents folder, the
+# answer was Don't Allow (runner 1's, at 02:25), and from then on every host-test run there died in 6 s with
+# `PermissionError: [Errno 1] Operation not permitted: .../.venv/pyvenv.cfg`, reported as each PR's FAIL. Before any
+# host test or T3, that Python is started once: one that can't start is a runner fault, not the PR.
+
+TOOLS_PYTHON_STEP = 'tools Python'
+TOOLS_PYTHON_FAULT = "runner fault, not the PR (#2493): this runner cannot start the main checkout's .venv Python"
+MACOS_PRIVACY_NOTE = 'a macOS privacy setting blocks this runner from the main checkout'  # NOT_LANE_FAULTS reads it
+
+
+def tools_python_fault(tree: Path, run=None) -> str | None:
+    """None when the tree has no .venv (the plans fall back to this Python, as before) or its Python starts, else the
+    report line. A .venv link whose Python can't be seen is a fault too: falling back would test without its packages."""
+    venv = tree / '.venv'
+    if not venv.is_symlink() and not venv.exists():
+        return None
+    run, started = run or subprocess.run, time.monotonic()
+    try:
+        probe = run([str(venv / 'bin/python'), '-c', 'pass'], capture_output=True, text=True, timeout=60)
+        code, said = probe.returncode, (probe.stderr or probe.stdout or '').strip().splitlines()
+    except (OSError, subprocess.TimeoutExpired) as error:  # no such file, or a Python that hangs at startup
+        code, said = None, [f'{type(error).__name__}: {error}']
+    if code == 0:
+        note_step(TOOLS_PYTHON_STEP, 'PASS', time.monotonic() - started)
+        return None
+    # No fault in 60 days says the guard is waste; its INCONCLUSIVE runs feed the ledger's runner-fault alarm.
+    note_step(TOOLS_PYTHON_STEP, 'INCONCLUSIVE', time.monotonic() - started)
+    observed = f'exit {code}' if code is not None else 'it did not start'
+    line = f'{TOOLS_PYTHON_FAULT} ({os.path.realpath(venv)}): {observed}{": " + said[-1] if said else ""}.'
+    if any('Operation not permitted' in text for text in said):
+        return (f'{line} Most likely {MACOS_PRIVACY_NOTE} (System Settings › Privacy & Security › Files and Folders: '
+                'Documents Folder off for `node`). The lane needs that access, or its tools and evidence moved out of '
+                '~/Documents (#2493); nothing was tested.')
+    return f'{line} Fix or re-create that .venv, then run the lane again; nothing was tested.'
 
 
 NO_APP_BUILD_PER_PR = ('no app build per PR (owner, 2026-10-09): the author builds both targets before pushing, '
@@ -2657,6 +2696,7 @@ REVERTS = re.compile(r'^This reverts commit ([0-9a-f]{40})', re.M)  # git revert
 NOT_LANE_FAULTS = (('does not merge cleanly', 'a merge conflict'),
                    ('names no tests', 'a T3 request with no tests'), ('Nothing to run.', 'nothing to run'),
                    ('lane fault: no audio output', "the Mac's sound output, not a lane change (#909)"),
+                   (MACOS_PRIVACY_NOTE, "the Mac's privacy settings, not a lane change (#2493)"),
                    ('too: not this PR', 'a test broken on the base too, filed as its own issue (#1204)'))
 PENDING_T3_HOLD = re.compile(r'^not merged: held for T3:', re.M)
 LANE_MERGE_LOOKBACK = 300
@@ -3108,7 +3148,9 @@ def request_name(pr: int, run_id: str, attempt: str | None) -> str:
 
 
 def tools_source() -> Path:
-    return Path(os.environ.get('SM_LANE_TOOLS') or Path.home() / 'Documents/GitHub/spoken-margins-native')
+    # Not the owner's main checkout in ~/Documents: macOS privacy (TCC) denies the runners' node access to
+    # Documents, and every host-test run died reading .venv/pyvenv.cfg there (#2493).
+    return Path(os.environ.get('SM_LANE_TOOLS') or Path.home() / 'Library/Caches/SpokenMarginsLane/tools')
 
 
 def link_tools(source: Path) -> None:
@@ -3309,6 +3351,9 @@ def main(argv=None) -> int:
         elif pointers := ensure_lfs_files(ROOT):
             verdict, where, ran, crashes = 'INCONCLUSIVE', 'no simulator', 'nothing', 'none'
             details = [pointers]
+        elif request['tier'] != 'T2' and (python_fault := tools_python_fault(ROOT)):  # T3 runs verify-tests.py
+            verdict, where, ran, crashes = 'INCONCLUSIVE', 'no simulator', 'nothing', 'none'
+            details = [python_fault]
         elif request['tier'] == 'T2':
             print(prune_lane_folder(evidence.parent), flush=True)
             warm = warm_build_folders(ROOT)
