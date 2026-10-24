@@ -27,6 +27,7 @@ import lane_sim
 import sm_build_cache
 import sessionkit_pass
 import lane_sim_pool
+import node_modules_drift
 import third_party_notices
 import xcodebuild_finish
 from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
@@ -1618,6 +1619,10 @@ class Run:
         self.command('main-thread-reads', [sys.executable, 'scripts/main_thread_reads.py'], timeout=120)
         if not (ROOT / 'node_modules').exists():
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
+        # A lockfile that moved since node_modules was installed fails the bundle check with "is stale";
+        # say what to do instead (#2569).
+        if stale_modules := node_modules_drift.drift(ROOT):
+            raise RuntimeError(node_modules_drift.message(stale_modules))
         self.command('browser', ['npm', 'run', 'test:browser-extraction'])
         self.command('share-link', ['npm', 'run', 'test:share-link'])
         # The Go server, the research Python tests and the Caddy script (#1033); a suite that can't run
