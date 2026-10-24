@@ -7,6 +7,7 @@ import UIKit
 
 struct SettingsScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var focusedField: Field?
     @State private var showsAdvancedAISettings = false
@@ -25,11 +26,11 @@ struct SettingsScreen: View {
     @AppStorage(CommunityMapUploadService.optInKey) private var helpsMakeListeningMaps = false
     @AppStorage(CommunityMapFetchService.optInKey) private var looksUpCommunityMaps = false
     /// The Supertonic download card's "Open Voices" lands here and opens Voices (#1820).
-    private let supertonicNotice: SupertonicDownloadNotice?
+    @ObservedObject private var supertonicNotice: SupertonicDownloadNotice
     @State private var showsVoices = false
 
-    init(supertonicNotice: SupertonicDownloadNotice? = nil) {
-        self.supertonicNotice = supertonicNotice
+    init(supertonicNotice: SupertonicDownloadNotice) {
+        _supertonicNotice = ObservedObject(wrappedValue: supertonicNotice)
     }
 
     private enum Field {
@@ -511,20 +512,19 @@ struct SettingsScreen: View {
             .tint(AppColors.evergreen)
             .navigationTitle("Settings")
             .onAppear {
+                guard !isEdgeSwipePreview else { return }  // a swipe's preview starts no refresh (#106)
                 model.refreshSpeechVoiceOptions()
                 model.refreshImportInbox()
-                if supertonicNotice?.takeVoicesRequest() == true { showsVoices = true }
+                if supertonicNotice.takeVoicesRequest() { showsVoices = true }
+            }
+            // Settings is a tab now, so the card's button can land while it is already showing (#1254).
+            .onCompatibleChange(of: supertonicNotice.opensVoices) { requested in
+                if requested, supertonicNotice.takeVoicesRequest() { showsVoices = true }
             }
             .navigationDestination(isPresented: $showsVoices) {
                 VoicesSettingsScreen(voices: model.requireVoiceDownloads()).miniPlayerKeepOut()
             }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: model.openHome) {
-                        Label("Home", systemImage: "arrow.left")
-                    }
-                    .accessibilityIdentifier("settings.home.button")
-                }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
                     Button("Done") { focusedField = nil }
