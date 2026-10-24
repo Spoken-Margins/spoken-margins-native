@@ -146,7 +146,8 @@ class LaneVerdictSteps(unittest.TestCase):
 
 TEST_COMMAND = re.compile(r'\b(xcodebuild|swift test|verify-tests\.py|sm_integration_run\.py|hosted_t3_check\.py|lane-runner\.py)\b')
 IGNORES_FAILURE = re.compile(r'\|\|\s*(true|:)\s*$')
-TEST_RUNNING = re.compile(r'test-without-building|verify-tests|swift test|unittest|sm_integration_run|hosted_t3_check')
+# check-build29-database.sh runs `swift test` for its fixture writer, so a job that calls it runs a test (shipped-build-compat).
+TEST_RUNNING = re.compile(r'test-without-building|verify-tests|swift test|unittest|sm_integration_run|hosted_t3_check|check-build29-database')
 
 # Steps allowed to carry continue-on-error: true, by (workflow file, job id). Each one is a ping or a report-of-a-report
 # that is not a test result ("Not a lane result: a failure here must not make the run look red" in lane.yml).
