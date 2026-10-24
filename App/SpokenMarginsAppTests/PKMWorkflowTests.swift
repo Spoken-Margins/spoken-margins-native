@@ -70,7 +70,7 @@ final class PKMWorkflowTests: XCTestCase {
 
     /// #2373: collections picked from + > Files (real temp files, the picker's URLs) land in the Library like a PDF
     /// added there, and a JSON file that is not an edition is a clear failure that does not stop the others.
-    func testCollectionFilesPickedFromTheAddSheetLandInTheLibraryAndABadOneSaysSo() throws {
+    func testCollectionFilesPickedFromTheAddSheetLandInTheLibraryAndABadOneSaysSo() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed(); model.declineCurrentTerms()
         model.importTitle = "Existing"; model.importText = "Keep the ongoing session."
@@ -95,7 +95,8 @@ final class PKMWorkflowTests: XCTestCase {
         let twoURL = try write("two.json", try second.encoded())
         let notAnEdition = try write("notes.json", Data(#"{"hello": "world"}"#.utf8))
 
-        XCTAssertTrue(model.importListeningEditionFiles([oneURL, twoURL]))
+        let importedBoth = await model.importListeningEditionFiles([oneURL, twoURL])
+        XCTAssertTrue(importedBoth)
         XCTAssertNil(model.lastError)
         XCTAssertEqual(model.libraryItems.filter { $0.id == first.itemID }.count, 1)
         XCTAssertEqual(model.libraryItems.filter { $0.id == second.itemID }.count, 1)
@@ -103,7 +104,8 @@ final class PKMWorkflowTests: XCTestCase {
         XCTAssertEqual(model.screen, screen, "a file added from the sheet opens nothing")
         XCTAssertEqual(model.activeItemId, activeItem)
 
-        XCTAssertFalse(model.importListeningEditionFiles([notAnEdition]), "a non-edition JSON file is not imported")
+        let importedBad = await model.importListeningEditionFiles([notAnEdition])
+        XCTAssertFalse(importedBad, "a non-edition JSON file is not imported")
         XCTAssertEqual(model.lastError?.contains("notes.json"), true, model.lastError ?? "no error")
         XCTAssertEqual(model.libraryItems.filter { $0.id == first.itemID }.count, 1, "nothing else changed")
     }

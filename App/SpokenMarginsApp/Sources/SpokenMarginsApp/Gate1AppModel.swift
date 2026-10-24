@@ -2752,16 +2752,6 @@ final class Gate1AppModel: ObservableObject {
     }
 
     // MARK: Portable listening editions and personal knowledge output
-    func importListeningEditionFile(_ url: URL) {
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-        do {
-            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-            guard size <= 8_000_000 else { throw EditionError.invalid("Listening edition exceeds 8 MB.") }
-            importListeningEditionData(try Data(contentsOf: url))
-        } catch { reportFailure(error, context: "Listening edition file could not be opened") }
-    }
-
     func importReadLaterDocument(_ document: ReadLaterDocument) {
         guard !isImportingReadLater else { return }
         isImportingReadLater = true
