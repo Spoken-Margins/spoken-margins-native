@@ -54,7 +54,7 @@ struct Gate1RootView: View {
         ) {
             // What openHome lands on, so the swipe reveals the tab it will arrive at.
             MiniPlayerDock(showsMiniPlayer: false) {
-                ExperienceRootTabs(navigation: .constant(navigation.edgeSwipePreview), showsMiniPlayer: !keyboardIsPresented && model.shouldShowMiniPlayer)
+                ExperienceRootTabs(navigation: .constant(navigation.edgeSwipePreview), supertonicNotice: supertonicNotice, showsMiniPlayer: !keyboardIsPresented && model.shouldShowMiniPlayer)
             }
         }
         .onAppear {

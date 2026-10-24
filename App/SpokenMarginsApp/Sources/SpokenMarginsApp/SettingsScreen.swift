@@ -7,6 +7,7 @@ import UIKit
 
 struct SettingsScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var focusedField: Field?
     @State private var showsAdvancedAISettings = false
@@ -511,6 +512,7 @@ struct SettingsScreen: View {
             .tint(AppColors.evergreen)
             .navigationTitle("Settings")
             .onAppear {
+                guard !isEdgeSwipePreview else { return }  // a swipe's preview starts no refresh (#106)
                 model.refreshSpeechVoiceOptions()
                 model.refreshImportInbox()
                 if supertonicNotice.takeVoicesRequest() { showsVoices = true }
