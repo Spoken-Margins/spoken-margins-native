@@ -263,16 +263,16 @@ final class Gate5BrowserTextImportTests: XCTestCase {
 
     /// #1437: with something paused in the mini player, a share opens its item as it does with nothing loaded,
     /// and the paused item keeps its place.
-    func testIncomingBrowserPayloadDoesNotReplacePlaybackFromLibraryRoot() throws {
-        try checkIncomingBrowserPayloadDuringPlayback(pausing: true)
+    func testIncomingBrowserPayloadDoesNotReplacePlaybackFromLibraryRoot() async throws {
+        try await checkIncomingBrowserPayloadDuringPlayback(pausing: true)
     }
 
     /// The same share while the item plays: it shows the shared item and the audio carries on.
-    func testIncomingBrowserPayloadShowsItsItemWhileSomethingPlays() throws {
-        try checkIncomingBrowserPayloadDuringPlayback(pausing: false)
+    func testIncomingBrowserPayloadShowsItsItemWhileSomethingPlays() async throws {
+        try await checkIncomingBrowserPayloadDuringPlayback(pausing: false)
     }
 
-    private func checkIncomingBrowserPayloadDuringPlayback(pausing: Bool) throws {
+    private func checkIncomingBrowserPayloadDuringPlayback(pausing: Bool) async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("spoken-margins-browser-route-\(UUID().uuidString)", isDirectory: true)
         temporaryDirectories.append(directory)
@@ -302,6 +302,10 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         model.openHome()
 
         model.handleIncomingURL(Gate5BrowserTextHandoffURL.url(forPayloadID: payloadID))
+        // The payload file is read and deleted off the main thread (#2510), so the import lands a moment later.
+        try await waitFor("shared payload import") {
+            model.diagnostics["lastBrowserTextPayloadCleanup"] == "imported_without_session_replacement"
+        }
 
         // #1437: the shared item opens as it does with nothing loaded; the paused item keeps its session.
         XCTAssertEqual(model.screen, .item)
@@ -318,7 +322,7 @@ final class Gate5BrowserTextImportTests: XCTestCase {
 
     /// Drives the app's own route for a shared payload (#1049, LNK-04): the model, not the test, deletes the
     /// payload once the import succeeds, so the launch sweep can't import it again.
-    func testPayloadIsDeletedAfterSuccessfulImport() throws {
+    func testPayloadIsDeletedAfterSuccessfulImport() async throws {
         let payloadID = "payload-delete"
         let store = try makePayloadStore(payloadID: payloadID, payload: deletablePayload(payloadID: payloadID))
         let model = Gate1AppModel(
@@ -330,6 +334,7 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         XCTAssertFalse(model.libraryItems.contains { $0.id == "item-payload-delete" })
 
         model.handleIncomingURL(Gate5BrowserTextHandoffURL.url(forPayloadID: payloadID))
+        try await waitFor("payload deleted after import") { (try? store.pendingPayloadIDs()) == [] }
 
         XCTAssertTrue(model.libraryItems.contains { $0.id == "item-payload-delete" })
         XCTAssertEqual(model.diagnostics["lastBrowserTextImport"], "item-payload-delete")
@@ -341,7 +346,7 @@ final class Gate5BrowserTextImportTests: XCTestCase {
 
     /// The failure twin: when the import fails (here the Library database can't be opened), the shared text
     /// stays in the store for the next launch instead of being lost.
-    func testPayloadIsKeptWhenImportFails() throws {
+    func testPayloadIsKeptWhenImportFails() async throws {
         let payloadID = "payload-keep"
         let store = try makePayloadStore(payloadID: payloadID, payload: deletablePayload(payloadID: payloadID))
         let blocker = FileManager.default.temporaryDirectory
@@ -356,6 +361,7 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         XCTAssertFalse(model.hasActiveSession)
 
         model.handleIncomingURL(Gate5BrowserTextHandoffURL.url(forPayloadID: payloadID))
+        try await waitFor("failed payload import") { model.lastError != nil }
 
         XCTAssertNil(model.diagnostics["lastBrowserTextImport"])
         XCTAssertEqual(try store.handoff(payloadID: payloadID).itemId, "item-payload-delete")

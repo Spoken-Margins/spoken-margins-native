@@ -256,6 +256,26 @@ final class BrowserTextHandoffStoreTests: XCTestCase {
         XCTAssertEqual(try store.failedHandoffs(), [])
     }
 
+    /// The app drains the folder off the main thread (#2510), so the store is handed to a detached task: list, read,
+    /// quarantine and delete all work there and leave the folder as the main-thread drain did.
+    func testTheDrainSequenceRunsOffTheMainThread() async throws {
+        try store.save(handoff(title: "kept"), payloadID: "kept")
+        try store.save(handoff(title: "gone"), payloadID: "gone")
+        let store = try XCTUnwrap(store)
+
+        let ranOffMain = try await Task.detached { () throws -> Bool in
+            let ids = try store.pendingPayloadIDs()
+            let read = try store.handoff(payloadID: "gone")
+            try store.deletePayload(payloadID: "gone")
+            try store.quarantine(payloadID: "kept", reason: "could not import")
+            return !Thread.isMainThread && ids.sorted() == ["gone", "kept"] && read.source.title == "gone"
+        }.value
+
+        XCTAssertTrue(ranOffMain)
+        XCTAssertEqual(try store.pendingPayloadIDs(), [])
+        XCTAssertEqual(try store.failedHandoffs().map(\.id), ["kept"])
+    }
+
     func testTheErrorsReadAsSentencesForTheListener() {
         XCTAssertEqual(Gate5BrowserTextHandoffStoreError.appGroupUnavailable("group.x").errorDescription,
                        "Browser text App Group is unavailable: group.x")
