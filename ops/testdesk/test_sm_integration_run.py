@@ -147,6 +147,27 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(probation['verdict'], 'PASS')
         self.assertEqual(probation['tests'], {TEST: 'passed'})
 
+    def test_a_plan_that_ran_no_test_is_inconclusive_whatever_its_status(self):
+        # #2590: no xcodegen on the hosted Mac, so --plan app ran nothing and the job still showed green.
+        for plan in ({'status': 'verified', 'steps': []}, manifest({}), manifest({TEST: 'skipped'}),
+                     manifest({JOURNEY: 'passed'}, probation={JOURNEY: 'passed'})):
+            result = run.summarize(plan)
+            self.assertEqual(result['verdict'], 'INCONCLUSIVE', plan)
+            self.assertIn('no test ran', result['errors'])
+        crashed = run.summarize({'error': "[Errno 2] No such file or directory: 'xcodegen'"})
+        self.assertEqual(crashed['errors'], ["[Errno 2] No such file or directory: 'xcodegen'"])
+        self.assertEqual(run.summarize(manifest({TEST: 'passed'}))['verdict'], 'PASS')
+
+    def test_the_hosted_job_is_green_only_for_a_pass_or_a_tip_already_reported(self):
+        self.assertEqual({v: run.hosted_exit_code(v) for v in ('PASS', 'held', 'FAIL', 'INCONCLUSIVE')},
+                         {'PASS': 0, 'held': 0, 'FAIL': 1, 'INCONCLUSIVE': 1})
+        with patch.object(run, 'hosted_run', return_value='INCONCLUSIVE'), patch.object(run, 'Ops'), \
+                patch.dict(os.environ, {'GITHUB_STEP_SUMMARY': os.devnull}):
+            self.assertEqual(run.main(['--hosted', '--sha', SHA]), 1)
+        with patch.object(run, 'hosted_run', return_value='PASS'), patch.object(run, 'Ops'), \
+                patch.dict(os.environ, {'GITHUB_STEP_SUMMARY': os.devnull}):
+            self.assertEqual(run.main(['--hosted', '--sha', SHA]), 0)
+
     def test_a_test_that_passes_both_reruns_is_flaky_not_failing(self):
         first = run.summarize(manifest({TEST: 'failed', OTHER: 'failed'}))
         reruns = [run.summarize(manifest({TEST: 'passed', OTHER: 'failed'})),
@@ -204,7 +225,7 @@ class ReportTextTests(unittest.TestCase):
         phone = load_phone_build()
         self.assertEqual(phone.latest_verdict(SHA, [body]), f'Lane report integration-{SHA[:7]} — PASS')
         self.assertEqual(run.reported([body]), [(SHA[:7], 'PASS')])
-        for words in (f'run by: {run.RUN_BY}', f'next moved from {OLD[:7]}', '1 passed, 0 failed',
+        for words in (f'run by: {run.RUN_BY}', f'{run.BASE_BRANCH} moved from {OLD[:7]}', '1 passed, 0 failed',
                       'flaky: none this run', run.NOT_RUN, run.NOT_VERIFIED, '/mac/evidence',
                       f'{SHA[:7]} is the current phone candidate: app tests passed; scripted journeys not run; '
                       'attended journeys not run.'):
@@ -509,7 +530,7 @@ class TickTests(unittest.TestCase):
             state = json.loads((ops.home / 'state.json').read_text())
             self.assertEqual(run.tick(ops), 'held')  # same tip next tick
         self.assertEqual(len(ops.posted), 1)
-        self.assertIn(f'next moved from {OLD[:7]}', ops.posted[0])
+        self.assertIn(f'{run.BASE_BRANCH} moved from {OLD[:7]}', ops.posted[0])
         self.assertEqual(state['results'][SHA]['verdict'], 'PASS')
         self.assertNotIn('in_progress', state['results'][SHA])
         self.assertEqual(ops.diagnosed, [])
