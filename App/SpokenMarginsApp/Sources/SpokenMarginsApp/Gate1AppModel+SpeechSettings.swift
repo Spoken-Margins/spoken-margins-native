@@ -61,7 +61,7 @@ extension Gate1AppModel {
         diagnostics["renderedSpeechCacheLimitMB"] = String(renderedSpeechCacheLimitMB)
         diagnostics["apiKeyConfigured"] = providerAPIKey.isEmpty ? "false" : "true"
         if rebuildEngineForCurrentSettings() {
-            screen = .settings
+            showSettingsTab()
             reportConfirmation("Provider settings saved.")
         }
     }
