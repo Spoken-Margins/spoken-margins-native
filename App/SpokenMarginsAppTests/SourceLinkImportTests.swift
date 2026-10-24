@@ -2029,8 +2029,9 @@ final class SourceLinkImportTests: XCTestCase {
         model.resetAndSeed()
 
         model.handleIncomingURL(SourceLinkHandoffURL.url(forPayloadID: handoff.id))
+        // The inbox refresh is the drain's last step, after the quarantine file and the diagnostics (#2510).
         try await waitFor("unsupported share quarantine") {
-            (try? store.failedHandoffs().count) == 1
+            (try? store.failedHandoffs().count) == 1 && model.importInbox.first?.payloadID == handoff.id
         }
 
         XCTAssertEqual(model.diagnostics["lastSourceLinkPayloadCleanup"], "queued:\(handoff.id)")
