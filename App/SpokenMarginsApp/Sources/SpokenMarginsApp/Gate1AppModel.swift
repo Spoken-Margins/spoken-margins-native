@@ -3188,12 +3188,6 @@ final class Gate1AppModel: ObservableObject {
         selectedBatchExportSessionIds.formIntersection(availableIds)
     }
 
-    func loadDeletedLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {
-        try store.listDeletedItemSummaries().map { item in
-            LibraryItemRow(id: item.id, title: item.title, status: "Recently deleted", canDelete: true)
-        }
-    }
-
     static func firstURL(in text: String) -> URL? {
         guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
             return URL(string: text)

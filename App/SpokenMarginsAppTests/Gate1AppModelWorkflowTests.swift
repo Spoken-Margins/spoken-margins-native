@@ -3278,6 +3278,35 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(try store.loadInterjections(itemId: liveID).count, 1)
     }
 
+    func testRelaunchListsRecentlyDeletedItemsNewestFirstFromTheLaunchRead() throws {
+        // #2508: launch builds Recently Deleted from the Library read it already made, so the rows must still be
+        // exactly the trashed items, newest first, and the trashed item must stay out of the Library rows.
+        let root = FileManager.default.temporaryDirectory.appending(path: "relaunch-deleted-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        var ids: [String] = []
+        for title in ["Older Trashed", "Newer Trashed", "Stays In Library"] {
+            model.importTitle = title
+            model.importText = "\(title) has some text to listen to."
+            model.importTextItem()
+            ids.append(model.selectedItem.id)
+        }
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        try store.moveItemToTrash(id: ids[0], at: Date(timeIntervalSince1970: 1_000))
+        try store.moveItemToTrash(id: ids[1], at: Date(timeIntervalSince1970: 2_000))
+
+        let reopened = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        reopened.bootstrapLibraryIfNeeded()
+
+        XCTAssertEqual(reopened.recentlyDeletedItems.map(\.id), [ids[1], ids[0]])
+        XCTAssertEqual(reopened.recentlyDeletedItems.map(\.status), ["Recently deleted", "Recently deleted"])
+        XCTAssertFalse(reopened.libraryItems.contains { ids[0...1].contains($0.id) })
+        XCTAssertTrue(reopened.libraryItems.contains { $0.id == ids[2] })
+    }
+
     func testEmptyRecentlyDeletedRemovesEveryTrashedItemsMarginRecordings() throws {
         // Start playback needs the Terms on a fresh simulator: with no stored answer the voice defaults to
         // James, and the Terms gate holds the start. Earlier tests in a full run happen to clear it.
