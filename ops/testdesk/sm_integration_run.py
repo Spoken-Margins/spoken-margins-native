@@ -39,7 +39,7 @@ HOSTED_RUN_BY = 'hosted integration'   # hosted-integration.yml on a GitHub-host
 HOSTED_VARIABLE = 'LANE_HOSTED_APP'    # the repository variable that switches hosted app tests on
 HOSTED_WORKFLOW = 'hosted-integration.yml'
 HOSTED_GRACE_SECONDS = 5 * 60        # how long a new tip waits for its hosted run to appear before the Mac tests it
-LANE_YIELD_SECONDS = 3 * 60 * 60     # lane app tests go first, unless next has gone this long untested
+LANE_YIELD_SECONDS = 3 * 60 * 60     # lane app tests go first, unless the trunk has gone this long untested
 MIN_FREE_GB = 10
 PER_BUILD_GB = 4
 RERUNS = 2
@@ -63,6 +63,7 @@ import journey_promotion  # noqa: E402
 import lane_ledger  # noqa: E402
 import lane_slots  # noqa: E402
 import sim_builds  # noqa: E402  (ready-made simulator builds for desks)
+import simctl_preflight  # noqa: E402  (#2591: simctl waiting on Xcode's first-launch install)
 from lane_xcresult_attachments import report_lines  # noqa: E402
 
 REPORT_RE = re.compile(r'^Lane report integration-([0-9a-f]{7,40}) — (PASS|FAIL|INCONCLUSIVE)\b')
@@ -167,7 +168,7 @@ def hold_reason(sha: str, state: dict, reports: list[tuple[str, str]], now: floa
     """Why this tick tests nothing, or None. Cheapest and most final reasons first.
 
     There is no fixed spacing: a new tip is tested as soon as the Mac has room. Lane app tests
-    waiting for the simulator go first, because they decide what merges, unless next has gone
+    waiting for the simulator go first, because they decide what merges, unless the trunk has gone
     LANE_YIELD_SECONDS without an integration run (a busy lane must not starve it)."""
     if sha in state.get('results', {}):
         return 'already tested ' + sha[:7]
@@ -215,7 +216,13 @@ def summarize(manifest: dict) -> dict:
                 statuses[name] = status
                 if status == 'failed':
                     failed.append(name)
-    if incomplete:
+    if not any(status in ('passed', 'failed') for status in statuses.values()):
+        # A plan that ran no test proves nothing, whatever its manifest says (#2590: a hosted run with no
+        # xcodegen posted INCONCLUSIVE with 0 tests while its job showed green).
+        verdict = 'INCONCLUSIVE'
+        if not errors and not manifest.get('error'):
+            errors.append('no test ran')
+    elif incomplete:
         verdict = 'INCONCLUSIVE'
     elif failed:
         verdict = 'FAIL'
@@ -299,18 +306,17 @@ def report_text(sha: str, result: dict, *, started: float, finished: float, prev
                 suspects: list[str], evidence, hosted: bool = False) -> str:
     c = result['counts']
     day = dt.datetime.fromtimestamp(started).strftime('%Y-%m-%d')
-    trunk = BASE_BRANCH
-    why = (f'{trunk} moved from {previous}, the last tip with an integration report' if previous
+    why = (f'{BASE_BRANCH} moved from {previous}, the last tip with an integration report' if previous
            else f'no integration report on #{REPORT_ISSUE} in the last {REPORT_LOOKBACK.days} days')
     lines = ['```text',
              f"Lane report integration-{sha[:7]} — {result['verdict']}",
-             f'commit {sha[:8]} ({trunk}\'s tip) · integration run: --plan app · '
+             f"commit {sha[:8]} ({BASE_BRANCH}'s tip) · integration run: --plan app · "
              f'{clock(started)}–{clock(finished)} local, {day}',
              f'run by: {HOSTED_RUN_BY if hosted else RUN_BY}',
-             f'why it ran: {why}; ' + (f'a push to {trunk} started hosted-integration.yml on a GitHub-hosted Mac.'
+             f'why it ran: {why}; ' + (f'a push to {BASE_BRANCH} started {HOSTED_WORKFLOW} on a GitHub-hosted Mac.'
                                        if hosted else
                                        'the Mac had room (simulator slot free, memory normal, disk above the line) '
-                                       f'and no lane app tests were waiting, or {trunk} had gone 3 hours untested.'),
+                                       f'and no lane app tests were waiting, or {BASE_BRANCH} had gone 3 hours untested.'),
              'ran:',
              f"  1. --plan app: {c['passed']} passed, {c['failed']} failed, {c['skipped']} skipped  ← verdict input"]
     if result.get('reruns'):
@@ -398,7 +404,7 @@ DIAGNOSIS_SCHEMA = {
 
 
 def fallback_groups(failed: list[str]) -> list[dict]:
-    return [{'tests': [t], 'title': f'{t.rsplit("/", 1)[-1]} fails on next',
+    return [{'tests': [t], 'title': f'{t.rsplit("/", 1)[-1]} fails on {BASE_BRANCH}',
              'steps': f'Run `--plan app --only-testing {t}` at the tip below.',
              'expected': 'The test scenario passes its assertions.',
              'actual': 'The scenario fails an assertion in the first run and in both re-runs; '
@@ -435,7 +441,7 @@ def diagnosis_prompt(sha: str, failed: list[str], suspects: list[str], evidence:
         'and the suspect: the merge below most likely to have caused it, as "#<PR>: <why>", or "unknown".',
         'Every failing ID must appear in exactly one group. Do not invent evidence.',
         '', f'Tip: {sha}', 'Failing IDs:', *[f'- {t}' for t in failed],
-        'Merges into next since the last PASS (newest first):', *([f'- {s}' for s in suspects] or ['- unknown'])])
+        f'Merges into {BASE_BRANCH} since the last PASS (newest first):', *([f'- {s}' for s in suspects] or ['- unknown'])])
 
 
 def claude_command(evidence: Path) -> list[str]:
@@ -453,7 +459,7 @@ def issue_text(group: dict, sha: str, report: str, evidence: Path, cost: Optiona
         '## Steps', group['steps'], '', '## Expected', group['expected'], '',
         '## Actual', group['actual'], '', '## Root cause (Claude inference)', group['root_cause'], '',
         '## Suspect', group['suspect'], '',
-        f'Tip SHA: `{sha}`', 'Build: next at the SHA above (unreleased integration tip).',
+        f'Tip SHA: `{sha}`', f'Build: {BASE_BRANCH} at the SHA above (unreleased integration tip).',
         f'Integration report: {report}', f'Evidence on the Mac: `{evidence}`',
         f"Diagnosis cost: ${cost:.2f} (API-equivalent)" if cost is not None else 'Diagnosis: none (fallback text)',
         '', NOT_VERIFIED, ''])
@@ -598,12 +604,15 @@ class Ops:
     def free_bytes(self) -> int:
         return shutil.disk_usage(self.repo_root).free
 
+    def simctl_problem(self) -> Optional[str]:
+        return simctl_preflight.problem()
+
     def builds_running(self) -> int:
         res = self.run(['pgrep', '-x', 'xcodebuild'], timeout=10)
         return len(res.stdout.split()) if res.returncode == 0 else 0
 
     def suspects(self, sha: str, green: Optional[str]) -> list[str]:
-        """First-parent merges into next after the last PASS, newest first ('#123 title')."""
+        """First-parent merges into the trunk after the last PASS, newest first ('#123 title')."""
         if not green:
             return []
         res = self.run(['git', 'log', '--first-parent', '--merges', '--format=%s', f'{green}..{sha}'],
@@ -710,7 +719,7 @@ class Ops:
 
     def open_revert(self, wt: Path, evidence: Path, commit: dict, sha: str, report: str, failed: list[str],
                     checks: list, prose: list[str]) -> tuple[Optional[str], str]:
-        """Revert the culprit merge on the newest next in `wt`, push revert/pr<N>, open the PR with automerge and
+        """Revert the culprit merge on the trunk's newest tip in `wt`, push revert/pr<N>, open the PR with automerge and
         file the re-land issue. Returns (the PR url, '') or (None, why not); nothing is pushed on a failure."""
         number = revert.pr_number(commit['subject'])
         title = revert.pr_title(commit['subject'], commit['body'])
@@ -723,12 +732,12 @@ class Ops:
             if undone.returncode:
                 conflicts = git('diff', '--name-only', '--diff-filter=U').stdout.split()
                 git('revert', '--abort')
-                return None, ('git revert -m 1 does not apply cleanly on the newest next ('
+                return None, (f'git revert -m 1 does not apply cleanly on the newest {BASE_BRANCH} ('
                               + (', '.join(conflicts[:10]) or (undone.stderr or '').strip()[:200]) + ')')
             staged = git('diff', '--cached', '--numstat')
             if git('diff', '--cached', '--quiet').returncode == 0:
                 git('revert', '--abort')
-                return None, 'reverting it changes nothing: next already undoes it'
+                return None, f'reverting it changes nothing: {BASE_BRANCH} already undoes it'
             grown = revert.grows_hot_file(staged.stdout)
             reland_url = '(the re-land issue is filed right after this PR opens)'
             message = revert.revert_message(number, title, sha, commit['sha'], report, failed)
@@ -961,6 +970,12 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
     if why:
         say('hold: ' + why)
         return 'held'
+    # After an Xcode update without its components, every simctl call waits on a password prompt (#2591): hold with
+    # the cause in the log instead of starting a run that hangs and posts an INCONCLUSIVE on #184.
+    blocked = ops.simctl_problem()
+    if blocked:
+        say('hold: ' + blocked)
+        return 'held'
     previous = reports[-1][0] if reports else None
     green = last_green(reports)
     if dry_run:
@@ -1086,7 +1101,7 @@ def defer_to_hosted(ops: Ops, state: dict, path: Path, comments: list[dict], rep
             return None
         say(f'hold: hosted integration is on ({HOSTED_VARIABLE}); {why}')
         return 'deferred'
-    # A confirmed failure on next goes ahead of waiting lane requests ("revert first", #1180).
+    # A confirmed failure on the trunk goes ahead of waiting lane requests ("revert first", #1180).
     why = room_reason(now, lane_slots.memory_pressure_level(), ops.free_bytes(), ops.builds_running(),
                       lane_slots.simulator_job_running())
     if why:
@@ -1211,8 +1226,10 @@ def hosted_run(ops: Ops, sha: str, *, post: bool = True) -> str:
 
 
 def hosted_exit_code(verdict: str) -> int:
-    """The hosted job's exit status (#2590): red for anything but a PASS, so a run that tested nothing can't show
-    green. `held` is the one exception: the tip already has a report, and the run was a repeat."""
+    """The hosted job's exit status: green only when the tip was tested and passed, or another run already
+    reported it ('held'). A FAIL, and an INCONCLUSIVE (a run that ran no test, or stopped part-way), turn the job
+    red, so a check that tested nothing never looks like a pass (#2590). The report on #184 is posted either
+    way, and the Mac reads that report, not the job's colour."""
     return 0 if verdict in ('PASS', 'held') else 1
 
 

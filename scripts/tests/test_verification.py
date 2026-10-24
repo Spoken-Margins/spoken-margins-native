@@ -599,9 +599,10 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(status, 'verified')
 
     def skipped_steps(self, manifest):
-        # shipped-compat follows its own path filter (test_shipped_compat_step.py), not the runner and ops test scopes.
+        # shipped-compat (test_shipped_compat_step.py) and tools (test_tools_step.py) follow their own path filters,
+        # not the runner and ops test scopes.
         return {step['name']: step['skipped'] for step in manifest['steps']
-                if step.get('skipped') and step['name'] != 'shipped-compat'}
+                if step.get('skipped') and step['name'] not in ('shipped-compat', 'tools')}
 
     def test_a_lane_run_for_an_app_only_diff_runs_just_the_tests_that_read_the_app(self):
         # #862: runner-tests are about 2 minutes of a 10-minute run, and the ones that read App/ are seconds.
@@ -660,7 +661,7 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
         # The sharing kit's tests (next, #848) read the kit under docs/ and the packet sources under Packages/.
         self.assertIn('test_sharing_kit', verification.RUNNER_TEST_READERS)
-        for path in ('docs/sharing-test-kit/kit.json', 'Packages/SessionKit/Sources/CoopPacket/PacketBuilder.swift'):
+        for path in ('docs/sharing-test-kit/kit.json', 'Packages/SessionKitTools/Sources/CoopPacket/PacketBuilder.swift'):
             self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
         # The third-party notices test (#1823) reads the dependency manifests and the generated list.
         self.assertIn('test_third_party_notices', verification.RUNNER_TEST_READERS)

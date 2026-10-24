@@ -3,10 +3,10 @@
 A Mac tool for co-op test packets (#856). Synthetic listeners (written by Claude or Codex) answer real packets, or start threads for a person to answer, so the whole co-op loop can be tested without recruiting people. Packets are written by the same SessionKit code the app uses.
 
 ```bash
-swift build --package-path Packages/SessionKit --product coop-packet
+swift build --package-path Packages/SessionKitTools --scratch-path Packages/SessionKit/.build/tools --product coop-packet
 ```
 
-The binary lands in `Packages/SessionKit/.build/debug/coop-packet`. Keep packets, plans and episode audio under `artifacts/` (git-ignored): exported packets hold the owner's voice.
+The binary lands in `Packages/SessionKit/.build/tools/debug/coop-packet`. The tool has its own package, which depends on `Packages/SessionKit` by path, so a project using SessionKit doesn't resolve it (#1873). It builds inside SessionKit's `.build`, which worktrees link to a cache that disk relief clears, as `scripts/sharing_kit.py` does. Keep packets, plans and episode audio under `artifacts/` (git-ignored): exported packets hold the owner's voice.
 
 ## Commands
 

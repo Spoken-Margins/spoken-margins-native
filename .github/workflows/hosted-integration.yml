@@ -1,6 +1,6 @@
-# Hosted integration run (#1389 phase 2, part B): test each new tip of next on a GitHub-hosted Mac instead of the
-# owner's, with the same script the Mac's launchd job runs (ops/testdesk/sm_integration_run.py --hosted):
-# --plan app, two re-runs of any failing test on the same build, the scripted journeys in
+# Hosted integration run (#1389 phase 2, part B): test each new tip of the trunk (SM_TRUNK, main since #1492) on a
+# GitHub-hosted Mac instead of the owner's, with the same script the Mac's launchd job runs
+# (ops/testdesk/sm_integration_run.py --hosted): --plan app, two re-runs of any failing test on the same build, the scripted journeys in
 # TestPlans/scripted-journeys.json, then one `Lane report integration-<sha7>` on #184 with
 # `run by: hosted integration`. scripts/phone-build reads that report unchanged.
 #
@@ -85,6 +85,17 @@ jobs:
           python-version: '3.12'
       - name: Python tools
         run: bash scripts/bootstrap-python-tools.sh
+      # verify-tests.py runs `xcodegen generate` before the app build, and the hosted image has no XcodeGen: every
+      # run here reported INCONCLUSIVE with 0 tests, "No such file or directory: 'xcodegen'" (#2590), as hosted T3
+      # did before lane.yml got this step (#2557).
+      - name: XcodeGen
+        env:
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: command -v xcodegen >/dev/null || brew install xcodegen; xcodegen --version
+      # A fresh hosted Mac has no crash-report folder, and verify-tests.py stops with "Simulator crash reports are
+      # unavailable" without one; lane.yml makes it for hosted T3 for the same reason (#2557).
+      - name: Crash-report folder
+        run: mkdir -p "$HOME/Library/Logs/DiagnosticReports"
 
       # verify-tests.py runs `xcodegen generate` before the app build, and the hosted image has no XcodeGen: the run
       # died with "No such file or directory: 'xcodegen'", reported INCONCLUSIVE with 0 tests and the job showed
@@ -111,6 +122,9 @@ jobs:
           sysctl -n hw.ncpu hw.memsize
           df -h "$GITHUB_WORKSPACE" | tail -1
 
+      # Red unless the tip passed (or another run already reported it): a FAIL, or an INCONCLUSIVE such as a run that
+      # executed no test, fails this step, so the check never shows green for a tip nothing tested (#2590). The
+      # report on #184 is posted either way.
       - name: Integration run
         env:
           GH_TOKEN: ${{ github.token }}

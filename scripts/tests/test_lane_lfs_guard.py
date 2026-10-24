@@ -200,13 +200,16 @@ class MacCheckoutTests(unittest.TestCase):
                         lfs = re.search(r'^\s+lfs: (.*)$', options, re.M)
                         self.assertIsNotNone(lfs, f'{workflow.name} {name}: its checkout needs `lfs: true`')
                         self.assertNotIn(lfs.group(1).strip(), ('false', "'false'"))
-        self.assertGreaterEqual(mac_jobs, 4)  # lane, automerge, release, compat: the parse found the Mac jobs
+        self.assertGreaterEqual(mac_jobs, 3)  # lane, automerge, release (compat moved to a hosted Mac, #2596): the parse found the Mac jobs
 
-    def test_the_compat_job_shares_the_lane_runner_and_fetches_lfs(self):
+    def test_the_compat_job_runs_hosted_in_a_fresh_workspace(self):
+        # The compat job moved to the hosted xcode-27 Mac (#2596). A hosted run starts from an empty workspace, so
+        # no lane checkout shares it and LFS pointers cannot linger; it builds only SessionKit, which bundles no
+        # model. The rule that matters now: it must not go back to a self-hosted runner without `lfs: true`.
         text = (WORKFLOWS / 'shipped-build-compat.yml').read_text()
         compat = dict(jobs(text))['compat']
-        self.assertIn('sm-lane', compat)
-        self.assertRegex(checkouts(compat)[0], r'(?m)^\s+lfs: true$')
+        self.assertRegex(compat, r'(?m)^    runs-on: xcode-27$')
+        self.assertNotRegex(compat, r'(?m)^    runs-on:.*self-hosted')
 
 
 if __name__ == '__main__':
