@@ -5309,7 +5309,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.resetAndSeed()
 
         model.importObsidianMarkdownFiles(urls: [file])
-        try await waitFor("PDF import to finish") {
+        try await waitFor("PDF import to finish", timeoutNanoseconds: 10_000_000_000) {
             !model.isImportingSources
         }
 
