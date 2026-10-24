@@ -90,6 +90,23 @@ class WorkflowFilesParse(unittest.TestCase):
                     self.assertIsInstance(job, dict, f'{path.name} job {job_name} is not a mapping')
 
 
+class AlwaysOnCheck(unittest.TestCase):
+    """workflow-files.yml is the check that notices a broken workflow, so nothing may be able to skip it."""
+
+    def test_it_runs_on_every_pull_request_and_needs_nothing(self):
+        document = parse(ROOT / '.github/workflows/workflow-files.yml')
+        triggers = next(document[key] for key in ('on', True, 'true') if key in document)  # YAML 1.1 reads `on` as true
+        pull_request = triggers['pull_request']
+        for key in ('paths', 'paths-ignore'):
+            self.assertNotIn(key, pull_request, f'a {key} filter could skip the check on a PR')
+        self.assertIn('workflow_dispatch', triggers)
+        for name, job in document['jobs'].items():
+            self.assertNotIn('needs', job, f'{name} waits on another job')
+            self.assertNotIn('vars.', str(job.get('if', '')), f'{name} is switched by a repository variable')
+        steps = ' '.join(str(step.get('run', '')) for job in document['jobs'].values() for step in job['steps'])
+        self.assertIn('scripts/tests/test_workflow_files.py', steps)
+
+
 class LaneVerdictSteps(unittest.TestCase):
     TEXT = (ROOT / '.github/workflows/lane.yml').read_text()
 
