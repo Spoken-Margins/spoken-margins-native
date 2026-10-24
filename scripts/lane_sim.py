@@ -71,6 +71,14 @@ PRESSURE_WAIT = 600
 FIRST_BOOT_TOLERANCE = 30
 LATE_REPORT_WAIT = 150
 CRASH_POLL_SECONDS = 1.0
+# On a GitHub-hosted Mac (SM_LANE_GITHUB_HOSTED=1) the only phone the image's iOS 27.0 runtime takes is iPhone 17, and
+# AppIntentsLiveEntityService, a background App Intents daemon, crashes once during each first boot there while
+# SpringBoard stays up. Every hosted T3 stopped on that one report and ran nothing (#2575). There, and only for these
+# processes, a crash report during the boot is kept as evidence and the boot goes on. A third report of the same
+# process on one device is a flood (the owner's rule: three of one process within a minute) and stops the boot as
+# before. SpringBoard is never on this list, and the build Macs are unchanged.
+HOSTED_BOOT_CRASH_TOLERATED = frozenset({'AppIntentsLiveEntityService'})
+HOSTED_BOOT_CRASH_LIMIT = 2
 
 
 def crash_reports_dir() -> Path:
@@ -338,7 +346,55 @@ def crash_snapshot(reports: Path) -> dict:
     return snapshot
 
 
-def new_crash(reports: Path, baseline: dict, udid: str) -> Path | None:
+def report_process(path: Path) -> str:
+    """The crashed process a report names: `AppIntentsLiveEntityService-2026-10-23-211854.ips` -> its first part."""
+    match = re.fullmatch(r'(.+?)-\d{4}-\d{2}-\d{2}-\d{6}(?:-\d+)?\.ips', path.name)
+    return match.group(1) if match else path.stem
+
+
+_tolerated_reports: dict = {}  # (udid, process) -> names of the reports tolerated in this process's life
+
+
+def tolerated_boot_crash(path: Path, udid: str, note=None) -> bool:
+    """True for a crash report the boot may go on past (HOSTED_BOOT_CRASH_TOLERATED, #2575).
+
+    Only on a GitHub-hosted Mac, only for the listed processes, and only up to HOSTED_BOOT_CRASH_LIMIT reports of one
+    process on one device; a report past the limit is a flood and stops the boot. Each tolerated report is copied
+    into the evidence folder (the hosted run uploads it) and logged with the boot's events.
+    """
+    if os.environ.get('SM_LANE_GITHUB_HOSTED') != '1':
+        return False
+    process = report_process(path)
+    if process not in HOSTED_BOOT_CRASH_TOLERATED:
+        return False
+    seen = _tolerated_reports.setdefault((udid, process), [])
+    if path.name in seen:
+        return True
+    if len(seen) >= HOSTED_BOOT_CRASH_LIMIT:
+        return False
+    seen.append(path.name)
+    kept = keep_tolerated_report(path)
+    text = (f'tolerated on a hosted Mac: {path.name} ({process}, report {len(seen)} of at most '
+            f'{HOSTED_BOOT_CRASH_LIMIT}, #2575); kept at {kept or "nowhere: the copy failed"}')
+    record_event(udid, text)
+    if note:
+        note(text)
+    return True
+
+
+def keep_tolerated_report(path: Path) -> Path | None:
+    """Copy a tolerated report next to the run's evidence, as .log so the hosted job's artifact keeps it."""
+    folder = Path(os.environ.get('SM_LANE_EVIDENCE_DIR') or state_dir()) / 'tolerated-crash-reports'
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        kept = folder / f'{path.name}.log'
+        kept.write_text(path.read_text(errors='replace'))
+        return kept
+    except OSError:
+        return None
+
+
+def new_crash(reports: Path, baseline: dict, udid: str, note=None) -> Path | None:
     if not reports.is_dir():
         return None
     for path in crash_reports(reports):
@@ -346,7 +402,8 @@ def new_crash(reports: Path, baseline: dict, udid: str) -> Path | None:
             stat = path.stat()
             if baseline.get(path) == (stat.st_mtime_ns, stat.st_size):
                 continue
-            if f'com.apple.CoreSimulator.SimDevice.{udid}' in path.read_text(errors='replace'):
+            if f'com.apple.CoreSimulator.SimDevice.{udid}' in path.read_text(errors='replace') \
+                    and not tolerated_boot_crash(path, udid, note):
                 return path
         except OSError:
             continue
@@ -450,7 +507,8 @@ def late_report(reports: Path, udid: str, window: tuple) -> Path | None:
         except OSError:
             continue
         when = report_time(text)
-        if f'com.apple.CoreSimulator.SimDevice.{udid}' in text and when is not None and start - 1 <= when <= end + 1:
+        if f'com.apple.CoreSimulator.SimDevice.{udid}' in text and when is not None and start - 1 <= when <= end + 1 \
+                and not tolerated_boot_crash(path, udid):
             return path
     return None
 
@@ -741,7 +799,9 @@ def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lo
                                          stderr=subprocess.DEVNULL)
                 try:
                     tolerated = wait_until_ready(udid, lambda: ready.poll() is not None, SpringBoardMonitor(udid),
-                                                 lambda: new_crash(reports, baseline, udid), timeout, out=out,
+                                                 lambda: new_crash(reports, baseline, udid,
+                                                                   lambda text: print(f'[lane] {text}', file=out, flush=True)),
+                                                 timeout, out=out,
                                                  tolerate_until=FIRST_BOOT_TOLERANCE if first_boot else None,
                                                  record=lambda text: record_event(udid, text))
                 except BootError as error:

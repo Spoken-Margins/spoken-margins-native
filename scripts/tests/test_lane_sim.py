@@ -602,6 +602,61 @@ class LaneSimTests(unittest.TestCase):
         (folder / 'SpringBoard-new.ips').write_text(f'FBSystemShellInitialize com.apple.CoreSimulator.SimDevice.{UDID}')
         self.assertEqual(lane_sim.new_crash(folder, baseline, UDID).name, 'SpringBoard-new.ips')
 
+    def hosted_boot(self, *names, hosted=True):
+        """Boot with these crash reports for the device already written and counted as new (#2575)."""
+        folder = Path(self.env['SM_LANE_CRASH_REPORTS'])
+        for name in names:
+            (folder / name).write_text(f'{{"app_name":"x"}}\n{{"path": "com.apple.CoreSimulator.SimDevice.{UDID}"}}')
+        evidence = Path(self.temporary.name) / 'evidence'
+        env = {'SM_LANE_EVIDENCE_DIR': str(evidence), 'SM_LANE_GITHUB_HOSTED': '1' if hosted else ''}
+        with mock.patch.dict(os.environ, env), mock.patch.object(lane_sim, 'crash_snapshot', return_value={}), \
+                mock.patch.dict(lane_sim._tolerated_reports, clear=True):
+            lane_sim.boot(UDID, 'test', out=self.quiet)
+        return evidence / 'tolerated-crash-reports'
+
+    def test_a_hosted_boot_goes_on_past_an_app_intents_daemon_crash_and_keeps_the_report(self):
+        # #2575: every hosted T3 on iOS 27.0 stopped on AppIntentsLiveEntityService's first-boot crash and ran nothing.
+        kept = self.hosted_boot('AppIntentsLiveEntityService-2026-10-23-211854.ips')
+        self.assertNotIn(UDID, lane_sim.unsafe_devices())
+        self.assertTrue((kept / 'AppIntentsLiveEntityService-2026-10-23-211854.ips.log').is_file())
+        events = (Path(self.env['SM_LANE_STATE_DIR']) / 'boot-events.log').read_text()
+        self.assertIn('tolerated on a hosted Mac: AppIntentsLiveEntityService-2026-10-23-211854.ips', events)
+
+    def test_the_same_crash_stops_a_boot_on_a_build_mac(self):
+        with self.assertRaisesRegex(lane_sim.BootError, 'AppIntentsLiveEntityService-2026-10-23-211854.ips while booting'):
+            self.hosted_boot('AppIntentsLiveEntityService-2026-10-23-211854.ips', hosted=False)
+        self.assertIn(UDID, lane_sim.unsafe_devices())
+
+    def test_a_hosted_boot_still_stops_on_any_other_crash(self):
+        with self.assertRaisesRegex(lane_sim.BootError, 'SpringBoard-2026-10-23-211854.ips while booting'):
+            self.hosted_boot('AppIntentsLiveEntityService-2026-10-23-211850.ips', 'SpringBoard-2026-10-23-211854.ips')
+
+    def test_a_third_report_of_the_tolerated_daemon_is_a_flood(self):
+        with self.assertRaisesRegex(lane_sim.BootError, 'AppIntentsLiveEntityService-.*while booting'):
+            self.hosted_boot(*(f'AppIntentsLiveEntityService-2026-10-23-21185{n}.ips' for n in range(3)))
+        self.assertIn(UDID, lane_sim.unsafe_devices())
+
+    def test_report_process_reads_the_name_before_the_date(self):
+        for name, process in [('AppIntentsLiveEntityService-2026-10-23-211854.ips', 'AppIntentsLiveEntityService'),
+                              ('AppIntentsLiveEntityService-2026-10-23-211854-2.ips', 'AppIntentsLiveEntityService'),
+                              ('com.apple.Foo-Bar-2026-10-23-211854.ips', 'com.apple.Foo-Bar'),
+                              ('AppIntentsLiveEntityServiceX-2026-10-23-211854.ips', 'AppIntentsLiveEntityServiceX'),
+                              ('SpringBoard-late.ips', 'SpringBoard-late')]:
+            self.assertEqual(lane_sim.report_process(Path(name)), process, name)
+
+    def test_a_hosted_late_report_check_skips_the_tolerated_daemon(self):
+        import datetime
+        folder = Path(self.env['SM_LANE_CRASH_REPORTS'])
+        stamp = datetime.datetime.fromtimestamp(time.time()).astimezone().strftime('%Y-%m-%d %H:%M:%S.%f %z')
+        (folder / 'AppIntentsLiveEntityService-2026-10-23-211854.ips').write_text(
+            f'{{"app_name":"x"}}\n{{"captureTime" : "{stamp}", "path": "com.apple.CoreSimulator.SimDevice.{UDID}"}}')
+        window = (time.time() - 10, time.time() + 10)
+        self.assertIsNotNone(lane_sim.late_report(folder, UDID, window))
+        with mock.patch.dict(os.environ, {'SM_LANE_GITHUB_HOSTED': '1',
+                                          'SM_LANE_EVIDENCE_DIR': str(Path(self.temporary.name) / 'evidence')}), \
+                mock.patch.dict(lane_sim._tolerated_reports, clear=True):
+            self.assertIsNone(lane_sim.late_report(folder, UDID, window))
+
     def test_a_crash_report_renamed_during_the_scan_does_not_fail_the_boot(self):
         # #822: macOS writes each report as a hidden `.Name-date.ips` and then renames it. A rename between
         # crash_snapshot's glob and its stat raised FileNotFoundError and failed the boot (#767 hit the same
