@@ -50,7 +50,8 @@ final class PDFWordSpacingTests: XCTestCase {
     /// eight times) is not taken for a name the paper prints alone.
     func testAPhraseGluedTheSameWayEachTimeSplits() throws {
         let context = Array(repeating: "Fullnotes attheendof the table.", count: 8)
-        XCTAssertEqual(try kittenSpacer(context: context).respaced("Fullnotes attheendof the table."), "Full notes at the end of the table.")
+        let spacer = try kittenSpacer(context: context)
+        XCTAssertEqual(spacer.respaced("Fullnotes attheendof the table."), "Full notes at the end of the table.")
     }
 
     /// Names, units and terms the corpus's glued papers showed being split (#2370).
@@ -62,8 +63,8 @@ final class PDFWordSpacingTests: XCTestCase {
         XCTAssertEqual(spacer.respaced("we use Bacillus vallismortis and B. vallismortis"), "we use Bacillus vallismortis and B. vallismortis")
         XCTAssertEqual(spacer.respaced("higherconfinement(0.4–0.7GPa),thespecimens"), "higher confinement (0.4–0.7GPa), the specimens")
         XCTAssertEqual(spacer.respaced("respecttotherecipient’sgenome."), "respect to the recipient’s genome.")
-        XCTAssertEqual(try kittenSpacer(context: Array(repeating: "B. subtilis", count: 4)).respaced("Here,Bacillussubtilisis Bacillus subtilis"),
-                       "Here, Bacillus subtilis is Bacillus subtilis")
+        let subtilis = try kittenSpacer(context: Array(repeating: "B. subtilis", count: 4))
+        XCTAssertEqual(subtilis.respaced("Here,Bacillussubtilisis Bacillus subtilis"), "Here, Bacillus subtilis is Bacillus subtilis")
         XCTAssertEqual(spacer.respaced("theMWDsinthesample"), "the MWDs in the sample")
         XCTAssertEqual(spacer.respaced("meetsBGI’sinternalhigh-confidence threshold"), "meets BGI’s internal high-confidence threshold")
         XCTAssertEqual(spacer.respaced("nonmetal, acetal, Sheetal and H2SO4 in 2019Baumol, Kwaetal.,2025"),
@@ -140,22 +141,21 @@ final class PDFWordSpacingTests: XCTestCase {
         }
         // A species name the paper prints alone stays whole; glued to a word, it splits off (PMC10756544).
         // PMC11314421 prints "lncRNAs" alone; glued to "can", it splits off whole.
-        let terms = Array(repeating: "the lncRNAs and lncRNAs", count: 2)
-        XCTAssertEqual(try kittenSpacer(context: terms).respaced("cellular compartments, lncRNAscanfunctionasdecoysfor"),
+        let terms = try kittenSpacer(context: Array(repeating: "the lncRNAs and lncRNAs", count: 2))
+        XCTAssertEqual(terms.respaced("cellular compartments, lncRNAscanfunctionasdecoysfor"),
                        "cellular compartments, lncRNAs can function as decoys for")
-        let species = Array(repeating: "in Rhodnius prolixus females", count: 6)
-        XCTAssertEqual(try kittenSpacer(context: species).respaced("R. prolixus and R. prolixusreproduction"),
-                       "R. prolixus and R. prolixus reproduction")
+        let species = try kittenSpacer(context: Array(repeating: "in Rhodnius prolixus females", count: 6))
+        XCTAssertEqual(species.respaced("R. prolixus and R. prolixusreproduction"), "R. prolixus and R. prolixus reproduction")
     }
 
     func testWordsThePaperPrintsAloneWinTies() throws {
         // "pressureisonascale": without context "ison" (a listed word) can win; a paper
         // that prints "is" and "on" alone reads it "is on".
-        let context = Array(repeating: "the pressure is on a scale and it is on the list", count: 20)
-        XCTAssertEqual(try kittenSpacer(context: context).respaced("pressureisonascale"), "pressure is on a scale")
+        let spacer = try kittenSpacer(context: Array(repeating: "the pressure is on a scale and it is on the list", count: 20))
+        XCTAssertEqual(spacer.respaced("pressureisonascale"), "pressure is on a scale")
         // A name the list lacks, printed alone, splits off a word glued to it.
-        let names = Array(repeating: "as Autor and Thompson show", count: 5)
-        XCTAssertEqual(try kittenSpacer(context: names).respaced("Autorand Thompson"), "Autor and Thompson")
+        let names = try kittenSpacer(context: Array(repeating: "as Autor and Thompson show", count: 5))
+        XCTAssertEqual(names.respaced("Autorand Thompson"), "Autor and Thompson")
     }
 
     func testSuperscriptRangesMoveWithTheText() {

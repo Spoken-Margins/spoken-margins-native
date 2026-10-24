@@ -16,7 +16,8 @@ import XCTest
 ///
 /// Read an input into a `let` before asserting on it. XCTest records a skip thrown inside an
 /// `XCTAssert…` or `XCTUnwrap` expression as a failure, and `try?` turns it into a wrong value.
-/// `scripts/check-sessionkit-standalone.sh --test` is what shows a call site that gets this wrong.
+/// `scripts/check-sessionkit-standalone.sh --test` is what shows a call site that gets this wrong;
+/// `scripts/tests/test_sessionkit_test_inputs.py` catches the common shapes in the fast plan.
 public enum TestInputs {
     public enum Input: String, CaseIterable, Sendable {
         /// Schemas, fixtures and traces: the canonical home of the listening formats (#1386).
