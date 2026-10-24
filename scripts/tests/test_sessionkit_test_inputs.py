@@ -68,11 +68,13 @@ def misplaced_reads(text):
             return found
     for match in ASSERTION.finditer(text):
         expression = balanced(text, match.end(), '(', ')')
-        if re.search(r'\btry\b', expression) and any(re.search(c, expression) for c in calls):
+        # `TestInputs.modelCheck` doesn't throw; a `try` inside, or before `XCTUnwrap(`, marks a throwing read.
+        throws = re.search(r'\btry\b', expression) or re.search(r'\btry\s*$', text[max(0, match.start() - 8):match.start()])
+        if throws and any(re.search(c, expression) for c in calls):
             found.append((text.count('\n', 0, match.start()) + 1, match.group(0) + expression[:60]))
     for number, line in enumerate(text.splitlines(), 1):
-        rest = line.partition('try?')[2]
-        if 'try?' in line and any(re.search(c, rest) for c in calls):
+        rest = line.partition('//')[0].partition('try?')[2]
+        if rest and any(re.search(c, rest) for c in calls):
             found.append((number, line.strip()[:80]))
     return sorted(found)
 
@@ -83,7 +85,7 @@ class TestInputsReadOutsideAssertionsTest(unittest.TestCase):
         for path in sorted(TESTS.rglob('*.swift')):
             if path.parent.name == 'TestInputs':
                 continue
-            for line, snippet in misplaced_reads(path.read_text()):
+            for line, snippet in misplaced_reads(path.read_text(encoding='utf-8')):
                 problems.append(f'{path.relative_to(ROOT)}:{line}: {snippet}')
         self.assertEqual(problems, [], 'read the input into a `let` first (see TestInputs.swift):\n' + '\n'.join(problems))
 
@@ -104,11 +106,13 @@ class TestInputsReadOutsideAssertionsTest(unittest.TestCase):
         XCTAssertEqual(try JSONDecoder().decode(T.self, from: data), t)
         XCTAssertEqual(try page(editing: good), "")
         XCTAssertNoThrow(try page())
+        let url = try XCTUnwrap(TestInputs.url(.contracts, "y.json"))
+        // A comment may name try? TestInputs.url(.contracts, "z.json").
     }
     private func page() throws -> String { try TestInputs.string(.contracts, "page.html") }
     private func page(editing spacer: Spacer) throws -> String { "" }
 '''
-        self.assertEqual([line for line, _ in misplaced_reads(text)], [8, 9, 11, 16])
+        self.assertEqual([line for line, _ in misplaced_reads(text)], [8, 9, 11, 16, 17])
         gated = text + '''
     override func setUpWithError() throws {
         _ = try TestInputs.url(.contracts, "folder")
