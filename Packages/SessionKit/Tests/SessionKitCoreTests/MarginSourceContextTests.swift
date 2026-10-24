@@ -152,6 +152,15 @@ final class MarginSourceContextTests: XCTestCase {
             "1 Introduction",
             "Abstract",
             "author@example.com",
+            // A short heading can end in a function word or a hyphen; only a line near the page's width runs on.
+            "Who This Is For",
+            "Who We Are",
+            "Turn It On",
+            "Notes -",
+            // A section number ends in a digit after a full stop, but it is no footnote.
+            "Table 3.1",
+            "Version 2.0",
+            "Appendix A.1",
         ]
         for heading in rows {
             let text = "\(heading)\nThe dominant models rely on a new simple network architecture, the\nTransformer, based on attention. We went on."
@@ -160,6 +169,28 @@ final class MarginSourceContextTests: XCTestCase {
             XCTAssertEqual(
                 anchor.anchorBefore,
                 "The dominant models rely on a new simple network architecture, the\nTransformer, based on attention.", heading)
+        }
+    }
+
+    /// #2527: a short line before one that starts with a digit or a bracket stays a heading, as a numbered heading
+    /// follows a short line the same way.
+    func testAShortLineBeforeADigitOrBracketIsAHeading() throws {
+        for opening in ["2 The next part starts here.", "[3] The next part starts here."] {
+            let text = "Short line here\n\(opening) We went on."
+            let start = (text as NSString).range(of: "We went on").location
+            let anchor = try writtenMargin(atOffset: start, in: text)
+            XCTAssertEqual(anchor.anchorBefore, opening, opening)
+        }
+    }
+
+    /// #2527: a Margin made at the very start of a wrapped line still reads that line's first letter.
+    func testAMarginAtTheStartOfAContinuationLineKeepsItsShoulder() throws {
+        let wrapped = "The dominant sequence transduction models are based on complex recurrent"
+        for indent in ["", "   "] {
+            let text = "Intro sentence ends here.\n\(wrapped)\n\(indent)neural networks that include an encoder. We went on."
+            let start = (text as NSString).range(of: "\n\(indent)neural").location + 1 + indent.count
+            let anchor = try writtenMargin(atOffset: start, in: text)
+            XCTAssertEqual(anchor.anchorBefore, "Intro sentence ends here.\n\(wrapped)", "indent \(indent.count)")
         }
     }
 

@@ -4740,8 +4740,9 @@ public final class SessionEngine {
         "the", "a", "an", "of", "and", "or", "to", "in", "on", "for", "with", "by", "that", "as", "at", "from",
         "which", "is", "are", "was", "were", "be", "this", "these", "those", "its", "their", "than", "but", "into"
     ]
-    /// A hard-wrapped body line is long; a comma at the end of a short one is a list of names.
-    private static let runOnCommaLength = 40
+    /// A hard-wrapped body line is near the page's width; a short line ending in a comma is a list of names, and one
+    /// ending in a function word or a hyphen is a heading (`Who We Are`).
+    private static let runOnLineLength = 40
 
     /// The line starting at `from` goes on from the one before it (a hard-wrapped line): its first letter is lower
     /// case. Only blanks are skipped, so an indented continuation counts and a blank line doesn't.
@@ -4756,14 +4757,23 @@ public final class SessionEngine {
         guard let lastIndex = characters.lastIndex(where: { !$0.isWhitespace }) else { return false }
         let last = characters[lastIndex]
         if Self.sentenceEndings.contains(last) { return false }
-        // A footnote number after the full stop: `mechanism.1`.
-        if last.isNumber, lastIndex > characters.startIndex, Self.sentenceEndings.contains(characters[lastIndex - 1]) { return false }
+        if endsInFootnoteNumber(characters[...lastIndex]) { return false }
         if followedByContinuation { return false }
-        if last == "-" { return false }
-        if last == ",", characters.count >= Self.runOnCommaLength { return false }
-        let word = String(characters[...lastIndex].reversed().prefix(while: { $0.isLetter }).reversed()).lowercased()
-        if !word.isEmpty, Self.runOnWords.contains(word) { return false }
+        if characters.count >= Self.runOnLineLength {
+            if last == "-" || last == "," { return false }
+            let word = String(characters[...lastIndex].reversed().prefix(while: { $0.isLetter }).reversed()).lowercased()
+            if !word.isEmpty, Self.runOnWords.contains(word) { return false }
+        }
         return characters.count <= Self.unsentencedLineLimit
+    }
+
+    /// A footnote number after the full stop that ends a word: `mechanism.1`. A section number (`3.1`, `A.1`) isn't one.
+    private func endsInFootnoteNumber(_ characters: ArraySlice<Character>) -> Bool {
+        let digits = characters.reversed().prefix(while: { $0.isNumber }).count
+        let stop = characters.endIndex - digits - 1
+        guard digits > 0, stop - 2 >= characters.startIndex, Self.sentenceEndings.contains(characters[stop]) else { return false }
+        if characters[stop - 1].isLetter { return characters[stop - 2].isLetter }
+        return !characters[stop - 1].isNumber
     }
 
     /// Looks back from `offset` only as far as `floor` (the shoulder's own start): anything before it is dropped by the
@@ -4774,9 +4784,13 @@ public final class SessionEngine {
         guard floorIndex < offsetIndex else { return floor }
         // The first line is read whole, so a long line cut at `floor` isn't mistaken for a heading.
         let windowStart = text[..<floorIndex].lastIndex(where: { $0.isNewline }).map { text.index(after: $0) } ?? text.startIndex
-        let characters = Array(text[windowStart..<offsetIndex])
+        // The window runs on to the first letter of the Margin's line, which says whether the line before it runs on.
+        var windowEnd = offsetIndex
+        while windowEnd < text.endIndex, text[windowEnd].isWhitespace, !text[windowEnd].isNewline { windowEnd = text.index(after: windowEnd) }
+        if windowEnd < text.endIndex { windowEnd = text.index(after: windowEnd) }
+        let characters = Array(text[windowStart..<windowEnd])
         let base = floor - text.distance(from: windowStart, to: floorIndex)
-        var lineStart = characters.count
+        var lineStart = text.distance(from: windowStart, to: offsetIndex)
         while lineStart > 0, !characters[lineStart - 1].isNewline { lineStart -= 1 }
         var following = lineStart // the start of the line after the one being read
         var end = lineStart
