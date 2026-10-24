@@ -3833,6 +3833,7 @@ final class SupertonicSpeechTests: XCTestCase {
         let renderer = CountingAudioSupertonicRenderer(templateURL: template)
         let fallback = RecordingFallbackAudioClient()
         let capture = PreparedAudioCapture()
+        let states = GenerationStateCapture()
         let completed = expectation(description: "prepared Supertonic audio")
         let client = SupertonicSpeechPlaybackClient(
             renderer: renderer,
@@ -3843,11 +3844,18 @@ final class SupertonicSpeechTests: XCTestCase {
             preparedAudioDirectory: output,
             audioSessionActivator: {},
             observesPlayerLifecycle: false,
+            // #2587: the defaults read the runner's own heat, memory and app state. One refused chunk is an iOS-voice
+            // stand-in, and an item with a stand-in is never assembled (#363); the likeliest reason this wait timed
+            // out on a hosted iOS 27 runner. This test is about saving the whole item, so it renders on a cool phone
+            // in front.
+            onDeviceRenderingAllowed: { true },
             fallbackClient: fallback,
+            onGenerationStateChange: { state, stopReason in states.record(state, stopReason: stopReason) },
             onPreparedAudio: { itemId, prepared in
                 capture.record(itemId: itemId, prepared: prepared)
                 completed.fulfill()
-            }
+            },
+            renderAheadWindow: { nil }
         )
         let source = (1...9).map {
             "Persistent sentence \($0) has enough text for progressive local audiobook generation."
@@ -3857,9 +3865,11 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.play(targetId: "persistent-item")
         try client.pause()
 
-        await fulfillment(of: [completed], timeout: 5)
-        let prepared = try XCTUnwrap(capture.prepared)
+        // Returns as soon as the audio is saved; the timeout only bounds a failure.
+        await fulfillment(of: [completed], timeout: 60)
         let renderCount = await renderer.renderCount
+        let prepared = try XCTUnwrap(capture.prepared, "generation states: \(states.values), stops: \(states.stopReasons), "
+                                     + "renders: \(renderCount) of \(renderedChunkCount(source))")
         XCTAssertEqual(capture.itemId, "persistent-item")
         XCTAssertEqual(renderCount, renderedChunkCount(source))
         XCTAssertTrue(fallback.playedOffsets.isEmpty)
@@ -3895,12 +3905,16 @@ final class SupertonicSpeechTests: XCTestCase {
             preparedAudioDirectory: blockedOutput,
             audioSessionActivator: {},
             observesPlayerLifecycle: false,
+            // #2587: a chunk refused for the runner's own heat or memory becomes a stand-in, and then assembly never
+            // runs (#363), so no stop comes. This test is about the assembly error, so every chunk renders.
+            onDeviceRenderingAllowed: { true },
             fallbackClient: RecordingFallbackAudioClient(),
             onGenerationStateChange: { state, stopReason in
                 states.record(state, stopReason: stopReason)
                 if state == .stopped { stopped.fulfill() }
             },
-            onPreparedAudio: { itemId, prepared in capture.record(itemId: itemId, prepared: prepared) }
+            onPreparedAudio: { itemId, prepared in capture.record(itemId: itemId, prepared: prepared) },
+            renderAheadWindow: { nil }
         )
         let source = (1...9).map {
             "Assembly sentence \($0) has enough text for progressive local audiobook generation."
@@ -3910,9 +3924,12 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.play(targetId: "assembly-fails")
         try client.pause()
 
-        await fulfillment(of: [stopped], timeout: 5)
+        // Returns as soon as generation stops; the timeout only bounds a failure.
+        await fulfillment(of: [stopped], timeout: 60)
         XCTAssertNil(capture.prepared, "No prepared audio may be reported when assembly failed")
-        let reason = try XCTUnwrap(states.stopReasons.last ?? nil, "The stop must carry the assembly error")
+        let renderCount = await renderer.renderCount
+        let reason = try XCTUnwrap(states.stopReasons.last ?? nil, "The stop must carry the assembly error; "
+                                   + "states: \(states.values), renders: \(renderCount)")
         XCTAssertTrue(reason.hasPrefix(SpeechGenerationStopReason.assemblyFailedCode), reason)
         XCTAssertGreaterThan(reason.count, SpeechGenerationStopReason.assemblyFailedCode.count + 2, "The error itself is kept")
         let shown = RenderedSpeechGenerationState.stopped.listenerDescription(
