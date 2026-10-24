@@ -14,10 +14,11 @@ import SessionKit
 import SessionKitFeeds
 import SubstackCanaryCore
 
-/// Three shapes: a substack.com subdomain with Substack's automatic voice, a custom domain with the automatic
-/// voice and many paid posts, and a custom domain whose author records a voiceover.
+/// Two shapes: a custom domain with Substack's automatic voice and many paid posts, and a custom domain whose
+/// author records a voiceover. https://thezvi.substack.com/feed (a substack.com subdomain) is not checked on
+/// hosted runners: Substack returns 403 to them (#2596). The canary runs only on hosted runners, so the feed is
+/// dropped, not worked around (no user-agent change, proxy or retry). Pass it with --feed to check it by hand.
 let defaultFeeds = [
-    "https://thezvi.substack.com/feed",
     "https://www.noahpinion.blog/feed",
     "https://www.experimental-history.com/feed",
 ]
