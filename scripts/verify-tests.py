@@ -1619,11 +1619,15 @@ class Run:
         self.command('main-thread-reads', [sys.executable, 'scripts/main_thread_reads.py'], timeout=120)
         if not (ROOT / 'node_modules').exists():
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
-        # A lockfile that moved since node_modules was installed fails the bundle check with "is stale";
-        # say what to do instead (#2569).
-        if stale_modules := node_modules_drift.drift(ROOT):
-            raise RuntimeError(node_modules_drift.message(stale_modules))
-        self.command('browser', ['npm', 'run', 'test:browser-extraction'])
+        # A lockfile that moved since node_modules was installed can fail the bundle check with "is stale". The
+        # lane links a shared node_modules that only moves to the trunk, so drift alone must not fail a run: name
+        # the cause next to a real failure instead (#2569).
+        try:
+            self.command('browser', ['npm', 'run', 'test:browser-extraction'])
+        except RuntimeError as failure:
+            if stale_modules := node_modules_drift.drift(ROOT):
+                raise RuntimeError(f'{failure}; {node_modules_drift.message(stale_modules)}') from failure
+            raise
         self.command('share-link', ['npm', 'run', 'test:share-link'])
         # The Go server, the research Python tests and the Caddy script (#1033); a suite that can't run
         # here is reported as skipped with its reason, not passed.
