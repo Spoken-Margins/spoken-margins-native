@@ -126,12 +126,106 @@ def is_available(udid: str) -> bool:
     return any(d.get('udid') == udid for group in listing.get('devices', {}).values() for d in group)
 
 
-def newest_runtime(major: int = IOS_MAJOR) -> str | None:
-    runtimes = json.loads(subprocess.check_output(simctl() + ['list', 'runtimes', '--json'], text=True))
-    usable = [r for r in runtimes.get('runtimes', [])
+def pick_device_type(listing: dict, preferred: str = DEVICE_TYPE, supported: set | None = None, survey: str = '') -> str:
+    """The device type to create: `preferred` when this Xcode has it, else its newest plain iPhone.
+
+    `listing` is `simctl list devicetypes --json`. A hosted Mac's image can ship a different set of phones than the
+    build Macs (#2557's audit); a type the image lacks used to fail `simctl create` with "Invalid device type".
+    `supported` limits the choice to the types the runtime accepts: the hosted xcode-27 image lists iPhone-17, but
+    its iOS 27 runtime refuses it ("Incompatible device", simctl code 403). With no usable iPhone it fails loudly,
+    naming what the image has, and `survey` (`runtime_survey`) adds every runtime's phones so one report shows the gap.
+    """
+    found = [t.get('identifier', '') for t in listing.get('devicetypes', [])]
+    if supported is not None:
+        found = [identifier for identifier in found if identifier in supported]
+    if preferred in found:
+        return preferred
+    plain = []
+    for identifier in found:
+        match = PLAIN_IPHONE.fullmatch(identifier)
+        if match:
+            plain.append((int(match.group(1)), identifier))
+    if plain:
+        return max(plain)[1]
+    raise BootError(f'No iPhone simulator device type is installed for this runtime (wanted {preferred}). '
+                    f'This Xcode and runtime have: {", ".join(found) or "none"}.' + (f' Runtimes: {survey}.' if survey else ''))
+
+
+PLAIN_IPHONE = re.compile(r'com\.apple\.CoreSimulator\.SimDeviceType\.iPhone-(\d+)')
+
+
+def runtimes_listing() -> dict | None:
+    """`simctl list runtimes --json`, or None when simctl does not give one."""
+    try:
+        listing = json.loads(subprocess.check_output(simctl() + ['list', 'runtimes', '--json'], text=True, timeout=60))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    return listing if isinstance(listing, dict) else None
+
+
+def runtime_device_types(runtime: str, listing: dict | None = None) -> set | None:
+    """The device types `runtime` accepts, or None when simctl does not say (then nothing is limited)."""
+    listing = runtimes_listing() if listing is None else listing
+    try:
+        for entry in (listing or {}).get('runtimes', []):
+            if entry.get('identifier') == runtime and entry.get('supportedDeviceTypes'):
+                return {t.get('identifier') for t in entry['supportedDeviceTypes']}
+    except (AttributeError, TypeError):
+        pass
+    return None
+
+
+def runtime_survey(listing: dict | None) -> str:
+    """Each iOS runtime and the phones it accepts, e.g. "iOS-27-0: iPhone-17, iPhone-Duo; iOS-27-1: iPhone-Duo"."""
+    parts = []
+    for entry in (listing or {}).get('runtimes', []):
+        if entry.get('platform') != 'iOS':
+            continue
+        types = [t.get('identifier', '').rsplit('.', 1)[-1] for t in entry.get('supportedDeviceTypes') or []]
+        phones = [t for t in types if t.startswith('iPhone')]
+        parts.append(f'{entry.get("identifier", "?").rsplit(".", 1)[-1]}: ' + (', '.join(phones) or 'no iPhone types listed'))
+    return '; '.join(parts)
+
+
+def device_type(runtime: str | None = None) -> str:
+    """`pick_device_type` for this Mac and `runtime`; the usual iPhone when simctl can't list device types."""
+    try:
+        listing = json.loads(subprocess.check_output(simctl() + ['list', 'devicetypes', '--json'], text=True, timeout=60))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return DEVICE_TYPE
+    if not isinstance(listing, dict) or not listing.get('devicetypes'):
+        return DEVICE_TYPE
+    runtimes = runtimes_listing() if runtime else None
+    return pick_device_type(listing, supported=runtime_device_types(runtime, runtimes) if runtime else None,
+                            survey=runtime_survey(runtimes))
+
+
+def pick_runtime(listing: dict, major: int = IOS_MAJOR, preferred: str = DEVICE_TYPE) -> str | None:
+    """The runtime to test on, chosen together with its phone (the hosted xcode-27 image has iOS 27.0 and 27.1, and
+    27.1 accepted only iPhone-Duo, which the first hosted T3 after #2571 died on).
+
+    Of the available iOS runtimes of `major`: the newest that accepts `preferred`; else the newest that accepts any
+    plain iPhone (`iPhone-N`, so not Duo, Fold, Air or Pro, whose screens the tests don't assume); else the newest, so
+    the clone step fails with `runtime_survey` naming every runtime. A runtime that lists no types is not limited.
+    None when no runtime of that major is available.
+    """
+    usable = [r for r in listing.get('runtimes', [])
               if r.get('isAvailable') and r.get('platform') == 'iOS' and r.get('version', '').split('.')[0] == str(major)]
-    usable.sort(key=lambda r: [int(x) for x in r['version'].split('.')])
-    return usable[-1]['identifier'] if usable else None
+    usable.sort(key=lambda r: [int(x) for x in r['version'].split('.')], reverse=True)
+
+    def types(entry):
+        return {t.get('identifier') for t in entry['supportedDeviceTypes']} if entry.get('supportedDeviceTypes') else None
+
+    for accepts in (lambda t: t is None or preferred in t,
+                    lambda t: t is None or any(PLAIN_IPHONE.fullmatch(i or '') for i in t)):
+        for entry in usable:
+            if accepts(types(entry)):
+                return entry['identifier']
+    return usable[0]['identifier'] if usable else None
+
+
+def newest_runtime(major: int = IOS_MAJOR) -> str | None:
+    return pick_runtime(json.loads(subprocess.check_output(simctl() + ['list', 'runtimes', '--json'], text=True)), major)
 
 
 def create_temporary(name: str) -> str:
@@ -139,7 +233,7 @@ def create_temporary(name: str) -> str:
     runtime = newest_runtime()
     if not runtime:
         raise BootError(f'No iOS {IOS_MAJOR} simulator runtime is installed.')
-    return subprocess.check_output(simctl() + ['create', name, DEVICE_TYPE, runtime], text=True).strip()
+    return subprocess.check_output(simctl() + ['create', name, device_type(runtime), runtime], text=True).strip()
 
 
 def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
@@ -155,7 +249,9 @@ def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
     marker = directory / 't3-template.json'
     template_name = 'SM Lane T3 template'
     toolchain = subprocess.check_output(['xcodebuild', '-version'], text=True, timeout=30).strip()
-    key = [runtime, DEVICE_TYPE, toolchain]
+    phone = device_type(runtime)
+    print(f'[lane] simulator pair: {runtime.rsplit(".", 1)[-1]} with {phone.rsplit(".", 1)[-1]}', file=out, flush=True)
+    key = [runtime, phone, toolchain]
     with (directory / 't3-template.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
@@ -169,7 +265,7 @@ def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
             listed = json.loads(subprocess.check_output(simctl() + ['list', 'devices', 'available', '--json'],
                                                         text=True, timeout=120))['devices']
             return {d['udid']: (r, d) for r, group in listed.items() for d in group
-                    if d.get('name') == template_name and d.get('deviceTypeIdentifier') == DEVICE_TYPE}
+                    if d.get('name') == template_name and d.get('deviceTypeIdentifier') == phone}
 
         owned = owned_devices()
         udid = saved.get('udid')
@@ -186,7 +282,7 @@ def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
             for old in owned:
                 release(old)
             def create():
-                return subprocess.check_output(simctl() + ['create', template_name, DEVICE_TYPE, runtime],
+                return subprocess.check_output(simctl() + ['create', template_name, phone, runtime],
                                                text=True, timeout=120).strip()
 
             def replace(stalled):

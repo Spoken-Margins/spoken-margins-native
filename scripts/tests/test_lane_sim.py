@@ -91,6 +91,138 @@ def stalling(*udids):
     return processes
 
 
+class DeviceTypeTests(unittest.TestCase):
+    """The phone to create comes from what this Xcode has, not a fixed name (#2557 audit)."""
+
+    @staticmethod
+    def listing(*names):
+        return {'devicetypes': [{'name': n, 'identifier': f'com.apple.CoreSimulator.SimDeviceType.{n}'} for n in names]}
+
+    def test_the_usual_phone_is_kept_when_the_image_has_it(self):
+        listing = self.listing('iPhone-17', 'iPhone-18', 'iPad-Pro')
+        self.assertEqual(lane_sim.pick_device_type(listing), lane_sim.DEVICE_TYPE)
+
+    def test_without_it_the_newest_plain_iPhone_is_used(self):
+        # Pro, Air, SE and the iPad are not what the lane tests on; iPhone-9 must not beat iPhone-18 (numbers, not text).
+        listing = self.listing('iPhone-9', 'iPhone-18', 'iPhone-18-Pro', 'iPhone-Air', 'iPhone-SE-3rd-generation', 'iPad-Pro')
+        self.assertEqual(lane_sim.pick_device_type(listing), 'com.apple.CoreSimulator.SimDeviceType.iPhone-18')
+
+    def test_with_no_plain_iPhone_it_fails_and_names_what_the_image_has(self):
+        with self.assertRaises(lane_sim.BootError) as caught:
+            lane_sim.pick_device_type(self.listing('iPad-Pro', 'Apple-Watch-Series-10'))
+        message = str(caught.exception)
+        self.assertIn('iPhone-17', message)
+        self.assertIn('SimDeviceType.iPad-Pro', message)
+        with self.assertRaises(lane_sim.BootError):
+            lane_sim.pick_device_type({'devicetypes': []})
+
+    def test_only_a_type_the_runtime_supports_is_picked(self):
+        # The hosted xcode-27 image lists iPhone-17 but its iOS 27 runtime rejects it ("Incompatible device", simctl
+        # 403, then exit 147): the first hosted T3 runs never started a simulator (#2557 follow-up).
+        listing = self.listing('iPhone-17', 'iPhone-18', 'iPad-Pro')
+        supported = {'com.apple.CoreSimulator.SimDeviceType.iPhone-18'}
+        self.assertEqual(lane_sim.pick_device_type(listing, supported=supported),
+                         'com.apple.CoreSimulator.SimDeviceType.iPhone-18')
+        with self.assertRaises(lane_sim.BootError) as caught:
+            lane_sim.pick_device_type(listing, supported={'com.apple.CoreSimulator.SimDeviceType.iPad-Pro'})
+        self.assertIn('runtime', str(caught.exception))
+
+    def test_the_runtime_listing_from_simctl_limits_the_types(self):
+        runtime = 'com.apple.CoreSimulator.SimRuntime.iOS-27-1'
+        types = self.listing('iPhone-17', 'iPhone-18')
+        runtimes = {'runtimes': [
+            {'identifier': 'com.apple.CoreSimulator.SimRuntime.iOS-27-0', 'supportedDeviceTypes': [
+                {'identifier': 'com.apple.CoreSimulator.SimDeviceType.iPhone-17'}]},
+            {'identifier': runtime, 'supportedDeviceTypes': [
+                {'identifier': 'com.apple.CoreSimulator.SimDeviceType.iPhone-18'}]}]}
+        with tempfile.TemporaryDirectory() as directory:
+            fake = Path(directory) / 'simctl'
+            fake.write_text('#!/bin/sh\nif [ "$2" = runtimes ]; then echo \'' + json.dumps(runtimes) + '\'\n'
+                            'else echo \'' + json.dumps(types) + '\'; fi\n')
+            fake.chmod(0o755)
+            with mock.patch.dict(os.environ, {'SM_LANE_SIMCTL': str(fake)}):
+                self.assertEqual(lane_sim.device_type(runtime), 'com.apple.CoreSimulator.SimDeviceType.iPhone-18')
+                self.assertEqual(lane_sim.device_type('com.apple.CoreSimulator.SimRuntime.iOS-27-0'), lane_sim.DEVICE_TYPE)
+                # A runtime the listing does not mention (or one with no list) does not limit the choice.
+                self.assertEqual(lane_sim.device_type('com.apple.CoreSimulator.SimRuntime.iOS-99-0'), lane_sim.DEVICE_TYPE)
+
+    def test_a_simctl_that_cannot_list_types_keeps_the_usual_phone(self):
+        for fake in ('true', 'false', 'echo not-json'):
+            with self.subTest(fake=fake), mock.patch.dict(os.environ, {'SM_LANE_SIMCTL': fake}):
+                self.assertEqual(lane_sim.device_type(), lane_sim.DEVICE_TYPE)
+
+    def test_the_listing_from_simctl_decides(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fake = Path(directory) / 'simctl'
+            fake.write_text('#!/bin/sh\necho \'' + json.dumps(self.listing('iPhone-18', 'iPad-Pro')) + '\'\n')
+            fake.chmod(0o755)
+            with mock.patch.dict(os.environ, {'SM_LANE_SIMCTL': str(fake)}):
+                self.assertEqual(lane_sim.device_type(), 'com.apple.CoreSimulator.SimDeviceType.iPhone-18')
+
+
+class RuntimePairTests(unittest.TestCase):
+    """The runtime and the phone are chosen together: a runtime that cannot take any usual phone is not picked while
+    another can (the hosted xcode-27 image has iOS 27.0 and 27.1, and 27.1 offered only iPhone-Duo)."""
+
+    PREFIX = 'com.apple.CoreSimulator.'
+
+    def runtimes(self, **versions):
+        """versions: 'iOS-27-1' -> list of supported type names, or None for a runtime that does not list any."""
+        entries = []
+        for name, types in versions.items():
+            platform, *numbers = name.split('-')
+            entry = {'identifier': f'{self.PREFIX}SimRuntime.{name}', 'isAvailable': True, 'platform': platform,
+                     'version': '.'.join(numbers)}
+            if types is not None:
+                entry['supportedDeviceTypes'] = [{'identifier': f'{self.PREFIX}SimDeviceType.{t}'} for t in types]
+            entries.append(entry)
+        return {'runtimes': entries}
+
+    def pick(self, listing, major=27):
+        return lane_sim.pick_runtime(listing, major)
+
+    def test_table(self):
+        rows = [
+            ('the pinned phone is only on the older runtime', {'iOS-27-0': ['iPhone-17', 'iPhone-Air'], 'iOS-27-1': ['iPhone-Duo']},
+             'iOS-27-0'),
+            ('both have it: the newest runtime', {'iOS-27-0': ['iPhone-17'], 'iOS-27-1': ['iPhone-17', 'iPhone-18']}, 'iOS-27-1'),
+            ('no runtime has it: the newest with a plain phone', {'iOS-27-0': ['iPhone-16'], 'iOS-27-1': ['iPhone-18']}, 'iOS-27-1'),
+            ('a Duo-only newest is passed over for a plain phone', {'iOS-27-0': ['iPhone-16', 'iPad-Pro'], 'iOS-27-1': ['iPhone-Duo']},
+             'iOS-27-0'),
+            ('Pro and Air are not plain phones', {'iOS-27-0': ['iPhone-17-Pro', 'iPhone-Air'], 'iOS-27-1': ['iPhone-18-Pro']},
+             'iOS-27-1'),
+            ('a runtime that lists nothing is not limited', {'iOS-27-0': ['iPhone-Duo'], 'iOS-27-1': None}, 'iOS-27-1'),
+            ('no usable phone anywhere: the newest, so the clone step reports it', {'iOS-27-0': ['iPhone-Duo'],
+                                                                                    'iOS-27-1': ['iPad-Pro']}, 'iOS-27-1'),
+            ('other platforms are ignored', {'iOS-27-0': ['iPhone-17'], 'tvOS-27-0': ['Apple-TV-4K']}, 'iOS-27-0'),
+        ]
+        for label, versions, expected in rows:
+            with self.subTest(label):
+                self.assertEqual(self.pick(self.runtimes(**versions)), f'{self.PREFIX}SimRuntime.{expected}')
+
+    def test_only_the_pinned_major_and_available_runtimes_count(self):
+        listing = self.runtimes(**{'iOS-26-4': ['iPhone-17'], 'iOS-27-0': ['iPhone-17']})
+        self.assertEqual(self.pick(listing, 26), f'{self.PREFIX}SimRuntime.iOS-26-4')
+        self.assertIsNone(self.pick(listing, 28))
+        listing['runtimes'][1]['isAvailable'] = False
+        self.assertIsNone(self.pick(listing, 27))
+
+    def test_the_failure_lists_every_runtime_and_its_phones(self):
+        listing = self.runtimes(**{'iOS-27-0': ['iPhone-Duo', 'iPad-Pro'], 'iOS-27-1': ['iPhone-Duo']})
+        with tempfile.TemporaryDirectory() as directory:
+            fake = Path(directory) / 'simctl'
+            fake.write_text('#!/bin/sh\nif [ "$2" = runtimes ]; then echo \'' + json.dumps(listing) + '\'\n'
+                            'else echo \'' + json.dumps(DeviceTypeTests.listing('iPhone-17', 'iPhone-Duo', 'iPad-Pro')) + '\'; fi\n')
+            fake.chmod(0o755)
+            with mock.patch.dict(os.environ, {'SM_LANE_SIMCTL': str(fake), 'SM_LANE_IOS_MAJOR': '27'}):
+                runtime = lane_sim.newest_runtime(27)
+                with self.assertRaises(lane_sim.BootError) as caught:
+                    lane_sim.device_type(runtime)
+        message = str(caught.exception)
+        self.assertIn('iOS-27-0: iPhone-Duo', message)
+        self.assertIn('iOS-27-1: iPhone-Duo', message)
+
+
 class TemplateTests(unittest.TestCase):
     def test_failed_template_is_deleted_without_clone_or_completion_marker(self):
         commands = []
