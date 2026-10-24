@@ -636,6 +636,18 @@ class LaneSimTests(unittest.TestCase):
             self.hosted_boot(*(f'AppIntentsLiveEntityService-2026-10-23-21185{n}.ips' for n in range(3)))
         self.assertIn(UDID, lane_sim.unsafe_devices())
 
+    def test_the_crash_check_during_tests_still_counts_the_tolerated_daemon(self):
+        # #2579 audit: verify-tests.py and check_posterboard_repair.py call new_crash while the app tests run.
+        # The hosted boot's exemption must not hide this daemon's crashes there, or a flood needs 5 reports, not 3.
+        folder = Path(self.env['SM_LANE_CRASH_REPORTS'])
+        (folder / 'AppIntentsLiveEntityService-2026-10-23-211854.ips').write_text(
+            f'{{"app_name":"x"}}\n{{"path": "com.apple.CoreSimulator.SimDevice.{UDID}"}}')
+        with mock.patch.dict(os.environ, {'SM_LANE_GITHUB_HOSTED': '1',
+                                          'SM_LANE_EVIDENCE_DIR': str(Path(self.temporary.name) / 'evidence')}), \
+                mock.patch.dict(lane_sim._tolerated_reports, clear=True):
+            self.assertEqual(lane_sim.new_crash(folder, {}, UDID).name, 'AppIntentsLiveEntityService-2026-10-23-211854.ips')
+            self.assertEqual(lane_sim._tolerated_reports, {})
+
     def test_report_process_reads_the_name_before_the_date(self):
         for name, process in [('AppIntentsLiveEntityService-2026-10-23-211854.ips', 'AppIntentsLiveEntityService'),
                               ('AppIntentsLiveEntityService-2026-10-23-211854-2.ips', 'AppIntentsLiveEntityService'),

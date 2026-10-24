@@ -394,7 +394,9 @@ def keep_tolerated_report(path: Path) -> Path | None:
         return None
 
 
-def new_crash(reports: Path, baseline: dict, udid: str, note=None) -> Path | None:
+def new_crash(reports: Path, baseline: dict, udid: str, note=None, tolerate: bool = False) -> Path | None:
+    """The first new crash report for this device. Only the boot passes tolerate=True: the crash checks that run
+    during the tests (verify-tests.py, check_posterboard_repair.py) count every report, the tolerated daemon's too."""
     if not reports.is_dir():
         return None
     for path in crash_reports(reports):
@@ -403,7 +405,7 @@ def new_crash(reports: Path, baseline: dict, udid: str, note=None) -> Path | Non
             if baseline.get(path) == (stat.st_mtime_ns, stat.st_size):
                 continue
             if f'com.apple.CoreSimulator.SimDevice.{udid}' in path.read_text(errors='replace') \
-                    and not tolerated_boot_crash(path, udid, note):
+                    and not (tolerate and tolerated_boot_crash(path, udid, note)):
                 return path
         except OSError:
             continue
@@ -800,7 +802,8 @@ def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lo
                 try:
                     tolerated = wait_until_ready(udid, lambda: ready.poll() is not None, SpringBoardMonitor(udid),
                                                  lambda: new_crash(reports, baseline, udid,
-                                                                   lambda text: print(f'[lane] {text}', file=out, flush=True)),
+                                                                   lambda text: print(f'[lane] {text}', file=out, flush=True),
+                                                                   tolerate=True),
                                                  timeout, out=out,
                                                  tolerate_until=FIRST_BOOT_TOLERANCE if first_boot else None,
                                                  record=lambda text: record_event(udid, text))
