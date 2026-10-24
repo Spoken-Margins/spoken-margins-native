@@ -179,6 +179,16 @@ Checks the repository's JSON contracts. Installed from requirements-dev.txt with
 
 Parses the workflow files in scripts/tests/test_workflow_files.py. Installed from requirements-dev.txt; build-time only and none ships.
 
+### lxml (Python) 6.1.3
+
+- Licence: BSD-3-Clause
+- From: lxml developers
+- Source: <https://github.com/lxml/lxml>
+- Where: `research/C1/tools`
+- Licence text: <https://github.com/lxml/lxml/blob/master/doc/licenses/BSD.txt>
+
+Parses HTML in the research ground-truth tests (research/C1/tools). Installed from requirements-dev.txt so the hosted research step really runs them (#2596); build-time only and none ships.
+
 ### Design prototypes' npm packages
 
 - Licence: Each package's own licence, installed by npm

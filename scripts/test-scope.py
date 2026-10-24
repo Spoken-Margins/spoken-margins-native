@@ -24,6 +24,8 @@ APP_TESTS = 'App/SpokenMarginsAppTests/'
 UI_TESTS = 'App/SpokenMarginsAppUITests/'
 SESSIONKIT = 'Packages/SessionKit/'
 SESSIONKIT_TESTS = SESSIONKIT + 'Tests/'
+# The developer tools built on SessionKit, in their own package (#1873). The app never links them.
+SESSIONKIT_TOOLS = 'Packages/SessionKitTools/'
 
 T0_PREFIXES = ('docs/', 'research/', 'Design/', 'references/', 'tmp/', 'Site/', '.claude/', '.github/',
                'Contracts/docs/')
@@ -81,6 +83,7 @@ REASONS = {
     'browser': 'browser extraction JavaScript',
     'sessionkit': 'SessionKit logic',
     'sessionkit-tests': 'SessionKit tests',
+    'sessionkit-tools': 'SessionKit developer tools (coop-packet, phone-plan)',
     'public-api': 'SessionKit public API',
     'package-manifest': 'SessionKit package manifest',
     'audio': 'audio session, players or playback state (escalated one tier)',
@@ -203,6 +206,8 @@ def classify_path(root, path, diff_text='', build_script_paths=frozenset()):
             '.venv/bin/python scripts/validate-contracts.py',
             '.venv/bin/python scripts/validate-surface-contracts.py',
             '.venv/bin/python scripts/test_inventory.py'])
+    if path.startswith(SESSIONKIT_TOOLS):
+        return Finding(path, 1, 'sessionkit-tools', commands=['bash scripts/run-sessionkit-tests.sh --tools'])
     if path.startswith(SESSIONKIT):
         if path.startswith(SESSIONKIT_TESTS):
             return Finding(path, 1, 'sessionkit-tests', swift_filters=test_classes([root / path]))

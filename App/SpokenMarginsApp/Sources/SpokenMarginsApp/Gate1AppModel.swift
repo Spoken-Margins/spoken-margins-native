@@ -2741,12 +2741,12 @@ final class Gate1AppModel: ObservableObject {
                 frontierSignatures[voice.rawValue] = signature
             }
             let root = try applicationSupportDirectory().appendingPathComponent("PreparedAudio")
+            let item = try store.loadItem(id: itemID)
+            guard let text = PreparedSpeechHooks.preparedText(of: item, in: store), !text.isEmpty else { return }
+            let source = try store.loadCanonicalSource(itemId: itemID)
+            let canonical = source?.segments.map(\.text).joined(separator: "\n\n") ?? ""
             while !Task.isCancelled, renderFrontierKey == key {
-                let item = try store.loadItem(id: itemID)
-                guard let text = PreparedSpeechHooks.preparedText(of: item, in: store), !text.isEmpty else { return }
-                let source = try store.loadCanonicalSource(itemId: itemID)
                 let manifest = try store.loadPreparedAudioManifests(itemId: itemID).first { $0.signature == signature }
-                let canonical = source?.segments.map(\.text).joined(separator: "\n\n") ?? ""
                 let fraction = await Task.detached(priority: .utility) {
                     PreparedRenderFrontier.fraction(manifest: manifest, signature: signature, sourceText: text, canonicalSourceText: canonical, root: root)
                 }.value
