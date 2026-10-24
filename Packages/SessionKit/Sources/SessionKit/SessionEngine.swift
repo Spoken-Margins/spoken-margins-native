@@ -11,7 +11,15 @@ public final class SessionEngine {
     private static let storedDurationTruncationMs = 999
     public private(set) var profile: RuntimeCapabilityProfile
     public private(set) var snapshot = SessionSnapshot()
-    public private(set) var currentSession: Session?
+    public private(set) var currentSession: Session? {
+        // A coalesced progress tick (#2509) leaves the newest place only in memory. Whatever replaces the session,
+        // the place is written first.
+        didSet {
+            guard let unsaved = unsavedProgressSessionId, let old = oldValue, old.id == unsaved,
+                  currentSession?.id != unsaved else { return }
+            try? persistSession(old)
+        }
+    }
     public private(set) var currentItem: Item? {
         // An article that plays its publisher's recording is always the playing copy in memory, however
         // the item was loaded (#547).
@@ -114,6 +122,9 @@ public final class SessionEngine {
     private var transcriptsDeletedSinceRequest: Set<String> = []
     /// How the last saved Margin chose where its source resumes (#806), for diagnostics.
     private var lastMarginRejoin: String?
+    /// The place the system paused a podcast or recording at, and when, until it is resumed or the listener moves it
+    /// (#1975). Resuming after the interruption steps back from here by how long it lasted.
+    private var systemPause: (sessionId: String, mediaTimeMs: Int, at: Date)?
     /// Where the last Back tap in text landed, so the next one can tell it is a repeat (#1102). Only listening on
     /// from there keeps it: every other change of position calls `forgetBackTapLanding()` (#1122).
     private var lastBackTapLanding: (targetKey: String, charOffset: Int)?
@@ -316,6 +327,7 @@ public final class SessionEngine {
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("pause")
         }
+        systemPause = nil
         session = try syncCurrentPositionFromAudio(session)
         currentSession = session
         try persistSession(session)
@@ -337,13 +349,46 @@ public final class SessionEngine {
         session = try syncCurrentPositionFromAudio(session)
         currentSession = session
         try persistSession(session)
+        systemPause = Self.isTimeBased(session) ? session.position.mediaTimeMs.map { (session.id, $0, now()) } : nil
         publish(status: .paused, phase: session.phase)
         return snapshot
+    }
+
+    /// Resumes after the system ended an interruption. A podcast or recording first steps back by
+    /// `InterruptionRewind` for how long it was paused, so the listener picks up the thread; anything else
+    /// resumes as `resumePlayback()` does. The step happens once: a retry of a refused resume starts from the
+    /// stepped-back place (#1975).
+    @discardableResult
+    public func resumePlaybackAfterInterruption() throws -> SessionSnapshot {
+        defer { systemPause = nil }
+        guard let pause = systemPause, var session = currentSession, snapshot.status == .paused,
+              session.id == pause.sessionId, session.position.mediaTimeMs == pause.mediaTimeMs else {
+            return try resumePlayback()
+        }
+        let rewindMs = InterruptionRewind.rewindMs(pausedForSeconds: now().timeIntervalSince(pause.at))
+        // An episode that ended as the call came in is finished, not replayed from its tail (#2097).
+        if rewindMs > 0, !startsInTheLastInstantOfMedia(session) {
+            forgetBackTapLanding()
+            // Never into a chapter the listener skipped: a tap on chapter 3 followed by a call must not resume in chapter 2.
+            let timeline = currentWatchPackage?.timeline ?? sourceTranscriptTimeline(for: session)
+            let chapterStartMs = timeline.flatMap { mediaChapter(at: pause.mediaTimeMs, timeline: $0)?.startMs } ?? 0
+            session = mediaSession(session, movedTo: max(chapterStartMs, pause.mediaTimeMs - rewindMs))
+            currentSession = session
+            try persistSession(session)
+            protectPlaybackPosition(for: session)
+        }
+        return try resumePlayback()
+    }
+
+    /// Podcasts and recordings are heard on a clock; text is read from a character, and resumes at its sentence.
+    private static func isTimeBased(_ session: Session) -> Bool {
+        session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia
     }
 
     @discardableResult
     public func resumePlayback() throws -> SessionSnapshot {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
+        systemPause = nil
         try requireNavigationAllowed("resumePlayback")
         try requirePlayback("resumePlayback")
         guard var session = currentSession else {
@@ -493,8 +538,19 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// How long a steady playback tick may keep its place in memory before it is saved (#2509). A kill loses at
+    /// most this much; pause, stop, a lifecycle sync, a status change and a change of session save at once.
+    static let progressWriteInterval: TimeInterval = 5
+
+    /// The session whose newest place is in memory but not yet saved.
+    private var unsavedProgressSessionId: String?
+    private var lastProgressWriteAt: [String: Date] = [:]
+
+    /// - Parameter coalescingWrites: the foreground ticker (about twice a second) passes true so a steady advance
+    ///   writes the Session row at most every `progressWriteInterval` seconds instead of on every tick. Every other
+    ///   caller leaves it false and saves a moved place at once.
     @discardableResult
-    public func syncPlaybackProgress() throws -> SessionSnapshot {
+    public func syncPlaybackProgress(coalescingWrites: Bool = false) throws -> SessionSnapshot {
         guard var session = currentSession else {
             return snapshot
         }
@@ -594,9 +650,20 @@ public final class SessionEngine {
             || updated.completionPercent != session.completionPercent
             || updated.phase != session.phase
             || updated.status != session.status {
+            let steadyAdvance = updated.phase == session.phase && updated.status == session.status && !playbackCompleted
+            let savedRecently = lastProgressWriteAt[session.id].map { now().timeIntervalSince($0) < Self.progressWriteInterval } ?? false
+            let deferWrite = coalescingWrites && steadyAdvance && savedRecently
             session = updated
-            currentSession = session
-            try persistSession(session)
+            if deferWrite {
+                unsavedProgressSessionId = session.id
+                currentSession = session
+            } else {
+                currentSession = session
+                try persistSession(session)
+            }
+        }
+        if !coalescingWrites, unsavedProgressSessionId == session.id, let held = currentSession {
+            try persistSession(held) // a lifecycle sync saves the place the ticker has been holding
         }
         let reconciledStatus: PlaybackStatus
         if playbackCompleted || (snapshot.status == .playing && transportState == .paused) {
@@ -3082,19 +3149,40 @@ public final class SessionEngine {
 
     /// What an export reads before it shapes anything: the session, its item (with the whole text), the item's
     /// transcript timeline (megabytes for a podcast), and the session's Margins and turns. Exporting N Margins of
-    /// one session reads this once (#2508) instead of once per Margin.
+    /// one session reads this once (#2508) instead of once per Margin. The timeline is read on first use (#2506):
+    /// only a recording's context, the full source text or the Listening Map's length need it, so an article's
+    /// export never decodes one.
     struct ExportSource {
         var session: Session
         var item: Item
-        var sourceTimeline: TranscriptTimeline?
+        var sourceTimeline: LazyTimeline
         var allInterjections: [Interjection]
         var allTurns: [ConversationTurn]
+    }
+
+    /// A transcript timeline read at most once, and only when something asks for it.
+    final class LazyTimeline {
+        private let load: () throws -> TranscriptTimeline?
+        private var loaded: TranscriptTimeline??
+        /// How many times the store was asked, for a test to pin (#2506).
+        private(set) var loads = 0
+
+        init(_ load: @escaping () throws -> TranscriptTimeline?) { self.load = load }
+
+        func value() throws -> TranscriptTimeline? {
+            if let loaded { return loaded }
+            loads += 1
+            let timeline = try load()
+            loaded = .some(timeline)
+            return timeline
+        }
     }
 
     func loadExportSource(sessionId: String?) throws -> ExportSource {
         let session = try resolveSession(sessionId)
         let item = try repository.loadItem(id: session.itemId)
-        let sourceTimeline = try repository.loadTranscriptTimeline(itemId: item.id)?.timeline
+        let itemId = item.id
+        let sourceTimeline = LazyTimeline { [repository] in try repository.loadTranscriptTimeline(itemId: itemId)?.timeline }
         let allInterjections = try repository.loadInterjections(sessionId: session.id)
             .filter { $0.status == "active" }
         let activeInterjectionIDs = Set(allInterjections.map(\.id))
@@ -3109,16 +3197,21 @@ public final class SessionEngine {
     }
 
     func buildExport(options: ExportOptions, source: ExportSource) throws -> SessionExport {
-        let session = source.session, item = source.item, sourceTimeline = source.sourceTimeline
+        let session = source.session, item = source.item
         let allInterjections = source.allInterjections, allTurns = source.allTurns
         let exposesFullSourceText = options.includeFullText && !isNativeAudioSource(item)
+        let interjections = options.includeInterjections ? scopedExportInterjections(options: options, session: session, interjections: allInterjections) : []
+        // Read only when this export uses it (#2506): the full text of a transcribed source, the words around a
+        // recording's Margins, or the Listening Map's length. An article's Margin note needs none of them.
+        let needsTimeline = exposesFullSourceText || options.includeListeningMap
+            || (isNativeAudioSource(item) && interjections.contains { $0.targetType == .item && $0.anchor.mediaTimeMs != nil })
+        let sourceTimeline = try needsTimeline ? source.sourceTimeline.value() : nil
         let sourceTranscript = exposesFullSourceText
             ? sourceTimeline?.segments
                 .sorted { $0.startMs < $1.startMs }
                 .map(\.text)
                 .joined(separator: " ")
             : nil
-        let interjections = options.includeInterjections ? scopedExportInterjections(options: options, session: session, interjections: allInterjections) : []
         let turns = options.includeTurns ? scopedExportTurns(options: options, turns: allTurns, interjections: interjections) : []
         // The page goes with a paper's citation (#206), so the structured document is only
         // read for an item that has one. Margins anchor into Item.text, so the page is only
@@ -4675,7 +4768,7 @@ public final class SessionEngine {
             beforeStart = previous
         }
         // Lines that end no sentence (a heading, a title page's names and emails) are not part of the passage.
-        beforeStart = max(beforeStart, unsentencedBlockEnd(in: text, before: split))
+        beforeStart = max(beforeStart, unsentencedBlockEnd(in: text, before: split, notBefore: beforeStart))
         for _ in 0..<Self.textAnchorShoulderSentenceCount {
             let next = nextBoundary(after: afterEnd, unit: "sentence", text: text)
             if next == afterEnd { break }
@@ -4698,16 +4791,62 @@ public final class SessionEngine {
     /// A longer line is prose, not a heading or a name.
     private static let unsentencedLineLimit = 120
 
-    /// The line starting at `from` goes on from the one before it (a hard-wrapped line): its first letter is lower case.
-    private func continues(_ characters: [Character], from: Int, before limit: Int) -> Bool {
+    /// Words a sentence doesn't end on. A line ending in one goes on in the next line, whatever that line starts with.
+    private static let runOnWords: Set<String> = [
+        "the", "a", "an", "of", "and", "or", "to", "in", "on", "for", "with", "by", "that", "as", "at", "from",
+        "which", "is", "are", "was", "were", "be", "this", "these", "those", "its", "their", "than", "but", "into"
+    ]
+    /// A hard-wrapped body line is near the page's width; a short line ending in a comma is a list of names, and one
+    /// ending in a function word or a hyphen is a heading (`Who We Are`).
+    private static let runOnLineLength = 40
+
+    /// The line starting at `from` goes on from the one before it (a hard-wrapped line): its first letter is lower
+    /// case. Only blanks are skipped, so an indented continuation counts and a blank line doesn't.
+    private func continues(_ characters: [Character], from: Int) -> Bool {
         var index = from
-        while index < min(limit, characters.count), characters[index].isWhitespace { index += 1 }
+        while index < characters.count, characters[index].isWhitespace, !characters[index].isNewline { index += 1 }
         return index < characters.count && characters[index].isLowercase
     }
 
-    private func unsentencedBlockEnd(in text: String, before offset: Int) -> Int {
-        let characters = Array(text)
-        var lineStart = min(max(0, offset), characters.count)
+    /// The line `characters[start..<end]` ends a sentence, or looks like it was cut mid-sentence by the page's width.
+    private func lineEndsUnsentenced(_ characters: ArraySlice<Character>, followedByContinuation: Bool) -> Bool {
+        guard let lastIndex = characters.lastIndex(where: { !$0.isWhitespace }) else { return false }
+        let last = characters[lastIndex]
+        if Self.sentenceEndings.contains(last) { return false }
+        if endsInFootnoteNumber(characters[...lastIndex]) { return false }
+        if followedByContinuation { return false }
+        if characters.count >= Self.runOnLineLength {
+            if last == "-" || last == "," { return false }
+            let word = String(characters[...lastIndex].reversed().prefix(while: { $0.isLetter }).reversed()).lowercased()
+            if !word.isEmpty, Self.runOnWords.contains(word) { return false }
+        }
+        return characters.count <= Self.unsentencedLineLimit
+    }
+
+    /// A footnote number after the full stop that ends a word: `mechanism.1`. A section number (`3.1`, `A.1`) isn't one.
+    private func endsInFootnoteNumber(_ characters: ArraySlice<Character>) -> Bool {
+        let digits = characters.reversed().prefix(while: { $0.isNumber }).count
+        let stop = characters.endIndex - digits - 1
+        guard digits > 0, stop - 2 >= characters.startIndex, Self.sentenceEndings.contains(characters[stop]) else { return false }
+        if characters[stop - 1].isLetter { return characters[stop - 2].isLetter }
+        return !characters[stop - 1].isNumber
+    }
+
+    /// Looks back from `offset` only as far as `floor` (the shoulder's own start): anything before it is dropped by the
+    /// caller, so the scan reads and copies just the lines between the two.
+    private func unsentencedBlockEnd(in text: String, before offset: Int, notBefore floor: Int) -> Int {
+        let offsetIndex = text.index(text.startIndex, offsetBy: max(0, offset), limitedBy: text.endIndex) ?? text.endIndex
+        let floorIndex = text.index(text.startIndex, offsetBy: max(0, floor), limitedBy: text.endIndex) ?? text.endIndex
+        guard floorIndex < offsetIndex else { return floor }
+        // The first line is read whole, so a long line cut at `floor` isn't mistaken for a heading.
+        let windowStart = text[..<floorIndex].lastIndex(where: { $0.isNewline }).map { text.index(after: $0) } ?? text.startIndex
+        // The window runs on to the first letter of the Margin's line, which says whether the line before it runs on.
+        var windowEnd = offsetIndex
+        while windowEnd < text.endIndex, text[windowEnd].isWhitespace, !text[windowEnd].isNewline { windowEnd = text.index(after: windowEnd) }
+        if windowEnd < text.endIndex { windowEnd = text.index(after: windowEnd) }
+        let characters = Array(text[windowStart..<windowEnd])
+        let base = floor - text.distance(from: windowStart, to: floorIndex)
+        var lineStart = text.distance(from: windowStart, to: offsetIndex)
         while lineStart > 0, !characters[lineStart - 1].isNewline { lineStart -= 1 }
         var following = lineStart // the start of the line after the one being read
         var end = lineStart
@@ -4715,14 +4854,13 @@ public final class SessionEngine {
             end -= 1 // the line break that ends the previous line
             var start = end
             while start > 0, !characters[start - 1].isNewline { start -= 1 }
-            if let last = characters[start..<end].last(where: { !$0.isWhitespace }) {
-                if !Self.sentenceEndings.contains(last), end - start <= Self.unsentencedLineLimit,
-                   !continues(characters, from: following, before: lineStart) { return following }
-                following = start
+            if lineEndsUnsentenced(characters[start..<end], followedByContinuation: continues(characters, from: following)) {
+                return base + following
             }
+            if characters[start..<end].contains(where: { !$0.isWhitespace }) { following = start }
             end = start
         }
-        return 0
+        return floor
     }
 
     private func completedWordBoundary(in text: String, at rawOffset: Int) -> Int {
@@ -6117,6 +6255,8 @@ public final class SessionEngine {
         }
         try repository.saveSession(storedForm(of: stamped))
         lastSavedMediaTimeMs[stamped.id] = stamped.position.mediaTimeMs
+        lastProgressWriteAt[stamped.id] = timestamp
+        if unsavedProgressSessionId == stamped.id { unsavedProgressSessionId = nil }
         if stamped.completionPercent > 98,
            completionPercentIsMeasured(stamped),
            var item = try? repository.loadItem(id: stamped.itemId),

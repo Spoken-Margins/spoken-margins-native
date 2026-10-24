@@ -1028,7 +1028,7 @@ final class Gate1AppModel: ObservableObject {
             let previousTargetId = self.snapshot.targetId
             let previousEngagementProgress = self.snapshot.currentPlaybackProgressPercent
             let updated = self.snapshotReflectingTextAudioPrewarmStatus(
-                try engine.syncPlaybackProgress(),
+                try engine.syncPlaybackProgress(coalescingWrites: true),
                 itemId: self.activeItemId
             )
             self.recordMediaSeekEvidence(from: engine)
@@ -3175,15 +3175,13 @@ final class Gate1AppModel: ObservableObject {
 
     func refreshBatchExportRows(store: SQLiteSessionStore) throws {
         let itemsById = Dictionary(uniqueKeysWithValues: try store.listItemSummaries().map { ($0.id, $0) })
+        let activeCounts = try store.activeInterjectionCountsBySession()
         batchExportRows = try store.loadSessions().compactMap { session in
             guard let item = itemsById[session.itemId] else { return nil }
-            let interjectionCount = try store.loadInterjections(sessionId: session.id)
-                .filter { $0.status == "active" }
-                .count
             return BatchSessionExportRow(
                 session: session,
                 itemTitle: item.title,
-                interjectionCount: interjectionCount
+                interjectionCount: activeCounts[session.id] ?? 0
             )
         }
         let availableIds = Set(batchExportRows.map(\.id))
@@ -3191,7 +3189,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func loadDeletedLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {
-        try store.listDeletedItems().map { item in
+        try store.listDeletedItemSummaries().map { item in
             LibraryItemRow(id: item.id, title: item.title, status: "Recently deleted", canDelete: true)
         }
     }
@@ -3424,20 +3422,6 @@ final class Gate1AppModel: ObservableObject {
         } catch {
             reportFailure(error, context: "Shared Margin settings could not be saved")
         }
-    }
-
-    func interjectionAudioEvidence(for path: String) -> String {
-        guard let url = resolvedInterjectionAudioURL(for: path) else {
-            return "duration_ms=unknown;bytes=unknown"
-        }
-        let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
-        #if canImport(AVFoundation)
-        if let audioFile = try? AVAudioFile(forReading: url), audioFile.processingFormat.sampleRate > 0 {
-            let durationMs = Int((Double(audioFile.length) / audioFile.processingFormat.sampleRate * 1000).rounded())
-            return "duration_ms=\(durationMs);bytes=\(bytes)"
-        }
-        #endif
-        return "duration_ms=unknown;bytes=\(bytes)"
     }
 
     func recordAnchorCaptureDiagnostics(for interjection: Interjection) {

@@ -21,13 +21,13 @@ whose every mention (strings included; `@objc` and `override` functions never) s
 How it decides what runs on the main thread (a heuristic over source text, no compiler; misses are listed below):
 - A scope is main when its type or function is `@MainActor`, the type conforms to View/App/Scene/UIKit classes, or it is
   an extension of such a type in any file (`Gate1AppModel+*.swift`), or its closure is `Task { @MainActor in`,
-  `MainActor.run` or `DispatchQueue.main`. It is off the main thread in `Task.detached`, `nonisolated async`
+  `MainActor.run` or `DispatchQueue.main`. It is off the main thread in `Task.detached` (or `Self.offMain { }`), `nonisolated async`
   functions, actors, `DispatchQueue.global()`, a queue the file made with `DispatchQueue(label:…)` (`writer.async { }`)
   and `addTask`. A `Task { }` and every other closure keep their
   surroundings' isolation.
 - A sync helper (`nonisolated`, or in a plain type) runs on its caller's thread. When the main thread calls one, the
   call is a row ("via Type.helper") carrying the helper's own reads, found through up to six levels of calls.
-- A row is keyed by file, enclosing function, API and class, not by line, so editing nearby code never breaks the
+- A row is keyed by enclosing type.function, API and class, not by line or file, so editing nearby code never breaks the
   ratchet. A `for`/`while`/`.map` body marks its rows `in_loop`. A `Task { }` on the main thread that contains a
   read and no `labels.scoped(` gets one extra `unlabelled-main-task` row: the hang probe reports it as
   `operation: none` (#2255).
@@ -358,7 +358,7 @@ def classify(header: str, after: str) -> Scope:
         scope.loop = bool(re.match(r'^(?:\w+:\s*)?(for|while|repeat)\b', h))
         return scope
     # closures and everything else
-    if re.search(r'\bTask\s*\.\s*detached\b', h):
+    if re.search(r'\bTask\s*\.\s*detached\b|\boffMain\b', h):  # `offMain` is the app's wrapper around Task.detached
         scope.kind, scope.iso = 'task', 'off'
     elif TASK_HEADER.search(h):
         scope.kind = 'task'
@@ -906,7 +906,9 @@ def scan(files, apis, off_props=frozenset()):
 
 
 def key_of(row):
-    return (row['file'], row['function'], row['api'], row['class'])
+    """A row's identity: enclosing type.function, API and class. Not the file, so moving a read to another file (a
+    split, an extension move) keeps its baseline row (#2256). The file is kept in the baseline for the reader only."""
+    return (row['function'], row['api'], row['class'])
 
 
 def counts(rows):
@@ -921,14 +923,14 @@ def load_baseline(path: Path):
     if not path.exists():
         return {}
     data = json.loads(path.read_text())
-    return {(e['file'], e['function'], e['api'], e['class']): e for e in data['entries']}
+    return {(e['function'], e['api'], e['class']): e for e in data['entries']}
 
 
 def write_baseline(path: Path, entries):
     head = {'version': 1, 'note': 'Main-thread store/file/audio reads that existed when the scanner arrived (#2257). '
-            'Keyed by file, function, API and class. A fix deletes rows (scripts/main_thread_reads.py --update); a new row '
+            'Keyed by function, API and class (the file is informational, so moving code between files keeps its rows). A fix deletes rows (scripts/main_thread_reads.py --update); a new row '
             'needs --accept "reason". Do not add rows to make a check pass: move the read off the main thread.'}
-    lines = [json.dumps(e, sort_keys=True) for e in sorted(entries, key=lambda e: (e['file'], e['function'], e['api'], e['class']))]
+    lines = [json.dumps(e, sort_keys=True) for e in sorted(entries, key=lambda e: (e['function'], e['api'], e['class'], e['file']))]
     body = ',\n    '.join(lines)
     path.write_text(json.dumps(head, indent=2)[:-2].rstrip() + ',\n  "entries": [\n    ' + body + '\n  ]\n}\n')
 
@@ -1001,6 +1003,10 @@ def main(argv=None, root: Path = ROOT):
     new, stale = compare(rows, baseline)
     if args.update or args.accept:
         current = counts(rows)
+        files_of = {}
+        for r in rows:
+            if not r['debug']:
+                files_of.setdefault(key_of(r), r['file'])
         entries = []
         for key, n in current.items():
             old = baseline.get(key)
@@ -1009,8 +1015,12 @@ def main(argv=None, root: Path = ROOT):
             elif old:
                 entries.append({**old, 'count': min(n, old['count'])})
             elif args.accept:
-                entries.append({'file': key[0], 'function': key[1], 'api': key[2], 'class': key[3], 'count': n,
+                entries.append({'file': files_of[key], 'function': key[0], 'api': key[1], 'class': key[2], 'count': n,
                                 'reason': args.accept})
+        for e in entries:   # the file is informational: follow the code when it moves
+            k = (e['function'], e['api'], e['class'])
+            if k in files_of:
+                e['file'] = files_of[k]
         write_baseline(baseline_path, entries)
         print(f'baseline: {len(entries)} entries ({len(stale)} tightened, {len(new) if args.accept else 0} accepted)')
         return 0
@@ -1025,8 +1035,12 @@ def main(argv=None, root: Path = ROOT):
             for r in mine[:extra] if mine else []:
                 note = f" via {r['detail']}" if r.get('detail') else ''
                 print(f"  {r['file']}:{r['line']}  {r['function']}  {r['api']}  [{r['class']}]{note}")
-        print('Move the read off the main thread (SessionKit async, or Task.detached then publish back). A false positive '
-              'or a read that must stay goes in with: scripts/main_thread_reads.py --accept "one-line reason".')
+        print('Move the read off the main thread (SessionKit async, or Task.detached then publish back). If a row above is '
+              'a false positive or a read that must stay, accept it with:')
+        print('  python3 scripts/main_thread_reads.py --accept "one-line reason"')
+        print('  python3 scripts/main_thread_reads.py --update')
+        print('then commit scripts/main_thread_reads_baseline.json. (Rows are keyed by type.function, API and class, so a '
+              'read that only moved between files is never listed here.)')
         return 1
     print(f"main-thread-reads: ok ({summary['rows']} baselined rows, {len(files)} files)")
     return 0

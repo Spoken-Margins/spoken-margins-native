@@ -8,7 +8,7 @@
     "test:share-link": "node --test research/B4/server/internal/links/share-link-open.test.mjs"
   },
   "dependencies": {
-    "defuddle": "0.19.1"
+    "defuddle": "0.19.5"
   },
   "devDependencies": {
     "esbuild": "0.28.1",

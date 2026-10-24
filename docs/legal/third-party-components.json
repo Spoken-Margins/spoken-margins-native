@@ -66,7 +66,7 @@
     {
       "id": "defuddle",
       "name": "Defuddle",
-      "version": "0.19.1",
+      "version": "0.19.5",
       "license": "MIT",
       "distribution": "bundled",
       "by": "Steph Ango",
@@ -140,7 +140,7 @@
     {
       "id": "xmldom",
       "name": "@xmldom/xmldom",
-      "version": "0.9.10",
+      "version": "0.9.12",
       "license": "MIT",
       "distribution": "bundled",
       "by": "Christopher J. Brody and contributors",

@@ -16,6 +16,7 @@ final class LibraryQueryEngineTests: XCTestCase {
         var continuationProgressPercent: Int?
         var offlineState: LibraryOfflineStateFilter = .onlineOnly
         var addedAt: Date?
+        var publishedAt: Date?
         var lastListenedAt: Date?
         var storageRecencyRank = Int.max
         var sharedMargins = SharedMarginTally.none
@@ -104,6 +105,17 @@ final class LibraryQueryEngineTests: XCTestCase {
                             Row(id: "new", addedAt: new, storageRecencyRank: 9)], .init()), ["new", "old"])
     }
 
+    func testPublishedSortsNewestFirstAndUndatedLast() {
+        let old = Date(timeIntervalSince1970: 10)
+        let new = Date(timeIntervalSince1970: 20)
+        // An item added last but published first is not first under Published, and undated items follow the dated ones.
+        let rows = [Row(id: "undated-b"), Row(id: "old", addedAt: new, publishedAt: old),
+                    Row(id: "new", addedAt: old, publishedAt: new), Row(id: "undated-a")]
+        XCTAssertEqual(ids(rows, .init(sort: .published)), ["new", "old", "undated-a", "undated-b"])
+        XCTAssertEqual(ids(rows, .init(sort: .recentlyAdded)), ["old", "new", "undated-a", "undated-b"],
+                       "the Added sort is untouched by publication dates")
+    }
+
     func testEverySortBreaksTiesByID() {
         for sort in LibrarySort.allCases {
             XCTAssertEqual(ids([Row(id: "b"), Row(id: "a")], .init(sort: sort)), ["a", "b"])
@@ -148,7 +160,7 @@ final class LibraryQueryEngineTests: XCTestCase {
         XCTAssertEqual(LibraryOfflineStateFilter.allCases.map { LibraryQueryEngine.displayName($0.rawValue) },
                        ["All", "Preparing", "Ready Offline", "Needs Repreparation", "Online Only"])
         XCTAssertEqual(LibrarySort.allCases.map { LibraryQueryEngine.displayName($0.rawValue) },
-                       ["Recently Added", "Recently Listened", "Title", "Progress"])
+                       ["Recently Added", "Recently Listened", "Title", "Progress", "Published"])
         // The menu lives in the app target: it must ask the engine, not capitalize on its own.
         let screen = try TestInputs.text(.appSources, "ExperienceLibraryScreen.swift")
         XCTAssertTrue(screen.contains("LibraryQueryEngine.displayName(rawValue)"))
@@ -163,7 +175,7 @@ final class LibraryQueryEngineTests: XCTestCase {
         XCTAssertEqual(LibraryContentTypeFilter.allCases.map(\.rawValue), ["all", "text", "pdf", "epub", "article", "podcast", "audiobook"])
         XCTAssertEqual(LibraryListeningStateFilter.allCases.map(\.rawValue), ["all", "unfinished", "unplayed", "in_progress", "completed"])
         XCTAssertEqual(LibraryOfflineStateFilter.allCases.map(\.rawValue), ["all", "preparing", "ready_offline", "needs_repreparation", "online_only"])
-        XCTAssertEqual(LibrarySort.allCases.map(\.rawValue), ["recently_added", "recently_listened", "title", "progress"])
+        XCTAssertEqual(LibrarySort.allCases.map(\.rawValue), ["recently_added", "recently_listened", "title", "progress", "published"])
         // The writer stays app-side. Pin its literal keys without loading the iOS app.
         let source = try TestInputs.text(.appSources, "Gate1AppModel.swift")
         for key in ["libraryContentTypeFilter", "libraryListeningStateFilter", "libraryOfflineStateFilter", "librarySort"] {
