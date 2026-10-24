@@ -3102,11 +3102,12 @@ final class Gate1AppModel: ObservableObject {
             cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         }
         episodeMapPreparer.cancel(itemId: itemId)
-        if let directory = try? episodeMapDirectory(itemId: itemId),
-           FileManager.default.fileExists(atPath: directory.path) {
-            try? FileManager.default.removeItem(at: directory)
-        }
-        try? purgeTransientEpisodeTranscriptionCaches(itemId: itemId)
+        // The map folder holds the transient folder, so one removal covers both; the files go off the main thread (#2510).
+        Self.removeEpisodeTranscriptionFilesInBackground(
+            itemId: itemId,
+            directories: [try? episodeMapDirectory(itemId: itemId)].compactMap { $0 }
+        )
+        try? deleteTransientTranscriptAssets(itemId: itemId)
         for job in (try? store?.loadEpisodeMapPreparationJobs()) ?? [] where job.itemId == itemId {
             try? store?.deleteEpisodeMapPreparationJob(id: job.id)
         }
@@ -3116,12 +3117,12 @@ final class Gate1AppModel: ObservableObject {
         let expiration = now.addingTimeInterval(-7 * 24 * 60 * 60)
         for job in (try? store.loadEpisodeMapPreparationJobs()) ?? [] where
             job.isCancelled || job.requestedAt < expiration {
-            try? purgeTransientEpisodeTranscriptionCaches(itemId: job.itemId)
-            if (try? store.loadEditionFingerprintSpine(itemId: job.itemId)) == nil,
-               let directory = try? episodeMapDirectory(itemId: job.itemId),
-               FileManager.default.fileExists(atPath: directory.path) {
-                try? FileManager.default.removeItem(at: directory)
-            }
+            // Without a saved map the whole folder goes; with one, only the transient folder (#2510: off the main thread).
+            let directory = try? episodeMapDirectory(itemId: job.itemId)
+            let hasMap = (try? store.loadEditionFingerprintSpine(itemId: job.itemId)) != nil
+            let doomed = hasMap ? directory?.appending(path: "Transient", directoryHint: .isDirectory) : directory
+            Self.removeEpisodeTranscriptionFilesInBackground(itemId: job.itemId, directories: [doomed].compactMap { $0 })
+            try? deleteTransientTranscriptAssets(itemId: job.itemId)
             try? store.deleteEpisodeMapPreparationJob(id: job.id)
         }
     }
