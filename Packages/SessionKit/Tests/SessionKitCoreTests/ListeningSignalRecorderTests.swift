@@ -53,9 +53,10 @@ final class ListeningSignalRecorderTests: XCTestCase {
         if ProcessInfo.processInfo.environment["UPDATE_I4_FIXTURE"] == "1" {
             try written.write(to: Self.fixture(), atomically: true, encoding: .utf8)
         }
-        let published = try String(contentsOf: Self.fixture(), encoding: .utf8)
+        let fixture = try Self.fixture()
+        let published = try String(contentsOf: fixture, encoding: .utf8)
         XCTAssertEqual(written, published, "the recorder's output changed; rerun with UPDATE_I4_FIXTURE=1 and update the I4 schema to match")
-        XCTAssertEqual(try ListeningSignalRecorder.read(Self.fixture()).count, published.split(separator: "\n").count)
+        XCTAssertEqual(try ListeningSignalRecorder.read(fixture).count, published.split(separator: "\n").count)
     }
 
     // MARK: Listening intervals

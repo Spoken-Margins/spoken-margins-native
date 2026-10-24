@@ -12,7 +12,8 @@ public enum DiagnosticsExport {
         public var developerBuild: String
         /// `nil` leaves the key out of the export, even if a live or stored entry had one.
         public var developerRecording: String?
-        /// `nil` leaves the key out of the export, even if a live or stored entry had one.
+        /// `nil` leaves the key out of the export, even if a live or stored entry had one, and leaves out
+        /// `responsiveness`, which is summed from these events.
         public var playbackEvents: String?
         public var exportedAt: Date
         public var playbackStatus: String
@@ -71,6 +72,8 @@ public enum DiagnosticsExport {
         safe["developerBuild"] = fixed.developerBuild
         safe["developerRecording"] = fixed.developerRecording
         safe["playbackEvents"] = fixed.playbackEvents
+        // Read off the events above, so a live or stored entry can't stand in for it (#2096).
+        safe["responsiveness"] = fixed.playbackEvents.map { ResponsivenessSummary(playbackEventsJSON: $0).text }
         safe["schemaVersion"] = schemaVersion
         safe["exportedAt"] = ISO8601DateFormatter().string(from: fixed.exportedAt)
         safe["playbackStatus"] = fixed.playbackStatus

@@ -376,7 +376,7 @@ class SplitPlanTests(unittest.TestCase):
     def test_mac_rest_for_an_app_diff_runs_only_the_sessionkit_rest(self):
         calls, skipped = self.run_plan('fast-mac-rest', ['App/SpokenMarginsApp/X.swift'])
         self.assertEqual(calls, [('slot', None), ('package-steps', {'core_elsewhere': True})])
-        self.assertEqual(skipped, {'hot-file-ratchet', 'runner-tests', 'ops', 'shipped-compat'})
+        self.assertEqual(skipped, {'hot-file-ratchet', 'runner-tests', 'ops', 'tools', 'shipped-compat'})
 
     def test_mac_rest_for_a_lane_diff_also_runs_the_apple_tool_tests_and_ops_disk(self):
         calls, _ = self.run_plan('fast-mac-rest', ['scripts/phone-build'])
