@@ -285,6 +285,7 @@ class VerificationTests(unittest.TestCase):
                 self.assertEqual(step['exit_code'], 124)
                 self.assertEqual(step['simulator_crash_report'], str(reports[-1]))
 
+    @patch.dict(os.environ, {'RUNNER_ENVIRONMENT': 'self-hosted'})  # a hosted runner scales the budget (#2602)
     def test_a_hung_shutdown_after_a_run_does_not_replace_the_error_that_ended_it(self):
         # #2602: the finally's 60 s shutdown timed out on a hosted Mac and its TimeoutExpired hid why 0 tests ran.
         def hang(command, **kwargs):
@@ -301,7 +302,7 @@ class VerificationTests(unittest.TestCase):
                 self.assertEqual(str(error), 'simulator-boot: the real reason')
             else:
                 self.fail('the original error should still be raised')
-        self.assertIn('did not finish in 60', output.getvalue())
+        self.assertIn('did not finish in 60s', output.getvalue())
 
     def test_simctl_timeouts_scale_on_a_hosted_runner_only(self):
         # #2602: the class behind three proof runs that died on three fixed short simctl timeouts.
@@ -1879,6 +1880,7 @@ class VerificationTests(unittest.TestCase):
             # What the second attempt followed is on record for the ledger.
             self.assertIn('TimeoutExpired', step['startup_stalls'][0]['relaunch']['error'])
 
+    @patch.dict(os.environ, {'RUNNER_ENVIRONMENT': 'self-hosted'})  # a hosted runner scales the budget (#2602)
     def test_hung_terminate_is_noted_and_the_stalled_result_bundle_is_still_moved_aside(self):
         # The same hang, through the real relaunch hook with a fake `xcrun` that never returns: the retry
         # needs the result-bundle path free, so the rename must not be skipped with the terminate.
