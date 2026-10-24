@@ -14,7 +14,7 @@ SOURCES = Path(__file__).resolve().parents[2] / 'App/SpokenMarginsApp/Sources/Sp
 SITES = {
     'ExperienceItemDetailScreen.swift': ['episodeLinked'],
     'Gate1AppModel+AudioClients.swift': [
-        'mediaInterruption', 'nowPlayingCommand', 'mediaStartTrace', 'heardSourceWindow', 'mediaStallTrace', 'postResumeEvidence'],
+        'mediaInterruption', 'nowPlayingCommand', 'mediaStartTrace', 'mediaStallTrace', 'postResumeEvidence'],
     'Gate1AppModel+FileImport.swift': ['obsidianImportFinish'],
     'Gate1AppModel+ImportInbox.swift': ['pendingPackageHandoffs', 'pendingBrowserTextImport'],
     'Gate1AppModel+LibraryAudioQueue.swift': ['scheduleAudioPreparation', 'explicitAudioPreparationQueued'],
@@ -24,13 +24,14 @@ SITES = {
     'Gate1AppModel+PodcastPlacementDeferral.swift': ['resumeDeferredPlacements'],
     'Gate1AppModel+SourceLinkBackground.swift': ['sharedLinkVoiceover'],
     'Gate1AppModel+SourceLinkForm.swift': ['sourceLinkFormFinish'],
+    'Gate1AppModel+SourceWindowContext.swift': ['heardSourceWindow'],
     'Gate1AppModel+TranscriptionRecovery.swift': ['sourceTranscriptAttach', 'sourceTranscriptUnavailable', 'sourceTranscriptionFailed'],
     'ImportedPodcastPlacementCoordinator.swift': ['transientTranscriptResolve'],
     'LiveSessionLineUpView.swift': ['liveSessionLineUpSaved'],
     'LiveSessionView.swift': ['liveSessionSavedAsNotes'],
     'MarginOutputCoordinator.swift': ['marginOutputResolveFolder'],
     'PlaybackStartCue.swift': ['playbackStartChime', 'playbackWaitingCue'],
-    'ReadwiseHighlightSync.swift': ['readwiseTokenLoad', 'readwiseLedgerOpen', 'readwiseLinks'],
+    'ReadwiseHighlightSync.swift': ['readwiseLedgerOpen'],
     'SpokenMarginsPackageImportCoordinator.swift': ['packageImportCommit'],
 }
 

@@ -66,7 +66,7 @@
     {
       "id": "defuddle",
       "name": "Defuddle",
-      "version": "0.19.4",
+      "version": "0.19.5",
       "license": "MIT",
       "distribution": "bundled",
       "by": "Steph Ango",
@@ -203,6 +203,23 @@
       "note": "Checks the repository's JSON contracts. Installed from requirements-dev.txt with its format-nongpl extra, which pulls in further small validator packages (for example idna, webcolors, jsonpointer, referencing); all are build-time only and none ships.",
       "tracks": {
         "pip": "jsonschema"
+      }
+    },
+    {
+      "id": "lxml",
+      "name": "lxml (Python)",
+      "version": "6.1.3",
+      "license": "BSD-3-Clause",
+      "distribution": "tool",
+      "by": "lxml developers",
+      "source": "https://github.com/lxml/lxml",
+      "paths": [
+        "research/C1/tools"
+      ],
+      "licenseUrl": "https://github.com/lxml/lxml/blob/master/doc/licenses/BSD.txt",
+      "note": "Parses HTML in the research ground-truth tests (research/C1/tools). Installed from requirements-dev.txt so the hosted research step really runs them (#2596); build-time only and none ships.",
+      "tracks": {
+        "pip": "lxml"
       }
     },
     {

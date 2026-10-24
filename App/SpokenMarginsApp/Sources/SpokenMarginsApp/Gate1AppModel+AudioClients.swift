@@ -69,16 +69,24 @@ extension Gate1AppModel {
                 self.currentSupertonicRenderSignature = signature
             }
             let diskCache: RenderedSpeechDiskCache
+            let cacheLimitBytes = renderedSpeechCacheLimitMB * 1024 * 1024
             if let renderedSpeechDiskCache {
-                renderedSpeechDiskCache.setLimitBytes(renderedSpeechCacheLimitMB * 1024 * 1024)
                 diskCache = renderedSpeechDiskCache
             } else {
                 let created = try RenderedSpeechDiskCache(
                     directory: supportDirectory.appending(path: "RenderedSpeechCache", directoryHint: .isDirectory),
-                    limitBytes: renderedSpeechCacheLimitMB * 1024 * 1024
+                    limitBytes: cacheLimitBytes,
+                    trimsOnInit: false
                 )
                 renderedSpeechDiskCache = created
                 diskCache = created
+            }
+            // Trimming and measuring list the whole cache directory: off the main actor, with the byte count
+            // coming back for the diagnostics (#2510).
+            Task.detached(priority: .utility) { [weak self] in
+                diskCache.setLimitBytes(cacheLimitBytes)
+                let bytes = diskCache.sizeBytes
+                await MainActor.run { self?.diagnostics["renderedSpeechCacheBytes"] = "\(bytes)" }
             }
             let supertonicModel = supertonicModel
             let kittenIsChosen = selection.choice.bundledVoiceIsChosen
@@ -95,7 +103,6 @@ extension Gate1AppModel {
                 refreshSupertonicSessionDiagnostics(voice: voice)
             }
             diagnostics["renderedSpeechCacheLimitMB"] = "\(renderedSpeechCacheLimitMB)"
-            diagnostics["renderedSpeechCacheBytes"] = "\(diskCache.sizeBytes)"
             return SupertonicSpeechPlaybackClient(
                 renderer: supertonicOutputGuard(wrapping: renderer, systemVoice: selectedVoice),
                 voice: voice,
@@ -355,10 +362,7 @@ extension Gate1AppModel {
             }
         }
         client.heardSourceWindowHandler = { [weak self] window in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.hangTelemetry.labels.scoped("heardSourceWindow") { self.handleHeardSourceWindow(window) }
-            }
+            Task { @MainActor [weak self] in await self?.handleHeardSourceWindow(window) }
         }
         client.playbackStallTraceHandler = { [weak self] fields in
             Task { @MainActor [weak self] in

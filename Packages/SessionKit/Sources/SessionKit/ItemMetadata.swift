@@ -14,9 +14,7 @@ public enum ItemMetadata {
     /// than two days after `now`, or before 1970, is treated as garbage rather than shown.
     public static func publishedDateText(_ raw: String?, now: Date = Date(),
                                          locale: Locale = .current, timeZone: TimeZone = .current) -> String? {
-        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty,
-              let parsed = parse(trimmed) else { return nil }
-        guard parsed.date.timeIntervalSince1970 >= 0, parsed.date <= now.addingTimeInterval(2 * 86_400) else { return nil }
+        guard let parsed = plausiblePublished(raw, now: now) else { return nil }
         let formatter = DateFormatter()
         formatter.locale = locale
         formatter.dateStyle = .long
@@ -26,21 +24,50 @@ public enum ItemMetadata {
         return formatter.string(from: parsed.date)
     }
 
-    private static func parse(_ text: String) -> (date: Date, hasTime: Bool)? {
-        let iso = ISO8601DateFormatter()
-        for options: ISO8601DateFormatter.Options in [[.withInternetDateTime, .withFractionalSeconds], [.withInternetDateTime]] {
-            iso.formatOptions = options
-            if let date = iso.date(from: text) { return (date, true) }
+    /// The moment `Item.publishedAt` names, for ordering the Library by it. Nil for the same text
+    /// `publishedDateText` refuses, so an item with no usable date sorts as undated (#1867).
+    public static func publishedDate(_ raw: String?, now: Date = Date()) -> Date? {
+        plausiblePublished(raw, now: now)?.date
+    }
+
+    private static func plausiblePublished(_ raw: String?, now: Date) -> (date: Date, hasTime: Bool)? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty,
+              let parsed = parse(trimmed) else { return nil }
+        guard parsed.date.timeIntervalSince1970 >= 0, parsed.date <= now.addingTimeInterval(2 * 86_400) else { return nil }
+        return parsed
+    }
+
+    /// Built once: the Library's Published sort reads this date for every item on every rebuild (#1867), and
+    /// making a formatter per call, and up to nine more for an RFC 822 date, cost real time on the main thread.
+    /// Never changed after they are built, so any thread may use them.
+    nonisolated(unsafe) private static let isoFormatters: [(formatter: ISO8601DateFormatter, hasTime: Bool)] = {
+        let kinds: [(ISO8601DateFormatter.Options, Bool)] = [
+            ([.withInternetDateTime, .withFractionalSeconds], true), ([.withInternetDateTime], true), ([.withFullDate], false)
+        ]
+        return kinds.map { options, hasTime in
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = options
+            return (formatter, hasTime)
         }
-        iso.formatOptions = [.withFullDate]
-        if let date = iso.date(from: text) { return (date, false) }
-        let posix = DateFormatter()
-        posix.locale = Locale(identifier: "en_US_POSIX")
-        for format in ["EEE, dd MMM yyyy HH:mm:ss zzz", "EEE, d MMM yyyy HH:mm:ss zzz", "EEE, dd MMM yyyy HH:mm:ss Z",
-                       "EEE, d MMM yyyy HH:mm:ss Z", "dd MMM yyyy HH:mm:ss zzz", "d MMM yyyy HH:mm:ss zzz",
-                       "EEE, dd MMM yyyy HH:mm zzz", "EEE, d MMM yyyy HH:mm zzz", "EEE, dd MMM yyyy HH:mm Z"] {
-            posix.dateFormat = format
-            if let date = posix.date(from: text) { return (date, true) }
+    }()
+
+    nonisolated(unsafe) private static let rfc822Formatters: [DateFormatter] = [
+        "EEE, dd MMM yyyy HH:mm:ss zzz", "EEE, d MMM yyyy HH:mm:ss zzz", "EEE, dd MMM yyyy HH:mm:ss Z",
+        "EEE, d MMM yyyy HH:mm:ss Z", "dd MMM yyyy HH:mm:ss zzz", "d MMM yyyy HH:mm:ss zzz",
+        "EEE, dd MMM yyyy HH:mm zzz", "EEE, d MMM yyyy HH:mm zzz", "EEE, dd MMM yyyy HH:mm Z"
+    ].map { format in
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = format
+        return formatter
+    }
+
+    private static func parse(_ text: String) -> (date: Date, hasTime: Bool)? {
+        for (formatter, hasTime) in isoFormatters {
+            if let date = formatter.date(from: text) { return (date, hasTime) }
+        }
+        for formatter in rfc822Formatters {
+            if let date = formatter.date(from: text) { return (date, true) }
         }
         return nil
     }

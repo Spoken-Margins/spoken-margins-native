@@ -13,6 +13,7 @@ public protocol LibraryQueryRow {
     var continuationProgressPercent: Int? { get }
     var offlineState: LibraryOfflineStateFilter { get }
     var addedAt: Date? { get }
+    var publishedAt: Date? { get }
     var lastListenedAt: Date? { get }
     var storageRecencyRank: Int { get }
     var sharedMargins: SharedMarginTally { get }
@@ -21,6 +22,7 @@ public protocol LibraryQueryRow {
 extension LibraryQueryRow {
     /// Rows that don't track shared Margins have none.
     public var sharedMargins: SharedMarginTally { .none }
+    public var publishedAt: Date? { nil }
 }
 
 /// Library query rules shared by the app and host tests.
@@ -64,6 +66,8 @@ public enum LibraryQueryEngine {
                 }
             case .recentlyListened:
                 ordered = compareDates(lhs.lastListenedAt, rhs.lastListenedAt)
+            case .published:
+                ordered = compareDates(lhs.publishedAt, rhs.publishedAt)
             case .title:
                 ordered = lhs.title.localizedStandardCompare(rhs.title)
             case .progress:

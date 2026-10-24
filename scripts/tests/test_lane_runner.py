@@ -553,6 +553,15 @@ class T3Tests(unittest.TestCase):
         self.assertTrue(any('marked unsafe and deleted' in line for line in details))
         self.assertEqual(crashes, 'none')
 
+    def test_the_report_names_the_phone_and_runtime_the_clone_used(self):
+        # Not a fixed "iPhone 17": the hosted image's runtime can take a different phone (#2557).
+        import lane_sim
+        with mock.patch.object(lane_sim, 'device_type', return_value='com.apple.CoreSimulator.SimDeviceType.iPhone-18'):
+            _, where, *_ = self._t3_with((None, {'pressure': 'normal', 'pressure_waited': 0, 'boot_window': (0.0, 1.0)}),
+                                         ([lane.summarize_manifest({'steps': []})], ['verified'], ['A (1 passed)'], []),
+                                         mock.Mock(return_value=False))
+        self.assertEqual(where, 'cloned iPhone 18, iOS 26.5')
+
     def _t3_with(self, boot, plans, back_to_one):
         import lane_sim
         with mock.patch.object(lane_sim, 'clone_temporary', return_value='U'), \
@@ -763,14 +772,79 @@ class RunnerDeviceTests(unittest.TestCase):
             {'name': name, 'udid': f'U{index}'} for index, name in enumerate(names)]}}
         commands = []
 
-        def run(command, **_):
+        def bounded(command, timeout, **_):
             commands.append(command)
-            return subprocess.CompletedProcess(command, 0)
+            self.assertLessEqual(timeout, lane.SWEEP_SIMCTL_TIMEOUT)
+            return json.dumps(listing) if command[2] == 'list' else ''
 
-        with mock.patch.object(lane.subprocess, 'check_output', return_value=json.dumps(listing)), \
-                mock.patch.object(lane.subprocess, 'run', side_effect=run):
+        import simctl_preflight
+        with mock.patch.object(simctl_preflight, 'problem', return_value=None), \
+                mock.patch.object(simctl_preflight, 'bounded_output', side_effect=bounded):
             lane.sweep_runner_simulators()
         return [c[-1] for c in commands if c[:3] == ['xcrun', 'simctl', 'delete']]
+
+    def test_a_hanging_simctl_stops_the_sweep_fast_and_leaves_no_process_behind(self):
+        """#2591: on 2026-10-24, after an Xcode update, `xcrun simctl list` ran `xcodebuild -runFirstLaunch`,
+        which waited on a password dialog forever, and the sweep's bare check_output waited with it."""
+        import simctl_preflight
+        import threading
+        with tempfile.TemporaryDirectory() as tmp:
+            pids = Path(tmp) / 'pids'
+            fake = Path(tmp) / 'xcrun'  # stands in for xcrun: a child that never answers, like the password wait
+            fake.write_text(f'#!/bin/sh\nsleep 300 &\necho "$$ $!" > {pids}\nwait\n')
+            fake.chmod(0o755)
+            out = []
+            sweep = threading.Thread(target=lane.sweep_runner_simulators, daemon=True)
+            try:
+                with mock.patch.dict(os.environ, {'PATH': f'{tmp}:{os.environ.get("PATH", "")}'}), \
+                        mock.patch.object(simctl_preflight, 'problem', return_value=None), \
+                        mock.patch.object(lane, 'SWEEP_SIMCTL_TIMEOUT', 1, create=True), \
+                        mock.patch('builtins.print', side_effect=lambda *a, **_: out.append(' '.join(map(str, a)))):
+                    sweep.start()
+                    sweep.join(15)
+                    self.assertFalse(sweep.is_alive(), 'the sweep is still waiting on a simctl that never answers')
+                started = [int(pid) for pid in pids.read_text().split()]
+                time.sleep(0.2)
+                for pid in started:
+                    with self.assertRaises(ProcessLookupError, msg=f'pid {pid} outlived the sweep'):
+                        os.kill(pid, 0)
+                self.assertTrue(any('gave no answer' in line and 'runFirstLaunch' in line for line in out), out)
+            finally:
+                if pids.exists():  # only the stand-in's own processes, if the sweep left them
+                    for pid in (int(p) for p in pids.read_text().split()):
+                        with contextlib.suppress(ProcessLookupError, PermissionError):
+                            os.kill(pid, signal.SIGKILL)
+
+    def test_a_simctl_that_would_wait_on_xcode_s_install_is_never_run(self):
+        import simctl_preflight
+        why = 'CoreSimulator is older than Xcode expects (1.0, Xcode wants 2.0); run it'
+        with tempfile.TemporaryDirectory() as tmp:
+            ran = Path(tmp) / 'ran'
+            fake = Path(tmp) / 'xcrun'  # never the Mac's own simctl, which may be the one that hangs
+            fake.write_text(f'#!/bin/sh\ntouch {ran}\nexit 1\n')
+            fake.chmod(0o755)
+            with mock.patch.dict(os.environ, {'PATH': f'{tmp}:{os.environ.get("PATH", "")}'}), \
+                    mock.patch.object(simctl_preflight, 'problem', return_value=why), \
+                    mock.patch('builtins.print') as printed:
+                lane.sweep_runner_simulators()
+            self.assertFalse(ran.exists(), 'simctl ran although the preflight named why it would hang')
+        self.assertIn(why, printed.call_args.args[0])
+
+    def test_a_failed_delete_is_not_reported_as_deleted(self):
+        import simctl_preflight
+        listing = json.dumps({'devices': {'r': [{'name': lane.RUNNER_SIMULATOR_PREFIX + 'pr3-r3', 'udid': 'U0'}]}})
+
+        def bounded(command, timeout, **_):
+            if command[2] == 'delete':
+                raise subprocess.CalledProcessError(1, command)
+            return listing if command[2] == 'list' else ''
+
+        with mock.patch.object(simctl_preflight, 'problem', return_value=None), \
+                mock.patch.object(simctl_preflight, 'bounded_output', side_effect=bounded), \
+                mock.patch('builtins.print') as printed:
+            lane.sweep_runner_simulators()
+        lines = [c.args[0] for c in printed.call_args_list]
+        self.assertFalse(any(line.startswith('Deleted') for line in lines), lines)
 
     def test_a_sweep_leaves_a_running_t3_s_device_alone_and_deletes_leftovers(self):
         claim = lane.claim_runner_device('SM Lane Runner pr432-r36724477838')
@@ -1495,6 +1569,34 @@ class MergeTests_Runner(unittest.TestCase):
                 self.assertEqual((got, events, github.posted), (verdict, ['build'], []))
                 self.assertIn(f'not merged: held for T3: the newest T3 lane report on this PR is {verdict} (on {HEAD[:7]}: '
                               'https://example.test/t3)', details[-1])
+
+    def no_tests_t3_report(self, commit=HEAD):
+        wanted = lane.identity('T3', commit, MERGE, [])
+        details = [f'{lane.NO_TESTS_T3}, and test-scope.py suggests no app test classes for this diff.']
+        return comment(lane.report('pr1-r1', 'INCONCLUSIVE', commit, MERGE, 'T3', 'no simulator', 1, 'nothing', details,
+                                   'none', '/e', 'owner', wanted), login='github-actions[bot]')
+
+    def test_a_t3_request_with_no_tests_holds_nothing_once_the_lane_says_so(self):
+        # #2550 (from #2434): the "names no tests" report was the newest T3 report, so every later automerge pass
+        # said "held for T3" and tested nothing, for a day, with all hosted checks green.
+        github = FakeGitHub(labels=('automerge',),
+                            comments=[comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report()])
+        self.assertIsNone(lane.t3_gate(github._comments))
+        (got, _, _, _), events = self.run_auto(github)
+        self.assertEqual((got, events), ('PASS', ['build', 'comment', 'push m1', 'sweep']))
+
+    def test_a_no_tests_t3_report_does_not_lift_an_earlier_fail_or_a_later_request(self):
+        failed = [self.T3_REQUEST, self.t3_report('FAIL', commit=NEWER)]
+        voided = failed + [comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report()]
+        self.assertEqual(lane.t3_gate(voided)[0], 'FAIL')  # the earlier FAIL still holds
+        named = [comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report(), self.T3_REQUEST]
+        self.assertIn('no lane report yet', lane.t3_gate(named)[1])  # a later request that names tests still waits
+
+    def test_a_bare_request_after_a_named_one_does_not_void_the_named_one(self):
+        # The audit of #2556: the runner answers only the newest request, so a no-tests report for a bare request
+        # must not make the earlier request that named tests look answered.
+        comments = [self.T3_REQUEST, comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report()]
+        self.assertIn('no lane report yet', lane.t3_gate(comments)[1])
 
     def test_a_t3_request_still_waiting_for_its_report_holds_the_merge(self):
         old_pass = self.t3_report('PASS', commit=NEWER)

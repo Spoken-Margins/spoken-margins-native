@@ -1,4 +1,7 @@
-"""Before a lane run blames a PR for a failing host test, re-run that test on plain next (#1204).
+"""Before a lane run blames a PR for a failing host test, re-run that test on the plain trunk (#1204).
+
+"next" in this docstring and the function names below means the trunk, which is main since 2026-10-20 (#1492);
+the report line and issue titles name the real branch (#2535).
 
 From 2026-10-02 to 10-09, 6 host-test FAILs were the same real-player tests failing on 4 unrelated PRs,
 because the Mac had no sound output (#909). A test that is broken on next, or on the Mac, fails every PR
@@ -23,6 +26,7 @@ import subprocess
 import sys
 
 import comment_trust
+import trunk
 
 # unittest's failure headings: "FAIL: test_x (module.Class.test_x)" on Python 3.11+, "(module.Class)" before;
 # a subTest adds " (name='a')", and a class fixture reads "ERROR: setUpClass (module.Class)".
@@ -35,7 +39,32 @@ MARK = 'LANE-NEXT-RERUN '
 ISSUE_LABELS = ['ready', 'priority', 'bug', 'regression']
 MILESTONE = 'Open Source: after the flip'  # Solid Ground is closed; a pipeline fault goes here (owner, 2026-10-19)
 BULK_LIMIT = 5  # more failing tests than this at once is the Mac or the tree, not that many broken tests
-FAILS_ON_NEXT = 'fails on next'  # how the report line starts; lane-runner.py's auto-revert reads it
+# The branch the re-run uses is the trunk (main since 2026-10-20, #1492), so the report line and issue titles name
+# it. lane-runner.py's auto-revert does not read that wording: it matches NOT_THIS_PR, which names no branch.
+# Open issues filed before the change still carry "next" in their title; LEGACY_BRANCH keeps them found (#2535).
+NOT_THIS_PR = 'too: not this PR'
+LEGACY_BRANCH = 'next'
+
+
+def branch() -> str:
+    try:
+        return trunk.trunk_branch()
+    except ValueError:
+        return 'the trunk'
+
+
+def fails_on(name: str | None = None) -> str:
+    """How the report line starts: "fails on main"."""
+    return f'fails on {name or branch()}'
+
+
+def issue_title(test: str, name: str | None = None) -> str:
+    return f'Host test fails on {name or branch()}: {test}'
+
+
+def bulk_titles() -> tuple[str, ...]:
+    """The title of the one issue for many failing tests, now and as it was filed before #2535."""
+    return tuple(f'Host tests fail on {name}: many at once' for name in dict.fromkeys((branch(), LEGACY_BRANCH)))
 
 # Run inside the PR's venv Python, in the tree, on next's code: one result per requested name.
 PY_LOADER = r'''
@@ -61,6 +90,8 @@ for name in sys.argv[2:]:
     result = unittest.TestResult()
     suite.run(result)
     results[name] = 'failed' if result.failures or result.errors else 'passed'
+    for case, trace in result.failures + result.errors:  # the log must show what failed, not only that it did (#2535)
+        print('LANE-NEXT-RERUN-FAILURE ' + name + '\n' + trace, flush=True)
 print('LANE-NEXT-RERUN ' + json.dumps(results), flush=True)
 '''
 
@@ -158,7 +189,7 @@ def rerun_on(tree: Path, sha: str, kind: str, folder: str, tests: list[str], log
         _git(tree, 'checkout', '--quiet', '--detach', sha)
     except (OSError, subprocess.CalledProcessError) as error:
         output = getattr(error, 'output', '') or str(error)
-        return {}, f'could not check out next {sha[:7]} to re-run them ({output.strip()[:200]})'
+        return {}, f'could not check out {branch()} {sha[:7]} to re-run them ({output.strip()[:200]})'
     try:
         if kind == 'swift':
             command = ['swift', 'test', '--package-path', folder, '--filter', swift_filter(tests)]
@@ -183,7 +214,7 @@ def rerun_on(tree: Path, sha: str, kind: str, folder: str, tests: list[str], log
         except ValueError:
             reported = {}
         results = {test: reported.get(test, 'missing') for test in tests}
-    note = '' if code is not None else f'the re-run on next stopped after {int(timeout)} s'
+    note = '' if code is not None else f'the re-run on {branch()} stopped after {int(timeout)} s'
     return results, note
 
 
@@ -227,15 +258,15 @@ def report_broken_on_next(api, repo: str, tests: list[str], sha: str, pr: int, r
                     f'Log on the Mac: `{log_path}`.\n\n_Posted by the lane runner (scripts/lane_next_rerun.py, #1204)._')
                 lines.append(f'{test}: already open as #{existing["number"]}; commented')
                 continue
-            body = (f'**Outcome.** `{test}` passes on `next` again, so it stops failing unrelated PRs.\n\n'
+            body = (f'**Outcome.** `{test}` passes on `{branch()}` again, so it stops failing unrelated PRs.\n\n'
                     f'**Evidence.** It failed in the lane run {request_id} on #{pr}. The lane re-ran it on plain '
-                    f'`next` at `{sha[:7]}` on the same Mac, and it failed there too, so it isn\'t that PR\'s '
+                    f'`{branch()}` at `{sha[:7]}` on the same Mac, and it failed there too, so it isn\'t that PR\'s '
                     f'doing. Re-run log on the Mac: `{log_path}`.\n\n'
-                    '**Done when**\n1. The cause is named: the test, the code on next, or the Mac\'s state.\n'
-                    '2. It passes on next in a lane run.\n\n'
+                    '**Done when**\n1. The cause is named: the test, the code on the trunk, or the Mac\'s state.\n'
+                    '2. It passes on the trunk in a lane run.\n\n'
                     '**Must not break.** Don\'t skip or quarantine the test to make it pass.\n\n'
                     '**Tier.** T1.\n\n---\n_Filed by the lane runner (scripts/lane_next_rerun.py, #1204)._')
-            args = [f'repos/{repo}/issues', '-f', f'title=Host test fails on next: {test}', '-f', f'body={body}']
+            args = [f'repos/{repo}/issues', '-f', f'title={issue_title(test)}', '-f', f'body={body}']
             for label in ISSUE_LABELS:
                 args += ['-f', f'labels[]={label}']
             if milestone is not None:
@@ -251,17 +282,17 @@ def report_broken_on_next(api, repo: str, tests: list[str], sha: str, pr: int, r
 def _report_bulk(api, repo, tests, sha, pr, request_id, log_path, open_issues, milestone) -> list[str]:
     """One issue for a run where more than BULK_LIMIT tests fail on plain next: 66 per-test issues on 2026-10-21
     were one fault. A later bulk run comments on the open one."""
-    title = 'Host tests fail on next: many at once'
+    title = bulk_titles()[0]
     listing = '\n'.join(f'- `{test}`' for test in tests)
-    existing = next((issue for issue in open_issues if issue.get('title', '') == title), None)
+    existing = next((issue for issue in open_issues if issue.get('title', '') in bulk_titles()), None)
     try:
         if existing:
             api(f'repos/{repo}/issues/{existing["number"]}/comments', '-f',
                 f'body={len(tests)} tests failed on plain next `{sha[:7]}` again, in the lane re-run for #{pr} '
                 f'({request_id}). Log on the Mac: `{log_path}`.\n\n_Posted by the lane runner (scripts/lane_next_rerun.py)._')
-            return [f'{len(tests)} tests fail on next: already open as #{existing["number"]}; commented']
+            return [f'{len(tests)} tests fail on {branch()}: already open as #{existing["number"]}; commented']
         body = (f'**Outcome.** The {len(tests)} tests below pass on the trunk again, so they stop failing unrelated PRs.\n\n'
-                f'**Evidence.** They failed in the lane run {request_id} on #{pr}, and on plain `next` at `{sha[:7]}` on the '
+                f'**Evidence.** They failed in the lane run {request_id} on #{pr}, and on plain `{branch()}` at `{sha[:7]}` on the '
                 f'same Mac. That many at once points at the Mac or the checkout, not at that many broken tests. '
                 f'Log on the Mac: `{log_path}`.\n\n{listing}\n\n'
                 '**Done when**\n1. The cause is named.\n2. They pass on the trunk in a lane run.\n\n'
@@ -273,9 +304,9 @@ def _report_bulk(api, repo, tests, sha, pr, request_id, log_path, open_issues, m
         if milestone is not None:
             args += ['-F', f'milestone={milestone}']
         filed = json.loads(api(*args))
-        return [f'{len(tests)} tests fail on next: filed #{filed["number"]} as one issue']
+        return [f'{len(tests)} tests fail on {branch()}: filed #{filed["number"]} as one issue']
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as error:
-        return [f'{len(tests)} tests fail on next: not reported ({error!r})']
+        return [f'{len(tests)} tests fail on {branch()}: not reported ({error!r})']
 
 
 def recheck(tree: Path, base_sha: str, evidence: Path, details: list[str], api, repo: str, pr: int,
@@ -290,9 +321,9 @@ def recheck(tree: Path, base_sha: str, evidence: Path, details: list[str], api, 
     log_path = evidence / 'next-rerun.log'
     results, note = rerun_on(tree, base_sha, kind, folder, tests, log_path, runner=runner, python=python)
     if not results:
-        return 'FAIL', details + [f'not re-run on next: {note}']
+        return 'FAIL', details + [f'not re-run on {branch()}: {note}']
     on_next = [test for test in tests if results.get(test) == 'failed']
-    others = [f'{test} ({results.get(test, "missing")} on next)' for test in tests if test not in on_next]
+    others = [f'{test} ({results.get(test, "missing")} on {branch()})' for test in tests if test not in on_next]
     sha7 = base_sha[:7]
     # #909: with no sound output the real-player tests fail everywhere. That's the Mac, not next: don't file.
     audio = _manifest(output).get('audio_output') or {}
@@ -304,9 +335,9 @@ def recheck(tree: Path, base_sha: str, evidence: Path, details: list[str], api, 
              + ([f'  {note}'] if note else []))
     if not others:
         return 'INCONCLUSIVE', details + [
-            f'{FAILS_ON_NEXT} {sha7} too: not this PR. The failing tests ({len(tests)}) were re-run on plain '
-            f'next {sha7} and failed there as well. evidence: {log_path}', *lines]
+            f'{fails_on()} {sha7} {NOT_THIS_PR}. The failing tests ({len(tests)}) were re-run on plain '
+            f'{branch()} {sha7} and failed there as well. evidence: {log_path}', *lines]
     passed = f'{", ".join(others[:5])}{" …" if len(others) > 5 else ""}'
     return 'FAIL', details + [
-        f're-run on plain next {sha7}: {passed}, so the FAIL stands'
-        + (f'; {len(on_next)} of them also fail on next' if on_next else '') + f'. evidence: {log_path}', *lines]
+        f're-run on plain {branch()} {sha7}: {passed}, so the FAIL stands'
+        + (f'; {len(on_next)} of them also fail on {branch()}' if on_next else '') + f'. evidence: {log_path}', *lines]
