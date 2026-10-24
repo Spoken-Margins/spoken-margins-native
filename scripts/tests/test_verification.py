@@ -301,7 +301,35 @@ class VerificationTests(unittest.TestCase):
                 self.assertEqual(str(error), 'simulator-boot: the real reason')
             else:
                 self.fail('the original error should still be raised')
-        self.assertIn('did not finish in 60s', output.getvalue())
+        self.assertIn('did not finish in 60', output.getvalue())
+
+    def test_simctl_timeouts_scale_on_a_hosted_runner_only(self):
+        # #2602: the class behind three proof runs that died on three fixed short simctl timeouts.
+        hosted, ours = {'RUNNER_ENVIRONMENT': 'github-hosted'}, {'RUNNER_ENVIRONMENT': 'self-hosted'}
+        self.assertEqual(verification.simctl_timeout(60, hosted), 60 * verification.HOSTED_SIMCTL_FACTOR)
+        self.assertEqual(verification.simctl_timeout(60, ours), 60)
+        self.assertEqual(verification.simctl_timeout(60, {}), 60)
+
+    def test_a_hung_or_missing_simctl_housekeeping_call_is_noted_and_never_raised(self):
+        # #2602: `simctl uninstall` timed out after 60 s and the run ended with 0 passed, 0 failed.
+        for failure in (subprocess.TimeoutExpired(['simctl'], 60), OSError('no xcrun')):
+            def fail(command, **kwargs):
+                raise failure
+            with self.subTest(failure=type(failure).__name__), patch.dict(os.environ, {'RUNNER_ENVIRONMENT': 'github-hosted'}), \
+                    patch.object(verification.subprocess, 'run', fail), contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertFalse(verification.simctl_quietly(['uninstall', 'UDID-1', 'com.example.app']))
+            self.assertIn('simctl uninstall UDID-1 com.example.app', output.getvalue())
+
+    def test_housekeeping_gets_the_scaled_budget_on_a_hosted_runner(self):
+        seen = {}
+
+        def record(command, **kwargs):
+            seen['timeout'] = kwargs['timeout']
+        for runner, expected in (('github-hosted', 60 * verification.HOSTED_SIMCTL_FACTOR), ('self-hosted', 60)):
+            with self.subTest(runner=runner), patch.dict(os.environ, {'RUNNER_ENVIRONMENT': runner}), \
+                    patch.object(verification.subprocess, 'run', record):
+                self.assertTrue(verification.simctl_quietly(['shutdown', 'UDID-1']))
+            self.assertEqual(seen['timeout'], expected)
 
     def test_a_flood_on_a_desk_pool_device_marks_it_unsafe_before_the_shutdown(self):
         # #688: the pool erases and reuses its devices, so a device that flooded must be retired, not reused.

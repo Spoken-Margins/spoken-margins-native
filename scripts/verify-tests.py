@@ -1169,18 +1169,40 @@ def hosted_system_crash(report, environ=None):
     return not ours
 
 
+# A loaded GitHub-hosted Mac (load average ~480 at the start of the #2602 proof runs) answers simctl several times
+# slower than ours. Each proof run died on a different fixed short simctl timeout: shutdown, boot, then uninstall
+# (60 s) before any test ran. The class is "simctl call with a fixed short timeout on a slow hosted Mac" (#2602).
+HOSTED_SIMCTL_FACTOR = 4
+
+
+def simctl_timeout(seconds, environ=None):
+    """A simctl call's time budget: as given on the Mac, HOSTED_SIMCTL_FACTOR times longer on a hosted runner."""
+    return seconds * HOSTED_SIMCTL_FACTOR if on_hosted_runner(environ) else seconds
+
+
+def simctl_quietly(args, timeout=60):
+    """Run `xcrun simctl <args>` as housekeeping: a hang or a launch failure is printed, never raised.
+
+    Shutdown, uninstall and terminate only tidy the device. A TimeoutExpired from one of them used to end the run
+    with `0 passed, 0 failed` before a test ran (#2602), so none of them may decide the verdict."""
+    budget = simctl_timeout(timeout)
+    try:
+        subprocess.run(['xcrun', 'simctl', *args], cwd=ROOT, capture_output=True, timeout=budget)
+        return True
+    except subprocess.TimeoutExpired:
+        print(f'warning: simctl {" ".join(args)} did not finish in {budget}s; the run goes on without it', flush=True)
+    except OSError as error:
+        print(f'warning: simctl {" ".join(args)} could not run: {error}', flush=True)
+    return False
+
+
 def shut_down_without_hiding_the_error(udid, timeout=60):
     """Shut the simulator this run booted down. A hung shutdown is noted, never raised.
 
     This runs in a `finally`, so a TimeoutExpired from here replaced the error that ended the run: the first hosted
     proof (#2602) reported only "simctl shutdown timed out" and the real cause of 0 tests was lost.
     """
-    try:
-        subprocess.run(['xcrun', 'simctl', 'shutdown', udid], cwd=ROOT, capture_output=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        print(f'warning: simctl shutdown {udid} did not finish in {timeout}s; the run goes on without it', flush=True)
-    except OSError as error:
-        print(f'warning: simctl shutdown {udid} could not run: {error}', flush=True)
+    simctl_quietly(['shutdown', udid], timeout)
 
 
 class Run:
@@ -1785,13 +1807,13 @@ class Run:
         if marked:
             print(f'{TEST_RUNNER_NAME} ({chosen["udid"]}) is on the lane\'s unsafe list ({marked["reason"]}); '
                   'replacing it with a fresh one', flush=True)
-            subprocess.run(['xcrun', 'simctl', 'shutdown', chosen['udid']], cwd=ROOT, capture_output=True, timeout=60)
-            self.command('simulator-retire', ['xcrun', 'simctl', 'delete', chosen['udid']], timeout=120)
+            simctl_quietly(['shutdown', chosen['udid']])
+            self.command('simulator-retire', ['xcrun', 'simctl', 'delete', chosen['udid']], timeout=simctl_timeout(120))
             chosen, template = dedicated_simulator(listed(), ios)
         if chosen is not None:
             return chosen, False
         self.command('simulator-create', ['xcrun', 'simctl', 'create', TEST_RUNNER_NAME,
-                     template['deviceTypeIdentifier'], template['runtime']], timeout=60)
+                     template['deviceTypeIdentifier'], template['runtime']], timeout=simctl_timeout(60))
         chosen, _ = dedicated_simulator(listed(), ios)
         if chosen is None:
             raise RuntimeError(f'Could not create the {TEST_RUNNER_NAME} simulator')
@@ -1890,8 +1912,8 @@ class Run:
 
                 def replace(stalled):
                     nonlocal chosen
-                    subprocess.run(['xcrun', 'simctl', 'shutdown', stalled], cwd=ROOT, capture_output=True, timeout=60)
-                    self.command('simulator-retire', ['xcrun', 'simctl', 'delete', stalled], timeout=120)
+                    simctl_quietly(['shutdown', stalled])
+                    self.command('simulator-retire', ['xcrun', 'simctl', 'delete', stalled], timeout=simctl_timeout(120))
                     chosen, _ = self.simulator(None, ios)
                     return chosen['udid']
 
@@ -1915,13 +1937,14 @@ class Run:
                     self.manifest['destination'] = chosen
                     base[base.index('-destination') + 1] = f'id={chosen["udid"]}'
                     self.save()
-            self.command('simulator-ready', ['xcrun', 'simctl', 'bootstatus', chosen['udid'], '-b'], timeout=180)
+            self.command('simulator-ready', ['xcrun', 'simctl', 'bootstatus', chosen['udid'], '-b'], timeout=simctl_timeout(180))
             if chosen.get('name') == TEST_RUNNER_NAME:
                 # Start from an empty app container so earlier runs' data can't leak into this one.
                 app = derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app'
                 bundle_id = plistlib.loads((app / 'Info.plist').read_bytes())['CFBundleIdentifier']
-                subprocess.run(['xcrun', 'simctl', 'uninstall', chosen['udid'], bundle_id],
-                               cwd=ROOT, capture_output=True, timeout=60)
+                # A device made for this run holds nothing to remove. The timeout is scaled and never fatal (#2602).
+                if not created:
+                    simctl_quietly(['uninstall', chosen['udid'], bundle_id])
             on_probation = None if probation is None else {
                 test for test in expected if any(selected(test, s) for s in probation)}
             result_bundle = self.output / 'tests.xcresult'
@@ -1934,9 +1957,9 @@ class Run:
                 note = {}
                 try:
                     subprocess.run(['xcrun', 'simctl', 'terminate', chosen['udid'], bundle_id],
-                                   cwd=ROOT, capture_output=True, timeout=TERMINATE_TIMEOUT_SECONDS)
+                                   cwd=ROOT, capture_output=True, timeout=simctl_timeout(TERMINATE_TIMEOUT_SECONDS))
                 except subprocess.TimeoutExpired:
-                    note['terminate'] = f'timed out after {TERMINATE_TIMEOUT_SECONDS}s'
+                    note['terminate'] = f'timed out after {simctl_timeout(TERMINATE_TIMEOUT_SECONDS)}s'
                 if result_bundle.exists():
                     result_bundle.rename(self.output / f'tests-stalled-{attempt}.xcresult')
                 return note
