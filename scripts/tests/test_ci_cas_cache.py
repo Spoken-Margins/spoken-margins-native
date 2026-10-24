@@ -100,13 +100,18 @@ class CasCacheTests(unittest.TestCase):
         subprocess.run(f'tar -C "{self.cas.parent}" -cf - compilation-cache | zstd -q -o "{self.pack}/cas.tar.zst"',
                        shell=True, check=True)
         shutil.rmtree(self.cas)
-        # A df that reports 10 MB free minus what the store holds so far, so the 5 MB floor is crossed mid-restore.
+        # Two stubs make the crossing certain instead of a race with a fast disk. unzstd hands tar the whole archive
+        # and then lingers, so the extraction is still running when the script looks; df reports 10 MB free until
+        # the store exists and none after, so the 5 MB floor is crossed the moment the first file lands.
+        unzstd = self.bin / 'unzstd'
+        unzstd.write_text('#!/bin/bash\n"%s" "$@" || exit\nexec sleep 5 >/dev/null 2>&1\n' % shutil.which('zstd'))
         df = self.bin / 'df'
         df.write_text('#!/bin/bash\n'
-                      'used=$(du -sk "%s" 2>/dev/null | awk \'{print $1}\')\n'
                       'echo "Filesystem 1024-blocks Used Available Capacity Mounted"\n'
-                      'echo "stub 0 0 $(( 10240 - ${used:-0} )) 0%% /"\n' % self.cas)
-        df.chmod(df.stat().st_mode | stat.S_IXUSR)
+                      'if [ -e "%s" ]; then free=0; else free=10240; fi\n'
+                      'echo "stub 0 0 $free 0%% /"\n' % self.cas)
+        for stub in (unzstd, df):
+            stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
 
         out = self.run_script('unpack', CAS_MIN_FREE_KB='5120')
 
