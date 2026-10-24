@@ -2,6 +2,15 @@ import Foundation
 import XCTest
 @testable import SessionKit
 
+/// Sync on purpose: `Thread.isMainThread` can't be read from an async closure.
+private func drainHandoffFolder(_ store: Gate5BrowserTextHandoffStore) throws -> Bool {
+    let ids = try store.pendingPayloadIDs()
+    let read = try store.handoff(payloadID: "gone")
+    try store.deletePayload(payloadID: "gone")
+    try store.quarantine(payloadID: "kept", reason: "could not import")
+    return !Thread.isMainThread && ids.sorted() == ["gone", "kept"] && read.source.title == "gone"
+}
+
 /// The payloads the Safari extension and Shortcuts leave for the app to import (moved from the app target, #318).
 final class BrowserTextHandoffStoreTests: XCTestCase {
     private var directory: URL!
@@ -261,15 +270,9 @@ final class BrowserTextHandoffStoreTests: XCTestCase {
     func testTheDrainSequenceRunsOffTheMainThread() async throws {
         try store.save(handoff(title: "kept"), payloadID: "kept")
         try store.save(handoff(title: "gone"), payloadID: "gone")
-        let store = try XCTUnwrap(store)
+        let handoffStore = try XCTUnwrap(store)
 
-        let ranOffMain = try await Task.detached { () throws -> Bool in
-            let ids = try store.pendingPayloadIDs()
-            let read = try store.handoff(payloadID: "gone")
-            try store.deletePayload(payloadID: "gone")
-            try store.quarantine(payloadID: "kept", reason: "could not import")
-            return !Thread.isMainThread && ids.sorted() == ["gone", "kept"] && read.source.title == "gone"
-        }.value
+        let ranOffMain = try await Task.detached { try drainHandoffFolder(handoffStore) }.value
 
         XCTAssertTrue(ranOffMain)
         XCTAssertEqual(try store.pendingPayloadIDs(), [])
