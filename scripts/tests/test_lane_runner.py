@@ -1496,6 +1496,34 @@ class MergeTests_Runner(unittest.TestCase):
                 self.assertIn(f'not merged: held for T3: the newest T3 lane report on this PR is {verdict} (on {HEAD[:7]}: '
                               'https://example.test/t3)', details[-1])
 
+    def no_tests_t3_report(self, commit=HEAD):
+        wanted = lane.identity('T3', commit, MERGE, [])
+        details = [f'{lane.NO_TESTS_T3}, and test-scope.py suggests no app test classes for this diff.']
+        return comment(lane.report('pr1-r1', 'INCONCLUSIVE', commit, MERGE, 'T3', 'no simulator', 1, 'nothing', details,
+                                   'none', '/e', 'owner', wanted), login='github-actions[bot]')
+
+    def test_a_t3_request_with_no_tests_holds_nothing_once_the_lane_says_so(self):
+        # #2550 (from #2434): the "names no tests" report was the newest T3 report, so every later automerge pass
+        # said "held for T3" and tested nothing, for a day, with all hosted checks green.
+        github = FakeGitHub(labels=('automerge',),
+                            comments=[comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report()])
+        self.assertIsNone(lane.t3_gate(github._comments))
+        (got, _, _, _), events = self.run_auto(github)
+        self.assertEqual((got, events), ('PASS', ['build', 'comment', 'push m1', 'sweep']))
+
+    def test_a_no_tests_t3_report_does_not_lift_an_earlier_fail_or_a_later_request(self):
+        failed = [self.T3_REQUEST, self.t3_report('FAIL', commit=NEWER)]
+        voided = failed + [comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report()]
+        self.assertEqual(lane.t3_gate(voided)[0], 'FAIL')  # the earlier FAIL still holds
+        named = [comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report(), self.T3_REQUEST]
+        self.assertIn('no lane report yet', lane.t3_gate(named)[1])  # a later request that names tests still waits
+
+    def test_a_bare_request_after_a_named_one_does_not_void_the_named_one(self):
+        # The audit of #2556: the runner answers only the newest request, so a no-tests report for a bare request
+        # must not make the earlier request that named tests look answered.
+        comments = [self.T3_REQUEST, comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report()]
+        self.assertIn('no lane report yet', lane.t3_gate(comments)[1])
+
     def test_a_t3_request_still_waiting_for_its_report_holds_the_merge(self):
         old_pass = self.t3_report('PASS', commit=NEWER)
         for comments in ([self.T3_REQUEST], [old_pass, self.T3_REQUEST],

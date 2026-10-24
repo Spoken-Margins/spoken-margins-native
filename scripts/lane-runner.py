@@ -175,6 +175,7 @@ BESIDE_SIMULATOR_LOG = 'beside-simulator.log'  # in the lane state folder: one l
 WARM_FREE_FLOOR = 25 * 10**9
 PRUNE_TIMEOUT = 300
 PROJECT_FILE = 'SpokenMarginsNative.xcodeproj/project.pbxproj'  # its layout names Xcode's VFS folders (#405)
+NO_TESTS_T3 = 'The T3 request names no tests'  # run_t3's INCONCLUSIVE when nothing was named or suggested (#2550)
 # How the T3 gate's hold reads in an automerge report, now and before #421 (PRs held by an older runner).
 HELD_FOR_T3 = ('not merged: held for T3', 'after a T3 PASS, push or remove and re-add automerge to merge')
 NOT_VERIFIED = 'journeys and anything a listener notices (T4), audible content (owner)'
@@ -1395,15 +1396,22 @@ def t3_gate(comments: list[dict]) -> tuple[str, str] | None:
     broke before any test ran), and its changed tests had run nowhere. A PR with no T3 request is not
     held. With one, the newest T3 request must have a report, and the newest T3 report must be PASS.
     A FAIL or INCONCLUSIVE on an earlier head still holds a later head until a newer T3 passes.
+
+    A T3 request the lane answered "names no tests" tested nothing (#2550): it is no verdict and holds nothing, so
+    a PR that asked for T3 with no `tests:` line merges on its other checks (a request that names tests still
+    needs a real T3 PASS). Earlier T3 reports still stand.
     """
-    asked, latest = -1, None
+    asked, latest, voided, named = -1, None, -1, -1
     for index, comment in enumerate(comments):
         body = comment.get('body') or ''
         url = comment.get('html_url') or 'an earlier comment'
         wanted, verdict, identical = report_identity(body), REPORT.search(body), IDENTICAL.search(body)
         if wanted and verdict:
             if wanted.get('tier') == 'T3':
-                latest = index, verdict.group(1), wanted.get('commit', ''), url
+                if verdict.group(1) == 'INCONCLUSIVE' and NO_TESTS_T3 in body:
+                    voided = index
+                else:
+                    latest = index, verdict.group(1), wanted.get('commit', ''), url
         elif identical and NOTE in body:
             if identical.group(1) == 'T3':  # "already reported": the request is answered by that report
                 latest = index, identical.group(3), identical.group(2), url
@@ -1411,6 +1419,12 @@ def t3_gate(comments: list[dict]) -> tuple[str, str] | None:
             request = parse_request(body)
             if request and request['tier'] == 'T3':
                 asked = index
+                if request.get('tests'):
+                    named = index
+    if voided > asked:  # the newest request was answered by a report that tested nothing: it is void
+        # The runner answers only the newest request, so a named request it never reached stays unanswered: keep
+        # holding for it rather than falling back to an older verdict (the audit of #2556).
+        asked = max(named, latest[0] if latest else -1)
     if asked < 0:
         return None
     again = ('the lane job that reports a T3 PASS on this head merges it, testing again only if next has since '
@@ -2561,7 +2575,7 @@ def run_t3(tests: list[str], request_id: str, evidence: Path,
     """
     from test_inventory import plan_tests
     if not tests and not classes:
-        return ('INCONCLUSIVE', 'no simulator', 'nothing', ['The T3 request names no tests, and test-scope.py suggests '
+        return ('INCONCLUSIVE', 'no simulator', 'nothing', [f'{NO_TESTS_T3}, and test-scope.py suggests '
                 'no app test classes for this diff. Add `tests: Class/method, …`.'], 'none', '')
     plans = {plan: plan_tests(ROOT, name) for plan, name in PLANS.items()}
     _, missing = plan_for_tests(tests, plans)  # checked before an added class can absorb a misspelled method
