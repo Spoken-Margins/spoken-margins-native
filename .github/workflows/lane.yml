@@ -315,19 +315,25 @@ jobs:
         run: >-
           "$LANE_PYTHON" "$RUNNER_TEMP/lane-runner.py" --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
           --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode explicit
-      # The check is red only on FAIL (#184): project threads wake when a check on their PR fails, and
+      # The check is red on FAIL (#184): project threads wake when a check on their PR fails, and
       # a FAIL is the PR's code. INCONCLUSIVE (held for T3, no simulator, a flood, a conflict with next)
-      # stays green with a warning: the report and the lane:done relabel take it to the dispatcher.
+      # stays green with a warning on the build Macs: the report and the lane:done relabel take it to the dispatcher.
+      # On a hosted Mac an explicit request that did not pass is red too (#2575): every hosted T3 ran nothing (no
+      # XcodeGen, no boot) and the check showed green. The thread that wakes reads the report; a runner fault gets one rerun.
       # This step runs after the report is posted and the labels are set. A job that dies before it
       # reports still fails at its Run step, so a lost report never looks green.
       - name: Verdict
         if: steps.run.outputs.reported == 'true'
         env:
           VERDICT: ${{ steps.run.outputs.verdict }}
+          HOSTED_MAC: ${{ runner.environment == 'github-hosted' }}
         run: |
           echo "Lane verdict: $VERDICT (the report is on the PR)"
           if [ "$VERDICT" = FAIL ]; then
             echo "::error title=Lane FAIL::The lane reported FAIL. The report on the PR says why."
+            exit 1
+          elif [ "$HOSTED_MAC" = true ] && [ "$VERDICT" != PASS ]; then
+            echo "::error title=Hosted lane $VERDICT::The requested hosted check did not pass, so its tests were not all run. The report on the PR says why."
             exit 1
           elif [ "$VERDICT" != PASS ]; then
             echo "::warning title=Lane $VERDICT::The lane reported $VERDICT, not a pass. The report on the PR says why."

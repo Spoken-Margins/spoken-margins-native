@@ -2390,6 +2390,25 @@ class MainFlowTests(unittest.TestCase):
                     else:
                         self.assertNotIn('::', done.stdout)
 
+    def test_a_hosted_mac_request_that_did_not_pass_is_red_and_nothing_else_changes(self):
+        """#2575: every hosted T3 ran nothing (no boot) and its check showed green. Only the lane job's Verdict
+        step, and only on a GitHub-hosted Mac, fails on a verdict that is not a PASS."""
+        lane_job = self.verdict_steps()[0]
+        for hosted, verdict, code in (('true', 'INCONCLUSIVE', 1), ('true', 'PASS', 0), ('true', 'FAIL', 1),
+                                      ('false', 'INCONCLUSIVE', 0), ('false', 'FAIL', 1)):
+            with self.subTest(hosted=hosted, verdict=verdict):
+                done = subprocess.run(['bash', '-e', '-c', lane_job], capture_output=True, text=True,
+                                      env=dict(os.environ, VERDICT=verdict, HOSTED_MAC=hosted))
+                self.assertEqual(done.returncode, code, done.stdout + done.stderr)
+        red = subprocess.run(['bash', '-e', '-c', lane_job], capture_output=True, text=True,
+                             env=dict(os.environ, VERDICT='INCONCLUSIVE', HOSTED_MAC='true'))
+        self.assertIn('::error title=Hosted lane INCONCLUSIVE', red.stdout)
+        # The automerge jobs' Verdict steps stay as they were: their INCONCLUSIVE is a hold, not a fault.
+        for script in self.verdict_steps()[1:]:
+            done = subprocess.run(['bash', '-e', '-c', script], capture_output=True, text=True,
+                                  env=dict(os.environ, VERDICT='INCONCLUSIVE', HOSTED_MAC='true'))
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
     def run_automerge_main(self, github, verdict='PASS', details=()):
         # run_auto does real git in the runner's tree; here it is faked, so the tree is never touched.
         with mock.patch.object(lane, 'run_auto',
