@@ -763,14 +763,79 @@ class RunnerDeviceTests(unittest.TestCase):
             {'name': name, 'udid': f'U{index}'} for index, name in enumerate(names)]}}
         commands = []
 
-        def run(command, **_):
+        def bounded(command, timeout, **_):
             commands.append(command)
-            return subprocess.CompletedProcess(command, 0)
+            self.assertLessEqual(timeout, lane.SWEEP_SIMCTL_TIMEOUT)
+            return json.dumps(listing) if command[2] == 'list' else ''
 
-        with mock.patch.object(lane.subprocess, 'check_output', return_value=json.dumps(listing)), \
-                mock.patch.object(lane.subprocess, 'run', side_effect=run):
+        import simctl_preflight
+        with mock.patch.object(simctl_preflight, 'problem', return_value=None), \
+                mock.patch.object(simctl_preflight, 'bounded_output', side_effect=bounded):
             lane.sweep_runner_simulators()
         return [c[-1] for c in commands if c[:3] == ['xcrun', 'simctl', 'delete']]
+
+    def test_a_hanging_simctl_stops_the_sweep_fast_and_leaves_no_process_behind(self):
+        """#2591: on 2026-10-24, after an Xcode update, `xcrun simctl list` ran `xcodebuild -runFirstLaunch`,
+        which waited on a password dialog forever, and the sweep's bare check_output waited with it."""
+        import simctl_preflight
+        import threading
+        with tempfile.TemporaryDirectory() as tmp:
+            pids = Path(tmp) / 'pids'
+            fake = Path(tmp) / 'xcrun'  # stands in for xcrun: a child that never answers, like the password wait
+            fake.write_text(f'#!/bin/sh\nsleep 300 &\necho "$$ $!" > {pids}\nwait\n')
+            fake.chmod(0o755)
+            out = []
+            sweep = threading.Thread(target=lane.sweep_runner_simulators, daemon=True)
+            try:
+                with mock.patch.dict(os.environ, {'PATH': f'{tmp}:{os.environ.get("PATH", "")}'}), \
+                        mock.patch.object(simctl_preflight, 'problem', return_value=None), \
+                        mock.patch.object(lane, 'SWEEP_SIMCTL_TIMEOUT', 1, create=True), \
+                        mock.patch('builtins.print', side_effect=lambda *a, **_: out.append(' '.join(map(str, a)))):
+                    sweep.start()
+                    sweep.join(15)
+                    self.assertFalse(sweep.is_alive(), 'the sweep is still waiting on a simctl that never answers')
+                started = [int(pid) for pid in pids.read_text().split()]
+                time.sleep(0.2)
+                for pid in started:
+                    with self.assertRaises(ProcessLookupError, msg=f'pid {pid} outlived the sweep'):
+                        os.kill(pid, 0)
+                self.assertTrue(any('gave no answer' in line and 'runFirstLaunch' in line for line in out), out)
+            finally:
+                if pids.exists():  # only the stand-in's own processes, if the sweep left them
+                    for pid in (int(p) for p in pids.read_text().split()):
+                        with contextlib.suppress(ProcessLookupError, PermissionError):
+                            os.kill(pid, signal.SIGKILL)
+
+    def test_a_simctl_that_would_wait_on_xcode_s_install_is_never_run(self):
+        import simctl_preflight
+        why = 'CoreSimulator is older than Xcode expects (1.0, Xcode wants 2.0); run it'
+        with tempfile.TemporaryDirectory() as tmp:
+            ran = Path(tmp) / 'ran'
+            fake = Path(tmp) / 'xcrun'  # never the Mac's own simctl, which may be the one that hangs
+            fake.write_text(f'#!/bin/sh\ntouch {ran}\nexit 1\n')
+            fake.chmod(0o755)
+            with mock.patch.dict(os.environ, {'PATH': f'{tmp}:{os.environ.get("PATH", "")}'}), \
+                    mock.patch.object(simctl_preflight, 'problem', return_value=why), \
+                    mock.patch('builtins.print') as printed:
+                lane.sweep_runner_simulators()
+            self.assertFalse(ran.exists(), 'simctl ran although the preflight named why it would hang')
+        self.assertIn(why, printed.call_args.args[0])
+
+    def test_a_failed_delete_is_not_reported_as_deleted(self):
+        import simctl_preflight
+        listing = json.dumps({'devices': {'r': [{'name': lane.RUNNER_SIMULATOR_PREFIX + 'pr3-r3', 'udid': 'U0'}]}})
+
+        def bounded(command, timeout, **_):
+            if command[2] == 'delete':
+                raise subprocess.CalledProcessError(1, command)
+            return listing if command[2] == 'list' else ''
+
+        with mock.patch.object(simctl_preflight, 'problem', return_value=None), \
+                mock.patch.object(simctl_preflight, 'bounded_output', side_effect=bounded), \
+                mock.patch('builtins.print') as printed:
+            lane.sweep_runner_simulators()
+        lines = [c.args[0] for c in printed.call_args_list]
+        self.assertFalse(any(line.startswith('Deleted') for line in lines), lines)
 
     def test_a_sweep_leaves_a_running_t3_s_device_alone_and_deletes_leftovers(self):
         claim = lane.claim_runner_device('SM Lane Runner pr432-r36724477838')
