@@ -132,8 +132,8 @@ class BuildCacheLinks(unittest.TestCase):
         self.assertNotIn('.build', status)
 
     def test_a_main_checkout_or_clone_keeps_its_build_folders(self):
-        # The daily phone-plan job runs the main checkout's Packages/SessionKit/.build/release/phone-plan,
-        # built once by hand (docs/workstreams/daily-phone-plan.md). Moved into a slot, disk relief would
+        # The daily phone-plan job runs the main checkout's phone-plan (Packages/SessionKitTools/.build/release,
+        # or Packages/SessionKit/.build/release when built before #1873), built once by hand (docs/workstreams/daily-phone-plan.md). Moved into a slot, disk relief would
         # empty it and the 8 am plan would never reach the owner (audit on 2b85624, finding 1).
         main = self.documents / 'GitHub/spoken-margins-native'
         (main / '.git').mkdir()

@@ -13,7 +13,8 @@ The daily job holds the rolling builder's lock and its disk/memory gates. `daily
 This PR does not install a job or change the Desktop copy of the shortcut.
 
 1. From the main checkout, compile the Foundation-only tool once:
-   `swift build --package-path Packages/SessionKit -c release --product phone-plan --disable-sandbox`
+   `swift build --package-path Packages/SessionKitTools -c release --product phone-plan --disable-sandbox`
+   It lands in `Packages/SessionKitTools/.build/release/phone-plan`. A binary built before #1873 at `Packages/SessionKit/.build/release/phone-plan` is still used until this one exists.
 2. Configure the authenticated project-chat relay in the LaunchAgent environment: `SM_DAILY_RELAY_URL` and `SM_DAILY_RELAY_TOKEN`. It uses the existing Dial/lane-open `/fire` contract (`ops/lane/README.md`); `SM_LANE_OPEN_URL` and `SM_LANE_OPEN_TOKEN` are accepted too. Keep the token out of git. Authenticate the Claude CLI under this Mac login as for the audit. `SM_DAILY_CLAUDE` and `SM_DAILY_VALIDATOR` can override executable paths.
 3. Refresh the Desktop **Install Spoken Margins on iPhone.command** from `scripts/install-phone-build.command` so it honors the daily pin. Keep the existing Desktop name. The rolling LaunchAgent is unchanged.
 4. Render the job with `ops/install-launchd.py --print daily-phone-plan`, add the relay variables to its `EnvironmentVariables`, save it as `~/Library/LaunchAgents/com.spokenmargins.daily-phone-plan.plist`, then run:

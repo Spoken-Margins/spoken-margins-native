@@ -532,6 +532,7 @@ PORTABLE_LEFT_OUT = {
     'package': 'needs the Swift toolchain, AVFoundation and a sound output; only the Mac lane runs the whole package',
     'shipped-compat': 'builds SessionKit and Build 29\'s persistence code with Swift on macOS; only the Mac lane runs it',
     'hot-file-ratchet': 'the author\'s own fast run checks it, and the lane runner checks next\'s copy with the PR\'s labels',
+    'tools': 'builds coop-packet, which needs AVFoundation and ShazamKit on macOS; only the Mac lane runs it',
 }
 # Inside runner-tests and ops, the tests that drive an Apple tool. Each is matched as a test id prefix (module,
 # class or test) in scripts/tests, or as a folder under ops/.
@@ -563,7 +564,7 @@ PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snaps
 # Between them the three plans run every fast-plan step (test_fast_split.py checks it).
 FAST_SPLIT_PLANS = ('fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest')
 HOSTED_SESSIONKIT_STEPS = ('package-build', 'package-core', 'package-core-serial')
-MAC_REST_STEPS = ('hot-file-ratchet', 'runner-tests', 'ops', 'package-build', 'package', 'shipped-compat')
+MAC_REST_STEPS = ('hot-file-ratchet', 'runner-tests', 'ops', 'package-build', 'package', 'tools', 'shipped-compat')
 # runner-tests without the tests above: discover scripts/tests as the plain step does, then drop the listed ids.
 PORTABLE_RUNNER_LOADER = '''
 import sys, unittest
@@ -637,6 +638,22 @@ def shipped_compat_needed(changed, root=None):
     if hit:
         return True, 'the diff touches ' + ', '.join(hit[:3]) + (f' and {len(hit) - 3} more' if len(hit) > 3 else '')
     return False, 'the diff touches none of the files shipped-build-compat.yml watches'
+
+
+# The developer tools built on SessionKit (#1873): their own package, so a SessionKit consumer doesn't resolve them.
+# Their tests run when the diff reaches the tools or anything they build on.
+TOOLS_PACKAGE = 'Packages/SessionKitTools'
+TOOLS_TEST_TRIGGERS = ('Packages/SessionKit/', TOOLS_PACKAGE + '/', 'scripts/run-sessionkit-tests.sh')
+TOOLS_TEST_TIMEOUT = 900  # a cold build of the SessionKit modules the tools use, then 22 tests in about 5 s
+
+
+def tools_tests_needed(changed):
+    """(run, reason) for the tools package's build and tests. changed=None means no diff information: run."""
+    if not changed:
+        return True, 'no list of changed paths, so every step runs'
+    if touches(changed, TOOLS_TEST_TRIGGERS):
+        return True, None
+    return False, f'the diff touches neither Packages/SessionKit nor {TOOLS_PACKAGE}'
 
 
 def touches(changed, prefixes):
@@ -1478,6 +1495,15 @@ class Run:
         else:
             self.skip('shipped-compat', why)
 
+    def tools_steps(self):
+        """Build the tools package (phone-plan, coop-packet) and run its tests (#1873), when the diff reaches them."""
+        needed, why = tools_tests_needed(self.changed)
+        if not needed:
+            self.skip('tools', why)
+            return
+        expected = {f'CoopPacketTests/{test}' for test in swift_tests(ROOT / TOOLS_PACKAGE / 'Tests/CoopPacketTests')}
+        self.command('tools', [*PACKAGE_RUNNER, '--tools'], timeout=TOOLS_TEST_TIMEOUT, expected=expected, tests=True)
+
     def hosted_sessionkit(self):
         """SessionKit's build and SessionKitCoreTests on a GitHub-hosted Mac (#1389), for hosted-portable.yml. No
         sound output there, so SessionKitTests and SessionKitTraceTests are left to the lane Mac (fast-mac-rest)."""
@@ -1524,6 +1550,7 @@ class Run:
             self.skip('package', why)
         else:
             self.package_steps(expected, core_elsewhere=True)
+        self.tools_steps()
         self.shipped_compat()
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError(inputs_changed_message('Inputs changed during Mac-only verification', self.input_files))
@@ -1603,6 +1630,7 @@ class Run:
             self.package_steps(expected)
             if pass_key and sessionkit_pass.key(ROOT, identity) == pass_key:
                 sessionkit_pass.record(state_dir(), pass_key, head=self.manifest['head'], tests=len(expected))
+        self.tools_steps()
         self.shipped_compat()
 
         if input_identity() != self.manifest['input_sha256']:
