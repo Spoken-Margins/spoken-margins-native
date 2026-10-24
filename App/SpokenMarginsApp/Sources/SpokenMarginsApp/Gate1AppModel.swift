@@ -229,8 +229,8 @@ final class Gate1AppModel: ObservableObject {
         offlineState: LibraryOfflineStateFilter(rawValue: UserDefaults.standard.string(forKey: "libraryOfflineStateFilter") ?? "") ?? .all,
         sort: LibrarySort(rawValue: UserDefaults.standard.string(forKey: "librarySort") ?? "") ?? .recentlyAdded
     )
-    @Published private(set) var sleepTimerState: SleepTimerState = .inactive
-    @Published private(set) var sleepTimerRemainingSeconds: Int?
+    @Published var sleepTimerState: SleepTimerState = .inactive // set by Gate1AppModel+SleepTimer.swift
+    @Published var sleepTimerRemainingSeconds: Int?
     @Published var libraryAccessError: String?
     @Published var recentlyDeletedItems: [LibraryItemRow] = []
     @Published var trashUndo: TrashUndoState?
@@ -521,7 +521,7 @@ final class Gate1AppModel: ObservableObject {
     var activeItemId = "item-pill"
     var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
     private var playbackProgressTask: Task<Void, Never>?
-    private var sleepTimerTask: Task<Void, Never>?
+    let sleepTimerFade = SleepTimerFadeController() // the timer's ticker, fade and cue; its functions are in Gate1AppModel+SleepTimer.swift (#1979)
     var onDeviceSpeechGenerationDelayTask: Task<Void, Never>?
     var trashUndoDismissTask: Task<Void, Never>?
     /// Background time while on-device narration starts, on every path into "starting" (#854).
@@ -1626,63 +1626,6 @@ final class Gate1AppModel: ObservableObject {
             streamingSpeechQueue.relinquishToCanonicalPlayback()
             refreshSelectedItemInBackground()
             reportSuccess("Paused.")
-        }
-    }
-
-    var sleepTimerIsActive: Bool {
-        SleepTimerPolicy.isActive(sleepTimerState)
-    }
-
-    var sleepTimerDescription: String {
-        SleepTimerPolicy.description(state: sleepTimerState, remainingSeconds: sleepTimerRemainingSeconds)
-    }
-
-    var canUseEndOfChapterSleepTimer: Bool {
-        SleepTimerPolicy.endOfChapterTarget(chapters: selectedItem.mediaChapters, currentMediaTimeMs: snapshot.currentMediaTimeMs) != nil
-    }
-
-    func armSleepTimer(_ mode: SleepTimerMode) {
-        guard let state = SleepTimerPolicy.arm(mode, now: Date(), chapters: selectedItem.mediaChapters, currentMediaTimeMs: snapshot.currentMediaTimeMs) else { return }
-        sleepTimerState = state
-        startSleepTimerTicker()
-        reconcileSleepTimer(now: Date())
-    }
-
-    func extendSleepTimerBy15Minutes() {
-        let now = Date()
-        sleepTimerState = SleepTimerPolicy.extend(sleepTimerState, now: now)
-        startSleepTimerTicker()
-        reconcileSleepTimer(now: now)
-    }
-
-    func cancelSleepTimer() {
-        sleepTimerTask?.cancel()
-        sleepTimerTask = nil
-        sleepTimerState = .inactive
-        sleepTimerRemainingSeconds = nil
-    }
-
-    private func startSleepTimerTicker() {
-        sleepTimerTask?.cancel()
-        sleepTimerTask = Task { [weak self] in
-            while !Task.isCancelled {
-                guard let self else { return }
-                self.reconcileSleepTimer(now: Date())
-                try? await Task.sleep(for: .seconds(1))
-            }
-        }
-    }
-
-    func reconcileSleepTimer(now: Date) {
-        if let mode = SleepTimerPolicy.reconcile(
-            state: &sleepTimerState, remainingSeconds: &sleepTimerRemainingSeconds,
-            now: now, isRecording: snapshot.isRecording,
-            currentMediaTimeMs: snapshot.currentMediaTimeMs, chapters: selectedItem.mediaChapters
-        ) {
-            if snapshot.status.isPlaybackActive { pause() }
-            releaseOwnMarginReturn()
-            cancelSleepTimer()
-            reportConfirmation(SleepTimerPolicy.expiryConfirmation(mode: mode))
         }
     }
 
