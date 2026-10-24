@@ -65,6 +65,8 @@ public final class LeveledMarginCache: @unchecked Sendable {
         var modified: Date
 
         init?(_ url: URL) {
+            // A fresh URL: a URL instance caches the resource values it has read, and callers reuse theirs.
+            let url = URL(fileURLWithPath: url.path)
             guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
                   let bytes = values.fileSize else { return nil }
             path = url.resolvingSymlinksInPath().path
@@ -90,7 +92,13 @@ public final class LeveledMarginCache: @unchecked Sendable {
     /// list the folder, so it is safe on the main thread. Nil also before the first `level` of a launch, and for
     /// a recording changed since; the caller plays the original and asks `level` (#2510).
     public func knownCopy(for recording: URL) -> URL? {
-        guard let stamp = Stamp(recording), let copy = lock.withLock({ known[stamp] }), isUsableCopy(copy) else { return nil }
+        guard let stamp = Stamp(recording), let copy = lock.withLock({ known[stamp] }) else { return nil }
+        guard isUsableCopy(URL(fileURLWithPath: copy.path)) else {
+            lock.withLock { known[stamp] = nil }
+            return nil
+        }
+        // Played copies stay fresh for eviction, as `readyCopy` kept them; the write is off the main thread.
+        queue.async { [self] in touch(copy) }
         return copy
     }
 
@@ -126,7 +134,12 @@ public final class LeveledMarginCache: @unchecked Sendable {
             queue.async { [self] in
                 let stamp = Stamp(recording)
                 let outcome = levelNow(recording, sourceWindow: sourceWindow)
-                if let stamp, case .leveled(let copy) = outcome { lock.withLock { known[stamp] = copy } }
+                if let stamp, case .leveled(let copy) = outcome {
+                    lock.withLock {
+                        if known.count >= 256 { known.removeAll() }  // entries for rewritten files would otherwise pile up
+                        known[stamp] = copy
+                    }
+                }
                 let waiting = lock.withLock { waiters.removeValue(forKey: flight) ?? [] }
                 for waiter in waiting { waiter.resume(returning: outcome) }
             }
