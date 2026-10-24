@@ -219,10 +219,13 @@ def summarize(manifest: dict) -> dict:
         verdict = 'INCONCLUSIVE'
     elif failed:
         verdict = 'FAIL'
-    elif manifest.get('status') == 'verified':
+    elif manifest.get('status') == 'verified' and counts['passed'] > 0:
         verdict = 'PASS'
     else:
         verdict = 'INCONCLUSIVE'
+        if manifest.get('status') == 'verified':
+            # A run that executed nothing proves nothing, whatever its status says (#2590).
+            errors.append('the app plan ran 0 tests, so nothing was verified')
     return {'verdict': verdict, 'counts': counts, 'failed': sorted(set(failed)), 'tests': statuses,
             'journeys': journeys, 'attachments': attachments, 'crashes': crashes,
             'errors': errors + ([manifest['error']] if manifest.get('error') else [])}
@@ -296,17 +299,18 @@ def report_text(sha: str, result: dict, *, started: float, finished: float, prev
                 suspects: list[str], evidence, hosted: bool = False) -> str:
     c = result['counts']
     day = dt.datetime.fromtimestamp(started).strftime('%Y-%m-%d')
-    why = (f'next moved from {previous}, the last tip with an integration report' if previous
+    trunk = BASE_BRANCH
+    why = (f'{trunk} moved from {previous}, the last tip with an integration report' if previous
            else f'no integration report on #{REPORT_ISSUE} in the last {REPORT_LOOKBACK.days} days')
     lines = ['```text',
              f"Lane report integration-{sha[:7]} — {result['verdict']}",
-             f'commit {sha[:8]} (next\'s tip) · integration run: --plan app · '
+             f'commit {sha[:8]} ({trunk}\'s tip) · integration run: --plan app · '
              f'{clock(started)}–{clock(finished)} local, {day}',
              f'run by: {HOSTED_RUN_BY if hosted else RUN_BY}',
-             f'why it ran: {why}; ' + ('a push to next started hosted-integration.yml on a GitHub-hosted Mac.'
+             f'why it ran: {why}; ' + (f'a push to {trunk} started hosted-integration.yml on a GitHub-hosted Mac.'
                                        if hosted else
                                        'the Mac had room (simulator slot free, memory normal, disk above the line) '
-                                       'and no lane app tests were waiting, or next had gone 3 hours untested.'),
+                                       f'and no lane app tests were waiting, or {trunk} had gone 3 hours untested.'),
              'ran:',
              f"  1. --plan app: {c['passed']} passed, {c['failed']} failed, {c['skipped']} skipped  ← verdict input"]
     if result.get('reruns'):
@@ -1159,20 +1163,22 @@ def defer_to_hosted(ops: Ops, state: dict, path: Path, comments: list[dict], rep
             prune_evidence(evidence_root)
 
 
-def hosted_run(ops: Ops, sha: str) -> str:
+def hosted_run(ops: Ops, sha: str, *, post: bool = True) -> str:
     """Test this checkout on a GitHub-hosted Mac and post #184's report (hosted-integration.yml, #1389).
 
     The same tests and report as a Mac tick, with less around it: no culprit search, revert, issues or Claude
     (a PR opened with the job's token starts no workflows, and there is no Claude token here; the Mac handles a
     confirmed FAIL, defer_to_hosted), no state, and no .xcresult bundles in the evidence the workflow uploads.
-    The tip's simulator app is zipped for the workflow's `sim-app-<sha>` artifact instead of kept on disk."""
+    The tip's simulator app is zipped for the workflow's `sim-app-<sha>` artifact instead of kept on disk.
+    post=False (a proof run dispatched from a branch, --no-report) posts nothing to #184: a report for a commit that
+    is not the trunk's tip would become the next tip's "previous" and its last PASS. The report is only logged."""
     now = ops.now()
     head = ops.must(['git', 'rev-parse', 'HEAD']).stdout.strip()
     if head != sha:
         raise ValueError(f'the checkout is at {head[:7]}, not {sha[:7]}')
     comments = ops.report_comments()
     reports = reported([c['body'] for c in comments])
-    if any(sha7 == sha[:7] for sha7, _ in reports):
+    if post and any(sha7 == sha[:7] for sha7, _ in reports):
         ops.log(f'hold: #{REPORT_ISSUE} already has an integration report for {sha[:7]}')
         return 'held'
     previous = reports[-1][0] if reports else None
@@ -1194,9 +1200,20 @@ def hosted_run(ops: Ops, sha: str) -> str:
                    f"/actions/runs/{os.environ['GITHUB_RUN_ID']} (artifact hosted-integration-{sha})")
     body = report_text(sha, result, started=now, finished=ops.now(), previous=previous, suspects=suspects,
                        evidence=run_url or evidence, hosted=True)
-    report = ops.post_report(body, evidence)
+    if post:
+        report = ops.post_report(body, evidence)
+    else:
+        (evidence / 'report.md').write_text(body)
+        ops.log('--no-report: the report is not posted to #184:\n' + body)
+        report = f'not posted ({evidence / "report.md"})'
     ops.log(f"{result['verdict']} {sha[:7]}: {report}")
     return result['verdict']
+
+
+def hosted_exit_code(verdict: str) -> int:
+    """The hosted job's exit status (#2590): red for anything but a PASS, so a run that tested nothing can't show
+    green. `held` is the one exception: the tip already has a report, and the run was a repeat."""
+    return 0 if verdict in ('PASS', 'held') else 1
 
 
 def main(argv=None) -> int:
@@ -1205,16 +1222,18 @@ def main(argv=None) -> int:
     ap.add_argument('--hosted', action='store_true',
                     help='test this checkout once on a GitHub-hosted Mac and post the report (hosted-integration.yml)')
     ap.add_argument('--sha', help="with --hosted: the full SHA of the trunk's tip, which this checkout must be at")
+    ap.add_argument('--no-report', action='store_true',
+                    help=f'with --hosted: run the tests but post nothing to #{REPORT_ISSUE} (a proof run from a branch)')
     args = ap.parse_args(argv)
     if args.hosted:
         if not re.fullmatch(r'[0-9a-f]{40}', args.sha or ''):
             ap.error('--hosted needs --sha <full 40-character SHA>')
-        verdict = hosted_run(Ops(echo=True), args.sha)
+        verdict = hosted_run(Ops(echo=True), args.sha, post=not args.no_report)
         summary = os.environ.get('GITHUB_STEP_SUMMARY')
         if summary:
             with open(summary, 'a') as f:
                 f.write(f'Integration run on {args.sha[:7]}: {verdict}\n')
-        return 0
+        return hosted_exit_code(verdict)
     ops = Ops(echo=args.dry_run)
     if args.dry_run:
         tick(ops, dry_run=True)

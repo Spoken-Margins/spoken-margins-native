@@ -46,7 +46,8 @@ env:
 jobs:
   integration:
     name: 'integration run on ${{ github.ref_name }}'
-    if: vars.LANE_HOSTED_APP == 'on' && github.ref_name == (vars.SM_TRUNK || 'main')
+    # A manual dispatch may run from any branch to prove a change to this job; it posts no report (--no-report below).
+    if: vars.LANE_HOSTED_APP == 'on' && (github.ref_name == (vars.SM_TRUNK || 'main') || github.event_name == 'workflow_dispatch')
     runs-on: xcode-27
     # The Mac takes about 18 min; hosted builds are 2-3.5x slower (hosted-app-macos.yml), plus re-runs and journeys.
     timeout-minutes: 150
@@ -85,6 +86,24 @@ jobs:
       - name: Python tools
         run: bash scripts/bootstrap-python-tools.sh
 
+      # verify-tests.py runs `xcodegen generate` before the app build, and the hosted image has no XcodeGen: the run
+      # died with "No such file or directory: 'xcodegen'", reported INCONCLUSIVE with 0 tests and the job showed
+      # green (#2590). Same fix as lane.yml's hosted T3 (#2557).
+      - name: XcodeGen
+        env:
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: command -v xcodegen >/dev/null || brew install xcodegen; xcodegen --version
+
+      # Every tool the run shells out to (verify-tests.py --plan app, sm_integration_run.py, sim_builds.py), checked
+      # up front so a missing one fails the job here by name instead of surfacing as a report line.
+      - name: Check the tools the run needs
+        run: |
+          missing=0
+          for tool in xcodegen xcodebuild xcrun git git-lfs gh python3 ditto pgrep; do
+            if command -v "$tool" >/dev/null; then echo "ok      $tool"; else echo "::error::$tool is missing on this image"; missing=1; fi
+          done
+          [ "$missing" -eq 0 ]
+
       - name: Toolchain
         run: |
           xcodebuild -version
@@ -98,7 +117,16 @@ jobs:
           SM_INTEGRATION_IOS: '27'
           SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
           SHA: ${{ github.sha }}
-        run: python3 ops/testdesk/sm_integration_run.py --hosted --sha "$SHA"
+          # The app plan's 600 s budget is the owner's Mac. This 3-core hosted Mac ran 928 tests and was cut off at
+          # the budget (run 40113636036), so the plan gets an hour here (verify-tests.py plan_timeout). The job's
+          # timeout-minutes above covers it with the build, the boot and the journeys.
+          SM_PLAN_TIMEOUT_SECONDS: '3600'
+        # Exits nonzero unless the verdict is PASS, so INCONCLUSIVE (including a run that executed 0 tests) and FAIL
+        # turn the job red. The report on #184 is posted first (#2590).
+        run: |
+          extra=()
+          [ "$GITHUB_REF_NAME" = "$SM_TRUNK" ] || extra=(--no-report)
+          python3 ops/testdesk/sm_integration_run.py --hosted --sha "$SHA" ${extra[@]+"${extra[@]}"}
 
       # Logs and manifests only: the script deletes the .xcresult bundles before the upload.
       - name: Keep the evidence
