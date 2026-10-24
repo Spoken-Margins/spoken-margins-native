@@ -1443,7 +1443,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         let anchor = MarginMomentAnchor(marginId: "own-margin", mediaTimeMs: 1_000)
         let momentVoice = model.leveledVoiceURL(["own-margin": voice], itemId: "real-source", margins: [anchor])
 
-        try waitUntil("the leveled copy is made", timeout: 20) { Gate1AppModel.leveledMargins.readyCopy(for: voice) != nil }
+        try waitUntil("the leveled copy is made and known", timeout: 20) { Gate1AppModel.leveledMargins.knownCopy(for: voice) != nil }
         let copy = try XCTUnwrap(Gate1AppModel.leveledMargins.readyCopy(for: voice))
         defer { try? FileManager.default.removeItem(at: copy) }
         let recorded = try XCTUnwrap(MarginLoudnessLeveler.measure(fileAt: voice).integratedLUFS)

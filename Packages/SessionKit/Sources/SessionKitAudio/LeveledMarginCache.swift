@@ -15,7 +15,8 @@ import CryptoKit
 /// queue and never on the caller's thread.
 ///
 /// A caller that needs the audio now asks `readyCopy` and plays the original when there is no copy
-/// yet; `level` makes the copy for the next play (or waits for it).
+/// yet; `level` makes the copy for the next play (or waits for it). On the main thread, ask `knownCopy`
+/// instead: it only looks at what `level` has already found and never reads the recording (#2510).
 public final class LeveledMarginCache: @unchecked Sendable {
     public enum Outcome: Equatable, Sendable {
         case leveled(URL)
@@ -54,6 +55,23 @@ public final class LeveledMarginCache: @unchecked Sendable {
     private let queue = DispatchQueue(label: "SpokenMargins.LeveledMarginCache", qos: .utility)
     private let lock = NSLock()
     private var waiters: [String: [CheckedContinuation<Outcome, Never>]] = [:]
+    /// The copy `level` last found or made for a recording as it was (path, size, modified), so the main thread
+    /// can ask for it with two `stat`s instead of hashing the file. Guarded by `lock`.
+    private var known: [Stamp: URL] = [:]
+
+    private struct Stamp: Hashable {
+        var path: String
+        var bytes: Int
+        var modified: Date
+
+        init?(_ url: URL) {
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+                  let bytes = values.fileSize else { return nil }
+            path = url.resolvingSymlinksInPath().path
+            self.bytes = bytes
+            modified = values.contentModificationDate ?? .distantPast
+        }
+    }
 
     public init(directory: URL, maximumBytes: Int64 = LeveledMarginCache.defaultMaximumBytes) {
         self.directory = directory
@@ -68,12 +86,22 @@ public final class LeveledMarginCache: @unchecked Sendable {
         return existingCopy(hash: hash)
     }
 
+    /// The copy `level` has already found or made for this recording, or nil: it does not read the recording or
+    /// list the folder, so it is safe on the main thread. Nil also before the first `level` of a launch, and for
+    /// a recording changed since; the caller plays the original and asks `level` (#2510).
+    public func knownCopy(for recording: URL) -> URL? {
+        guard let stamp = Stamp(recording), let copy = lock.withLock({ known[stamp] }), isUsableCopy(copy) else { return nil }
+        return copy
+    }
+
     /// Removes every copy of this recording, for when the recording itself is deleted for good. Call it
     /// before the recording is removed: the copy is found by the recording's content. The removal runs
     /// on the leveling queue, after any render in progress, so a copy that is being made when the
     /// recording is deleted goes too; renders queued later fail because the recording is gone.
     public func removeCopies(of recording: URL) {
         guard let hash = try? Self.contentHash(of: recording) else { return }
+        let path = recording.resolvingSymlinksInPath().path
+        lock.withLock { known = known.filter { $0.key.path != path } }
         queue.async { [self] in
             for copy in copies() where copy.url.lastPathComponent.hasPrefix("\(hash)-") {
                 try? FileManager.default.removeItem(at: copy.url)
@@ -96,7 +124,9 @@ public final class LeveledMarginCache: @unchecked Sendable {
             }
             guard isFirst else { return }
             queue.async { [self] in
+                let stamp = Stamp(recording)
                 let outcome = levelNow(recording, sourceWindow: sourceWindow)
+                if let stamp, case .leveled(let copy) = outcome { lock.withLock { known[stamp] = copy } }
                 let waiting = lock.withLock { waiters.removeValue(forKey: flight) ?? [] }
                 for waiter in waiting { waiter.resume(returning: outcome) }
             }

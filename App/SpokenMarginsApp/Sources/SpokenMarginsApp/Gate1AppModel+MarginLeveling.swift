@@ -18,7 +18,8 @@ extension Gate1AppModel {
     /// recording itself, and the copy is made for the next play. `anchorMediaTimeMs` is where the
     /// Margin sits in `itemId`, which sets the target when that item is a podcast on the device.
     func leveledMarginURL(_ recording: URL, itemId: String?, anchorMediaTimeMs: Int?) -> URL {
-        if let copy = Self.leveledMargins.readyCopy(for: recording) {
+        // Never reads the recording: this runs on the main thread when a Margin plays (#2510).
+        if let copy = Self.leveledMargins.knownCopy(for: recording) {
             diagnostics["marginLeveling"] = "leveled"
             return copy
         }
@@ -51,7 +52,7 @@ extension Gate1AppModel {
     /// the time playback reaches them.
     func leveledVoiceURL(_ voiceURLs: [String: URL], itemId: String, margins: [MarginMomentAnchor]) -> (String) -> URL? {
         let anchors = Dictionary(margins.map { ($0.marginId, $0.mediaTimeMs) }, uniquingKeysWith: { first, _ in first })
-        for (id, url) in voiceURLs where Self.leveledMargins.readyCopy(for: url) == nil {
+        for (id, url) in voiceURLs where Self.leveledMargins.knownCopy(for: url) == nil {
             prepareLeveledMargin(url, itemId: itemId, anchorMediaTimeMs: anchors[id])
         }
         return { [weak self] id in

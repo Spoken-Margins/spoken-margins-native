@@ -107,6 +107,27 @@ final class LeveledMarginCacheTests: XCTestCase {
         XCTAssertEqual(cache.readyCopy(for: moved), cache.readyCopy(for: first))
     }
 
+    /// #2510: the main thread asks `knownCopy`, which never hashes the recording. It knows nothing until `level`
+    /// has run, then finds the copy; a recording rewritten since is not matched to the old copy, and a removed
+    /// recording's copies are forgotten.
+    func testKnownCopyNeverReadsTheRecordingAndFollowsLevel() async throws {
+        let margin = try recording(named: "margin.wav", seed: 9, lufs: -30)
+        let cache = LeveledMarginCache(directory: cacheFolder)
+        XCTAssertNil(cache.knownCopy(for: margin), "nothing is known before level has run")
+
+        guard case .leveled(let copy) = await cache.level(margin) else { return XCTFail("expected a leveled copy") }
+        XCTAssertEqual(cache.knownCopy(for: margin), copy)
+
+        try Data(count: 4_096).write(to: margin)
+        XCTAssertNil(cache.knownCopy(for: margin), "a recording that changed is not the one that was leveled")
+
+        let other = try recording(named: "other.wav", seed: 10, lufs: -30)
+        _ = await cache.level(other)
+        XCTAssertNotNil(cache.knownCopy(for: other))
+        cache.removeCopies(of: other)
+        XCTAssertNil(cache.knownCopy(for: other))
+    }
+
     func testAskingTwiceAtOnceSharesOneRender() async throws {
         let margin = try recording(named: "margin.wav", seed: 8, lufs: -30)
         let cache = LeveledMarginCache(directory: cacheFolder)
