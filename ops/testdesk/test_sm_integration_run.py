@@ -1002,6 +1002,15 @@ class HostedRunTests(unittest.TestCase):
         self.assertEqual(run.reported(ops.posted), [(SHA[:7], 'INCONCLUSIVE')])
         self.assertIn('ran 0 tests', ops.posted[0])
 
+    def test_a_proof_run_from_a_branch_posts_no_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = HostedOps(tmp, [manifest({TEST: 'passed'})], bodies=[report_comment(SHA[:7], 'PASS')])
+            with recording_slot(ops.events), patch.dict(os.environ, {'GITHUB_RUN_ID': '42'}):
+                verdict = run.hosted_run(ops, SHA, post=False)  # even a tip that has a report is tested
+            written = list(ops.repo_root.rglob('report.md'))
+        self.assertEqual((verdict, ops.posted), ('PASS', []))
+        self.assertEqual(len(written), 1)
+
     def test_main_needs_a_full_sha(self):
         with open(os.devnull, 'w') as quiet, self.assertRaises(SystemExit), contextlib.redirect_stderr(quiet):
             run.main(['--hosted', '--sha', SHA[:7]])
