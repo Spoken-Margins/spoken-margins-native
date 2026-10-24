@@ -553,6 +553,15 @@ class T3Tests(unittest.TestCase):
         self.assertTrue(any('marked unsafe and deleted' in line for line in details))
         self.assertEqual(crashes, 'none')
 
+    def test_the_report_names_the_phone_and_runtime_the_clone_used(self):
+        # Not a fixed "iPhone 17": the hosted image's runtime can take a different phone (#2557).
+        import lane_sim
+        with mock.patch.object(lane_sim, 'device_type', return_value='com.apple.CoreSimulator.SimDeviceType.iPhone-18'):
+            _, where, *_ = self._t3_with((None, {'pressure': 'normal', 'pressure_waited': 0, 'boot_window': (0.0, 1.0)}),
+                                         ([lane.summarize_manifest({'steps': []})], ['verified'], ['A (1 passed)'], []),
+                                         mock.Mock(return_value=False))
+        self.assertEqual(where, 'cloned iPhone 18, iOS 26.5')
+
     def _t3_with(self, boot, plans, back_to_one):
         import lane_sim
         with mock.patch.object(lane_sim, 'clone_temporary', return_value='U'), \
