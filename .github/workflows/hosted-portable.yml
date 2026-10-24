@@ -105,6 +105,19 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: ${{ steps.gotool.outputs.version }}
+      # test-edit-caddyfile.sh validates every candidate Caddyfile and serves it only when CADDY and SMSERVER are
+      # set; without them it passes "but not the Caddy ones", and the step is red on this runner (#2605). The
+      # tarball is pinned by version and checked against its published SHA-512.
+      - name: Caddy and smserver for the Caddyfile tests
+        run: |
+          version=2.11.7
+          sha512=a7a433a1b133efc3c8d10eb0b99d52a24b5ef5c322dc77f5282182b1c0402139ab83f3a99f0c52409df77d20123fb0b523edad8a66d8f5e49136197bf61ef0e7
+          curl -fsSL -o "$RUNNER_TEMP/caddy.tar.gz" "https://github.com/caddyserver/caddy/releases/download/v${version}/caddy_${version}_linux_amd64.tar.gz"
+          echo "$sha512  $RUNNER_TEMP/caddy.tar.gz" | sha512sum -c -
+          tar -xzf "$RUNNER_TEMP/caddy.tar.gz" -C "$RUNNER_TEMP" caddy
+          (cd research/B4/server && go build -o "$RUNNER_TEMP/smserver" ./cmd/smserver)
+          echo "CADDY=$RUNNER_TEMP/caddy" >> "$GITHUB_ENV"
+          echo "SMSERVER=$RUNNER_TEMP/smserver" >> "$GITHUB_ENV"
       - name: Python tools and Node packages
         run: |
           bash scripts/bootstrap-python-tools.sh
