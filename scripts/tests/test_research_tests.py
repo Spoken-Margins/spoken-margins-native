@@ -77,14 +77,15 @@ class ResearchRunnerTests(unittest.TestCase):
         self.assertEqual(steps['research'][0][-1], 'scripts/research_tests.py')
         self.assertGreaterEqual(steps['research'][1]['timeout'], 300)  # a cold Go build on the Mac
 
-    def run_step(self, script_output, exit_code=0, ci=False):
+    def run_step(self, script_output, exit_code=0, ci=False, runner='github-hosted'):
         script = f'import sys; sys.stdout.write({script_output!r}); sys.exit({exit_code})'
         with tempfile.TemporaryDirectory() as temporary:
             run = verification.Run(Path(temporary) / 'run', 'fast')
             error = None
-            environment = {name: value for name, value in os.environ.items() if name not in ('CI', 'GITHUB_ACTIONS')}
+            environment = {name: value for name, value in os.environ.items() if name not in ('CI', 'GITHUB_ACTIONS', 'RUNNER_ENVIRONMENT')}
             if ci:
                 environment['GITHUB_ACTIONS'] = 'true'
+                environment['RUNNER_ENVIRONMENT'] = runner
             with contextlib.redirect_stdout(io.StringIO()) as printed, patch.dict(os.environ, environment, clear=True):
                 try:
                     run.command('research', [sys.executable, '-c', script])
@@ -103,7 +104,7 @@ class ResearchRunnerTests(unittest.TestCase):
         self.assertEqual(step['skipped'], ['go research/B4/server - `go` is not on PATH; the server tests did not run'])
         self.assertIn('warning: research skipped: go research/B4/server', printed)
 
-    def test_in_ci_a_suite_skipped_for_a_missing_package_fails_the_step_and_names_it(self):
+    def test_on_a_hosted_runner_a_suite_skipped_for_a_missing_package_fails_the_step_and_names_it(self):
         # #2596: hosted-portable run 40108677003 printed "lxml is not installed" and passed the step.
         output = ('passed: python research/B2 (15 tests)\n'
                   'skipped: python research/C1/tools test_groundtruth - the Python package `lxml` is not installed\n'
@@ -116,11 +117,20 @@ class ResearchRunnerTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertIn('warning: research skipped', printed)
 
-    def test_in_ci_reads_both_variables(self):
-        self.assertTrue(verification.in_ci({'CI': 'true'}))
-        self.assertTrue(verification.in_ci({'GITHUB_ACTIONS': 'true'}))
-        self.assertFalse(verification.in_ci({}))
-        self.assertFalse(verification.in_ci({'CI': 'false'}))
+    def test_on_the_self_hosted_mac_lane_a_skip_stays_a_warning(self):
+        # The Mac lane also sets GITHUB_ACTIONS=true; no `go` or a bash 3.2 there is expected (lane-runner.py notes it).
+        output = ('skipped: shell research/B4/deploy/test-edit-caddyfile.sh - the bash on PATH has no mapfile\n'
+                  'research-tests: 15 tests in 1 suites; 1 skipped; 2 not covered\n')
+        step, error, printed = self.run_step(output, ci=True, runner='self-hosted')
+        self.assertIsNone(error)
+        self.assertFalse(step['errors'])
+        self.assertIn('warning: research skipped', printed)
+
+    def test_on_hosted_runner_reads_the_runner_environment_only(self):
+        self.assertTrue(verification.on_hosted_runner({'RUNNER_ENVIRONMENT': 'github-hosted'}))
+        self.assertFalse(verification.on_hosted_runner({'RUNNER_ENVIRONMENT': 'self-hosted', 'GITHUB_ACTIONS': 'true', 'CI': 'true'}))
+        self.assertFalse(verification.on_hosted_runner({'GITHUB_ACTIONS': 'true'}))
+        self.assertFalse(verification.on_hosted_runner({}))
 
     def test_the_portable_job_installs_lxml_through_the_requirements_file_it_already_uses(self):
         self.assertRegex((ROOT / 'requirements-dev.txt').read_text(), r'(?m)^lxml==')

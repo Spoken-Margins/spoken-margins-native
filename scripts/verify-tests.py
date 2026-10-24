@@ -524,12 +524,15 @@ OPS_TEST_TRIGGERS = ('ops/', 'scripts/', '.github/', 'project.yml', 'TestPlans/'
 # Linux job (.github/workflows/hosted-portable.yml). Every step the fast plan can run is named here, either to
 # run (PORTABLE_STEPS) or with the reason it is left out (PORTABLE_LEFT_OUT); the run prints the left-out ones as
 # skipped. test_verification fails when the plan code names a step that is in neither table.
-def in_ci(environ=None):
-    """True on a CI machine (CI or GITHUB_ACTIONS set to `true`). There a step that skips part of its work for a
-    missing tool or package fails and names it, instead of reporting a pass (owner, 2026-10-21: every test blocks).
+def on_hosted_runner(environ=None):
+    """True on a GitHub-hosted runner (GitHub sets RUNNER_ENVIRONMENT=github-hosted there, and `self-hosted` on ours).
+    Only there are the research suites' tools guaranteed (setup-go, a current bash, the lxml package), so only there
+    a suite that skips itself for a missing tool or package fails the step and names it instead of reporting a
+    pass (owner, 2026-10-21: every test blocks). The self-hosted Mac lane also sets GITHUB_ACTIONS=true, and its
+    skips (no `go`, macOS bash 3.2) are expected, so CI or GITHUB_ACTIONS alone must not turn them into failures.
     On a developer's machine the same skip stays a printed warning."""
     environ = os.environ if environ is None else environ
-    return any(str(environ.get(name, '')).lower() == 'true' for name in ('CI', 'GITHUB_ACTIONS'))
+    return environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
 
 
 PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'browser', 'share-link', 'research')
@@ -1394,9 +1397,9 @@ class Run:
             entry['skipped'] = re.findall(r'^skipped: (.+)$', text, re.M)
             for reason in entry['skipped']:
                 print(f'warning: research skipped: {reason}', flush=True)
-            # In CI a suite that skipped itself for a missing tool or package did not test what it names (#2596).
-            if in_ci():
-                errors.extend(f'research skipped in CI, a missing dependency fails the step: {reason}'
+            # On a hosted runner a suite that skipped itself for a missing tool or package did not test what it names (#2596).
+            if on_hosted_runner():
+                errors.extend(f'research skipped on a hosted runner, a missing dependency fails the step: {reason}'
                               for reason in entry['skipped'])
             # Name the failing suites and tests in the error, which the lane's report carries.
             errors.extend(re.findall(r'^(?:FAILED|failed test|failed package): .+$', text, re.M)[:5])
