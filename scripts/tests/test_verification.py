@@ -277,6 +277,24 @@ class VerificationTests(unittest.TestCase):
                 self.assertEqual(step['exit_code'], 124)
                 self.assertEqual(step['simulator_crash_report'], str(reports[-1]))
 
+    def test_a_hung_shutdown_after_a_run_does_not_replace_the_error_that_ended_it(self):
+        # #2602: the finally's 60 s shutdown timed out on a hosted Mac and its TimeoutExpired hid why 0 tests ran.
+        def hang(command, **kwargs):
+            raise subprocess.TimeoutExpired(command, kwargs['timeout'])
+
+        output = io.StringIO()
+        with patch.object(verification.subprocess, 'run', hang), contextlib.redirect_stdout(output):
+            try:
+                try:
+                    raise RuntimeError('simulator-boot: the real reason')
+                finally:
+                    verification.shut_down_without_hiding_the_error('UDID-1')
+            except RuntimeError as error:
+                self.assertEqual(str(error), 'simulator-boot: the real reason')
+            else:
+                self.fail('the original error should still be raised')
+        self.assertIn('did not finish in 60s', output.getvalue())
+
     def test_a_flood_on_a_desk_pool_device_marks_it_unsafe_before_the_shutdown(self):
         # #688: the pool erases and reuses its devices, so a device that flooded must be retired, not reused.
         import json

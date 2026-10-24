@@ -1165,6 +1165,20 @@ def hosted_system_crash(report, environ=None):
     return lane_sim.crash_is_warning(process)
 
 
+def shut_down_without_hiding_the_error(udid, timeout=60):
+    """Shut the simulator this run booted down. A hung shutdown is noted, never raised.
+
+    This runs in a `finally`, so a TimeoutExpired from here replaced the error that ended the run: the first hosted
+    proof (#2602) reported only "simctl shutdown timed out" and the real cause of 0 tests was lost.
+    """
+    try:
+        subprocess.run(['xcrun', 'simctl', 'shutdown', udid], cwd=ROOT, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        print(f'warning: simctl shutdown {udid} did not finish in {timeout}s; the run goes on without it', flush=True)
+    except OSError as error:
+        print(f'warning: simctl shutdown {udid} could not run: {error}', flush=True)
+
+
 class Run:
     def __init__(self, output, plan, changed=None):
         self.output = output
@@ -1956,8 +1970,7 @@ class Run:
                 lane_sim.mark_quiet(chosen['udid'])
             if booted_here:
                 # Don't leave an idle simulator holding memory after the run.
-                subprocess.run(['xcrun', 'simctl', 'shutdown', chosen['udid']],
-                               cwd=ROOT, capture_output=True, timeout=60)
+                shut_down_without_hiding_the_error(chosen['udid'])
             if slot:
                 if simulator_slot_fd is not None:
                     slot.close()
