@@ -72,6 +72,14 @@ Paste this into `~/.claude/scheduled-tasks/sm-mac-tick/SKILL.md`, right after st
 2a. LANE STALL. Run `cd ~/Documents/GitHub/spoken-margins-native && python3 ops/lane/sm_lane_stall.py` and keep its one line. If it starts with STALL or ERROR, put that line, in bold, as the first line of this tick's #337 comment, above the time heading, and add after it: "Check the runner: `gh run list --workflow lane.yml --limit 5` and the newest lane change merged into next." Don't revert anything, comment /lane, or touch labels yourself. If it says OK, add nothing. It only reads GitHub, so a failure to run it is an ERROR line, never a reason to skip the rest of the tick.
 ```
 
+### Simulator-tool preflight (#2591)
+
+On 2026-10-24 an overnight Xcode update left CoreSimulator older than Xcode expected, so every `xcrun simctl` call waited on an admin-password prompt, and the tick's own `simctl list devices booted` hung. `scripts/simctl_preflight.py` reads the two versions the `simctl` wrapper compares and answers at once. `lane_sim.py` and the integration run already call it. For the tick, replace the simulator-slot check in step 2 (SIGNALS) with this:
+
+```text
+   - Simulator slot: first run `cd ~/Documents/GitHub/spoken-margins-native && python3 scripts/simctl_preflight.py`. If it prints anything but a line starting with OK, put that line, in bold, as the first line of this tick's #337 comment, skip every `simctl` command this tick, and report the slot from a running Simulator process instead. If it prints OK, check whether any simulator is booted, and its name (a read-only check the lane guard allows, such as `xcrun simctl list devices booted`; if that is blocked, look for a running Simulator process). Don't run `scripts/lane-sim-boot`;
+```
+
 ### Owner-tap alert backstop (#2047)
 
 `scripts/owner_tap_alert.py` pushes the owner's phone (a `github-actions[bot]` comment that @mentions him) when a PR only he can merge is ready for his tap. It runs in the last job of `hosted-portable.yml` (`linux-t1.yml` until #2442) and `shipped-build-compat.yml`, so it decides as a PR's checks finish. The audit script asks for a check after auditing such a PR, by re-adding the `owner-tap-check` label, whose labeled run in `owner-tap-alert.yml` posts as the bot. A lane run that finishes last starts nothing, so this tick step is an optional backstop. On the Mac, `gh` is the owner, whose comment would notify nobody, so the step only re-adds the label on PRs that are ready and not yet alerted. To add it, paste this after step 2a:
