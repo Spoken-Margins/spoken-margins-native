@@ -3149,19 +3149,40 @@ public final class SessionEngine {
 
     /// What an export reads before it shapes anything: the session, its item (with the whole text), the item's
     /// transcript timeline (megabytes for a podcast), and the session's Margins and turns. Exporting N Margins of
-    /// one session reads this once (#2508) instead of once per Margin.
+    /// one session reads this once (#2508) instead of once per Margin. The timeline is read on first use (#2506):
+    /// only a recording's context, the full source text or the Listening Map's length need it, so an article's
+    /// export never decodes one.
     struct ExportSource {
         var session: Session
         var item: Item
-        var sourceTimeline: TranscriptTimeline?
+        var sourceTimeline: LazyTimeline
         var allInterjections: [Interjection]
         var allTurns: [ConversationTurn]
+    }
+
+    /// A transcript timeline read at most once, and only when something asks for it.
+    final class LazyTimeline {
+        private let load: () throws -> TranscriptTimeline?
+        private var loaded: TranscriptTimeline??
+        /// How many times the store was asked, for a test to pin (#2506).
+        private(set) var loads = 0
+
+        init(_ load: @escaping () throws -> TranscriptTimeline?) { self.load = load }
+
+        func value() throws -> TranscriptTimeline? {
+            if let loaded { return loaded }
+            loads += 1
+            let timeline = try load()
+            loaded = .some(timeline)
+            return timeline
+        }
     }
 
     func loadExportSource(sessionId: String?) throws -> ExportSource {
         let session = try resolveSession(sessionId)
         let item = try repository.loadItem(id: session.itemId)
-        let sourceTimeline = try repository.loadTranscriptTimeline(itemId: item.id)?.timeline
+        let itemId = item.id
+        let sourceTimeline = LazyTimeline { [repository] in try repository.loadTranscriptTimeline(itemId: itemId)?.timeline }
         let allInterjections = try repository.loadInterjections(sessionId: session.id)
             .filter { $0.status == "active" }
         let activeInterjectionIDs = Set(allInterjections.map(\.id))
@@ -3176,16 +3197,21 @@ public final class SessionEngine {
     }
 
     func buildExport(options: ExportOptions, source: ExportSource) throws -> SessionExport {
-        let session = source.session, item = source.item, sourceTimeline = source.sourceTimeline
+        let session = source.session, item = source.item
         let allInterjections = source.allInterjections, allTurns = source.allTurns
         let exposesFullSourceText = options.includeFullText && !isNativeAudioSource(item)
+        let interjections = options.includeInterjections ? scopedExportInterjections(options: options, session: session, interjections: allInterjections) : []
+        // Read only when this export uses it (#2506): the full text of a transcribed source, the words around a
+        // recording's Margins, or the Listening Map's length. An article's Margin note needs none of them.
+        let needsTimeline = exposesFullSourceText || options.includeListeningMap
+            || (isNativeAudioSource(item) && interjections.contains { $0.targetType == .item && $0.anchor.mediaTimeMs != nil })
+        let sourceTimeline = try needsTimeline ? source.sourceTimeline.value() : nil
         let sourceTranscript = exposesFullSourceText
             ? sourceTimeline?.segments
                 .sorted { $0.startMs < $1.startMs }
                 .map(\.text)
                 .joined(separator: " ")
             : nil
-        let interjections = options.includeInterjections ? scopedExportInterjections(options: options, session: session, interjections: allInterjections) : []
         let turns = options.includeTurns ? scopedExportTurns(options: options, turns: allTurns, interjections: interjections) : []
         // The page goes with a paper's citation (#206), so the structured document is only
         // read for an item that has one. Margins anchor into Item.text, so the page is only
