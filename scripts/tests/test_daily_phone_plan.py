@@ -183,6 +183,39 @@ class DeliveryTests(unittest.TestCase):
         ledger = json.loads((self.root / 'daily-plan-ledger/step-ledger.json').read_text())
         self.assertEqual(ledger['steps']['daily-phone-plan']['runs'], 1)
 
+    def test_on_request_writer_timeout_still_moves_the_pin_with_a_plain_plan(self):
+        # Seen 2026-10-23 (#2529): the headless writer timed out after 180 s and the pin never moved.
+        self.mocks['propose'].side_effect = daily.subprocess.TimeoutExpired('claude', 180)
+        state = {}
+        self.assertIn('delivered', daily.deliver(self.now, state, self.state_path, on_request=True))
+        self.assertEqual((self.root / 'daily-ready').resolve(), self.folder.resolve())
+        plan = (self.folder / 'test-plan.md').read_text()
+        self.assertIn('plain plan', plan)
+        self.assertIn('#101 Fix 101', plan)
+        self.assertIn('Tap Play.', plan)
+        self.mocks['validate'].assert_not_called()
+        self.mocks['relay'].assert_called_once()
+        self.assertIn('plain plan', self.mocks['relay'].call_args.args[0])
+        record = json.loads(next((self.root / 'daily-plans').glob('*/plan.json')).read_text())
+        self.assertTrue(record['plain'])
+        self.assertEqual(record['proposal']['checks'], [])
+        self.assertEqual({entry['issue'] for entry in record['proposal']['blocked']}, {101, 102})
+
+    def test_automatic_writer_timeout_is_still_an_error_not_a_plain_plan(self):
+        self.mocks['propose'].side_effect = daily.subprocess.TimeoutExpired('claude', 180)
+        with self.assertRaises(daily.subprocess.TimeoutExpired):
+            daily.deliver(self.now, {}, self.state_path)
+        self.assertFalse((self.root / 'daily-ready').exists())
+        self.mocks['relay'].assert_not_called()
+
+    def test_plain_plan_cannot_close_issues(self):
+        self.mocks['propose'].side_effect = RuntimeError('plan writer failed; previous plan kept')
+        daily.deliver(self.now, {}, self.state_path, on_request=True)
+        path = next((self.root / 'daily-plans').glob('*/plan.json'))
+        reply = f'Phone pass {path.parent.name}; build {SHA}\n#101: PASS\n'
+        with self.assertRaises(ValueError):
+            daily.parse_results(reply, json.loads(path.read_text()))
+
     def test_5_pm_threshold_counts_new_fixes_not_total_backlog(self):
         evening = self.now.replace(hour=22)
         self.items[:] = [dict(self.items[0], number=n) for n in range(101, 108)]

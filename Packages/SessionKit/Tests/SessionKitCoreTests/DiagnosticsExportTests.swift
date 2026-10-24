@@ -118,6 +118,7 @@ final class DiagnosticsExportTests: XCTestCase {
             "sessionPhase": "live phase",
             "targetType": "live target",
             "pendingAIJobs": "99",
+            "responsiveness": "live summary",
         ]
         let entries = DiagnosticsExport.entries(live: clashing, stored: clashing, fixed: fixed())
 
@@ -130,17 +131,19 @@ final class DiagnosticsExportTests: XCTestCase {
         XCTAssertEqual(entries["sessionPhase"], "item_playback")
         XCTAssertEqual(entries["targetType"], "item_text_tts")
         XCTAssertEqual(entries["pendingAIJobs"], "3")
+        XCTAssertEqual(entries["responsiveness"], ResponsivenessSummary(playbackEventsJSON: "{\"events\":[]}").text)
     }
 
     func testARecordingThatIsNotThereLeavesTheKeyOutEvenIfALiveEntryHadOne() {
         let entries = DiagnosticsExport.entries(
-            live: ["developerRecording": "stale", "playbackEvents": "stale"],
+            live: ["developerRecording": "stale", "playbackEvents": "stale", "responsiveness": "stale"],
             stored: ["developerRecording": "stale"],
             fixed: fixed(developerRecording: nil, playbackEvents: nil)
         )
 
         XCTAssertFalse(entries.keys.contains("developerRecording"))
         XCTAssertFalse(entries.keys.contains("playbackEvents"))
+        XCTAssertFalse(entries.keys.contains("responsiveness"))
     }
 
     func testNoTargetIsExportedAsNone() {
@@ -149,13 +152,13 @@ final class DiagnosticsExportTests: XCTestCase {
         XCTAssertEqual(entries["targetType"], "none")
     }
 
-    func testTheExportCarriesExactlyTheNineFixedKeysWhenThereIsNothingElse() {
+    func testTheExportCarriesExactlyTheTenFixedKeysWhenThereIsNothingElse() {
         let entries = DiagnosticsExport.entries(live: [:], stored: [:], fixed: fixed())
 
         XCTAssertEqual(
             Set(entries.keys),
             ["developerBuild", "developerRecording", "playbackEvents", "schemaVersion", "exportedAt",
-             "playbackStatus", "sessionPhase", "targetType", "pendingAIJobs"]
+             "playbackStatus", "sessionPhase", "targetType", "pendingAIJobs", "responsiveness"]
         )
     }
 

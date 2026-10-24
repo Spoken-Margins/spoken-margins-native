@@ -53,6 +53,9 @@ class Export:
     events: list[dict]
     memory: str
     last_run_start: str = ''
+    # The export's own one-line summary (#2096, #2580): hangs, tap-to-state p95 and `budget=ok|broken(...)`. Builds
+    # before it have none.
+    responsiveness: str = ''
 
 
 @dataclass
@@ -89,7 +92,8 @@ def load_export(path: Path) -> Export:
     build, sha = parse_build(data.get('developerBuild', ''))
     raw = data.get('playbackEvents') or '{}'
     events = (json.loads(raw) if isinstance(raw, str) else raw).get('events', [])
-    export = Export(path, build, sha, data.get('exportedAt', ''), events, data.get('memoryFootprint', '') or '')
+    export = Export(path, build, sha, data.get('exportedAt', ''), events, data.get('memoryFootprint', '') or '',
+                    responsiveness=data.get('responsiveness', '') or '')
     # The run that was live when the export was made is the export's own build for sure. Runs are told apart by
     # `elapsedMs` (time since launch) going down.
     start = ''
@@ -144,6 +148,12 @@ def has_hang_probe(sha: str, repo: Path = REPO) -> str:
     except (OSError, subprocess.SubprocessError):
         return 'unknown'
     return 'yes' if present.returncode == 0 else 'no'
+
+
+def budget_word(line: str) -> str:
+    """`ok` or `broken(hang,tap)` from an export's `responsiveness` line; a dash when the build has none."""
+    match = re.search(r'\bbudget=(\S+)', line or '')
+    return match.group(1) if match else '–'
 
 
 def describe(event: Event) -> str:
@@ -395,8 +405,9 @@ def render_summary(report: dict) -> str:
     out.append(markdown_table(
         [{'build': e.build, 'sha': e.sha, 'exportedAt': e.exported_at, 'events': len(e.events),
           'hangProbe': probe.get(e.sha, 'unknown'),
-          'hangs': sum(1 for ev in e.events if ev.get('kind') == 'main.hang')} for e in exports],
-        ['build', 'sha', 'exportedAt', 'events', 'hangProbe', 'hangs']))
+          'hangs': sum(1 for ev in e.events if ev.get('kind') == 'main.hang'),
+          'budget': budget_word(e.responsiveness)} for e in exports],
+        ['build', 'sha', 'exportedAt', 'events', 'hangProbe', 'hangs', 'budget']))
     without = sorted({e.sha for e in exports if probe.get(e.sha) == 'no'})
     out += [
         '### What this data can\'t show', '',
