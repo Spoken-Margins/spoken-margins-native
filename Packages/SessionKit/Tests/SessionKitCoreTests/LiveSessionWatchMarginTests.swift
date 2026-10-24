@@ -7,42 +7,7 @@ import XCTest
 final class LiveSessionWatchMarginTests: XCTestCase {
     private let t0 = Date(timeIntervalSince1970: 1_800_000_000)
 
-    private func span(_ id: String, _ start: Double, _ end: Double?) -> LiveSessionWatchMatch.Span {
-        .init(id: id, startedAt: t0.addingTimeInterval(start), endedAt: end.map { t0.addingTimeInterval($0) })
-    }
-
-    // MARK: Matching
-
-    func testInsideTheSpanPicksThatSession() {
-        let spans = [span("old", 0, 600), span("new", 1_000, 2_000)]
-        XCTAssertEqual(LiveSessionWatchMatch.sessionId(for: t0.addingTimeInterval(300), among: spans), "old")
-        XCTAssertEqual(LiveSessionWatchMatch.sessionId(for: t0.addingTimeInterval(1_000), among: spans), "new")
-        XCTAssertEqual(LiveSessionWatchMatch.sessionId(for: t0.addingTimeInterval(2_000), among: spans), "new")
-    }
-
-    func testARunningSessionHoldsEverythingAfterItsStart() {
-        XCTAssertEqual(LiveSessionWatchMatch.sessionId(for: t0.addingTimeInterval(99_999), among: [span("live", 0, nil)]), "live")
-    }
-
-    func testBeforeTheStartGoesToTheMostRecentSession() {
-        let spans = [span("old", 0, 600), span("new", 1_000, nil)]
-        XCTAssertEqual(LiveSessionWatchMatch.sessionId(for: t0.addingTimeInterval(-60), among: spans), "new")
-    }
-
-    func testAfterTheEndGoesToTheMostRecentSession() {
-        let spans = [span("new", 1_000, 2_000), span("old", 0, 600)]
-        XCTAssertEqual(LiveSessionWatchMatch.sessionId(for: t0.addingTimeInterval(800), among: spans), "new")
-        XCTAssertEqual(LiveSessionWatchMatch.sessionId(for: t0.addingTimeInterval(5_000), among: spans), "new")
-    }
-
-    func testOverlappingSpansPickTheLaterStart() {
-        let spans = [span("long", 0, nil), span("short", 100, 200)]
-        XCTAssertEqual(LiveSessionWatchMatch.sessionId(for: t0.addingTimeInterval(150), among: spans), "short")
-    }
-
-    func testNoSessionMatchesNothing() {
-        XCTAssertNil(LiveSessionWatchMatch.sessionId(for: t0, among: []))
-    }
+    // The span matching moved to `LiveSessionFiling` (slice 1a): see LiveSessionFilingTests.
 
     // MARK: Metadata and attaching
 
