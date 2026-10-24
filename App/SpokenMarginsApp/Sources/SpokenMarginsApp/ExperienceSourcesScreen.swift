@@ -76,12 +76,6 @@ struct ExperienceSourcesScreen: View {
                 .navigationTitle("Following")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button(action: model.openSettings) {
-                            Image(systemName: "gearshape").frame(width: 44, height: 44)
-                        }
-                        .accessibilityLabel("Settings")
-                    }
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         Button(action: { model.refreshQuickAddFeed() }) {
                             if model.isRefreshingQuickAddFeed { ProgressView() } else { Image(systemName: "arrow.clockwise") }

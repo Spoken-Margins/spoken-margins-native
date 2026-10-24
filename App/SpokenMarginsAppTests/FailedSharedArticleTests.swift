@@ -37,7 +37,7 @@ final class FailedSharedArticleTests: XCTestCase {
         try XCTUnwrap(model.feedbackEvent?.action).perform()
         model.refreshImportInbox()
 
-        XCTAssertEqual(model.screen, .settings)
+        XCTAssertEqual(model.requestedExperienceRoot, .settings)
         let entry = try XCTUnwrap(model.importInbox.first)
         XCTAssertEqual(entry.reason, ImportInboxReason.plain(entry.reason), "The Inbox shows a sentence, not the error's code")
     }

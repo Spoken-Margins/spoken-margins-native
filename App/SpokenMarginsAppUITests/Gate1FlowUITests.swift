@@ -131,7 +131,7 @@ final class Gate1FlowUITests: XCTestCase {
         let record = scrollToElement("settings.developer.recordDiagnostics")
         record.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         XCTAssertEqual(record.value as? String, "1", "Diagnostic recording must be enabled")
-        app.buttons["settings.home.button"].tap()
+        tapRoot("Library")
         let start = app.buttons["queue.start.item-ui-text-regression"]
         XCTAssertTrue(start.waitForExistence(timeout: 8))
         start.tap()
@@ -370,7 +370,7 @@ final class Gate1FlowUITests: XCTestCase {
         let apply = scrollToElement("settings.developer.mapJSON.apply")
         apply.tap()
 
-        app.buttons["settings.home.button"].tap()
+        tapRoot("Library")
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4))
         app.buttons["library.row.item-pill"].tap()
         XCTAssertTrue(element("item.screen").waitForExistence(timeout: 4))
@@ -799,10 +799,9 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("sources.browseCatalog").exists)
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(element("sources.manageFeeds").waitForExistence(timeout: 4))
-        app.buttons["Settings"].tap()
+        tapRoot("Settings")
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 5))
         captureScreen(named: "following-settings-opened")
-        element("settings.home.button").tap()
         tapRoot("Following")
         XCTAssertFalse(app.staticTexts["Follow is not Add"].exists)
         XCTAssertTrue(element("miniPlayer.bar").exists)
@@ -1485,14 +1484,14 @@ final class Gate1FlowUITests: XCTestCase {
             XCTAssertLessThanOrEqual(
                 miniPlayer.frame.maxY,
                 tabBar.frame.minY,
-                "The mini-player overlaps the Library, Sources, and Margins controls",
+                "The mini-player overlaps the Library, Following, Margins, and Settings controls",
                 file: file,
                 line: line
             )
         } else {
             // iPad's sidebar-adaptable TabView exposes tabs at the top rather
             // than a bottom UITabBar. Verify the actual controls in both axes.
-            for identifier in ["navigation.tab.library", "navigation.tab.sources", "navigation.tab.margins"] {
+            for identifier in ["navigation.tab.library", "navigation.tab.sources", "navigation.tab.margins", "navigation.tab.settings"] {
                 let matches = app.descendants(matching: .any).matching(identifier: identifier).allElementsBoundByIndex
                 guard let control = matches.first(where: { $0.isHittable }) else {
                     XCTFail("Root navigation is missing or unreachable: \(identifier)", file: file, line: line)
@@ -1511,10 +1510,7 @@ final class Gate1FlowUITests: XCTestCase {
     }
 
     private func openLibrarySettings() {
-        app.buttons["home.settings.button"].tap()
-        let settings = app.buttons["Settings"]
-        XCTAssertTrue(settings.waitForExistence(timeout: 2), "Library options did not expose Settings")
-        settings.tap()
+        tapRoot("Settings")
     }
 
     private func openTimelineExperience() {
