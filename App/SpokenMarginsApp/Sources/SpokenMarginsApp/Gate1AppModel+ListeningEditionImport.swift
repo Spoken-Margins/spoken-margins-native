@@ -50,9 +50,12 @@ extension Gate1AppModel {
     /// Collection files picked from the Add sheet's Files route (#2373). Like a PDF added there, they land in the
     /// Library and nothing opens or plays. Returns whether every file went in, so the sheet knows to close.
     @discardableResult
-    func importListeningEditionFiles(_ urls: [URL]) -> Bool {
-        let entries = urls.enumerated().map { ListeningEditionBatch.Entry.reading(url: $1, id: $0) }
-        let lines = importListeningEditions(entries)
+    func importListeningEditionFiles(_ urls: [URL]) async -> Bool {
+        // The files are read and decoded off the main thread (#2510); the import itself still runs on it.
+        let entries = await Task.detached(priority: .userInitiated) {
+            urls.enumerated().map { ListeningEditionBatch.Entry.reading(url: $1, id: $0) }
+        }.value
+        let lines = hangTelemetry.labels.scoped("listeningEditionFiles.import") { importListeningEditions(entries) }
         let summary = ListeningEditionBatch.summary(of: lines)
         if lines.contains(where: { $0.outcome.isSuccess }) { markOnboardingSteps([.addedOwnSource, .addedFromFiles]) }
         if summary.isFailure {
@@ -61,6 +64,24 @@ extension Gate1AppModel {
             reportConfirmation(summary.message)
         }
         return !summary.isFailure
+    }
+
+    /// One edition file from a file open or a staged hand-off. The file is read off the main thread (#2510).
+    func importListeningEditionFile(_ url: URL) {
+        Task { @MainActor in
+            do {
+                let data = try await Self.offMain { try Self.listeningEditionFileData(url) }
+                hangTelemetry.labels.scoped("listeningEditionFile.import") { importListeningEditionData(data) }
+            } catch { reportFailure(error, context: "Listening edition file could not be opened") }
+        }
+    }
+
+    private nonisolated static func listeningEditionFileData(_ url: URL) throws -> Data {
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        guard size <= 8_000_000 else { throw EditionError.invalid("Listening edition exceeds 8 MB.") }
+        return try Data(contentsOf: url)
     }
 
     func importListeningEditionDataForShortcut(_ data: Data) throws {
