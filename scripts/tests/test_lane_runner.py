@@ -553,6 +553,16 @@ class T3Tests(unittest.TestCase):
         self.assertTrue(any('marked unsafe and deleted' in line for line in details))
         self.assertEqual(crashes, 'none')
 
+    def test_an_isolated_system_crash_warning_from_the_boot_is_named_in_the_report(self):
+        verdict, _, _, details, *_ = self._t3_with(
+            (None, {'pressure': 'normal', 'pressure_waited': 0, 'boot_window': (0.0, 1.0),
+                    'crash_warnings': ['AppIntents crashed (AppIntents-2026.ips)']}),
+            ([lane.summarize_manifest({'steps': []})], ['verified'], ['A (1 passed)'], []),
+            mock.Mock(return_value=False))
+        self.assertEqual(verdict, 'PASS')
+        self.assertTrue(any('AppIntents crashed (AppIntents-2026.ips)' in line and 'did not stop the run' in line
+                            for line in details))
+
     def test_the_report_names_the_phone_and_runtime_the_clone_used(self):
         # Not a fixed "iPhone 17": the hosted image's runtime can take a different phone (#2557).
         import lane_sim

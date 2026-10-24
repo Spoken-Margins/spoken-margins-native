@@ -2767,6 +2767,8 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
         if boot_info.get('tolerated'):
             details.insert(1, f'tolerated one SpringBoard change in the first 30 s of the first boot (owner\'s rule, '
                               f'#184): {boot_info["tolerated"]}')
+        for warning in boot_info.get('crash_warnings') or []:
+            details.append(f'isolated system-process crash during the first boot did not stop the run: {warning}')
         details.append(f'template preparation and simulator clone took {duration(clone_seconds)}; '
                        f'evidence: {evidence}/simulator-clone.log')
     finally:
