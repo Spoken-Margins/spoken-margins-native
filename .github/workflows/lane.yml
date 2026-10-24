@@ -430,6 +430,7 @@ jobs:
       # reports still fails at its Run step, so a lost report never looks green.
       - name: Verdict
         if: steps.run.outputs.reported == 'true'
+        env:
           VERDICT: ${{ steps.run.outputs.verdict }}
           HELD: ${{ steps.run.outputs.held }}
         run: |
@@ -502,6 +503,7 @@ jobs:
       # As the automerge job's: red on FAIL (#184) and on an INCONCLUSIVE that is not a hold (#2596).
       - name: Verdict
         if: steps.run.outputs.reported == 'true'
+        env:
           VERDICT: ${{ steps.run.outputs.verdict }}
           HELD: ${{ steps.run.outputs.held }}
         run: |
