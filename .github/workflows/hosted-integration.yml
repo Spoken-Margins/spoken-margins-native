@@ -35,7 +35,7 @@ permissions:
 # One run at a time, newest tip wins: GitHub keeps one pending run and cancels older pending ones, but never
 # cancels the run in progress (a half-run tip would post nothing). Tips that land meanwhile are tested together.
 concurrency:
-  group: hosted-integration
+  group: hosted-integration-${{ github.ref_name == (vars.SM_TRUNK || 'main') && 'trunk' || github.ref }}
   cancel-in-progress: false
 
 env:

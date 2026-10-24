@@ -321,6 +321,16 @@ class VerificationTests(unittest.TestCase):
                 self.assertFalse(verification.simctl_quietly(['uninstall', 'UDID-1', 'com.example.app']))
             self.assertIn('simctl uninstall UDID-1 com.example.app', output.getvalue())
 
+    def test_a_hung_uninstall_on_a_reused_device_stops_the_run_but_not_installed_is_fine(self):
+        def hang(command, **kwargs):
+            raise subprocess.TimeoutExpired(command, kwargs['timeout'])
+        with patch.object(verification.subprocess, 'run', hang):
+            with self.assertRaisesRegex(RuntimeError, 'simulator-clean.*did not finish'):
+                verification.uninstall_from_reused_device('UDID-1', 'com.example.app')
+        not_installed = subprocess.CompletedProcess([], 1)
+        with patch.object(verification.subprocess, 'run', lambda *a, **k: not_installed):
+            verification.uninstall_from_reused_device('UDID-1', 'com.example.app')
+
     def test_housekeeping_gets_the_scaled_budget_on_a_hosted_runner(self):
         seen = {}
 

@@ -1196,6 +1196,19 @@ def simctl_quietly(args, timeout=60):
     return False
 
 
+def uninstall_from_reused_device(udid, bundle_id, timeout=60):
+    """Remove the app from a reused device so earlier runs' data can't leak in. A hung uninstall stops the run.
+
+    A nonzero exit ("not installed") is fine and ignored. A timeout is not: the app and its data may still be there,
+    so the run ends INCONCLUSIVE instead of testing on a dirty device (#2602). The budget scales on a hosted runner."""
+    budget = simctl_timeout(timeout)
+    try:
+        subprocess.run(['xcrun', 'simctl', 'uninstall', udid, bundle_id], cwd=ROOT, capture_output=True, timeout=budget)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f'simulator-clean: simctl uninstall {bundle_id} did not finish in {budget}s; '
+                           'the device may still hold the last run\'s data') from None
+
+
 def shut_down_without_hiding_the_error(udid, timeout=60):
     """Shut the simulator this run booted down. A hung shutdown is noted, never raised.
 
@@ -1944,7 +1957,7 @@ class Run:
                 bundle_id = plistlib.loads((app / 'Info.plist').read_bytes())['CFBundleIdentifier']
                 # A device made for this run holds nothing to remove. The timeout is scaled and never fatal (#2602).
                 if not created:
-                    simctl_quietly(['uninstall', chosen['udid'], bundle_id])
+                    uninstall_from_reused_device(chosen['udid'], bundle_id)
             on_probation = None if probation is None else {
                 test for test in expected if any(selected(test, s) for s in probation)}
             result_bundle = self.output / 'tests.xcresult'

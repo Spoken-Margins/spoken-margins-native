@@ -59,7 +59,7 @@ class HostedWorkflowTests(unittest.TestCase):
 
     def test_only_one_integration_run_holds_a_mac_at_a_time(self):
         # GitHub keeps one running and one pending; a newer pending run replaces the older, so only the latest tip waits.
-        self.assertRegex(self.TEXT, r"concurrency:\n  group: hosted-integration\n  cancel-in-progress: false")
+        self.assertRegex(self.TEXT, r"concurrency:\n  group: hosted-integration-\$\{\{ github.ref_name == \(vars.SM_TRUNK \|\| 'main'\) && 'trunk' \|\| github.ref \}\}\n  cancel-in-progress: false")
 
 
 if __name__ == '__main__':
