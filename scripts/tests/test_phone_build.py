@@ -825,6 +825,22 @@ class HostedPhoneBuildTests(unittest.TestCase):
         self.assertIn('-configuration Release', self.log.read_text())  # built here
 
 
+class PhoneBuildFolderTests(unittest.TestCase):
+    def test_two_builds_of_one_commit_in_the_same_second_get_different_folders(self):
+        # #2537: the folder is named by the second and the commit, so the second build used to fail.
+        module = load_phone_build()
+        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.dict(os.environ, {'SM_PHONE_DIR': tmp}):
+            sha = 'ab' * 20
+            first = module.new_build_folder('20261023-094656', sha)
+            second = module.new_build_folder('20261023-094656', sha)
+            third = module.new_build_folder('20261023-094656', sha)
+            self.assertEqual([first.name, second.name, third.name],
+                             ['20261023-094656-abababa', '20261023-094657-abababa', '20261023-094658-abababa'])
+            for folder in (first, second, third):
+                self.assertRegex(folder.name, r'\d{8}-\d{6}-[0-9a-f]{7}$')  # still what prune() matches
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), [first.name, second.name, third.name])
+
+
 class PhoneBuildCoalescingTests(unittest.TestCase):
     def setUp(self):
         self.module = load_phone_build()
