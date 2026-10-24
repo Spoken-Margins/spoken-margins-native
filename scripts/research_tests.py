@@ -53,8 +53,9 @@ TAIL_LINES = 40
 
 
 class Result:
-    def __init__(self, label, tests=0, error=None, skipped=None, not_covered=None):
+    def __init__(self, label, tests=0, error=None, skipped=None, not_covered=None, partial=None):
         self.label, self.tests, self.error, self.skipped, self.not_covered = label, tests, error, skipped, not_covered
+        self.partial = partial  # a suite that ran, but not all of its checks: counted as run, and named as skipped
 
     @property
     def ran(self):
@@ -150,10 +151,13 @@ def caddy_suite(root):
     text = done.stdout + done.stderr
     # The script's last line is "N checks passed", or "N checks passed, but not the Caddy ones above" where
     # Caddy isn't installed (a hosted Linux job, #1847); both count.
-    match = re.search(r'^(\d+) checks passed(?:, but not the Caddy ones above)?$', text, re.M)
+    match = re.search(r'^(\d+) checks passed(, but not the Caddy ones above)?$', text, re.M)
     checks = int(match[1]) if match else 0
     if done.returncode or not checks:
         return Result(label, tests=checks, error=f'script exited {done.returncode} after {checks} checks\n' + tail(text))
+    if match[2]:  # #2605: the Caddy checks (validate every candidate, serve it, read the log) ran nothing
+        return Result(label, tests=checks, partial='Caddy or smserver is missing (set CADDY and SMSERVER); '
+                                                    'the Caddy validate and local-serving checks did not run')
     return Result(label, tests=checks)
 
 
@@ -188,9 +192,11 @@ def main(root=ROOT, out=sys.stdout):
             print(f'FAILED: {result.label}\n{result.error}', file=out)
         else:
             print(f'passed: {result.label} ({result.tests} tests)', file=out)
+            if result.partial:
+                print(f'skipped: {result.label} - {result.partial}', file=out)
     ran = [r for r in results if r.ran]
     tests = sum(r.tests for r in ran if not r.error)
-    skipped = sum(r.skipped is not None for r in results)
+    skipped = sum(r.skipped is not None or bool(r.partial) for r in results)
     not_covered = sum(r.not_covered is not None for r in results)
     print(f'research-tests: {tests} tests in {len(ran)} suites; {skipped} skipped; {not_covered} not covered',
           file=out)
