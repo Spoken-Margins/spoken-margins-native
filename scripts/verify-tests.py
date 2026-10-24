@@ -45,6 +45,16 @@ PLANS = {
     'journeys': ('SpokenMarginsReleaseTests', 'Release', 1800),
 }
 
+PLAN_TIMEOUT_ENV = 'SM_PLAN_TIMEOUT_SECONDS'
+
+
+def plan_timeout(default: int) -> int:
+    """The test step's time budget: PLANS' own, unless the caller sets SM_PLAN_TIMEOUT_SECONDS to a positive whole
+    number of seconds. PLANS' budgets are the owner's Mac; the hosted integration run (hosted-integration.yml) sets
+    it, because its 3-core hosted Mac ran the whole app plan past the 600 s budget and cut it off (#2596)."""
+    raw = os.environ.get(PLAN_TIMEOUT_ENV, '').strip()
+    return int(raw) if raw.isdigit() and int(raw) > 0 else default
+
 # A run waits at most this long for a Mac-wide build slot, then fails rather than hanging.
 BUILD_SLOT_WAIT_SECONDS = 1800
 
@@ -1792,6 +1802,7 @@ class Run:
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed before Xcode verification')
         scheme, name, timeout = PLANS[plan]
+        timeout = plan_timeout(timeout)
         # T3 runs a few test classes or methods of a plan. Each selector must name tests in the plan.
         selectors, planned, expected = t3_selection(only, name)
         if selectors:
