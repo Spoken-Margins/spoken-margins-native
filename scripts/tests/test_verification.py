@@ -250,6 +250,14 @@ class VerificationTests(unittest.TestCase):
             self.assertNotIn('simulator_crash_report', step)
             self.assertEqual(step['hosted_system_process_crashes'], {'intelligencetasksd': 3})
 
+    def test_a_hosted_runner_counts_a_daemon_report_that_names_no_apple_bundle_or_runtime_path(self):
+        # #2602: run 40126811473's intelligencetasksd reports were not recognised as Apple's, so three in 20 s stopped the run.
+        with tempfile.TemporaryDirectory() as temporary:
+            reports = self.crash_files(temporary, 'intelligencetasksd', 3, bundle='', path='/usr/libexec/intelligencetasksd')
+            step = self.run_with_crashes(temporary, reports, 'github-hosted')
+            self.assertEqual(step['exit_code'], 0)
+            self.assertEqual(step['hosted_system_process_crashes'], {'intelligencetasksd': 3})
+
     def test_a_hosted_runner_still_stops_on_a_flood_of_the_app_or_its_test_runner(self):
         for process, bundle, path in (('SpokenMarginsApp', 'com.spokenmargins.native', None),
                                       ('SpokenMarginsAppUITests-Runner', 'com.spokenmargins.UITests.xctrunner', None),

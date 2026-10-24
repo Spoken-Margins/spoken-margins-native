@@ -1149,11 +1149,12 @@ TEST_RUN_PROCESSES = ('xctest', 'xctrunner', 'xcodebuild', 'testmanagerd')
 
 
 def hosted_system_crash(report, environ=None):
-    """True for a crash report of an Apple system process of the simulator, on a GitHub-hosted runner only.
+    """True for a crash report of a system process that is not ours, on a GitHub-hosted runner only.
 
     Not the app under test or its extensions (SpokenMargins*, com.spokenmargins*), not its test runner, not
-    SpringBoard, and not a report that can't be read: those all keep the flood stop (lane_sim.crash_is_warning
-    is the one place that says what is "ours")."""
+    SpringBoard, and not a report that can't be read: those all keep the flood stop. Everything else counts, even
+    when it names no com.apple bundle and no RuntimeRoot path: the first hosted proof's intelligencetasksd reports
+    named neither, so the Mac's stricter crash_is_warning left them as a flood (#2602). The Mac rule is unchanged."""
     if not on_hosted_runner(environ):
         return False
     try:
@@ -1162,7 +1163,10 @@ def hosted_system_crash(report, environ=None):
         return False
     if process is None or process[0].lower().startswith(TEST_RUN_PROCESSES):
         return False
-    return lane_sim.crash_is_warning(process)
+    name, bundle, _path = process
+    ours = name.startswith('SpokenMargins') or bundle.startswith('com.spokenmargins') \
+        or name == 'SpringBoard' or bundle == 'com.apple.springboard'
+    return not ours
 
 
 def shut_down_without_hiding_the_error(udid, timeout=60):
