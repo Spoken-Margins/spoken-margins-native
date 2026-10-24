@@ -13,7 +13,7 @@ fi
 
 if [[ ! -f "$INSTALLED_REQUIREMENTS" ]] \
   || ! cmp -s "$REQUIREMENTS" "$INSTALLED_REQUIREMENTS" \
-  || ! "$VENV/bin/python" -c 'import jsonschema, rfc3339_validator, rfc3986_validator'; then
+  || ! "$VENV/bin/python" -c 'import jsonschema, rfc3339_validator, rfc3986_validator, yaml'; then
   "$VENV/bin/python" -m pip install \
     --disable-pip-version-check \
     --requirement "$REQUIREMENTS"
