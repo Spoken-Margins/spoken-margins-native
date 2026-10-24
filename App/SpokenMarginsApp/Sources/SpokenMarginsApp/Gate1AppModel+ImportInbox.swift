@@ -107,7 +107,11 @@ extension Gate1AppModel {
     /// A browser-text open with a payload id: reads and deletes the payload file off the main thread and imports
     /// the page on it (#2510).
     func importBrowserTextPayload(payloadID: String) {
+        // Claimed now, before the first suspension, so a drain that starts at the same foreground skips it and
+        // the share still opens its item (#1437).
+        guard browserTextPayloadsInFlight.insert(payloadID).inserted else { return }
         Task { @MainActor in
+            defer { browserTextPayloadsInFlight.remove(payloadID) }
             do {
                 let handoffStore = try resolvedBrowserTextHandoffStore()
                 let handoff = try await Self.offMain { try handoffStore.handoff(payloadID: payloadID) }
@@ -182,6 +186,8 @@ extension Gate1AppModel {
             let payloadIDs = try await Self.offMain { try handoffStore.pendingPayloadIDs() }
             diagnostics["pendingBrowserTextPayloads"] = "\(payloadIDs.count)"
             for payloadID in payloadIDs {
+                guard browserTextPayloadsInFlight.insert(payloadID).inserted else { continue }
+                defer { browserTextPayloadsInFlight.remove(payloadID) }
                 do {
                     let handoff = try await Self.offMain { try handoffStore.handoff(payloadID: payloadID) }
                     addedItemIds.append(try importBrowserTextInBackground(handoff))

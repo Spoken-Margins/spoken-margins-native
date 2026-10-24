@@ -559,6 +559,8 @@ final class Gate1AppModel: ObservableObject {
     var pendingStartupAudioPreparationItemIds: Set<String> = []
     var failedStartupAudioPreparationItemIds: Set<String> = []
     var isImportingPendingSourceLinkHandoffs = false
+    /// Browser-text payloads one path is importing now; the link open and the drain both suspend, so each skips what the other holds (#2510).
+    var browserTextPayloadsInFlight = Set<String>()
     let pendingHandoffNetworkRetry = PendingHandoffNetworkRetry()
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
     var completedStreamingTurnIds: Set<String> = []
