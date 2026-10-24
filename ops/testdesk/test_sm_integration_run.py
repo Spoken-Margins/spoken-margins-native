@@ -168,14 +168,16 @@ class VerdictTests(unittest.TestCase):
                 patch.dict(os.environ, {'GITHUB_STEP_SUMMARY': os.devnull}):
             self.assertEqual(run.main(['--hosted', '--sha', SHA]), 0)
 
-    def test_a_test_that_passes_both_reruns_is_flaky_not_failing(self):
+    def test_a_test_that_failed_first_is_a_failure_even_when_both_reruns_pass_it(self):
+        # #2590, owner 2026-10-21: a recovered failure is evidence of flakiness, never a green verdict.
         first = run.summarize(manifest({TEST: 'failed', OTHER: 'failed'}))
-        reruns = [run.summarize(manifest({TEST: 'passed', OTHER: 'failed'})),
-                  run.summarize(manifest({TEST: 'passed', OTHER: 'failed'}))]
+        reruns = [run.summarize(manifest({TEST: 'passed', OTHER: 'failed'}))] * 2
         settled = run.settle(first, reruns)
-        self.assertEqual((settled['verdict'], settled['failed'], settled['flaky']), ('FAIL', [OTHER], [TEST]))
+        self.assertEqual((settled['verdict'], settled['failed'], settled['flaky'], settled['confirmed']),
+                         ('FAIL', sorted([TEST, OTHER]), [TEST], [OTHER]))
         clean = run.settle(first, [run.summarize(manifest({TEST: 'passed', OTHER: 'passed'}))] * 2)
-        self.assertEqual((clean['verdict'], clean['failed'], clean['flaky']), ('PASS', [], sorted([TEST, OTHER])))
+        self.assertEqual((clean['verdict'], clean['failed'], clean['confirmed']), ('FAIL', sorted([TEST, OTHER]), []))
+        self.assertEqual(clean['flaky'], sorted([TEST, OTHER]))
 
     def test_a_rerun_cannot_clear_a_test_it_did_not_pass(self):
         first = run.summarize(manifest({TEST: 'failed'}))
@@ -186,27 +188,23 @@ class VerdictTests(unittest.TestCase):
             with self.subTest(reruns=len(reruns)):
                 self.assertEqual(run.settle(first, reruns)['verdict'], 'FAIL')
 
-    def test_a_pass_in_any_completed_rerun_clears_the_test_even_when_the_other_rerun_stopped(self):
-        # #1417: re-run 1 passed both tests; re-run 2 never ran a test (the simulator would not boot).
+    def test_a_rerun_that_stopped_changes_nothing_about_the_verdict(self):
         first = run.summarize(manifest({TEST: 'failed', OTHER: 'failed'}))
         passed = run.summarize(manifest({TEST: 'passed', OTHER: 'passed'}))
         stopped = run.summarize({'status': 'failed_or_incomplete', 'steps': []})
         for reruns in ([passed, stopped], [stopped, passed], [passed]):
             with self.subTest(reruns=[r['verdict'] for r in reruns]):
                 settled = run.settle(first, reruns)
-                self.assertEqual((settled['verdict'], settled['failed'], settled['flaky']),
-                                 ('PASS', [], sorted([TEST, OTHER])))
+                self.assertEqual((settled['verdict'], settled['flaky']), ('FAIL', sorted([TEST, OTHER])))
 
-    def test_a_test_that_passes_once_and_fails_once_is_flaky_but_the_report_says_so(self):
-        first = run.summarize(manifest({TEST: 'failed', OTHER: 'failed'}))
-        reruns = [run.summarize(manifest({TEST: 'passed', OTHER: 'passed'})),
-                  run.summarize(manifest({TEST: 'failed', OTHER: 'passed'}))]
+    def test_the_report_says_how_often_a_flaky_failure_failed(self):
+        first = run.summarize(manifest({TEST: 'failed'}))
+        reruns = [run.summarize(manifest({TEST: 'passed'})), run.summarize(manifest({TEST: 'failed'}))]
         settled = run.settle(first, reruns)
-        self.assertEqual((settled['verdict'], settled['flaky']), ('PASS', sorted([TEST, OTHER])))
-        self.assertEqual(list(settled['flaky_notes']), [TEST])
-        text = run.report_text('a' * 40, dict(settled, reruns=2, crashes=[], counts={'passed': 0, 'failed': 0, 'skipped': 0}),
+        text = run.report_text('a' * 40, dict(settled, reruns=2, crashes=[], counts={'passed': 0, 'failed': 1, 'skipped': 0}),
                                started=0, finished=1, previous=None, suspects=[], evidence=Path('/e'))
-        self.assertIn(f'{TEST} (passed in 1 of 2 re-runs, failed in the rest)', text)
+        self.assertIn('— FAIL', text)
+        self.assertIn(f'{TEST} (failed 2 of 3 runs', text)
 
     def test_settle_leaves_pass_and_inconclusive_alone(self):
         for m in (manifest({TEST: 'passed'}), manifest({TEST: 'failed'}, interrupted=True)):
@@ -569,15 +567,15 @@ class TickTests(unittest.TestCase):
         self.assertIn('journeys due to move: J1ListenToAnArticleJourneyUITests passed twice running, move to gating',
                       ops.posted[1])
 
-    def test_flaky_failure_is_rerun_twice_and_reported_as_pass_without_claude(self):
+    def test_flaky_failure_is_rerun_twice_and_reported_as_fail(self):
         plans = [manifest({TEST: 'failed'}), manifest({TEST: 'passed'}), manifest({TEST: 'passed'})]
         with tempfile.TemporaryDirectory() as tmp, mac_with_room():
             ops = FakeOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')])
-            self.assertEqual(run.tick(ops), 'PASS')
+            self.assertEqual(run.tick(ops), 'FAIL')
         self.assertIn(['test_plan', 'rerun-1', TEST], ops.calls)
         self.assertIn(['test_plan', 'rerun-2', TEST], ops.calls)
+        self.assertIn('— FAIL', ops.posted[0])
         self.assertIn(f'flaky: {TEST}', ops.posted[0])
-        self.assertEqual((ops.diagnosed, ops.filed), ([], []))
 
     def test_confirmed_failure_reports_then_diagnoses_and_files(self):
         plans = [manifest({TEST: 'failed'}), manifest({TEST: 'failed'}), manifest({TEST: 'failed'})]
@@ -744,25 +742,16 @@ class CulpritTests(unittest.TestCase):
         self.assertFalse(any(e[0] in ('commits_since', 'check') for e in ops.events))
         self.assertIn('no earlier integration PASS', ops.comments[0][1])
 
-    def test_a_flaky_pass_never_searches_or_reverts(self):
-        plans = [manifest({TEST: 'failed'}), manifest({TEST: 'passed'}), manifest({TEST: 'passed'})]
-        with tempfile.TemporaryDirectory() as tmp:
-            ops = CulpritOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')])
-            with recording_slot(ops.events):
-                self.assertEqual(run.tick(ops), 'PASS')
-        self.assertEqual((ops.reverts, ops.comments), ([], []))
-        self.assertFalse(any(e[0] == 'check' for e in ops.events))
-
-    def test_a_pass_in_one_rerun_with_the_other_unable_to_boot_never_searches_or_reverts(self):
-        # #1417: re-run 1 passed, re-run 2 never ran a test.
-        plans = [manifest({TEST: 'failed'}), manifest({TEST: 'passed'}), {'status': 'failed_or_incomplete', 'steps': []}]
-        with tempfile.TemporaryDirectory() as tmp:
-            ops = CulpritOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')])
-            with recording_slot(ops.events):
-                self.assertEqual(run.tick(ops), 'PASS')
-        self.assertEqual((ops.reverts, ops.comments), ([], []))
-        self.assertFalse(any(e[0] == 'check' for e in ops.events))
-
+    def test_a_flaky_failure_never_searches_or_reverts(self):
+        # Failing once and passing on a re-run names no merge: nothing to bisect, and never a revert.
+        for plans in ([manifest({TEST: 'failed'}), manifest({TEST: 'passed'}), manifest({TEST: 'passed'})],
+                      [manifest({TEST: 'failed'}), manifest({TEST: 'passed'}), {'status': 'failed_or_incomplete', 'steps': []}]):
+            with tempfile.TemporaryDirectory() as tmp:
+                ops = CulpritOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')])
+                with recording_slot(ops.events):
+                    self.assertEqual(run.tick(ops), 'FAIL')
+            self.assertEqual(ops.reverts, [])
+            self.assertFalse(any(e[0] in ('commits_since', 'check') for e in ops.events))
 
 
 class StrangerTests(unittest.TestCase):

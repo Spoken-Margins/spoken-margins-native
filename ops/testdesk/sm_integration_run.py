@@ -222,6 +222,8 @@ def summarize(manifest: dict) -> dict:
         verdict = 'INCONCLUSIVE'
         if not errors and not manifest.get('error'):
             errors.append('no test ran')
+            if manifest.get('status') == 'verified':
+                errors.append('the app plan ran 0 tests, so nothing was verified')
     elif incomplete:
         verdict = 'INCONCLUSIVE'
     elif failed:
@@ -239,14 +241,14 @@ def summarize(manifest: dict) -> dict:
 
 
 def settle(first: dict, reruns: list[dict]) -> dict:
-    """Apply the flake rule to a FAIL: a test that passed in a completed re-run on the same build is flaky.
+    """Re-run evidence for a FAIL. A test that failed on the first run is a failure for the verdict even when a
+    completed re-run passed it (owner, 2026-10-21: every failure means a real bug, and no flake tolerance, #2590).
 
-    A re-run that stopped (INCONCLUSIVE) is no information either way: it can't clear a test, and it can't
-    keep a failure confirmed that another re-run's pass has already cleared (#1417). A test that passed in
-    one re-run and failed in another is flaky too, but `flaky_notes` says so, because an order-dependent
-    failure looks the same."""
+    The re-runs only say how it failed. `confirmed` holds the tests that no completed re-run passed; `flaky` holds
+    the ones that passed in at least one, with `flaky_notes` saying "failed 1 of 3 runs" so the report is plain.
+    A re-run that stopped (INCONCLUSIVE) is no information about a test either way."""
     if first['verdict'] != 'FAIL':
-        return dict(first, flaky=[])
+        return dict(first, flaky=[], confirmed=[])
     completed = [r for r in reruns if r['verdict'] != 'INCONCLUSIVE']
     flaky, notes = [], {}
     for test in first['failed']:
@@ -254,10 +256,9 @@ def settle(first: dict, reruns: list[dict]) -> dict:
         if not passes:
             continue
         flaky.append(test)
-        if any(r['tests'].get(test) == 'failed' for r in completed):
-            notes[test] = f' (passed in {passes} of {len(completed)} re-runs, failed in the rest)'
+        notes[test] = f' (failed {1 + len(completed) - passes} of {1 + len(completed)} runs, so a failure, not a pass)'
     confirmed = [t for t in first['failed'] if t not in flaky]
-    return dict(first, verdict='FAIL' if confirmed else 'PASS', failed=confirmed, flaky=flaky, flaky_notes=notes,
+    return dict(first, flaky=flaky, flaky_notes=notes, confirmed=confirmed,
                 errors=first['errors'] + [e for r in reruns for e in r['errors']] if confirmed else first['errors'])
 
 
@@ -1010,8 +1011,11 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
             ops.must(['scripts/setup-worktree.sh'], cwd=wt)
             result = run_tests(ops, wt, evidence, fds)
             ops.log('simulator build ' + keep_sim_build(ops, wt, evidence / 'app' / 'manifest.json', sha))
-            if result['verdict'] == 'FAIL':
-                result['culprit'] = search_culprit(ops, wt, evidence, green, sha, result['failed'], fds)
+            if result['verdict'] == 'FAIL' and result.get('confirmed'):
+                result['culprit'] = search_culprit(ops, wt, evidence, green, sha, result['confirmed'], fds)
+            elif result['verdict'] == 'FAIL':  # every failure passed on a re-run: no merge can be blamed for it
+                result['culprit'] = {'status': 'unknown', 'checks': [],
+                                     'why': 'each failing test passed on a re-run, so there is no stable failure to bisect'}
         except Exception as error:
             result = dict(summarize({'error': str(error)}), flaky=[])
         finally:
