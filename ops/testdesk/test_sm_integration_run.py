@@ -447,6 +447,9 @@ class FakeOps(run.Ops):
     def free_bytes(self):
         return 50 * GB
 
+    def simctl_problem(self):
+        return None
+
     def test_plan(self, wt, output, plan, fds, only=()):
         self.calls.append(['test_plan', output.name, *only])
         return self.plans.pop(0)
@@ -476,6 +479,17 @@ def mac_with_room():
 
 
 class TickTests(unittest.TestCase):
+    def test_simctl_waiting_on_first_launch_holds_with_the_cause(self):
+        # #2591: after an Xcode update without its components, every simctl call waited on a password prompt.
+        why = 'CoreSimulator is older than Xcode expects (1171.7, Xcode wants 1174.9.2)'
+        with tempfile.TemporaryDirectory() as tmp, mac_with_room():
+            ops = FakeOps(tmp, [], bodies=[report_comment(OLD[:7], 'PASS')])
+            with patch.object(ops, 'simctl_problem', return_value=why), patch.object(ops, 'log') as log:
+                self.assertEqual(run.tick(ops), 'held')
+        self.assertIn(why, ' '.join(str(c) for c in log.call_args_list))
+        self.assertFalse(any(c[:3] == ['git', 'worktree', 'add'] for c in ops.calls))
+        self.assertEqual(ops.posted, [])
+
     def test_a_tip_someone_already_reported_starts_nothing(self):
         with tempfile.TemporaryDirectory() as tmp, mac_with_room():
             ops = FakeOps(tmp, [], bodies=[report_comment(SHA[:7], 'PASS', by='Test Desk')])

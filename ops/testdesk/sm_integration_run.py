@@ -63,6 +63,7 @@ import journey_promotion  # noqa: E402
 import lane_ledger  # noqa: E402
 import lane_slots  # noqa: E402
 import sim_builds  # noqa: E402  (ready-made simulator builds for desks)
+import simctl_preflight  # noqa: E402  (#2591: simctl waiting on Xcode's first-launch install)
 from lane_xcresult_attachments import report_lines  # noqa: E402
 
 REPORT_RE = re.compile(r'^Lane report integration-([0-9a-f]{7,40}) — (PASS|FAIL|INCONCLUSIVE)\b')
@@ -600,6 +601,9 @@ class Ops:
     def free_bytes(self) -> int:
         return shutil.disk_usage(self.repo_root).free
 
+    def simctl_problem(self) -> Optional[str]:
+        return simctl_preflight.problem()
+
     def builds_running(self) -> int:
         res = self.run(['pgrep', '-x', 'xcodebuild'], timeout=10)
         return len(res.stdout.split()) if res.returncode == 0 else 0
@@ -962,6 +966,12 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
                       ops.lane_waiting(), max(tested, default=None))
     if why:
         say('hold: ' + why)
+        return 'held'
+    # After an Xcode update without its components, every simctl call waits on a password prompt (#2591): hold with
+    # the cause in the log instead of starting a run that hangs and posts an INCONCLUSIVE on #184.
+    blocked = ops.simctl_problem()
+    if blocked:
+        say('hold: ' + blocked)
         return 'held'
     previous = reports[-1][0] if reports else None
     green = last_green(reports)
