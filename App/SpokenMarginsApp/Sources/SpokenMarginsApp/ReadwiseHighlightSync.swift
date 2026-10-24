@@ -45,9 +45,11 @@ final class ReadwiseHighlightSync: ObservableObject {
 
     /// The ledger is a file that grows with every item sent, so it is read off the main actor (#2510).
     private func loadLinks() {
+        let epoch = connectionEpoch
         Task { [weak self] in
             let loaded = await Task.detached(priority: .utility) { try? Self.ledger().links() }.value
-            if let loaded { self?.links = loaded }
+            // A pass or a Disconnect that finished first has the newer answer.
+            if let self, let loaded, self.links.isEmpty, epoch == self.connectionEpoch { self.links = loaded }
         }
     }
 
