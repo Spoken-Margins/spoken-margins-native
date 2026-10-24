@@ -85,9 +85,11 @@ extension Gate1AppModel {
     private nonisolated static func summaryBridgeAssetID(
         itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String?, voiceKey: String
     ) -> String {
-        let safe = PodcastAnchorEvidencePaths.safeComponent
-        let key = suppliedAssetId.map { "supplied-\(safe($0))" } ?? voiceKey
-        return "summary-bridge-\(safe(itemId))-\(safe(proposalId))-\(safe(sceneId))-\(key)"
+        // An id the name cut would change carries a hash of the whole id, so two ids can't share a file (#1120).
+        SummaryBridgeAssetNaming.assetID(
+            itemId: itemId, proposalId: proposalId, sceneId: sceneId, suppliedAssetId: suppliedAssetId,
+            generatedVoiceKey: suppliedAssetId == nil ? voiceKey : ""
+        )
     }
 
     func prepareSummaryBridgeAsset(
@@ -101,9 +103,17 @@ extension Gate1AppModel {
         let usesKitten = summaryBridgeUsesKitten
         let assetID = summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id,
                                            suppliedAssetId: scene.summaryAssetId, usesKitten: usesKitten)
+        // A supplied voice imported before #1120 sits under the old cut name; it still counts as prepared.
+        let legacyID = scene.summaryAssetId.flatMap {
+            SummaryBridgeAssetNaming.legacyAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id, suppliedAssetId: $0)
+        }
         // The whole asset table, read off the main thread (#2255).
-        let saved = try await Task.detached(priority: .userInitiated) {
-            try store.loadOwnedOfflineAssets().first(where: { $0.id == assetID && $0.integrity == .valid })
+        let saved = try await Task.detached(priority: .userInitiated) { () throws -> OwnedOfflineAsset? in
+            let assets = try store.loadOwnedOfflineAssets()
+            for id in [assetID] + (legacyID.map { [$0] } ?? []) {
+                if let found = assets.first(where: { $0.id == id && $0.integrity == .valid }) { return found }
+            }
+            return nil
         }.value
         if let existing = saved, resolvedApplicationSupportAssetURL(for: existing.relativePath) != nil { return existing }
         // An authored voice is part of the imported experience, not a request
