@@ -219,10 +219,13 @@ def summarize(manifest: dict) -> dict:
         verdict = 'INCONCLUSIVE'
     elif failed:
         verdict = 'FAIL'
-    elif manifest.get('status') == 'verified':
+    elif manifest.get('status') == 'verified' and counts['passed'] > 0:
         verdict = 'PASS'
     else:
         verdict = 'INCONCLUSIVE'
+        if manifest.get('status') == 'verified':
+            # A run that executed nothing proves nothing, whatever its status says (#2590).
+            errors.append('the app plan ran 0 tests, so nothing was verified')
     return {'verdict': verdict, 'counts': counts, 'failed': sorted(set(failed)), 'tests': statuses,
             'journeys': journeys, 'attachments': attachments, 'crashes': crashes,
             'errors': errors + ([manifest['error']] if manifest.get('error') else [])}
@@ -296,17 +299,18 @@ def report_text(sha: str, result: dict, *, started: float, finished: float, prev
                 suspects: list[str], evidence, hosted: bool = False) -> str:
     c = result['counts']
     day = dt.datetime.fromtimestamp(started).strftime('%Y-%m-%d')
-    why = (f'next moved from {previous}, the last tip with an integration report' if previous
+    trunk = BASE_BRANCH
+    why = (f'{trunk} moved from {previous}, the last tip with an integration report' if previous
            else f'no integration report on #{REPORT_ISSUE} in the last {REPORT_LOOKBACK.days} days')
     lines = ['```text',
              f"Lane report integration-{sha[:7]} — {result['verdict']}",
-             f'commit {sha[:8]} (next\'s tip) · integration run: --plan app · '
+             f'commit {sha[:8]} ({trunk}\'s tip) · integration run: --plan app · '
              f'{clock(started)}–{clock(finished)} local, {day}',
              f'run by: {HOSTED_RUN_BY if hosted else RUN_BY}',
-             f'why it ran: {why}; ' + ('a push to next started hosted-integration.yml on a GitHub-hosted Mac.'
+             f'why it ran: {why}; ' + (f'a push to {trunk} started hosted-integration.yml on a GitHub-hosted Mac.'
                                        if hosted else
                                        'the Mac had room (simulator slot free, memory normal, disk above the line) '
-                                       'and no lane app tests were waiting, or next had gone 3 hours untested.'),
+                                       f'and no lane app tests were waiting, or {trunk} had gone 3 hours untested.'),
              'ran:',
              f"  1. --plan app: {c['passed']} passed, {c['failed']} failed, {c['skipped']} skipped  ← verdict input"]
     if result.get('reruns'):
@@ -1199,6 +1203,12 @@ def hosted_run(ops: Ops, sha: str) -> str:
     return result['verdict']
 
 
+def hosted_exit_code(verdict: str) -> int:
+    """The hosted job's exit status (#2590): red for anything but a PASS, so a run that tested nothing can't show
+    green. `held` is the one exception: the tip already has a report, and the run was a repeat."""
+    return 0 if verdict in ('PASS', 'held') else 1
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--dry-run', action='store_true', help='print the decision; run no tests and change nothing')
@@ -1214,7 +1224,7 @@ def main(argv=None) -> int:
         if summary:
             with open(summary, 'a') as f:
                 f.write(f'Integration run on {args.sha[:7]}: {verdict}\n')
-        return 0
+        return hosted_exit_code(verdict)
     ops = Ops(echo=args.dry_run)
     if args.dry_run:
         tick(ops, dry_run=True)

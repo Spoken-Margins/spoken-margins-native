@@ -204,7 +204,7 @@ class ReportTextTests(unittest.TestCase):
         phone = load_phone_build()
         self.assertEqual(phone.latest_verdict(SHA, [body]), f'Lane report integration-{SHA[:7]} — PASS')
         self.assertEqual(run.reported([body]), [(SHA[:7], 'PASS')])
-        for words in (f'run by: {run.RUN_BY}', f'next moved from {OLD[:7]}', '1 passed, 0 failed',
+        for words in (f'run by: {run.RUN_BY}', f'{run.BASE_BRANCH} moved from {OLD[:7]}', '1 passed, 0 failed',
                       'flaky: none this run', run.NOT_RUN, run.NOT_VERIFIED, '/mac/evidence',
                       f'{SHA[:7]} is the current phone candidate: app tests passed; scripted journeys not run; '
                       'attended journeys not run.'):
@@ -509,7 +509,7 @@ class TickTests(unittest.TestCase):
             state = json.loads((ops.home / 'state.json').read_text())
             self.assertEqual(run.tick(ops), 'held')  # same tip next tick
         self.assertEqual(len(ops.posted), 1)
-        self.assertIn(f'next moved from {OLD[:7]}', ops.posted[0])
+        self.assertIn(f'{run.BASE_BRANCH} moved from {OLD[:7]}', ops.posted[0])
         self.assertEqual(state['results'][SHA]['verdict'], 'PASS')
         self.assertNotIn('in_progress', state['results'][SHA])
         self.assertEqual(ops.diagnosed, [])
@@ -977,6 +977,30 @@ class HostedRunTests(unittest.TestCase):
             with patch.object(run, 'exclusive_slot', busy):
                 self.assertEqual(run.hosted_run(ops, SHA), 'INCONCLUSIVE')
         self.assertIn('why inconclusive: simulator slot decision is busy', ops.posted[0])
+
+    def test_a_run_that_executed_no_tests_is_inconclusive_not_a_pass(self):
+        """#2590: the hosted run lacked xcodegen, ran nothing and still looked green."""
+        empty = manifest({})
+        self.assertEqual(empty['status'], 'verified')
+        result = run.summarize(empty)
+        self.assertEqual(result['verdict'], 'INCONCLUSIVE')
+        self.assertIn('ran 0 tests', ' '.join(result['errors']))
+        skipped_only = run.summarize(manifest({TEST: 'skipped'}))
+        self.assertEqual(skipped_only['verdict'], 'INCONCLUSIVE')
+        self.assertEqual(run.summarize(manifest({TEST: 'passed'}))['verdict'], 'PASS')
+
+    def test_the_hosted_job_is_red_unless_the_tip_passed(self):
+        self.assertEqual({v: run.hosted_exit_code(v) for v in ('PASS', 'held', 'FAIL', 'INCONCLUSIVE')},
+                         {'PASS': 0, 'held': 0, 'FAIL': 1, 'INCONCLUSIVE': 1})
+
+    def test_main_exits_nonzero_for_a_hosted_run_that_tested_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = HostedOps(tmp, [manifest({})], bodies=[report_comment(OLD[:7], 'PASS')])
+            with recording_slot(ops.events), patch.object(run, 'Ops', return_value=ops), \
+                    patch.dict(os.environ, {'GITHUB_RUN_ID': '42'}):
+                self.assertEqual(run.main(['--hosted', '--sha', SHA]), 1)
+        self.assertEqual(run.reported(ops.posted), [(SHA[:7], 'INCONCLUSIVE')])
+        self.assertIn('ran 0 tests', ops.posted[0])
 
     def test_main_needs_a_full_sha(self):
         with open(os.devnull, 'w') as quiet, self.assertRaises(SystemExit), contextlib.redirect_stderr(quiet):
