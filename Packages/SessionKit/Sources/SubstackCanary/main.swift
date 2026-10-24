@@ -5,7 +5,7 @@
 //
 //   swift run substack-canary [--report <file.md>] [--posts <n>] [--feed <https feed URL> ...]
 //
-// Exit status: 0 passed, 1 a parser failure, 3 inconclusive (feeds couldn't be read), 2 bad arguments.
+// Exit status: 0 passed, 1 a parser failure, 3 inconclusive (some feeds couldn't be read), 5 no feed could be checked, 2 bad arguments.
 import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -115,7 +115,14 @@ for feed in feeds {
     }
     guard let subscription,
           let entries = try? repository.loadFeedEntries(subscriptionId: subscription.id) else {
-        lines.append("- **\(feed)**: could not check (the feed didn't load twice: \(feedError))")
+        // The app's error hides the HTTP status; ask once more plainly so the report says what the server answered.
+        let answer: String
+        switch await fetchPage(URL(string: feed)!) {
+        case .failed(let why): answer = why
+        case .tooLarge(let bytes): answer = "HTTP 2xx, \(bytes) bytes"
+        case .page: answer = "HTTP 2xx"
+        }
+        lines.append("- **\(feed)**: could not check (the feed didn't load twice: \(feedError); a plain request got \(answer))")
         feedVerdicts.append(.couldNotCheck)
         continue
     }
@@ -163,6 +170,7 @@ let status = SubstackCanary.exitStatus(feedVerdicts)
 let headline = switch status {
 case 0: "Substack canary passed: the app's parser read every feed it could reach."
 case 1: "Substack canary FAILED: the app's parser missed a publisher voice, or found none on any feed."
+case SubstackCanary.nothingCheckedStatus: "Substack canary FAILED to check anything: no feed could be read, so it tested nothing."
 default: "Substack canary inconclusive: no voice found and at least one feed couldn't be read."
 }
 let report = ([headline, ""] + lines).joined(separator: "\n") + "\n"

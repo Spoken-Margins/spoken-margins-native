@@ -142,9 +142,13 @@ public enum SubstackCanary {
 
     /// The run's exit status: 0 passed; 1 the parser missed something, or no feed gave a voice although every
     /// feed was read (these feeds usually have one, so the audio went somewhere neither reading looks); 3 no
-    /// voice and at least one feed couldn't be read, which is not evidence about the parser.
+    /// voice and at least one feed couldn't be read, which is not evidence about the parser; 5 no feed could be
+    /// checked at all (or there were none), so the run tested nothing and must not look green (#2596).
+    public static let nothingCheckedStatus: Int32 = 5
+
     public static func exitStatus(_ feeds: [FeedVerdict]) -> Int32 {
         if feeds.contains(.failed) { return 1 }
+        if feeds.allSatisfy({ $0 == .couldNotCheck }) { return nothingCheckedStatus }
         if feeds.contains(.voice) { return 0 }
         return feeds.contains(.couldNotCheck) ? 3 : 1
     }
