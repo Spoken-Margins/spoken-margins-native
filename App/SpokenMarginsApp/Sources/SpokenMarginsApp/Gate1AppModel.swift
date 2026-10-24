@@ -252,7 +252,7 @@ final class Gate1AppModel: ObservableObject {
             }
         }
     }
-    @Published private(set) var marginRows: [MarginRow] = []
+    @Published var marginRows: [MarginRow] = []
     @Published private(set) var offlineStorageSnapshot = OfflineStorageSnapshot()
     @Published var recordingCaptureHealth: MarginCaptureSupervisor.Health = .capturing // written by Gate1AppModel+MarginCapture only
     var captureWatcher = MarginCaptureWatcher()
