@@ -25,6 +25,8 @@ RUNNING = f'"hosted fast: Mac rest" {lane.NOT_FINISHED} on {HEAD[:7]}'
 STALE = f'"hosted fast: portable" tested it on main at {MERGE[:7]}, and main since: its commits touch build inputs (x)'
 FAILED = f'"hosted fast: Mac rest" ended failure on {HEAD[:7]}'
 MISSING = f'no "hosted fast: Mac rest" check ran on {HEAD[:7]}'
+UNRECORDED = f'"hosted fast: portable" on {HEAD[:7]} did not record that it tested fast-portable on this head'
+NEWER = '9' * 40
 
 
 class Clock:
@@ -71,12 +73,15 @@ class RoutingTests(unittest.TestCase):
 
 
 class HostedRestChecksTests(unittest.TestCase):
-    def wait(self, answers, alive=lambda: None, dispatch_result='', wait=3600, checks=None):
+    def wait(self, answers, alive=lambda: None, dispatch_result='', wait=3600, checks=None, newest_base=None,
+             seen=None):
         """hosted_rest_checks over a scripted sequence of (found, why) answers, on a fake clock."""
         answers, clock, dispatched = list(answers), Clock(), []
         def once(*args, **kwargs):
             # all three checks, the Mac rest among them, unless the caller asked for the pair alone
             self.assertEqual(set(args[-1]), set(CHECKS if checks is None else checks))
+            if seen is not None:
+                seen.append(args[4])  # the base tip this poll compared the checks with
             return answers.pop(0) if len(answers) > 1 else answers[0]
         def dispatch():
             dispatched.append(clock.now)
@@ -85,6 +90,7 @@ class HostedRestChecksTests(unittest.TestCase):
             result = lane.hosted_rest_checks(FakeGitHub(), Path('.'), 'main', HEAD, MERGE, alive=alive,
                                              dispatch=dispatch, env=ON, wait=wait, poll=30, clock=clock,
                                              sleep=clock.sleep, out=open('/dev/null', 'w'),
+                                             newest_base=newest_base,
                                              **({} if checks is None else {'checks': checks}))
         return result, clock.now, dispatched
 
@@ -111,6 +117,30 @@ class HostedRestChecksTests(unittest.TestCase):
         (found, why), _, dispatched = self.wait([(None, STALE), (None, STALE), (None, RUNNING), (STOOD, '')])
         self.assertEqual(found, STOOD)
         self.assertEqual(dispatched, [0.0])  # one dispatch: the second stale answer was the old run still newest
+
+    def test_a_check_that_wrote_no_notice_is_run_again_not_handed_to_the_mac(self):
+        # #2596: a hosted check that passed but recorded nothing to match against went to the Mac fallback at once.
+        self.assertTrue(lane.HOSTED_STALE.search(UNRECORDED))
+        (found, why), _, dispatched = self.wait([(None, UNRECORDED), (None, RUNNING), (STOOD, '')])
+        self.assertEqual(found, STOOD)
+        self.assertEqual(dispatched, [0.0])
+
+    def test_each_poll_compares_the_checks_with_the_newest_base(self):
+        # main moved about every 20 minutes while a check took 10 to 25: comparing with the tip the job started on
+        # made a fresh run stale before it was read.
+        tips, seen = iter(['c' * 40, 'd' * 40, NEWER]), []
+        (found, why), _, _ = self.wait([(None, RUNNING), (None, RUNNING), (STOOD, '')], seen=seen,
+                                       newest_base=lambda: next(tips))
+        self.assertEqual(found, STOOD)
+        self.assertEqual(seen, ['c' * 40, 'd' * 40, NEWER])
+
+    def test_a_base_that_cannot_be_fetched_keeps_the_tip_it_has(self):
+        def broken():
+            raise OSError('network down')
+        seen = []
+        (found, why), _, _ = self.wait([(STOOD, '')], seen=seen, newest_base=broken)
+        self.assertEqual(found, STOOD)
+        self.assertEqual(seen, [MERGE])
 
     def test_checks_still_stale_after_a_fresh_run_are_run_again_up_to_the_limit(self):
         cycle = [(None, STALE), (None, RUNNING)]
@@ -208,12 +238,14 @@ class HostedRunAutoTests(unittest.TestCase):
     T3_ASKED = comment('/lane T3\ncommit: ' + HEAD[:7] + '\ntests: SourceLinkImportTests')
 
     def run_auto(self, comments=(), found=(STOOD, ''), paths=('Packages/SessionKit/Sources/SessionKit/A.swift',),
-                 env=ON):
+                 env=ON, wait_effect=None, builds=None):
         github = FakeGitHub(labels=('automerge',), comments=comments)
         with tempfile.TemporaryDirectory() as temporary, \
                 mock.patch.dict(lane.os.environ, env), \
                 mock.patch.object(lane, 'TESTED_RECORD', Path(temporary) / 'tested.json'), \
-                mock.patch.object(lane, 'build_merge_commit', return_value=(MERGE, [])), \
+                mock.patch.object(lane, 'build_merge_commit',
+                                  side_effect=builds or [(MERGE, [])] * 3) as self.build, \
+                mock.patch.object(lane, 'fetch_base', return_value=NEWER), \
                 mock.patch.object(lane, 'base_policy', return_value=scope), \
                 mock.patch.object(lane, 'diff_scope', return_value=scope.classify(list(paths))), \
                 mock.patch.object(lane, 'inherited_check', return_value=lambda comments: []), \
@@ -221,7 +253,8 @@ class HostedRunAutoTests(unittest.TestCase):
                 mock.patch.object(lane, 'host_build_folders') as folders, \
                 mock.patch.object(lane, 'sweep_merge_audit'), \
                 mock.patch.object(lane, 'dispatch_hosted_integration', return_value=''), \
-                mock.patch.object(lane, 'hosted_rest_checks', return_value=found) as wait, \
+                mock.patch.object(lane, 'hosted_rest_checks',
+                                  side_effect=wait_effect or (lambda *args, **kwargs: found)) as wait, \
                 mock.patch.object(lane, 'hosted_fast_checks') as pair, \
                 mock.patch.object(lane, 'run_fast') as fast, \
                 mock.patch.object(lane, 'run_mac_rest') as rest, \
@@ -248,6 +281,30 @@ class HostedRunAutoTests(unittest.TestCase):
         self.assertIn('none on the Mac', ran)
         self.assertIn(f'merged into main as {MERGE[:7]}', details)
         self.assertTrue(any('"hosted fast: Mac rest": PASS' in line for line in details), details)
+
+    def test_main_moving_while_it_waited_merges_on_the_tip_the_checks_were_compared_with(self):
+        def newest(*args, **kwargs):
+            self.assertEqual(kwargs['newest_base'](), NEWER)
+            return STOOD, ''
+        (verdict, where, ran, details), github, wait, push = self.run_auto(wait_effect=newest)
+        self.assertEqual(verdict, 'PASS')
+        self.assertEqual(self.build.call_count, 2)  # once on the tip the job started on, again on the newest
+        push.assert_called_once()
+
+    def test_main_not_moving_builds_the_merge_once(self):
+        (verdict, *_), github, wait, push = self.run_auto()
+        self.assertEqual(verdict, 'PASS')
+        self.assertEqual(self.build.call_count, 1)
+
+    def test_a_clash_with_the_newest_base_is_reported_not_merged(self):
+        def newest(*args, **kwargs):
+            kwargs['newest_base']()
+            return STOOD, ''
+        (verdict, where, ran, details), github, wait, push = self.run_auto(
+            wait_effect=newest, builds=[(MERGE, []), (None, ['scripts/x.py'])])
+        push.assert_not_called()
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertTrue(any('does not merge cleanly' in line for line in details), details)
 
     def test_checks_it_cannot_get_hand_the_run_to_the_mac_fallback(self):
         (verdict, *_), github, wait, push = self.run_auto(found=(None, MISSING))
