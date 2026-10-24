@@ -88,6 +88,11 @@ final class SubstackCanaryTests: XCTestCase {
         // Every feed read and none gave a voice: for these feeds the audio has gone somewhere neither reading looks.
         XCTAssertEqual(SubstackCanary.exitStatus([.noneOffered, .noneOffered]), 1)
         XCTAssertEqual(SubstackCanary.exitStatus([.noneOffered, .couldNotCheck]), 3)
-        XCTAssertEqual(SubstackCanary.exitStatus([.couldNotCheck, .couldNotCheck]), 3)
+        // Nothing could be checked: the run tested nothing, so it is not the soft "inconclusive" (#2596).
+        XCTAssertEqual(SubstackCanary.exitStatus([.couldNotCheck, .couldNotCheck, .couldNotCheck]), 5)
+        XCTAssertEqual(SubstackCanary.exitStatus([]), 5)
+        // One feed unchecked beside a checked, passing one stays a warning.
+        XCTAssertEqual(SubstackCanary.exitStatus([.voice, .couldNotCheck, .couldNotCheck]), 0)
+        XCTAssertEqual(SubstackCanary.exitStatus([.noneOffered, .couldNotCheck, .couldNotCheck]), 3)
     }
 }
