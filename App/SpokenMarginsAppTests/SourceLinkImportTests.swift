@@ -2029,9 +2029,9 @@ final class SourceLinkImportTests: XCTestCase {
         model.resetAndSeed()
 
         model.handleIncomingURL(SourceLinkHandoffURL.url(forPayloadID: handoff.id))
-        // The inbox refresh is the drain's last step, after the quarantine file and the diagnostics (#2510).
+        // The drain sets its busy flag back last, after the quarantine file, the diagnostics and the inbox refresh (#2510).
         try await waitFor("unsupported share quarantine") {
-            (try? store.failedHandoffs().count) == 1 && model.importInbox.first?.payloadID == handoff.id
+            (try? store.failedHandoffs().count) == 1 && !model.isImportingPendingSourceLinkHandoffs
         }
 
         XCTAssertEqual(model.diagnostics["lastSourceLinkPayloadCleanup"], "queued:\(handoff.id)")
@@ -2082,7 +2082,7 @@ final class SourceLinkImportTests: XCTestCase {
 
         model.handleAppBecameActive()
         try await waitFor("shared episode import") {
-            model.libraryItems.contains { $0.title == "Shared Episode" }
+            model.libraryItems.contains { $0.title == "Shared Episode" } && !model.isImportingPendingSourceLinkHandoffs
         }
 
         XCTAssertEqual(model.screen, .playback)
@@ -2134,7 +2134,7 @@ final class SourceLinkImportTests: XCTestCase {
 
         model.handleAppBecameActive()
         try await waitFor("background podcast import") {
-            model.libraryItems.contains { $0.title == "Transcript Race Podcast" }
+            model.libraryItems.contains { $0.title == "Transcript Race Podcast" } && !model.isImportingPendingSourceLinkHandoffs
         }
         let podcastID = try XCTUnwrap(
             model.libraryItems.first(where: { $0.title == "Transcript Race Podcast" })?.id
@@ -2186,7 +2186,7 @@ final class SourceLinkImportTests: XCTestCase {
 
         model.importPendingSourceLinkHandoffs()
         try await waitFor("pending episode import") {
-            model.libraryItems.contains { $0.title == "Pending Episode" }
+            model.libraryItems.contains { $0.title == "Pending Episode" } && !model.isImportingPendingSourceLinkHandoffs
         }
 
         XCTAssertEqual(model.screen, .home)

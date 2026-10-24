@@ -424,9 +424,9 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         let snapshotBeforeImport = model.snapshot
 
         model.importPendingSourceLinkHandoffs()
-        // The payload file is deleted off the main thread after the import (#2510), so wait for that too.
+        // The payload file is deleted off the main thread after the import (#2510); the drain clears its busy flag after that.
         try await waitFor("Markdown share import") {
-            model.libraryItems.contains { $0.id == "item-shared-markdown" } && (try? browserStore.pendingPayloadIDs()) == []
+            model.libraryItems.contains { $0.id == "item-shared-markdown" } && !model.isImportingPendingSourceLinkHandoffs
         }
 
         XCTAssertEqual(model.snapshot, snapshotBeforeImport)
@@ -470,9 +470,9 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         let snapshotBeforeImport = model.snapshot
 
         model.importPendingSourceLinkHandoffs()
-        // The payload file is deleted off the main thread after the import (#2510), so wait for that too.
+        // The payload file is deleted off the main thread after the import (#2510); the drain clears its busy flag after that.
         try await waitFor("Shared text import") {
-            model.libraryItems.contains { $0.id == "item-shared-text-662" } && (try? browserStore.pendingPayloadIDs()) == []
+            model.libraryItems.contains { $0.id == "item-shared-text-662" } && !model.isImportingPendingSourceLinkHandoffs
         }
 
         XCTAssertEqual(model.snapshot, snapshotBeforeImport)
