@@ -1103,10 +1103,24 @@ def hosted_fast_records(github, head: str, checks: dict = HOSTED_FAST_CHECKS) ->
     return found, ''
 
 
-def merged_tree(tree: Path, base: str, head: str) -> str | None:
-    """The tree of <head> merged onto <base>, as a merge commit would hold it; None on a conflict."""
-    done = subprocess.run(['git', '-C', str(tree), 'merge-tree', '--write-tree', base, head],
-                          capture_output=True, text=True)
+def merged_tree(tree: Path, base: str, head: str, fetch: str | None = None) -> str | None:
+    """The tree of <head> merged onto <base>, as a merge commit would hold it; None on a conflict.
+
+    <fetch>: the branch <base> is a tip of. A fresh hosted run merges the PR onto the newest tip of it, which can be
+    newer than the checkout this job started with, and git merge-tree cannot merge a commit it lacks: that read as
+    "tested a tree that is not ..." three runs in a row (#2596: 4 of 7 fallbacks). When <base> is missing, the branch is
+    fetched once and the merge tried again."""
+    def merge():
+        return subprocess.run(['git', '-C', str(tree), 'merge-tree', '--write-tree', base, head],
+                              capture_output=True, text=True)
+    done = merge()
+    if done.returncode != 0 and fetch:
+        lacks = subprocess.run(['git', '-C', str(tree), 'cat-file', '-e', f'{base}^{{commit}}'],
+                               capture_output=True).returncode != 0
+        if lacks:
+            subprocess.run(git_with_token(tree) + ['fetch', '--no-tags', '--quiet', 'origin', fetch],
+                           capture_output=True)
+            done = merge()
     return done.stdout.split('\n', 1)[0].strip() if done.returncode == 0 else None
 
 
@@ -1160,11 +1174,11 @@ def _fast_checks_stand(github, tree: Path, base: str, head: str, base_sha: str, 
         if found is None:
             return None, why
         for name, record in found.items():
-            if merged_tree(tree, record['base'], head) != record['tree']:
+            if merged_tree(tree, record['base'], head, fetch=base) != record['tree']:
                 return None, (f'"{name}" tested a tree that is not {head[:7]} merged onto {base} at '
                               f'{record["base"][:7]}')
             if record['base'] != base_sha:
-                skipped, why = untested_moves(tree, record['base'], base_sha, head)
+                skipped, why = untested_moves(tree, record['base'], base_sha, head, hosted=True)
                 if skipped is None:
                     return None, f'"{name}" tested it on {base} at {record["base"][:7]}, and {base} since: {why}'
                 record['moved'] = skipped
@@ -1188,7 +1202,7 @@ def hosted_fast_lines(found: dict) -> list[str]:
     for name, record in found.items():
         moved = record.get('moved')
         since = (f'; next\'s {len(moved)} commit{"s" if len(moved) != 1 else ""} since touch none of this PR\'s files '
-                 'and no build inputs its checks read' if moved else '')
+                 'and no project.yml, Package.swift, Package.resolved or lockfile' if moved else '')
         lines.append(f'{record.get("runner", "GitHub-hosted")} check "{name}": PASS on this head merged with next at {record["base"][:7]} '
                      f'(tree {record["tree"][:7]}){since}. {record.get("url", "")}'.rstrip())
     return lines
@@ -1204,7 +1218,9 @@ HOSTED_MISSING_GRACE = 5 * 60
 HOSTED_FAILED = re.compile(r'" ended (failure|timed_out) on ')
 HOSTED_MISSING = re.compile(r'^no ".+" check ran on ')
 # What _fast_checks_stand says when a check passed on an older next whose commits since can matter.
-HOSTED_STALE = re.compile(r'" tested (a tree that is not|it on .+ and .+ since: )')
+# A check that passed but wrote no `lane-hosted-tested` notice (a dispatch without the `base` input, or an older
+# workflow file) is run again the same way: it cannot be matched to a tree, and a fresh run on the newest base can.
+HOSTED_STALE = re.compile(r'" tested (a tree that is not|it on .+ and .+ since: )|" on .+ did not record that it tested ')
 HOSTED_WORKFLOW = 'hosted-portable.yml'
 HOSTED_REDISPATCHES = 3  # fresh runs per job when next keeps moving under them; then the Mac fallback takes it
 NEEDS_MAC = 'NEEDS_MAC'  # the hosted automerge job's cue to hand the run to lane.yml's automerge-mac job
@@ -1230,14 +1246,17 @@ def pr_moved_on(github, head: str) -> str | None:
 def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, alive, dispatch, env=None,
                        records=hosted_fast_records, wait: float | None = None, poll: float = HOSTED_FAST_POLL,
                        grace: float = HOSTED_MISSING_GRACE, clock=time.monotonic, sleep=time.sleep,
-                       out=sys.stdout, checks: dict | None = None) -> tuple[dict | None, str]:
+                       out=sys.stdout, checks: dict | None = None, newest_base=None) -> tuple[dict | None, str]:
     """(all three hosted checks standing for <head> merged onto <base> at <base_sha>, '') or (None, why not), for the
     hosted automerge job (#2459). It never runs a test. While a check is still running, or missing within <grace>,
     it waits, up to <wait> seconds (HOSTED_REST_WAIT in a lane job, else none). When one passed on an older next that
     has since moved in ways that matter, it calls dispatch() (up to HOSTED_REDISPATCHES times: a fresh run of hosted-portable.yml on the PR's
     branch, merged onto <base>) and waits for that. alive() names why to stop (the PR moved on, say) or is falsy.
     checks: the checks to wait for, all three by default; the hosted pair alone (HOSTED_FAST_CHECKS) when the hosted
-    job only waits for them before handing the run to the build Mac (LANE_HOSTED_MAC_REST off)."""
+    job only waits for them before handing the run to the build Mac (LANE_HOSTED_MAC_REST off).
+    newest_base: a callable that fetches and returns the base branch's tip. Each poll compares the checks with it, not
+    with the tip this job started on, because a fresh run is merged onto the newest tip and main moves while the job
+    waits (#2596). The caller reads back the tip the last poll used."""
     env = os.environ if env is None else env
     if wait is None:
         wait = HOSTED_REST_WAIT if env.get('GITHUB_ACTIONS') == 'true' else 0
@@ -1249,6 +1268,11 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
         stop = alive()
         if stop:
             return None, stop
+        if newest_base is not None:
+            try:
+                base_sha = newest_base()
+            except (OSError, subprocess.SubprocessError):
+                pass  # keep comparing with the tip we have; the push says if it moved
         found, why = _hosted_fast_checks_once(github, tree, base, head, base_sha, env, records, checks)
         if found is not None or HOSTED_FAILED.search(why):
             return found, why
@@ -1674,11 +1698,27 @@ def counts_for_pr(path: str, pr_paths) -> bool:
     return path not in HOST_UNREAD_SCRIPTS or widens_host_checks(pr_paths)
 
 
-def untested_moves(tree: Path, tested_base: str, new_base: str, head: str) -> tuple[list[str] | None, str]:
+# #2596 (Default taken 5): what makes a hosted check run on an older <base> stale. The runner re-runs the hosted checks
+# on the newest <base> when one is, and <base> merged a PR about every 20 minutes while a check takes 10 to 25, so
+# almost every check went stale on some unrelated scripts/ file (6 of 7 fallbacks on 2026-10-24). Only a commit that
+# changes what every PR is built or resolved from can invalidate a check through a file the PR doesn't touch. What
+# this lets through is a clash between two PRs' separate files, which the hosted integration run on every merged tip
+# catches (#2590), as the owner's call has it: merged tips are tested end to end.
+HOSTED_GLOBAL_INPUT_NAMES = {'Package.swift', 'Package.resolved', 'package.json', 'package-lock.json'}
+
+
+def is_hosted_global_input(path: str) -> bool:
+    return path == 'project.yml' or Path(path).name in HOSTED_GLOBAL_INPUT_NAMES
+
+
+def untested_moves(tree: Path, tested_base: str, new_base: str, head: str,
+                   hosted: bool = False) -> tuple[list[str] | None, str]:
     """(next's commits since <tested_base>, '') when they can't change what the PR's test showed, else (None, why).
 
     They can't when they touch none of the PR's files and no build input its checks read (counts_for_pr). Each
     first-parent commit counts with everything it brought in, so a merge of another PR counts with that PR's files.
+    <hosted>: the test was a hosted check (hosted-portable.yml), and only the global inputs count
+    (is_hosted_global_input), not every scripts/ file.
     """
     git = ['git', '-C', str(tree)]
     if subprocess.run(git + ['merge-base', '--is-ancestor', tested_base, new_base], capture_output=True).returncode:
@@ -1701,7 +1741,7 @@ def untested_moves(tree: Path, tested_base: str, new_base: str, head: str) -> tu
     shared = sorted(touched & mine)
     if shared:
         return None, f'its commits touch this PR\'s files ({", ".join(shared[:5])})'
-    inputs = sorted(p for p in touched if counts_for_pr(p, mine))
+    inputs = sorted(p for p in touched if (is_hosted_global_input(p) if hosted else counts_for_pr(p, mine)))
     if inputs:
         return None, f'its commits touch build inputs ({", ".join(inputs[:5])})'
     return commits, ''
@@ -1822,15 +1862,33 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                         f'not merged: {held[1]}.',
                         'This run tested nothing and took no Mac: the T3 PASS\'s merge runs the host tests then, '
                         'or merges on the hosted checks that stand for this head.']
+                latest = {'sha': base_sha}  # the tip the checks were last compared with (hosted_rest_checks)
+
+                def newest_base():
+                    latest['sha'] = fetch_base(ROOT, base)
+                    return latest['sha']
                 found, why = hosted_rest_checks(github, ROOT, base, head, base_sha, wait=rest_wait,
                                                 alive=lambda: pr_moved_on(github, head),
                                                 dispatch=lambda: github.dispatch_hosted_checks(pull['head']['ref'],
                                                                                                base),
+                                                newest_base=newest_base,
                                                 **({'checks': HOSTED_FAST_CHECKS} if pair else {}))
                 if why.startswith(MOVED_ON):
                     return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', notes + [f'not merged: {why}']
                 if not found:
                     return hosted_checks_missing(why, NEEDS_MAC if hosted else 'INCONCLUSIVE')
+                if latest['sha'] != base_sha:
+                    # main moved while the job waited: the checks stand for the tip they were compared with, so the
+                    # merge commit is built on that tip, not the one this job started on (#2596).
+                    base_sha = latest['sha']
+                    if context is not None:
+                        context.tested_base = base_sha
+                    remember_tested(base, base_sha)
+                    merge_sha, conflicts = build_merge_commit(ROOT, base, head, pr, pull.get('title', ''))
+                    if conflicts:
+                        return 'INCONCLUSIVE', 'no simulator', 'nothing', notes + [
+                            f'The PR does not merge cleanly into {base} ({base_sha[:7]}): {", ".join(conflicts[:10])}. '
+                            f'Merge {base} into your branch and push; the automerge label runs it again.']
                 if pair:  # the build Mac takes the hosted pair's PASS and runs only --plan fast-mac-rest
                     return NEEDS_MAC, 'hosted Linux runner', 'nothing', notes + [
                         f'the hosted fast pair passed on {head[:7]} with {base} at '
