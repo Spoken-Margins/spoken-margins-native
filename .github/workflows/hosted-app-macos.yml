@@ -80,6 +80,9 @@ env:
 
 jobs:
   app:
+    # The check's name says what a green one means: on a PR or a push this job builds the app and runs no tests
+    # (T3 runs only when a hand-started run names tests). A check called plain "app" read as a passing app (#2596).
+    name: app build (T2, tests only when asked)
     # Collaborators' PRs only; a fork's PR starts no Mac.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: xcode-27

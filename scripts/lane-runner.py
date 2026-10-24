@@ -2436,7 +2436,9 @@ def failed_step_errors(manifest: dict, output: Path, limit: int = 3) -> list[str
 
 def t3_verdict(summaries: list[dict], statuses: list[str]) -> str:
     if statuses and all(status == 'verified' for status in statuses):
-        return 'PASS'
+        # Every plan in `grouped` holds part of a requested selector, so a plan that is verified yet passed no test ran
+        # nothing it was asked to (#2596: a class that "ran" 0 tests in the adapters plan was a PASS).
+        return 'FAIL' if any(not s['passed'] for s in summaries) else 'PASS'
     # A plan that lost its simulator failed for the lane's reasons (#411: exit 70 when the device vanished).
     if any((s['failed'] or s['build_failed']) and not s.get('device_lost') for s in summaries):
         return 'FAIL'
@@ -2498,6 +2500,9 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
             details.append(f'{plan}: the {what} ran out of its own {duration(limit)} budget (verify-tests.py `{step}`) '
                            f'after {summary["passed"]} passing test{"s" if summary["passed"] != 1 else ""}. '
                            'The simulator\'s boot has a separate budget and had finished before it started.')
+        if manifest.get('status') == 'verified' and not summary['passed']:
+            details.append(f'{plan}: ran 0 of the requested tests ({", ".join(s.split("/", 1)[-1] for s in selectors)}); '
+                           f'a requested test that does not run is a FAIL (#2596). evidence: {output}/manifest.json')
         if manifest.get('status') != 'verified' and not summary['failed']:
             details.append(f'{plan}: {manifest.get("error") or manifest.get("status")}. evidence: {output}/manifest.json')
             details += [f'{plan}: {line}' for line in failed_step_errors(manifest, output)]
@@ -3294,8 +3299,16 @@ def merge_base_branch(tree: Path, base: str) -> list[str]:
     return conflicts or [merged.stderr.strip().splitlines()[-1] if merged.stderr.strip() else 'the merge failed']
 
 
-def record_outcome(verdict: str) -> None:
-    """Hand the verdict to the workflow, whose Verdict step makes the check red on FAIL (#184).
+def is_hold(verdict: str, details: list[str]) -> bool:
+    """Whether an INCONCLUSIVE report is a deliberate wait, not a lane that did not run: the run said "not merged: ..."
+    (held for T3 or an audit, owner-merge files, the PR moved on). Such a PR is not failing, so its check stays
+    green with a warning that it was held; sm_status.py and owner_tap_alert.py read a red check as a failing PR."""
+    return verdict == 'INCONCLUSIVE' and any(str(line).startswith('not merged') for line in details)
+
+
+def record_outcome(verdict: str, held: bool = False) -> None:
+    """Hand the verdict to the workflow, whose Verdict step makes the check red on FAIL (#184) and, since #2596, on
+    any INCONCLUSIVE that is not a hold (held=True): a lane that tested nothing must not show green.
 
     The script itself exits 0 once it has reported, so a lane.yml from before this change (on a PR that
     hasn't merged next) stays green on FAIL, as before, instead of posting "stopped before reporting".
@@ -3303,7 +3316,7 @@ def record_outcome(verdict: str) -> None:
     outputs = os.environ.get('GITHUB_OUTPUT')
     if outputs:
         with open(outputs, 'a') as handle:
-            handle.write(f'reported=true\nverdict={verdict}\n')
+            handle.write(f'reported=true\nverdict={verdict}\nheld={str(held).lower()}\n')
 
 
 def request_name(pr: int, run_id: str, attempt: str | None) -> str:
@@ -3554,7 +3567,7 @@ def main(argv=None) -> int:
     if request['tier'] == 'T3':
         log_recovered_stalls(evidence, args.pr, head, t3_url, lambda text: Repo(repo).comment(STALL_ISSUE, text),
                              verdict)
-    record_outcome(verdict)
+    record_outcome(verdict, is_hold(verdict, moved + details))
     _, desk_waiting = pending_requests(github.comments())
     if explicit:
         github.relabel(RUNNING, QUEUED if desk_waiting else None)
