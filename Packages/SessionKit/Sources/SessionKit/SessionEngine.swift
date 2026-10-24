@@ -3149,19 +3149,40 @@ public final class SessionEngine {
 
     /// What an export reads before it shapes anything: the session, its item (with the whole text), the item's
     /// transcript timeline (megabytes for a podcast), and the session's Margins and turns. Exporting N Margins of
-    /// one session reads this once (#2508) instead of once per Margin.
+    /// one session reads this once (#2508) instead of once per Margin. The timeline is read on first use (#2506):
+    /// only a recording's context, the full source text or the Listening Map's length need it, so an article's
+    /// export never decodes one.
     struct ExportSource {
         var session: Session
         var item: Item
-        var sourceTimeline: TranscriptTimeline?
+        var sourceTimeline: LazyTimeline
         var allInterjections: [Interjection]
         var allTurns: [ConversationTurn]
+    }
+
+    /// A transcript timeline read at most once, and only when something asks for it.
+    final class LazyTimeline {
+        private let load: () throws -> TranscriptTimeline?
+        private var loaded: TranscriptTimeline??
+        /// How many times the store was asked, for a test to pin (#2506).
+        private(set) var loads = 0
+
+        init(_ load: @escaping () throws -> TranscriptTimeline?) { self.load = load }
+
+        func value() throws -> TranscriptTimeline? {
+            if let loaded { return loaded }
+            loads += 1
+            let timeline = try load()
+            loaded = .some(timeline)
+            return timeline
+        }
     }
 
     func loadExportSource(sessionId: String?) throws -> ExportSource {
         let session = try resolveSession(sessionId)
         let item = try repository.loadItem(id: session.itemId)
-        let sourceTimeline = try repository.loadTranscriptTimeline(itemId: item.id)?.timeline
+        let itemId = item.id
+        let sourceTimeline = LazyTimeline { [repository] in try repository.loadTranscriptTimeline(itemId: itemId)?.timeline }
         let allInterjections = try repository.loadInterjections(sessionId: session.id)
             .filter { $0.status == "active" }
         let activeInterjectionIDs = Set(allInterjections.map(\.id))
@@ -3176,16 +3197,21 @@ public final class SessionEngine {
     }
 
     func buildExport(options: ExportOptions, source: ExportSource) throws -> SessionExport {
-        let session = source.session, item = source.item, sourceTimeline = source.sourceTimeline
+        let session = source.session, item = source.item
         let allInterjections = source.allInterjections, allTurns = source.allTurns
         let exposesFullSourceText = options.includeFullText && !isNativeAudioSource(item)
+        let interjections = options.includeInterjections ? scopedExportInterjections(options: options, session: session, interjections: allInterjections) : []
+        // Read only when this export uses it (#2506): the full text of a transcribed source, the words around a
+        // recording's Margins, or the Listening Map's length. An article's Margin note needs none of them.
+        let needsTimeline = exposesFullSourceText || options.includeListeningMap
+            || (isNativeAudioSource(item) && interjections.contains { $0.targetType == .item && $0.anchor.mediaTimeMs != nil })
+        let sourceTimeline = try needsTimeline ? source.sourceTimeline.value() : nil
         let sourceTranscript = exposesFullSourceText
             ? sourceTimeline?.segments
                 .sorted { $0.startMs < $1.startMs }
                 .map(\.text)
                 .joined(separator: " ")
             : nil
-        let interjections = options.includeInterjections ? scopedExportInterjections(options: options, session: session, interjections: allInterjections) : []
         let turns = options.includeTurns ? scopedExportTurns(options: options, turns: allTurns, interjections: interjections) : []
         // The page goes with a paper's citation (#206), so the structured document is only
         // read for an item that has one. Margins anchor into Item.text, so the page is only
@@ -4742,7 +4768,7 @@ public final class SessionEngine {
             beforeStart = previous
         }
         // Lines that end no sentence (a heading, a title page's names and emails) are not part of the passage.
-        beforeStart = max(beforeStart, unsentencedBlockEnd(in: text, before: split))
+        beforeStart = max(beforeStart, unsentencedBlockEnd(in: text, before: split, notBefore: beforeStart))
         for _ in 0..<Self.textAnchorShoulderSentenceCount {
             let next = nextBoundary(after: afterEnd, unit: "sentence", text: text)
             if next == afterEnd { break }
@@ -4765,16 +4791,62 @@ public final class SessionEngine {
     /// A longer line is prose, not a heading or a name.
     private static let unsentencedLineLimit = 120
 
-    /// The line starting at `from` goes on from the one before it (a hard-wrapped line): its first letter is lower case.
-    private func continues(_ characters: [Character], from: Int, before limit: Int) -> Bool {
+    /// Words a sentence doesn't end on. A line ending in one goes on in the next line, whatever that line starts with.
+    private static let runOnWords: Set<String> = [
+        "the", "a", "an", "of", "and", "or", "to", "in", "on", "for", "with", "by", "that", "as", "at", "from",
+        "which", "is", "are", "was", "were", "be", "this", "these", "those", "its", "their", "than", "but", "into"
+    ]
+    /// A hard-wrapped body line is near the page's width; a short line ending in a comma is a list of names, and one
+    /// ending in a function word or a hyphen is a heading (`Who We Are`).
+    private static let runOnLineLength = 40
+
+    /// The line starting at `from` goes on from the one before it (a hard-wrapped line): its first letter is lower
+    /// case. Only blanks are skipped, so an indented continuation counts and a blank line doesn't.
+    private func continues(_ characters: [Character], from: Int) -> Bool {
         var index = from
-        while index < min(limit, characters.count), characters[index].isWhitespace { index += 1 }
+        while index < characters.count, characters[index].isWhitespace, !characters[index].isNewline { index += 1 }
         return index < characters.count && characters[index].isLowercase
     }
 
-    private func unsentencedBlockEnd(in text: String, before offset: Int) -> Int {
-        let characters = Array(text)
-        var lineStart = min(max(0, offset), characters.count)
+    /// The line `characters[start..<end]` ends a sentence, or looks like it was cut mid-sentence by the page's width.
+    private func lineEndsUnsentenced(_ characters: ArraySlice<Character>, followedByContinuation: Bool) -> Bool {
+        guard let lastIndex = characters.lastIndex(where: { !$0.isWhitespace }) else { return false }
+        let last = characters[lastIndex]
+        if Self.sentenceEndings.contains(last) { return false }
+        if endsInFootnoteNumber(characters[...lastIndex]) { return false }
+        if followedByContinuation { return false }
+        if characters.count >= Self.runOnLineLength {
+            if last == "-" || last == "," { return false }
+            let word = String(characters[...lastIndex].reversed().prefix(while: { $0.isLetter }).reversed()).lowercased()
+            if !word.isEmpty, Self.runOnWords.contains(word) { return false }
+        }
+        return characters.count <= Self.unsentencedLineLimit
+    }
+
+    /// A footnote number after the full stop that ends a word: `mechanism.1`. A section number (`3.1`, `A.1`) isn't one.
+    private func endsInFootnoteNumber(_ characters: ArraySlice<Character>) -> Bool {
+        let digits = characters.reversed().prefix(while: { $0.isNumber }).count
+        let stop = characters.endIndex - digits - 1
+        guard digits > 0, stop - 2 >= characters.startIndex, Self.sentenceEndings.contains(characters[stop]) else { return false }
+        if characters[stop - 1].isLetter { return characters[stop - 2].isLetter }
+        return !characters[stop - 1].isNumber
+    }
+
+    /// Looks back from `offset` only as far as `floor` (the shoulder's own start): anything before it is dropped by the
+    /// caller, so the scan reads and copies just the lines between the two.
+    private func unsentencedBlockEnd(in text: String, before offset: Int, notBefore floor: Int) -> Int {
+        let offsetIndex = text.index(text.startIndex, offsetBy: max(0, offset), limitedBy: text.endIndex) ?? text.endIndex
+        let floorIndex = text.index(text.startIndex, offsetBy: max(0, floor), limitedBy: text.endIndex) ?? text.endIndex
+        guard floorIndex < offsetIndex else { return floor }
+        // The first line is read whole, so a long line cut at `floor` isn't mistaken for a heading.
+        let windowStart = text[..<floorIndex].lastIndex(where: { $0.isNewline }).map { text.index(after: $0) } ?? text.startIndex
+        // The window runs on to the first letter of the Margin's line, which says whether the line before it runs on.
+        var windowEnd = offsetIndex
+        while windowEnd < text.endIndex, text[windowEnd].isWhitespace, !text[windowEnd].isNewline { windowEnd = text.index(after: windowEnd) }
+        if windowEnd < text.endIndex { windowEnd = text.index(after: windowEnd) }
+        let characters = Array(text[windowStart..<windowEnd])
+        let base = floor - text.distance(from: windowStart, to: floorIndex)
+        var lineStart = text.distance(from: windowStart, to: offsetIndex)
         while lineStart > 0, !characters[lineStart - 1].isNewline { lineStart -= 1 }
         var following = lineStart // the start of the line after the one being read
         var end = lineStart
@@ -4782,14 +4854,13 @@ public final class SessionEngine {
             end -= 1 // the line break that ends the previous line
             var start = end
             while start > 0, !characters[start - 1].isNewline { start -= 1 }
-            if let last = characters[start..<end].last(where: { !$0.isWhitespace }) {
-                if !Self.sentenceEndings.contains(last), end - start <= Self.unsentencedLineLimit,
-                   !continues(characters, from: following, before: lineStart) { return following }
-                following = start
+            if lineEndsUnsentenced(characters[start..<end], followedByContinuation: continues(characters, from: following)) {
+                return base + following
             }
+            if characters[start..<end].contains(where: { !$0.isWhitespace }) { following = start }
             end = start
         }
-        return 0
+        return floor
     }
 
     private func completedWordBoundary(in text: String, at rawOffset: Int) -> Int {

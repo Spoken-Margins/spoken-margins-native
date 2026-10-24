@@ -183,6 +183,39 @@ class DeliveryTests(unittest.TestCase):
         ledger = json.loads((self.root / 'daily-plan-ledger/step-ledger.json').read_text())
         self.assertEqual(ledger['steps']['daily-phone-plan']['runs'], 1)
 
+    def test_on_request_writer_timeout_still_moves_the_pin_with_a_plain_plan(self):
+        # Seen 2026-10-23 (#2529): the headless writer timed out after 180 s and the pin never moved.
+        self.mocks['propose'].side_effect = daily.subprocess.TimeoutExpired('claude', 180)
+        state = {}
+        self.assertIn('delivered', daily.deliver(self.now, state, self.state_path, on_request=True))
+        self.assertEqual((self.root / 'daily-ready').resolve(), self.folder.resolve())
+        plan = (self.folder / 'test-plan.md').read_text()
+        self.assertIn('plain plan', plan)
+        self.assertIn('#101 Fix 101', plan)
+        self.assertIn('Tap Play.', plan)
+        self.mocks['validate'].assert_not_called()
+        self.mocks['relay'].assert_called_once()
+        self.assertIn('plain plan', self.mocks['relay'].call_args.args[0])
+        record = json.loads(next((self.root / 'daily-plans').glob('*/plan.json')).read_text())
+        self.assertTrue(record['plain'])
+        self.assertEqual(record['proposal']['checks'], [])
+        self.assertEqual({entry['issue'] for entry in record['proposal']['blocked']}, {101, 102})
+
+    def test_automatic_writer_timeout_is_still_an_error_not_a_plain_plan(self):
+        self.mocks['propose'].side_effect = daily.subprocess.TimeoutExpired('claude', 180)
+        with self.assertRaises(daily.subprocess.TimeoutExpired):
+            daily.deliver(self.now, {}, self.state_path)
+        self.assertFalse((self.root / 'daily-ready').exists())
+        self.mocks['relay'].assert_not_called()
+
+    def test_plain_plan_cannot_close_issues(self):
+        self.mocks['propose'].side_effect = RuntimeError('plan writer failed; previous plan kept')
+        daily.deliver(self.now, {}, self.state_path, on_request=True)
+        path = next((self.root / 'daily-plans').glob('*/plan.json'))
+        reply = f'Phone pass {path.parent.name}; build {SHA}\n#101: PASS\n'
+        with self.assertRaises(ValueError):
+            daily.parse_results(reply, json.loads(path.read_text()))
+
     def test_5_pm_threshold_counts_new_fixes_not_total_backlog(self):
         evening = self.now.replace(hour=22)
         self.items[:] = [dict(self.items[0], number=n) for n in range(101, 108)]
@@ -339,6 +372,41 @@ class OmittedIssueTests(unittest.TestCase):
         proposal = {'checks': [{'issues': [1, 2]}], 'blocked': []}
         daily.add_omitted(proposal, items)
         self.assertEqual(proposal, {'checks': [{'issues': [1, 2]}], 'blocked': []})
+
+
+class ValidatorTests(unittest.TestCase):
+    """phone-plan moved to Packages/SessionKitTools (#1873); the job must still find a binary built before then."""
+
+    def command(self, *built):
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ), \
+                patch.object(daily.phone, 'PUBLIC', Path(temporary)):
+            os.environ.pop('SM_DAILY_VALIDATOR', None)
+            for path in built:
+                (Path(temporary) / path).parent.mkdir(parents=True)
+                (Path(temporary) / path).write_text('binary')
+            return [str(Path(part).relative_to(temporary)) for part in daily.validator_command()]
+
+    def test_the_tools_package_binary_is_used(self):
+        self.assertEqual(self.command('Packages/SessionKitTools/.build/release/phone-plan',
+                                      'Packages/SessionKit/.build/release/phone-plan'),
+                         ['Packages/SessionKitTools/.build/release/phone-plan'])
+
+    def test_a_binary_built_before_the_move_is_still_used(self):
+        self.assertEqual(self.command('Packages/SessionKit/.build/release/phone-plan'),
+                         ['Packages/SessionKit/.build/release/phone-plan'])
+
+    def test_with_neither_built_the_error_names_the_tools_package(self):
+        self.assertEqual(self.command(), ['Packages/SessionKitTools/.build/release/phone-plan'])
+
+    def test_the_tools_package_builds_phone_plan(self):
+        # The path the job looks in first must be the package that makes the product.
+        manifest = (SCRIPTS.parent / 'Packages/SessionKitTools/Package.swift').read_text()
+        self.assertIn('.executable(name: "phone-plan"', manifest)
+        self.assertTrue(daily.VALIDATORS[0].startswith('Packages/SessionKitTools/'))
+
+    def test_an_override_wins(self):
+        with patch.dict(os.environ, {'SM_DAILY_VALIDATOR': '/x/phone-plan --flag'}):
+            self.assertEqual(daily.validator_command(), ['/x/phone-plan', '--flag'])
 
 
 if __name__ == '__main__':

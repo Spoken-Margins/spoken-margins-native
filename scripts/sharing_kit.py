@@ -12,7 +12,7 @@ procedure (about twenty minutes, ten on its short path) is docs/sharing-test-kit
     sharing_kit.py lint-packets FILE... read built packets without Swift: manifest keys Build 29 accepts, hashes, kit.json, capability rule
     sharing_kit.py stage [--work DIR]   copy checked packets into docs/sharing-test-kit/packets/
 
-Packets are written by `coop-packet` (Packages/SessionKit/Sources/CoopPacket), the same SessionKit code the app uses.
+Packets are written by `coop-packet` (Packages/SessionKitTools/Sources/CoopPacket), the same SessionKit code the app uses.
 That tool needs macOS: `say` speaks the voices and ShazamKit signs the episode audio. Everything else here runs anywhere.
 """
 import argparse
@@ -36,7 +36,8 @@ SCHEMAS = ROOT / 'Contracts' / 'schemas'
 DEFAULT_WORK = ROOT / 'artifacts' / 'sharing-kit'
 sys.path.insert(0, str(ROOT / 'Contracts' / 'tools'))
 import spoken_margins_format as _format  # noqa: E402
-COOP_PACKET = ROOT / 'Packages' / 'SessionKit'
+COOP_PACKET = ROOT / 'Packages' / 'SessionKitTools'  # the package that builds coop-packet (#1873)
+COOP_PACKET_BUILD = ROOT / 'Packages' / 'SessionKit' / '.build' / 'tools'
 
 # The limits below come from the code that reads and writes packets.
 MAX_MARGINS = 50                      # InterjectionPackageArchive.maximumInterjections
@@ -591,9 +592,11 @@ def build(kit, work, run=subprocess.run, fetch=download, platform=sys.platform):
     out.mkdir(parents=True, exist_ok=True)
     for old in out.glob('*.spokenmargins'):
         old.unlink()
-    package = str(COOP_PACKET)
-    run(['swift', 'build', '--package-path', package, '--product', 'coop-packet'], check=True)
-    bin_path = run(['swift', 'build', '--package-path', package, '--show-bin-path'],
+    # Built inside SessionKit's .build, which worktrees link to a warm cache that disk relief clears, as
+    # scripts/run-sessionkit-tests.sh --tools does (#1873).
+    package = ['--package-path', str(COOP_PACKET), '--scratch-path', str(COOP_PACKET_BUILD)]
+    run(['swift', 'build', *package, '--product', 'coop-packet'], check=True)
+    bin_path = run(['swift', 'build', *package, '--show-bin-path'],
                    check=True, capture_output=True, text=True).stdout.strip()
     tool = str(Path(bin_path) / 'coop-packet')
     for plan in plans:

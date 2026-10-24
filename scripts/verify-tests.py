@@ -27,6 +27,7 @@ import lane_sim
 import sm_build_cache
 import sessionkit_pass
 import lane_sim_pool
+import node_modules_drift
 import third_party_notices
 import xcodebuild_finish
 from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
@@ -524,6 +525,17 @@ OPS_TEST_TRIGGERS = ('ops/', 'scripts/', '.github/', 'project.yml', 'TestPlans/'
 # Linux job (.github/workflows/hosted-portable.yml). Every step the fast plan can run is named here, either to
 # run (PORTABLE_STEPS) or with the reason it is left out (PORTABLE_LEFT_OUT); the run prints the left-out ones as
 # skipped. test_verification fails when the plan code names a step that is in neither table.
+def on_hosted_runner(environ=None):
+    """True on a GitHub-hosted runner (GitHub sets RUNNER_ENVIRONMENT=github-hosted there, and `self-hosted` on ours).
+    Only there are the research suites' tools guaranteed (setup-go, a current bash, the lxml package), so only there
+    a suite that skips itself for a missing tool or package fails the step and names it instead of reporting a
+    pass (owner, 2026-10-21: every test blocks). The self-hosted Mac lane also sets GITHUB_ACTIONS=true, and its
+    skips (no `go`, macOS bash 3.2) are expected, so CI or GITHUB_ACTIONS alone must not turn them into failures.
+    On a developer's machine the same skip stays a printed warning."""
+    environ = os.environ if environ is None else environ
+    return environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
+
+
 PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'browser', 'share-link', 'research')
 PORTABLE_LEFT_OUT = {
     'package-build': 'needs the Swift toolchain on macOS; hosted-sessionkit-linux.yml builds the Foundation-only modules on Linux',
@@ -532,6 +544,7 @@ PORTABLE_LEFT_OUT = {
     'package': 'needs the Swift toolchain, AVFoundation and a sound output; only the Mac lane runs the whole package',
     'shipped-compat': 'builds SessionKit and Build 29\'s persistence code with Swift on macOS; only the Mac lane runs it',
     'hot-file-ratchet': 'the author\'s own fast run checks it, and the lane runner checks next\'s copy with the PR\'s labels',
+    'tools': 'builds coop-packet, which needs AVFoundation and ShazamKit on macOS; only the Mac lane runs it',
 }
 # Inside runner-tests and ops, the tests that drive an Apple tool. Each is matched as a test id prefix (module,
 # class or test) in scripts/tests, or as a folder under ops/.
@@ -563,7 +576,7 @@ PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snaps
 # Between them the three plans run every fast-plan step (test_fast_split.py checks it).
 FAST_SPLIT_PLANS = ('fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest')
 HOSTED_SESSIONKIT_STEPS = ('package-build', 'package-core', 'package-core-serial')
-MAC_REST_STEPS = ('hot-file-ratchet', 'runner-tests', 'ops', 'package-build', 'package', 'shipped-compat')
+MAC_REST_STEPS = ('hot-file-ratchet', 'runner-tests', 'ops', 'package-build', 'package', 'tools', 'shipped-compat')
 # runner-tests without the tests above: discover scripts/tests as the plain step does, then drop the listed ids.
 PORTABLE_RUNNER_LOADER = '''
 import sys, unittest
@@ -637,6 +650,22 @@ def shipped_compat_needed(changed, root=None):
     if hit:
         return True, 'the diff touches ' + ', '.join(hit[:3]) + (f' and {len(hit) - 3} more' if len(hit) > 3 else '')
     return False, 'the diff touches none of the files shipped-build-compat.yml watches'
+
+
+# The developer tools built on SessionKit (#1873): their own package, so a SessionKit consumer doesn't resolve them.
+# Their tests run when the diff reaches the tools or anything they build on.
+TOOLS_PACKAGE = 'Packages/SessionKitTools'
+TOOLS_TEST_TRIGGERS = ('Packages/SessionKit/', TOOLS_PACKAGE + '/', 'scripts/run-sessionkit-tests.sh')
+TOOLS_TEST_TIMEOUT = 900  # a cold build of the SessionKit modules the tools use, then 22 tests in about 5 s
+
+
+def tools_tests_needed(changed):
+    """(run, reason) for the tools package's build and tests. changed=None means no diff information: run."""
+    if not changed:
+        return True, 'no list of changed paths, so every step runs'
+    if touches(changed, TOOLS_TEST_TRIGGERS):
+        return True, None
+    return False, f'the diff touches neither Packages/SessionKit nor {TOOLS_PACKAGE}'
 
 
 def touches(changed, prefixes):
@@ -1386,6 +1415,10 @@ class Run:
             entry['skipped'] = re.findall(r'^skipped: (.+)$', text, re.M)
             for reason in entry['skipped']:
                 print(f'warning: research skipped: {reason}', flush=True)
+            # On a hosted runner a suite that skipped itself for a missing tool or package did not test what it names (#2596).
+            if on_hosted_runner():
+                errors.extend(f'research skipped on a hosted runner, a missing dependency fails the step: {reason}'
+                              for reason in entry['skipped'])
             # Name the failing suites and tests in the error, which the lane's report carries.
             errors.extend(re.findall(r'^(?:FAILED|failed test|failed package): .+$', text, re.M)[:5])
             if not entry['executed_count']:
@@ -1478,6 +1511,15 @@ class Run:
         else:
             self.skip('shipped-compat', why)
 
+    def tools_steps(self):
+        """Build the tools package (phone-plan, coop-packet) and run its tests (#1873), when the diff reaches them."""
+        needed, why = tools_tests_needed(self.changed)
+        if not needed:
+            self.skip('tools', why)
+            return
+        expected = {f'CoopPacketTests/{test}' for test in swift_tests(ROOT / TOOLS_PACKAGE / 'Tests/CoopPacketTests')}
+        self.command('tools', [*PACKAGE_RUNNER, '--tools'], timeout=TOOLS_TEST_TIMEOUT, expected=expected, tests=True)
+
     def hosted_sessionkit(self):
         """SessionKit's build and SessionKitCoreTests on a GitHub-hosted Mac (#1389), for hosted-portable.yml. No
         sound output there, so SessionKitTests and SessionKitTraceTests are left to the lane Mac (fast-mac-rest)."""
@@ -1524,6 +1566,7 @@ class Run:
             self.skip('package', why)
         else:
             self.package_steps(expected, core_elsewhere=True)
+        self.tools_steps()
         self.shipped_compat()
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError(inputs_changed_message('Inputs changed during Mac-only verification', self.input_files))
@@ -1576,7 +1619,15 @@ class Run:
         self.command('main-thread-reads', [sys.executable, 'scripts/main_thread_reads.py'], timeout=120)
         if not (ROOT / 'node_modules').exists():
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
-        self.command('browser', ['npm', 'run', 'test:browser-extraction'])
+        # A lockfile that moved since node_modules was installed can fail the bundle check with "is stale". The
+        # lane links a shared node_modules that only moves to the trunk, so drift alone must not fail a run: name
+        # the cause next to a real failure instead (#2569).
+        try:
+            self.command('browser', ['npm', 'run', 'test:browser-extraction'])
+        except RuntimeError as failure:
+            if stale_modules := node_modules_drift.drift(ROOT):
+                raise RuntimeError(f'{failure}; {node_modules_drift.message(stale_modules)}') from failure
+            raise
         self.command('share-link', ['npm', 'run', 'test:share-link'])
         # The Go server, the research Python tests and the Caddy script (#1033); a suite that can't run
         # here is reported as skipped with its reason, not passed.
@@ -1603,6 +1654,7 @@ class Run:
             self.package_steps(expected)
             if pass_key and sessionkit_pass.key(ROOT, identity) == pass_key:
                 sessionkit_pass.record(state_dir(), pass_key, head=self.manifest['head'], tests=len(expected))
+        self.tools_steps()
         self.shipped_compat()
 
         if input_identity() != self.manifest['input_sha256']:

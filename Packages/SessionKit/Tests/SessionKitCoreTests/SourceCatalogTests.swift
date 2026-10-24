@@ -339,7 +339,8 @@ final class SourceCatalogTests: XCTestCase {
 
     func testFixtureManifestMatchesFixtureCatalog() throws {
         let manifest = try SourceCatalogVerifier.manifest(from: Data(contentsOf: Self.fixtureManifest()), policy: Self.fixturePolicy)
-        XCTAssertNoThrow(try SourceCatalogVerifier.catalog(from: Data(contentsOf: Self.fixture()), manifest: manifest, policy: Self.fixturePolicy))
+        let catalog = try Data(contentsOf: Self.fixture())
+        XCTAssertNoThrow(try SourceCatalogVerifier.catalog(from: catalog, manifest: manifest, policy: Self.fixturePolicy))
     }
 
     // MARK: Helpers
