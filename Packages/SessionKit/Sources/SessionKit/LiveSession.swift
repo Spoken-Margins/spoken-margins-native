@@ -191,11 +191,17 @@ public enum LiveSessionStore {
 }
 
 extension JSONEncoder.DateEncodingStrategy {
-    /// ISO 8601 with milliseconds: Margin times need more than whole seconds.
+    /// ISO 8601 with milliseconds: Margin times need more than whole seconds. The format style truncates, and a
+    /// millisecond read back sits a hair under itself, so a date saved again lost a millisecond. The date is rounded to
+    /// the nearest millisecond first, and the fraction written from that whole number; the text has the same shape.
     static var iso8601withFractions: Self {
         .custom { date, encoder in
             var container = encoder.singleValueContainer()
-            try container.encode(Date.ISO8601FormatStyle(includingFractionalSeconds: true).format(date))
+            let ms = Int64((date.timeIntervalSince1970 * 1_000).rounded())
+            let (seconds, fraction) = ms.quotientAndRemainder(dividingBy: 1_000)
+            let (whole, rest) = fraction < 0 ? (seconds - 1, fraction + 1_000) : (seconds, fraction)
+            let text = Date.ISO8601FormatStyle().format(Date(timeIntervalSince1970: TimeInterval(whole)))
+            try container.encode(text.dropLast() + String(format: ".%03lldZ", rest))
         }
     }
 }
@@ -205,9 +211,13 @@ extension JSONDecoder.DateDecodingStrategy {
         .custom { decoder in
             let container = try decoder.singleValueContainer()
             let text = try container.decode(String.self)
-            if let date = try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(text) { return date }
-            if let date = try? Date.ISO8601FormatStyle().parse(text) { return date }
-            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Not an ISO 8601 date: \(text)")
+            let parsed = (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(text))
+                ?? (try? Date.ISO8601FormatStyle().parse(text))
+            guard let parsed else {
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: "Not an ISO 8601 date: \(text)")
+            }
+            // Back on the millisecond the text names, not a hair under it.
+            return Date(timeIntervalSince1970: (parsed.timeIntervalSince1970 * 1_000).rounded() / 1_000)
         }
     }
 }

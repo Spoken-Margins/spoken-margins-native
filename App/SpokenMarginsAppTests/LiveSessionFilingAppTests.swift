@@ -78,9 +78,10 @@ final class LiveSessionFilingAppTests: XCTestCase {
         let context = try XCTUnwrap(receiver.lastPublishedContext)
         XCTAssertEqual(context[WatchLiveSessionContext.title] as? String, "Budget meeting")
         XCTAssertEqual(context[WatchLiveSessionContext.id] as? String, "live-budget")
-        // current.json keeps milliseconds, so the restored start is the saved one to the millisecond.
+        // current.json keeps milliseconds, so the restored start is the saved one's nearest millisecond, however many
+        // times the store wrote it on the way.
         let sentStart = try XCTUnwrap(context[WatchLiveSessionContext.startedAt] as? Double)
-        XCTAssertEqual(sentStart, started.timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertEqual(sentStart, (started.timeIntervalSince1970 * 1_000).rounded() / 1_000, accuracy: 0.000_01)
         let board = LiveSessionBoard(files: files)
         await board.refreshNow()
         XCTAssertEqual(board.rows.map(\.id), ["live-budget"])
