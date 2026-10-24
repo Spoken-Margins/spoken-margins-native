@@ -166,10 +166,20 @@ final class StoreReadMeterTests: XCTestCase {
         XCTFail("Within budget now: remove expectKnownOversized for \(issue) so the limit is enforced. \(message)", file: file, line: line)
     }
 
+    /// The fixture's mapped podcast has no `media`, so exports treat it as text. A recording's export reads its
+    /// timeline for the words around each Margin (#2102); give it the media it has on the phone.
+    private func markMappedPodcastAsNativeAudio(_ store: SQLiteSessionStore) throws {
+        var item = try store.loadItem(id: LibraryFixture.mappedItemId)
+        item.media = ItemMedia(sourceType: .nativeMediaFile, url: "https://cdn.example.com/mapped.mp3", durationMs: LibraryFixture.mappedDurationMs)
+        try store.saveItem(item)
+    }
+
     func testSharingAnItemsMarginsAsMarkdownReadsTheItemOncePerSession() throws {
         let fixture = try build(.small)
         let meter = StoreReadMeter()
         let store = try fixture.openStore(meter: meter)
+        try markMappedPodcastAsNativeAudio(store)
+        meter.reset()
         let engine = SessionEngine(
             profile: RuntimeCapabilityProfile(id: "phone", displayName: "Phone", capabilities: ["sync": ["canonical_persistence"]]),
             repository: store)
@@ -191,6 +201,34 @@ final class StoreReadMeterTests: XCTestCase {
         // The notes are the same text the per-Margin exports gave, (sorted, so a dropped or duplicated note shows).
         let expected = oneByOne.map(\.1).filter { !$0.isEmpty }
         XCTAssertEqual(file.markdown.components(separatedBy: MarginMarkdownShare.separator).sorted(), expected.sorted())
+    }
+
+    func testAnArticlesMarginNoteDoesNotReadATranscriptTimeline() throws {
+        let fixture = try build(.small)
+        let meter = StoreReadMeter()
+        let store = try fixture.openStore(meter: meter)
+        try markMappedPodcastAsNativeAudio(store)
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(id: "phone", displayName: "Phone", capabilities: ["sync": ["canonical_persistence"]]),
+            repository: store)
+        let articleIds = Set(try store.listItemSummaries().filter { $0.mediaType == "text" }.map(\.id))
+        let notes = try store.loadSessions()
+            .flatMap { try store.loadInterjections(sessionId: $0.id) }
+            .filter { articleIds.contains($0.itemId) && MarginMarkdownShare.hasNote($0) }
+        let margin = try XCTUnwrap(notes.first, "the fixture has a note on an article")
+        meter.reset()
+
+        let file = try XCTUnwrap(try MarginMarkdownShare.file(for: margin, engine: engine))
+
+        XCTAssertFalse(file.markdown.isEmpty)
+        XCTAssertEqual(meter.totals(for: "loadTranscriptTimeline(itemId:)").calls, 0,
+                       "an article's note is cut from the text, so the timeline is never read (#2506)")
+        XCTAssertEqual(meter.totals(for: "loadItem(id:)").calls, 1)
+        // A recording's note still reads it once, for the words around the Margin.
+        let podcastMargin = try XCTUnwrap(try store.loadInterjections(itemId: LibraryFixture.mappedItemId).first(where: MarginMarkdownShare.hasNote))
+        meter.reset()
+        _ = try MarginMarkdownShare.file(for: podcastMargin, engine: engine)
+        XCTAssertEqual(meter.totals(for: "loadTranscriptTimeline(itemId:)").calls, 1)
     }
 
     func testOneSourcesFeedEntriesReadOnlyThatSourcesRows() throws {

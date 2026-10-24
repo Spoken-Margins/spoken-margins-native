@@ -32,7 +32,7 @@ final class ReadwiseHighlightSync: ObservableObject {
     /// Called when the app becomes active. Starts the loop if sending is on.
     func start(store: @escaping @MainActor () -> SQLiteSessionStore?) {
         storeProvider = store
-        links = (try? Self.ledger().links()) ?? links
+        loadLinks()
         guard enabled, task == nil else { return }
         task = Task { [weak self] in
             while !Task.isCancelled {
@@ -40,6 +40,16 @@ final class ReadwiseHighlightSync: ObservableObject {
                 await self.sendPass()
                 do { try await Task.sleep(for: .seconds(60)) } catch { break }
             }
+        }
+    }
+
+    /// The ledger is a file that grows with every item sent, so it is read off the main actor (#2510).
+    private func loadLinks() {
+        let epoch = connectionEpoch
+        Task { [weak self] in
+            let loaded = await Task.detached(priority: .utility) { try? Self.ledger().links() }.value
+            // A pass or a Disconnect that finished first has the newer answer.
+            if let self, let loaded, self.links.isEmpty, epoch == self.connectionEpoch { self.links = loaded }
         }
     }
 
@@ -88,15 +98,21 @@ final class ReadwiseHighlightSync: ObservableObject {
 
     func sendPass() async {
         guard enabled, !isSending, let store = storeProvider?() else { return }
-        guard let token = KeychainStore.load(service: ReadLaterModel.credentialService, account: ReadLaterService.reader.rawValue),
-              !token.isEmpty else {
-            status = "Connect Readwise Reader above to send Margins."; return
-        }
-        let tokenDigest = ListeningEdition.digest(token)
-        guard tokenDigest != rejectedTokenDigest else { return }
+        // Set before the first suspension, so a second pass can't start while this one reads the token (#2510).
         isSending = true
         defer { isSending = false }
         let epoch = connectionEpoch
+        let service = ReadLaterModel.credentialService, account = ReadLaterService.reader.rawValue
+        // The Keychain and the ledger file are read off the main actor (#2510); the hash is a SHA-256 of the token.
+        let credential = await Task.detached(priority: .utility) { () -> (token: String, digest: String)? in
+            guard let token = KeychainStore.load(service: service, account: account), !token.isEmpty else { return nil }
+            return (token, ListeningEdition.digest(token))
+        }.value
+        guard epoch == connectionEpoch, enabled else { return }
+        guard let (token, tokenDigest) = credential else {
+            status = "Connect Readwise Reader above to send Margins."; return
+        }
+        guard tokenDigest != rejectedTokenDigest else { return }
         do {
             let ledger = try Self.ledger()
             let client = ReadwiseHighlightClient { [session] request in
@@ -104,24 +120,24 @@ final class ReadwiseHighlightSync: ObservableObject {
                 guard let http = response as? HTTPURLResponse else { throw ReadwiseHighlightError.httpStatus(0) }
                 return (data, http)
             }
-            let service = ReadLaterModel.credentialService, account = ReadLaterService.reader.rawValue
             let work = Task.detached(priority: .utility) {
                 let highlights = try ReadwiseHighlightGatherer.highlights(
                     sessions: store.loadSessions(), repository: store, skipping: ledger.sentKeys()
                 )
                 // #642: Disconnect (or a new token) ends the pass before its next batch.
-                return try await ReadwiseHighlightSyncPass.run(highlights, token: token, client: client, ledger: ledger) {
+                let report = try await ReadwiseHighlightSyncPass.run(highlights, token: token, client: client, ledger: ledger) {
                     KeychainStore.load(service: service, account: account) == $0
                 }
+                return (report: report, links: try? ledger.links())
             }
             // stop() cancels the loop; this carries that into the detached pass so no further batch goes out.
-            let report = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
+            let done = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
             guard epoch == connectionEpoch else { return }
             rejectedTokenDigest = nil
             let now = Date().formatted(date: .omitted, time: .shortened)
-            if let summary = report.summary { lastSummary = summary; lastSentAt = now }
+            if let summary = done.report.summary { lastSummary = summary; lastSentAt = now }
             status = ReadwiseSyncReport.statusLine(lastSummary: lastSummary, sentAt: lastSentAt, checkedAt: now)
-            links = (try? ledger.links()) ?? links
+            links = done.links ?? links
         } catch is CancellationError {
             return
         } catch ReadwiseHighlightError.tokenRejected {
@@ -134,7 +150,7 @@ final class ReadwiseHighlightSync: ObservableObject {
         }
     }
 
-    private static func ledger() throws -> ReadwiseSentLedger {
+    private nonisolated static func ledger() throws -> ReadwiseSentLedger {
         ReadwiseSentLedger(fileURL: try FileManager.default
             .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             .appendingPathComponent("SpokenMargins/ReadwiseSentLedger.json"))

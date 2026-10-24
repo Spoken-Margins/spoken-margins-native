@@ -107,18 +107,18 @@ The examples here hold no user data, no real voices or media, no tokens and no p
 
 ## Updating the examples
 
-The two `*-reference` packets were written by the app's Swift writer: `coop-packet build` (Packages/SessionKit/Sources/CoopPacket) with text-only Margins. The rest are derived from them:
+The two `*-reference` packets were written by the app's Swift writer: `coop-packet build` (Packages/SessionKitTools/Sources/CoopPacket) with text-only Margins. The rest are derived from them:
 
 ```zsh
 .venv/bin/python Contracts/tools/spoken_margins_format.py corpus Contracts/examples/packets
 ```
 
 ```zsh
-swift build --package-path Packages/SessionKit --product coop-packet
+swift build --package-path Packages/SessionKitTools --scratch-path Packages/SessionKit/.build/tools --product coop-packet
 ```
 
 ```zsh
-Packages/SessionKit/.build/debug/coop-packet check Contracts/examples/packets/<name>.spokenmargins
+Packages/SessionKit/.build/tools/debug/coop-packet check Contracts/examples/packets/<name>.spokenmargins
 ```
 
 Record each `check` result in `expectations.json`; `validate-contracts.py` fails if a committed packet, a regenerated one and the recorded verdict disagree.

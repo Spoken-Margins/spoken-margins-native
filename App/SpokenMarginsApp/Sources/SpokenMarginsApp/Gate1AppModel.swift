@@ -559,6 +559,8 @@ final class Gate1AppModel: ObservableObject {
     var pendingStartupAudioPreparationItemIds: Set<String> = []
     var failedStartupAudioPreparationItemIds: Set<String> = []
     var isImportingPendingSourceLinkHandoffs = false
+    /// Browser-text payloads one path is importing now; the link open and the drain both suspend, so each skips what the other holds (#2510).
+    var browserTextPayloadsInFlight = Set<String>()
     let pendingHandoffNetworkRetry = PendingHandoffNetworkRetry()
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
     var completedStreamingTurnIds: Set<String> = []
@@ -1028,7 +1030,7 @@ final class Gate1AppModel: ObservableObject {
             let previousTargetId = self.snapshot.targetId
             let previousEngagementProgress = self.snapshot.currentPlaybackProgressPercent
             let updated = self.snapshotReflectingTextAudioPrewarmStatus(
-                try engine.syncPlaybackProgress(),
+                try engine.syncPlaybackProgress(coalescingWrites: true),
                 itemId: self.activeItemId
             )
             self.recordMediaSeekEvidence(from: engine)
@@ -2333,50 +2335,28 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         if SourceLinkHandoffURL.isSourceLinkURL(url) {
-            do {
-                if let payloadID = SourceLinkHandoffURL.payloadID(from: url) {
-                    let handoffStore = try resolvedSourceLinkHandoffStore()
-                    _ = try SourceLinkHandoffURL.handoff(from: url, store: handoffStore)
-                    diagnostics["lastSourceLinkPayloadCleanup"] = "queued:\(payloadID)"
-                    importPendingSourceLinkHandoffs()
-                } else if let handoff = SourceLinkHandoffURL.handoff(from: url) {
-                    if sourceLinkResolver == nil {
-                        Task { @MainActor in
-                            await importSourceLinkAsync(handoff)
-                        }
-                    } else {
-                        importSourceLink(handoff)
+            if let payloadID = SourceLinkHandoffURL.payloadID(from: url) {
+                queueSourceLinkPayload(url: url, payloadID: payloadID)
+            } else if let handoff = SourceLinkHandoffURL.handoff(from: url) {
+                if sourceLinkResolver == nil {
+                    Task { @MainActor in
+                        await importSourceLinkAsync(handoff)
                     }
                 } else {
-                    reportFailure("Unsupported source link URL.")
+                    importSourceLink(handoff)
                 }
-            } catch SourceLinkHandoffStoreError.missingPayload(let payloadID) {
-                diagnostics["lastSourceLinkPayloadCleanup"] = "already_consumed:\(payloadID)"
-            } catch {
-                reportFailure(error, context: "Source link import failed")
+            } else {
+                reportFailure("Unsupported source link URL.")
             }
             return
         }
         guard !Gate5BrowserTextHandoffURL.isBrowserTextURL(url) else {
-            do {
-                if let payloadID = Gate5BrowserTextHandoffURL.payloadID(from: url) {
-                    let handoffStore = try resolvedBrowserTextHandoffStore()
-                    let handoff = try Gate5BrowserTextHandoffURL.handoff(from: url, store: handoffStore)
-                    // With something in Now Playing the import still shows its item and never touches playback (#1437).
-                    let hadSession = hasActiveSession
-                    if importClippedPage(handoff) {
-                        try? handoffStore.deletePayload(payloadID: payloadID)
-                        if hadSession { diagnostics["lastBrowserTextPayloadCleanup"] = "imported_without_session_replacement" }
-                    }
-                } else if let handoff = Gate5BrowserTextHandoffURL.handoff(from: url) {
-                    importClippedPage(handoff)
-                } else {
-                    reportFailure("Unsupported browser text URL.")
-                }
-            } catch Gate5BrowserTextHandoffStoreError.missingPayload(let payloadID) {
-                diagnostics["lastBrowserTextPayloadCleanup"] = "already_consumed:\(payloadID)"
-            } catch {
-                reportFailure(error, context: "Browser text import failed")
+            if let payloadID = Gate5BrowserTextHandoffURL.payloadID(from: url) {
+                importBrowserTextPayload(payloadID: payloadID)
+            } else if let handoff = Gate5BrowserTextHandoffURL.handoff(from: url) {
+                importClippedPage(handoff)
+            } else {
+                reportFailure("Unsupported browser text URL.")
             }
             return
         }
@@ -2741,12 +2721,12 @@ final class Gate1AppModel: ObservableObject {
                 frontierSignatures[voice.rawValue] = signature
             }
             let root = try applicationSupportDirectory().appendingPathComponent("PreparedAudio")
+            let item = try store.loadItem(id: itemID)
+            guard let text = PreparedSpeechHooks.preparedText(of: item, in: store), !text.isEmpty else { return }
+            let source = try store.loadCanonicalSource(itemId: itemID)
+            let canonical = source?.segments.map(\.text).joined(separator: "\n\n") ?? ""
             while !Task.isCancelled, renderFrontierKey == key {
-                let item = try store.loadItem(id: itemID)
-                guard let text = PreparedSpeechHooks.preparedText(of: item, in: store), !text.isEmpty else { return }
-                let source = try store.loadCanonicalSource(itemId: itemID)
                 let manifest = try store.loadPreparedAudioManifests(itemId: itemID).first { $0.signature == signature }
-                let canonical = source?.segments.map(\.text).joined(separator: "\n\n") ?? ""
                 let fraction = await Task.detached(priority: .utility) {
                     PreparedRenderFrontier.fraction(manifest: manifest, signature: signature, sourceText: text, canonicalSourceText: canonical, root: root)
                 }.value
@@ -2772,16 +2752,6 @@ final class Gate1AppModel: ObservableObject {
     }
 
     // MARK: Portable listening editions and personal knowledge output
-    func importListeningEditionFile(_ url: URL) {
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-        do {
-            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-            guard size <= 8_000_000 else { throw EditionError.invalid("Listening edition exceeds 8 MB.") }
-            importListeningEditionData(try Data(contentsOf: url))
-        } catch { reportFailure(error, context: "Listening edition file could not be opened") }
-    }
-
     func importReadLaterDocument(_ document: ReadLaterDocument) {
         guard !isImportingReadLater else { return }
         isImportingReadLater = true
@@ -3422,20 +3392,6 @@ final class Gate1AppModel: ObservableObject {
         } catch {
             reportFailure(error, context: "Shared Margin settings could not be saved")
         }
-    }
-
-    func interjectionAudioEvidence(for path: String) -> String {
-        guard let url = resolvedInterjectionAudioURL(for: path) else {
-            return "duration_ms=unknown;bytes=unknown"
-        }
-        let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
-        #if canImport(AVFoundation)
-        if let audioFile = try? AVAudioFile(forReading: url), audioFile.processingFormat.sampleRate > 0 {
-            let durationMs = Int((Double(audioFile.length) / audioFile.processingFormat.sampleRate * 1000).rounded())
-            return "duration_ms=\(durationMs);bytes=\(bytes)"
-        }
-        #endif
-        return "duration_ms=unknown;bytes=\(bytes)"
     }
 
     func recordAnchorCaptureDiagnostics(for interjection: Interjection) {

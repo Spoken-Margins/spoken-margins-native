@@ -499,11 +499,17 @@ struct ExperienceAddSourceFlow: View {
         let editionURLs = picked.filter { $0.pathExtension.lowercased() == "json" }
         let urls = picked.filter { $0.pathExtension.lowercased() != "json" }
         fileImportError = nil
-        var closes = !picked.isEmpty
-        if !editionURLs.isEmpty, !model.importListeningEditionFiles(editionURLs) {
-            fileImportError = model.lastError
-            closes = false
+        guard !editionURLs.isEmpty else { importDocuments(urls, closes: !picked.isEmpty); return }
+        // The edition files are read off the main thread (#2510), so the rest waits for them.
+        Task { @MainActor in
+            let editionsImported = await model.importListeningEditionFiles(editionURLs)
+            if !editionsImported { fileImportError = model.lastError }
+            model.hangTelemetry.labels.scoped("addSheet.documentImport") { importDocuments(urls, closes: editionsImported) }
         }
+    }
+
+    private func importDocuments(_ urls: [URL], closes: Bool) {
+        var closes = closes
         let epubURLs = urls.filter { $0.pathExtension.lowercased() == "epub" }
         if epubURLs.isEmpty, !urls.isEmpty {
             model.importObsidianMarkdownFiles(urls: urls)

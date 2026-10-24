@@ -94,6 +94,7 @@ jobs:
           case "$CANARY_STATUS" in
             0) echo "Passed." ;;
             3) echo "::warning::Substack canary inconclusive: feeds couldn't be read. Not a parser failure." ;;
+            5) echo "::error::Substack canary checked nothing: no feed could be read (status 5)."; exit 1 ;;
             1) echo "::error::The app's parser missed a Substack publisher voice. See the issue titled 'Substack canary: the app's parser missed a publisher voice'."; exit 1 ;;
             *) echo "::error::The canary didn't build or run (status $CANARY_STATUS)."; exit 1 ;;
           esac
