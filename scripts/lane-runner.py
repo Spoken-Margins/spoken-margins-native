@@ -3177,18 +3177,55 @@ def runner_device_claimed(name: str) -> bool:
     return False
 
 
+SWEEP_SIMCTL_TIMEOUT = 120  # seconds, as the old shutdown and delete had; a healthy `simctl list` takes about one
+
+
 def sweep_runner_simulators() -> None:
-    """Delete simulators earlier runner jobs left behind; a running job's claimed device stays (#440)."""
-    devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', '--json'], text=True))
-    for group in devices.get('devices', {}).values():
-        for device in group:
-            if device.get('name', '').startswith(RUNNER_SIMULATOR_PREFIX):
-                if runner_device_claimed(device['name']):
-                    print(f'Left {device["name"]} alone: a running T3 job holds it')
-                    continue
-                subprocess.run(['xcrun', 'simctl', 'shutdown', device['udid']], capture_output=True, timeout=120)
-                subprocess.run(['xcrun', 'simctl', 'delete', device['udid']], capture_output=True, timeout=120)
-                print(f'Deleted leftover simulator {device["name"]}')
+    """Delete simulators earlier runner jobs left behind; a running job's claimed device stays (#440).
+
+    Every simctl call is bounded and runs in its own process group, and the sweep is skipped, never fatal,
+    when simctl can't answer: after an Xcode update left CoreSimulator older than Xcode wanted, the bare
+    `simctl list` here ran `xcodebuild -runFirstLaunch` and waited on a password dialog forever (#2591)."""
+    try:
+        import simctl_preflight
+    except ImportError as error:  # a tree without the helper; the next job's tree sweeps instead
+        print(f'Skipped the leftover-simulator sweep: {error}')
+        return
+    why = simctl_preflight.problem()
+    if why:
+        print(f'Skipped the leftover-simulator sweep: {why}')
+        return
+
+    def simctl(*args: str) -> str | None:  # None when simctl failed; a timeout stops the whole sweep
+        command = ['xcrun', 'simctl', *args]
+        try:
+            return simctl_preflight.bounded_output(command, timeout=SWEEP_SIMCTL_TIMEOUT)
+        except (subprocess.CalledProcessError, OSError) as error:
+            print(f'`{" ".join(command)}` failed: {error}')
+            return None
+
+    try:
+        listing = simctl('list', 'devices', '--json')
+        if listing is None:
+            return
+        try:
+            devices = json.loads(listing)
+        except ValueError:
+            print('Skipped the leftover-simulator sweep: `simctl list devices --json` did not print JSON')
+            return
+        for group in devices.get('devices', {}).values():
+            for device in group:
+                if device.get('name', '').startswith(RUNNER_SIMULATOR_PREFIX):
+                    if runner_device_claimed(device['name']):
+                        print(f'Left {device["name"]} alone: a running T3 job holds it')
+                        continue
+                    simctl('shutdown', device['udid'])  # fails harmlessly on a device already shut down
+                    if simctl('delete', device['udid']) is not None:
+                        print(f'Deleted leftover simulator {device["name"]}')
+    except subprocess.TimeoutExpired as stuck:
+        print(f'Stopped the leftover-simulator sweep: `{" ".join(stuck.cmd)}` gave no answer in '
+              f'{SWEEP_SIMCTL_TIMEOUT} s and was killed with its process group; if a password dialog is '
+              f'showing, {simctl_preflight.FIX}.')
 
 
 TESTED_RECORD: Path | None = None  # main() sets it to a file in this job's RUNNER_TEMP

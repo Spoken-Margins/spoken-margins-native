@@ -49,6 +49,7 @@ import subprocess
 import sys
 import time
 
+from simctl_preflight import bounded_output, problem as simctl_problem
 from lane_slots import (annotate_holder, build_slot_file, disable_second_slot, memory_pressure_level, second_slot_back_on_at, simulator_boot_lock,
                         simulator_jobs_running, state_dir, PRESSURE_NAMES, SLOTS)
 
@@ -97,6 +98,28 @@ def simctl() -> list[str]:
     return shlex.split(os.environ.get('SM_LANE_SIMCTL', 'xcrun simctl'))
 
 
+# A `simctl list` normally answers in about a second; 60 s is the stuck case (#2591), not a slow one.
+SIMCTL_TIMEOUT = 60
+
+
+def ensure_simctl_ready() -> None:
+    """Raise BootError, naming the fix, when `xcrun simctl` would wait on Xcode's first-launch install (#2591).
+
+    Skipped for a stand-in simctl (SM_LANE_SIMCTL, the tests' fakes). Costs one plist read and one small file read."""
+    if os.environ.get('SM_LANE_SIMCTL'):
+        return
+    found = simctl_problem()
+    if found:
+        raise BootError(found)
+
+
+def simctl_output(args: list, timeout: float = SIMCTL_TIMEOUT) -> str:
+    """`simctl <args>`'s output, after the first-launch preflight; a timeout kills its whole process group, so no
+    `xcodebuild -runFirstLaunch` child is orphaned (17 were on 2026-10-24, #2591)."""
+    ensure_simctl_ready()
+    return bounded_output(simctl() + list(args), timeout=timeout)
+
+
 def unsafe_path() -> Path:
     return state_dir() / 'unsafe-simulators.json'
 
@@ -116,14 +139,14 @@ def mark_unsafe(udid: str, reason: str) -> None:
 
 
 def booted_udids() -> set:
-    listing = json.loads(subprocess.check_output(simctl() + ['list', 'devices', 'booted', '--json'], text=True))
+    listing = json.loads(simctl_output(['list', 'devices', 'booted', '--json']))
     return {d['udid'] for group in listing.get('devices', {}).values() for d in group}
 
 
 def is_available(udid: str) -> bool:
     """Whether simctl still lists the device as available; True when simctl can't say."""
     try:
-        listing = json.loads(subprocess.check_output(simctl() + ['list', 'devices', 'available', '--json'], text=True))
+        listing = json.loads(simctl_output(['list', 'devices', 'available', '--json']))
     except (OSError, ValueError, subprocess.SubprocessError):
         return True
     return any(d.get('udid') == udid for group in listing.get('devices', {}).values() for d in group)
@@ -160,7 +183,7 @@ PLAIN_IPHONE = re.compile(r'com\.apple\.CoreSimulator\.SimDeviceType\.iPhone-(\d
 def runtimes_listing() -> dict | None:
     """`simctl list runtimes --json`, or None when simctl does not give one."""
     try:
-        listing = json.loads(subprocess.check_output(simctl() + ['list', 'runtimes', '--json'], text=True, timeout=60))
+        listing = json.loads(simctl_output(['list', 'runtimes', '--json'], timeout=60))
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
     return listing if isinstance(listing, dict) else None
@@ -193,7 +216,7 @@ def runtime_survey(listing: dict | None) -> str:
 def device_type(runtime: str | None = None) -> str:
     """`pick_device_type` for this Mac and `runtime`; the usual iPhone when simctl can't list device types."""
     try:
-        listing = json.loads(subprocess.check_output(simctl() + ['list', 'devicetypes', '--json'], text=True, timeout=60))
+        listing = json.loads(simctl_output(['list', 'devicetypes', '--json'], timeout=60))
     except (OSError, ValueError, subprocess.SubprocessError):
         return DEVICE_TYPE
     if not isinstance(listing, dict) or not listing.get('devicetypes'):
@@ -228,7 +251,7 @@ def pick_runtime(listing: dict, major: int = IOS_MAJOR, preferred: str = DEVICE_
 
 
 def newest_runtime(major: int = IOS_MAJOR) -> str | None:
-    return pick_runtime(json.loads(subprocess.check_output(simctl() + ['list', 'runtimes', '--json'], text=True)), major)
+    return pick_runtime(json.loads(simctl_output(['list', 'runtimes', '--json'])), major)
 
 
 def create_temporary(name: str) -> str:
@@ -236,7 +259,7 @@ def create_temporary(name: str) -> str:
     runtime = newest_runtime()
     if not runtime:
         raise BootError(f'No iOS {IOS_MAJOR} simulator runtime is installed.')
-    return subprocess.check_output(simctl() + ['create', name, device_type(runtime), runtime], text=True).strip()
+    return simctl_output(['create', name, device_type(runtime), runtime], timeout=120).strip()
 
 
 def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
@@ -265,8 +288,7 @@ def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
             saved = {}
 
         def owned_devices():
-            listed = json.loads(subprocess.check_output(simctl() + ['list', 'devices', 'available', '--json'],
-                                                        text=True, timeout=120))['devices']
+            listed = json.loads(simctl_output(['list', 'devices', 'available', '--json'], timeout=120))['devices']
             return {d['udid']: (r, d) for r, group in listed.items() for d in group
                     if d.get('name') == template_name and d.get('deviceTypeIdentifier') == phone}
 
@@ -285,8 +307,7 @@ def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
             for old in owned:
                 release(old)
             def create():
-                return subprocess.check_output(simctl() + ['create', template_name, phone, runtime],
-                                               text=True, timeout=120).strip()
+                return simctl_output(['create', template_name, phone, runtime], timeout=120).strip()
 
             def replace(stalled):
                 release(stalled)
@@ -319,7 +340,7 @@ def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
                 raise BootError('The T3 template was unsafe or did not shut down; it was deleted and no clone was made.')
             marker.write_text(json.dumps({'udid': udid, 'key': key, 'boot_window': info['boot_window']}) + '\n')
         print(f'[lane] cloning first-booted template {udid} for {name}', file=out, flush=True)
-        return subprocess.check_output(simctl() + ['clone', udid, name], text=True, timeout=120).strip()
+        return simctl_output(['clone', udid, name], timeout=120).strip()
 
 
 def crash_reports(reports: Path):
