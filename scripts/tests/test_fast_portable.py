@@ -33,7 +33,7 @@ verification = load('verification', 'verify-tests.py')
 supertonic = load('validate_supertonic_assets', 'validate-supertonic-assets.py')
 
 FAST_PLAN_METHODS = ('fast', 'portable', 'hosted_sessionkit', 'mac_rest', 'host_steps', 'package_steps', 'package_core',
-                     'shipped_compat', 'hot_file_ratchet',
+                     'shipped_compat', 'tools_steps', 'hot_file_ratchet',
                      'ops_steps')
 
 

@@ -10,6 +10,7 @@ struct ExperienceSourcesScreen: View {
     }
 
     @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -96,9 +97,9 @@ struct ExperienceSourcesScreen: View {
                     ManageFeedsScreen(focusFeedURLOnAppear: focusFeedURLOnManage)
                         .miniPlayerKeepOut()
                 }
-                .task { model.refreshQuickAddFeed(force: false) }
+                .task { if !isEdgeSwipePreview { model.refreshQuickAddFeed(force: false) } } // the swipe's preview fetches nothing (#106)
                 // The catalog tags followed shows with a kind and subjects (I2), and gives their artwork (#773).
-                .task { await catalogDrawer.loadSnapshot() }
+                .task { if !isEdgeSwipePreview { await catalogDrawer.loadSnapshot() } }
                 // Re-read the artwork when the shows, the catalog or a refresh changes it (#773).
                 .task(id: ArtworkKey(
                     subscriptionIDs: model.feedSubscriptions.map(\.id),

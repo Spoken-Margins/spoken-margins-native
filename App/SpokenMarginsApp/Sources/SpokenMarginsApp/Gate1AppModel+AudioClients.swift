@@ -357,7 +357,7 @@ extension Gate1AppModel {
             }
         }
         client.heardSourceWindowHandler = { [weak self] window in
-            Task { @MainActor [weak self] in self?.handleHeardSourceWindow(window) }
+            Task { @MainActor [weak self] in await self?.handleHeardSourceWindow(window) }
         }
         client.playbackStallTraceHandler = { [weak self] fields in
             Task { @MainActor [weak self] in

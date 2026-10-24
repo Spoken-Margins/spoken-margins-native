@@ -25,6 +25,11 @@ final class AddMarginShortcutIntentTests: XCTestCase {
         _ = try await intent.perform()
     }
 
+    /// #126: without an App Shortcut Siri can't run "Add Margin" until the listener builds a shortcut around it.
+    func testAddMarginIsOfferedToSiriAsAnAppShortcut() {
+        XCTAssertEqual(SpokenMarginsAppShortcuts.appShortcuts.count, 1)
+    }
+
     private let sampleId = Gate1AppModel.welcomeSampleItemId
 
     /// The welcome sample has been listened to and left at `offset`, and "item-pill" is the item playing.

@@ -374,5 +374,40 @@ class OmittedIssueTests(unittest.TestCase):
         self.assertEqual(proposal, {'checks': [{'issues': [1, 2]}], 'blocked': []})
 
 
+class ValidatorTests(unittest.TestCase):
+    """phone-plan moved to Packages/SessionKitTools (#1873); the job must still find a binary built before then."""
+
+    def command(self, *built):
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ), \
+                patch.object(daily.phone, 'PUBLIC', Path(temporary)):
+            os.environ.pop('SM_DAILY_VALIDATOR', None)
+            for path in built:
+                (Path(temporary) / path).parent.mkdir(parents=True)
+                (Path(temporary) / path).write_text('binary')
+            return [str(Path(part).relative_to(temporary)) for part in daily.validator_command()]
+
+    def test_the_tools_package_binary_is_used(self):
+        self.assertEqual(self.command('Packages/SessionKitTools/.build/release/phone-plan',
+                                      'Packages/SessionKit/.build/release/phone-plan'),
+                         ['Packages/SessionKitTools/.build/release/phone-plan'])
+
+    def test_a_binary_built_before_the_move_is_still_used(self):
+        self.assertEqual(self.command('Packages/SessionKit/.build/release/phone-plan'),
+                         ['Packages/SessionKit/.build/release/phone-plan'])
+
+    def test_with_neither_built_the_error_names_the_tools_package(self):
+        self.assertEqual(self.command(), ['Packages/SessionKitTools/.build/release/phone-plan'])
+
+    def test_the_tools_package_builds_phone_plan(self):
+        # The path the job looks in first must be the package that makes the product.
+        manifest = (SCRIPTS.parent / 'Packages/SessionKitTools/Package.swift').read_text()
+        self.assertIn('.executable(name: "phone-plan"', manifest)
+        self.assertTrue(daily.VALIDATORS[0].startswith('Packages/SessionKitTools/'))
+
+    def test_an_override_wins(self):
+        with patch.dict(os.environ, {'SM_DAILY_VALIDATOR': '/x/phone-plan --flag'}):
+            self.assertEqual(daily.validator_command(), ['/x/phone-plan', '--flag'])
+
+
 if __name__ == '__main__':
     unittest.main()
