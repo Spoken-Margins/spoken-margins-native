@@ -57,29 +57,43 @@ final class CommunityMapUploadService {
     ) {
         guard Self.optedIn else {
             // Opted out: nothing waits to be sent.
-            if let folder = Self.keptFolder { try? FileManager.default.removeItem(at: folder) }
+            Task.detached(priority: .utility) {
+                if let folder = Self.keptFolder { try? FileManager.default.removeItem(at: folder) }
+            }
             return
         }
-        guard let records = try? store.loadCommunityMapUploads() else { return }
+        // The store reads and kept-file checks run off the main thread (#2507); only the starts come back here.
+        Task {
+            let due = (try? await StoreReader(store).read { store in Self.dueItemIds(store: store) }) ?? []
+            for itemId in due {
+                attempt(itemId: itemId, store: store, localAudio: localAudio, report: report)
+            }
+        }
+    }
+
+    /// The items whose held-back upload is due another try (at most three). Closes records whose item is
+    /// gone and moves ones whose episode key has changed, so they stop coming back first in every retry.
+    nonisolated private static func dueItemIds(store: SQLiteSessionStore) -> [String] {
+        guard let records = try? store.loadCommunityMapUploads() else { return [] }
+        var due: [String] = []
         for record in CommunityMapUploadPolicy.dueForRetry(records, now: Date()).prefix(3) {
             let item = try? store.loadItem(id: record.itemId)
-            let kept = Self.keptTranscript(episodeKey: record.id)
-            // Closes records whose item is gone and moves ones whose episode key has changed,
-            // so they stop coming back first in every retry.
+            let kept = keptTranscript(episodeKey: record.id)
             guard CommunityMapUploadPolicy.prepareRetry(
                 record, item: item,
                 hasTranscript: kept != nil || (try? store.loadTranscriptTimeline(itemId: record.itemId)) != nil,
                 repository: store, now: Date()
             ) else {
-                Self.keep(nil, episodeKey: record.id)
+                keep(nil, episodeKey: record.id)
                 continue
             }
             if let kept, let key = item.flatMap(CommunityMapEpisodeKey.key(for:)), key != record.id {
-                Self.keep(kept, episodeKey: key)
-                Self.keep(nil, episodeKey: record.id)
+                keep(kept, episodeKey: key)
+                keep(nil, episodeKey: record.id)
             }
-            attempt(itemId: record.itemId, store: store, localAudio: localAudio, report: report)
+            due.append(record.itemId)
         }
+        return due
     }
 
     private static var optedIn: Bool { UserDefaults.standard.bool(forKey: optInKey) }
@@ -93,33 +107,30 @@ final class CommunityMapUploadService {
     ) {
         // Also reached from a queued transcript after an upload: the setting may be off by then.
         guard Self.optedIn else { return }
-        guard let item = try? store.loadItem(id: itemId),
-              let episodeKey = CommunityMapEpisodeKey.key(for: item) else { return }
-        // The map job deletes its transcript once the map is made, so the phone's transcript is
-        // saved before anything is sent: an app closed mid-upload can still retry it. If it can't
-        // be saved (storage full) it is still sent now, and Diagnostics says it can't be retried.
-        let unkept = transcribed.map { !Self.keep($0, episodeKey: episodeKey) } ?? false
-        guard !inFlight.contains(episodeKey) else {
-            if let transcribed { queued[episodeKey] = (itemId, transcribed) }
-            return
-        }
-        // A transcript the phone made for the map comes first: a stored one may be a publisher's
-        // that could not upload.
-        let stored = try? store.loadTranscriptTimeline(itemId: itemId)?.timeline
-        guard let timeline = transcribed ?? Self.keptTranscript(episodeKey: episodeKey) ?? stored else { return }
-        let storedChapters = CommunityMapUploadPolicy.hasPublisherChapters(
-            map: try? store.loadListeningMap(itemId: itemId), timeline: timeline
-        ) || CommunityMapUploadPolicy.hasPublisherChapters(map: nil, timeline: stored)
-        // Chapters embedded in the audio are imported only once the file is read, which can
-        // finish after the transcript is attached, so they are read here too.
-        let audioFile = localAudio(itemId)
-        // Transcripts don't record their language (a publisher's VTT can be in any language), and
-        // the device's would mislabel them, so the server is told it's unknown.
-        let language = "und"
-        let bridge = self.bridge
-        let uploader = self.uploader
-        inFlight.insert(episodeKey)
+        let reader = StoreReader(store)
+        // Everything the upload needs is read off the main thread (#2507); the in-flight bookkeeping and
+        // `localAudio` come back to it.
         Task {
+            let read = try? await reader.read { store in
+                Self.gather(itemId: itemId, transcribed: transcribed, store: store)
+            }
+            guard let gathered = read else { return }
+            guard let episodeKey = gathered.episodeKey, let item = gathered.item else { return }
+            guard !inFlight.contains(episodeKey) else {
+                if let transcribed { queued[episodeKey] = (itemId, transcribed) }
+                return
+            }
+            guard let timeline = gathered.timeline else { return }
+            // Chapters embedded in the audio are imported only once the file is read, which can
+            // finish after the transcript is attached, so they are read here too.
+            let audioFile = localAudio(itemId)
+            // Transcripts don't record their language (a publisher's VTT can be in any language), and
+            // the device's would mislabel them, so the server is told it's unknown.
+            let language = "und"
+            let bridge = self.bridge
+            let uploader = self.uploader
+            let storedChapters = gathered.storedChapters
+            inFlight.insert(episodeKey)
             let outcome = await uploader.uploadIfEligible(
                 item: item, timeline: timeline, language: language, repository: store,
                 optedIn: { await MainActor.run { Self.optedIn } },
@@ -138,34 +149,66 @@ final class CommunityMapUploadService {
                     return await bridge.state(of: ServerService.maps)
                 }
             )
-            self.inFlight.remove(episodeKey)
-            // Keep the phone's transcript only while its upload waits to be tried again (and if
-            // the record can't be read, keep it).
-            if case .success(let record) = Result(catching: { try store.loadCommunityMapUpload(episodeKey: episodeKey) }),
-               record?.state != .failed, self.queued[episodeKey] == nil {
-                Self.keep(nil, episodeKey: episodeKey)
+            // Keep the phone's transcript only while its upload waits to be tried again (and if the record
+            // can't be read, keep it). The episode stays in flight until this is done, so a transcript that
+            // arrives meanwhile is queued, and its own attempt keeps it again.
+            let hasQueued = queued[episodeKey] != nil
+            _ = try? await reader.read { store in
+                if case .success(let record) = Result(catching: { try store.loadCommunityMapUpload(episodeKey: episodeKey) }),
+                   record?.state != .failed, !hasQueued {
+                    Self.keep(nil, episodeKey: episodeKey)
+                }
             }
-            report(outcome.diagnostic + (unkept ? " (transcript not kept for a retry)" : ""))
-            if let next = self.queued.removeValue(forKey: episodeKey) {
-                self.attempt(itemId: next.itemId, transcribed: next.timeline, store: store, localAudio: localAudio, report: report)
+            inFlight.remove(episodeKey)
+            report(outcome.diagnostic + (gathered.unkept ? " (transcript not kept for a retry)" : ""))
+            if let next = queued.removeValue(forKey: episodeKey) {
+                attempt(itemId: next.itemId, transcribed: next.timeline, store: store, localAudio: localAudio, report: report)
             }
         }
     }
 
+    /// What `attempt` reads from the store and the kept files, for one item.
+    private struct Gathered: Sendable {
+        var item: Item?
+        var episodeKey: String?
+        /// A transcript the phone made could not be saved for a retry.
+        var unkept = false
+        var timeline: TranscriptTimeline?
+        var storedChapters = false
+    }
+
+    nonisolated private static func gather(itemId: String, transcribed: TranscriptTimeline?, store: SQLiteSessionStore) -> Gathered {
+        guard let item = try? store.loadItem(id: itemId),
+              let episodeKey = CommunityMapEpisodeKey.key(for: item) else { return Gathered() }
+        // The map job deletes its transcript once the map is made, so the phone's transcript is
+        // saved before anything is sent: an app closed mid-upload can still retry it. If it can't
+        // be saved (storage full) it is still sent now, and Diagnostics says it can't be retried.
+        let unkept = transcribed.map { !keep($0, episodeKey: episodeKey) } ?? false
+        // A transcript the phone made for the map comes first: a stored one may be a publisher's
+        // that could not upload.
+        let stored = try? store.loadTranscriptTimeline(itemId: itemId)?.timeline
+        let timeline = transcribed ?? keptTranscript(episodeKey: episodeKey) ?? stored
+        let storedChapters = timeline.map { timeline in
+            CommunityMapUploadPolicy.hasPublisherChapters(map: try? store.loadListeningMap(itemId: itemId), timeline: timeline)
+                || CommunityMapUploadPolicy.hasPublisherChapters(map: nil, timeline: stored)
+        } ?? false
+        return Gathered(item: item, episodeKey: episodeKey, unkept: unkept, timeline: timeline, storedChapters: storedChapters)
+    }
+
     /// Where phone-made transcripts wait for their retry, one file per episode key (a hex hash).
-    private static var keptFolder: URL? {
+    nonisolated private static var keptFolder: URL? {
         try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             .appending(path: "SpokenMargins/CommunityMapUploads", directoryHint: .isDirectory)
     }
 
-    private static func keptTranscript(episodeKey: String) -> TranscriptTimeline? {
+    nonisolated private static func keptTranscript(episodeKey: String) -> TranscriptTimeline? {
         guard let url = keptFolder?.appending(path: "\(episodeKey).json"), let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(TranscriptTimeline.self, from: data)
     }
 
     /// Saves the transcript for a retry, or with nil removes it. Says whether it was saved.
     @discardableResult
-    private static func keep(_ timeline: TranscriptTimeline?, episodeKey: String) -> Bool {
+    nonisolated private static func keep(_ timeline: TranscriptTimeline?, episodeKey: String) -> Bool {
         guard let url = keptFolder?.appending(path: "\(episodeKey).json") else { return false }
         guard let timeline else {
             try? FileManager.default.removeItem(at: url)
