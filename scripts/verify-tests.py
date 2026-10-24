@@ -1138,6 +1138,33 @@ def hang_evidence(pid, folder, sample_seconds=3, sampler_tool=None):
 REAL_PLAYER_TEST = re.compile(r'/(?:RealPlayer[A-Z]\w*Tests|StreamSeekLifecycleTests)/')
 
 
+def on_hosted_runner(environ=None):
+    """True on a GitHub-hosted runner (GitHub sets RUNNER_ENVIRONMENT=github-hosted there, and `self-hosted` on ours)."""
+    environ = os.environ if environ is None else environ
+    return environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
+
+
+# Processes of the test run itself: a crash of one of these is ours to stop on, whoever's machine it is (#2602).
+TEST_RUN_PROCESSES = ('xctest', 'xctrunner', 'xcodebuild', 'testmanagerd')
+
+
+def hosted_system_crash(report, environ=None):
+    """True for a crash report of an Apple system process of the simulator, on a GitHub-hosted runner only.
+
+    Not the app under test or its extensions (SpokenMargins*, com.spokenmargins*), not its test runner, not
+    SpringBoard, and not a report that can't be read: those all keep the flood stop (lane_sim.crash_is_warning
+    is the one place that says what is "ours")."""
+    if not on_hosted_runner(environ):
+        return False
+    try:
+        process = lane_sim.crash_process(Path(report).read_text(errors='replace'))
+    except OSError:
+        return False
+    if process is None or process[0].lower().startswith(TEST_RUN_PROCESSES):
+        return False
+    return lane_sim.crash_is_warning(process)
+
+
 class Run:
     def __init__(self, output, plan, changed=None):
         self.output = output
@@ -1166,6 +1193,16 @@ class Run:
         except OSError:
             self.crash_baseline[report] = (0, 0)
         process = re.sub(r'-\d{4}-\d{2}-\d{2}-\d{6}.*$', '', report.name)
+        # #2602: on a GitHub-hosted runner nobody's screen fills with crash dialogs, and the simulator's own system
+        # daemons (intelligencetasksd, AppIntentsLiveEntityService, ...) crash in bursts on a loaded VM, so those
+        # are counted and logged, never a reason to stop. The app, its test runner and anything unreadable still
+        # stop the run on a flood, here and everywhere; the Mac's rule is unchanged.
+        if hosted_system_crash(report):
+            counts = entry.setdefault('hosted_system_process_crashes', {})
+            counts[process] = counts.get(process, 0) + 1
+            print(f'warning: hosted runner: simulator system process {process} crashed '
+                  f'({counts[process]} so far this step); not a flood stop here', flush=True)
+            return False
         now = time.monotonic()
         self.crash_times.setdefault(process, []).append(now)
         entry.setdefault('simulator_crash_reports', []).append(str(report))

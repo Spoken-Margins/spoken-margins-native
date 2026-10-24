@@ -216,6 +216,67 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual(step['simulator_crash_report'], crashes[-1])
             self.assertEqual(step['exit_code'], 124)
 
+    def crash_files(self, folder, process, count, bundle='com.apple.intelligencetasksd', path=None):
+        """`count` real .ips reports of one process, as macOS writes them (JSON header line, JSON body)."""
+        files = []
+        for index in range(count):
+            head = {'app_name': process, 'name': process, 'bundleID': bundle}
+            body = {'procName': process, 'procPath': path or f'/Volumes/V/RuntimeRoot/usr/libexec/{process}'}
+            report = Path(folder) / f'{process}-2026-10-24-12000{index}.ips'
+            report.write_text(json.dumps(head) + '\n' + json.dumps(body))
+            files.append(report)
+        return files
+
+    def run_with_crashes(self, folder, reports, runner):
+        run = verification.Run(Path(folder) / 'run', 'test')
+        run.manifest['destination'] = {'udid': 'synthetic-device'}
+        run.crash_baseline = {}
+        with patch.dict(os.environ, {'RUNNER_ENVIRONMENT': runner}), \
+                patch.object(verification, 'new_crash', side_effect=self.crash_reports(*reports)), \
+                patch.object(verification.subprocess, 'run') as shutdown:
+            shutdown.return_value.returncode = 0
+            try:
+                run.command('crash-check', [sys.executable, '-c', 'import time; time.sleep(3)'])
+            except RuntimeError:
+                pass
+        return run.manifest['steps'][-1]
+
+    def test_a_hosted_runner_counts_three_system_daemon_crashes_in_seconds_and_goes_on(self):
+        # #2602: intelligencetasksd crashed three times in 20 s on the hosted Mac and ended a good run.
+        with tempfile.TemporaryDirectory() as temporary:
+            reports = self.crash_files(temporary, 'intelligencetasksd', 3)
+            step = self.run_with_crashes(temporary, reports, 'github-hosted')
+            self.assertEqual(step['exit_code'], 0)
+            self.assertNotIn('simulator_crash_report', step)
+            self.assertEqual(step['hosted_system_process_crashes'], {'intelligencetasksd': 3})
+
+    def test_a_hosted_runner_still_stops_on_a_flood_of_the_app_or_its_test_runner(self):
+        for process, bundle, path in (('SpokenMarginsApp', 'com.spokenmargins.native', None),
+                                      ('SpokenMarginsAppUITests-Runner', 'com.spokenmargins.UITests.xctrunner', None),
+                                      ('xctest', 'com.apple.dt.xctest', '/Volumes/V/RuntimeRoot/usr/bin/xctest'),
+                                      ('SpringBoard', 'com.apple.springboard', None)):
+            with self.subTest(process=process), tempfile.TemporaryDirectory() as temporary:
+                reports = self.crash_files(temporary, process, 3, bundle=bundle, path=path)
+                step = self.run_with_crashes(temporary, reports, 'github-hosted')
+                self.assertEqual(step['exit_code'], 124)
+                self.assertEqual(step['simulator_crash_report'], str(reports[-1]))
+                self.assertNotIn('hosted_system_process_crashes', step)
+
+    def test_a_hosted_runner_stops_on_a_report_it_cannot_read(self):
+        reports = [f'intelligencetasksd-2026-10-24-12000{i}.ips' for i in range(3)]
+        with tempfile.TemporaryDirectory() as temporary:
+            step = self.run_with_crashes(temporary, reports, 'github-hosted')
+            self.assertEqual(step['exit_code'], 124)
+
+    def test_a_self_hosted_runner_stops_on_the_same_daemon_flood(self):
+        # The Mac's rule is unchanged: crash dialogs fill Cole's screen.
+        for runner in ('self-hosted', ''):
+            with self.subTest(runner=runner), tempfile.TemporaryDirectory() as temporary:
+                reports = self.crash_files(temporary, 'intelligencetasksd', 3)
+                step = self.run_with_crashes(temporary, reports, runner)
+                self.assertEqual(step['exit_code'], 124)
+                self.assertEqual(step['simulator_crash_report'], str(reports[-1]))
+
     def test_a_flood_on_a_desk_pool_device_marks_it_unsafe_before_the_shutdown(self):
         # #688: the pool erases and reuses its devices, so a device that flooded must be retired, not reused.
         import json
