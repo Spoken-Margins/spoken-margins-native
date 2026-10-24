@@ -220,6 +220,22 @@ final class RenderedSpeechDiskCacheTests: XCTestCase {
         XCTAssertEqual(cache.sizeBytes, 100)
     }
 
+    func testOpeningWithoutTrimLeavesTheListingToTheCallersSetLimit() throws {
+        try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        let old = cacheDirectory.appending(path: "old.wav")
+        let recent = cacheDirectory.appending(path: "recent.wav")
+        try Data(repeating: 1, count: 100).write(to: old)
+        try Data(repeating: 1, count: 100).write(to: recent)
+        try age(old, secondsAgo: 500)
+
+        let cache = try RenderedSpeechDiskCache(directory: cacheDirectory, limitBytes: 150, trimsOnInit: false)
+        XCTAssertEqual(try files(in: cacheDirectory), ["old.wav", "recent.wav"], "opening lists nothing and trims nothing")
+
+        cache.setLimitBytes(150)
+
+        XCTAssertEqual(try files(in: cacheDirectory), ["recent.wav"])
+    }
+
     func testCachedAudioMissesWhenNothingWasStoredAndTheMissLeavesNoFile() throws {
         let cache = try RenderedSpeechDiskCache(directory: cacheDirectory, limitBytes: 10_000)
 

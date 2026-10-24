@@ -61,8 +61,8 @@ final class PublisherAudioDetectorTests: XCTestCase {
         let voiceover = try XCTUnwrap(items.first { $0.title == "The harbor in winter" })
         let entry = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: voiceover.url, title: voiceover.title,
                               bodyWordCount: PublisherAudioDetector.bodyWordCount(of: voiceover), fullBody: voiceover.content)
-        let confirmed = try XCTUnwrap(PublisherNarrationEvidence.confirmedEntry(entry,
-            html: String(decoding: Self.fixture("substack-voiceover-page.html"), as: UTF8.self)))
+        let page = try Self.fixture("substack-voiceover-page.html")
+        let confirmed = try XCTUnwrap(PublisherNarrationEvidence.confirmedEntry(entry, html: String(decoding: page, as: UTF8.self)))
         XCTAssertEqual(PublisherAudioDetector.kind(of: confirmed), .articleWithPublisherAudio)
         XCTAssertEqual(confirmed.audioURL, "https://recordings.example/voiceover.mp3")
         XCTAssertEqual(PublisherAudioDetector.articleHandoff(for: confirmed)?.text, voiceover.content)

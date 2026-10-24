@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import sharing_kit as kit_tool  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
-PACKET_PLAN_SWIFT = ROOT / 'Packages/SessionKit/Sources/CoopPacket/PacketBuilder.swift'
+PACKET_PLAN_SWIFT = ROOT / 'Packages/SessionKitTools/Sources/CoopPacket/PacketBuilder.swift'
 SHARING_MODELS_SWIFT = ROOT / 'Packages/SessionKit/Sources/SessionKit/SharingModels.swift'
 
 
@@ -598,6 +598,9 @@ class BuildTests(unittest.TestCase):
         packets = kit_tool.build(self.kit, self.work.name, run=self.runner(), fetch=self.fetch, platform='darwin')
         verbs = [c[1] if c[0] == '/bin-path/coop-packet' else c[0] for c in self.calls if c[0] != 'say']
         self.assertEqual(verbs, ['swift', 'swift'] + ['build'] * 4 + ['check'])
+        # coop-packet is built from its own package, Packages/SessionKitTools (#1873), not from SessionKit.
+        for build in (c for c in self.calls if c[:2] == ['swift', 'build']):
+            self.assertEqual(build[build.index('--package-path') + 1], str(ROOT / 'Packages/SessionKitTools'))
         check = next(c for c in self.calls if c[:2] == ['/bin-path/coop-packet', 'check'])
         self.assertEqual([Path(p).name for p in check[2:]], [kit_tool.packet_file_name(p) for p in self.kit['packets']])
         listed = (Path(self.work.name) / 'out' / 'SHA256SUMS').read_text().splitlines()

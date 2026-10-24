@@ -91,17 +91,23 @@ def identity(url):
     return url.rstrip('/').rsplit('/', 1)[-1].removesuffix('.git').lower()
 
 
+# The Swift manifests swift_packages reads, so every remote package in them must have its own entry. The tools
+# package (#1873) builds on SessionKit by path and names no outside package today.
+SWIFT_MANIFESTS = ('Packages/SessionKit/Package.swift', 'Packages/SessionKitTools/Package.swift')
+SWIFT_RESOLVED = ('Packages/SessionKit/Package.resolved', 'Packages/SessionKitTools/Package.resolved',
+                  'SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved')
+
+
 def swift_packages(root):
-    """{identity: version or None} for every remote Swift package: `.package(url:)` in SessionKit's Package.swift
-    (Linux block included), `url:` in project.yml's packages, and the pins of both Package.resolved files."""
-    text = (root / 'Packages/SessionKit/Package.swift').read_text()
+    """{identity: version or None} for every remote Swift package: `.package(url:)` in SessionKit's and its tools'
+    Package.swift (Linux blocks included), `url:` in project.yml's packages, and the pins of every Package.resolved."""
+    text = '\n'.join((root / manifest).read_text() for manifest in SWIFT_MANIFESTS if (root / manifest).exists())
     text = '\n'.join(line for line in text.splitlines() if not line.lstrip().startswith('//'))
     found = {identity(url): version for url, version in
              re.findall(r'\.package\(\s*(?:name:\s*"[^"]*"\s*,\s*)?url:\s*"([^"]+)"(?:\s*,\s*exact:\s*"([^"]+)")?', text)}
     for url in re.findall(r'^\s+url:\s*(\S+)', (root / 'project.yml').read_text(), re.M):
         found.setdefault(identity(url), None)
-    for resolved in ('Packages/SessionKit/Package.resolved',
-                     'SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'):
+    for resolved in SWIFT_RESOLVED:
         if (root / resolved).exists():
             for pin in json.loads((root / resolved).read_text())['pins']:
                 found.setdefault(pin['identity'], None)
@@ -208,9 +214,7 @@ def problems(root):
         if not covers([*prefixes, *own], path) and not any(covers([path], listed) for listed in [*prefixes, *own]):
             found.append(f'project.yml bundles {path}, which no entry lists in "paths" and "projectAuthored" does not claim')
     claimed_manifests = {path for component in components for path in component.get('tracks', {}).get('manifests', [])}
-    individually_checked = {'package.json', 'requirements-dev.txt', 'Packages/SessionKit/Package.swift',
-                            'Packages/SessionKit/Package.resolved',
-                            'SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'}
+    individually_checked = {'package.json', 'requirements-dev.txt', *SWIFT_MANIFESTS, *SWIFT_RESOLVED}
     for path in walk(root):
         name = path.rsplit('/', 1)[-1]
         if Path(path).suffix.lower() in MODEL_SUFFIXES and not covers(model_prefixes, path):

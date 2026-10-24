@@ -98,7 +98,7 @@ class InstallerTests(unittest.TestCase):
         newer = self.other_build('20260930-150000-ccccccc', 'c' * 40, '2026-09-30T15:00:00')
         self.point_latest_at(newer)
         (self.phone / 'installed.txt').write_text('c' * 40 + ' 2026-09-30T15:10:00 Cole iPhone\n')
-        done, calls = self.run_installer([iphone('PHONE-1')])
+        done, calls = self.run_installer([iphone('PHONE-1')], SM_PHONE_NOW='2026-09-30T16:00:00')
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertFalse(any('install app' in call for call in calls), calls)
         self.assertIn('newer build than this morning', done.stdout)
@@ -112,7 +112,7 @@ class InstallerTests(unittest.TestCase):
         latest = self.other_build('20260930-170000-ddddddd', 'd' * 40, '2026-09-30T17:00:00')
         self.point_latest_at(latest)
         (self.phone / 'installed.txt').write_text('c' * 40 + ' 2026-09-30T15:10:00 Cole iPhone\n')
-        done, calls = self.run_installer([iphone('PHONE-1')])
+        done, calls = self.run_installer([iphone('PHONE-1')], SM_PHONE_NOW='2026-09-30T18:00:00')
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual([call for call in calls if 'install app' in call],
                          [f'devicectl device install app --device PHONE-1 {latest.resolve()}/SpokenMarginsApp.app'])
@@ -126,7 +126,41 @@ class InstallerTests(unittest.TestCase):
         latest = self.other_build('20260930-170000-ddddddd', 'd' * 40, '2026-09-30T17:00:00')
         self.point_latest_at(latest)
         (self.phone / 'installed.txt').write_text('e' * 40 + ' 2026-09-30T14:00:00 Cole iPhone\n')
-        done, calls = self.run_installer([iphone('PHONE-1')])
+        done, calls = self.run_installer([iphone('PHONE-1')], SM_PHONE_NOW='2026-09-30T18:00:00')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual([call for call in calls if 'install app' in call],
+                         [f'devicectl device install app --device PHONE-1 {pin.resolve()}/SpokenMarginsApp.app'])
+        self.assertIn('install the daily phone pass', done.stdout)
+
+    def test_daily_pin_older_than_a_day_gives_way_to_a_newer_latest(self):
+        # Seen 2026-10-23 (#2529): daily plans stopped, the pin stayed at the 10-21 build while latest moved on.
+        pin = self.make_build()
+        self.pin_daily_at(pin, '2026-09-30T08:00:00')
+        latest = self.other_build('20261002-090000-ddddddd', 'd' * 40, '2026-10-02T09:00:00')
+        self.point_latest_at(latest)
+        done, calls = self.run_installer([iphone('PHONE-1')], SM_PHONE_NOW='2026-10-02T10:00:00')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual([call for call in calls if 'install app' in call],
+                         [f'devicectl device install app --device PHONE-1 {latest.resolve()}/SpokenMarginsApp.app'])
+        self.assertEqual((self.phone / 'installed.txt').read_text().split()[0], 'd' * 40)
+        self.assertIn('install the newest phone build', done.stdout)
+        self.assertIn('more than a day old', done.stdout)
+
+    def test_daily_pin_under_a_day_old_still_wins_over_a_newer_latest(self):
+        pin = self.make_build()
+        self.pin_daily_at(pin, '2026-10-01T08:00:00')
+        latest = self.other_build('20261002-070000-ddddddd', 'd' * 40, '2026-10-02T07:00:00')
+        self.point_latest_at(latest)
+        done, calls = self.run_installer([iphone('PHONE-1')], SM_PHONE_NOW='2026-10-02T07:30:00')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual([call for call in calls if 'install app' in call],
+                         [f'devicectl device install app --device PHONE-1 {pin.resolve()}/SpokenMarginsApp.app'])
+        self.assertNotIn('more than a day old', done.stdout)
+
+    def test_old_pin_that_is_already_latest_stays_the_daily_pass(self):
+        pin = self.make_build()
+        self.pin_daily_at(pin, '2026-09-28T08:00:00')
+        done, calls = self.run_installer([iphone('PHONE-1')], SM_PHONE_NOW='2026-10-02T10:00:00')
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual([call for call in calls if 'install app' in call],
                          [f'devicectl device install app --device PHONE-1 {pin.resolve()}/SpokenMarginsApp.app'])
