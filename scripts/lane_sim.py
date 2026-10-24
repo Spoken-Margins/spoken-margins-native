@@ -410,8 +410,9 @@ def judge_crashes(found: list, warnings: list | None = None) -> Path | None:
 def new_crash(reports: Path, baseline: dict, udid: str, warnings: list | None = None) -> Path | None:
     """The new crash report naming the device that should stop its boot, or None.
 
-    An isolated crash of an Apple system process is not one: it is recorded in `warnings` (when given) and the
-    boot goes on. See crash_is_warning and judge_crashes.
+    A caller that passes `warnings` (the lane boot) gets the boot policy: an isolated crash of an Apple system
+    process is recorded there and the boot goes on (crash_is_warning, judge_crashes). Without `warnings` the
+    first report is returned as before: verify-tests.py and check_posterboard_repair.py count crashes themselves.
     """
     if not reports.is_dir():
         return None
@@ -426,6 +427,8 @@ def new_crash(reports: Path, baseline: dict, udid: str, warnings: list | None = 
             continue
         if f'com.apple.CoreSimulator.SimDevice.{udid}' in text:
             found.append((path, text))
+    if warnings is None:
+        return found[0][0] if found else None
     return judge_crashes(found, warnings)
 
 
@@ -516,7 +519,8 @@ def report_time(text: str) -> float | None:
 def late_report(reports: Path, udid: str, window: tuple, warnings: list | None = None) -> Path | None:
     """A crash report naming the device for a crash inside the boot window (a later app crash doesn't count).
 
-    Only a report that should stop the run counts; isolated system-process crashes go to `warnings`.
+    With `warnings`, only a report that should stop the run counts and isolated system-process crashes go there;
+    without it, the first report counts, as in new_crash.
     """
     start, end = window
     if not reports.is_dir():
@@ -532,6 +536,8 @@ def late_report(reports: Path, udid: str, window: tuple, warnings: list | None =
         when = report_time(text)
         if f'com.apple.CoreSimulator.SimDevice.{udid}' in text and when is not None and start - 1 <= when <= end + 1:
             found.append((path, text))
+    if warnings is None:
+        return found[0][0] if found else None
     return judge_crashes(found, warnings)
 
 

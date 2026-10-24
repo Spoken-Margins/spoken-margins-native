@@ -328,6 +328,19 @@ class CrashPolicyTests(unittest.TestCase):
         (self.folder / 'b.ips').write_text(json.dumps(head) + '\n' + json.dumps(body))
         self.assertEqual(lane_sim.late_report(self.folder, UDID, window, []).name, 'b.ips')
 
+    def test_callers_without_a_warnings_list_still_see_every_crash(self):
+        # The audit on 2433396: verify-tests.py and check_posterboard_repair.py call new_crash with no
+        # `warnings`. They count crashes themselves (a lone crash is a recorded warning there, a flood stops the
+        # step, and the PosterBoard check fails on its first report), so the boot policy must not hide one.
+        import check_posterboard_repair
+        report = self.write('WidgetRenderer_Default', 'com.apple.WidgetRenderer')
+        self.assertEqual(lane_sim.new_crash(self.folder, {}, UDID), report)
+        self.assertEqual(check_posterboard_repair.new_crash(self.folder, {}, UDID), report)
+        now = time.time()
+        stamp = datetime.datetime.fromtimestamp(now).astimezone().strftime('%Y-%m-%d %H:%M:%S.%f %z')
+        report.write_text(report.read_text().replace('2026-10-23 12:00:00.0000 +0000', stamp))
+        self.assertEqual(lane_sim.late_report(self.folder, UDID, (now - 10, now + 10)), report)
+
 
 class TemplateTests(unittest.TestCase):
     def test_failed_template_is_deleted_without_clone_or_completion_marker(self):
