@@ -8,6 +8,9 @@
 # and opens this build's test-plan.md. It also copies the plan to iCloud Drive (folder "Spoken Margins
 # test plans", the newest five kept), so the owner can read it on the phone away from the Mac.
 #
+# The daily pin (~/SpokenMargins-phone/daily-ready) is installed instead of latest, unless the phone already has
+# a newer build or the pin is over 24 hours old (the daily plans stopped refreshing it, #2529).
+#
 # If installed.txt already names the newest build, it says so and changes nothing, unless the
 # owner types R to reinstall (#500). It also says whether a newer build is being made right now
 # (a scratch folder in ~/SpokenMargins-phone/.work) or the newest attempt failed (last-attempt.json).
@@ -29,6 +32,8 @@ import datetime, json, os, sys
 from pathlib import Path
 
 phone = Path(sys.argv[1])
+# Tests pin the clock with SM_PHONE_NOW (an ISO local time).
+now = datetime.datetime.fromisoformat(os.environ['SM_PHONE_NOW']) if os.environ.get('SM_PHONE_NOW') else datetime.datetime.now()
 
 def build(folder):
     try:
@@ -58,11 +63,23 @@ if installed and pin_sha and installed != pin_sha:
             newer = at > pinned_at
         except (IndexError, OSError, ValueError):
             newer = False
-print('yes' if newer else 'no')
+# A pin the daily plans have stopped refreshing (three unanswered days, a failed writer) must not hold
+# the installer back (#2529): past 24 hours old, and behind latest, it is skipped.
+stale = False
+latest_sha, _ = build(phone / 'latest')
+if latest_sha and pin_sha and latest_sha != pin_sha:
+    try:
+        pinned_at = datetime.datetime.fromtimestamp(os.lstat(phone / 'daily-ready').st_mtime)
+        stale = now - pinned_at > datetime.timedelta(hours=24)
+    except OSError:
+        stale = False
+print('yes' if newer else 'stale' if stale else 'no')
 PY
 )
   if [[ "$phone_is_newer" == yes ]]; then
     pinned=passed
+  elif [[ "$phone_is_newer" == stale ]]; then
+    pinned=stale
   else
     latest="$phone_dir/daily-ready"
     pinned=yes
@@ -88,6 +105,10 @@ fi
 print -r -- ""
 if [[ "$pinned" == passed ]]; then
   print -r -- "Your phone already has a newer build than this morning's daily pass, so this uses the newest build instead."
+  print -r -- ""
+fi
+if [[ "$pinned" == stale ]]; then
+  print -r -- "The daily pass is more than a day old and a newer build exists, so this uses the newest build instead."
   print -r -- ""
 fi
 
