@@ -19,7 +19,6 @@ targets:
       - path: App/SpokenMarginsApp/Sources
         type: syncedFolder
         excludes:
-          - SpokenMarginsApp/Gate3WatchConnectivityController.swift
           - SpokenMarginsApp/WatchPackageRenderCoordinator.swift
       - path: App/Gate2Shared/Sources
         type: syncedFolder
@@ -161,13 +160,17 @@ targets:
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: true
   # Speak a Margin from the wrist during a phone call (#2487): the call holds the iPhone's microphone, the Watch's
-  # still records. A single-target watchOS app, embedded in the iOS app. It doesn't link SessionKit.
+  # still records. A single-target watchOS app, embedded in the iOS app. It doesn't link SessionKit; it compiles the
+  # two contract files below directly.
   SpokenMarginsWatchApp:
     type: application
     platform: watchOS
     sources:
       - path: App/SpokenMarginsWatchApp/Sources
         type: syncedFolder
+      # The Watch-phone contract and the Watch's state machines (#2487 slice 1b), host-tested in SessionKit.
+      - path: Packages/SessionKit/Sources/SessionKit/WatchContract.swift
+      - path: Packages/SessionKit/Sources/SessionKit/WatchContractState.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.watchkitapp

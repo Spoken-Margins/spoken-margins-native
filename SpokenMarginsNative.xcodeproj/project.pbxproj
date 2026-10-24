@@ -21,7 +21,9 @@
 		3EB7A4EE3350ECA1902F69A8 /* SessionKitSupertonic in Frameworks */ = {isa = PBXBuildFile; productRef = BE679FFC0BC2A00A74297525 /* SessionKitSupertonic */; };
 		4CF539FBC54D635647751674 /* emoji-article-crash-regression.txt in Resources */ = {isa = PBXBuildFile; fileRef = 1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */; };
 		4EB9C4988DDEA400406B44F5 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 9AC0CEE299A474FCA1DE58BE /* popup.js */; };
+		50CB2702E8C858DA64B35EBB /* WatchContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = 319720F5D1C48499C77B9EE3 /* WatchContract.swift */; };
 		5582E774F89977B1BEA8AD66 /* BundledJavaScript-NOTICES.txt in Resources */ = {isa = PBXBuildFile; fileRef = 9DCA8BA796D0A4F2D17C342F /* BundledJavaScript-NOTICES.txt */; };
+		5CB55322C5E78BE68FC70E90 /* WatchContractState.swift in Sources */ = {isa = PBXBuildFile; fileRef = C35CC3A6D5622D241C4A34DB /* WatchContractState.swift */; };
 		5CDAE601AA8B28F47829D3C6 /* substack-shared-text-feed.xml in Resources */ = {isa = PBXBuildFile; fileRef = 50026D96CAC3D753625277E0 /* substack-shared-text-feed.xml */; };
 		5D420626A6A49CF830E8B408 /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 9547A66336D57411F645B986 /* SessionKitAudio */; };
 		5E894548E5C48572F8F55264 /* icon-512.png in Resources */ = {isa = PBXBuildFile; fileRef = 57C1F61B420E53CF05698E57 /* icon-512.png */; };
@@ -145,6 +147,7 @@
 		13B8FED93087CC3C8B2ABB2B /* VoiceCatalog */ = {isa = PBXFileReference; lastKnownFileType = folder; name = VoiceCatalog; path = App/SpokenMarginsApp/Resources/VoiceCatalog; sourceTree = SOURCE_ROOT; };
 		1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "emoji-article-crash-regression.txt"; sourceTree = "<group>"; };
 		1FB65F7C5B34151CFB025D14 /* licenses */ = {isa = PBXFileReference; lastKnownFileType = folder; name = licenses; path = "Contracts/voice-models/licenses"; sourceTree = SOURCE_ROOT; };
+		319720F5D1C48499C77B9EE3 /* WatchContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchContract.swift; sourceTree = "<group>"; };
 		36E0E49E13407DED3533C291 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 		3D2052181FEAFB56EB0856FA /* Defuddle-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Defuddle-LICENSE.txt"; sourceTree = "<group>"; };
 		45170E0354730F22BB2E258A /* SharedTextIntake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedTextIntake.swift; sourceTree = "<group>"; };
@@ -171,6 +174,7 @@
 		BE41691E3B902A5C377AC70D /* SpokenMarginsShareExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SpokenMarginsShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		BF9501739D9C1D8AAED60132 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
 		C271766FC941B68CA12F2DAC /* SessionKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SessionKit; path = Packages/SessionKit; sourceTree = SOURCE_ROOT; };
+		C35CC3A6D5622D241C4A34DB /* WatchContractState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchContractState.swift; sourceTree = "<group>"; };
 		C52D1CADC5773F67C398A2B2 /* SourceLinkPreprocessor.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = SourceLinkPreprocessor.js; sourceTree = "<group>"; };
 		D8F75089EB72A10C4E2E79E1 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		DA64F144F04CC7A9F436B28E /* traces */ = {isa = PBXFileReference; lastKnownFileType = folder; name = traces; path = Contracts/traces; sourceTree = SOURCE_ROOT; };
@@ -206,7 +210,6 @@
 		FE1B29E10916AF8A501A3286 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				SpokenMarginsApp/Gate3WatchConnectivityController.swift,
 				SpokenMarginsApp/WatchPackageRenderCoordinator.swift,
 			);
 			target = A7009410088927EF7A55F0A3 /* SpokenMarginsApp */;
@@ -415,6 +418,8 @@
 				DCF082C6D01456C6743B188A /* ClipboardIntakeClassifier.swift */,
 				4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */,
 				45170E0354730F22BB2E258A /* SharedTextIntake.swift */,
+				319720F5D1C48499C77B9EE3 /* WatchContract.swift */,
+				C35CC3A6D5622D241C4A34DB /* WatchContractState.swift */,
 			);
 			name = SessionKit;
 			path = Packages/SessionKit/Sources/SessionKit;
@@ -863,6 +868,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				50CB2702E8C858DA64B35EBB /* WatchContract.swift in Sources */,
+				5CB55322C5E78BE68FC70E90 /* WatchContractState.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
