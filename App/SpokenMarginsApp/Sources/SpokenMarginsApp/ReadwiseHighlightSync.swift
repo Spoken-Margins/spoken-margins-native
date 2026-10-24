@@ -88,8 +88,9 @@ final class ReadwiseHighlightSync: ObservableObject {
 
     func sendPass() async {
         guard enabled, !isSending, let store = storeProvider?() else { return }
-        guard let token = KeychainStore.load(service: ReadLaterModel.credentialService, account: ReadLaterService.reader.rawValue),
-              !token.isEmpty else {
+        guard let token = MainThreadOperationLabels.shared.scoped("readwiseTokenLoad", {
+            KeychainStore.load(service: ReadLaterModel.credentialService, account: ReadLaterService.reader.rawValue)
+        }), !token.isEmpty else {
             status = "Connect Readwise Reader above to send Margins."; return
         }
         let tokenDigest = ListeningEdition.digest(token)
@@ -98,7 +99,7 @@ final class ReadwiseHighlightSync: ObservableObject {
         defer { isSending = false }
         let epoch = connectionEpoch
         do {
-            let ledger = try Self.ledger()
+            let ledger = try MainThreadOperationLabels.shared.scoped("readwiseLedgerOpen") { try Self.ledger() }
             let client = ReadwiseHighlightClient { [session] request in
                 let (data, response) = try await session.data(for: request)
                 guard let http = response as? HTTPURLResponse else { throw ReadwiseHighlightError.httpStatus(0) }
@@ -121,7 +122,7 @@ final class ReadwiseHighlightSync: ObservableObject {
             let now = Date().formatted(date: .omitted, time: .shortened)
             if let summary = report.summary { lastSummary = summary; lastSentAt = now }
             status = ReadwiseSyncReport.statusLine(lastSummary: lastSummary, sentAt: lastSentAt, checkedAt: now)
-            links = (try? ledger.links()) ?? links
+            links = MainThreadOperationLabels.shared.scoped("readwiseLinks") { (try? ledger.links()) ?? links }
         } catch is CancellationError {
             return
         } catch ReadwiseHighlightError.tokenRejected {

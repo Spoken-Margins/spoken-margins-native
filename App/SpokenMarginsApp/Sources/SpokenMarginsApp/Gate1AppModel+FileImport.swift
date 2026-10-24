@@ -180,12 +180,14 @@ extension Gate1AppModel {
                 }
             }
             guard let self else { return }
-            self.completeObsidianMarkdownImport(
-                batch,
-                refreshQuickFolderWhenFinished: refreshQuickFolderWhenFinished,
-                openImportedItemWhenFinished: openImportedItemWhenFinished,
-                quickAccessFileToDismiss: quickAccessFileToDismiss
-            )
+            self.hangTelemetry.labels.scoped("obsidianImportFinish") {
+                self.completeObsidianMarkdownImport(
+                    batch,
+                    refreshQuickFolderWhenFinished: refreshQuickFolderWhenFinished,
+                    openImportedItemWhenFinished: openImportedItemWhenFinished,
+                    quickAccessFileToDismiss: quickAccessFileToDismiss
+                )
+            }
         }
     }
 
