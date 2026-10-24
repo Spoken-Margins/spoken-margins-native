@@ -303,18 +303,26 @@ def clock(ts: float) -> str:
     return dt.datetime.fromtimestamp(ts).strftime('%H:%M')
 
 
+def tip_label(trunk_tip: bool) -> str:
+    """Names what the run tested. A run of any other branch must not say it tested the trunk's tip."""
+    if trunk_tip:
+        return f"{BASE_BRANCH}'s tip"
+    return f"branch {os.environ.get('GITHUB_REF_NAME') or 'other than ' + BASE_BRANCH}, not {BASE_BRANCH}'s tip"
+
+
 def report_text(sha: str, result: dict, *, started: float, finished: float, previous: Optional[str],
-                suspects: list[str], evidence, hosted: bool = False) -> str:
+                suspects: list[str], evidence, hosted: bool = False, trunk_tip: bool = True) -> str:
     c = result['counts']
     day = dt.datetime.fromtimestamp(started).strftime('%Y-%m-%d')
     why = (f'{BASE_BRANCH} moved from {previous}, the last tip with an integration report' if previous
            else f'no integration report on #{REPORT_ISSUE} in the last {REPORT_LOOKBACK.days} days')
     lines = ['```text',
              f"Lane report integration-{sha[:7]} — {result['verdict']}",
-             f"commit {sha[:8]} ({BASE_BRANCH}'s tip) · integration run: --plan app · "
+             f"commit {sha[:8]} ({tip_label(trunk_tip)}) · integration run: --plan app · "
              f'{clock(started)}–{clock(finished)} local, {day}',
              f'run by: {HOSTED_RUN_BY if hosted else RUN_BY}',
-             f'why it ran: {why}; ' + (f'a push to {BASE_BRANCH} started {HOSTED_WORKFLOW} on a GitHub-hosted Mac.'
+             f'why it ran: {why}; ' + ((f'a push to {BASE_BRANCH} started {HOSTED_WORKFLOW} on a GitHub-hosted Mac.' if trunk_tip else
+                                        f'a manual proof run of {HOSTED_WORKFLOW} on a branch; nothing is posted to #{REPORT_ISSUE}.')
                                        if hosted else
                                        'the Mac had room (simulator slot free, memory normal, disk above the line) '
                                        f'and no lane app tests were waiting, or {BASE_BRANCH} had gone 3 hours untested.'),
@@ -341,7 +349,9 @@ def report_text(sha: str, result: dict, *, started: float, finished: float, prev
     lines += [NOT_RUN, NOT_VERIFIED, f'evidence: {evidence}', '```']
     if result.get('attachments'):
         lines += ['', *report_lines(result['attachments'])]
-    if result['verdict'] == 'PASS':
+    if result['verdict'] == 'PASS' and not trunk_tip:
+        lines += ['', f'{sha[:7]} is not {BASE_BRANCH}\'s tip: a proof run, so it is no phone candidate.']
+    elif result['verdict'] == 'PASS':
         # Say what the pass covers: app tests alone are not a full candidate (#1465).
         journeys = result.get('journeys') or {}
         scripted = scripted_summary(journeys)
@@ -1210,7 +1220,9 @@ def hosted_run(ops: Ops, sha: str, *, post: bool = True) -> str:
             result = run_tests(ops, ops.repo_root, evidence, fds)
     except Exception as error:  # noqa: BLE001
         result = dict(summarize({'error': str(error)}), flaky=[])
-    ops.log('simulator build ' + pack_sim_build(ops.repo_root, evidence / 'app' / 'manifest.json', sha))
+    # Desks take the newest sim-app artifact of any commit, so only the trunk's tip may produce one (#2590).
+    ops.log('simulator build ' + (pack_sim_build(ops.repo_root, evidence / 'app' / 'manifest.json', sha) if post
+                                   else 'not packed: this run is not the trunk\'s tip'))
     suspects = ops.suspects(sha, green) if result['verdict'] == 'FAIL' else []
     drop_bundles(evidence)
     run_url = ''
@@ -1218,7 +1230,7 @@ def hosted_run(ops: Ops, sha: str, *, post: bool = True) -> str:
         run_url = (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{os.environ.get('GITHUB_REPOSITORY', REPO)}"
                    f"/actions/runs/{os.environ['GITHUB_RUN_ID']} (artifact hosted-integration-{sha})")
     body = report_text(sha, result, started=now, finished=ops.now(), previous=previous, suspects=suspects,
-                       evidence=run_url or evidence, hosted=True)
+                       evidence=run_url or evidence, hosted=True, trunk_tip=post)
     if post:
         report = ops.post_report(body, evidence)
     else:

@@ -97,14 +97,6 @@ jobs:
       - name: Crash-report folder
         run: mkdir -p "$HOME/Library/Logs/DiagnosticReports"
 
-      # verify-tests.py runs `xcodegen generate` before the app build, and the hosted image has no XcodeGen: the run
-      # died with "No such file or directory: 'xcodegen'", reported INCONCLUSIVE with 0 tests and the job showed
-      # green (#2590). Same fix as lane.yml's hosted T3 (#2557).
-      - name: XcodeGen
-        env:
-          HOMEBREW_NO_INSTALL_CLEANUP: '1'
-        run: command -v xcodegen >/dev/null || brew install xcodegen; xcodegen --version
-
       # Every tool the run shells out to (verify-tests.py --plan app, sm_integration_run.py, sim_builds.py), checked
       # up front so a missing one fails the job here by name instead of surfacing as a report line.
       - name: Check the tools the run needs
@@ -156,8 +148,11 @@ jobs:
       # symlinks and modes, so no second compression. About 290 MB on 2026-10-18 at 1-2 tips a day. 2 days: a desk
       # wants today's tip, and storage counts against the account's quota while the repo is private.
       # Absent when the build failed or wasn't this SHA's.
+      # Only for a run of the trunk's tip: desks take the newest `sim-app-*` of any commit, so a branch's proof run
+      # must never leave one (#2590). Its step above already passes --no-report for such a run, and the script packs
+      # nothing then.
       - name: Keep the simulator app for desks
-        if: always()
+        if: always() && github.ref_name == (vars.SM_TRUNK || 'main')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sim-app-${{ github.sha }}

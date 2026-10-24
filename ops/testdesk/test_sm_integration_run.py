@@ -1029,11 +1029,17 @@ class HostedRunTests(unittest.TestCase):
     def test_a_proof_run_from_a_branch_posts_no_report(self):
         with tempfile.TemporaryDirectory() as tmp:
             ops = HostedOps(tmp, [manifest({TEST: 'passed'})], bodies=[report_comment(SHA[:7], 'PASS')])
-            with recording_slot(ops.events), patch.dict(os.environ, {'GITHUB_RUN_ID': '42'}):
+            with recording_slot(ops.events), patch.object(run, 'pack_sim_build', side_effect=AssertionError(
+                    'a branch run must leave no sim-app for desks')), \
+                    patch.dict(os.environ, {'GITHUB_RUN_ID': '42', 'GITHUB_REF_NAME': 'ws/2590-x'}):
                 verdict = run.hosted_run(ops, SHA, post=False)  # even a tip that has a report is tested
             written = list(ops.repo_root.rglob('report.md'))
+            text = written[0].read_text() if written else ''
         self.assertEqual((verdict, ops.posted), ('PASS', []))
         self.assertEqual(len(written), 1)
+        self.assertIn("branch ws/2590-x, not main's tip", text)
+        self.assertNotIn("(main's tip)", text)
+        self.assertNotIn('current phone candidate', text)
 
     def test_main_needs_a_full_sha(self):
         with open(os.devnull, 'w') as quiet, self.assertRaises(SystemExit), contextlib.redirect_stderr(quiet):
