@@ -13,6 +13,7 @@ final class LiveSessionBoard: ObservableObject {
     let files: LiveSessionFileWorker
     private var observers: [NSObjectProtocol] = []
     private var latest = 0
+    private var applied = 0
 
     init(files: LiveSessionFileWorker) {
         self.files = files
@@ -29,13 +30,15 @@ final class LiveSessionBoard: ObservableObject {
         Task { await refreshNow() }
     }
 
-    /// Reads the rows now. A read that finishes after a newer one is dropped.
+    /// Reads the rows now. A read that finishes after a newer read has been applied is dropped; one that is merely
+    /// overtaken by a newer read still in flight is applied, so on return the rows are at least as fresh as this read.
     func refreshNow() async {
         latest += 1
         let ticket = latest
         let summaries = await files.summaries()
-        guard ticket == latest, summaries != rows else { return }
-        rows = summaries
+        guard ticket > applied else { return }
+        applied = ticket
+        if summaries != rows { rows = summaries }
     }
 }
 
