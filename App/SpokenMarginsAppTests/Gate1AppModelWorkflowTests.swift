@@ -5350,7 +5350,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.resetAndSeed()
 
         model.importObsidianMarkdownFiles(urls: [file])
-        try await waitFor("PDF import to finish") {
+        // The 1 s default timed out on hosted iOS 27 runners, as the structured-PDF test did (#1413, #2365).
+        try await waitFor("PDF import to finish", timeoutNanoseconds: 10_000_000_000) {
             !model.isImportingSources
         }
 
