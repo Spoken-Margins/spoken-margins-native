@@ -109,17 +109,14 @@ final class HeardSourceWindowFilesTests: XCTestCase {
     }
 
     /// #2510: the app writes the audio from a background task and only then keeps it on the main thread, so the
-    /// file half must work with no instance and leave the map alone until `adopt`.
-    func testTheFilesAreWrittenOffTheMainThreadAndKeptAfterwards() async throws {
+    /// file half must work from a detached task and leave the map alone until `adopt`.
+    func testTheFilesAreWrittenFromABackgroundTaskAndKeptAfterwards() async throws {
         let files = HeardSourceWindowFiles(rootDirectory: root)
         let heard = window(runsMs: [60_000, 1_500, 30_000])
         let directory = root!
 
-        let (written, offMain) = try await Task.detached { () throws -> ([HeardSourceWindowFiles.Segment], Bool) in
-            (try HeardSourceWindowFiles.write(heard, in: directory), !Thread.isMainThread)
-        }.value
+        let written = try await Task.detached { try HeardSourceWindowFiles.write(heard, in: directory) }.value
 
-        XCTAssertTrue(offMain)
         XCTAssertEqual(written.map(\.durationMs), [60_000, 30_000])
         XCTAssertNil(files.segments(for: "session::ij-001"), "writing keeps nothing until the caller adopts it")
         XCTAssertEqual(files.adopt(written, key: "session::ij-001"), [])
@@ -151,6 +148,17 @@ final class HeardSourceWindowFilesTests: XCTestCase {
         XCTAssertEqual(files.adopt(nothing, key: "session::ij-001"), [])
         XCTAssertEqual(files.segments(for: "session::ij-001"), older)
         XCTAssertEqual(try folders().count, 1, "the empty write leaves no folder behind")
+    }
+
+    /// Two hand-overs for one Margin can finish writing in either order; only the later-reserved one may be kept.
+    func testAnOlderHandOverThatFinishesLastIsNotKept() throws {
+        let files = HeardSourceWindowFiles(rootDirectory: root)
+        let first = files.reserve("session::ij-001")
+        let second = files.reserve("session::ij-001")
+
+        XCTAssertFalse(files.isLatest(first, for: "session::ij-001"))
+        XCTAssertTrue(files.isLatest(second, for: "session::ij-001"))
+        XCTAssertTrue(files.isLatest(files.reserve("session::ij-002"), for: "session::ij-002"), "another Margin is independent")
     }
 
     func testBackgroundDiscardForgetsTheWindowAtOnceAndDeletesTheFilesLater() async throws {

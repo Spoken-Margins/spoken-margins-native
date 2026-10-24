@@ -26,6 +26,7 @@ public final class HeardSourceWindowFiles {
 
     public let rootDirectory: URL
     private var windows: [String: [Segment]] = [:]
+    private var tickets: [String: Int] = [:]
     private static let purgedRootsLock = NSLock()
     nonisolated(unsafe) private static var purgedRoots: Set<String> = []
 
@@ -80,6 +81,17 @@ public final class HeardSourceWindowFiles {
         }
         return segments
     }
+
+    /// Numbers a hand-over for `key` before its files are written in the background. Two writes for one Margin can
+    /// finish in either order, so the caller keeps only a window that is still `isLatest` when its write is done.
+    public func reserve(_ key: String) -> Int {
+        let ticket = (tickets[key] ?? 0) + 1
+        tickets[key] = ticket
+        return ticket
+    }
+
+    /// Whether no later hand-over for `key` has been reserved since `ticket`.
+    public func isLatest(_ ticket: Int, for key: String) -> Bool { tickets[key] == ticket }
 
     /// Keeps segments `write` made as the window for `key`, and returns the window it replaced (one no transcription
     /// has taken) for the caller to `delete`. Nothing is kept, and nothing replaced, when `segments` is empty.

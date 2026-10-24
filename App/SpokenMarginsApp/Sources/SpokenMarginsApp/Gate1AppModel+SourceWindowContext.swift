@@ -32,6 +32,7 @@ extension Gate1AppModel {
         let key = HeardAudioWindowRecorder.key(window.request)
         let diagnosticKey = Self.marginDiagnosticKey("heardSourceWindow", sessionId: window.request.sessionId, interjectionId: window.request.interjectionId)
         let root = heardSourceWindows.rootDirectory
+        let ticket = heardSourceWindows.reserve(key)
         let written = await Task.detached(priority: .utility) {
             Result { try HeardSourceWindowFiles.write(window, in: root) }
         }.value
@@ -40,6 +41,11 @@ extension Gate1AppModel {
         case .success(let segments): files = segments
         case .failure(let error):
             diagnostics[diagnosticKey] = "write_failed:\(error.localizedDescription)"
+            return
+        }
+        // A newer hand-over for this Margin may have started while this one wrote; the newer window wins, in either order.
+        guard heardSourceWindows.isLatest(ticket, for: key) else {
+            HeardSourceWindowFiles.deleteInBackground(files)
             return
         }
         HeardSourceWindowFiles.deleteInBackground(heardSourceWindows.adopt(files, key: key))
