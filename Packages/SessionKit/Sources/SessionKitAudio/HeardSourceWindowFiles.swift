@@ -52,11 +52,20 @@ public final class HeardSourceWindowFiles {
     /// deleting) a window for the same Margin that no transcription has taken. Keeps nothing when no run qualifies.
     @discardableResult
     public func store(_ window: HeardAudioWindow, key: String) throws -> [Segment] {
+        let segments = try Self.write(window, in: rootDirectory)
+        Self.delete(adopt(segments, key: key))
+        return segments
+    }
+
+    /// The file half of `store`: writes the runs of at least two seconds to a new folder under `rootDirectory`
+    /// (up to about two minutes of mono audio) and keeps nothing here. It touches no state, so the app runs it
+    /// off the main thread (#2510); `adopt` then keeps what it returns.
+    public static func write(_ window: HeardAudioWindow, in rootDirectory: URL) throws -> [Segment] {
         let directory = rootDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var segments: [Segment] = []
         do {
-            for (index, run) in window.segments.enumerated() where window.durationMs(of: run) >= Self.minimumSegmentDurationMs {
+            for (index, run) in window.segments.enumerated() where window.durationMs(of: run) >= minimumSegmentDurationMs {
                 let url = directory.appending(path: "segment-\(index).caf")
                 try Self.write(run.samples, sampleRate: window.sampleRate, to: url)
                 segments.append(Segment(url: url, startMediaTimeMs: run.startMediaTimeMs, durationMs: window.durationMs(of: run)))
@@ -69,9 +78,16 @@ public final class HeardSourceWindowFiles {
             try? FileManager.default.removeItem(at: directory)
             return []
         }
-        discard(key)
-        windows[key] = segments
         return segments
+    }
+
+    /// Keeps segments `write` made as the window for `key`, and returns the window it replaced (one no transcription
+    /// has taken) for the caller to `delete`. Nothing is kept, and nothing replaced, when `segments` is empty.
+    public func adopt(_ segments: [Segment], key: String) -> [Segment] {
+        guard !segments.isEmpty else { return [] }
+        let replaced = windows.removeValue(forKey: key) ?? []
+        windows[key] = segments
+        return replaced
     }
 
     /// Hands the window to a transcription, which must `delete` it when done. It is no longer kept here.
@@ -84,11 +100,23 @@ public final class HeardSourceWindowFiles {
         if let segments = windows.removeValue(forKey: key) { Self.delete(segments) }
     }
 
+    /// Like `discard`, but the folder is removed off the calling thread: the window is forgotten at once, so a
+    /// caller on the main thread never waits on the files (#2510).
+    public func discardInBackground(_ key: String) {
+        if let segments = windows.removeValue(forKey: key) { Self.deleteInBackground(segments) }
+    }
+
     /// Removes a taken window's folder.
     public static func delete(_ segments: [Segment]) {
         for directory in Set(segments.map { $0.url.deletingLastPathComponent().standardizedFileURL }) {
             try? FileManager.default.removeItem(at: directory)
         }
+    }
+
+    /// `delete` on a background task, for a caller on the main thread.
+    public static func deleteInBackground(_ segments: [Segment]) {
+        guard !segments.isEmpty else { return }
+        Task.detached(priority: .utility) { HeardSourceWindowFiles.delete(segments) }
     }
 
     private static func purgeEarlierRunsOnce(in rootDirectory: URL) {

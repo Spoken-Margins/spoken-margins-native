@@ -108,6 +108,65 @@ final class HeardSourceWindowFilesTests: XCTestCase {
         XCTAssertEqual(try folders().count, 1, "only the newer, untaken window is left")
     }
 
+    /// #2510: the app writes the audio from a background task and only then keeps it on the main thread, so the
+    /// file half must work with no instance and leave the map alone until `adopt`.
+    func testTheFilesAreWrittenOffTheMainThreadAndKeptAfterwards() async throws {
+        let files = HeardSourceWindowFiles(rootDirectory: root)
+        let heard = window(runsMs: [60_000, 1_500, 30_000])
+        let directory = root!
+
+        let (written, offMain) = try await Task.detached { () throws -> ([HeardSourceWindowFiles.Segment], Bool) in
+            (try HeardSourceWindowFiles.write(heard, in: directory), !Thread.isMainThread)
+        }.value
+
+        XCTAssertTrue(offMain)
+        XCTAssertEqual(written.map(\.durationMs), [60_000, 30_000])
+        XCTAssertNil(files.segments(for: "session::ij-001"), "writing keeps nothing until the caller adopts it")
+        XCTAssertEqual(files.adopt(written, key: "session::ij-001"), [])
+        XCTAssertEqual(files.segments(for: "session::ij-001"), written)
+        XCTAssertEqual(try folders().count, 1)
+    }
+
+    func testAdoptingANewerWindowHandsBackTheOlderOneToDelete() throws {
+        let files = HeardSourceWindowFiles(rootDirectory: root)
+        let older = try HeardSourceWindowFiles.write(window(runsMs: [60_000]), in: root)
+        let newer = try HeardSourceWindowFiles.write(window(runsMs: [30_000]), in: root)
+        XCTAssertEqual(files.adopt(older, key: "session::ij-001"), [])
+
+        let replaced = files.adopt(newer, key: "session::ij-001")
+
+        XCTAssertEqual(replaced, older)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: older[0].url.path), "the caller deletes it, off its own thread")
+        XCTAssertEqual(files.segments(for: "session::ij-001"), newer)
+        HeardSourceWindowFiles.delete(replaced)
+        XCTAssertEqual(try folders().count, 1)
+    }
+
+    func testAWindowWithNoQualifyingRunIsNotAdoptedAndKeepsTheOlderOne() throws {
+        let files = HeardSourceWindowFiles(rootDirectory: root)
+        let older = try files.store(window(runsMs: [60_000]), key: "session::ij-001")
+        let nothing = try HeardSourceWindowFiles.write(window(runsMs: [1_000]), in: root)
+
+        XCTAssertEqual(nothing, [])
+        XCTAssertEqual(files.adopt(nothing, key: "session::ij-001"), [])
+        XCTAssertEqual(files.segments(for: "session::ij-001"), older)
+        XCTAssertEqual(try folders().count, 1, "the empty write leaves no folder behind")
+    }
+
+    func testBackgroundDiscardForgetsTheWindowAtOnceAndDeletesTheFilesLater() async throws {
+        let files = HeardSourceWindowFiles(rootDirectory: root)
+        let stored = try files.store(window(runsMs: [60_000]), key: "session::ij-001")
+
+        files.discardInBackground("session::ij-001")
+        XCTAssertNil(files.segments(for: "session::ij-001"))
+
+        for _ in 0..<200 where FileManager.default.fileExists(atPath: stored[0].url.path) {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stored[0].url.path))
+        XCTAssertEqual(try folders(), [])
+    }
+
     func testOtherMarginsWindowsAreUntouched() throws {
         let files = HeardSourceWindowFiles(rootDirectory: root)
         let kept = try files.store(window(id: "ij-002", runsMs: [60_000]), key: "session::ij-002")

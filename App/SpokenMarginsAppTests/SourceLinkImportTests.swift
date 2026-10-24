@@ -1371,7 +1371,7 @@ final class SourceLinkImportTests: XCTestCase {
         let beforeHeard = await transcriber.windowRequestCount()
         XCTAssertEqual(beforeHeard, 0)
 
-        try deliverHeardWindow(to: model, anchorMs: 123_000, startMs: 63_000, durationMs: 120_000)
+        try await deliverHeardWindow(to: model, anchorMs: 123_000, startMs: 63_000, durationMs: 120_000)
         let request = await transcriber.waitForWindowRequest()
         try await waitFor("source window context to attach") {
             model.marginDiagnostic("sourceWindowTranscription", interjectionId: "ij-001") == "complete:heard_audio:3_segments"
@@ -1441,9 +1441,12 @@ final class SourceLinkImportTests: XCTestCase {
         margin.anchorContextStatus = .ready
         try store.saveInterjection(margin)
 
-        try deliverHeardWindow(to: model, anchorMs: 123_000, startMs: 63_000, durationMs: 120_000)
+        try await deliverHeardWindow(to: model, anchorMs: 123_000, startMs: 63_000, durationMs: 120_000)
 
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: heardRoot.path), [], "no unused heard audio left in the cache")
+        // The unused files are removed off the main thread (#2510), so they go a moment after the hand-over.
+        try await waitFor("the unused heard audio to be deleted") {
+            (try? FileManager.default.contentsOfDirectory(atPath: heardRoot.path))?.isEmpty == true
+        }
         XCTAssertNil(model.heardSourceWindows.segments(for: "\(sessionId)::ij-001"))
         let requests = await transcriber.windowRequestCount()
         XCTAssertEqual(requests, 0)
@@ -1489,7 +1492,7 @@ final class SourceLinkImportTests: XCTestCase {
         model.dispatchGate2CompactCommand(.beginInterjection)
         model.dispatchGate2CompactCommand(.finishInterjection)
         await interjectionTranscriber.waitForRequest()
-        try deliverHeardWindow(to: model, anchorMs: 123_000, startMs: 63_000, durationMs: 120_000)
+        try await deliverHeardWindow(to: model, anchorMs: 123_000, startMs: 63_000, durationMs: 120_000)
 
         let sourceRequestsBeforeNoteFinished = await sourceTranscriber.windowRequestCount()
         XCTAssertEqual(sourceRequestsBeforeNoteFinished, 0)
@@ -1819,7 +1822,7 @@ final class SourceLinkImportTests: XCTestCase {
         audio.currentMediaTimeValue = 123_000
         model.dispatchGate2CompactCommand(.beginInterjection)
         model.dispatchGate2CompactCommand(.finishInterjection)
-        try deliverHeardWindow(to: model, anchorMs: 123_000, startMs: 63_000, durationMs: 120_000)
+        try await deliverHeardWindow(to: model, anchorMs: 123_000, startMs: 63_000, durationMs: 120_000)
         try await waitFor("source window failure to persist") {
             model.selectedItem.interjections.first?.anchorContextStatus == .unavailable
         }
@@ -2759,13 +2762,13 @@ extension SourceLinkImportTests {
 
     /// Stands in for the player's audio tap, which these tests don't run: hands the model the audio heard around the
     /// first Margin (#156). Silent samples are enough; the fake transcriber doesn't read them.
-    func deliverHeardWindow(to model: Gate1AppModel, anchorMs: Int, startMs: Int, durationMs: Int) throws {
+    func deliverHeardWindow(to model: Gate1AppModel, anchorMs: Int, startMs: Int, durationMs: Int) async throws {
         let margin = try XCTUnwrap(model.selectedItem.interjections.first, "the Margin should be saved before its heard audio arrives")
         let request = PostResumeAudioSampleRequest(
             interjectionId: margin.id, sessionId: margin.sessionId, itemId: margin.itemId,
             anchorMediaTimeMs: anchorMs, targetDurationMs: 11_000
         )
-        model.handleHeardSourceWindow(HeardAudioWindow(
+        await model.handleHeardSourceWindow(HeardAudioWindow(
             request: request, sampleRate: 1_000,
             segments: [.init(startMediaTimeMs: startMs, samples: [Float](repeating: 0, count: durationMs))],
             endReason: "complete"
