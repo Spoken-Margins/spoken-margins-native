@@ -87,6 +87,49 @@ extension Gate1AppModel {
         }
     }
 
+    /// A `spokenmargins://source-link?payloadId=` open: checks the payload is still there off the main thread (the
+    /// share extension wrote it into the shared folder), then lets the drain import it (#2510).
+    func queueSourceLinkPayload(url: URL, payloadID: String) {
+        Task { @MainActor in
+            do {
+                let handoffStore = try resolvedSourceLinkHandoffStore()
+                _ = try await Self.offMain { try SourceLinkHandoffURL.handoff(from: url, store: handoffStore) }
+                diagnostics["lastSourceLinkPayloadCleanup"] = "queued:\(payloadID)"
+                hangTelemetry.labels.scoped("sourceLinkPayload.queue") { importPendingSourceLinkHandoffs() }
+            } catch SourceLinkHandoffStoreError.missingPayload(let payloadID) {
+                diagnostics["lastSourceLinkPayloadCleanup"] = "already_consumed:\(payloadID)"
+            } catch {
+                reportFailure(error, context: "Source link import failed")
+            }
+        }
+    }
+
+    /// A browser-text open with a payload id: reads and deletes the payload file off the main thread and imports
+    /// the page on it (#2510).
+    func importBrowserTextPayload(payloadID: String) {
+        // Claimed now, before the first suspension, so a drain that starts at the same foreground skips it and
+        // the share still opens its item (#1437).
+        guard browserTextPayloadsInFlight.insert(payloadID).inserted else { return }
+        Task { @MainActor in
+            defer { browserTextPayloadsInFlight.remove(payloadID) }
+            do {
+                let handoffStore = try resolvedBrowserTextHandoffStore()
+                let handoff = try await Self.offMain { try handoffStore.handoff(payloadID: payloadID) }
+                // With something in Now Playing the import still shows its item and never touches playback (#1437).
+                let hadSession = hasActiveSession
+                let imported = hangTelemetry.labels.scoped("browserTextPayload.import") { importClippedPage(handoff) }
+                if imported {
+                    try? await Self.offMain { try handoffStore.deletePayload(payloadID: payloadID) }
+                    if hadSession { diagnostics["lastBrowserTextPayloadCleanup"] = "imported_without_session_replacement" }
+                }
+            } catch Gate5BrowserTextHandoffStoreError.missingPayload(let payloadID) {
+                diagnostics["lastBrowserTextPayloadCleanup"] = "already_consumed:\(payloadID)"
+            } catch {
+                reportFailure(error, context: "Browser text import failed")
+            }
+        }
+    }
+
     /// Runs a handoff-folder read or write off the main thread; the folder is shared with the share extension, so
     /// any of these can wait on it (#2510).
     nonisolated static func offMain<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
@@ -140,16 +183,18 @@ extension Gate1AppModel {
 
         do {
             let handoffStore = try resolvedBrowserTextHandoffStore()
-            let payloadIDs = try handoffStore.pendingPayloadIDs()
+            let payloadIDs = try await Self.offMain { try handoffStore.pendingPayloadIDs() }
             diagnostics["pendingBrowserTextPayloads"] = "\(payloadIDs.count)"
             for payloadID in payloadIDs {
+                guard browserTextPayloadsInFlight.insert(payloadID).inserted else { continue }
+                defer { browserTextPayloadsInFlight.remove(payloadID) }
                 do {
-                    let handoff = try handoffStore.handoff(payloadID: payloadID)
+                    let handoff = try await Self.offMain { try handoffStore.handoff(payloadID: payloadID) }
                     addedItemIds.append(try importBrowserTextInBackground(handoff))
-                    try handoffStore.deletePayload(payloadID: payloadID)
+                    try await Self.offMain { try handoffStore.deletePayload(payloadID: payloadID) }
                     diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "imported"
                 } catch Gate5BrowserTextHandoffStoreError.invalidPayload {
-                    try? handoffStore.deletePayload(payloadID: payloadID)
+                    try? await Self.offMain { try handoffStore.deletePayload(payloadID: payloadID) }
                     diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "deleted_invalid_payload"
                 } catch Gate5BrowserTextHandoffStoreError.missingPayload {
                     diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "missing"
@@ -157,7 +202,7 @@ extension Gate1AppModel {
                     // Announced only once it sits in the Import Inbox: a payload that can't be quarantined stays
                     // pending, and announcing it would repeat the banner on every drain with nothing behind "See why".
                     do {
-                        try handoffStore.quarantine(payloadID: payloadID, reason: error.localizedDescription)
+                        try await Self.offMain { try handoffStore.quarantine(payloadID: payloadID, reason: error.localizedDescription) }
                         diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "quarantined:\(error.localizedDescription)"
                         failedSharedArticles += 1
                     } catch {

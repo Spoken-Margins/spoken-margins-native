@@ -3283,6 +3283,44 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertFalse(after.isEmpty)
         XCTAssertTrue(after.allSatisfy(outcome.bundledTexts.contains), "the bundled voice takes back the chunks after the run")
         XCTAssertTrue(before.allSatisfy(outcome.bundledTexts.contains), "and kept the chunks before it")
+        XCTAssertEqual(outcome.servedIndices, Array(run.indices), "the saved chunks come from the saved audio, in order")
+    }
+
+    /// #1892: five minutes of listening is more audio at a faster speed. A saved run just over 300 s of audio is five
+    /// minutes of listening at 1x but only 2.5 at 2x, so at the listener's 2x the bundled voice keeps it. A client that
+    /// passed 1.0 to the rule instead of its playback rate would take it over and fail here.
+    func testASavedSupertonicRunOfFiveMinutesOfAudioIsTooShortAtTwiceTheSpeed() async throws {
+        let text = Self.pressureArticle(paragraphs: 14)
+        let run = try Self.savedRun(in: text, startingAtOrAfter: 2, chunks: 5)
+        let outcome = try await renderUnderPressure(
+            text: text, savedSupertonic: Set(run.indices), declaredSeconds: 61, playbackRate: 2)
+        XCTAssertEqual(outcome.supertonicRenders, 0)
+        XCTAssertTrue(run.texts.allSatisfy(outcome.bundledTexts.contains),
+                      "305 s of audio is 152 s of listening at 2x, so the bundled voice keeps it: \(outcome.bundledTexts)")
+    }
+
+    /// #1892: and the same run at 1x is five minutes of listening, so it takes over. Together with the 2x test above,
+    /// this fails for a client that ignores the rate in either direction.
+    func testTheSameSavedSupertonicRunIsLongEnoughAtNormalSpeed() async throws {
+        let text = Self.pressureArticle(paragraphs: 14)
+        let run = try Self.savedRun(in: text, startingAtOrAfter: 2, chunks: 5)
+        let outcome = try await renderUnderPressure(
+            text: text, savedSupertonic: Set(run.indices), declaredSeconds: 61, playbackRate: 1)
+        XCTAssertEqual(outcome.supertonicRenders, 0)
+        XCTAssertTrue(outcome.bundledTexts.allSatisfy { !run.texts.contains($0) },
+                      "305 s of audio is five minutes of listening at 1x, so the saved run plays: \(outcome.bundledTexts)")
+    }
+
+    /// #1892: a lookup answers only for the exact chunk (item, article identity, index, start, length and text), as the
+    /// real coordinator does. A saved chunk whose start or length is off by one is a miss, so Kitten reads it.
+    func testASavedSupertonicChunkWithTheWrongStartIsAMiss() async throws {
+        let text = Self.pressureArticle(paragraphs: 14)
+        let run = try Self.savedRun(in: text, startingAtOrAfter: 2, chunks: 5)
+        let outcome = try await renderUnderPressure(
+            text: text, savedSupertonic: Set(run.indices), declaredSeconds: 70, savedStartShift: 1)
+        XCTAssertEqual(outcome.servedIndices, [], "no lookup matched the shifted start")
+        XCTAssertTrue(run.texts.allSatisfy(outcome.bundledTexts.contains),
+                      "with no saved audio found, the bundled voice reads the run: \(outcome.bundledTexts)")
     }
 
     /// #1680: a saved run under five minutes that doesn't reach the end would be a Supertonic island inside the
@@ -3331,14 +3369,21 @@ final class SupertonicSpeechTests: XCTestCase {
 
     /// Renders `text` to the end on a phone that refuses Supertonic, with saved Supertonic audio for the article chunks
     /// at `savedSupertonic`, each declared `declaredSeconds` long.
+    /// The lookup matches the full key, as the coordinator does (#1892): the item, the article's identity, and each
+    /// chunk's index, start, length and text against the article plan, with `savedStartShift` added to the start to
+    /// make a wrong one. `servedIndices` are the chunks it answered for, once each, in the order first answered.
     private func renderUnderPressure(
-        text: String, savedSupertonic: Set<Int>, declaredSeconds: TimeInterval
-    ) async throws -> (bundledTexts: [String], supertonicRenders: Int) {
+        text: String, savedSupertonic: Set<Int>, declaredSeconds: TimeInterval, playbackRate: Double = 1,
+        savedStartShift: Int = 0
+    ) async throws -> (bundledTexts: [String], supertonicRenders: Int, servedIndices: [Int]) {
         let template = try makeTestWAV(duration: 0.2)
         defer { try? FileManager.default.removeItem(at: template) }
         let supertonic = CountingAudioSupertonicRenderer(templateURL: template)
         let bundled = RecordingBundledVoiceRenderer(templateURL: template)
         let log = KittenClientLog()
+        let served = ServedChunkLog()
+        let expectedIdentity = NarrationChunkPlanner.identity(ofArticle: text)
+        let expectedPlan = Self.expectedArticlePlan(for: text)
         let client = SupertonicSpeechPlaybackClient(
             renderer: supertonic, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             audioSessionActivator: {}, audioPlayerStarter: { player, rate in player.volume = 0; player.playImmediately(atRate: rate) },
@@ -3347,8 +3392,13 @@ final class SupertonicSpeechTests: XCTestCase {
             pressureRenderer: bundled,
             fallbackClient: RecordingFallbackAudioClient(),
             onGenerationProgress: { log.record($0) },
-            preparedChunkLookup: { _, _, plan in
-                savedSupertonic.contains(plan.index) ? .init(audioURL: template, duration: declaredSeconds) : nil
+            preparedChunkLookup: { itemId, identity, plan in
+                guard itemId == "saved-run", identity == expectedIdentity,
+                      let expected = expectedPlan.first(where: { $0.index == plan.index }), savedSupertonic.contains(plan.index),
+                      plan.startOffset == expected.startOffset + savedStartShift,
+                      plan.sourceLength == expected.sourceLength, plan.text == expected.text else { return nil }
+                served.add(plan.index)
+                return .init(audioURL: template, duration: declaredSeconds)
             },
             onFallback: { reason, _, _ in log.recordFallback(reason) },
             // #2088: the default window reads the shared governor and the device. If an earlier test class left the
@@ -3357,13 +3407,24 @@ final class SupertonicSpeechTests: XCTestCase {
             renderAheadWindow: { nil }
         )
         _ = try client.prepareSpeechText(text)
+        try client.setPlaybackRate(playbackRate)
         try client.play(targetId: "saved-run")
         // Returns as soon as the last chunk is reported (#2386); the timeout only bounds a failure.
         await fulfillment(of: [log.finished], timeout: 60)
         XCTAssertEqual(log.completedChunks, log.totalChunks, "the generation finished")
         XCTAssertEqual(log.fallbacks, [])
         try client.stop()
-        return (await bundled.renderedTexts, await supertonic.renderCount)
+        return (await bundled.renderedTexts, await supertonic.renderCount, served.indices)
+    }
+
+    /// The article plan the way the planner makes it, in the article's own coordinates: what a lookup must be asked for.
+    private static func expectedArticlePlan(for text: String) -> [PreparedChunkPlan] {
+        let projection = SpeechTextNormalizer.normalizeWithSourceOffsets(text)
+        return NarrationChunkPlanner.spokenPlan(spokenText: projection.text, articleText: nil, articleSpokenStart: 0).chunks
+            .enumerated().map { position, chunk in
+                PreparedChunkPlan(index: chunk.articleIndex ?? position, startOffset: chunk.startOffset,
+                                  sourceLength: chunk.sourceLength, text: chunk.text)
+            }
     }
 
     func testSlowSpeculativeChunkDoesNotSwitchAudiblePreparedPlaybackToFallback() async throws {
@@ -3772,6 +3833,7 @@ final class SupertonicSpeechTests: XCTestCase {
         let renderer = CountingAudioSupertonicRenderer(templateURL: template)
         let fallback = RecordingFallbackAudioClient()
         let capture = PreparedAudioCapture()
+        let states = GenerationStateCapture()
         let completed = expectation(description: "prepared Supertonic audio")
         let client = SupertonicSpeechPlaybackClient(
             renderer: renderer,
@@ -3782,11 +3844,18 @@ final class SupertonicSpeechTests: XCTestCase {
             preparedAudioDirectory: output,
             audioSessionActivator: {},
             observesPlayerLifecycle: false,
+            // #2587: the defaults read the runner's own heat, memory and app state. One refused chunk is an iOS-voice
+            // stand-in, and an item with a stand-in is never assembled (#363); the likeliest reason this wait timed
+            // out on a hosted iOS 27 runner. This test is about saving the whole item, so it renders on a cool phone
+            // in front.
+            onDeviceRenderingAllowed: { true },
             fallbackClient: fallback,
+            onGenerationStateChange: { state, stopReason in states.record(state, stopReason: stopReason) },
             onPreparedAudio: { itemId, prepared in
                 capture.record(itemId: itemId, prepared: prepared)
                 completed.fulfill()
-            }
+            },
+            renderAheadWindow: { nil }
         )
         let source = (1...9).map {
             "Persistent sentence \($0) has enough text for progressive local audiobook generation."
@@ -3796,9 +3865,11 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.play(targetId: "persistent-item")
         try client.pause()
 
-        await fulfillment(of: [completed], timeout: 5)
-        let prepared = try XCTUnwrap(capture.prepared)
+        // Returns as soon as the audio is saved; the timeout only bounds a failure.
+        await fulfillment(of: [completed], timeout: 60)
         let renderCount = await renderer.renderCount
+        let prepared = try XCTUnwrap(capture.prepared, "generation states: \(states.values), stops: \(states.stopReasons), "
+                                     + "renders: \(renderCount) of \(renderedChunkCount(source))")
         XCTAssertEqual(capture.itemId, "persistent-item")
         XCTAssertEqual(renderCount, renderedChunkCount(source))
         XCTAssertTrue(fallback.playedOffsets.isEmpty)
@@ -3834,12 +3905,16 @@ final class SupertonicSpeechTests: XCTestCase {
             preparedAudioDirectory: blockedOutput,
             audioSessionActivator: {},
             observesPlayerLifecycle: false,
+            // #2587: a chunk refused for the runner's own heat or memory becomes a stand-in, and then assembly never
+            // runs (#363), so no stop comes. This test is about the assembly error, so every chunk renders.
+            onDeviceRenderingAllowed: { true },
             fallbackClient: RecordingFallbackAudioClient(),
             onGenerationStateChange: { state, stopReason in
                 states.record(state, stopReason: stopReason)
                 if state == .stopped { stopped.fulfill() }
             },
-            onPreparedAudio: { itemId, prepared in capture.record(itemId: itemId, prepared: prepared) }
+            onPreparedAudio: { itemId, prepared in capture.record(itemId: itemId, prepared: prepared) },
+            renderAheadWindow: { nil }
         )
         let source = (1...9).map {
             "Assembly sentence \($0) has enough text for progressive local audiobook generation."
@@ -3849,9 +3924,12 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.play(targetId: "assembly-fails")
         try client.pause()
 
-        await fulfillment(of: [stopped], timeout: 5)
+        // Returns as soon as generation stops; the timeout only bounds a failure.
+        await fulfillment(of: [stopped], timeout: 60)
         XCTAssertNil(capture.prepared, "No prepared audio may be reported when assembly failed")
-        let reason = try XCTUnwrap(states.stopReasons.last ?? nil, "The stop must carry the assembly error")
+        let renderCount = await renderer.renderCount
+        let reason = try XCTUnwrap(states.stopReasons.last ?? nil, "The stop must carry the assembly error; "
+                                   + "states: \(states.values), renders: \(renderCount)")
         XCTAssertTrue(reason.hasPrefix(SpeechGenerationStopReason.assemblyFailedCode), reason)
         XCTAssertGreaterThan(reason.count, SpeechGenerationStopReason.assemblyFailedCode.count + 2, "The error itself is kept")
         let shown = RenderedSpeechGenerationState.stopped.listenerDescription(
@@ -5379,6 +5457,14 @@ private final class KittenClientLog: @unchecked Sendable {
     var completedChunks: Int { lock.withLock { progress.completedChunks } }
     var totalChunks: Int { lock.withLock { progress.totalChunks } }
     var fallbacks: [String] { lock.withLock { fallbackReasons } }
+}
+
+/// The chunk indices a saved-audio lookup answered for, once each, in the order first answered (#1892).
+private final class ServedChunkLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var served: [Int] = []
+    func add(_ index: Int) { lock.withLock { if !served.contains(index) { served.append(index) } } }
+    var indices: [Int] { lock.withLock { served } }
 }
 
 /// Whether Supertonic may render, flipped by a test while a generation runs (#849 audit).

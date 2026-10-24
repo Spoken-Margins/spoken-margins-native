@@ -212,19 +212,18 @@ extension Gate1AppModel {
     func submitAutomaticEpisodeMapPreparationIfNeeded() {
         guard automaticEpisodeMapPreparationPolicy == .whileCharging,
               let store else { return }
-        let candidates = libraryItems.compactMap { row -> Item? in
+        // A summary has the media kind; a whole `loadItem` per row decoded every article's text (#2506).
+        let candidates = libraryItems.compactMap { row -> LibraryItemSummary? in
             guard (try? store.loadEditionFingerprintSpine(itemId: row.id)) == nil,
-                  let item = try? store.loadItem(id: row.id),
+                  let item = try? store.loadItemSummary(id: row.id),
                   item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream,
                   podcastDownloadCoordinator?.validatedLocalURL(for: row.id) != nil else { return nil }
             return item
         }
+        let existingJobIDs = candidates.isEmpty ? [] : Set(((try? store.loadEpisodeMapPreparationJobs()) ?? []).filter { !$0.isCancelled }.map(\.id))
         for item in candidates {
             let id = "episode-map-job-\(safePodcastEvidenceComponent(item.id))"
-            if let existing = try? store.loadEpisodeMapPreparationJobs().first(where: { $0.id == id && !$0.isCancelled }) {
-                _ = existing
-                continue
-            }
+            if existingJobIDs.contains(id) { continue }
             try? store.saveEpisodeMapPreparationJob(EpisodeMapPreparationJob(
                 id: id,
                 itemId: item.id,

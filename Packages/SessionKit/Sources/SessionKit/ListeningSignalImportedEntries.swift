@@ -7,9 +7,14 @@ import Foundation
 /// article. This file remembers the entry the listener picked, so I4 rows still join it. It sits
 /// beside the log on the device, holds article links and entry ids only (never feed URLs), and is
 /// never exported.
+///
+/// The map is read and written on a private serial queue, never on the caller's thread (#2509). A tap on
+/// Add, Open or Play only enqueues the note; `entryIds()` waits for the notes ahead of it, so a reader
+/// (this instance or a fresh one, as after a relaunch) always sees every note made before it was called.
 public final class ListeningSignalImportedEntries: @unchecked Sendable {
     public let fileURL: URL
-    private let lock = NSLock()
+    /// One queue for every instance: a fresh instance's first read waits behind any note still being written.
+    private static let queue = DispatchQueue(label: "com.spokenmargins.followed-article-entries", qos: .utility)
     private var cache: [String: String]?
 
     public init(fileURL: URL) {
@@ -43,8 +48,8 @@ public final class ListeningSignalImportedEntries: @unchecked Sendable {
     public static func itemKey(_ itemId: String) -> String { "item:\(itemId)" }
 
     private func store(key: String, entryId: String) {
-        lock.withLock {
-            var map = loadLocked()
+        Self.queue.async { [self] in
+            var map = loadOnQueue()
             guard map[key] != entryId else { return }
             map[key] = entryId
             cache = map
@@ -58,10 +63,10 @@ public final class ListeningSignalImportedEntries: @unchecked Sendable {
     /// Normalized article URL, or `itemKey(_:)` of an imported Library item, to the id of the feed
     /// entry it was imported from.
     public func entryIds() -> [String: String] {
-        lock.withLock { loadLocked() }
+        Self.queue.sync { loadOnQueue() }
     }
 
-    private func loadLocked() -> [String: String] {
+    private func loadOnQueue() -> [String: String] {
         if let cache { return cache }
         let map = (try? Data(contentsOf: fileURL)).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
         cache = map

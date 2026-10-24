@@ -11,7 +11,9 @@ public final class RenderedSpeechDiskCache: @unchecked Sendable {
     private let fileManager: FileManager
     private let lock = NSLock()
 
-    public init(directory: URL, limitBytes: Int, fileManager: FileManager = .default) throws {
+    /// `trimsOnInit: false` leaves the first trim to the caller's `setLimitBytes`, which lists the whole
+    /// directory and so belongs off the main actor (#2510).
+    public init(directory: URL, limitBytes: Int, trimsOnInit: Bool = true, fileManager: FileManager = .default) throws {
         self.directory = directory.standardizedFileURL
         self.limitBytes = max(1, limitBytes)
         self.fileManager = fileManager
@@ -20,7 +22,7 @@ public final class RenderedSpeechDiskCache: @unchecked Sendable {
         resourceValues.isExcludedFromBackup = true
         var mutableDirectory = directory
         try? mutableDirectory.setResourceValues(resourceValues)
-        enforceLimit(protecting: nil)
+        if trimsOnInit { enforceLimit(protecting: nil) }
     }
 
     public func cachedAudio(

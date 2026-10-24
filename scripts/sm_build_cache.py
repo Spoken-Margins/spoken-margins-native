@@ -19,8 +19,8 @@ so it gets the slot emptied instead of building against the old branch's Derived
 using the same paths (`.build/dd`, `.build/verification/...`, `Packages/SessionKit/.build/debug/...`).
 
 Only linked worktrees (`.git` is a `gitdir:` file) are linked. Left alone: the main checkout and other
-clones (the daily phone-plan job runs the main checkout's prebuilt `Packages/SessionKit/.build/release/
-phone-plan`, which disk relief must never empty), a worktree outside ~/Documents (the lane's runner
+clones (the daily phone-plan job runs the main checkout's prebuilt `phone-plan`, in `Packages/SessionKitTools/
+.build/release/` or, built before #1873, `Packages/SessionKit/.build/release/`, which disk relief must never empty), a worktree outside ~/Documents (the lane's runner
 workspaces, which link `.build` to the lane's own warm cache, and Codex worktrees in ~/.codex, which the
 job can read), an existing link, and an existing real folder that a build may be using. An idle real
 folder is moved into the slot: a rename on the same disk, so nothing is copied. Linking holds

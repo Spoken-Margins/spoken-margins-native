@@ -37,7 +37,7 @@ final class SourceLinkShareFallbackTests: XCTestCase {
 
         model.importPendingSourceLinkHandoffs()
         try await waitFor("shared post import") {
-            model.diagnostics["pendingSourceLinkPayload:\(handoff.id)"] != nil
+            model.diagnostics["pendingSourceLinkPayload:\(handoff.id)"] != nil && !model.isImportingPendingSourceLinkHandoffs
         }
 
         XCTAssertEqual(model.diagnostics["pendingSourceLinkPayload:\(handoff.id)"], "imported")
@@ -170,7 +170,7 @@ final class SourceLinkShareFallbackTests: XCTestCase {
 
         model.importPendingSourceLinkHandoffs()
         try await waitFor("unreadable share quarantine") {
-            (try? store.failedHandoffs().count) == 1
+            (try? store.failedHandoffs().count) == 1 && !model.isImportingPendingSourceLinkHandoffs
         }
 
         XCTAssertEqual(extractor.requested, [URL(string: Self.postURL)!])
@@ -201,7 +201,7 @@ final class SourceLinkShareFallbackTests: XCTestCase {
 
         model.importPendingSourceLinkHandoffs()
         try await waitFor("missing page quarantine") {
-            (try? store.failedHandoffs().count) == 1
+            (try? store.failedHandoffs().count) == 1 && !model.isImportingPendingSourceLinkHandoffs
         }
 
         XCTAssertEqual(extractor.requested, [URL(string: handoff.inputURL)!])

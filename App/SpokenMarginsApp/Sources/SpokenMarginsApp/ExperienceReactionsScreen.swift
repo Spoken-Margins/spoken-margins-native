@@ -1,5 +1,6 @@
 import SwiftUI
 import SessionKit
+import SessionKitPersistence
 
 /// Which layers feed "Where people reacted" (#476). Every enabled layer is chosen until the listener
 /// unchecks it, so a layer imported later is chosen too. Nothing here is stored: it resets on reopening.
@@ -92,6 +93,7 @@ final class ReactionsViewModel: ObservableObject {
 
     private var generator: ReactionSummaryGenerator?
     private var task: Task<Void, Never>?
+    private var loadTask: Task<Void, Never>?
 
     func configure(model: Gate1AppModel) {
         guard generator == nil,
@@ -99,19 +101,35 @@ final class ReactionsViewModel: ObservableObject {
         else { return }
         let store = ReactionSummaryStore(directory: directory)
         generator = ReactionSummaryGenerator(client: model.localFoundationModelClient, store: store)
-        // A summary holds words drawn from other people's Margins, so it goes when its item or any
-        // Margin it cites is deleted.
-        for stored in store.all() where model.store != nil && (try? model.store?.loadItem(id: stored.itemId)) == nil {
-            store.delete(itemId: stored.itemId)
-        }
         let item = model.selectedItem
         let live = Set(item.interjections.filter { $0.status == "active" }.map(\.id))
             .union(item.importedCommentaryLayers.filter { $0.deletedAt == nil }
                 .flatMap { item.importedCommentaryInterjections[$0.id, default: []].map(\.id) })
-        if let stored = store.load(itemId: item.id), stored.isOrphaned(liveMarginIds: live) {
-            store.delete(itemId: item.id)
+        let itemStore = model.store
+        let itemId = item.id
+        // The folder listing, the item lookups and the summary file are disk reads, so they run off the main
+        // thread; the sheet shows no summary until they finish (#2510).
+        loadTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let stored = Self.prunedSummary(store: store, itemStore: itemStore, itemId: itemId, liveMarginIds: live)
+            await MainActor.run { if !Task.isCancelled { self?.summary = stored } }
         }
-        summary = store.load(itemId: item.id)
+    }
+
+    /// A summary holds words drawn from other people's Margins, so it goes when its item or any Margin it
+    /// cites is deleted. Returns what is left for `itemId`.
+    nonisolated static func prunedSummary(
+        store: ReactionSummaryStore,
+        itemStore: SQLiteSessionStore?,
+        itemId: String,
+        liveMarginIds live: Set<String>
+    ) -> StoredReactionSummary? {
+        for stored in store.all() where itemStore != nil && (try? itemStore?.loadItem(id: stored.itemId)) == nil {
+            store.delete(itemId: stored.itemId)
+        }
+        if let stored = store.load(itemId: itemId), stored.isOrphaned(liveMarginIds: live) {
+            store.delete(itemId: itemId)
+        }
+        return store.load(itemId: itemId)
     }
 
     func summarize(input: MarginLayerSynthesis.Input) {
@@ -133,6 +151,8 @@ final class ReactionsViewModel: ObservableObject {
     func cancel() {
         task?.cancel()
         task = nil
+        loadTask?.cancel()
+        loadTask = nil
     }
 }
 
