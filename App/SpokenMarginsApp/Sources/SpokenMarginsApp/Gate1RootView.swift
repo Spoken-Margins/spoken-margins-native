@@ -47,7 +47,16 @@ struct Gate1RootView: View {
         }
         .background(AppColors.background.ignoresSafeArea())
         .modifier(AppFeedbackPresentation())
-        .edgeSwipeBack(enabled: !model.recordingNavigationIsLocked && model.screen != .home, action: model.openHome)
+        .edgeSwipeBack(
+            enabled: !model.recordingNavigationIsLocked && model.screen != .home,
+            canCommit: { !model.recordingNavigationIsLocked },
+            action: model.openHome
+        ) {
+            // What openHome lands on, so the swipe reveals the tab it will arrive at.
+            MiniPlayerDock(showsMiniPlayer: false) {
+                ExperienceRootTabs(navigation: .constant(navigation.edgeSwipePreview), showsMiniPlayer: !keyboardIsPresented && model.shouldShowMiniPlayer)
+            }
+        }
         .onAppear {
             model.bootstrapLibraryIfNeeded()
             catalogDrawer.presentIfFirstRun(
@@ -531,48 +540,6 @@ struct ProductPanel<Content: View>: View {
 }
 
 extension Interjection: @retroactive Identifiable {}
-
-private struct EdgeSwipeBackModifier: ViewModifier {
-    let enabled: Bool
-    let action: () -> Void
-
-    func body(content: Content) -> some View {
-        content.overlay(alignment: .leading) {
-            if enabled {
-                // Attach recognition only to the edge. A gesture on the entire
-                // screen competes with slider tracking even when its action
-                // later rejects a drag that started away from the edge.
-                GeometryReader { geometry in
-                    // Native back buttons can overlap the leading edge on
-                    // iOS 18. Keep the gesture below the navigation bar so
-                    // those buttons receive ordinary center taps.
-                    let topClearance = geometry.safeAreaInsets.top + 64
-                    Color.clear
-                        .frame(width: 32, height: max(0, geometry.size.height - topClearance))
-                        .contentShape(Rectangle())
-                        .gesture(
-                            DragGesture(minimumDistance: 18, coordinateSpace: .global)
-                                .onEnded { value in
-                                    let horizontal = value.translation.width
-                                    let vertical = abs(value.translation.height)
-                                    guard horizontal >= 72, horizontal > vertical * 1.4 else { return }
-                                    action()
-                                }
-                        )
-                        .offset(y: topClearance)
-                        .accessibilityHidden(true)
-                }
-                .frame(width: 32)
-            }
-        }
-    }
-}
-
-private extension View {
-    func edgeSwipeBack(enabled: Bool, action: @escaping () -> Void) -> some View {
-        modifier(EdgeSwipeBackModifier(enabled: enabled, action: action))
-    }
-}
 
 func humanizedItemStatus(_ status: String) -> String {
     switch status {
