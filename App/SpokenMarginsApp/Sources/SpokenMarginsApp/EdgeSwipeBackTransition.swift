@@ -21,6 +21,8 @@ private struct EdgeSwipeBackModifier<Underlay: View>: ViewModifier {
     /// The moving screen's opacity: only Reduce Motion changes it, to cross-fade instead of slide.
     @State private var fade = 1.0
     @GestureState private var isTouching = false
+    /// Bumped by every reset, so a finished animation from an earlier swipe can't reset a newer one.
+    @State private var generation = 0
 
     /// 0 to 1: how much of Library shows through, from the drag, or from the fade under Reduce Motion.
     private var revealed: Double {
@@ -36,11 +38,17 @@ private struct EdgeSwipeBackModifier<Underlay: View>: ViewModifier {
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             .background {
                 if showsUnderlay {
-                    underlay()
-                        .offset(x: reduceMotion ? 0 : -width * 0.25 * CGFloat(1 - revealed))
-                        .overlay { Color.black.opacity(0.22 * (1 - revealed)) }
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
+                    ZStack {
+                        // The status-bar and home-indicator bands the moving screen uncovers.
+                        AppColors.background.ignoresSafeArea()
+                        underlay()
+                            .environment(\.isEdgeSwipePreview, true)
+                            .offset(x: reduceMotion ? 0 : -width * 0.25 * CGFloat(1 - revealed))
+                    }
+                    .overlay { Color.black.opacity(0.22 * (1 - revealed)).ignoresSafeArea() }
+                    .transition(.identity)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
                 }
             }
             .overlay(alignment: .leading) {
@@ -103,16 +111,16 @@ private struct EdgeSwipeBackModifier<Underlay: View>: ViewModifier {
             let remaining = 1 - revealed
             withAnimation(.easeOut(duration: 0.12 + 0.18 * remaining)) {
                 tracker.settle(.commit, containerWidth: containerWidth)
-            } completion: {
-                complete()
+            } completion: { [generation] in
+                complete(generation)
             }
         case (.commit, true):
-            withAnimation(.easeInOut(duration: 0.18)) { fade = 0 } completion: { complete() }
+            withAnimation(.easeInOut(duration: 0.18)) { fade = 0 } completion: { [generation] in complete(generation) }
         case (.cancel, false) where tracker.offset > 0:
             withAnimation(.spring(duration: 0.3, bounce: 0)) {
                 tracker.settle(.cancel, containerWidth: containerWidth)
-            } completion: {
-                resetImmediately()
+            } completion: { [generation] in
+                resetImmediately(ifGeneration: generation)
             }
         case (.cancel, _):
             resetImmediately()
@@ -121,15 +129,15 @@ private struct EdgeSwipeBackModifier<Underlay: View>: ViewModifier {
 
     /// The screen has left the display: go to Library, with the moving screen put back first so the next
     /// screen doesn't appear already pushed off to the side.
-    private func complete() {
-        guard tracker.phase == .settling else { return }
+    private func complete(_ startedIn: Int) {
+        guard startedIn == generation, tracker.phase == .settling else { return }
         guard canCommit() else {
             // A Margin started recording while the screen was moving away: stay where we were.
             withAnimation(.spring(duration: 0.3, bounce: 0)) {
                 tracker.settle(.cancel, containerWidth: Double(width))
                 fade = 1
-            } completion: {
-                resetImmediately()
+            } completion: { [generation] in
+                resetImmediately(ifGeneration: generation)
             }
             return
         }
@@ -137,7 +145,9 @@ private struct EdgeSwipeBackModifier<Underlay: View>: ViewModifier {
         action()
     }
 
-    private func resetImmediately() {
+    private func resetImmediately(ifGeneration expected: Int? = nil) {
+        if let expected, expected != generation { return }
+        generation += 1
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
@@ -168,4 +178,10 @@ extension AppNavigationState {
         preview.taskRoute = nil
         return preview
     }
+}
+
+extension EnvironmentValues {
+    /// True inside the Library drawn under a swipe (#106), so the preview starts no fetch, refresh or
+    /// pasteboard check: a swipe that may not navigate does not act for the listener.
+    @Entry var isEdgeSwipePreview = false
 }

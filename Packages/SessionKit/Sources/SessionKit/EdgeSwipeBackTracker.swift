@@ -21,11 +21,14 @@ public struct EdgeSwipeBackTracker: Equatable, Sendable {
     /// Whether the drag has been judged sideways. Latched for the rest of the touch, so a swipe that
     /// wanders up or down after it has started moving doesn't make the screen jump back.
     public private(set) var isClaimed = false
+    /// Whether the screen has moved at all this touch. Library stays drawn until the swipe is over, so a
+    /// cancel's spring back never slides over an empty gap.
+    public private(set) var hasMoved = false
 
     public init() {}
 
-    /// Whether Library should be drawn underneath: from the moment the screen starts to move until it settles.
-    public var showsUnderlay: Bool { phase != .idle && offset > 0 }
+    /// Whether Library should be drawn underneath: from the moment the screen starts to move until the swipe ends.
+    public var showsUnderlay: Bool { phase != .idle && hasMoved }
 
     /// A touch moved. `followsFinger` is false under Reduce Motion, when the screen stays put.
     public mutating func changed(horizontal: Double, vertical: Double, containerWidth: Double, followsFinger: Bool) {
@@ -39,6 +42,7 @@ public struct EdgeSwipeBackTracker: Equatable, Sendable {
             return
         }
         offset = min(containerWidth, max(0, horizontal))
+        if offset > 0 { hasMoved = true }
     }
 
     /// The touch ended. Returns what to do, once per touch; an end with no drag in progress, or a second

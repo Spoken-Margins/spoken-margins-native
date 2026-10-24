@@ -98,6 +98,17 @@ final class EdgeSwipeBackTrackerTests: XCTestCase {
         XCTAssertFalse(tracker.showsUnderlay)
     }
 
+    func testLibraryStaysDrawnWhileACancelSpringsBack() {
+        var tracker = EdgeSwipeBackTracker()
+        drag(&tracker, 80)
+        let outcome = tracker.ended(horizontal: 80, vertical: 0, velocity: 0, containerWidth: width)!
+        tracker.settle(outcome, containerWidth: width)
+        XCTAssertEqual(tracker.offset, 0)
+        XCTAssertTrue(tracker.showsUnderlay, "The screen is still sliding back over the gap")
+        tracker.reset()
+        XCTAssertFalse(tracker.showsUnderlay)
+    }
+
     func testSettleBeforeAReleaseDoesNothing() {
         var tracker = EdgeSwipeBackTracker()
         drag(&tracker, 120)
