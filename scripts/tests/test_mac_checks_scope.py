@@ -80,7 +80,7 @@ class MacChecksRequiredTests(unittest.TestCase):
 
 
 class HostedCheckSetTests(unittest.TestCase):
-    FULL = {**lane.HOSTED_FAST_CHECKS, **lane.HOSTED_REST_CHECK}
+    FULL = lane.HOSTED_MERGED_CHECKS
 
     def check_set(self, paths, policy=scope):
         with mock.patch.object(lane, 'base_policy', return_value=policy), \
@@ -152,6 +152,47 @@ class WorkflowScopeTests(unittest.TestCase):
         text = (ROOT / '.github/workflows/hosted-portable.yml').read_text()
         self.assertIn('echo "mac=true" >> "$GITHUB_OUTPUT"', text)
         self.assertIn('--mac-required', text)
+
+
+class OneMacJobTests(unittest.TestCase):
+    """#2596: SessionKit core and Mac rest share one hosted Mac, so a Swift diff pays for one machine start, not two."""
+
+    @classmethod
+    def setUpClass(cls):
+        import yaml
+        cls.text = (ROOT / '.github/workflows/hosted-portable.yml').read_text()
+        cls.jobs = yaml.safe_load(cls.text)['jobs']
+
+    def steps(self, job):
+        return [step.get('run', '') for step in self.jobs[job]['steps']]
+
+    def test_the_mac_rest_job_runs_the_core_tests_then_the_rest_on_the_same_machine(self):
+        runs = self.steps('mac-rest')
+        core = next(i for i, run in enumerate(runs) if '--plan fast-hosted-sessionkit' in run)
+        rest = next(i for i, run in enumerate(runs) if '--plan fast-mac-rest' in run)
+        blackhole = next(i for i, run in enumerate(runs) if 'blackhole-2ch' in run)
+        self.assertLess(core, blackhole)  # the core tests ran before BlackHole in the old job too
+        self.assertLess(blackhole, rest)  # the audio tests still get the virtual output
+
+    def test_the_check_name_and_the_recorded_plan_stay_what_the_runner_expects(self):
+        self.assertEqual(self.jobs['mac-rest']['name'], 'hosted fast: Mac rest')
+        self.assertEqual(lane.HOSTED_REST_CHECK, {'hosted fast: Mac rest': 'fast-mac-rest'})
+        self.assertIn('plan=fast-mac-rest tree=', self.text)
+        self.assertEqual(self.text.count('plan=fast-hosted-sessionkit tree='), 1)  # only the sessionkit job records it
+
+    def test_the_separate_sessionkit_job_runs_only_with_the_mac_rest_switch_off(self):
+        self.assertIn("vars.LANE_HOSTED_MAC_REST != 'on'", self.jobs['sessionkit']['if'])
+        self.assertNotIn("!= 'on'", self.jobs['mac-rest']['if'])
+
+    def test_the_runner_requires_two_checks_for_a_swift_diff_and_the_job_that_writes_each(self):
+        self.assertEqual(set(lane.HOSTED_MERGED_CHECKS), {'hosted fast: portable', 'hosted fast: Mac rest'})
+        self.assertNotIn('hosted fast: SessionKit core', lane.HOSTED_MERGED_CHECKS)
+        for name in lane.HOSTED_MERGED_CHECKS:
+            self.assertIn(f"name: '{name}'", self.text)
+
+    def test_the_job_has_room_for_both_plans(self):
+        self.assertGreaterEqual(self.jobs['mac-rest']['timeout-minutes'],
+                                self.jobs['sessionkit']['timeout-minutes'] + 20)
 
 
 if __name__ == '__main__':
