@@ -114,7 +114,7 @@ final class ReadwiseHighlightSync: ObservableObject {
         }
         guard tokenDigest != rejectedTokenDigest else { return }
         do {
-            let ledger = try Self.ledger()
+            let ledger = try MainThreadOperationLabels.shared.scoped("readwiseLedgerOpen") { try Self.ledger() }
             let client = ReadwiseHighlightClient { [session] request in
                 let (data, response) = try await session.data(for: request)
                 guard let http = response as? HTTPURLResponse else { throw ReadwiseHighlightError.httpStatus(0) }
