@@ -4,6 +4,7 @@ The hosted `app` check restored a 481 MB archive of the store with plain tar, wh
 zeros until the runner's 36 GB disk was full, before anything was compiled.
 """
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -159,8 +160,14 @@ class WorkflowsUseTheScriptTests(unittest.TestCase):
     def test_each_workflow_unpacks_what_it_restores_and_packs_before_it_saves(self):
         for name in self.FILES:
             text = (WORKFLOWS / name).read_text()
-            self.assertIn('ci-cas-cache.sh unpack', text, name)
-            self.assertIn('ci-cas-cache.sh pack', text, name)
+            self.assertRegex(text, r'ci-cas-cache\.sh"? unpack', name)
+            self.assertRegex(text, r'ci-cas-cache\.sh"? pack', name)
+
+    def test_the_lane_runs_the_base_branchs_copy_of_the_script_not_the_prs(self):
+        # The lane checks out the PR's head; a PR branched before the script existed has no copy (#2619).
+        text = (WORKFLOWS / 'lane.yml').read_text()
+        self.assertIn('git show "origin/$BASE_REF:scripts/ci-cas-cache.sh"', text)
+        self.assertNotIn('bash scripts/ci-cas-cache.sh', text)
 
     def test_a_save_needs_a_successful_pack_and_the_pack_needs_a_good_build(self):
         wanted = {'lane.yml': "steps.run.outputs.verdict == 'PASS'",
@@ -168,7 +175,7 @@ class WorkflowsUseTheScriptTests(unittest.TestCase):
                   'hosted-app-macos.yml': "steps.t2-sim.outcome == 'success'"}
         for name, condition in wanted.items():
             steps = [step for job in parse(WORKFLOWS / name)['jobs'].values() for step in job.get('steps', [])]
-            packs = [step for step in steps if 'ci-cas-cache.sh pack' in step.get('run', '')]
+            packs = [step for step in steps if re.search(r'ci-cas-cache\.sh"? pack', step.get('run', ''))]
             saves = [step for step in steps if str(step.get('uses', '')).startswith('actions/cache/save')
                      and 'cas-' in step['with']['key']]
             self.assertEqual((len(packs), len(saves)), (1, 1), name)
