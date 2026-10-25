@@ -278,10 +278,18 @@ def test_records(log):
             previous = records[identifier]
             attempts = previous.setdefault('attempts', [dict(previous)])
             attempts.append(result)
-            # A passing retry must never erase the original failure or skip.
-            previous['status'] = next(s for s in ('failed', 'skipped', 'passed')
-                                      if any(a['status'] == s for a in attempts))
-            previous['seconds'] = sum(a['seconds'] for a in attempts)
+            seconds_total = sum(a['seconds'] for a in attempts)
+            if result['status'] == 'passed' and any(a['status'] == 'failed' for a in attempts[:-1]) \
+                    and not any(a['status'] == 'skipped' for a in attempts):
+                # Owner, 2026-10-24: a test that fails and then passes on a rerun counts as a pass (#2596). The report
+                # names it. A skip, or a failing last attempt, still counts as before.
+                previous['status'] = 'passed'
+                previous['passed_on_retry'] = True
+            else:
+                previous['status'] = next(s for s in ('failed', 'skipped', 'passed')
+                                          if any(a['status'] == s for a in attempts))
+                previous.pop('passed_on_retry', None)
+            previous['seconds'] = seconds_total
         else:
             records[identifier] = result
     return records
@@ -361,12 +369,21 @@ def xcresult_test_records(payload):
                 if not bundle or not re.fullmatch(r'\w+/test\w+', name):
                     raise ValueError(f'Unknown xcresult test identifier: {bundle}/{name}')
                 identifier = f'{bundle}/{name}'
-                result = {'status': worst([status(node), *attempts(node)]),
+                runs = list(attempts(node))
+                retried = len(runs) > 1 and runs[-1] == 'passed' and 'failed' in runs[:-1] and 'skipped' not in runs
+                # Owner, 2026-10-24 (#2596): fail-then-pass on a rerun is a pass; fail-then-fail stays failed.
+                result = {'status': 'passed' if retried else worst([status(node), *runs]),
                           'seconds': float(node.get('durationInSeconds', 0))}
+                if retried:
+                    result['passed_on_retry'] = True
                 if identifier in records:
                     previous = records[identifier]
                     result['status'] = worst([previous['status'], result['status']])
                     result['seconds'] += previous['seconds']
+                    if result['status'] != 'passed' or not (previous.get('passed_on_retry') or result.get('passed_on_retry')):
+                        result.pop('passed_on_retry', None)
+                    else:
+                        result['passed_on_retry'] = True
                 records[identifier] = result
             else:
                 visit(node.get('children', []), bundle)
@@ -391,6 +408,10 @@ def completed_test_records(log, result_bundle):
             previous = records[identifier]
             previous['status'] = next(s for s in ('failed', 'skipped', 'passed')
                                       if s in (previous['status'], result['status']))
+            if previous['status'] == 'passed' and result.get('passed_on_retry'):
+                previous['passed_on_retry'] = True
+            elif previous['status'] != 'passed':
+                previous.pop('passed_on_retry', None)
     return records, payload
 
 
@@ -1383,6 +1404,7 @@ class Run:
             entry['tests'] = records
             entry['counts'] = {status: sum(r['status'] == status for r in records.values())
                                for status in ('passed', 'failed', 'skipped')}
+            entry['passed_on_retry'] = sorted(n for n, r in records.items() if r.get('passed_on_retry'))
             errors.extend(reconcile(expected, records, allowed_skips, probation or ()))
             if probation is not None:  # scripted journeys: each listed test's result, by status
                 entry['gating'] = {test: records.get(test, {}).get('status', 'missing')
@@ -1946,6 +1968,7 @@ class Run:
                     self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
                                  'test-without-building', '-parallel-testing-enabled', 'NO',
                                  '-collect-test-diagnostics', 'never',
+                                 '-retry-tests-on-failure', '-test-iterations', '2',
                                  '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
                                  timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup,
                                  allowed_skips=lane_audio_window.unasked(expected, asked))
