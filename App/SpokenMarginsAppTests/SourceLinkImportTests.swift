@@ -2081,8 +2081,13 @@ final class SourceLinkImportTests: XCTestCase {
         let snapshotBeforeImport = model.snapshot
 
         model.handleAppBecameActive()
+        // The event this test needs is the drain finishing: the episode is in the Library and the saved share's file
+        // is gone. The file is deleted off the main thread, so waiting on the title alone let the assertion below
+        // race that delete once on the hosted run (#2630: the read failed with a file error, not "missing").
         try await waitFor("shared episode import") {
-            model.libraryItems.contains { $0.title == "Shared Episode" } && !model.isImportingPendingSourceLinkHandoffs
+            model.libraryItems.contains { $0.title == "Shared Episode" }
+                && !model.isImportingPendingSourceLinkHandoffs
+                && ((try? store.pendingPayloadIDs()) ?? ["unreadable"]).isEmpty
         }
 
         XCTAssertEqual(model.screen, .playback)
