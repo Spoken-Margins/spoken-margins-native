@@ -35,12 +35,13 @@ extension Gate1AppModel {
     }
 
     func endCaptureWatch() {
+        MarginOutcomeCuePlayer.shared.stop() // a dead microphone's repeating cue ends with the recording (#1977)
         captureWatcher.stop()
         recordingCaptureHealth = .capturing
         gate2CompactControls.setMicrophone(.capturing)
     }
 
-    private func captureHealthChanged(_ health: MarginCaptureSupervisor.Health, restarts: Int) {
+    func captureHealthChanged(_ health: MarginCaptureSupervisor.Health, restarts: Int) {
         let wasCapturing = recordingCaptureHealth == .capturing
         recordingCaptureHealth = health
         gate2CompactControls.setMicrophone(health.liveActivityMicrophone)
@@ -54,11 +55,13 @@ extension Gate1AppModel {
         case .capturing where !wasCapturing:
             reportSuccess("Recording Margin.")
         case .notCapturing:
+            // The source is paused for the recording, so a dead microphone is otherwise silence: say so, softly, until the listener acts (#1977).
+            diagnostics["outcomeCue"] = MarginOutcomeCuePlayer.shared.play(.micStopped)
             reportFailure(captureWatcher.hasKeepableAudio
                 ? Self.keptAudioMessage
                 : "The microphone isn't recording, so nothing is being saved. Tap Try again, or cancel and write the Margin instead.")
         default:
-            break
+            MarginOutcomeCuePlayer.shared.stop()
         }
         // The health may be unchanged while only the keepable state flipped: redraw for Try again.
         objectWillChange.send()
@@ -128,6 +131,7 @@ extension Gate1AppModel {
     /// Save was tapped on a recording that took in no audio: say so, and don't keep an empty voice as a Margin.
     private func discardEmptyRecording() {
         cancelInterjection(feeling: .warning) // one tap for the miss, not a cancel's and then a warning's
+        diagnostics["outcomeCue"] = MarginOutcomeCuePlayer.shared.play(MarginOutcomeCue(verdict: .discardEmpty))
         reportFailure("Nothing was recorded, so no Margin was saved. The microphone didn't pick up any sound. Try again, or write the Margin instead.")
     }
 
@@ -137,12 +141,15 @@ extension Gate1AppModel {
         if let integrity { recordDeveloperDiagnostic("margin.capture.finalized", integrity.diagnosticFields) }
         if let integrity, integrity.fileMs == nil {
             AppHaptics.play(.warning)
+            diagnostics["outcomeCue"] = MarginOutcomeCuePlayer.shared.play(.savedMaybeCut)
             reportWarning("Margin saved, but its recording could not be checked. Please play it back.")
         } else if (integrity?.qualifying(verdict) ?? verdict) == .saveCutShort {
             AppHaptics.play(.warning)
+            diagnostics["outcomeCue"] = MarginOutcomeCuePlayer.shared.play(MarginOutcomeCue(verdict: .saveCutShort))
             reportWarning("Margin saved, but part of it may be missing.")
         } else {
             AppHaptics.play(.saved)
+            diagnostics["outcomeCue"] = MarginOutcomeCuePlayer.shared.play(MarginOutcomeCue(verdict: .save))
             reportConfirmation("Margin saved. Transcription is continuing in the background.")
         }
     }
