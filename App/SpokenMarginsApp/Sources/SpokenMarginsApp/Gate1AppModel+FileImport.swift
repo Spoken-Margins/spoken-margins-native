@@ -146,7 +146,8 @@ extension Gate1AppModel {
         securityScopedURLs: [URL],
         refreshQuickFolderWhenFinished: Bool = false,
         openImportedItemWhenFinished: Bool = false,
-        quickAccessFileToDismiss: QuickAccessFile? = nil
+        quickAccessFileToDismiss: QuickAccessFile? = nil,
+        onImported: (([Item]) -> Void)? = nil
     ) {
         guard !urls.isEmpty else {
             reportFailure("Choose at least one Markdown, text, or PDF file to import.")
@@ -185,7 +186,8 @@ extension Gate1AppModel {
                     batch,
                     refreshQuickFolderWhenFinished: refreshQuickFolderWhenFinished,
                     openImportedItemWhenFinished: openImportedItemWhenFinished,
-                    quickAccessFileToDismiss: quickAccessFileToDismiss
+                    quickAccessFileToDismiss: quickAccessFileToDismiss,
+                    onImported: onImported
                 )
             }
         }
@@ -237,7 +239,8 @@ extension Gate1AppModel {
         _ batch: ObsidianImportBatch,
         refreshQuickFolderWhenFinished: Bool,
         openImportedItemWhenFinished: Bool,
-        quickAccessFileToDismiss: QuickAccessFile?
+        quickAccessFileToDismiss: QuickAccessFile?,
+        onImported: (([Item]) -> Void)? = nil
     ) {
         defer {
             sourceImportTask = nil
@@ -295,6 +298,7 @@ extension Gate1AppModel {
             if let quickAccessFileToDismiss {
                 dismissQuickAccessFile(quickAccessFileToDismiss)
             }
+            onImported?(imported)
             imported.forEach { scheduleTextAudioPrewarmIfNeeded(itemId: $0.id) }
             if let structure = imported.compactMap(\.documentStructure).last {
                 recordPDFExtractionDiagnostics(structure)

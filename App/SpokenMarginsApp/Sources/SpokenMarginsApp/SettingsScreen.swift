@@ -270,6 +270,18 @@ struct SettingsScreen: View {
                 Section("Import & Export") {
                     NavigationLink("Import Listening Edition") { ListeningEditionImportScreen().miniPlayerKeepOut() }
                     NavigationLink("Read Later Services") { ReadLaterScreen().miniPlayerKeepOut() }
+                    Toggle(isOn: Binding(
+                        get: { model.quickAccess.inboxFeedsQueue },
+                        set: { model.quickAccess.inboxFeedsQueue = $0 }
+                    )) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Queue New Quick Folder Files")
+                            Text("Files that appear in your Quick Folder are imported and added to the end of your play queue, in filename order. Choose the folder under Add Source.")
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.quickFolderQueue.toggle")
                     DisclosureGroup("Import Inbox", isExpanded: $showsImportInbox) {
                         PendingLinksWaitingLine(count: model.sourceLinksWaitingForNetwork)
                         if model.importInbox.isEmpty {
