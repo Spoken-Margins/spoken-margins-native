@@ -249,6 +249,12 @@ struct ExperienceItemDetailScreen: View {
                 case .markUnfinished:
                     Button("Mark Not Complete", systemImage: "arrow.uturn.backward.circle") { model.markItemUnfinished(id: row.id) }
                         .accessibilityIdentifier("item.markUnfinished.button")
+                case .playNext:
+                    Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") { model.queuePlayNext(itemId: row.id) }
+                        .accessibilityIdentifier("item.playNext.button")
+                case .addToQueue:
+                    Button("Add to Queue", systemImage: "text.line.last.and.arrowtriangle.forward") { model.queueAppend(itemId: row.id) }
+                        .accessibilityIdentifier("item.addToQueue.button")
                 case .addToCollection:
                     Button("Add to Collection…", systemImage: "folder.badge.plus") { collectionItem = row }
                         .accessibilityIdentifier("item.addToCollection.button")
