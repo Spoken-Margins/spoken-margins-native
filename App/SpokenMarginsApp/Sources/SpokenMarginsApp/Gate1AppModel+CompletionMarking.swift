@@ -12,11 +12,22 @@ extension Gate1AppModel {
             guard let item = try ManualItemCompletion.markComplete(itemId: id, in: store) else { return }
             listeningSignals.finish(itemId: id)
             marginOutput.noteCompletion(ofItem: id) // One note per item mode (#587).
-            try refreshLibraryRows(store: store)
-            if selectedItem.id == id { selectedItem = try loadItemDetail(id: id, store: store) }
+            refreshLibraryRowsInBackground(mustPublish: true)
+            try reloadSelectedItemAfterCompletionChange(id: id, store: store)
             presentCompletionUndo(itemId: id, title: item.title, markedAt: item.sourceCompletedAt ?? Date())
         } catch {
             reportFailure(error, context: "Mark complete failed")
+        }
+    }
+
+    /// The open item screen shows the completion state too. It reloads off the main thread when it is the active item;
+    /// a selection that isn't the active item (rare) keeps the direct read (#2505).
+    private func reloadSelectedItemAfterCompletionChange(id: String, store: SQLiteSessionStore) throws {
+        guard selectedItem.id == id else { return }
+        if activeItemId == id {
+            refreshSelectedItemInBackground()
+        } else {
+            selectedItem = try loadItemDetail(id: id, store: store)
         }
     }
 
@@ -33,8 +44,8 @@ extension Gate1AppModel {
             let store = try requireStore()
             // Never a later completion, and never natural session completion.
             guard let item = try ManualItemCompletion.markUnfinished(itemId: id, markedAt: markedAt, in: store) else { return }
-            try refreshLibraryRows(store: store)
-            if selectedItem.id == id { selectedItem = try loadItemDetail(id: id, store: store) }
+            refreshLibraryRowsInBackground(mustPublish: true)
+            try reloadSelectedItemAfterCompletionChange(id: id, store: store)
             reportConfirmation(markedAt == nil
                 ? ManualCompletionMessages.unfinished(title: item.title)
                 : ManualCompletionMessages.undone(title: item.title))
