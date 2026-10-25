@@ -7,6 +7,7 @@ ways that matter, a check that didn't pass), and with the switch off nothing cha
 (#2160) was read here until #2442 retired it.
 """
 import contextlib
+import copy as copy_module
 import io
 import json
 import re
@@ -474,7 +475,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_a_red_portable_job_cancels_the_run_so_its_mac_jobs_free_their_slots(self):
         # #2596: the cancel job runs on Linux, only after `portable` ended `failure`, and holds no more than actions: write.
-        # The Mac jobs must not wait for `portable` (`needs:`): the lane runner gives a missing check only 5 minutes.
+        # The Mac jobs may wait only for the ~20 s `scope` job: the lane runner gives a missing check only 5 minutes.
         jobs = yaml.safe_load(self.hosted)['jobs']
         stop = jobs['stop-macs-on-red']
         self.assertEqual(stop['needs'], 'portable')
@@ -483,7 +484,22 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("needs.portable.result == 'failure'", stop['if'])
         self.assertIn('gh run cancel', stop['steps'][0]['run'])
         for name in ('sessionkit', 'mac-rest'):
-            self.assertNotIn('needs', jobs[name], name)
+            self.assertEqual(self.slow_needs(jobs[name]), [], name)
+        # Only `scope` (a Linux job of about 20 seconds, #2650) may come first; any other need fails the check.
+        for allowed in ('scope', ['scope']):
+            copy = copy_module.deepcopy(jobs['mac-rest'])
+            copy['needs'] = allowed
+            self.assertEqual(self.slow_needs(copy), [], allowed)
+        for slow in ('portable', ['scope', 'portable'], ['sessionkit']):
+            copy = copy_module.deepcopy(jobs['mac-rest'])
+            copy['needs'] = slow
+            self.assertNotEqual(self.slow_needs(copy), [], slow)
+
+    @staticmethod
+    def slow_needs(job):
+        needs = job.get('needs', [])
+        needs = [needs] if isinstance(needs, str) else list(needs)
+        return [name for name in needs if name != 'scope']
 
     def test_no_workflow_runs_on_the_vps_test_runner_and_only_the_lane_open_pings_on_the_vps(self):
         # #2442: CI left the owner's VPS. linux-t1.yml is gone; the lane-open pings keep sm-vps for their shared state.
