@@ -1635,11 +1635,24 @@ def check_app(app: Path, sha: str, cwd: Path, log: Path) -> dict:
     return info
 
 
+def new_build_folder(stamp: str, sha: str) -> Path:
+    """Make <stamp>-<sha7> under the phone folder. Two builds of one commit that start in the same second
+    would collide (#2537), so a taken name moves on one second at a time: the name keeps the format
+    prune() and the installer match, and still sorts by time."""
+    moment = datetime.datetime.strptime(stamp, '%Y%m%d-%H%M%S')
+    while True:
+        folder = phone_dir() / f'{moment:%Y%m%d-%H%M%S}-{sha[:7]}'
+        try:
+            folder.mkdir()
+            return folder
+        except FileExistsError:
+            moment += datetime.timedelta(seconds=1)
+
+
 def deliver(app: Path, info: dict, sha: str, stamp: str, log: Path, seconds: int, checks: str,
             built_at: str | None = None, extra: dict | None = None) -> Path:
     """Put a checked app where the Desktop installer looks, with its build.json and test plan."""
-    folder = phone_dir() / f'{stamp}-{sha[:7]}'
-    folder.mkdir()
+    folder = new_build_folder(stamp, sha)
     subprocess.check_call(['ditto', str(app), str(folder / APP_NAME)])
     shutil.copy(log, folder / 'build.log')
     size = int(subprocess.check_output(['du', '-sk', str(folder / APP_NAME)]).split()[0]) * 1024
