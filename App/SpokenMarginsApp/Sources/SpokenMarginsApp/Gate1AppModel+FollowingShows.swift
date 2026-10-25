@@ -46,16 +46,13 @@ extension Gate1AppModel {
         FollowingRankingModel.directory?.appending(path: FollowingLookedMarkers.fileName, directoryHint: .notDirectory)
     }
 
-    /// Reads every stored entry and the looked-times file off the main thread (feeds keep up to 200 each),
-    /// then builds the rows there too. Muted shows and played episodes are in it, unlike
-    /// `followedSourceEntries`. The first run also merges the file into memory (the newer date wins per show):
-    /// with no file, or one that can't be read, every followed show is stamped "now" so nothing counts as new
-    /// until a later refresh brings an episode. Until that has finished, `markShowLooked` only updates memory
-    /// and sets `followingLookedDirty`; the merge then saves once.
-    /// The seed reads the followed shows from the store in the same detached read, not `feedSubscriptions`, which
-    /// is still empty when Following opens before the first feed refresh lands; seeding from it then saved an
-    /// empty file and every show showed all its episodes as new (#2690 audit). If that read fails, nothing is
-    /// marked loaded, so the next reload seeds.
+    /// Reads every stored entry, the looked-times file and the followed shows off the main thread (feeds keep up to
+    /// 200 each), then builds the rows there too. Muted shows and played episodes are in it, unlike
+    /// `followedSourceEntries`. The first read of a launch settles the markers with
+    /// `FollowingLookedMarkers.afterFirstLoad`, against the store's followed shows rather than `feedSubscriptions`
+    /// (still empty before the first feed refresh), and saves them if they differ from the file. Until then,
+    /// `markShowLooked` only updates memory and sets `followingLookedDirty`. If the followed shows can't be read,
+    /// nothing is settled and the next reload tries again.
     func reloadFollowingShowEntries() async {
         guard let store else { return }
         let needsMarkers = !followingLookedLoaded
@@ -63,22 +60,16 @@ extension Gate1AppModel {
         let result = await Task.detached(priority: .userInitiated) {
             let entries = (try? store.loadFeedEntries(subscriptionId: nil)) ?? []
             let saved = needsMarkers ? url.flatMap { FollowingLookedMarkers.loadIfPresent(from: $0) } : nil
-            let followed = needsMarkers && saved == nil ? try? store.loadFeedSubscriptions().map(\.id) : nil
+            let followed = needsMarkers ? try? store.loadFeedSubscriptions().map(\.id) : nil
             return (entries, saved, followed)
         }.value
         followingShowEntries = result.0
         followingShowRevision += 1
-        if needsMarkers, !followingLookedLoaded, result.1 != nil || result.2 != nil {
+        if needsMarkers, !followingLookedLoaded, let followed = result.2 {
             followingLookedLoaded = true
-            var merged = followingLooked
-            if let saved = result.1 {
-                merged.merge(saved)
-            } else if let followed = result.2, !followed.isEmpty {
-                merged.seed(followed)
-            }
-            let changed = merged != followingLooked
-            followingLooked = merged
-            if changed || followingLookedDirty || result.1 == nil {
+            let settled = FollowingLookedMarkers.afterFirstLoad(inMemory: followingLooked, saved: result.1, followed: followed)
+            followingLooked = settled
+            if settled != result.1 || followingLookedDirty {
                 followingLookedDirty = false
                 saveFollowingLooked()
             }
@@ -109,9 +100,9 @@ extension Gate1AppModel {
 
     private func saveFollowingLooked() {
         guard let url = Self.followingLookedURL else { return }
-        var pruned = followingLooked
-        pruned.prune(keeping: Set(feedSubscriptions.map(\.id)))
-        let markers = pruned
+        // No prune here: `feedSubscriptions` may not be loaded yet. The first load prunes against the store, and
+        // Unfollow removes its own marker.
+        let markers = followingLooked
         let version = ProcessInfo.processInfo.systemUptime
         Task { await FollowingLookedWriter.shared.save(markers, to: url, version: version) }
     }

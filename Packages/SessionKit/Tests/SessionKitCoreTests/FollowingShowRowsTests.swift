@@ -269,4 +269,33 @@ final class FollowingShowRowsTests: XCTestCase {
         seenJustBefore.firstSeenAt = day(5).addingTimeInterval(0.4)
         XCTAssertEqual(build([show("a")], [seenJustBefore], looked: loaded.lookedAt).rows[0].newCount, 0)
     }
+
+    /// #2690 audits: Following opened before the first feed refresh, while the model's list of followed shows was
+    /// still empty. Settling against that list saved an empty file, and the next launch counted every episode as
+    /// new. Settling against the store's list, across two launches, keeps every followed show marked.
+    func testTheFirstLoadSettlesMarkersAgainstTheStoresFollowedShowsAcrossLaunches() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("looked-\(UUID().uuidString)/\(FollowingLookedMarkers.fileName)")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+        let first = FollowingLookedMarkers.afterFirstLoad(inMemory: FollowingLookedMarkers(), saved: FollowingLookedMarkers.loadIfPresent(from: url),
+                                                          followed: ["a", "b"], now: day(1))
+        XCTAssertEqual(first.lookedAt, ["a": day(1), "b": day(1)], "the first run stamps every followed show")
+        try first.save(to: url)
+
+        let second = FollowingLookedMarkers.afterFirstLoad(inMemory: FollowingLookedMarkers(), saved: FollowingLookedMarkers.loadIfPresent(from: url),
+                                                           followed: ["a", "b"], now: day(5))
+        XCTAssertEqual(second.lookedAt, ["a": day(1), "b": day(1)], "the next launch keeps the saved times")
+    }
+
+    func testTheFirstLoadMarksAFollowedShowTheFileMissesAndDropsUnfollowedOnes() {
+        let emptyFile = FollowingLookedMarkers()
+        XCTAssertEqual(FollowingLookedMarkers.afterFirstLoad(inMemory: FollowingLookedMarkers(), saved: emptyFile, followed: ["a"], now: day(2)).lookedAt,
+                       ["a": day(2)], "a file that misses a followed show never leaves it counting everything as new")
+        var memory = FollowingLookedMarkers()
+        memory.markLooked("a", at: day(4))
+        let saved = FollowingLookedMarkers(lookedAt: ["a": day(3), "gone": day(1)])
+        XCTAssertEqual(FollowingLookedMarkers.afterFirstLoad(inMemory: memory, saved: saved, followed: ["a"], now: day(9)).lookedAt,
+                       ["a": day(4)], "the newer date wins and an unfollowed show's marker goes")
+    }
+
 }
