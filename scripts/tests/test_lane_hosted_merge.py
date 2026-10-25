@@ -226,9 +226,11 @@ class MacRestIsAHardConditionTests(unittest.TestCase):
 
     def test_a_mac_rest_record_for_another_head_tree_or_plan_never_stands(self):
         rest = 'hosted fast: Mac rest'
-        for name, record in (('another head', ('fast-mac-rest', self.TREE, MERGE, 'b' * 40)),
-                             ('another tree', ('fast-mac-rest', 'f' * 40, MERGE, HEAD)),
-                             ('another plan', ('fast-portable', self.TREE, MERGE, HEAD))):
+        plan = CHECKS[rest]
+        for name, record in (('another head', (plan, self.TREE, MERGE, 'b' * 40)),
+                             ('another tree', (plan, 'f' * 40, MERGE, HEAD)),
+                             ('another plan', ('fast-portable', self.TREE, MERGE, HEAD)),
+                             ('the old job, with no core tests', ('fast-mac-rest', self.TREE, MERGE, HEAD))):
             with self.subTest(name):
                 found, why = self.stands(self.all_three(**{rest: record}))
                 self.assertIsNone(found)

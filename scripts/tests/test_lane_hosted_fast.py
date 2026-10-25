@@ -461,7 +461,8 @@ class WorkflowTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertIn(f"name: '{name}'", self.hosted)
                 self.assertIn(f'::notice title={lane.HOSTED_TESTED_TITLE}::plan={plan} tree=', self.hosted)
-                self.assertIn(f'--plan {plan}', self.hosted)
+                for part in plan.split('+'):  # Mac rest records both plans it runs (#2596)
+                    self.assertIn(f'--plan {part}', self.hosted)
 
     def test_both_jobs_run_on_a_pr_only_from_this_repo_and_only_with_the_switch_on(self):
         guard = ("(github.event.pull_request.head.repo.full_name == github.repository && "

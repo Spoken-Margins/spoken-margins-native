@@ -249,8 +249,8 @@ class OneMacJobTests(unittest.TestCase):
 
     def test_the_check_name_and_the_recorded_plan_stay_what_the_runner_expects(self):
         self.assertEqual(self.jobs['mac-rest']['name'], 'hosted fast: Mac rest')
-        self.assertEqual(lane.HOSTED_REST_CHECK, {'hosted fast: Mac rest': 'fast-mac-rest'})
-        self.assertIn('plan=fast-mac-rest tree=', self.text)
+        self.assertEqual(lane.HOSTED_REST_CHECK, {'hosted fast: Mac rest': 'fast-hosted-sessionkit+fast-mac-rest'})
+        self.assertIn('plan=fast-hosted-sessionkit+fast-mac-rest tree=', self.text)
         self.assertEqual(self.text.count('plan=fast-hosted-sessionkit tree='), 1)  # only the sessionkit job records it
 
     def test_the_separate_sessionkit_job_runs_only_with_the_mac_rest_switch_off(self):
@@ -262,6 +262,39 @@ class OneMacJobTests(unittest.TestCase):
         self.assertNotIn('hosted fast: SessionKit core', lane.HOSTED_MERGED_CHECKS)
         for name in lane.HOSTED_MERGED_CHECKS:
             self.assertIn(f"name: '{name}'", self.text)
+
+    def records(self, rest_plan):
+        """hosted_fast_records over the merged set, where the portable check passed and Mac rest recorded <rest_plan>."""
+        names = list(lane.HOSTED_MERGED_CHECKS)
+
+        class Checks(fast_tests.FakeChecks):
+            def api(self, path):
+                if '/annotations' in path:
+                    return super().api(path)
+                name = next(name for name in names if 'check_name=' + lane.urllib.parse.quote(name, safe='') + '&' in path)
+                return fast_tests.json.dumps({'check_runs': self.runs.get(name, [])})
+
+        plans = {**lane.HOSTED_MERGED_CHECKS, 'hosted fast: Mac rest': rest_plan}
+        fake = fast_tests.passing(HEAD, checks=plans)
+        return lane.hosted_fast_records(Checks(fake.runs, fake.annotations), HEAD, lane.HOSTED_MERGED_CHECKS)
+
+    def test_a_mac_rest_record_from_the_old_job_does_not_stand_for_the_core_tests(self):
+        # The audit of 47facb5: the old `mac-rest` job ran no SessionKitCoreTests but recorded plan=fast-mac-rest. A PR
+        # whose core check failed or never finished would merge on that record once only two checks are required.
+        found, why = self.records('fast-mac-rest')
+        self.assertIsNone(found)
+        self.assertIn('"hosted fast: Mac rest"', why)
+        self.assertIn('did not record', why)
+
+    def test_the_plan_the_merged_job_records_is_the_one_the_runner_requires(self):
+        recorded = [plan for run in self.steps('mac-rest') for plan in re.findall(r'plan=(\S+) tree=', run)]
+        self.assertEqual(recorded, [lane.HOSTED_MERGED_CHECKS['hosted fast: Mac rest']])
+        self.assertNotEqual(recorded, ['fast-mac-rest'])
+        found, why = self.records(recorded[0])
+        self.assertEqual(set(found), set(lane.HOSTED_MERGED_CHECKS), why)
+        # each plan the name lists is one the job runs
+        for plan in recorded[0].split('+'):
+            self.assertTrue(any(f'--plan {plan}' in run for run in self.steps('mac-rest')), plan)
 
     def test_the_job_has_room_for_both_plans(self):
         self.assertGreaterEqual(self.jobs['mac-rest']['timeout-minutes'],

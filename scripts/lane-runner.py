@@ -1056,12 +1056,14 @@ HOSTED_FAST_CHECKS = {'hosted fast: portable': 'fast-portable',
 # #2459: the third hosted check, --plan fast-mac-rest on a GitHub-hosted Mac (hosted-portable.yml `mac-rest`). With
 # it, the automerge job runs on hosted Linux and runs no test itself. Anything but `on` keeps merging on the build Mac.
 HOSTED_REST_SWITCH = 'LANE_HOSTED_MAC_REST'
-HOSTED_REST_CHECK = {'hosted fast: Mac rest': 'fast-mac-rest'}
+# The plan it records names both plans it runs (#2596): the job before SessionKit core moved into it recorded
+# fast-mac-rest with no core tests, so such a record, still on a PR from before the move, must not stand for them.
+HOSTED_REST_CHECK = {'hosted fast: Mac rest': 'fast-hosted-sessionkit+fast-mac-rest'}
 # #2596: a diff with no Swift inputs needs only this one. The two Mac jobs are skipped for it (hosted-portable.yml's
 # `scope` job asks the same test-scope.py function), so the runner must not wait for them or fall back to the build Mac.
 HOSTED_PORTABLE_CHECK = {'hosted fast: portable': 'fast-portable'}
 # SessionKit core and Mac rest run as one hosted Mac job (#2596): with LANE_HOSTED_MAC_REST `on` a Swift diff needs only
-# these two checks. The Mac-rest job records plan fast-mac-rest after it has also run SessionKitCoreTests. The pair
+# these two checks. The Mac-rest job records plan fast-hosted-sessionkit+fast-mac-rest after running both. The pair
 # (HOSTED_FAST_CHECKS) is what the `sessionkit` job still records with the variable off.
 HOSTED_MERGED_CHECKS = {**HOSTED_PORTABLE_CHECK, **HOSTED_REST_CHECK}
 HOSTED_TESTED_TITLE = 'lane-hosted-tested'

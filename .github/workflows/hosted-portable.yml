@@ -31,7 +31,7 @@
 #
 # One Mac job (#2596): with LANE_HOSTED_MAC_REST `on`, `mac-rest` runs SessionKit's build and SessionKitCoreTests
 # (`--plan fast-hosted-sessionkit`) and then `--plan fast-mac-rest` on the same hosted Mac, and records one notice,
-# for fast-mac-rest, under its stable check name. The `sessionkit` job above then does not run (a second machine
+# for both plans (`plan=fast-hosted-sessionkit+fast-mac-rest`), under its stable check name. The `sessionkit` job above then does not run (a second machine
 # start, checkout, cache restore and SessionKit build for about the same tests), and the runner requires only the
 # portable check and "hosted fast: Mac rest". With the variable off, `sessionkit` runs alone as before.
 #
@@ -386,8 +386,9 @@ jobs:
         if: success() && (github.event_name == 'pull_request' || inputs.base != '')
         run: |
           # GitHub's merge commit: parent 1 is the base, parent 2 the PR's head. The runner matches the tree.
+          # Both plans in the name: an older job's plan=fast-mac-rest ran no core tests and must not stand for them.
           parents=$(git cat-file -p HEAD | awk '/^parent /{print $2}' | tr '\n' ' ')
-          echo "::notice title=lane-hosted-tested::plan=fast-mac-rest tree=$(git rev-parse 'HEAD^{tree}') parents=$parents"
+          echo "::notice title=lane-hosted-tested::plan=fast-hosted-sessionkit+fast-mac-rest tree=$(git rev-parse 'HEAD^{tree}') parents=$parents"
       - name: Report time
         if: always()
         run: |
