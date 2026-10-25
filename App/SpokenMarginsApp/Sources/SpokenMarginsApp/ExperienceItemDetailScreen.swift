@@ -28,6 +28,7 @@ struct ExperienceItemDetailScreen: View {
                         ItemDescriptionPreview(text: description).id(model.selectedItem.id)
                     }
                     secondaryActions
+                    completionControl
                     downloadRecovery
                     ItemLastFailureCard(itemId: model.selectedItem.id)
                     if !sharingCoordinator.importedLayers.isEmpty {
@@ -257,6 +258,27 @@ struct ExperienceItemDetailScreen: View {
                         .accessibilityIdentifier("item.prepareOffline.button")
                 }
             }
+        }
+    }
+
+    /// Mark Complete where the listener is already looking, not only in the options menu (#2393). The same
+    /// action and undo the Library swipe uses; an item that finished by listening shows nothing.
+    @ViewBuilder private var completionControl: some View {
+        if let row = model.libraryItems.first(where: { $0.id == model.selectedItem.id }),
+           let action = ItemQuickAction.completionAction(for: row) {
+            Button {
+                if action == .markComplete { model.markItemCompleted(id: row.id) } else { model.markItemUnfinished(id: row.id) }
+            } label: {
+                Label(
+                    action == .markComplete ? "Mark complete" : "Mark not complete",
+                    systemImage: action == .markComplete ? "checkmark.circle" : "arrow.uturn.backward.circle"
+                )
+                .frame(maxWidth: .infinity, minHeight: 40)
+                .expandedHitArea(vertical: 2)
+            }
+            .buttonStyle(.bordered)
+            .tint(AppColors.evergreen)
+            .accessibilityIdentifier(action == .markComplete ? "item.markCompleteVisible.button" : "item.markUnfinishedVisible.button")
         }
     }
 
