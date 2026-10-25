@@ -104,15 +104,17 @@ extension Gate1AppModel {
     ///
     /// `mustPublish` is for a tap that changed the database and expects the screen to show it (Mark complete, Undo,
     /// Restore). Playback ticks and prewarm progress can invalidate every read of a busy Library, and dropping the
-    /// reload then would leave the row stale until something else reloads. A `mustPublish` reload reads once and
-    /// publishes the rows whatever moved meanwhile (the database is the truth; the next tick refreshes a moving row),
-    /// and leaves the Preparing Audio lists alone when their writer changed them during the read.
+    /// reload then would leave the row stale until something else reloads. A `mustPublish` reload reads again like any
+    /// other (a synchronous reload that landed meanwhile, such as a permanent delete or Play, is newer than this read
+    /// and must not be undone by it), but its third read publishes the rows whatever moved meanwhile (the database is
+    /// the truth; the next tick refreshes a moving row), and leaves the Preparing Audio lists alone when their writer
+    /// changed them during that read.
     func refreshLibraryRowsInBackground(mustPublish: Bool = false) {
         guard let store else { return }
         let (generation, publishRequired) = backgroundRefresh.beginLibraryReload(mustPublish: mustPublish)
         let read = navigationLibraryRead
         backgroundRefresh.holdLibrary(Task { [weak self] in
-            for _ in 0..<3 {
+            for attempt in 0..<3 {
                 guard let revision = self?.libraryPresentationRevision,
                       let listsBefore = self?.audioPreparationLists,
                       let data = try? await read(store) else { return }
@@ -121,7 +123,7 @@ extension Gate1AppModel {
                 // `libraryItems`, so the revision can't see them: a list that changed during the read is read again.
                 let rowsMoved = self.libraryPresentationRevision != revision
                 let listsMoved = self.audioPreparationLists != listsBefore
-                if (rowsMoved || listsMoved) && !publishRequired { continue }
+                if (rowsMoved || listsMoved) && !(publishRequired && attempt == 2) { continue }
                 self.publishLibrary(data)
                 self.backgroundRefresh.libraryWasPublished()
                 if !listsMoved { self.publishAudioPreparationPresentation(from: data, store: store) }
