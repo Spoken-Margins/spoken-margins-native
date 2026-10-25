@@ -5309,10 +5309,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.resetAndSeed()
 
         model.importObsidianMarkdownFiles(urls: [file])
-<<<<<<< ours
-=======
         // PDF extraction on a cold hosted simulator can overrun the 1 s default (#2548).
->>>>>>> theirs
         try await waitFor("PDF import to finish", timeoutNanoseconds: 10_000_000_000) {
             !model.isImportingSources
         }
@@ -5354,12 +5351,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.resetAndSeed()
 
         model.importObsidianMarkdownFiles(urls: [file])
-<<<<<<< ours
-        // The 1 s default timed out on hosted iOS 27 runners, as the structured-PDF test did (#1413, #2365).
-=======
         // Extraction runs off the main actor; on a cold hosted iOS 27 simulator
         // it overran the 1 s default (#2548), as the structured import did (#1413).
->>>>>>> theirs
         try await waitFor("PDF import to finish", timeoutNanoseconds: 10_000_000_000) {
             !model.isImportingSources
         }
