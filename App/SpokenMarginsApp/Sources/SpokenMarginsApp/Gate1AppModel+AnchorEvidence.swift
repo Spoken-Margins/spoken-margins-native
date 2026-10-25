@@ -164,13 +164,11 @@ extension Gate1AppModel {
             ?? "epoch-\(capture.continuityEpoch)-\(capture.sourceMediaStartMs)"
         let assetID = "episode-signature-\(safeItem)-\(suffix)"
         let fileURL = root.appending(path: "\(assetID).shazamsignature")
-        try capture.signatureData.write(to: fileURL, options: .atomic)
 
         let existing = try store.loadEditionFingerprintSpine(itemId: capture.itemId)
-        var landmarks = existing?.landmarks.filter { $0.signatureAssetId != assetID } ?? []
-        landmarks.append(EpisodeFingerprintLandmark(
+        let landmark = EpisodeFingerprintLandmark(
             id: "landmark-\(suffix)",
-            order: landmarks.count,
+            order: 0,
             sourceMediaStartMs: capture.sourceMediaStartMs,
             sourceMediaEndMs: capture.sourceMediaEndMs,
             anchorMediaTimeMs: capture.anchorMediaTimeMs,
@@ -178,22 +176,15 @@ extension Gate1AppModel {
             trigger: capture.trigger,
             provenance: .observedDecodedPlayback,
             signatureAssetId: assetID
-        ))
-        landmarks = landmarks.sorted { $0.sourceMediaStartMs < $1.sourceMediaStartMs }.enumerated().map { index, value in
-            EpisodeFingerprintLandmark(
-                id: value.id,
-                order: index,
-                sourceMediaStartMs: value.sourceMediaStartMs,
-                sourceMediaEndMs: value.sourceMediaEndMs,
-                anchorMediaTimeMs: value.anchorMediaTimeMs,
-                continuityEpoch: value.continuityEpoch,
-                trigger: value.trigger,
-                provenance: value.provenance,
-                signatureAssetId: value.signatureAssetId,
-                transcriptSketchWindowId: value.transcriptSketchWindowId,
-                generatorVersion: value.generatorVersion
-            )
-        }
+        )
+        // Build 35 kept cutting post-seek landmarks (#2626). The same rule trims what it left and refuses a repeat.
+        let compacted = EpisodeFingerprintSpineCompaction.compact(existing: existing?.landmarks ?? [], adding: landmark)
+        let landmarks = compacted.kept
+        let keepsNew = compacted.keeps(signatureAssetId: assetID)
+        let hadStoredNew = existing?.landmarks.contains { $0.signatureAssetId == assetID } ?? false
+        let staleAssetIDs = compacted.dropped.map(\.signatureAssetId).filter { $0 != assetID || keepsNew || hadStoredNew }
+        guard keepsNew || !staleAssetIDs.isEmpty else { return }
+        if keepsNew { try capture.signatureData.write(to: fileURL, options: .atomic) }
         let item = try? store.loadItem(id: capture.itemId)
         try store.saveEditionFingerprintSpine(EditionFingerprintSpineArtifact(
             id: existing?.id ?? "episode-spine-\(safeItem)",
@@ -204,14 +195,28 @@ extension Gate1AppModel {
             createdAt: existing?.createdAt ?? Date(),
             landmarks: landmarks
         ))
-        try store.saveOwnedOfflineAsset(OwnedOfflineAsset(
-            id: assetID,
-            itemId: capture.itemId,
-            category: .fingerprintMap,
-            relativePath: "SpokenMargins/EpisodeMaps/\(safeItem)/\(assetID).shazamsignature",
-            byteCount: Int64(capture.signatureData.count),
-            isReproducible: false
-        ))
+        if keepsNew {
+            try store.saveOwnedOfflineAsset(OwnedOfflineAsset(
+                id: assetID,
+                itemId: capture.itemId,
+                category: .fingerprintMap,
+                relativePath: "SpokenMargins/EpisodeMaps/\(safeItem)/\(assetID).shazamsignature",
+                byteCount: Int64(capture.signatureData.count),
+                isReproducible: false
+            ))
+        }
+        removeDroppedFingerprintLandmarkAssets(staleAssetIDs, in: root, store: store)
+    }
+
+    /// Forgets landmarks the spine no longer holds: their offline-asset rows and signature files, off the main thread.
+    private func removeDroppedFingerprintLandmarkAssets(_ assetIDs: [String], in root: URL, store: SQLiteSessionStore) {
+        guard !assetIDs.isEmpty else { return }
+        Task.detached(priority: .utility) {
+            for assetID in assetIDs {
+                try? store.deleteOwnedOfflineAsset(id: assetID)
+                try? FileManager.default.removeItem(at: root.appending(path: "\(assetID).shazamsignature"))
+            }
+        }
     }
     #endif
 

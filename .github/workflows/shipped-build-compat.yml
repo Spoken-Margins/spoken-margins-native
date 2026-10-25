@@ -8,7 +8,7 @@
 #    (scripts/check-build29-database.sh). --plan fast doesn't run this, so it is the reason this
 #    workflow exists.
 #
-# The runner is the lane's Mac: jobs queue behind lane jobs, one at a time. It needs macOS because
+# The job runs on the free GitHub-hosted Mac (xcode-27), not the lane's Mac (#2596). It needs macOS because
 # the writer builds SessionKit's test target, which uses ShazamKit and AVFoundation. The same
 # pull_request trigger limits as lane.yml apply (GitHub builds the run from the PR's merge ref).
 name: shipped-build-compat
@@ -65,19 +65,26 @@ jobs:
   compat:
     # Same-repo PRs only (#1719); ops/runner-guard backs this up on the runner itself.
     if: github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, macOS, sm-lane]
+    # GitHub-hosted Mac, the label hosted-app-macos.yml uses; no self-hosted runner, no secrets, read-only token.
+    runs-on: xcode-27
     concurrency:
       group: shipped-build-compat-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          # Full history and tags: the checks read testflight/0.1-build-29 with git archive.
           fetch-depth: 0
-          # This job shares its workspace with the lane on the same runner. Without LFS the checkout writes the
-          # voice models as pointer files, and the lane's own LFS checkout never rewrites them (#2139). The LFS
-          # cache in .git already holds the models, so this downloads nothing new.
-          lfs: true
+          fetch-tags: true
+          persist-credentials: false
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          git rev-parse --short 'testflight/0.1-build-29^{commit}'
       - name: The frozen packet reader matches the shipped build
         run: scripts/freeze-shipped-reader.sh --check
       - name: A database written by this code opens in Build 29
