@@ -15,13 +15,22 @@ protocol MarginReadyCuePlaying: AnyObject {
 final class MarginReadyCuePlayer: MarginReadyCuePlaying {
     private var player: AVAudioPlayer?
 
+    /// Where the cue is about to be heard, read from the session the recording already holds.
+    static func currentRoute() -> ReadyCueOutputRoute {
+        #if os(iOS)
+        ReadyCueOutputRoute(outputPortTypes: AVAudioSession.sharedInstance().currentRoute.outputs.map { $0.portType.rawValue })
+        #else
+        .speaker
+        #endif
+    }
+
     func playReadyCue() -> String {
         #if os(iOS)
         guard AVAudioSession.sharedInstance().category == .playAndRecord else { return "skipped:session_not_recording" }
         #endif
         do {
             let player = try AVAudioPlayer(data: MarginReadyCue.wavData())
-            player.volume = MarginReadyCue.volume
+            player.volume = MarginReadyCue.volume(for: Self.currentRoute())
             self.player = player
             return player.play() ? "played" : "skipped:player_refused"
         } catch {

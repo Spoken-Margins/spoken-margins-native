@@ -1684,7 +1684,7 @@ final class Gate1AppModel: ObservableObject {
             if snapshot.status.isPlaybackActive { pause() }
             releaseOwnMarginReturn()
             cancelSleepTimer()
-            reportConfirmation(SleepTimerPolicy.expiryConfirmation(mode: mode))
+            sleepTimerExpired(mode)
         }
     }
 
