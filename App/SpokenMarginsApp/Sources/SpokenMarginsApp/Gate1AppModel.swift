@@ -2596,13 +2596,7 @@ final class Gate1AppModel: ObservableObject {
             } else {
                 updateGate2CompactState()
             }
-            if command == .beginInterjection, snapshot.isRecording {
-                marginCapture.setPresentationContext(RecordingPresentationContext(
-                    snapshot: snapshot,
-                    startedAt: Date()
-                ))
-                applySuggestedReplyToCompactRecording() // answers the shared Margin heard over it or just before (#473)
-            }
+            if command == .beginInterjection, snapshot.isRecording { compactRecordingBegan() }
             if command == .setPlaybackRate,
                let playbackRate = normalizedPlaybackRate {
                 if isMediaPlaybackSnapshot {

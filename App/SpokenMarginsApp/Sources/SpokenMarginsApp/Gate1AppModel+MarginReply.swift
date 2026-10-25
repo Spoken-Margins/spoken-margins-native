@@ -90,9 +90,9 @@ extension Gate1AppModel {
     }
 
     /// A Margin started from the Lock Screen, headphones or a Live Activity goes through the engine without a link;
-    /// once it is recording, it takes the suggestion the same way.
-    func applySuggestedReplyToCompactRecording() {
-        guard snapshot.isRecording else { return }
+    /// once it is recording, it names its screen and takes the suggestion the same way.
+    func compactRecordingBegan() {
+        marginCapture.setPresentationContext(RecordingPresentationContext(snapshot: snapshot, startedAt: Date()))
         suggestSharedMarginReply()
         engine?.changeReplyOfCurrentCapture(to: marginCapture.pendingReply?.link)
     }
