@@ -1,121 +1,199 @@
 import SessionKit
 import SwiftUI
 
+/// Following (#1865): one row per followed show, newest episode first, with "N new", a play button for the
+/// newest unplayed episode and a chevron into the show's own screen. Quiet shows sit in a collapsed group
+/// at the bottom. The plus follows a show (it opens the old Manage Feeds screen, which keeps Follow by
+/// link, Browse, OPML import, Read Later and Listening Edition import until the Follow sheet, #1784, replaces it).
 struct ExperienceSourcesScreen: View {
-    private enum Filter: String, CaseIterable, Identifiable {
-        case all = "All"
-        case feeds = "Feeds"
-        case folder = "Quick Folder"
-        var id: String { rawValue }
-    }
-
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    @State private var filter: Filter = .all
-    /// Kind chip and subject menu (#485); subjects hidden on this device live in its preferences.
-    @State private var kind: SourceContentKind?
-    @State private var subject: String?
-    @AppStorage("following.hiddenSubjects") private var hiddenSubjectsStorage = ""
-    /// Feed management lives on its own screen so Following opens on the new entries (#141).
+    /// Following's follow flow lives on its own screen so this tab stays a list of shows (#141).
     @State private var isManagingFeeds = false
     @State private var focusFeedURLOnManage = false
+    @State private var isShowingQuickFolder = false
+    @State private var path: [String] = []
+    @State private var isQuietExpanded = false
     /// Each followed show's artwork (#773), read from the coordinator's side file.
     @State private var artwork = FollowingArtworkCache()
-    /// The swipe hint shows once, ever (#478); a per-viewer flag. It stays up for the rest of that visit.
-    @AppStorage("following.swipeHintSeen") private var swipeHintSeen = false
-    @State private var swipeHintShownThisVisit = false
-    /// The place in the list, kept by the root view because opening an entry destroys this screen (#479).
+    /// Kept for the root view's signature. The shows are pushed inside this stack, so the list is not
+    /// destroyed when one opens and keeps its own place.
     @Binding var scrollMemory: FollowingScrollMemory
-    /// Follows the top entry without redrawing the screen on every row that scrolls by (#479).
-    @State private var scrollTracker = ListScrollTracker()
-    @State private var restoredScroll = false
-    /// "Clear" on the New list asks first: it dismisses everything listed (#1589).
-    @State private var isConfirmingClear = false
 
     var body: some View {
-        NavigationStack {
-            ScrollViewReader { proxy in
-                List {
-                    // An item's Follow can find several feeds; the choice shows here too, not only on Manage Feeds.
-                    if !model.followedSourceCandidates.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) { FollowCandidateChoices() }
-                            .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-                    }
-                    manageFeedsRow
+        NavigationStack(path: $path) {
+            let list = model.followingShowList()
+            List {
+                // An item's Follow can find several feeds; the choice shows here too, not only on the follow screen.
+                if !model.followedSourceCandidates.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) { FollowCandidateChoices() }
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+                }
+                if model.selectedProfileId.contains("offline") {
+                    Label("Showing the last local snapshot", systemImage: "wifi.slash")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppColors.secondaryText)
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
-                    filterBar
+                }
+                if quickFolderFiles.count > 0 {
+                    quickFolderRow
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
-                    inbox
                 }
-                .onChange(of: candidateIDs, initial: true) { _, ids in
-                    scrollTracker.order = ids
-                    restoreScroll(in: ids, using: proxy)
-                }
-                .onAppear { if restoredScroll { scrollTracker.thaw() } }
-                .onDisappear { rememberScroll() }
-                .background(AppColors.bone)
-                .scrollContentBackground(.hidden)
-                .listStyle(.plain)
-                .refreshable { await model.pullToRefreshFollowing() }
-                .motionAnimation(.smooth(duration: 0.24), value: orderedCandidates.map(\.id))
-                .confirmationDialog(
-                    "Clear the \(clearableEntryIDs.count) entries listed in New?",
-                    isPresented: $isConfirmingClear,
-                    titleVisibility: .visible
-                ) {
-                    Button("Clear \(clearableEntryIDs.count) entries", role: .destructive) {
-                        model.clearFollowedSourceEntries(ids: clearableEntryIDs)
+                if list.rows.isEmpty && list.quiet.isEmpty {
+                    SMExperienceEmptyState(
+                        systemImage: "dot.radiowaves.left.and.right",
+                        title: "You’re not following anything yet",
+                        detail: "Follow a podcast or a writer. Each show is one row here, with how many episodes are new.",
+                        actionTitle: "Paste a feed link"
+                    ) {
+                        // Paste when the clipboard holds a link; otherwise leave the field ready for typing.
+                        openManageFeeds(focusingFeedURL: !model.pasteFollowedSourceFromClipboard())
                     }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text("Nothing is added to your Library. You can undo right after.")
+                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
-                .accessibilityIdentifier("sources.screen")
-                .navigationTitle("Following")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        Button(action: { model.refreshQuickAddFeed() }) {
-                            if model.isRefreshingQuickAddFeed { ProgressView() } else { Image(systemName: "arrow.clockwise") }
+                ForEach(list.rows) { row in
+                    showRow(row)
+                }
+                if !list.quiet.isEmpty {
+                    Section {
+                        if isQuietExpanded {
+                            ForEach(list.quiet) { row in showRow(row) }
                         }
-                        .frame(minWidth: 44, minHeight: 44)
-                        .disabled(model.isRefreshingQuickAddFeed)
-                        .accessibilityLabel("Refresh Sources")
-                        .accessibilityIdentifier("quickAdd.refresh.button")
+                    } header: {
+                        quietHeader(list)
                     }
                 }
-                .navigationDestination(isPresented: $isManagingFeeds) {
-                    ManageFeedsScreen(focusFeedURLOnAppear: focusFeedURLOnManage)
-                        .miniPlayerKeepOut()
+            }
+            .background(AppColors.bone)
+            .scrollContentBackground(.hidden)
+            .listStyle(.plain)
+            .refreshable { await model.pullToRefreshFollowing() }
+            .motionAnimation(.smooth(duration: 0.24), value: list.rows.map(\.id))
+            .accessibilityIdentifier("sources.screen")
+            .navigationTitle("Following")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button(action: { model.refreshQuickAddFeed() }) {
+                        if model.isRefreshingQuickAddFeed { ProgressView() } else { Image(systemName: "arrow.clockwise") }
+                    }
+                    .frame(minWidth: 44, minHeight: 44)
+                    .disabled(model.isRefreshingQuickAddFeed)
+                    .accessibilityLabel("Refresh Sources")
+                    .accessibilityIdentifier("quickAdd.refresh.button")
+                    Button(action: { openManageFeeds(focusingFeedURL: false) }) {
+                        Image(systemName: "plus")
+                    }
+                    .frame(minWidth: 44, minHeight: 44)
+                    .accessibilityLabel("Follow a show")
+                    .accessibilityHint("Follow a feed, browse podcasts and writers, or import from another app.")
+                    .accessibilityIdentifier("sources.manageFeeds")
                 }
-                .task { if !isEdgeSwipePreview { model.refreshQuickAddFeed(force: false) } } // the swipe's preview fetches nothing (#106)
-                // The catalog tags followed shows with a kind and subjects (I2), and gives their artwork (#773).
-                .task { if !isEdgeSwipePreview { await catalogDrawer.loadSnapshot() } }
-                // Re-read the artwork when the shows, the catalog or a refresh changes it (#773).
-                .task(id: ArtworkKey(
-                    subscriptionIDs: model.feedSubscriptions.map(\.id),
-                    hasCatalog: catalogDrawer.catalog != nil,
-                    isRefreshing: model.isRefreshingFollowedSources
-                )) {
-                    guard let coordinator = model.followedSourceCoordinator else { return }
-                    artwork = await coordinator.followingArtwork(catalog: catalogDrawer.catalog)
-                }
+            }
+            .navigationDestination(for: String.self) { subscriptionID in
+                ExperienceShowScreen(
+                    subscriptionID: subscriptionID,
+                    lookedAtOnOpen: model.followingLooked.lookedAt[subscriptionID],
+                    artwork: artwork
+                )
+                .miniPlayerKeepOut()
+            }
+            .navigationDestination(isPresented: $isManagingFeeds) {
+                ManageFeedsScreen(focusFeedURLOnAppear: focusFeedURLOnManage)
+                    .miniPlayerKeepOut()
+            }
+            .navigationDestination(isPresented: $isShowingQuickFolder) {
+                QuickFolderFilesScreen(artwork: artwork)
+                    .miniPlayerKeepOut()
+            }
+            .task { if !isEdgeSwipePreview { model.refreshQuickAddFeed(force: false) } } // the swipe's preview fetches nothing (#106)
+            // The catalog gives followed shows their artwork (#773).
+            .task { if !isEdgeSwipePreview { await catalogDrawer.loadSnapshot() } }
+            // Re-read the rows' entries when the shows, the unplayed entries or a refresh change them. Played and
+            // Quiet shows' entries aren't in `followedSourceEntries`, so the rows read the store.
+            .task(id: ShowRowsKey(
+                subscriptions: model.feedSubscriptions.map { "\($0.id):\($0.state.rawValue)" },
+                unplayedCount: model.followedSourceEntries.count,
+                isRefreshing: model.isRefreshingFollowedSources
+            )) {
+                await model.reloadFollowingShowEntries()
+            }
+            // Re-read the artwork when the shows, the catalog or a refresh changes it (#773).
+            .task(id: ArtworkKey(
+                subscriptionIDs: model.feedSubscriptions.map(\.id),
+                hasCatalog: catalogDrawer.catalog != nil,
+                isRefreshing: model.isRefreshingFollowedSources
+            )) {
+                guard let coordinator = model.followedSourceCoordinator else { return }
+                artwork = await coordinator.followingArtwork(catalog: catalogDrawer.catalog)
             }
             .miniPlayerKeepOut()
         }
     }
 
-    /// One compact row instead of the feed field, links and feed list (#141).
-    private var manageFeedsRow: some View {
-        Button(action: { openManageFeeds(focusingFeedURL: false) }) {
+    // MARK: Rows
+
+    @ViewBuilder
+    private func showRow(_ row: FollowingShowRow) -> some View {
+        FollowingShowRowView(
+            row: row,
+            artworkURL: artwork.artworkURL(for: row.id),
+            open: { path.append(row.id) },
+            play: { model.playNewestEpisode(of: row) },
+            isPlayStarting: row.playEntryID.map { model.importingFollowedSourceEntryIds.contains($0) } ?? false
+        )
+        .listRowInsets(EdgeInsets(
+            top: 0,
+            leading: horizontalSizeClass == .regular ? 28 : 16,
+            bottom: 0,
+            trailing: horizontalSizeClass == .regular ? 28 : 16
+        ))
+        .listRowSeparator(.hidden)
+        .listRowBackground(AppColors.bone)
+    }
+
+    /// "Quiet (2)", a button that opens and closes the group. The count and the chevron say what it holds.
+    private func quietHeader(_ list: FollowingShowList) -> some View {
+        Button {
+            isQuietExpanded.toggle()
+        } label: {
+            HStack {
+                Text(list.quietTitle)
+                    .font(.headline)
+                    .foregroundStyle(AppColors.text)
+                Spacer()
+                Image(systemName: isQuietExpanded ? "chevron.down" : "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.secondaryText)
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .textCase(nil)
+        .accessibilityIdentifier("sources.quietGroup")
+        .accessibilityLabel(list.quietTitle)
+        .accessibilityValue(isQuietExpanded ? "Expanded" : "Collapsed")
+        .accessibilityHint("Shows you have set to Quiet.")
+        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+    }
+
+    /// New files in the Quick Folder. They used to arrive in Following's stream; the folder is a place to open now.
+    private var quickFolderFiles: [QuickAddCandidate] {
+        model.quickAddCandidates.filter { if case .localFile = $0 { true } else { false } }
+    }
+
+    private var quickFolderRow: some View {
+        Button { isShowingQuickFolder = true } label: {
             HStack(spacing: 10) {
-                Image(systemName: "dot.radiowaves.left.and.right")
+                Image(systemName: "folder")
                     .foregroundStyle(AppColors.evergreen)
                     .accessibilityHidden(true)
-                Text(manageFeedsTitle)
+                Text("Quick Folder · \(quickFolderFiles.count) new")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppColors.text)
                 Spacer()
@@ -128,14 +206,7 @@ struct ExperienceSourcesScreen: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityIdentifier("sources.manageFeeds")
-        .accessibilityHint("Follow a feed, browse podcasts and writers, or manage the feeds you follow.")
-    }
-
-    private var manageFeedsTitle: String {
-        let count = model.feedSubscriptions.count
-        if count == 0 { return "Follow a feed" }
-        return "\(count) \(count == 1 ? "feed" : "feeds") · Manage"
+        .accessibilityIdentifier("sources.quickFolder")
     }
 
     private func openManageFeeds(focusingFeedURL: Bool) {
@@ -143,201 +214,10 @@ struct ExperienceSourcesScreen: View {
         isManagingFeeds = true
     }
 
-    private var filterBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(Filter.allCases) { option in
-                    Button {
-                        filter = option
-                        if option == .all { kind = nil; subject = nil }
-                    } label: {
-                        ExperienceFilterChip(isActive: filter == option && (option != .all || !isNarrowed)) { Text(option.rawValue) }
-                    }
-                    .buttonStyle(.plain)
-                }
-                ForEach(FollowingFilter.kinds(in: inboxCategories), id: \.self) { option in
-                    Button { kind = kind == option ? nil : option } label: {
-                        ExperienceFilterChip(isActive: kind == option) { Text(Self.title(of: option)) }
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("sources.filter.kind.\(option.rawValue)")
-                }
-                subjectMenu
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var subjectMenu: some View {
-        let subjects = FollowingFilter.subjects(in: inboxCategories, catalog: catalogDrawer.catalog)
-        if !subjects.isEmpty || !hiddenSubjects.isEmpty {
-            Menu {
-                Picker("Subject", selection: $subject) {
-                    Text("All subjects").tag(String?.none)
-                    ForEach(subjects) { option in
-                        Text(option.title).tag(Optional(option.id))
-                    }
-                }
-                let hideable = subjects.filter { !hiddenSubjects.contains($0.id) }
-                if !hideable.isEmpty {
-                    Menu("Hide a subject") {
-                        ForEach(hideable) { option in
-                            Button(option.title) { setHidden(option.id, true) }
-                        }
-                    }
-                }
-                if !hiddenSubjects.isEmpty {
-                    Section("Hidden") {
-                        ForEach(hiddenSubjects.sorted(), id: \.self) { id in
-                            Button("Show \(subjectTitle(id))") { setHidden(id, false) }
-                        }
-                    }
-                }
-            } label: {
-                ExperienceFilterChip(isActive: subject != nil) {
-                    Label(subject.map(subjectTitle) ?? "Subject", systemImage: "line.3.horizontal.decrease")
-                }
-            }
-            .accessibilityIdentifier("sources.filter.subject")
-        }
-    }
-
-    @ViewBuilder
-    private var inbox: some View {
-        Section {
-            if model.selectedProfileId.contains("offline") {
-                Label("Showing the last local snapshot", systemImage: "wifi.slash")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppColors.secondaryText)
-                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
-            }
-
-            if orderedCandidates.isEmpty {
-                SMExperienceEmptyState(
-                    systemImage: "tray",
-                    title: "You’re caught up",
-                    detail: emptyDetail,
-                    actionTitle: "Paste a feed link"
-                ) {
-                    // Paste when the clipboard holds a link; otherwise leave the field ready for typing.
-                    openManageFeeds(focusingFeedURL: !model.pasteFollowedSourceFromClipboard())
-                }
-                .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-            } else {
-                if showsSwipeHint {
-                    swipeHint
-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
-                }
-                ForEach(orderedCandidates) { row in
-                    SourceInboxRow(candidate: row.candidate, artwork: artwork)
-                    .listRowInsets(EdgeInsets(
-                        top: 0,
-                        leading: horizontalSizeClass == .regular ? 28 : 16,
-                        bottom: 0,
-                        trailing: horizontalSizeClass == .regular ? 28 : 16
-                    ))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(AppColors.bone)
-                    .onAppear { scrollTracker.rowChanged(row.id, isVisible: true) }
-                    .onDisappear { scrollTracker.rowChanged(row.id, isVisible: false) }
-                }
-            }
-        } header: {
-            HStack {
-                Text("New")
-                    .font(.headline)
-                    .foregroundStyle(AppColors.text)
-                Spacer()
-                if clearableEntryIDs.count > 1 {
-                    Button("Clear") { isConfirmingClear = true }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(AppColors.evergreen)
-                        .frame(minWidth: 44, minHeight: 44)
-                        .accessibilityIdentifier("sources.clearNew")
-                        .accessibilityHint("Dismisses every followed entry listed, with Undo.")
-                }
-                Text("\(orderedCandidates.count)")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(AppColors.secondaryText)
-            }
-            .textCase(nil)
-            .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
-        }
-    }
-
-    /// The followed entries listed now, which Clear dismisses. Quick Folder files keep their own dismissal.
-    private var clearableEntryIDs: [String] {
-        orderedCandidates.compactMap { row -> String? in
-            guard case .followedSource(let entry) = row.candidate else { return nil }
-            return entry.id
-        }
-    }
-
-    private struct OrderedCandidate: Identifiable {
-        var candidate: QuickAddCandidate
-        var id: String { candidate.id }
-    }
-
-    /// The filtered inbox, newest first as the model lists it. The Top order (#484) is off until it
-    /// picks entries worth listening to (#1440); `FollowingRanker` stays in SessionKit for it.
-    private var orderedCandidates: [OrderedCandidate] {
-        filteredCandidates.map { OrderedCandidate(candidate: $0) }
-    }
-
-    private var filteredCandidates: [QuickAddCandidate] {
-        let narrowing = FollowingFilter(kind: kind, subject: subject, hiddenSubjects: hiddenSubjects)
-        let categories = subscriptionCategories
-        return model.quickAddCandidates.filter { candidate in
-            switch (filter, candidate) {
-            case (.all, _), (.feeds, .followedSource), (.folder, .localFile): narrowing.includes(category(of: candidate, in: categories))
-            default: false
-            }
-        }
-    }
-
-    /// Shown the first time Following lists entries, and for the rest of that visit (#478).
-    private var showsSwipeHint: Bool { !swipeHintSeen || swipeHintShownThisVisit }
-
-    private var swipeHint: some View {
-        Label(FollowingRowActions.swipeHint, systemImage: "hand.draw")
-            .font(.footnote)
-            .foregroundStyle(AppColors.secondaryText)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityIdentifier("sources.swipeHint")
-            .onAppear {
-                swipeHintShownThisVisit = true
-                swipeHintSeen = true
-            }
-    }
-
-    private var isNarrowed: Bool { kind != nil || subject != nil }
-
-    private var candidateIDs: [String] { orderedCandidates.map(\.id) }
-
-    /// Hands the place to the root view, which outlives this screen.
-    private func rememberScroll() {
-        scrollTracker.freeze()
-        guard let top = scrollTracker.topEntryID else { return }
-        scrollMemory = FollowingScrollMemory(topEntryId: top, order: candidateIDs)
-    }
-
-    /// Scrolls back to the remembered entry once, the first time the list has entries. The tracker
-    /// stays frozen until then, so the rows that appear at the top first don't overwrite the place.
-    private func restoreScroll(in ids: [String], using proxy: ScrollViewProxy) {
-        guard !restoredScroll, !ids.isEmpty else { return }
-        restoredScroll = true
-        guard let target = scrollMemory.restoreTarget(in: ids) else {
-            scrollTracker.thaw()
-            return
-        }
-        Task { @MainActor in
-            // After the list's first layout, or the scroll finds nothing to move.
-            try? await Task.sleep(for: .milliseconds(150))
-            // Not at the very top: the pinned "New" header covers the first row there.
-            proxy.scrollTo(target, anchor: UnitPoint(x: 0.5, y: 0.06))
-            try? await Task.sleep(for: .milliseconds(150))
-            scrollTracker.thaw()
-        }
+    private struct ShowRowsKey: Equatable {
+        var subscriptions: [String]
+        var unplayedCount: Int
+        var isRefreshing: Bool
     }
 
     private struct ArtworkKey: Equatable {
@@ -345,62 +225,147 @@ struct ExperienceSourcesScreen: View {
         var hasCatalog: Bool
         var isRefreshing: Bool
     }
+}
 
-    private var hiddenSubjects: Set<String> {
-        Set(hiddenSubjectsStorage.split(separator: "\n").map(String.init))
-    }
+/// One show on Following: artwork, name, the newest episode, "N new", ▶ and ›.
+private struct FollowingShowRowView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let row: FollowingShowRow
+    let artworkURL: URL?
+    let open: () -> Void
+    let play: () -> Void
+    let isPlayStarting: Bool
 
-    private func setHidden(_ id: String, _ hidden: Bool) {
-        var ids = hiddenSubjects
-        if hidden { ids.insert(id) } else { ids.remove(id) }
-        hiddenSubjectsStorage = ids.sorted().joined(separator: "\n")
-        if hidden, subject == id { subject = nil }
-    }
-
-    /// Categories of the inbox's followed-feed entries, for the chips and menu.
-    private var inboxCategories: [FollowedSourceCategory] {
-        let categories = subscriptionCategories
-        return model.quickAddCandidates.compactMap { category(of: $0, in: categories) }
-    }
-
-    /// One lookup per followed feed, not per inbox entry: feeds keep up to 200 entries each.
-    private var subscriptionCategories: [String: FollowedSourceCategory] {
-        FollowedSourceCategory.bySubscription(model.feedSubscriptions, catalog: catalogDrawer.catalog)
-    }
-
-    /// nil for a Quick Folder file. A feed entry whose subscription is gone is classed by its audio.
-    private func category(of candidate: QuickAddCandidate, in categories: [String: FollowedSourceCategory]) -> FollowedSourceCategory? {
-        guard case .followedSource(let entry) = candidate else { return nil }
-        return categories[entry.subscriptionId] ?? FollowedSourceCategory(contentKind: entry.audioURL == nil ? .article : .podcast)
-    }
-
-    private func subjectTitle(_ id: String) -> String {
-        catalogDrawer.catalog?.subjects.first { $0.id == id }?.title ?? id
-    }
-
-    private static func title(of kind: SourceContentKind) -> String {
-        switch kind {
-        case .podcast: "Podcasts"
-        case .article: "Articles"
-        case .newsletter: "Newsletters"
-        case .paper: "Papers"
-        case .news: "News"
-        case .video: "Videos"
-        default: kind.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+    var body: some View {
+        HStack(spacing: 0) {
+            Button(action: open) {
+                HStack(alignment: .center, spacing: 12) {
+                    ShowArtworkView(url: artworkURL, title: row.title, size: 56)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(row.title)
+                            .font(.headline)
+                            .foregroundStyle(AppColors.text)
+                            .multilineTextAlignment(.leading)
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                        if let episode = row.newestEpisodeTitle {
+                            Text(episode)
+                                .font(.subheadline)
+                                .foregroundStyle(AppColors.secondaryText)
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                        }
+                        HStack(spacing: 8) {
+                            if let label = row.newLabel {
+                                Text(label)
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(AppColors.onEvergreen)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 2)
+                                    .background(AppColors.evergreen, in: Capsule())
+                            }
+                            if let date = row.dateLabel {
+                                Text(date)
+                                    .font(.caption)
+                                    .foregroundStyle(AppColors.secondaryText)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(row.accessibilityLabel)
+            .accessibilityHint("Opens the show.")
+            .accessibilityIdentifier("sources.show.\(row.id)")
+            if row.playEntryID != nil {
+                Button(action: play) {
+                    Group {
+                        if isPlayStarting {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "play.circle.fill").font(.title2)
+                        }
+                    }
+                    .foregroundStyle(AppColors.evergreen)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isPlayStarting)
+                .accessibilityLabel("Play newest episode of \(row.title)")
+                .accessibilityIdentifier("sources.show.\(row.id).play")
+            }
+            Button(action: open) {
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.secondaryText)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHidden(true)
         }
-    }
-
-    private var emptyDetail: String {
-        if isNarrowed { return "Nothing new matches this filter." }
-        return switch filter {
-        case .all: "Follow a feed or connect a Quick Folder. New entries will wait for an explicit choice."
-        case .feeds: "No new entries from followed feeds."
-        case .folder: "No new eligible files in your Quick Folder."
-        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(AppColors.panel)
     }
 }
 
-/// Adding and managing followed feeds, pushed from Following's "N feeds · Manage" row (#141).
+/// A show's artwork, or its first letter on a tinted square.
+struct ShowArtworkView: View {
+    let url: URL?
+    let title: String
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let url {
+                ArtworkThumbnail(url: url, fallback: AnyView(initial))
+            } else {
+                initial
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .accessibilityHidden(true)
+    }
+
+    private var initial: some View {
+        Text(title.first.map { String($0).uppercased() } ?? "?")
+            .font(.title2.weight(.semibold))
+            .foregroundStyle(AppColors.evergreen)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(AppColors.softGreen)
+    }
+}
+
+/// New files in the Quick Folder, which used to arrive in Following's stream. Each keeps its row actions.
+private struct QuickFolderFilesScreen: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    let artwork: FollowingArtworkCache
+
+    var body: some View {
+        List {
+            ForEach(model.quickAddCandidates.filter { if case .localFile = $0 { true } else { false } }) { candidate in
+                SourceInboxRow(candidate: candidate, artwork: artwork)
+                    .listRowInsets(EdgeInsets(top: 0, leading: horizontalSizeClass == .regular ? 28 : 16, bottom: 0, trailing: horizontalSizeClass == .regular ? 28 : 16))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(AppColors.bone)
+            }
+        }
+        .background(AppColors.bone)
+        .scrollContentBackground(.hidden)
+        .listStyle(.plain)
+        .navigationTitle("Quick Folder")
+        .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("sources.quickFolder.screen")
+    }
+}
+
+/// Following a show: by link, from the catalog, by OPML or from a read-later service. Pushed from Following's plus.
+/// The followed shows themselves are Following's rows now, and Quiet, Unfollow and "new items" live on each show's screen (#1865).
 private struct ManageFeedsScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
@@ -408,10 +373,6 @@ private struct ManageFeedsScreen: View {
 
     /// Following's empty state found no link on the clipboard, so the field opens ready for typing.
     let focusFeedURLOnAppear: Bool
-    @State private var pendingUnfollowID: String?
-    private var pendingUnfollowTitle: String? {
-        model.feedSubscriptions.first { $0.id == pendingUnfollowID }.map { $0.source.title ?? $0.source.host }
-    }
     @State private var didFocusOnAppear = false
     @FocusState private var feedURLIsFocused: Bool
 
@@ -440,26 +401,13 @@ private struct ManageFeedsScreen: View {
                 NavigationLink("Read Later Services") { ReadLaterScreen().miniPlayerKeepOut() }
                 NavigationLink("Import Listening Edition") { ListeningEditionImportScreen().miniPlayerKeepOut() }
             }
-            sourceSetup
-                .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
         }
         .background(AppColors.bone)
         .scrollContentBackground(.hidden)
         .listStyle(.plain)
         .accessibilityIdentifier("sources.manageFeeds.screen")
-        .navigationTitle("Manage Feeds")
+        .navigationTitle("Follow a Show")
         .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog(FollowingRowActions.unfollowQuestion(showTitle: pendingUnfollowTitle), isPresented: Binding(
-            get: { pendingUnfollowID != nil },
-            set: { if !$0 { pendingUnfollowID = nil } }
-        ), titleVisibility: .visible) {
-            Button("Unfollow", role: .destructive) {
-                // The dialog clears pendingUnfollowID as it closes, so its title keeps the show's name.
-                if let id = pendingUnfollowID { model.unfollowSource(id: id) }
-            }
-        } message: {
-            Text("Items already in your Library will be kept.")
-        }
         .task {
             // Once: coming back from Read Later shouldn't raise the keyboard again.
             guard focusFeedURLOnAppear, !didFocusOnAppear else { return }
@@ -508,49 +456,6 @@ private struct ManageFeedsScreen: View {
             .filledActionButton()
             .disabled(model.followedSourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .accessibilityIdentifier("sources.follow.button")
-    }
-
-    @ViewBuilder
-    private var sourceSetup: some View {
-        if !model.feedSubscriptions.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Followed feeds").font(.headline)
-                VStack(spacing: 0) {
-                    ForEach(model.feedSubscriptions) { subscription in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(subscription.source.title ?? subscription.source.host).font(.headline)
-                                Text(subscription.state.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
-                                    .font(.caption)
-                                    .foregroundStyle(AppColors.secondaryText)
-                            }
-                            Spacer()
-                            Menu {
-                                Picker("New items", selection: Binding(
-                                    get: { subscription.newItemPolicy ?? .letMePick },
-                                    set: { model.setFeedNewItemPolicy(id: subscription.id, policy: $0) }
-                                )) {
-                                    Text("Let me pick").tag(FeedNewItemPolicy.letMePick)
-                                    Text("Add every new item").tag(FeedNewItemPolicy.addEveryNewItem)
-                                }
-                                Button(subscription.state == .muted ? "Unmute" : "Mute") {
-                                    model.toggleMuteSource(id: subscription.id)
-                                }
-                                Button("Unfollow", role: .destructive) { pendingUnfollowID = subscription.id }
-                            } label: {
-                                Label("Manage", systemImage: "ellipsis")
-                                    .frame(minHeight: 44)
-                            }
-                            .accessibilityLabel("Manage \(subscription.source.title ?? subscription.source.host)")
-                        }
-                        .padding(.top, 12)
-                    }
-                }
-            }
-            .padding(16)
-            .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
-            .overlay { RoundedRectangle(cornerRadius: 17).stroke(AppColors.border) }
-        }
     }
 }
 
