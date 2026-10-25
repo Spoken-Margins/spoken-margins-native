@@ -50,13 +50,19 @@ extension Gate1AppModel {
     /// Collection files picked from the Add sheet's Files route (#2373). Like a PDF added there, they land in the
     /// Library and nothing opens or plays. Returns whether every file went in, so the sheet knows to close.
     @discardableResult
-    func importListeningEditionFiles(_ urls: [URL]) async -> Bool {
-        // The files are read and decoded off the main thread (#2510); the import itself still runs on it.
-        let entries = await Task.detached(priority: .userInitiated) {
-            urls.enumerated().map { ListeningEditionBatch.Entry.reading(url: $1, id: $0) }
-        }.value
-        let lines = hangTelemetry.labels.scoped("listeningEditionFiles.import") { importListeningEditions(entries) }
-        let summary = ListeningEditionBatch.summary(of: lines)
+    func importListeningEditionFiles(_ urls: [URL], folders: [URL] = []) async -> Bool {
+        // The folders are walked and the files read and decoded off the main thread (#2510, #2256); the import
+        // itself still runs on it.
+        let loaded = await Task.detached(priority: .userInitiated) { Self.readListeningEditionEntries(urls, folders: folders) }.value
+        if loaded.entries.isEmpty {
+            reportFailure(ListeningEditionFolderWalk.emptyMessage(folderNames: folders.map(\.lastPathComponent)))
+            return false
+        }
+        let lines = hangTelemetry.labels.scoped("listeningEditionFiles.import") { importListeningEditions(loaded.entries) }
+        var summary = ListeningEditionBatch.summary(of: lines)
+        if loaded.truncated {
+            summary = summary.appending(ListeningEditionFolderWalk.truncationNote())
+        }
         if lines.contains(where: { $0.outcome.isSuccess }) { markOnboardingSteps([.addedOwnSource, .addedFromFiles]) }
         if summary.isFailure {
             reportFailure(summary.message)
@@ -64,6 +70,24 @@ extension Gate1AppModel {
             reportConfirmation(summary.message)
         }
         return !summary.isFailure
+    }
+
+    /// Reads the picked files, plus the `.json` files found in the picked folders (#2672), into batch entries.
+    /// A folder's security-scoped access stays open while its files are read, since the files inherit it.
+    private nonisolated static func readListeningEditionEntries(_ urls: [URL], folders: [URL])
+        -> (entries: [ListeningEditionBatch.Entry], truncated: Bool) {
+        var all = urls
+        var truncated = false
+        var scoped: [URL] = []
+        defer { for folder in scoped { folder.stopAccessingSecurityScopedResource() } }
+        for folder in folders {
+            if folder.startAccessingSecurityScopedResource() { scoped.append(folder) }
+            let room = max(0, ListeningEditionFolderWalk.defaultMaxFiles - (all.count - urls.count))
+            let walked = ListeningEditionFolderWalk.collect(in: folder, maxFiles: room)
+            all.append(contentsOf: walked.urls)
+            if walked.truncated { truncated = true }
+        }
+        return (all.enumerated().map { ListeningEditionBatch.Entry.reading(url: $1, id: $0) }, truncated)
     }
 
     /// One edition file from a file open or a staged hand-off. The file is read off the main thread (#2510).
