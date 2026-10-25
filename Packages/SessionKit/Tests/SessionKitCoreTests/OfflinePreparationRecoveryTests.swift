@@ -36,31 +36,6 @@ final class OfflinePreparationRecoveryTests: XCTestCase {
             jobs: [], automaticAudio: .off, automaticEpisodeMaps: .whileCharging))
     }
 
-    func testExpiryMarksMatchingExplicitRequestsWithoutChangingTheirPlace() throws {
-        var explicit = job(.explicit)
-        explicit.requestedAt = Date(timeIntervalSince1970: 10)
-        explicit.nextChunkIndex = 42
-        explicit.userPriority = -2
-        let key = OfflinePreparationRun.RequestKey(jobId: explicit.id, requestedAt: explicit.requestedAt)
-        var second = explicit
-        second.id = "second"
-        let secondKey = OfflinePreparationRun.RequestKey(jobId: second.id, requestedAt: second.requestedAt)
-        let interruptedJobs = OfflinePreparationRecovery.interruptedJobs(
-            [job(.whileCharging), job(.demandWindow), explicit, second, job(.explicit, cancelled: true)],
-            requests: [key, secondKey]
-        )
-        XCTAssertEqual(interruptedJobs.map(\.id), [explicit.id, second.id])
-        XCTAssertTrue(interruptedJobs.allSatisfy { $0.lastFailureCode == OfflinePreparationRecovery.waitingForSystem })
-        let interrupted = try XCTUnwrap(interruptedJobs.first)
-        XCTAssertEqual(interrupted.lastFailureCode, OfflinePreparationRecovery.waitingForSystem)
-        var expected = explicit
-        expected.lastFailureCode = OfflinePreparationRecovery.waitingForSystem
-        XCTAssertEqual(interrupted, expected, "request identity, committed progress and priority survive expiry")
-        explicit.requestedAt = Date(timeIntervalSince1970: 20)
-        XCTAssertTrue(OfflinePreparationRecovery.interruptedJobs([explicit], requests: [key]).isEmpty,
-                      "an old expiration must not affect a newer tap")
-    }
-
     func testAutomaticEnqueuePreservesExplicitRequestsAndUnfinishedOpeningBuffers() {
         let explicit = job(.explicit)
         XCTAssertEqual(OfflinePreparationRecovery.automaticJob(explicit, committedChunks: 42), explicit)

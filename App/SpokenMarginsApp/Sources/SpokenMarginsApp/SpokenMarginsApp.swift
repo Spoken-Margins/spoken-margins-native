@@ -26,7 +26,6 @@ final class SpokenMarginsAppDelegate: NSObject, UIApplicationDelegate {
         #if canImport(BackgroundTasks)
         AudioPreparationBackgroundController.shared.register()
         FollowedSourceBackgroundRefreshController.shared.register()
-        ContinuedAudioPreparationController.shared.register()
         #endif
         WatchMarginReceiver.shared.activate() // Watch Margins (#2487), including a transfer that woke the app
         return true

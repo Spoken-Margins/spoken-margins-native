@@ -69,14 +69,14 @@ final class LibraryAudioPreparationLoopWiringTests: XCTestCase {
         defer { Task { await fixture.renderer.release() } }
 
         model.startForegroundAudioPreparationIfNeeded()
-        XCTAssertTrue(model.isForegroundAudioPreparationRunning)
+        XCTAssertTrue(model.libraryAudioLoop.isRunning)
         try await waitFor(fixture.renderer, toStart: 1, within: .seconds(30))
 
-        model.stopForegroundAudioPreparation()
-        XCTAssertFalse(model.isForegroundAudioPreparationRunning, "stopping from the continued-processing task invalidates the run")
+        model.libraryAudioLoop.stopAndInvalidate()
+        XCTAssertFalse(model.libraryAudioLoop.isRunning, "stopping and invalidating the loop ends the run")
 
         model.startForegroundAudioPreparationIfNeeded()
-        XCTAssertTrue(model.isForegroundAudioPreparationRunning)
+        XCTAssertTrue(model.libraryAudioLoop.isRunning)
         let generation = model.libraryAudioLoop.generation
         var memoryBackoff = false
         model.preparationSeams = PreparationPassSeams(
@@ -90,12 +90,12 @@ final class LibraryAudioPreparationLoopWiringTests: XCTestCase {
         playing.itemId = "playing-elsewhere"
         playing.status = .playing
         model.snapshot = playing // playback starts while preparation is forbidden: cancel only
-        XCTAssertTrue(model.isForegroundAudioPreparationRunning, "a cancel-only stop leaves the run for its own finalizer")
+        XCTAssertTrue(model.libraryAudioLoop.isRunning, "a cancel-only stop leaves the run for its own finalizer")
         XCTAssertEqual(model.libraryAudioLoop.generation, generation, "and does not invalidate it")
         memoryBackoff = false
 
         model.clearAudioPreparationQueue()
-        XCTAssertFalse(model.isForegroundAudioPreparationRunning, "clearing the queue invalidates the run")
+        XCTAssertFalse(model.libraryAudioLoop.isRunning, "clearing the queue invalidates the run")
         XCTAssertGreaterThan(model.libraryAudioLoop.generation, generation)
 
         await fixture.renderer.release()
@@ -115,7 +115,7 @@ final class LibraryAudioPreparationLoopWiringTests: XCTestCase {
 
         model.startForegroundAudioPreparationIfNeeded() // A queues behind the holder at the render gate
         try await Task.sleep(for: .milliseconds(300))
-        model.stopForegroundAudioPreparation() // A is invalidated while it waits
+        model.libraryAudioLoop.stopAndInvalidate() // A is invalidated while it waits
         model.startForegroundAudioPreparationIfNeeded() // B
         try await Task.sleep(for: .milliseconds(300))
         let startedWhileHeld = await renderer.started
@@ -137,7 +137,7 @@ final class LibraryAudioPreparationLoopWiringTests: XCTestCase {
         }
         XCTAssertEqual(Array(try committedIndexes().prefix(2)), [0, 1], "the holder's chunk and the replacement's, one after the other")
 
-        model.stopForegroundAudioPreparation()
+        model.libraryAudioLoop.stopAndInvalidate()
         try await Task.sleep(for: .milliseconds(400))
     }
 
@@ -153,7 +153,7 @@ final class LibraryAudioPreparationLoopWiringTests: XCTestCase {
 
         model.startForegroundAudioPreparationIfNeeded() // A queues behind the holder at the render gate
         try await Task.sleep(for: .milliseconds(300))
-        model.stopForegroundAudioPreparation()
+        model.libraryAudioLoop.stopAndInvalidate()
 
         await renderer.release()
         _ = await holder.value

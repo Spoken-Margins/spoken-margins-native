@@ -5,7 +5,7 @@ import XCTest
 /// scripted host until the test lets it return, so the order "A invalidated, B started, A exiting" is exact.
 @MainActor
 final class LibraryAudioPreparationLoopTests: XCTestCase {
-    func testAStartWhileARunIsGoingRequestsContinuedProcessingButStartsNoSecondRun() async {
+    func testAStartWhileARunIsGoingStartsNoSecondRun() async {
         let host = ScriptedHost()
         let loop = LibraryAudioPreparationLoop()
         loop.start(host: host)
@@ -14,7 +14,6 @@ final class LibraryAudioPreparationLoopTests: XCTestCase {
         await settle { host.runsStarted == 1 }
         await pause()
         XCTAssertEqual(host.runsStarted, 1, "one run, however often it is asked for")
-        XCTAssertEqual(host.continuedRequests, 3, "every ask reaches continued processing, even with a run going (#905)")
         XCTAssertEqual(loop.generation, 1)
         XCTAssertTrue(loop.isRunning)
 
@@ -78,7 +77,6 @@ final class LibraryAudioPreparationLoopTests: XCTestCase {
         host.finishRun(0)
         await settle { host.runsStarted == 2 }
         XCTAssertEqual(host.loopsEnded, 1)
-        XCTAssertEqual(host.continuedRequests, 2, "the restart goes through start, which asks for continued processing")
         XCTAssertEqual(loop.generation, 2)
         XCTAssertTrue(loop.isRunning)
 
@@ -159,14 +157,11 @@ final class LibraryAudioPreparationLoopTests: XCTestCase {
 @MainActor
 private final class ScriptedHost: LibraryAudioPreparationHost {
     var playbackAllows = true
-    private(set) var continuedRequests = 0
     private(set) var runsStarted = 0
     private(set) var loopsEnded = 0
     private var parked: [Int: CheckedContinuation<Void, Never>] = [:]
 
     var playbackAllowsLibraryAudioPreparation: Bool { playbackAllows }
-
-    func requestContinuedAudioPreparationIfNeeded() { continuedRequests += 1 }
 
     func runForegroundAudioPreparationPasses() async {
         let number = runsStarted

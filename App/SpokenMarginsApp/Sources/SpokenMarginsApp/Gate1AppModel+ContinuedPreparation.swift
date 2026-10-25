@@ -2,17 +2,10 @@ import Foundation
 import SessionKit
 import SessionKitPersistence
 
-/// What keeps a Make available offline run going when the listener puts the phone down (#905): a
-/// system progress task while the app is away, and a wait that ends a heat pause or a memory backoff by itself.
+/// What keeps a Make available offline run going while the app is open (#905): a wait that ends a
+/// heat pause or a memory backoff by itself. The system progress card that once tried to carry a run
+/// past the Lock Screen is gone (#2694): it ended as failed every time.
 extension Gate1AppModel {
-    // Read and driven by the continued-processing task and the heat wait.
-    var isForegroundAudioPreparationRunning: Bool { libraryAudioLoop.isRunning }
-
-    /// Ends the loop without the restart a plain cancel gets: iOS or the listener ended its background time.
-    func stopForegroundAudioPreparation() {
-        libraryAudioLoop.stopAndInvalidate()
-    }
-
     /// Live playback leaves the renderer free. Apart from the memory backoff so a loop that a
     /// memory warning cancelled restarts and waits the backoff out (#1107).
     var playbackAllowsLibraryAudioPreparation: Bool {
@@ -94,67 +87,4 @@ extension Gate1AppModel {
         guard let store, let jobs = try? store.loadAudioPreparationJobs() else { return false }
         return !LibraryAudioPreparationTurns.eligible(jobs, for: .foreground).isEmpty
     }
-
-    func explicitPreparationJobs(including previous: [OfflinePreparationRun.Job] = []) -> [OfflinePreparationRun.Job] {
-        guard let store, let stored = try? store.loadAudioPreparationJobs() else { return previous }
-        let allJobs = stored.filter { !$0.isCancelled && $0.policy == .explicit }.map { job in
-            let manifest = try? store.loadPreparedAudioManifest(id: job.manifestId)
-            return OfflinePreparationRun.Job(
-                id: job.id, manifestId: job.manifestId,
-                requestedAt: job.requestedAt, policy: job.policy,
-                state: manifest?.state ?? .failed,
-                completedChunks: manifest?.committedChunkCount ?? job.nextChunkIndex,
-                plannedChunks: manifest?.plannedChunkCount ?? 0
-            )
-        }
-        // Old failures aren't part of a new run. A failure this banner saw happen stays in it.
-        let tracked = OfflinePreparationRun.openExplicitRequests(allJobs).union(previous.map {
-            OfflinePreparationRun.RequestKey(jobId: $0.id, requestedAt: $0.requestedAt)
-        })
-        let jobs = allJobs.filter { tracked.contains(.init(jobId: $0.id, requestedAt: $0.requestedAt)) }
-        let current = Set(jobs.map { OfflinePreparationRun.RequestKey(jobId: $0.id, requestedAt: $0.requestedAt) })
-        return jobs + previous.filter {
-            !current.contains(.init(jobId: $0.id, requestedAt: $0.requestedAt))
-        }.map { job in
-            OfflinePreparationRun.resolvingRemovedJob(job, manifest: try? store.loadPreparedAudioManifest(id: job.manifestId))
-        }
-    }
-
-    /// Also covers expiry during a heat wait, when no renderer is there to record cancellation.
-    func deferExplicitPreparation(_ requests: Set<OfflinePreparationRun.RequestKey>) {
-        if let store, let jobs = try? store.loadAudioPreparationJobs() {
-            for job in OfflinePreparationRecovery.interruptedJobs(jobs, requests: requests) {
-                try? store.saveAudioPreparationJob(job)
-            }
-            try? refreshAudioPreparationPresentation(store: store)
-        }
-        scheduleAudioPreparationBackgroundTask()
-    }
-
-    /// Asks iOS to keep the app running for a long run the listener just started. A no-op where
-    /// background tasks don't exist.
-    func requestContinuedAudioPreparationIfNeeded() {
-        #if canImport(BackgroundTasks) && canImport(UIKit)
-        installContinuedAudioPreparation() // here, not in init: keeps the hot file's size (#905)
-        ContinuedAudioPreparationController.shared.requestIfNeeded()
-        #endif
-    }
-
-    #if canImport(BackgroundTasks) && canImport(UIKit)
-    private func installContinuedAudioPreparation() {
-        ContinuedAudioPreparationController.shared.install(
-            ContinuedAudioPreparationController.Hooks(
-                jobs: { [weak self] previous in self?.explicitPreparationJobs(including: previous) ?? [] },
-                isRunning: { [weak self] in self?.isForegroundAudioPreparationRunning ?? false },
-                isCoolingDown: { [weak self] in self?.isWaitingOutPreparationHeat ?? false },
-                stop: { [weak self] in self?.stopForegroundAudioPreparation() },
-                deferRemaining: { [weak self] requests in self?.deferExplicitPreparation(requests) },
-                report: { [weak self] event in
-                    guard let self else { return }
-                    diagnostics["continuedAudioPreparation"] = event
-                }
-            )
-        )
-    }
-    #endif
 }

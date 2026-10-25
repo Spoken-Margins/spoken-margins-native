@@ -15,7 +15,13 @@ final class AudioPreparationBackgroundController {
 
     private init() {}
 
+    /// Builds up to 35 asked iOS for a "Preparing audio for offline listening" progress card, which
+    /// ended as failed every time (#2694). The card is gone; a request such an install left queued
+    /// is dropped here so iOS never launches the app for it.
+    private static let retiredContinuedIdentifier = "com.spokenmargins.native.audio-preparation.continued"
+
     func register() {
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.retiredContinuedIdentifier)
         guard !registered else { return }
         registered = BGTaskScheduler.shared.register(
             forTaskWithIdentifier: Self.identifier,
