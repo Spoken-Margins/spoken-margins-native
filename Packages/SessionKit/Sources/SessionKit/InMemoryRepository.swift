@@ -338,12 +338,12 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
         ownedOfflineAssetsLock.withLock { ownedOfflineAssets[ownedAsset.id] = ownedAsset }
     }
 
-    public func savePreparedAudioManifest(_ manifest: PreparedAudioManifest) throws { preparedAudioManifests[manifest.id] = manifest }
+    public func savePreparedAudioManifest(_ manifest: PreparedAudioManifest) throws { preparedAudioManifests[manifest.id] = manifest; PreparedAudioChangeSignal.shared.bump() }
     public func loadPreparedAudioManifest(id: String) throws -> PreparedAudioManifest? { preparedAudioManifests[id] }
     public func loadPreparedAudioManifests(itemId: String) throws -> [PreparedAudioManifest] {
         preparedAudioManifests.values.filter { $0.itemId == itemId }.sorted { $0.updatedAt < $1.updatedAt }
     }
-    public func deletePreparedAudioManifest(id: String) throws { preparedAudioManifests[id] = nil }
+    public func deletePreparedAudioManifest(id: String) throws { preparedAudioManifests[id] = nil; PreparedAudioChangeSignal.shared.bump() }
     public func saveAudioPreparationJob(_ job: AudioPreparationJob) throws { audioPreparationJobs[job.id] = job }
     public func loadAudioPreparationJobs() throws -> [AudioPreparationJob] {
         audioPreparationJobs.values.sorted { $0.requestedAt < $1.requestedAt }

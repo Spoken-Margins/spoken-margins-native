@@ -355,6 +355,15 @@ extension Gate1AppModel {
                 }
             }
         }
+        client.nextTrackHandler = { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.hangTelemetry.labels.scoped("nowPlayingCommand") {
+                    self.syncPlaybackProgressForLifecycle()
+                    self.dispatchGate2CompactCommand(.skipForward, origin: "now_playing" + HeadphoneRemoteSignal.nextTrackOriginSuffix)
+                }
+            }
+        }
         client.playbackStartTraceHandler = { [weak self] fields in
             Task { @MainActor [weak self] in
                 guard let self else { return }

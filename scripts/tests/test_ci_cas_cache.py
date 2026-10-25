@@ -4,6 +4,7 @@ The hosted `app` check restored a 481 MB archive of the store with plain tar, wh
 zeros until the runner's 36 GB disk was full, before anything was compiled.
 """
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -11,7 +12,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from test_workflow_files import parse
+
 SCRIPT = Path(__file__).resolve().parents[1] / 'ci-cas-cache.sh'
+WORKFLOWS = Path(__file__).resolve().parents[2] / '.github/workflows'
 MIB = 1024 * 1024
 
 
@@ -125,6 +129,58 @@ class CasCacheTests(unittest.TestCase):
         out = self.run_script('unpack')
         self.assertFalse(self.cas.exists())
         self.assertIn('Restore failed', out)
+
+
+class WorkflowsUseTheScriptTests(unittest.TestCase):
+    """Every workflow that caches the compilation cache goes through the script, and saves only after a good build (#2619).
+
+    lane.yml and phone-build.yml kept actions/cache on the store itself after #2618 fixed the hosted app check, so the
+    same disk-filling restore could still happen there, and the lane saved the store of a failed build too.
+    """
+    FILES = ('hosted-app-macos.yml', 'lane.yml', 'phone-build.yml')
+
+    def cache_steps(self, name):
+        steps = [step for job in parse(WORKFLOWS / name)['jobs'].values() for step in job.get('steps', [])]
+        return [step for step in steps if str(step.get('uses', '')).startswith('actions/cache')
+                and '-cas-' in str(step.get('with', {}).get('key', ''))]
+
+    def test_no_workflow_caches_the_store_directly_or_restores_a_plain_tar_entry(self):
+        for name in self.FILES:
+            steps = self.cache_steps(name)
+            self.assertTrue(steps, f'{name} has no compilation cache step')
+            for step in steps:
+                action = step['uses'].split('@')[0]
+                self.assertIn(action, ('actions/cache/restore', 'actions/cache/save'), f'{name}: plain actions/cache')
+                key = step['with']['key']
+                self.assertIn('-cas-sparse-27.0-', key, f'{name}: the old plain-tar prefix could be restored')
+                self.assertIn('pack', step['with']['path'].lower(), f'{name}: caches the store, not its sparse archive')
+                if 'restore-keys' in step['with']:
+                    self.assertIn('-cas-sparse-27.0-', step['with']['restore-keys'])
+
+    def test_each_workflow_unpacks_what_it_restores_and_packs_before_it_saves(self):
+        for name in self.FILES:
+            text = (WORKFLOWS / name).read_text()
+            self.assertRegex(text, r'ci-cas-cache\.sh"? unpack', name)
+            self.assertRegex(text, r'ci-cas-cache\.sh"? pack', name)
+
+    def test_the_lane_runs_the_base_branchs_copy_of_the_script_not_the_prs(self):
+        # The lane checks out the PR's head; a PR branched before the script existed has no copy (#2619).
+        text = (WORKFLOWS / 'lane.yml').read_text()
+        self.assertIn('git show "origin/$BASE_REF:scripts/ci-cas-cache.sh"', text)
+        self.assertNotIn('bash scripts/ci-cas-cache.sh', text)
+
+    def test_a_save_needs_a_successful_pack_and_the_pack_needs_a_good_build(self):
+        wanted = {'lane.yml': "steps.run.outputs.verdict == 'PASS'",
+                  'phone-build.yml': "steps.archive.outcome == 'success'",
+                  'hosted-app-macos.yml': "steps.t2-sim.outcome == 'success'"}
+        for name, condition in wanted.items():
+            steps = [step for job in parse(WORKFLOWS / name)['jobs'].values() for step in job.get('steps', [])]
+            packs = [step for step in steps if re.search(r'ci-cas-cache\.sh"? pack', step.get('run', ''))]
+            saves = [step for step in steps if str(step.get('uses', '')).startswith('actions/cache/save')
+                     and 'cas-' in step['with']['key']]
+            self.assertEqual((len(packs), len(saves)), (1, 1), name)
+            self.assertIn(condition, packs[0]['if'], f'{name}: a failed build\'s store could be saved')
+            self.assertIn(f"steps.{packs[0]['id']}.outputs.ok == 'true'", saves[0]['if'], name)
 
 
 if __name__ == '__main__':

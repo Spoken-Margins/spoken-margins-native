@@ -110,6 +110,39 @@ final class PKMWorkflowTests: XCTestCase {
         XCTAssertEqual(model.libraryItems.filter { $0.id == first.itemID }.count, 1, "nothing else changed")
     }
 
+    func testImportsAFolderOfCollectionsAndSaysWhenItIsEmpty() async throws {
+        // #2672: a picked folder lands its collections, names the non-collection .json, and opens nothing.
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed(); model.declineCurrentTerms()
+        let screen = model.screen
+        func make(_ title: String) -> ListeningEdition {
+            ListeningEdition(title: title, text: title + " " + UUID().uuidString, generator: "External model", overview: "Overview",
+                             scenes: [.init(title: "A", description: "Description", summary: "Summary", startBlock: 1, endBlock: 1)])
+        }
+        let first = make("Folder one"), second = make("Folder two")
+        defer { for e in [first, second] { try? FileManager.default.removeItem(at: ListeningEditionStore.application().file(e.itemID)) } }
+        let folder = FileManager.default.temporaryDirectory.appending(path: "collection-folder-\(UUID().uuidString)")
+        let nested = folder.appending(path: "nested")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        let empty = FileManager.default.temporaryDirectory.appending(path: "collection-empty-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder); try? FileManager.default.removeItem(at: empty) }
+        try first.encoded().write(to: folder.appending(path: "one.json"))
+        try second.encoded().write(to: nested.appending(path: "two.json"))
+        try Data(#"{"hello": "world"}"#.utf8).write(to: folder.appending(path: "notes.json"))
+
+        let imported = await model.importListeningEditionFiles([], folders: [folder])
+        XCTAssertFalse(imported, "the non-collection file is reported")
+        XCTAssertEqual(model.lastError?.contains("notes.json"), true, model.lastError ?? "no error")
+        XCTAssertEqual(model.libraryItems.filter { $0.id == first.itemID }.count, 1)
+        XCTAssertEqual(model.libraryItems.filter { $0.id == second.itemID }.count, 1)
+        XCTAssertEqual(model.screen, screen, "a folder added from the sheet opens nothing")
+
+        let importedEmpty = await model.importListeningEditionFiles([], folders: [empty])
+        XCTAssertFalse(importedEmpty)
+        XCTAssertEqual(model.lastError?.contains("No collection files"), true, model.lastError ?? "no error")
+    }
+
     func testShortcutIntentImportsAndOpensEditionWithoutURLLaunch() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed(); model.declineCurrentTerms()

@@ -111,6 +111,7 @@ jobs:
     env:
       DERIVED: ${{ github.workspace }}/.build/phone-dd
       CAS: ${{ github.workspace }}/.build/compilation-cache
+      CAS_PACK: ${{ github.workspace }}/.build/compilation-cache-pack
       SPM: ${{ github.workspace }}/.build/spm
       OUT: ${{ github.workspace }}/.build/phone-out
       APP_NAME: SpokenMarginsApp.app
@@ -144,11 +145,21 @@ jobs:
           path: ${{ env.SPM }}
           key: phone-spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
           restore-keys: phone-spm-
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      # The compilation cache goes through scripts/ci-cas-cache.sh, not straight into actions/cache (#2619, from
+      # #2617): the store's data files are sparse, plain tar saved their holes as zeros, and restoring a 481 MB
+      # archive wrote until the runner's disk was full, before the build began. The script archives them sparse,
+      # refuses a restore that would fill the disk, and costs a cold build, never a red check. `sparse` in the key
+      # keeps the earlier plain-tar entries (phone-cas-27.0-) from ever being restored, and the phone- prefix still
+      # means this job restores only caches it wrote itself. It is saved right after the archive builds, before
+      # the signing key is written to disk.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
         with:
-          path: ${{ env.CAS }}
-          key: phone-cas-27.0-${{ github.run_id }}
-          restore-keys: phone-cas-27.0-
+          path: ${{ env.CAS_PACK }}
+          key: phone-cas-sparse-27.0-${{ github.run_id }}
+          restore-keys: phone-cas-sparse-27.0-
+      - name: Unpack the compilation cache
+        run: CAS="$CAS" PACK="$CAS_PACK" bash scripts/ci-cas-cache.sh unpack
 
       # The team the TestFlight upload already names, into the file the Mac reads it from (#1841).
       - name: Signing team
@@ -161,6 +172,7 @@ jobs:
       # Signed with `-` (no certificate, no profile), which still embeds each target's entitlements, so the
       # ad hoc export below keeps the app group and associated domains.
       - name: Archive the Release app
+        id: archive
         run: |
           mkdir -p "$OUT"
           root="$GITHUB_WORKSPACE"
@@ -177,6 +189,18 @@ jobs:
             "SM_BUILD_COMMIT=$GITHUB_SHA" archive 2>&1 | tee "$OUT/build.log" | grep -E 'error:|ARCHIVE|cacheable tasks' || true
           grep -q 'ARCHIVE SUCCEEDED' "$OUT/build.log"
           echo "BUILD_SECONDS=$(( $(date +%s) - started ))" >> "$GITHUB_ENV"
+
+      # Saved only after a successful archive: a failed build's store is what the next run restored in #2617.
+      - name: Pack the compilation cache
+        id: cas-pack
+        if: always() && steps.archive.outcome == 'success'
+        run: CAS="$CAS" PACK="$CAS_PACK" bash scripts/ci-cas-cache.sh pack
+      - name: Save the compilation cache
+        if: always() && steps.cas-pack.outputs.ok == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.CAS_PACK }}
+          key: phone-cas-sparse-27.0-${{ github.run_id }}
 
       - name: Check the archived entitlements
         run: |

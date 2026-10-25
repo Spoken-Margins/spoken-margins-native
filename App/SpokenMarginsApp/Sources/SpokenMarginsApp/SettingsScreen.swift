@@ -9,6 +9,7 @@ struct SettingsScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
+    @AppStorage(HeadphoneDoublePressAction.storageKey) private var headphoneDoublePress = HeadphoneDoublePressAction.default.rawValue
     @FocusState private var focusedField: Field?
     @State private var showsAdvancedAISettings = false
     @State private var showsDeveloperTools = false
@@ -180,6 +181,14 @@ struct SettingsScreen: View {
                     .onCompatibleChange(of: model.mediaSkipBackSeconds) { _ in
                         model.mediaSkipSettingsChanged()
                     }
+                    Picker("Headphone double-press", selection: $headphoneDoublePress) {
+                        Text("Add a Margin").tag(HeadphoneDoublePressAction.addMargin.rawValue)
+                        Text("Skip forward").tag(HeadphoneDoublePressAction.skipForward.rawValue)
+                    }
+                    .accessibilityIdentifier("settings.headphoneDoublePress.picker")
+                    Text("Triple-press still skips back.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
                     Picker("Native Audio Forward", selection: $model.mediaSkipForwardSeconds) {
                         ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
                             Text("\(seconds) seconds").tag(seconds)
@@ -270,6 +279,18 @@ struct SettingsScreen: View {
                 Section("Import & Export") {
                     NavigationLink("Import Listening Edition") { ListeningEditionImportScreen().miniPlayerKeepOut() }
                     NavigationLink("Read Later Services") { ReadLaterScreen().miniPlayerKeepOut() }
+                    Toggle(isOn: Binding(
+                        get: { model.quickAccess.inboxFeedsQueue },
+                        set: { model.quickAccess.inboxFeedsQueue = $0 }
+                    )) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Queue New Quick Folder Files")
+                            Text("Files that appear in your Quick Folder are imported and added to the end of your play queue, in filename order. Choose the folder under Add Source.")
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.quickFolderQueue.toggle")
                     DisclosureGroup("Import Inbox", isExpanded: $showsImportInbox) {
                         PendingLinksWaitingLine(count: model.sourceLinksWaitingForNetwork)
                         if model.importInbox.isEmpty {

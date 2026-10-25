@@ -6,6 +6,7 @@ struct ExperienceMarginDetailView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var pendingNavigation: NavigationIntent?
     @State private var showsManagement = false
     @State private var actionFeedback: UserFeedbackEvent?
@@ -14,6 +15,71 @@ struct ExperienceMarginDetailView: View {
 
     private enum NavigationIntent { case moment, item }
     private var current: MarginRow { model.marginRows.first { $0.id == row.id } ?? row }
+
+    private var isStarred: Bool { current.interjection.isStarredForSharing == true }
+
+    private var playButton: some View {
+        let playing = model.isPlayingInterjectionAudio(current.interjection)
+        return Button(playing ? "Stop playing" : "Hear my recording", systemImage: playing ? "stop.fill" : "play.fill") {
+            model.toggleInterjectionAudioPlayback(current.interjection)
+        }
+        .accessibilityIdentifier("marginDetail.playRecording.button")
+    }
+
+    private var starButton: some View {
+        Button(isStarred ? "Starred" : "Star", systemImage: isStarred ? "star.fill" : "star") {
+            model.setMarginStarred(current, starred: !isStarred)
+        }
+        .accessibilityLabel(isStarred ? "Unstar Margin" : "Star Margin")
+        .accessibilityIdentifier("marginDetail.star.button")
+    }
+
+    /// Play beside Star: the two things done most often. At accessibility text sizes they stack.
+    @ViewBuilder private var primaryActions: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(spacing: 8) {
+                if current.canPlayRecording { playButton }
+                starButton
+            }
+        } else {
+            HStack(spacing: 8) {
+                if current.canPlayRecording { playButton }
+                starButton
+            }
+        }
+    }
+
+    /// Rare actions live here so the screen is not a stack of look-alike buttons (#1980).
+    private var moreMenu: some View {
+        Menu {
+            Button("Copy with Context", systemImage: "doc.on.doc") {
+                model.copyInterjectionWithContext(current.interjection)
+            }
+            .buttonStyle(.automatic)
+            .accessibilityIdentifier("marginDetail.copyWithContext.button")
+            if MarginMarkdownShare.hasNote(current.interjection) {
+                Button("Share this Margin", systemImage: "square.and.arrow.up") { // its note as Markdown (#1866 Done when 4)
+                    markdownFileURL = model.marginMarkdownFileURL(for: [current.interjection], asItem: false)
+                }
+                .buttonStyle(.automatic)
+                .accessibilityIdentifier("marginDetail.shareMarkdown.button")
+            }
+            if model.selectedItem.id == current.interjection.itemId,
+               model.snapshot.sessionId == current.interjection.sessionId {
+                Button("Manage this Margin", systemImage: "slider.horizontal.3") { showsManagement = true }
+                    .buttonStyle(.automatic)
+                    .accessibilityIdentifier("marginDetail.manage.button")
+            }
+        } label: {
+            Label("More", systemImage: "ellipsis.circle")
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .padding(.horizontal, 12)
+                .foregroundStyle(AppColors.evergreen)
+                .background(AppColors.softGreen)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .accessibilityIdentifier("marginDetail.more.button")
+    }
 
     var body: some View {
         NavigationStack {
@@ -65,28 +131,13 @@ struct ExperienceMarginDetailView: View {
                     }
                 }
                 Section {
+                    primaryActions
                     if let context = model.marginSourceContext(current) {
                         DisclosureGroup("Context from \(current.targetDescription.lowercased())") {
                             Text(context)
                                 .font(.system(.body, design: .serif))
                                 .textSelection(.enabled)
                         }
-                    }
-                    Button("Copy with Context", systemImage: "doc.on.doc") {
-                        model.copyInterjectionWithContext(current.interjection)
-                    }
-                    if MarginMarkdownShare.hasNote(current.interjection) {
-                        Button("Share this Margin", systemImage: "square.and.arrow.up") { // its note as Markdown (#1866 Done when 4)
-                            markdownFileURL = model.marginMarkdownFileURL(for: [current.interjection], asItem: false)
-                        }
-                        .accessibilityIdentifier("marginDetail.shareMarkdown.button")
-                    }
-                    if current.canPlayRecording {
-                        Button(
-                            model.isPlayingInterjectionAudio(current.interjection) ? "Stop playing" : "Hear my recording",
-                            systemImage: model.isPlayingInterjectionAudio(current.interjection) ? "stop.fill" : "play.fill"
-                        ) { model.toggleInterjectionAudioPlayback(current.interjection) }
-                        .accessibilityIdentifier("marginDetail.playRecording.button")
                     }
                     if current.canRetryTranscription {
                         Button(model.isRetryingInterjectionTranscription(current.interjection) ? "Transcribing…" : "Retry Transcription", systemImage: "arrow.clockwise") {
@@ -110,10 +161,7 @@ struct ExperienceMarginDetailView: View {
                         pendingNavigation = .item
                         dismiss()
                     }
-                    if model.selectedItem.id == current.interjection.itemId,
-                       model.snapshot.sessionId == current.interjection.sessionId {
-                        Button("Manage this Margin", systemImage: "ellipsis.circle") { showsManagement = true }
-                    }
+                    moreMenu
                 }
             }
             .buttonStyle(MarginDetailActionButtonStyle())
@@ -146,15 +194,6 @@ struct ExperienceMarginDetailView: View {
             .scrollContentBackground(.hidden)
             .background(AppColors.bone)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        model.setMarginStarred(current, starred: current.interjection.isStarredForSharing != true)
-                    } label: {
-                        Image(systemName: current.interjection.isStarredForSharing == true ? "star.fill" : "star")
-                    }
-                    .accessibilityLabel(current.interjection.isStarredForSharing == true ? "Unstar Margin" : "Star Margin")
-                    .accessibilityIdentifier("marginDetail.star.button")
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }.accessibilityIdentifier("marginDetail.done.button")
                 }
