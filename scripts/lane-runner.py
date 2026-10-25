@@ -1056,10 +1056,16 @@ HOSTED_FAST_CHECKS = {'hosted fast: portable': 'fast-portable',
 # #2459: the third hosted check, --plan fast-mac-rest on a GitHub-hosted Mac (hosted-portable.yml `mac-rest`). With
 # it, the automerge job runs on hosted Linux and runs no test itself. Anything but `on` keeps merging on the build Mac.
 HOSTED_REST_SWITCH = 'LANE_HOSTED_MAC_REST'
-HOSTED_REST_CHECK = {'hosted fast: Mac rest': 'fast-mac-rest'}
+# The plan it records names both plans it runs (#2596): the job before SessionKit core moved into it recorded
+# fast-mac-rest with no core tests, so such a record, still on a PR from before the move, must not stand for them.
+HOSTED_REST_CHECK = {'hosted fast: Mac rest': 'fast-hosted-sessionkit+fast-mac-rest'}
 # #2596: a diff with no Swift inputs needs only this one. The two Mac jobs are skipped for it (hosted-portable.yml's
 # `scope` job asks the same test-scope.py function), so the runner must not wait for them or fall back to the build Mac.
 HOSTED_PORTABLE_CHECK = {'hosted fast: portable': 'fast-portable'}
+# SessionKit core and Mac rest run as one hosted Mac job (#2596): with LANE_HOSTED_MAC_REST `on` a Swift diff needs only
+# these two checks. The Mac-rest job records plan fast-hosted-sessionkit+fast-mac-rest after running both. The pair
+# (HOSTED_FAST_CHECKS) is what the `sessionkit` job still records with the variable off.
+HOSTED_MERGED_CHECKS = {**HOSTED_PORTABLE_CHECK, **HOSTED_REST_CHECK}
 HOSTED_TESTED_TITLE = 'lane-hosted-tested'
 HOSTED_TESTED = re.compile(r'^plan=(\S+) tree=([0-9a-f]{40}) parents=([0-9a-f]{40}) ([0-9a-f]{40})\s*$')
 
@@ -1082,7 +1088,7 @@ def hosted_check_set(tree: Path, base: str) -> tuple[dict, str | None]:
     base branch like the other policies), only the portable check is required, and the reason is printed. Anything
     that goes wrong, or a base without the function yet, requires all three: a skipped Mac job is never read as a pass
     (a "skipped" conclusion still stops hosted_fast_records), only left out when the diff cannot need it."""
-    full = {**HOSTED_FAST_CHECKS, **HOSTED_REST_CHECK}
+    full = HOSTED_MERGED_CHECKS
     try:
         policy = base_policy(tree, base, 'scripts/test-scope.py')
         required = getattr(policy, 'mac_checks_required', None)
@@ -1276,12 +1282,12 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
                        records=hosted_fast_records, wait: float | None = None, poll: float = HOSTED_FAST_POLL,
                        grace: float = HOSTED_MISSING_GRACE, clock=time.monotonic, sleep=time.sleep,
                        out=sys.stdout, checks: dict | None = None, newest_base=None) -> tuple[dict | None, str]:
-    """(all three hosted checks standing for <head> merged onto <base> at <base_sha>, '') or (None, why not), for the
+    """(the portable and Mac-rest hosted checks standing for <head> merged onto <base> at <base_sha>, '') or (None, why not), for the
     hosted automerge job (#2459). It never runs a test. While a check is still running, or missing within <grace>,
     it waits, up to <wait> seconds (HOSTED_REST_WAIT in a lane job, else none). When one passed on an older next that
     has since moved in ways that matter, it calls dispatch() (up to HOSTED_REDISPATCHES times: a fresh run of hosted-portable.yml on the PR's
     branch, merged onto <base>) and waits for that. alive() names why to stop (the PR moved on, say) or is falsy.
-    checks: the checks to wait for, all three by default; the hosted pair alone (HOSTED_FAST_CHECKS) when the hosted
+    checks: the checks to wait for, the portable check and "hosted fast: Mac rest" by default (#2596); the hosted pair alone (HOSTED_FAST_CHECKS) when the hosted
     job only waits for them before handing the run to the build Mac (LANE_HOSTED_MAC_REST off).
     newest_base: a callable that fetches and returns the base branch's tip. Each poll compares the checks with it, not
     with the tip this job started on, because a fresh run is merged onto the newest tip and main moves while the job
@@ -1289,7 +1295,7 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
     env = os.environ if env is None else env
     if wait is None:
         wait = HOSTED_REST_WAIT if env.get('GITHUB_ACTIONS') == 'true' else 0
-    checks = {**HOSTED_FAST_CHECKS, **HOSTED_REST_CHECK} if checks is None else checks
+    checks = HOSTED_MERGED_CHECKS if checks is None else checks
     started = clock()
     deadline = started + wait
     dispatches, dispatched_at, running_seen = 0, started, False

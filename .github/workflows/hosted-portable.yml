@@ -29,6 +29,12 @@
 # pass: its check run ends `skipped`, which the runner never reads as one. Unknown paths, a dispatch without a base
 # and any trouble reading the diff all say `mac=true`.
 #
+# One Mac job (#2596): with LANE_HOSTED_MAC_REST `on`, `mac-rest` runs SessionKit's build and SessionKitCoreTests
+# (`--plan fast-hosted-sessionkit`) and then `--plan fast-mac-rest` on the same hosted Mac, and records one notice,
+# for both plans (`plan=fast-hosted-sessionkit+fast-mac-rest`), under its stable check name. The `sessionkit` job above then does not run (a second machine
+# start, checkout, cache restore and SessionKit build for about the same tests), and the runner requires only the
+# portable check and "hosted fast: Mac rest". With the variable off, `sessionkit` runs alone as before.
+#
 # Dispatch it by hand on any branch with `gh workflow run hosted-portable.yml --ref <branch>`.
 #
 # No secrets, a read-only token, no pull_request_target, no Git LFS (the voice models stay pointers; the
@@ -194,8 +200,9 @@ jobs:
   sessionkit:
     name: 'hosted fast: SessionKit core'
     needs: scope
+    # Not with LANE_HOSTED_MAC_REST `on`: the mac-rest job below runs these tests then (#2596).
     if: >-
-      !cancelled() && needs.scope.result != 'skipped' && needs.scope.outputs.mac != 'false' && (github.event_name != 'pull_request' ||
+      !cancelled() && needs.scope.result != 'skipped' && needs.scope.outputs.mac != 'false' && vars.LANE_HOSTED_MAC_REST != 'on' && (github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on'))
     # The image and Xcode the lane Mac builds with (hosted-app-macos.yml says why), so the two can't disagree.
     runs-on: xcode-27
@@ -278,9 +285,10 @@ jobs:
       ((github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on') &&
        vars.LANE_HOSTED_MAC_REST == 'on'))
     runs-on: xcode-27
-    # SessionKit's build (cached dependencies), its two serial targets, and the compatibility checks when the diff
-    # reaches them (the lane's own budget for those is 40 minutes).
-    timeout-minutes: 60
+    # SessionKit's build (cached dependencies) and SessionKitCoreTests (the `sessionkit` job's 40 minutes before they
+    # moved here, #2596), its two serial targets, and the compatibility checks when the diff reaches them (the lane's
+    # own budget for those is 40 minutes).
+    timeout-minutes: 75
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
       HOMEBREW_NO_AUTO_UPDATE: 1
@@ -334,6 +342,11 @@ jobs:
           restore-keys: sessionkit-macos-xcode27.0-
       - name: Python tools
         run: bash scripts/bootstrap-python-tools.sh
+      # Before BlackHole, as the `sessionkit` job ran them (#2596). The second plan's build is then incremental.
+      - name: SessionKit build and SessionKitCoreTests
+        run: |
+          swift --version
+          .venv/bin/python scripts/verify-tests.py --plan fast-hosted-sessionkit
       # Hosted Macs have no audio hardware, and AVPlayer's clock does not move without a running output (#909).
       # BlackHole gives Core Audio one. brew refuses to run as root; the cask's installer asks for sudo itself,
       # which is passwordless on hosted runners. verify-tests.py checks the output starts before the audio tests.
@@ -373,8 +386,9 @@ jobs:
         if: success() && (github.event_name == 'pull_request' || inputs.base != '')
         run: |
           # GitHub's merge commit: parent 1 is the base, parent 2 the PR's head. The runner matches the tree.
+          # Both plans in the name: an older job's plan=fast-mac-rest ran no core tests and must not stand for them.
           parents=$(git cat-file -p HEAD | awk '/^parent /{print $2}' | tr '\n' ' ')
-          echo "::notice title=lane-hosted-tested::plan=fast-mac-rest tree=$(git rev-parse 'HEAD^{tree}') parents=$parents"
+          echo "::notice title=lane-hosted-tested::plan=fast-hosted-sessionkit+fast-mac-rest tree=$(git rev-parse 'HEAD^{tree}') parents=$parents"
       - name: Report time
         if: always()
         run: |
