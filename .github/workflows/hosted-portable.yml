@@ -141,6 +141,27 @@ jobs:
           npm ci
       - name: Portable fast plan
         run: .venv/bin/python scripts/verify-tests.py --plan fast-portable
+      # #2681: SessionKit also builds on Linux (the daily Substack canary runs on it, and hosted-sessionkit-linux.yml
+      # runs only by hand), but no per-PR check compiled it there, so #2671's Foundation-only `.bySentences` broke the
+      # Linux build on main unnoticed. This builds SessionKit's Linux targets and SessionKitCoreTests in the same
+      # swift image, with the same dependency cache, as hosted-sessionkit-linux.yml; it runs no tests (the Mac jobs
+      # run SessionKitCoreTests). A red build fails this check, which the lane reads, so it blocks the merge.
+      # Cost and catch: about 2 to 4 free hosted Linux minutes per PR, in parallel with the longer Mac jobs, so no
+      # added merge wait; no tokens or owner clicks. It would have caught #2681. Waste signal: three months with no
+      # Linux-only compile failure while the step's time grows past 5 minutes.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .build-linux
+          key: sessionkit-linux-swift6.2.4-${{ hashFiles('Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: sessionkit-linux-swift6.2.4-
+      - name: SessionKit builds on Linux
+        run: |
+          # On Linux SwiftPM rewrites Package.resolved (swift-crypto in, onnxruntime out), as
+          # scripts/run-sessionkit-linux-tests.sh notes; restore it so later steps see the Mac's copy.
+          cp Packages/SessionKit/Package.resolved "$RUNNER_TEMP/Package.resolved"
+          docker run --rm -v "$PWD:/w" -w /w/Packages/SessionKit swift:6.2.4 bash -c \
+            'apt-get update -qq && apt-get install -y -qq libsqlite3-dev >/dev/null && swift build --build-tests --scratch-path /w/.build-linux'
+          cp "$RUNNER_TEMP/Package.resolved" Packages/SessionKit/Package.resolved
       # The machine is gone after the job: keep the per-step logs so a red run names its failing tests.
       - name: Keep the step logs
         if: failure()
