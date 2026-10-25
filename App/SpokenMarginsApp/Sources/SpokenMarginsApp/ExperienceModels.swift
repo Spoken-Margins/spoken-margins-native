@@ -23,6 +23,7 @@ enum AppRoot: String, CaseIterable, Identifiable, Hashable, Sendable {
     case library
     case sources
     case margins
+    case settings
 
     var id: String { rawValue }
 
@@ -31,6 +32,7 @@ enum AppRoot: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .library: "Library"
         case .sources: "Following"
         case .margins: "Margins"
+        case .settings: "Settings"
         }
     }
 
@@ -39,6 +41,7 @@ enum AppRoot: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .library: "books.vertical"
         case .sources: "dot.radiowaves.left.and.right"
         case .margins: "quote.bubble"
+        case .settings: "gearshape"
         }
     }
 }
@@ -151,7 +154,8 @@ struct AppNavigationState: Equatable, Sendable {
     var paths: [AppRoot: [AppRoute]] = [
         .library: [],
         .sources: [],
-        .margins: []
+        .margins: [],
+        .settings: []
     ]
     var taskRoute: AppRoute?
     var addSourceRoute: AddSourceRoute?

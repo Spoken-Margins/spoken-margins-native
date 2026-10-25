@@ -21,6 +21,8 @@ for dir in .venv node_modules; do
     exit 1
   fi
 done
+# A lockfile that moved since node_modules was installed makes the browser checks fail with "stale" (#2569).
+python3 "$here/scripts/node_modules_drift.py" || true
 # The signing team for device builds and archives lives only in the main checkout (#1841).
 if [ -f "$main/Config/Local.xcconfig" ] && [ ! -e "$here/Config/Local.xcconfig" ] && [ ! -L "$here/Config/Local.xcconfig" ]; then
   ln -s "$main/Config/Local.xcconfig" "$here/Config/Local.xcconfig"

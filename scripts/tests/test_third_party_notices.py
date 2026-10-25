@@ -17,6 +17,7 @@ import third_party_notices as notices  # noqa: E402
 REAL = notices.ROOT
 READ = ['docs/legal/third-party-components.json', 'THIRD_PARTY_NOTICES.md', 'project.yml', 'package.json',
         'requirements-dev.txt', 'Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved',
+        'Packages/SessionKitTools/Package.swift', 'Packages/SessionKitTools/Package.resolved',
         'App/SharedResources/BundledJavaScript-NOTICES.txt', 'App/SharedResources/Defuddle-LICENSE.txt',
         'App/SpokenMarginsShareExtension/Resources/BundledJavaScript-NOTICES.txt',
         'App/SpokenMarginsShareExtension/Resources/Defuddle-LICENSE.txt',
@@ -68,6 +69,16 @@ class ThirdPartyNoticesTests(unittest.TestCase):
         swift = root / 'Packages/SessionKit/Package.swift'
         swift.write_text(swift.read_text() + '\nlet extra = [.package(url: "https://github.com/x/Extra.git", exact: "1.0.0")]\n')
         self.assertProblem(root, 'Swift package extra')
+
+    def test_a_dependency_added_to_the_tools_package_needs_an_entry(self):
+        # coop-packet and phone-plan have their own package (#1873); a dependency there is a dependency too.
+        root = self.tree()
+        swift = root / 'Packages/SessionKitTools/Package.swift'
+        swift.write_text(swift.read_text() + '\nlet extra = [.package(url: "https://github.com/x/ToolDep.git", exact: "1.0.0")]\n')
+        self.assertProblem(root, 'Swift package tooldep')
+        self.edit_json(root / 'Packages/SessionKitTools/Package.resolved',
+                       lambda d: d['pins'].append({'identity': 'pinned-tool-dep', 'state': {}}))
+        self.assertProblem(root, 'Swift package pinned-tool-dep')
 
     def test_a_package_declared_with_a_name_still_needs_an_entry(self):
         root = self.tree()
@@ -206,7 +217,7 @@ class ThirdPartyNoticesTests(unittest.TestCase):
         requirements = root / 'requirements-dev.txt'
         requirements.write_text('-r other.txt\n' + requirements.read_text())
         self.assertEqual(notices.problems(root), [])
-        self.assertEqual(set(notices.pip_requirements(root)), {'jsonschema'})
+        self.assertEqual(set(notices.pip_requirements(root)), {'jsonschema', 'lxml', 'pyyaml'})
 
     def test_a_stale_generated_file_fails(self):
         root = self.tree()

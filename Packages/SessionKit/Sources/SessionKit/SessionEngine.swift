@@ -3149,19 +3149,40 @@ public final class SessionEngine {
 
     /// What an export reads before it shapes anything: the session, its item (with the whole text), the item's
     /// transcript timeline (megabytes for a podcast), and the session's Margins and turns. Exporting N Margins of
-    /// one session reads this once (#2508) instead of once per Margin.
+    /// one session reads this once (#2508) instead of once per Margin. The timeline is read on first use (#2506):
+    /// only a recording's context, the full source text or the Listening Map's length need it, so an article's
+    /// export never decodes one.
     struct ExportSource {
         var session: Session
         var item: Item
-        var sourceTimeline: TranscriptTimeline?
+        var sourceTimeline: LazyTimeline
         var allInterjections: [Interjection]
         var allTurns: [ConversationTurn]
+    }
+
+    /// A transcript timeline read at most once, and only when something asks for it.
+    final class LazyTimeline {
+        private let load: () throws -> TranscriptTimeline?
+        private var loaded: TranscriptTimeline??
+        /// How many times the store was asked, for a test to pin (#2506).
+        private(set) var loads = 0
+
+        init(_ load: @escaping () throws -> TranscriptTimeline?) { self.load = load }
+
+        func value() throws -> TranscriptTimeline? {
+            if let loaded { return loaded }
+            loads += 1
+            let timeline = try load()
+            loaded = .some(timeline)
+            return timeline
+        }
     }
 
     func loadExportSource(sessionId: String?) throws -> ExportSource {
         let session = try resolveSession(sessionId)
         let item = try repository.loadItem(id: session.itemId)
-        let sourceTimeline = try repository.loadTranscriptTimeline(itemId: item.id)?.timeline
+        let itemId = item.id
+        let sourceTimeline = LazyTimeline { [repository] in try repository.loadTranscriptTimeline(itemId: itemId)?.timeline }
         let allInterjections = try repository.loadInterjections(sessionId: session.id)
             .filter { $0.status == "active" }
         let activeInterjectionIDs = Set(allInterjections.map(\.id))
@@ -3176,16 +3197,21 @@ public final class SessionEngine {
     }
 
     func buildExport(options: ExportOptions, source: ExportSource) throws -> SessionExport {
-        let session = source.session, item = source.item, sourceTimeline = source.sourceTimeline
+        let session = source.session, item = source.item
         let allInterjections = source.allInterjections, allTurns = source.allTurns
         let exposesFullSourceText = options.includeFullText && !isNativeAudioSource(item)
+        let interjections = options.includeInterjections ? scopedExportInterjections(options: options, session: session, interjections: allInterjections) : []
+        // Read only when this export uses it (#2506): the full text of a transcribed source, the words around a
+        // recording's Margins, or the Listening Map's length. An article's Margin note needs none of them.
+        let needsTimeline = exposesFullSourceText || options.includeListeningMap
+            || (isNativeAudioSource(item) && interjections.contains { $0.targetType == .item && $0.anchor.mediaTimeMs != nil })
+        let sourceTimeline = try needsTimeline ? source.sourceTimeline.value() : nil
         let sourceTranscript = exposesFullSourceText
             ? sourceTimeline?.segments
                 .sorted { $0.startMs < $1.startMs }
                 .map(\.text)
                 .joined(separator: " ")
             : nil
-        let interjections = options.includeInterjections ? scopedExportInterjections(options: options, session: session, interjections: allInterjections) : []
         let turns = options.includeTurns ? scopedExportTurns(options: options, turns: allTurns, interjections: interjections) : []
         // The page goes with a paper's citation (#206), so the structured document is only
         // read for an item that has one. Margins anchor into Item.text, so the page is only
@@ -4510,6 +4536,14 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
         var itemId = handoff.itemId ?? browserTextItemId(title: idTitle, url: handoff.source.url)
+        // A web or share-sheet PDF's id is a slug of its title and address. When a better title is read from
+        // the same PDF (#2062), re-importing it must still find the item it already made (#556).
+        var matchedByAddress = false
+        if handoff.itemId == nil, isPDF, try existingItem(id: itemId) == nil,
+           let sameAddress = try existingPDFItemId(atHTTPSAddress: handoff.source.url) {
+            itemId = sameAddress
+            matchedByAddress = true
+        }
         if handoff.itemId == nil, handoff.captureMode == .readablePage || isPDF {
             // A corrected extraction (or a new PDF extractor) must not move existing
             // Margin anchors. Retain the original edition and give changed text its
@@ -4521,8 +4555,9 @@ public final class SessionEngine {
                 // C1 M3 step 5: a PDF re-imported with a newer extraction moves the
                 // existing item to it when every Margin and position lands on the same
                 // words (I13 rule 1d). Otherwise it stays, and the new text becomes
-                // its own edition as before.
-                if mode != .skip, let document, existing.deletedAt == nil, currentSession?.itemId != existing.id, currentItem?.id != existing.id,
+                // its own edition as before. An item found only by its address may be a different PDF now
+                // served there (a newsletter's "current.pdf"), so its text is never replaced in place.
+                if mode != .skip, !matchedByAddress, let document, existing.deletedAt == nil, currentSession?.itemId != existing.id, currentItem?.id != existing.id,
                    let store = repository as? any (SessionRepository & StructuredDocumentRepository) {
                     let job = StructuredUpgradeJob(repository: store, existing: existing, document: document)
                     if mode == .deferred { return .upgradeCandidate(job) }
@@ -4572,6 +4607,26 @@ public final class SessionEngine {
             documentStructure: handoff.documentStructure
         )
         return .records(item, deterministicMap, document)
+    }
+
+    /// The id of the PDF already imported from this https address. A listener's own copy comes before one in Recently
+    /// Deleted, and the oldest before a newer one. A later edition has `-edition-` and a SHA-256 at the end of its id;
+    /// editions are made from the original, never from each other, so only an original is a match.
+    private func existingPDFItemId(atHTTPSAddress address: String) throws -> String? {
+        guard URLComponents(string: address)?.scheme?.lowercased() == "https" else { return nil }
+        let sameAddress: [Item]
+        if let lookup = repository as? any ItemAddressLookup {
+            sameAddress = try lookup.listItems(withExternalReference: address)
+        } else {
+            sameAddress = try repository.listItems(includeDeleted: true).filter { $0.externalReference == address }
+        }
+        return sameAddress
+            .filter { $0.mediaType == "pdf" && $0.id.hasPrefix("item-browser-") && $0.id.range(of: #"-edition-[0-9a-f]{64}$"#, options: .regularExpression) == nil }
+            .min { lhs, rhs in
+                if (lhs.deletedAt == nil) != (rhs.deletedAt == nil) { return lhs.deletedAt == nil }
+                let (l, r) = (lhs.createdAt ?? .distantFuture, rhs.createdAt ?? .distantFuture)
+                return l != r ? l < r : lhs.id < rhs.id
+            }?.id
     }
 
     private func existingItem(id: String) throws -> Item? {

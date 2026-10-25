@@ -19,6 +19,7 @@ struct ExperienceLibraryScreen: View {
     @State private var newMarginsOfferItemId: String?
     @State private var collectionItem: LibraryItemRow?
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     /// A copied link on offer at the top of the Library (#1379).
     @StateObject private var clipboardLink = ClipboardLinkOfferModel()
 
@@ -87,7 +88,7 @@ struct ExperienceLibraryScreen: View {
                 .environmentObject(model)
         }
         .newMarginsOffer(itemId: $newMarginsOfferItemId)
-        .task { await clipboardLink.refresh() }
+        .task { if !isEdgeSwipePreview { await clipboardLink.refresh() } } // the swipe's preview reads nothing (#106)
         .onCompatibleChange(of: scenePhase) { phase in
             if phase == .active { Task { await clipboardLink.refresh() } }
         }
@@ -109,7 +110,6 @@ struct ExperienceLibraryScreen: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
             Menu {
-                Button("Settings", systemImage: "gearshape", action: model.openSettings)
                 Button("Help", systemImage: "questionmark.circle", action: model.openHelp)
                 Divider()
                 Button("Preparing Audio", systemImage: "waveform.badge.magnifyingglass") {
