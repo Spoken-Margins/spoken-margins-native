@@ -37,6 +37,27 @@ final class JustHeardCueTests: XCTestCase {
         XCTAssertLessThanOrEqual(cue.count, JustHeardCue.characterLimit + 1)
     }
 
+    /// The splitter works the same on Apple platforms and Linux, which has no Foundation sentence boundaries (#2681).
+    func testThePunctuationSplitterCutsAfterEndsThatASpaceFollows() {
+        let rows: [(String, [String])] = [
+            ("First thing. Second thing! Third thing? Fourth…", ["First thing.", "Second thing!", "Third thing?", "Fourth…"]),
+            ("He said \"stop.\" Then left.", ["He said \"stop.\"", "Then left."]),
+            ("Version 2.5 shipped. Done", ["Version 2.5 shipped.", "Done"]),
+            ("no punctuation at all", ["no punctuation at all"]),
+            ("Wait... what? (Really.) Yes.", ["Wait...", "what?", "(Really.)", "Yes."]),
+            ("", []),
+        ]
+        for (text, expected) in rows {
+            XCTAssertEqual(JustHeardCue.punctuationSentences(of: text), expected, text)
+        }
+    }
+
+    /// Foundation's `.bySentences`, which this replaced, also ended a sentence at "Dr. ", so the two sentences
+    /// kept are "Then Dr." and "Smith arrived late." and the cue reads as it did before #2681.
+    func testAnAbbreviationReadsAsItDidWithFoundationsSentences() {
+        XCTAssertEqual(JustHeardCue.excerpt(from: "It rained. Then Dr. Smith arrived late."), "Then Dr. Smith arrived late.")
+    }
+
     private let profile = RuntimeCapabilityProfile(
         id: "phone-tablet-online", displayName: "Phone/Tablet Online",
         capabilities: [
