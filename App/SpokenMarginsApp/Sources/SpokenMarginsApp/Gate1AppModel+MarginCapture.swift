@@ -35,12 +35,13 @@ extension Gate1AppModel {
     }
 
     func endCaptureWatch() {
+        MarginOutcomeCuePlayer.shared.stop() // a dead microphone's repeating cue ends with the recording (#1977)
         captureWatcher.stop()
         recordingCaptureHealth = .capturing
         gate2CompactControls.setMicrophone(.capturing)
     }
 
-    private func captureHealthChanged(_ health: MarginCaptureSupervisor.Health, restarts: Int) {
+    func captureHealthChanged(_ health: MarginCaptureSupervisor.Health, restarts: Int) {
         let wasCapturing = recordingCaptureHealth == .capturing
         recordingCaptureHealth = health
         gate2CompactControls.setMicrophone(health.liveActivityMicrophone)
@@ -52,13 +53,17 @@ extension Gate1AppModel {
         diagnostics["lastVoiceCapture"] = Self.captureSummary(fields)
         switch health {
         case .capturing where !wasCapturing:
+            // Recovery from a dead microphone lands here too: the repeating cue ends with it (#1977).
+            MarginOutcomeCuePlayer.shared.stop()
             reportSuccess("Recording Margin.")
         case .notCapturing:
+            // The source is paused for the recording, so a dead microphone is otherwise silence: say so, softly, until the listener acts (#1977).
+            playOutcomeCue(.micStopped)
             reportFailure(captureWatcher.hasKeepableAudio
                 ? Self.keptAudioMessage
                 : "The microphone isn't recording, so nothing is being saved. Tap Try again, or cancel and write the Margin instead.")
         default:
-            break
+            MarginOutcomeCuePlayer.shared.stop()
         }
         // The health may be unchanged while only the keepable state flipped: redraw for Try again.
         objectWillChange.send()
@@ -67,12 +72,15 @@ extension Gate1AppModel {
     /// The listener tapped Try again on a recording screen that says the microphone isn't recording.
     func retryMicrophone() {
         guard snapshot.isRecording else { return }
+        // The new recorder starts inside `retry()`: end the microphone cue first, or its tail opens the new file.
+        MarginOutcomeCuePlayer.shared.stop()
         if captureWatcher.retry() {
             lastError = nil
         } else {
             // Speech arrived since the last poll: a restart would delete it. Redraw without Try again.
-            if case .notCapturing = captureWatcher.health, lastError != Self.keptAudioMessage {
-                reportFailure(Self.keptAudioMessage)
+            if case .notCapturing = captureWatcher.health {
+                playOutcomeCue(.micStopped) // nothing restarted, so the microphone is still stopped
+                if lastError != Self.keptAudioMessage { reportFailure(Self.keptAudioMessage) }
             }
             objectWillChange.send()
         }
@@ -128,7 +136,20 @@ extension Gate1AppModel {
     /// Save was tapped on a recording that took in no audio: say so, and don't keep an empty voice as a Margin.
     private func discardEmptyRecording() {
         cancelInterjection(feeling: .warning) // one tap for the miss, not a cancel's and then a warning's
+        playOutcomeCue(MarginOutcomeCue(verdict: .discardEmpty))
         reportFailure("Nothing was recorded, so no Margin was saved. The microphone didn't pick up any sound. Try again, or write the Margin instead.")
+    }
+
+    /// Every outcome cue goes through here (#1977). When the recorder ended by turning the audio session off, it
+    /// handed the session back to another app's audio; a cue would turn it on again and leave that audio
+    /// interrupted, so the ending stays silent and the diagnostics key says why.
+    private func playOutcomeCue(_ cue: MarginOutcomeCue) {
+        if engine?.recordingReleasedAudioSession() == true {
+            MarginOutcomeCuePlayer.shared.stop()
+            diagnostics["outcomeCue"] = "skipped:session_released"
+            return
+        }
+        diagnostics["outcomeCue"] = MarginOutcomeCuePlayer.shared.play(cue)
     }
 
     /// Reports interrupted, unexpectedly short or unverified saved audio without claiming a capture cause.
@@ -137,12 +158,15 @@ extension Gate1AppModel {
         if let integrity { recordDeveloperDiagnostic("margin.capture.finalized", integrity.diagnosticFields) }
         if let integrity, integrity.fileMs == nil {
             AppHaptics.play(.warning)
+            playOutcomeCue(.savedMaybeCut)
             reportWarning("Margin saved, but its recording could not be checked. Please play it back.")
         } else if (integrity?.qualifying(verdict) ?? verdict) == .saveCutShort {
             AppHaptics.play(.warning)
+            playOutcomeCue(MarginOutcomeCue(verdict: .saveCutShort))
             reportWarning("Margin saved, but part of it may be missing.")
         } else {
             AppHaptics.play(.saved)
+            playOutcomeCue(MarginOutcomeCue(verdict: .save))
             reportConfirmation("Margin saved. Transcription is continuing in the background.")
         }
     }
