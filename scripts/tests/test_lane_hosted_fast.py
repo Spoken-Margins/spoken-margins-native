@@ -317,7 +317,8 @@ class HostedChecksStandTests(unittest.TestCase):
 
 class RunAutomergeTests(unittest.TestCase):
     SCOPE = {'tier': 'T2', 'why': ['App/x.swift']}
-    FOUND = {'hosted fast: portable': {'plan': 'fast-portable', 'tree': 'e' * 40, 'base': 'd' * 40, 'head': 'a' * 40}}
+    FOUND = {name: {'plan': plan, 'tree': 'e' * 40, 'base': 'd' * 40, 'head': 'a' * 40}
+             for name, plan in lane.HOSTED_FAST_CHECKS.items()}
 
     def run_it(self, **kwargs):
         calls = []
@@ -466,7 +467,8 @@ class WorkflowTests(unittest.TestCase):
         guard = ("(github.event.pull_request.head.repo.full_name == github.repository && "
                  f"vars.{lane.HOSTED_FAST_SWITCH} == 'on')")
         # The pair, and the Mac-rest check (#2459), which runs on a PR only with LANE_HOSTED_MAC_REST `on` too.
-        self.assertEqual(self.hosted.count(guard), len(lane.HOSTED_FAST_CHECKS) + len(lane.HOSTED_REST_CHECK))
+        # plus the `scope` job (#2596), which has the same guard
+        self.assertEqual(self.hosted.count(guard), len(lane.HOSTED_FAST_CHECKS) + len(lane.HOSTED_REST_CHECK) + 1)
         self.assertIn(f"vars.{lane.HOSTED_REST_SWITCH} == 'on')", self.hosted)
         self.assertNotIn('pull_request_target:', self.hosted)
 

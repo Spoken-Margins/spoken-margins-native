@@ -1057,6 +1057,9 @@ HOSTED_FAST_CHECKS = {'hosted fast: portable': 'fast-portable',
 # it, the automerge job runs on hosted Linux and runs no test itself. Anything but `on` keeps merging on the build Mac.
 HOSTED_REST_SWITCH = 'LANE_HOSTED_MAC_REST'
 HOSTED_REST_CHECK = {'hosted fast: Mac rest': 'fast-mac-rest'}
+# #2596: a diff with no Swift inputs needs only this one. The two Mac jobs are skipped for it (hosted-portable.yml's
+# `scope` job asks the same test-scope.py function), so the runner must not wait for them or fall back to the build Mac.
+HOSTED_PORTABLE_CHECK = {'hosted fast: portable': 'fast-portable'}
 HOSTED_TESTED_TITLE = 'lane-hosted-tested'
 HOSTED_TESTED = re.compile(r'^plan=(\S+) tree=([0-9a-f]{40}) parents=([0-9a-f]{40}) ([0-9a-f]{40})\s*$')
 
@@ -1070,6 +1073,26 @@ def hosted_rest_on(env=None) -> bool:
     LANE_HOSTED_MAC_REST is `on`. test-scope.py's hosted_merge_routing reads the same two variables."""
     env = os.environ if env is None else env
     return hosted_fast_on(env) and env.get(HOSTED_REST_SWITCH, '').strip().lower() == 'on'
+
+
+def hosted_check_set(tree: Path, base: str) -> tuple[dict, str | None]:
+    """(the hosted checks a merge waits for, why the Mac ones are not among them or None) for the PR in <tree>.
+
+    #2596: when every changed path is one the Mac checks can ignore (test-scope.py mac_checks_required, from the
+    base branch like the other policies), only the portable check is required, and the reason is printed. Anything
+    that goes wrong, or a base without the function yet, requires all three: a skipped Mac job is never read as a pass
+    (a "skipped" conclusion still stops hosted_fast_records), only left out when the diff cannot need it."""
+    full = {**HOSTED_FAST_CHECKS, **HOSTED_REST_CHECK}
+    try:
+        policy = base_policy(tree, base, 'scripts/test-scope.py')
+        required = getattr(policy, 'mac_checks_required', None)
+        if required is None:
+            return full, None
+        paths, _ = committed_changes(tree, base)
+        needed, why = required(paths)
+    except Exception:  # noqa: BLE001 - any doubt requires the Mac checks
+        return full, None
+    return (full, None) if needed else (HOSTED_PORTABLE_CHECK, why)
 
 
 def hosted_tested(annotations: list[dict]) -> dict | None:
@@ -1193,6 +1216,9 @@ def _fast_checks_stand(github, tree: Path, base: str, head: str, base_sha: str, 
 def hosted_fast_ran(found: dict) -> str:
     bases = sorted({record['base'][:7] for record in found.values()})
     where = sorted({record.get('runner', 'GitHub-hosted') for record in found.values()})
+    if set(found) == set(HOSTED_PORTABLE_CHECK):
+        return (f'host tests ({" and ".join(where)}: --plan fast-portable with next at {", ".join(bases)}; the SessionKit '
+                'and Mac-rest checks were not required: no Swift inputs; none on the Mac)')
     if set(HOSTED_REST_CHECK) <= set(found):
         return (f'host tests ({" and ".join(where)}: --plan fast-portable, SessionKitCoreTests and --plan fast-mac-rest '
                 f'with next at {", ".join(bases)}; none on the Mac)')
@@ -1846,6 +1872,7 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                 f'Merge {base} into your branch and push; the automerge label runs it again.']
         rest = rest_hosted  # merge on the three hosted checks, testing nothing here (#2459)
         pair = False  # wait here for the hosted pair, then hand the run to the build Mac (#2459, Mac rest off)
+        only_portable = None  # why the Mac checks are not required for this diff (#2596), when they are not
         if hosted:
             # Recheck with the current base's policy on every merge attempt, including reused checks.
             policy = base_policy(ROOT, base, 'scripts/test-scope.py')
@@ -1857,6 +1884,12 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                 else:
                     return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', [
                         'The current diff requires the Mac; remove and re-add automerge to route it again.']
+        if (rest or pair) and hosted_fast_on():
+            _, only_portable = hosted_check_set(ROOT, base)
+            if only_portable:  # merge on the portable check alone, with the Mac off: the Mac jobs were skipped
+                rest, pair = True, False
+                if only_portable not in notes:
+                    notes.append(only_portable)
         if skipped is None:
             if rest or pair:
                 held = t3_gate(comments) if attempt == 1 else None
@@ -1875,7 +1908,8 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                                                 dispatch=lambda: github.dispatch_hosted_checks(pull['head']['ref'],
                                                                                                base),
                                                 newest_base=newest_base,
-                                                **({'checks': HOSTED_FAST_CHECKS} if pair else {}))
+                                                **({'checks': HOSTED_FAST_CHECKS} if pair else
+                                                   {'checks': HOSTED_PORTABLE_CHECK} if only_portable else {}))
                 if why.startswith(MOVED_ON):
                     return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', notes + [f'not merged: {why}']
                 if not found:
@@ -2056,7 +2090,8 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
         rest = False
         if reason and hosted_rest_on():
             found, _ = hosted_rest_checks(github, ROOT, base, head, base_sha, alive=lambda: None,
-                                          dispatch=lambda: 'not from here', wait=0)
+                                          dispatch=lambda: 'not from here', wait=0,
+                                          checks=hosted_check_set(ROOT, base)[0])
             rest = found is not None
             reason = None if rest else reason
         if reason and hosted:  # the hosted job never runs the Mac's host tests: the Mac's release run does
