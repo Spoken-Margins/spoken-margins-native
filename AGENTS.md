@@ -202,11 +202,15 @@ Replace this section when the focus changes; do not append to it.
     - A test that passes on retry 3 or more times in 7 days gets its own `ready` issue in `Showcase`, so an intermittent real bug still surfaces.
     - He said his 2026-10-21 "every test blocks" call was too broad on this point. This narrows that call for retry passes only. Tests still block, and there is still no quarantine and no non-blocking tier.
     - It applies to the hosted integration run (#2602) and the lane's T3 path (#2596).
-- **Owner's standing call (2026-10-25).** Don't ask again:
+- **Owner's standing calls (2026-10-25).** Don't ask again:
   - **A Margin recorded during a friend's Margin is a reply, and he can switch it to independent.** Asked how he should reply to a friend's Margin while it plays (1: a recording made during it becomes a reply, with a toggle; 2: a Reply button on the playing card; 3: leave it), he said: "I think I prefer number one with the margin you record during someone else's becoming a reply, and then the option to toggle that as a independent margin." (#473)
     - A Margin recorded while a shared Margin plays, or within a short window after it ends, is saved as a reply to it by default, on every capture path (in-app button, headphone double-press, Siri). The window is a default taken: 20 seconds.
     - The recording screen, the written-Margin screen and the saved Margin show whom it answers, with a control to make it independent (and back). There is no new Reply button on the playing card.
     - The packet format is unchanged; the reply link already round-trips, so Builds 32 and 34 read these packets as before.
+  - **Neural voices may require a Neural Engine phone, and must keep 2.5× headroom at 2×.** "I am very happy to limit it to phones with a neural engine." and "where the listener is reading at 2x speed... You probably want to be going at 2.5 minimum." A downloadable neural voice (Kokoro, Phonon) is offered only on phones where it renders at least 1.25 × the listening speed; the default floor is A14 (iPhone 12) and newer, per Apple's Neural Engine guidance, and older phones keep Kitten (#2700).
+  - **Render in bursts, not a sustained grind.** He asked that fast voices render ahead and rest "so heat dissipates instead of... just grinding away" (#2703).
+  - **Privacy-preserving telemetry is welcome later; opt-in until it meets the 2026-10-05 bar.** "it is reasonable that we do have telemetry eventually in the app, and especially if the telemetry is privacy-preserving." He would like a public community service of real, sustained on-device TTS performance. Until then, voice performance stays in the local Diagnostics export (#2701).
+  - **Kokoro and Phonon become download options.** "Phonon is sweet. I'd love to get those two as options." (#2704, #2705)
 - **Podcast anchors** continue as stream C4: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
 - **Parked, reference only:**
   - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand. Its packets use a Margin kind this build can't read.
