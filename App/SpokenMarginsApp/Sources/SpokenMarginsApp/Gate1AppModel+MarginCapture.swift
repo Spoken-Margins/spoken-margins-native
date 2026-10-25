@@ -53,6 +53,8 @@ extension Gate1AppModel {
         diagnostics["lastVoiceCapture"] = Self.captureSummary(fields)
         switch health {
         case .capturing where !wasCapturing:
+            // Recovery from a dead microphone lands here too: the repeating cue ends with it (#1977).
+            MarginOutcomeCuePlayer.shared.stop()
             reportSuccess("Recording Margin.")
         case .notCapturing:
             // The source is paused for the recording, so a dead microphone is otherwise silence: say so, softly, until the listener acts (#1977).
