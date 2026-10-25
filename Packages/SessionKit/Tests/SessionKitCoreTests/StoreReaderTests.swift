@@ -50,16 +50,35 @@ final class StoreReaderTests: XCTestCase {
         } catch is Boom {}
     }
 
+    /// A screen's `.task` that is cancelled before its read starts must not run the read (or its writes).
+    /// The sleep's error is swallowed so the cancelled task does reach `read`.
     func testACancelledCallerNeverStartsTheRead() async throws {
         let reader = StoreReader(try makeStore())
         let ran = Ran()
         let task = Task {
-            try await Task.sleep(nanoseconds: 50_000_000)
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            XCTAssertTrue(Task.isCancelled)
             return try await reader.read { _ in ran.mark() }
         }
         task.cancel()
-        _ = try? await task.value
+        let result = await task.result
+        XCTAssertThrowsError(try result.get()) { XCTAssertTrue($0 is CancellationError) }
         XCTAssertFalse(ran.value)
+    }
+
+    /// Cancelling the caller while the read is waiting to run reaches the read's own task.
+    func testCancellingTheCallerReachesTheReadsTask() async throws {
+        let reader = StoreReader(try makeStore())
+        let task = Task {
+            try await reader.read { _ -> Bool in
+                Thread.sleep(forTimeInterval: 0.2)
+                return Task.isCancelled
+            }
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        task.cancel()
+        let sawCancel = try await task.value
+        XCTAssertTrue(sawCancel, "a long read can check Task.isCancelled and stop early")
     }
 
     /// An older answer that arrives after a newer request started is dropped; the newest one is kept.

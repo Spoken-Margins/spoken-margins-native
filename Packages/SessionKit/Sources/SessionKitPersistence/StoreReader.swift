@@ -9,7 +9,8 @@ import Foundation
 ///     let rows = try await StoreReader(store).read { try $0.loadCommunityMapUploads() }
 ///
 /// Reads and writes in one `read` closure run in order on one background task, so a save followed by a read in
-/// the same closure sees the save. Cancelling the awaiting task before the closure starts skips it.
+/// the same closure sees the save. Cancelling the awaiting task before the closure starts skips it; cancelling it
+/// later lets a long closure see `Task.isCancelled`, but a closure that has started runs to its end.
 ///
 /// `readLatest` is for a screen that asks again before the answer comes back: it returns nil for every request
 /// except the newest one with the same key, so an old answer can't overwrite a newer one.
@@ -25,11 +26,18 @@ public struct StoreReader: Sendable {
         priority: TaskPriority = .utility,
         _ body: @escaping @Sendable (SQLiteSessionStore) throws -> Value
     ) async throws -> Value {
+        // A detached task doesn't inherit the caller's cancellation, so it is checked here and passed on below.
+        try Task.checkCancellation()
         let store = store
-        return try await Task.detached(priority: priority) {
+        let task = Task.detached(priority: priority) {
             try Task.checkCancellation()
             return try body(store)
-        }.value
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     /// The newest request for `key` gets its value; an older one that finishes after a newer one started gets nil.
