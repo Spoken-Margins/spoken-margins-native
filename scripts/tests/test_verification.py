@@ -473,9 +473,10 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(status, 'verified')
 
     def skipped_steps(self, manifest):
-        # shipped-compat follows its own path filter (test_shipped_compat_step.py), not the runner and ops test scopes.
+        # shipped-compat (test_shipped_compat_step.py) and tools (test_tools_step.py) follow their own path filters,
+        # not the runner and ops test scopes.
         return {step['name']: step['skipped'] for step in manifest['steps']
-                if step.get('skipped') and step['name'] != 'shipped-compat'}
+                if step.get('skipped') and step['name'] not in ('shipped-compat', 'tools')}
 
     def test_a_lane_run_for_an_app_only_diff_runs_just_the_tests_that_read_the_app(self):
         # #862: runner-tests are about 2 minutes of a 10-minute run, and the ones that read App/ are seconds.
@@ -534,7 +535,7 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
         # The sharing kit's tests (next, #848) read the kit under docs/ and the packet sources under Packages/.
         self.assertIn('test_sharing_kit', verification.RUNNER_TEST_READERS)
-        for path in ('docs/sharing-test-kit/kit.json', 'Packages/SessionKit/Sources/CoopPacket/PacketBuilder.swift'):
+        for path in ('docs/sharing-test-kit/kit.json', 'Packages/SessionKitTools/Sources/CoopPacket/PacketBuilder.swift'):
             self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
         # The third-party notices test (#1823) reads the dependency manifests and the generated list.
         self.assertIn('test_third_party_notices', verification.RUNNER_TEST_READERS)
@@ -1453,8 +1454,8 @@ class VerificationTests(unittest.TestCase):
         retry = self.xcresult_payload(children=[{'nodeType': 'Test Case Run', 'result': 'Failed'},
                                                {'nodeType': 'Test Case Run', 'result': 'Passed'}])
         records = verification.xcresult_test_records(retry)
-        self.assertEqual(records['App/ExportTests/testIsolation']['status'], 'failed')
-        self.assertTrue(verification.reconcile(set(records), records))
+        self.assertEqual(records['App/ExportTests/testIsolation']['status'], 'passed')  # owner 2026-10-24 (#2596)
+        self.assertEqual(verification.reconcile(set(records), records), [])
         skipped = verification.xcresult_test_records(self.xcresult_payload('Skipped'))
         self.assertEqual(skipped['App/ExportTests/testIsolation']['status'], 'skipped')
         self.assertTrue(verification.reconcile(set(skipped), skipped))
@@ -1463,6 +1464,23 @@ class VerificationTests(unittest.TestCase):
             log = "Test Case '-[App.ExportTests testIsolation]' passed (0.125 seconds)."
             failed, _ = verification.completed_test_records(log, 'tests.xcresult')
         self.assertEqual(failed['App/ExportTests/testIsolation']['status'], 'failed')
+
+    def test_fail_then_pass_on_a_rerun_is_a_pass_and_fail_then_fail_is_not(self):
+        # Owner, 2026-10-24 (#2596): "a green run [may] override a red one".
+        name = 'App/ExportTests/testIsolation'
+        line = "Test Case '-[App.ExportTests testIsolation]' {} (0.1 seconds)."
+        log = line.format('failed') + '\n' + line.format('passed')
+        records = verification.test_records(log)
+        self.assertEqual(records[name]['status'], 'passed')
+        self.assertTrue(records[name]['passed_on_retry'])
+        self.assertEqual(verification.reconcile({name}, records), [])
+        twice = verification.test_records(line.format('failed') + '\n' + line.format('failed'))
+        self.assertEqual(twice[name]['status'], 'failed')
+        self.assertTrue(verification.reconcile({name}, twice))
+        runs = lambda *r: self.xcresult_payload(children=[{'nodeType': 'Test Case Run', 'result': x} for x in r])
+        retried = verification.xcresult_test_records(runs('Failed', 'Passed'))[name]
+        self.assertEqual((retried['status'], retried.get('passed_on_retry')), ('passed', True))
+        self.assertEqual(verification.xcresult_test_records(runs('Failed', 'Failed'))[name]['status'], 'failed')
 
     def test_result_bundle_counts_cannot_replace_individual_records(self):
         payload = {'testNodes': [{'nodeType': 'Test Plan', 'name': 'App', 'result': 'Passed'}],
@@ -1485,14 +1503,15 @@ class VerificationTests(unittest.TestCase):
                                     '-resultBundlePath', 'tests.xcresult'], tests=True, expected={identifier})
                 self.assertEqual(run.manifest['steps'][-1]['counts']['passed'], 1)
 
-    def test_passing_retry_cannot_erase_failure(self):
+    def test_a_failure_followed_by_a_pass_is_a_pass_named_as_retried(self):
         log = "\n".join(f"Test Case '-[App.ExportTests testIsolation]' {status} (0.125 seconds)."
                         for status in ('failed', 'passed', 'passed'))
         records = verification.test_records(log)
         result = records['App/ExportTests/testIsolation']
-        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['status'], 'passed')  # owner, 2026-10-24 (#2596)
+        self.assertTrue(result['passed_on_retry'])
         self.assertEqual(len(result['attempts']), 3)
-        self.assertTrue(verification.reconcile(set(records), records))
+        self.assertEqual(verification.reconcile(set(records), records), [])
 
     def test_unknown_selector_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:

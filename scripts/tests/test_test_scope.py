@@ -61,6 +61,16 @@ class TestScopeTests(unittest.TestCase):
         self.assertIn("swift test --package-path Packages/SessionKit --filter 'ListeningEditionTests'", result['run'])
         self.assertFalse(any('xcodebuild' in command for command in result['run']))
 
+    def test_the_tools_package_runs_its_own_tests_without_an_app_compile(self):
+        # coop-packet and phone-plan moved out of SessionKit (#1873). The app never links them, even when one
+        # declares something public, and their tests are in their own package, not in SessionKit's --filter.
+        result = self.classify('Packages/SessionKitTools/Sources/CoopPacket/CoopCheck.swift',
+                               'Packages/SessionKitTools/Tests/CoopPacketTests/CoopResendTests.swift',
+                               'Packages/SessionKitTools/Package.swift',
+                               diffs={'Packages/SessionKitTools/Sources/CoopPacket/CoopCheck.swift': '+public struct X {}'})
+        self.assertEqual(result['tier'], 'T1')
+        self.assertEqual(result['run'], ['bash scripts/run-sessionkit-tests.sh --tools'])
+
     def test_sessionkit_public_api_change_needs_an_app_compile(self):
         diff = '@@ -1 +1 @@\n-    func edition() {}\n+    public func edition() {}\n'
         result = self.classify(KIT + 'SessionKit/ListeningEdition.swift',

@@ -254,8 +254,12 @@ class HostedChecksStandTests(unittest.TestCase):
         self.assertTrue(all('1 commit since touch none of this PR' in line for line in lines))
         self.assertIn(tested[:7], lane.hosted_fast_ran(found))
 
-    def test_next_touching_the_prs_files_or_a_build_input_means_the_whole_plan(self):
-        for name, path in (('the PR\'s file', 'pr.txt'), ('a build input', 'scripts/verify-tests.py')):
+    def test_next_touching_the_prs_files_or_a_global_input_means_the_whole_plan(self):
+        # #2596 (Default taken 5): only the PR's own files and what every PR is built from make a hosted check stale.
+        for name, path in (('the PR\'s file', 'pr.txt'), ('project.yml', 'project.yml'),
+                           ('Package.swift', 'Packages/SessionKit/Package.swift'),
+                           ('Package.resolved', 'Package.resolved'), ('package-lock.json', 'web/package-lock.json'),
+                           ('package.json', 'package.json')):
             with self.subTest(name):
                 self.setUp()
                 head, tested, tree = self.pr()
@@ -263,6 +267,37 @@ class HostedChecksStandTests(unittest.TestCase):
                 found, why = self.stands(head, newest, self.records(head, tested, tree))
                 self.assertIsNone(found)
                 self.assertIn(f'tested it on main at {tested[:7]}', why)
+                self.assertTrue(lane.HOSTED_STALE.search(why), why)
+
+    def test_next_moving_in_scripts_or_workflows_lets_a_hosted_check_stand(self):
+        # 6 of 7 fallbacks on 2026-10-24 were a scripts/ file merged by someone else while the check ran.
+        for path in ('scripts/verify-tests.py', 'scripts/lane-runner.py', '.github/workflows/lane.yml',
+                     'ops/testdesk/x.py', 'App/SpokenMarginsApp/Sources/Other.swift'):
+            with self.subTest(path):
+                self.setUp()
+                head, tested, tree = self.pr()
+                newest = self.move_next(path)
+                found, why = self.stands(head, newest, self.records(head, tested, tree))
+                self.assertEqual(why, '')
+                self.assertEqual(set(found), set(lane.HOSTED_FAST_CHECKS))
+
+    def test_a_base_commit_the_runner_lacks_is_fetched_not_read_as_another_tree(self):
+        # The job's checkout can be older than the tip a fresh hosted run merged onto: git merge-tree cannot merge a
+        # commit it lacks, and that read as "tested a tree that is not ..." (#2596: 4 of 7 fallbacks).
+        head, tested, tree = self.pr()
+        lagging = Path(self.temporary.name) / 'lagging'
+        subprocess.run(self.git + ['clone', '-q', '-b', 'main', str(self.origin), str(lagging)], check=True,
+                       capture_output=True)
+        subprocess.run(self.git + ['-C', str(lagging), 'fetch', '-q', str(self.tree), 'HEAD'], check=True)
+        newest = self.move_next('docs/notes.md')
+        expected = lane.merged_tree(self.tree, newest, head)
+        self.assertIsNotNone(expected)
+        self.assertIsNone(lane.merged_tree(lagging, newest, head))
+        self.assertEqual(lane.merged_tree(lagging, newest, head, fetch='main'), expected)
+        found, why = lane.hosted_fast_checks(None, lagging, 'main', head, newest, env=ON,
+                                             records=self.records(head, newest, expected))
+        self.assertEqual(why, '')
+        self.assertEqual(set(found), set(lane.HOSTED_FAST_CHECKS))
 
     def test_a_record_naming_a_next_the_runner_does_not_have_falls_back(self):
         head, tested, tree = self.pr()
@@ -376,7 +411,7 @@ class SplitPlanTests(unittest.TestCase):
     def test_mac_rest_for_an_app_diff_runs_only_the_sessionkit_rest(self):
         calls, skipped = self.run_plan('fast-mac-rest', ['App/SpokenMarginsApp/X.swift'])
         self.assertEqual(calls, [('slot', None), ('package-steps', {'core_elsewhere': True})])
-        self.assertEqual(skipped, {'hot-file-ratchet', 'runner-tests', 'ops', 'shipped-compat'})
+        self.assertEqual(skipped, {'hot-file-ratchet', 'runner-tests', 'ops', 'tools', 'shipped-compat'})
 
     def test_mac_rest_for_a_lane_diff_also_runs_the_apple_tool_tests_and_ops_disk(self):
         calls, _ = self.run_plan('fast-mac-rest', ['scripts/phone-build'])

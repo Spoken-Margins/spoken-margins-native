@@ -123,6 +123,79 @@ final class MediaPositionNeverBackwardsTests: XCTestCase {
         }
     }
 
+    // MARK: - Coalesced ticks (#2509)
+
+    /// Playing forward with the foreground ticker (twice a second) writes the Session row at most every five seconds.
+    func testTheTickerSavesASteadyAdvanceAtMostEveryFiveSeconds() throws {
+        let (engine, audio, repository) = try playingEngine(startingAt: 10 * 60_000)
+        let firstSaved = repository.sessions["session-2186"]?.position.mediaTimeMs // the start saved it
+        for tick in 1...9 { // up to 4.5 s after the start
+            now += 0.5
+            audio.mediaTimeMs = 10 * 60_000 + tick * 500
+            _ = try engine.syncPlaybackProgress(coalescingWrites: true)
+            XCTAssertEqual(repository.sessions["session-2186"]?.position.mediaTimeMs, firstSaved, "tick \(tick) waits")
+        }
+        XCTAssertEqual(engine.snapshot.currentMediaTimeMs, 10 * 60_000 + 9 * 500, "the screen still follows every tick")
+        now += 0.5 // 5 s since the last save
+        audio.mediaTimeMs = 10 * 60_000 + 5_500
+        _ = try engine.syncPlaybackProgress(coalescingWrites: true)
+        XCTAssertEqual(repository.sessions["session-2186"]?.position.mediaTimeMs, 10 * 60_000 + 5_500, "five seconds on, it is saved")
+    }
+
+    func testAPauseSavesThePlaceTheTickerHeld() throws {
+        let (engine, audio, repository) = try playingEngine(startingAt: 10 * 60_000)
+        audio.mediaTimeMs = 10 * 60_000 + 500
+        _ = try engine.syncPlaybackProgress(coalescingWrites: true)
+        now += 1
+        audio.mediaTimeMs = 10 * 60_000 + 1_500
+        _ = try engine.syncPlaybackProgress(coalescingWrites: true)
+        XCTAssertEqual(repository.sessions["session-2186"]?.position.mediaTimeMs, 10 * 60_000, "held")
+        _ = try engine.pause()
+        XCTAssertEqual(repository.sessions["session-2186"]?.position.mediaTimeMs, 10 * 60_000 + 1_500)
+    }
+
+    func testALifecycleSyncSavesThePlaceTheTickerHeld() throws {
+        let (engine, audio, repository) = try playingEngine(startingAt: 10 * 60_000)
+        audio.mediaTimeMs = 10 * 60_000 + 500
+        _ = try engine.syncPlaybackProgress(coalescingWrites: true)
+        now += 1
+        audio.mediaTimeMs = 10 * 60_000 + 1_500
+        _ = try engine.syncPlaybackProgress(coalescingWrites: true)
+        _ = try engine.syncPlaybackProgress() // going to the background
+        XCTAssertEqual(repository.sessions["session-2186"]?.position.mediaTimeMs, 10 * 60_000 + 1_500)
+    }
+
+    func testOpeningAnotherSessionSavesThePlaceTheTickerHeld() throws {
+        let (engine, audio, repository) = try playingEngine(startingAt: 10 * 60_000)
+        let other = Item(id: "item-other", title: "Another", mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil,
+                         externalReference: nil, status: "ready",
+                         media: ItemMedia(sourceType: .nativeMediaFile, url: "file:///episodes/other.mp3", durationMs: durationMs))
+        repository.items[other.id] = other
+        repository.sessions["session-other"] = Session(
+            id: "session-other", itemId: other.id, status: "in_progress", phase: .itemPlayback,
+            currentTargetType: .transcriptBackedMedia, currentTargetId: "file:///episodes/other.mp3",
+            position: Position(mediaTimeMs: 0), completionPercent: 0, playbackRate: 1)
+        audio.mediaTimeMs = 10 * 60_000 + 500
+        _ = try engine.syncPlaybackProgress(coalescingWrites: true)
+        now += 1
+        audio.mediaTimeMs = 10 * 60_000 + 1_500
+        _ = try engine.syncPlaybackProgress(coalescingWrites: true)
+        XCTAssertEqual(repository.sessions["session-2186"]?.position.mediaTimeMs, 10 * 60_000, "held")
+        _ = try engine.inspectSession(sessionId: "session-other")
+        XCTAssertEqual(repository.sessions["session-2186"]?.position.mediaTimeMs, 10 * 60_000 + 1_500)
+    }
+
+    func testAPhaseOrStatusChangeIsNeverHeldBack() throws {
+        let (engine, audio, repository) = try playingEngine(startingAt: 10 * 60_000)
+        audio.mediaTimeMs = 10 * 60_000 + 500
+        _ = try engine.syncPlaybackProgress(coalescingWrites: true)
+        now += 1
+        audio.mediaTimeMs = durationMs // the episode ends inside the five seconds
+        audio.complete = true
+        _ = try engine.syncPlaybackProgress(coalescingWrites: true)
+        XCTAssertEqual(repository.sessions["session-2186"]?.position.mediaTimeMs, durationMs)
+    }
+
     // MARK: - The log
 
     func testASeekBackOfMoreThanAMinuteIsLoggedWithItsCommand() throws {
@@ -225,6 +298,7 @@ private final class ProgressAudioClient: AudioPlaybackClient {
     var activeTargetId: String?
     var mediaTimeMs: Int?
     var mediaPlays: [Int] = []
+    var complete = false
 
     init(durationMs: Int) { self.durationMs = durationMs }
 
@@ -250,6 +324,6 @@ private final class ProgressAudioClient: AudioPlaybackClient {
         }
     }
 
-    func isPlaybackComplete(targetId: String) -> Bool { false }
+    func isPlaybackComplete(targetId: String) -> Bool { complete }
     func playbackStartStatus(targetId: String) -> PlaybackStartStatus { startStatus }
 }

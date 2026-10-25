@@ -7,12 +7,12 @@ import Foundation
 /// the same SessionKit code the app uses, and every packet is read back by the current reader and
 /// the Build 29 reader before it leaves the Mac.
 ///
-///     swift run --package-path Packages/SessionKit coop-packet inspect <packet>...
-///     swift run --package-path Packages/SessionKit coop-packet build <plan.json> [--out <dir>]
-///     swift run --package-path Packages/SessionKit coop-packet check <packet>...
-///     swift run --package-path Packages/SessionKit coop-packet map <edition.json> [--type text|pdf|epub] [--url <link>|--no-url]
+///     swift run --package-path Packages/SessionKitTools coop-packet inspect <packet>...
+///     swift run --package-path Packages/SessionKitTools coop-packet build <plan.json> [--out <dir>]
+///     swift run --package-path Packages/SessionKitTools coop-packet check <packet>...
+///     swift run --package-path Packages/SessionKitTools coop-packet map <edition.json> [--type text|pdf|epub] [--url <link>|--no-url]
 ///
-/// The plan format is in `Packages/SessionKit/Sources/CoopPacket/README.md`.
+/// The plan format is in `Packages/SessionKitTools/Sources/CoopPacket/README.md`.
 
 let usage = """
 usage:

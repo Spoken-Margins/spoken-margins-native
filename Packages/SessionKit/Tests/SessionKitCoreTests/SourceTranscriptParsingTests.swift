@@ -134,11 +134,19 @@ final class SourceTranscriptParsingTests: XCTestCase {
         for literal in [
             #"diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "no_links""#,
             #"diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "scheduled:\(sortedLinks.count)""#,
-            #"self.diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "attached:\(link.type)""#,
             #"lastFailure = "empty:\(link.type)""#,
-            #"self.diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "unavailable:\(lastFailure)""#
+            #"self.finishDiscoveredSourceTranscript(timeline, itemId: itemId, linkType: link.type)"#,
+            #"self.markSourceTranscriptUnavailable(itemId: itemId, lastFailure: lastFailure)"#
         ] {
             XCTAssertTrue(scheduler.contains(literal), literal)
+        }
+        // The attached and unavailable values are written by the labelled main-actor finishes (#2512).
+        let finishes = try TestInputs.text(.appSources, "Gate1AppModel+TranscriptionRecovery.swift")
+        for literal in [
+            #"diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "attached:\(linkType)""#,
+            #"diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "unavailable:\(lastFailure)""#
+        ] {
+            XCTAssertTrue(finishes.contains(literal), literal)
         }
     }
 

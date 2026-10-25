@@ -34,6 +34,12 @@ extension Item: LibraryItemFields {
     }
 }
 
+/// A repository that can find the items made from one web address without reading the rest of the Library. A re-import
+/// uses it, so finding "have I imported this before" does not parse every document's text.
+public protocol ItemAddressLookup {
+    func listItems(withExternalReference address: String) throws -> [Item]
+}
+
 /// An item as the Library list needs it: every field of `Item` the rows read, and no `text` or `documentStructure`.
 /// Those two are most of an article's or book's bytes, and decoding them for every item made each tap that rebuilds the
 /// Library wait for the whole store (#2102). It is a type of its own, not an `Item` with the text left out, so a

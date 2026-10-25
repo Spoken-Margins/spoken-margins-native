@@ -70,6 +70,26 @@ final class Gate1ChapterNavigationMessagesTests: XCTestCase {
         XCTAssertFalse(model.isGeneratingListeningMap)
     }
 
+    /// #2620: the injected client says the model is absent, so the test does not depend on which
+    /// simulator or phone it runs on. The local map is deterministic and must not need the model.
+    func testMapGenerationOnADeviceWithoutTheOnDeviceModelSaysGeneratedListeningMap() {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
+            localFoundationModelClient: NoModelFoundationModelClient()
+        )
+        model.resetAndSeed()
+        importPlainText(into: model)
+        XCTAssertFalse(model.localFoundationModelAvailable)
+
+        model.generateListeningMap()
+
+        XCTAssertNil(model.lastError)
+        XCTAssertEqual(model.statusMessage, "Generated Listening Map.")
+        XCTAssertEqual(model.diagnostics["lastListeningMapMode"], "local_deterministic")
+        XCTAssertFalse(model.selectedItem.chapters.isEmpty)
+    }
+
     func testMapGenerationWithoutProviderKeySaysGeneratedLocalListeningMap() {
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
@@ -92,5 +112,16 @@ final class Gate1ChapterNavigationMessagesTests: XCTestCase {
         model.importText = "A paragraph without structural headings. Another sentence follows. A third one closes it."
         model.importTextItem()
         XCTAssertTrue(model.selectedItem.chapters.isEmpty, "The map paths start from an item without chapters")
+    }
+}
+
+private struct NoModelFoundationModelClient: LocalFoundationModelClient {
+    func availability() -> LocalFoundationModelAvailability { .unavailable("No on-device model in this test") }
+    func summarizeInterjections(context: String) async throws -> String { throw LocalFoundationModelError.unavailable("test") }
+    func labelListeningMapChapter(text: String, chapterNumber: Int) async throws -> LocalListeningMapLabel {
+        throw LocalFoundationModelError.unavailable("test")
+    }
+    func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String {
+        throw LocalFoundationModelError.unavailable("test")
     }
 }

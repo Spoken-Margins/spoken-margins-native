@@ -5,7 +5,7 @@ import XCTest
 
 /// A friend who shares again sends the Margins they already sent (#858). Each row is a neighbouring
 /// input of the matching rule, run through a real SQLite Library. The same flow with real packets
-/// is in SessionKitTests/CoopResendTests.
+/// is in CoopResendTests, in Packages/SessionKitTools (#1873).
 final class ImportedMarginResendsTests: XCTestCase {
     private var folder: URL!
     private var store: SQLiteSessionStore!

@@ -26,26 +26,43 @@ extension Gate1AppModel {
     }
 
     /// The tap hands over what was heard around a Margin: write it to temporary files, then transcribe if the
-    /// Margin's own note transcription has finished (otherwise that completion schedules this).
-    func handleHeardSourceWindow(_ window: HeardAudioWindow) {
+    /// Margin's own note transcription has finished (otherwise that completion schedules this). The files, up to two
+    /// minutes of audio, are written and removed off the main thread (#2510).
+    func handleHeardSourceWindow(_ window: HeardAudioWindow) async {
         let key = HeardAudioWindowRecorder.key(window.request)
         let diagnosticKey = Self.marginDiagnosticKey("heardSourceWindow", sessionId: window.request.sessionId, interjectionId: window.request.interjectionId)
+        let root = heardSourceWindows.rootDirectory
+        let ticket = heardSourceWindows.reserve(key)
+        let written = await Task.detached(priority: .utility) {
+            Result { try HeardSourceWindowFiles.write(window, in: root) }
+        }.value
         let files: [HeardSourceWindowFiles.Segment]
-        do { files = try heardSourceWindows.store(window, key: key) } catch {
+        switch written {
+        case .success(let segments): files = segments
+        case .failure(let error):
             diagnostics[diagnosticKey] = "write_failed:\(error.localizedDescription)"
             return
         }
+        // A newer hand-over for this Margin may have started while this one wrote; the newer window wins, in either order.
+        guard heardSourceWindows.isLatest(ticket, for: key) else {
+            HeardSourceWindowFiles.deleteInBackground(files)
+            return
+        }
+        HeardSourceWindowFiles.deleteInBackground(heardSourceWindows.adopt(files, key: key))
         let totalMs = files.reduce(0) { $0 + $1.durationMs }
         diagnostics[diagnosticKey] = "captured:\(totalMs)ms;segments=\(files.count);before=\(window.coversBeforeAnchor ? 1 : 0);after=\(window.coversAfterAnchor ? 1 : 0);end=\(window.endReason)"
         // #652: drop the files when the Margin is gone or its context is already ready, since nothing would use them.
         // If the Margins can't be read, keep them: a later schedule may still need them.
-        guard !files.isEmpty, let store, let margins = try? store.loadInterjections(sessionId: window.request.sessionId) else { return }
-        let interjection = margins.first(where: { $0.id == window.request.interjectionId })
-        guard let interjection, HeardSourceWindowFiles.isStillNeeded(by: interjection) else {
-            heardSourceWindows.discard(key)
-            return
+        // The Margin read and the schedule run on the main thread after the write; label them for the hang probe (#2512).
+        hangTelemetry.labels.scoped("heardSourceWindow") {
+            guard !files.isEmpty, let store, let margins = try? store.loadInterjections(sessionId: window.request.sessionId) else { return }
+            let interjection = margins.first(where: { $0.id == window.request.interjectionId })
+            guard let interjection, HeardSourceWindowFiles.isStillNeeded(by: interjection) else {
+                heardSourceWindows.discardInBackground(key)
+                return
+            }
+            scheduleSourceWindowContextIfNeeded(for: interjection)
         }
-        scheduleSourceWindowContextIfNeeded(for: interjection)
     }
 
     /// No heard audio yet: the tap delivers it about a minute after playback resumes. If it never arrives (the
@@ -98,7 +115,7 @@ extension Gate1AppModel {
                     try? SourceTranscriptionCaches.remove(.windows, itemId: scratchID, cachesDirectory: caches)
                 }
             }
-            HeardSourceWindowFiles.delete(files)
+            HeardSourceWindowFiles.deleteInBackground(files)
             await MainActor.run {
                 self.pendingSourceContextInterjectionIds.remove(key)
                 let timeline = HeardAudioWindow.episodeTimeline(parts)
@@ -152,7 +169,7 @@ extension Gate1AppModel {
            ) {
             run { engine in
                 snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjection.id, sessionId: interjection.sessionId, timeline: window)
-                heardSourceWindows.discard(Self.marginIdentity(interjection)) // #652: the context is ready without it
+                heardSourceWindows.discardInBackground(Self.marginIdentity(interjection)) // #652: the context is ready without it
                 refreshSelectedItem()
                 refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
                 if reportsResult { reportConfirmation("Source context recovered.") }
@@ -226,7 +243,7 @@ extension Gate1AppModel {
                 )
                 self.run { engine in
                     self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjectionId, sessionId: interjection.sessionId, timeline: analysis.timeline)
-                    self.heardSourceWindows.discard(identity) // #652: the context is ready without it
+                    self.heardSourceWindows.discardInBackground(identity) // #652: the context is ready without it
                     if !reference.evidence.isEmpty {
                         try self.persistPodcastAnchorEvidence(
                             request: request,
@@ -293,7 +310,14 @@ extension Gate1AppModel {
         case .unavailable, nil:
             schedulePodcastAnchorEvidenceCapture(for: interjection)
         }
-        diagnostics[Self.marginDiagnosticKey("interjectionAudioAtCapture", interjection)] = interjectionAudioEvidence(for: audioPath)
+        let audioEvidenceKey = Self.marginDiagnosticKey("interjectionAudioAtCapture", interjection)
+        let supportDirectory = try? FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false
+        )
+        Task.detached(priority: .utility) { [weak self] in
+            let evidence = Self.interjectionAudioEvidence(for: audioPath, applicationSupportDirectory: supportDirectory)
+            await MainActor.run { self?.diagnostics[audioEvidenceKey] = evidence }
+        }
         diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "scheduled"
         Task {
             do {
@@ -350,5 +374,21 @@ extension Gate1AppModel {
                 }
             }
         }
+    }
+
+    /// A diagnostics string only, so it reads the file (size, and an `AVAudioFile` open for the length) away from
+    /// the main actor (#2510).
+    nonisolated static func interjectionAudioEvidence(for path: String, applicationSupportDirectory: URL?) -> String {
+        guard let url = resolvedInterjectionAudioURL(for: path, applicationSupportDirectory: applicationSupportDirectory) else {
+            return "duration_ms=unknown;bytes=unknown"
+        }
+        let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
+        #if canImport(AVFoundation)
+        if let audioFile = try? AVAudioFile(forReading: url), audioFile.processingFormat.sampleRate > 0 {
+            let durationMs = Int((Double(audioFile.length) / audioFile.processingFormat.sampleRate * 1000).rounded())
+            return "duration_ms=\(durationMs);bytes=\(bytes)"
+        }
+        #endif
+        return "duration_ms=unknown;bytes=\(bytes)"
     }
 }

@@ -41,8 +41,9 @@ extension Gate1AppModel {
         #if canImport(BackgroundTasks) && canImport(UIKit)
         let enabled = automaticAudioPreparationPolicy == .whileCharging
         Task { [weak self] in
-            if enabled { await self?.enqueueAutomaticAudioPreparationJobs() }
-            self?.scheduleAudioPreparationBackgroundTask()
+            guard let self else { return }
+            if enabled { await self.enqueueAutomaticAudioPreparationJobs() }
+            self.hangTelemetry.labels.scoped("scheduleAudioPreparation") { self.scheduleAudioPreparationBackgroundTask() }
         }
         #endif
     }
@@ -69,11 +70,12 @@ extension Gate1AppModel {
         }
         do {
             let store = try requireStore()
-            let item = try store.loadItem(id: itemId)
-            guard item.deletedAt == nil, item.sourceCompletedAt == nil,
+            // A summary has everything these checks read; the item's text is not needed to decide (#2506).
+            guard let item = try store.loadItemSummary(id: itemId),
+                  item.deletedAt == nil, item.sourceCompletedAt == nil,
                   !PreparationChunkGate.itemAlreadyListened(try store.loadSessions(itemId: itemId)),
                   LibraryRowBuilder.shouldPrewarmTextAudio(for: item),
-                  item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                  item.hasListenableText else {
                 return
             }
             pendingStartupAudioPreparationItemIds.insert(itemId)
@@ -365,12 +367,14 @@ extension Gate1AppModel {
                 reportConfirmation("\(item.title) is already available offline.")
                 return
             }
-            _ = try PreparedAudioEnqueue.configureJob(manifest: manifest, sourceText: sourceText, repository: store, request: .explicit)
-            try refreshLibraryRows(store: store)
-            diagnostics["explicitAudioPreparation:\(item.id)"] = "queued"
-            reportConfirmation("Prioritized \(item.title) for audio preparation.")
-            scheduleAudioPreparationBackgroundTask()
-            startForegroundAudioPreparationIfNeeded()
+            try hangTelemetry.labels.scoped("explicitAudioPreparationQueued") {
+                _ = try PreparedAudioEnqueue.configureJob(manifest: manifest, sourceText: sourceText, repository: store, request: .explicit)
+                try refreshLibraryRows(store: store)
+                diagnostics["explicitAudioPreparation:\(item.id)"] = "queued"
+                reportConfirmation("Prioritized \(item.title) for audio preparation.")
+                scheduleAudioPreparationBackgroundTask()
+                startForegroundAudioPreparationIfNeeded()
+            }
         } catch PreparedAudioEnqueue.Rejection.staleSource {
             diagnostics["explicitAudioPreparation:\(item.id)"] = "retired_source"
         } catch {

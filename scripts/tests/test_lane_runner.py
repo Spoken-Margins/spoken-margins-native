@@ -459,7 +459,38 @@ class T3Tests(unittest.TestCase):
         self.assertEqual(lane.t3_verdict([failing], ['failed_or_incomplete']), 'FAIL')
         broken = lane.summarize_manifest({'steps': [{'name': 'build-for-testing', 'errors': ['Process exit 65']}]})
         self.assertEqual(lane.t3_verdict([broken], ['failed_or_incomplete']), 'FAIL')
-        self.assertEqual(lane.t3_verdict([lane.summarize_manifest({'steps': []})], ['verified']), 'PASS')
+        ran = lane.summarize_manifest({'steps': [{'name': 'xcode-tests', 'tests': {'A/test1': {'status': 'passed'}}}]})
+        self.assertEqual(lane.t3_verdict([ran], ['verified']), 'PASS')
+
+    def test_a_verified_plan_that_ran_no_requested_test_is_a_fail_not_a_pass(self):
+        """#2596: SupertonicSpeechTests "ran" 0 tests in the adapters plan and a verified plan counted as a pass."""
+        ran = {'status': 'verified', 'steps': [{'name': 'xcode-tests', 'tests': {'T/A/test1': {'status': 'passed'}}}]}
+        nothing = {'status': 'verified', 'steps': [{'name': 'xcode-tests', 'tests': {}}]}
+        for plans, verdict in (({'app': ran}, 'PASS'), ({'app': nothing}, 'FAIL'), ({'app': ran, 'adapters': nothing}, 'FAIL')):
+            with self.subTest(plans=list(plans), verdict=verdict):
+                grouped = {plan: ['T/A'] for plan in plans}
+                summaries, statuses, _, details = lane.run_plans(grouped, lambda plan, *_: plans[plan], Path('/e'))
+                self.assertEqual(lane.t3_verdict(summaries, statuses), verdict)
+                self.assertEqual(any('ran 0 of the requested tests' in line for line in details), verdict == 'FAIL')
+        # A plan that did not finish is the lane's trouble, not a verdict on the requested test.
+        stopped = lane.summarize_manifest({'steps': []})
+        self.assertEqual(lane.t3_verdict([stopped], ['failed_or_incomplete']), 'INCONCLUSIVE')
+
+    def test_only_a_deliberate_wait_is_a_hold(self):
+        held = ['not merged: held for T3: this PR\'s newest /lane T3 request has no lane report yet.']
+        self.assertTrue(lane.is_hold('INCONCLUSIVE', ['tested nothing'] + held))
+        self.assertTrue(lane.is_hold('INCONCLUSIVE', ['not merged by the runner: it touches .github/']))
+        self.assertFalse(lane.is_hold('INCONCLUSIVE', ['The Mac\'s simulator slots stayed busy']))
+        self.assertFalse(lane.is_hold('INCONCLUSIVE', []))
+        self.assertFalse(lane.is_hold('FAIL', held))
+        self.assertFalse(lane.is_hold('PASS', held))
+
+    def test_the_outcome_tells_the_workflow_whether_an_inconclusive_run_was_a_hold(self):
+        for held in (True, False):
+            with tempfile.TemporaryDirectory() as folder, mock.patch.dict(os.environ, {'GITHUB_OUTPUT': f'{folder}/out'}):
+                lane.record_outcome('INCONCLUSIVE', held)
+                self.assertEqual((Path(folder) / 'out').read_text(),
+                                 f'reported=true\nverdict=INCONCLUSIVE\nheld={str(held).lower()}\n')
 
     def test_an_interrupted_build_or_a_flood_is_inconclusive_not_a_failure(self):
         timed_out = lane.summarize_manifest({'steps': [{'name': 'build-for-testing', 'interrupted': True,
@@ -519,7 +550,7 @@ class T3Tests(unittest.TestCase):
 
         def tests(*_):
             now[0] += 900
-            return [lane.summarize_manifest({'steps': []})], ['verified'], ['A (1 passed)'], []
+            return [lane.summarize_manifest({'steps': [{'name': 'xcode-tests', 'tests': {'T/A/test1': {'status': 'passed'}}}]})], ['verified'], ['A (1 passed)'], []
 
         import lane_sim
         with mock.patch.object(lane, 'time', fake_time), \
@@ -543,7 +574,7 @@ class T3Tests(unittest.TestCase):
                 mock.patch.object(lane, 'boot_t3_device', return_value=(None, {
                     'pressure': 'normal', 'pressure_waited': 0, 'tolerated': 'SpringBoard restarted (pid 1 -> 2)',
                     'boot_window': (0.0, 1.0)})), \
-                mock.patch.object(lane, 'run_plans', return_value=([lane.summarize_manifest({'steps': []})], ['verified'],
+                mock.patch.object(lane, 'run_plans', return_value=([lane.summarize_manifest({'steps': [{'name': 'xcode-tests', 'tests': {'T/A/test1': {'status': 'passed'}}}]})], ['verified'],
                                                                    ['A (1 passed)'], [])), \
                 tempfile.TemporaryDirectory() as temporary:
             verdict, _, _, details, crashes, cc = lane._t3_on_fresh_device(
@@ -552,6 +583,15 @@ class T3Tests(unittest.TestCase):
         self.assertIn("tolerated one SpringBoard change in the first 30 s of the first boot (owner's rule, #184)", details[1])
         self.assertTrue(any('marked unsafe and deleted' in line for line in details))
         self.assertEqual(crashes, 'none')
+
+    def test_the_report_names_the_phone_and_runtime_the_clone_used(self):
+        # Not a fixed "iPhone 17": the hosted image's runtime can take a different phone (#2557).
+        import lane_sim
+        with mock.patch.object(lane_sim, 'device_type', return_value='com.apple.CoreSimulator.SimDeviceType.iPhone-18'):
+            _, where, *_ = self._t3_with((None, {'pressure': 'normal', 'pressure_waited': 0, 'boot_window': (0.0, 1.0)}),
+                                         ([lane.summarize_manifest({'steps': []})], ['verified'], ['A (1 passed)'], []),
+                                         mock.Mock(return_value=False))
+        self.assertEqual(where, 'cloned iPhone 18, iOS 26.5')
 
     def _t3_with(self, boot, plans, back_to_one):
         import lane_sim
@@ -579,7 +619,7 @@ class T3Tests(unittest.TestCase):
                 self.assertEqual(back_to_one.call_count, expected)
                 self.assertIn(f'{period} period', details[0])
                 self.assertEqual(any('back to one simulator' in line for line in details), bool(expected))
-        passing = ([lane.summarize_manifest({'steps': []})], ['verified'], ['A (1 passed)'], [])
+        passing = ([lane.summarize_manifest({'steps': [{'name': 'xcode-tests', 'tests': {'T/A/test1': {'status': 'passed'}}}]})], ['verified'], ['A (1 passed)'], [])
         back_to_one = mock.Mock(return_value=True)
         self.assertEqual(self._t3_with((None, {'period': 'two-simulator'}), passing, back_to_one)[0], 'PASS')
         back_to_one.assert_not_called()
@@ -709,7 +749,7 @@ class T3VerifyTestsLaunchTests(unittest.TestCase):
             return lane._t3_on_fresh_device(grouped, 'r7', self.evidence, self.RUNTIME)
 
     def test_each_plan_runs_verify_tests_on_the_claimed_simulator_with_exactly_its_selectors(self):
-        self.behave({'status': 'verified', 'steps': []})
+        self.behave({'status': 'verified', 'steps': [{'name': 'xcode-tests', 'tests': {'T/A/test1': {'status': 'passed'}}}]})
         verdict, _, _, _, _, _ = self.run_t3({'app': ['AppTests/AlphaTests', 'AppTests/BetaTests/testOne'],
                                               'adapters': ['AudioTests/GammaTests']})
         self.assertEqual(verdict, 'PASS')
@@ -731,7 +771,7 @@ class T3VerifyTestsLaunchTests(unittest.TestCase):
     def test_the_manifest_status_decides_the_verdict(self):
         failed = {'status': 'failed_or_incomplete', 'steps': [{'name': 'xcode-tests', 'exit_code': 65, 'tests': {
             'AppTests/AlphaTests/testBad': {'status': 'failed'}}}]}
-        for manifest, expected in (({'status': 'verified', 'steps': []}, 'PASS'), (failed, 'FAIL')):
+        for manifest, expected in (({'status': 'verified', 'steps': [{'name': 'xcode-tests', 'tests': {'T/A/test1': {'status': 'passed'}}}]}, 'PASS'), (failed, 'FAIL')):
             with self.subTest(status=manifest['status']):
                 self.behave(manifest)
                 self.assertEqual(self.run_t3({'app': ['AppTests/AlphaTests']})[0], expected)
@@ -763,14 +803,79 @@ class RunnerDeviceTests(unittest.TestCase):
             {'name': name, 'udid': f'U{index}'} for index, name in enumerate(names)]}}
         commands = []
 
-        def run(command, **_):
+        def bounded(command, timeout, **_):
             commands.append(command)
-            return subprocess.CompletedProcess(command, 0)
+            self.assertLessEqual(timeout, lane.SWEEP_SIMCTL_TIMEOUT)
+            return json.dumps(listing) if command[2] == 'list' else ''
 
-        with mock.patch.object(lane.subprocess, 'check_output', return_value=json.dumps(listing)), \
-                mock.patch.object(lane.subprocess, 'run', side_effect=run):
+        import simctl_preflight
+        with mock.patch.object(simctl_preflight, 'problem', return_value=None), \
+                mock.patch.object(simctl_preflight, 'bounded_output', side_effect=bounded):
             lane.sweep_runner_simulators()
         return [c[-1] for c in commands if c[:3] == ['xcrun', 'simctl', 'delete']]
+
+    def test_a_hanging_simctl_stops_the_sweep_fast_and_leaves_no_process_behind(self):
+        """#2591: on 2026-10-24, after an Xcode update, `xcrun simctl list` ran `xcodebuild -runFirstLaunch`,
+        which waited on a password dialog forever, and the sweep's bare check_output waited with it."""
+        import simctl_preflight
+        import threading
+        with tempfile.TemporaryDirectory() as tmp:
+            pids = Path(tmp) / 'pids'
+            fake = Path(tmp) / 'xcrun'  # stands in for xcrun: a child that never answers, like the password wait
+            fake.write_text(f'#!/bin/sh\nsleep 300 &\necho "$$ $!" > {pids}\nwait\n')
+            fake.chmod(0o755)
+            out = []
+            sweep = threading.Thread(target=lane.sweep_runner_simulators, daemon=True)
+            try:
+                with mock.patch.dict(os.environ, {'PATH': f'{tmp}:{os.environ.get("PATH", "")}'}), \
+                        mock.patch.object(simctl_preflight, 'problem', return_value=None), \
+                        mock.patch.object(lane, 'SWEEP_SIMCTL_TIMEOUT', 1, create=True), \
+                        mock.patch('builtins.print', side_effect=lambda *a, **_: out.append(' '.join(map(str, a)))):
+                    sweep.start()
+                    sweep.join(15)
+                    self.assertFalse(sweep.is_alive(), 'the sweep is still waiting on a simctl that never answers')
+                started = [int(pid) for pid in pids.read_text().split()]
+                time.sleep(0.2)
+                for pid in started:
+                    with self.assertRaises(ProcessLookupError, msg=f'pid {pid} outlived the sweep'):
+                        os.kill(pid, 0)
+                self.assertTrue(any('gave no answer' in line and 'runFirstLaunch' in line for line in out), out)
+            finally:
+                if pids.exists():  # only the stand-in's own processes, if the sweep left them
+                    for pid in (int(p) for p in pids.read_text().split()):
+                        with contextlib.suppress(ProcessLookupError, PermissionError):
+                            os.kill(pid, signal.SIGKILL)
+
+    def test_a_simctl_that_would_wait_on_xcode_s_install_is_never_run(self):
+        import simctl_preflight
+        why = 'CoreSimulator is older than Xcode expects (1.0, Xcode wants 2.0); run it'
+        with tempfile.TemporaryDirectory() as tmp:
+            ran = Path(tmp) / 'ran'
+            fake = Path(tmp) / 'xcrun'  # never the Mac's own simctl, which may be the one that hangs
+            fake.write_text(f'#!/bin/sh\ntouch {ran}\nexit 1\n')
+            fake.chmod(0o755)
+            with mock.patch.dict(os.environ, {'PATH': f'{tmp}:{os.environ.get("PATH", "")}'}), \
+                    mock.patch.object(simctl_preflight, 'problem', return_value=why), \
+                    mock.patch('builtins.print') as printed:
+                lane.sweep_runner_simulators()
+            self.assertFalse(ran.exists(), 'simctl ran although the preflight named why it would hang')
+        self.assertIn(why, printed.call_args.args[0])
+
+    def test_a_failed_delete_is_not_reported_as_deleted(self):
+        import simctl_preflight
+        listing = json.dumps({'devices': {'r': [{'name': lane.RUNNER_SIMULATOR_PREFIX + 'pr3-r3', 'udid': 'U0'}]}})
+
+        def bounded(command, timeout, **_):
+            if command[2] == 'delete':
+                raise subprocess.CalledProcessError(1, command)
+            return listing if command[2] == 'list' else ''
+
+        with mock.patch.object(simctl_preflight, 'problem', return_value=None), \
+                mock.patch.object(simctl_preflight, 'bounded_output', side_effect=bounded), \
+                mock.patch('builtins.print') as printed:
+            lane.sweep_runner_simulators()
+        lines = [c.args[0] for c in printed.call_args_list]
+        self.assertFalse(any(line.startswith('Deleted') for line in lines), lines)
 
     def test_a_sweep_leaves_a_running_t3_s_device_alone_and_deletes_leftovers(self):
         claim = lane.claim_runner_device('SM Lane Runner pr432-r36724477838')
@@ -816,7 +921,7 @@ class RunnerDeviceTests(unittest.TestCase):
                 mock.patch.object(lane_sim, 'start_watcher'), mock.patch.object(lane_sim, 'release', side_effect=release), \
                 mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
                 mock.patch.object(lane, 'boot_t3_device', return_value=(None, {})), \
-                mock.patch.object(lane, 'run_plans', return_value=([lane.summarize_manifest({'steps': []})], ['verified'],
+                mock.patch.object(lane, 'run_plans', return_value=([lane.summarize_manifest({'steps': [{'name': 'xcode-tests', 'tests': {'T/A/test1': {'status': 'passed'}}}]})], ['verified'],
                                                                    ['A (1 passed)'], [])), \
                 tempfile.TemporaryDirectory() as temporary:
             lane._t3_on_fresh_device({'app': ['T/A']}, 'pr7-r7', Path(temporary),
@@ -867,7 +972,7 @@ class T3PreparationTests(unittest.TestCase):
                 commands.append(command)
                 output = evidence / 'verify-build'
                 output.mkdir()
-                (output / 'manifest.json').write_text(json.dumps({'status': 'verified', 'steps': []}))
+                (output / 'manifest.json').write_text(json.dumps({'status': 'verified', 'steps': [{'name': 'xcode-tests', 'tests': {'T/A/test1': {'status': 'passed'}}}]}))
                 return 0
 
             with mock.patch.object(lane, 'run_bounded', side_effect=run):
@@ -896,7 +1001,7 @@ class LostDeviceTests(unittest.TestCase):
 
         def run_plan(plan, selectors, output):
             calls.append(plan)
-            return first if plan == 'app' else {'status': 'verified', 'steps': []}
+            return first if plan == 'app' else {'status': 'verified', 'steps': [{'name': 'xcode-tests', 'tests': {'T/A/test1': {'status': 'passed'}}}]}
         return calls, run_plan
 
     def test_a_failed_readiness_step_stops_the_remaining_plans_with_one_inconclusive(self):
@@ -1495,6 +1600,34 @@ class MergeTests_Runner(unittest.TestCase):
                 self.assertEqual((got, events, github.posted), (verdict, ['build'], []))
                 self.assertIn(f'not merged: held for T3: the newest T3 lane report on this PR is {verdict} (on {HEAD[:7]}: '
                               'https://example.test/t3)', details[-1])
+
+    def no_tests_t3_report(self, commit=HEAD):
+        wanted = lane.identity('T3', commit, MERGE, [])
+        details = [f'{lane.NO_TESTS_T3}, and test-scope.py suggests no app test classes for this diff.']
+        return comment(lane.report('pr1-r1', 'INCONCLUSIVE', commit, MERGE, 'T3', 'no simulator', 1, 'nothing', details,
+                                   'none', '/e', 'owner', wanted), login='github-actions[bot]')
+
+    def test_a_t3_request_with_no_tests_holds_nothing_once_the_lane_says_so(self):
+        # #2550 (from #2434): the "names no tests" report was the newest T3 report, so every later automerge pass
+        # said "held for T3" and tested nothing, for a day, with all hosted checks green.
+        github = FakeGitHub(labels=('automerge',),
+                            comments=[comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report()])
+        self.assertIsNone(lane.t3_gate(github._comments))
+        (got, _, _, _), events = self.run_auto(github)
+        self.assertEqual((got, events), ('PASS', ['build', 'comment', 'push m1', 'sweep']))
+
+    def test_a_no_tests_t3_report_does_not_lift_an_earlier_fail_or_a_later_request(self):
+        failed = [self.T3_REQUEST, self.t3_report('FAIL', commit=NEWER)]
+        voided = failed + [comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report()]
+        self.assertEqual(lane.t3_gate(voided)[0], 'FAIL')  # the earlier FAIL still holds
+        named = [comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report(), self.T3_REQUEST]
+        self.assertIn('no lane report yet', lane.t3_gate(named)[1])  # a later request that names tests still waits
+
+    def test_a_bare_request_after_a_named_one_does_not_void_the_named_one(self):
+        # The audit of #2556: the runner answers only the newest request, so a no-tests report for a bare request
+        # must not make the earlier request that named tests look answered.
+        comments = [self.T3_REQUEST, comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report()]
+        self.assertIn('no lane report yet', lane.t3_gate(comments)[1])
 
     def test_a_t3_request_still_waiting_for_its_report_holds_the_merge(self):
         old_pass = self.t3_report('PASS', commit=NEWER)
@@ -2320,11 +2453,12 @@ class MainFlowTests(unittest.TestCase):
             return dict(line.split('=', 1) for line in outputs.read_text().splitlines())
 
     def test_the_workflow_gets_the_verdict_so_the_check_is_red_on_fail(self):
-        # lane.yml's Verdict step fails on verdict=FAIL; reported=true keeps the tidy step quiet.
+        # lane.yml's Verdict step fails on verdict=FAIL, and on INCONCLUSIVE unless held=true (#2596); reported=true
+        # keeps the tidy step quiet.
         for verdict in ('PASS', 'FAIL', 'INCONCLUSIVE'):
             with self.subTest(verdict=verdict):
                 github = FakeGitHub(comments=[comment('/lane T2')])
-                self.assertEqual(self.outcome(github, verdict), {'reported': 'true', 'verdict': verdict})
+                self.assertEqual(self.outcome(github, verdict), {'reported': 'true', 'verdict': verdict, 'held': 'false'})
                 self.assertTrue(github.posted[0].startswith(f'Lane report pr5-r42 — {verdict}'))
 
     def test_a_repeated_request_carries_the_earlier_verdict_so_a_fail_stays_red(self):
@@ -2332,7 +2466,7 @@ class MainFlowTests(unittest.TestCase):
         self.run_main(github, HEAD, 'FAIL')
         github.labels.add('lane:queued')
         github._comments.append(comment('/lane T2'))
-        self.assertEqual(self.outcome(github, 'PASS'), {'reported': 'true', 'verdict': 'FAIL'})
+        self.assertEqual(self.outcome(github, 'PASS'), {'reported': 'true', 'verdict': 'FAIL', 'held': 'false'})
         self.assertIn('already reported (FAIL)', github.posted[-1])
 
     def test_nothing_is_handed_over_when_nothing_ran(self):
@@ -2366,29 +2500,38 @@ class MainFlowTests(unittest.TestCase):
             scripts.append('\n'.join(lines))
         return scripts
 
-    def test_the_check_is_red_only_on_fail(self):
-        # Project threads wake when a check on their PR fails. A FAIL is the PR's code; an INCONCLUSIVE report
-        # (held for T3, no simulator, XCTest never connected, a flood, a conflict with main) isn't, so its check
-        # stays green with a warning, and the report and the lane:done relabel carry it to the dispatcher.
-        # In 13 hours on 2026-09-30, 29 of the lane's 46 red checks were INCONCLUSIVE, 20 of them held for T3.
+    def test_the_check_is_red_on_fail_and_on_an_inconclusive_that_is_not_a_hold(self):
+        """#2596: a lane that tested nothing must not show green. Hosted T3 ran nothing for days under a green check
+        (#2575) and an automerge run with `ran: nothing` was green (run 40108676974). Only a hold stays green: a PR
+        waiting for T3, an audit or the owner is not failing, and sm_status.py and owner_tap_alert.py read a red
+        check as a failing PR. A runner from before this change writes no `held` output; that stays a warning."""
         scripts = self.verdict_steps()
         # the lane job's, the automerge job's, its automerge-mac fallback's (#2459) and the release job's (#1209)
         self.assertEqual(len(scripts), 4)
         for job, script in zip(('lane', 'automerge', 'automerge-mac', 'release'), scripts):
-            # The release job's check sits on main's tip, not on the PR (#1209): a FAIL there stays a warning.
-            fail = ('FAIL', 0, '::warning title=Lane FAIL') if job == 'release' else ('FAIL', 1, '::error title=Lane FAIL')
-            for verdict, code, annotation in (('PASS', 0, None), ('INCONCLUSIVE', 0, '::warning title=Lane INCONCLUSIVE'),
-                                              fail):
-                with self.subTest(job=job, verdict=verdict):
+            release = job == 'release'  # its check sits on main's tip, not on the PR: nothing there is red
+            for verdict, held, code, annotation in (
+                    ('PASS', '', 0, None),
+                    ('FAIL', '', 0 if release else 1, '::warning title=Lane FAIL' if release else '::error title=Lane FAIL'),
+                    ('INCONCLUSIVE', 'false', 0 if release else 1,
+                     '::warning title=Lane INCONCLUSIVE' if release else '::error title=Lane INCONCLUSIVE'),
+                    ('INCONCLUSIVE', 'true', 0, '::warning title=Lane INCONCLUSIVE'),
+                    ('INCONCLUSIVE', '', 0, '::warning title=Lane INCONCLUSIVE')):
+                with self.subTest(job=job, verdict=verdict, held=held):
                     # GitHub runs a step's script with bash -e when the step names no shell.
-                    done = subprocess.run(['bash', '-e', '-c', script], env=dict(os.environ, VERDICT=verdict),
-                                          capture_output=True, text=True)
+                    done = subprocess.run(['bash', '-e', '-c', script], capture_output=True, text=True,
+                                          env=dict(os.environ, VERDICT=verdict, HELD=held))
                     self.assertEqual(done.returncode, code, done.stdout + done.stderr)
                     self.assertIn(f'Lane verdict: {verdict}', done.stdout)
                     if annotation:
                         self.assertIn(annotation, done.stdout)
                     else:
                         self.assertNotIn('::', done.stdout)
+
+    def test_every_verdict_step_reads_the_held_output_of_its_own_run_step(self):
+        workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/lane.yml').read_text()
+        for step in workflow.split('      - name: Verdict\n')[1:4]:  # the release job's is a warning by design
+            self.assertIn('HELD: ${{ steps.run.outputs.held }}', step)
 
     def run_automerge_main(self, github, verdict='PASS', details=()):
         # run_auto does real git in the runner's tree; here it is faked, so the tree is never touched.
@@ -2666,7 +2809,7 @@ class MainFlowTests(unittest.TestCase):
         with mock.patch.object(lane, 'merge_after_t3', create=True, side_effect=RuntimeError('gh api: 502')), \
                 mock.patch.object(lane, 't3_scope', return_value=([], [])), \
                 mock.patch.object(lane, 'run_t3', return_value=('PASS', 'sim', 'ran', [], 'none', '')):
-            self.assertEqual(self.outcome(github), {'reported': 'true', 'verdict': 'PASS'})
+            self.assertEqual(self.outcome(github), {'reported': 'true', 'verdict': 'PASS', 'held': 'false'})
         self.assertTrue(github.posted[-1].startswith('Lane: the automerge run after the T3 PASS stopped'),
                         github.posted[-1])
         self.assertIn("RuntimeError('gh api: 502')", github.posted[-1])
@@ -3467,7 +3610,7 @@ class BootStallRetryTests(unittest.TestCase):
                 mock.patch.object(lane_sim, 'post_stall') as posted, \
                 mock.patch.object(lane_sim, 'LATE_REPORT_WAIT', 0), \
                 mock.patch.object(lane_sim, 'late_report', return_value=None), \
-                mock.patch.object(lane, 'run_plans', return_value=([lane.summarize_manifest({'steps': []})],
+                mock.patch.object(lane, 'run_plans', return_value=([lane.summarize_manifest({'steps': [{'name': 'xcode-tests', 'tests': {'T/A/test1': {'status': 'passed'}}}]})],
                                                                    ['verified'], ['A (1 passed)'], [])):
             result = lane._t3_on_claimed_device({'app': ['T/A']}, 'r9', evidence,
                                                 'com.apple.CoreSimulator.SimRuntime.iOS-26-5')
@@ -3641,6 +3784,20 @@ class FreshCloneRerunTests(unittest.TestCase):
         self.assertTrue(any('could not start' in line and 'simctl boot U2 failed' in line for line in details))
         self.assertTrue(any('not run: adapters' in line for line in details))
         self.assertIn('simctl boot U2 failed', json.loads((evidence / lane.FRESH_RERUNS).read_text())[0]['boot'])
+
+    def test_a_fresh_clone_that_boots_but_fails_readiness_runs_nothing_more(self):
+        # #2530 (audit of #2179 on 6933707): the stalled run's own steps passed readiness, so only the rerun's
+        # manifest shows the fresh clone is not ready. The adapters plan must not start on it.
+        not_ready = {'status': 'failed_or_incomplete', 'error': 'simulator-ready: Process exit 148',
+                     'steps': [{'name': 'simulator-ready', 'exit_code': 148, 'errors': ['Process exit 148']}]}
+        (verdict, _, ran, details, _, _), released, devices, outputs, evidence = self.run_t3(
+            [stalled_out_manifest(), not_ready], grouped={'app': ['T/A'], 'adapters': ['T/B']})
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertEqual((devices, outputs), (['U1', 'U2'], ['verify-app', 'verify-app-fresh']))
+        self.assertEqual(released, ['U1', 'U2'])
+        self.assertTrue(any('booted but was not ready (verify-tests.py `simulator-ready`)' in line
+                            and 'not run: adapters' in line for line in details), details)
+        self.assertEqual(json.loads((evidence / lane.FRESH_RERUNS).read_text())[0]['not_ready'], 'simulator-ready')
 
     def test_a_fresh_clone_marked_unsafe_by_its_failed_boot_is_not_a_crash_flood(self):
         # Audit on 484c63b: the failed boot marks U2 unsafe ('simctl boot failed'). No watcher ever ran on U2, so

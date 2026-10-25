@@ -33,6 +33,8 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     private var unannouncedLimitExceeded: Set<String> = []
     private var userInitiatedTaskIds: Set<Int> = []
     private var lastProgressPublishDateByItemId: [String: Date] = [:]
+    /// Byte-progress ticks reach the screen at once but the database at most every few seconds (#2509).
+    private var progressWriteGate = ProgressWriteGate()
     private var session: URLSession!
 
     init(
@@ -128,6 +130,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         preparationTasks.removeValue(forKey: itemId)?.cancel()
         activeTaskItemIds.remove(itemId)
         lastProgressPublishDateByItemId[itemId] = nil
+        progressWriteGate.forget(key: itemId)
         if let attempt = attempts.removeValue(forKey: itemId) {
             try? store.deleteOfflineStorageReservation(id: attempt.reservationId)
         }
@@ -482,6 +485,22 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         updated.updatedAt = Date()
         recordsByItemId[updated.itemId] = updated
         try? store.savePodcastDownload(updated)
+        progressWriteGate.didWrite(key: updated.itemId, at: updated.updatedAt)
+        onRecordChanged?(updated)
+    }
+
+    /// A byte-progress tick: the screen sees it now, the row is written at most every `progressWriteGate.interval`
+    /// seconds, so a download does not put a SQLite write on the main actor twice a second (#2509). The
+    /// finishing tick writes at once. Stale bytes in a row are harmless after a kill: a `downloading` row
+    /// is reset to `waitingForWiFi` on restore and the next progress callback restates the bytes.
+    private func persistProgress(_ record: PodcastDownloadRecord, finishing: Bool) {
+        var updated = record
+        updated.updatedAt = Date()
+        recordsByItemId[updated.itemId] = updated
+        if finishing || progressWriteGate.shouldWrite(key: updated.itemId, at: updated.updatedAt) {
+            try? store.savePodcastDownload(updated)
+            progressWriteGate.didWrite(key: updated.itemId, at: updated.updatedAt)
+        }
         onRecordChanged?(updated)
     }
 
@@ -644,7 +663,7 @@ extension PodcastDownloadCoordinator: URLSessionDownloadDelegate {
             record.bytesWritten = totalBytesWritten
             // A chunked download keeps the size the preflight recorded, so it is still known to be announced (#912).
             record.expectedBytes = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : record.expectedBytes
-            self.persist(record)
+            self.persistProgress(record, finishing: complete)
         }
     }
 

@@ -212,9 +212,20 @@ def add_omitted(proposal, items):
                 {'issue': item['number'], 'reason': item['blocked'] or OMITTED})
 
 
+# phone-plan is built in its own package (#1873). A checkout that built it before then has only the old binary,
+# which reads plans the same way; it is used until the new one is built (docs/workstreams/daily-phone-plan.md).
+VALIDATORS = ('Packages/SessionKitTools/.build/release/phone-plan', 'Packages/SessionKit/.build/release/phone-plan')
+
+
+def validator_command():
+    if 'SM_DAILY_VALIDATOR' in os.environ:
+        return shlex.split(os.environ['SM_DAILY_VALIDATOR'])
+    paths = [phone.PUBLIC / path for path in VALIDATORS]
+    return [str(next((path for path in paths if path.exists()), paths[0]))]
+
+
 def validate(request, plan_id):
-    command = shlex.split(os.environ.get('SM_DAILY_VALIDATOR', str(
-        phone.PUBLIC / 'Packages/SessionKit/.build/release/phone-plan')))
+    command = validator_command()
     result = subprocess.run([*command, plan_id], input=json.dumps(request), text=True,
                             capture_output=True, timeout=30)
     if result.returncode:
@@ -234,6 +245,28 @@ def relay(message):
         'anthropic-beta': 'experimental-cc-routine-2026-04-01', 'anthropic-version': '2023-06-01'})
     with urllib.request.urlopen(req, timeout=30) as response:
         response.read()
+
+
+def plain_plan(items, sha, name, error):
+    """A plan with no Claude writer (#2529): the Owner checks as written, nothing combined or audited.
+
+    Every issue is listed as waiting, so no PASS can be applied from it by --results; the owner
+    reads the checks, and the coordinator closes issues from what he reports.
+    """
+    detail = 'timed out' if isinstance(error, subprocess.TimeoutExpired) else str(error) or type(error).__name__
+    reason = f'Plain plan: the plan writer was unavailable ({detail[:120]}); coordinator must turn this check into steps.'
+    lines = [f'# Phone pass {name} (plain plan)', '',
+             f'Build: `{sha}`. The plan writer was unavailable, so these are the checks as written, not a walkthrough.', '',
+             '1. Plug in and unlock your iPhone. Double-click **Install Spoken Margins on iPhone** on the Mac Desktop.',
+             f'2. Open Spoken Margins. If available, Settings > Version must end with `{sha[:7]}`.',
+             '   Keep your Library and recordings. Do not delete or reset anything.', '']
+    for index, item in enumerate(items, start=3):
+        lines.append(f'{index}. #{item["number"]} {item["title"]}')
+        lines.append('   ' + (item['blocked'] or item['check'] or 'No runnable Owner check.').replace('\n', '\n   '))
+    lines += ['', 'Waiting for the coordinator to turn these into steps: ' +
+              ', '.join(f'#{item["number"]}' for item in items), '']
+    return {'markdown': '\n'.join(lines), 'minutes': 2 + 2 * len(items),
+            'blocked': [{'issue': item['number'], 'reason': item['blocked'] or reason} for item in items]}
 
 
 def deliver(now, state, state_path, on_request=False):
@@ -273,14 +306,23 @@ def deliver(now, state, state_path, on_request=False):
         record = saved
     else:
         started = time.monotonic()
-        proposal = propose(items, catalog, archive)
-        add_omitted(proposal, items)
-        # A writer cannot turn an explicitly blocked prerequisite into a check.
-        blocked = {entry['issue']: entry['reason'] for entry in proposal['blocked']}
-        if any(item['blocked'] and blocked.get(item['number']) != item['blocked'] for item in items):
-            raise RuntimeError('writer removed a prerequisite block')
-        output = validate({'build': sha, 'required': numbers, 'previousStillOpen': prior,
-                           'controls': list(catalog), 'proposal': proposal}, name)
+        try:
+            proposal = propose(items, catalog, archive)
+            add_omitted(proposal, items)
+            # A writer cannot turn an explicitly blocked prerequisite into a check.
+            blocked = {entry['issue']: entry['reason'] for entry in proposal['blocked']}
+            if any(item['blocked'] and blocked.get(item['number']) != item['blocked'] for item in items):
+                raise RuntimeError('writer removed a prerequisite block')
+            output = validate({'build': sha, 'required': numbers, 'previousStillOpen': prior,
+                               'controls': list(catalog), 'proposal': proposal}, name)
+        except (OSError, subprocess.SubprocessError, ValueError, RuntimeError, KeyError, TypeError) as error:
+            if not on_request:
+                raise
+            # An attended request must still move the pin (#2529): without a plan the installer
+            # would keep a stale binary. The plain plan carries each Owner check as written.
+            output = plain_plan(items, sha, name, error)
+            proposal = {'checks': [], 'blocked': output.pop('blocked')}
+            output['plain'] = True
         record = {'id': name, 'sha': sha, 'build_number': info.get('bundle_version'), 'issues': numbers,
                   'items': items, 'proposal': proposal, **output, 'results': {},
                   'writer_seconds': round(time.monotonic() - started, 3)}
@@ -303,7 +345,8 @@ def deliver(now, state, state_path, on_request=False):
     link.unlink(missing_ok=True)
     link.symlink_to(folder.name)
     link.replace(root / 'daily-ready')
-    message = (f'Phone pass {name}: build {sha[:7]} ready. About {record["minutes"]} minutes. '
+    plain = ' (plain plan: the writer timed out or failed)' if record.get('plain') else ''
+    message = (f'Phone pass {name}: build {sha[:7]} ready{plain}. About {record["minutes"]} minutes. '
                'Plug in and unlock your iPhone; double-click "Install Spoken Margins on iPhone" on the Desktop. '
                f'Plan: {folder / "test-plan.md"}.\n'
                'Coordinator: post this once, including the walkthrough below. Use the pass ID to deduplicate. '

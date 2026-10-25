@@ -257,8 +257,10 @@ struct LiveSessionView: View {
                 Task {
                     do {
                         try await model.saveLiveSession(session, transcript: nil, placed: [], recordingURL: nil)
-                        controller.discard()
-                        dismiss()
+                        model.hangTelemetry.labels.scoped("liveSessionSavedAsNotes") {
+                            controller.discard()
+                            dismiss()
+                        }
                     } catch {
                         controller.errorMessage = "Couldn't save: \(error.localizedDescription)"
                     }
