@@ -166,7 +166,6 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 manifest.updatedAt = Date()
                 _ = try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: store) { _, _ in
                     try store.savePreparedAudioManifest(manifest)
-                    PreparedAudioChangeSignal.shared.bump()
                     try store.deleteAudioPreparationJob(id: job.id)
                 }
                 return try hasMoreMatchingJobs()
