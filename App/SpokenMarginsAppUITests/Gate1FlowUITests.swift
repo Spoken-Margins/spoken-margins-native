@@ -1080,7 +1080,6 @@ final class Gate1FlowUITests: XCTestCase {
         tapRoot("Margins")
         XCTAssertTrue(element("margins.scope.picker").waitForExistence(timeout: 4))
         captureScreen(named: "margins-scoped-workspace")
-        app.buttons["margins.exportMenu.button"].tap()
         let exportSessions = app.buttons["margins.export.button"]
         XCTAssertTrue(exportSessions.waitForExistence(timeout: 2))
         exportSessions.tap()
@@ -1110,9 +1109,7 @@ final class Gate1FlowUITests: XCTestCase {
         scrollToElement("playback.home.button").tap()
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 4))
         tapRoot("Margins")
-        app.buttons["margins.exportMenu.button"].tap()
-        let exportSessions = app.buttons["margins.export.button"]
-        XCTAssertTrue(exportSessions.waitForExistence(timeout: 2))
+        let exportSessions = scrollToElement("margins.export.button")
         exportSessions.tap()
         XCTAssertTrue(element("batchExport.screen").waitForExistence(timeout: 4))
         let filter = scrollToElement("batchExport.filter.picker")

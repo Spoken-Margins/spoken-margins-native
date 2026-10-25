@@ -76,7 +76,7 @@ struct ExperienceMarginDetailView: View {
                         model.copyInterjectionWithContext(current.interjection)
                     }
                     if MarginMarkdownShare.hasNote(current.interjection) {
-                        Button("Share this Margin", systemImage: "square.and.arrow.up") {
+                        Button("Share as Markdown", systemImage: "square.and.arrow.up") {
                             markdownFileURL = model.marginMarkdownFileURL(for: [current.interjection], asItem: false)
                         }
                         .accessibilityIdentifier("marginDetail.shareMarkdown.button")

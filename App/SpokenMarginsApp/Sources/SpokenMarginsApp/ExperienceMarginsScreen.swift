@@ -22,6 +22,7 @@ struct ExperienceMarginsScreen: View {
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
     @State private var markdownFileURL: URL?
+    @State private var isPreparingExportAll = false
     @State private var collections: [ItemCollection] = []
 
     var body: some View {
@@ -48,18 +49,30 @@ struct ExperienceMarginsScreen: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    // Export all Margins is two taps from the tab: this menu, then the share sheet (#1866).
-                    Menu {
-                        Button("Export all Margins", systemImage: "square.and.arrow.up") {
-                            markdownFileURL = model.allMarginsMarkdownFileURL()
+                    // Export all Margins is one toolbar tap to the share sheet; the tab makes it two (#1866).
+                    Button {
+                        guard !isPreparingExportAll else { return }
+                        isPreparingExportAll = true
+                        Task {
+                            markdownFileURL = await model.prepareAllMarginsMarkdownFileURL()
+                            isPreparingExportAll = false
                         }
-                        .accessibilityIdentifier("margins.exportAll.button")
-                        Button("Export Sessions", systemImage: "square.and.arrow.up.on.square", action: openBatchExport)
-                            .accessibilityIdentifier("margins.export.button")
                     } label: {
-                        Label("Export", systemImage: "square.and.arrow.up")
+                        if isPreparingExportAll {
+                            ProgressView().frame(minWidth: 44, minHeight: 44)
+                        } else {
+                            Label("Export all Margins", systemImage: "square.and.arrow.up")
+                                .labelStyle(.iconOnly)
+                                .frame(minWidth: 44, minHeight: 44)
+                        }
                     }
-                    .accessibilityIdentifier("margins.exportMenu.button")
+                    .disabled(isPreparingExportAll)
+                    .accessibilityLabel(isPreparingExportAll ? "Preparing Margins" : "Export all Margins")
+                    .accessibilityIdentifier("margins.exportAll.button")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Export Sessions", systemImage: "square.and.arrow.up.on.square", action: openBatchExport)
+                        .accessibilityIdentifier("margins.export.button")
                 }
             }
             .task {
