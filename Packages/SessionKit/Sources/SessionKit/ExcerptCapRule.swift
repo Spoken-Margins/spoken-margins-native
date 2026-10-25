@@ -48,22 +48,38 @@ public enum ExcerptCapRule {
     }
 
     /// Keeps the end of `text` (the words nearest the Margin). A cut that lands inside a word drops that word's
-    /// partial start, unless the whole cap is one long word.
+    /// partial start, unless the whole cap is one long word. A cut leaves no space at its edge.
     public static func trimmedBefore(_ text: String, cap: Int) -> String {
         let kept = hardLimit(text, cap: cap, keepingEnd: true)
-        guard kept.count < text.count, let first = kept.first, !first.isWhitespace,
-              let cutAfter = text.dropLast(kept.count).last, !cutAfter.isWhitespace,
-              let space = kept.firstIndex(where: \.isWhitespace) else { return kept }
-        return String(kept[kept.index(after: space)...])
+        guard kept.count < text.count else { return kept }
+        if let first = kept.first, !first.isWhitespace,
+           let cutAfter = text.dropLast(kept.count).last, !cutAfter.isWhitespace,
+           let space = kept.firstIndex(where: \.isWhitespace) {
+            return trimmedLeading(String(kept[kept.index(after: space)...]))
+        }
+        return trimmedLeading(kept)
     }
 
-    /// Keeps the start of `text`; a cut inside a word drops that word's partial end.
+    /// Keeps the start of `text`; a cut inside a word drops that word's partial end. A cut leaves no space at its edge.
     public static func trimmedAfter(_ text: String, cap: Int) -> String {
         let kept = hardLimit(text, cap: cap, keepingEnd: false)
-        guard kept.count < text.count, let last = kept.last, !last.isWhitespace,
-              let cutBefore = text.dropFirst(kept.count).first, !cutBefore.isWhitespace,
-              let space = kept.lastIndex(where: \.isWhitespace) else { return kept }
-        return String(kept[..<space])
+        guard kept.count < text.count else { return kept }
+        if let last = kept.last, !last.isWhitespace,
+           let cutBefore = text.dropFirst(kept.count).first, !cutBefore.isWhitespace,
+           let space = kept.lastIndex(where: \.isWhitespace) {
+            return trimmedTrailing(String(kept[..<space]))
+        }
+        return trimmedTrailing(kept)
+    }
+
+    private static func trimmedLeading(_ text: String) -> String {
+        String(text.drop(while: \.isWhitespace))
+    }
+
+    private static func trimmedTrailing(_ text: String) -> String {
+        var end = text.endIndex
+        while end > text.startIndex, text[text.index(before: end)].isWhitespace { end = text.index(before: end) }
+        return String(text[..<end])
     }
 
     /// The plain cut, no word handling: `cap` characters and no more than `cap` Unicode scalars. What a sender's own

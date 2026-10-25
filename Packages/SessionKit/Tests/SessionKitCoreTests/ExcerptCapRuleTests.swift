@@ -63,6 +63,13 @@ final class ExcerptCapRuleTests: XCTestCase {
         XCTAssertLessThanOrEqual(long.count, 450)
     }
 
+    func testACutNeverLeavesASpaceAtItsEdge() {
+        let after = ExcerptCapRule.select(before: "", after: String(repeating: "a", count: 119) + " bbbb", commentLength: 5).after
+        XCTAssertEqual(after, String(repeating: "a", count: 119))
+        let before = ExcerptCapRule.select(before: "bbbb " + String(repeating: "a", count: 279), after: "", commentLength: 5).before
+        XCTAssertEqual(before, String(repeating: "a", count: 279))
+    }
+
     func testOneLongWordIsCutHardRatherThanDropped() {
         let word = String(repeating: "x", count: 600)
         let context = ExcerptCapRule.select(before: word, after: word, commentLength: 5)
