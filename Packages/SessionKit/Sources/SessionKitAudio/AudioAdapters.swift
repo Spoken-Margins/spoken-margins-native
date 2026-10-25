@@ -1813,6 +1813,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var mediaSeekStartedUptime: TimeInterval?
     /// Tests only: drop AVPlayer's seek completions, as happened on a stream in #166.
     var withholdsSeekCompletionsForTesting = false
+    var hasPendingSeekForTesting: Bool { mediaSeekLifecycle.pending != nil }
     var pendingSeekHasLandingEvidenceForTesting: Bool { mediaSeekLifecycle.pending?.landingObserved == true }
     #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
     private var postResumeEvidenceTap: MTAudioProcessingTap?
@@ -2003,9 +2004,12 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     /// The probe said a streamed MP3 is VBR with a header (#2660), after its item was built without the key.
     /// Inside the swap window (before meaningful audio) the playing item is rebuilt keyed at the same place;
     /// later, `requestMediaSeek` rebuilds it before the next deliberate seek. Never moves audible audio.
-    private func probeAnswered(for url: URL) {
+    func probeAnswered(for url: URL) {
         guard vbrProbe.cachedAnswer(for: url) == true, !activeItemHasPreciseTiming,
               activePlaybackURL == url, let targetId = activeTargetId, player != nil, !paused,
+              // play() supersedes any pending seek (the listener's, or the start seek still buffering), and the
+              // new player's clock would be what the engine is told. Leave those to the next deliberate seek.
+              mediaSeekLifecycle.pending == nil,
               ProcessInfo.processInfo.systemUptime - activeItemBuiltAt < preciseTimingSwapWindow else { return }
         let heardMs = currentMediaTimeMs() ?? lastRequestedMediaTimeMs
         activePlaybackURL = nil
@@ -2014,7 +2018,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     /// Before a deliberate seek on an unkeyed item whose URL is now known to be VBR with a header.
     private func upgradeItemBeforeSeek() {
+        // Not while an earlier seek is pending: rebuilding the player first would make that seek's "superseded"
+        // answer read the new player's clock. The seek that follows still lands; the next settled one upgrades.
         guard !activeItemHasPreciseTiming, let url = activePlaybackURL, let targetId = activeTargetId,
+              mediaSeekLifecycle.pending == nil,
               vbrProbe.cachedAnswer(for: url) == true else { return }
         installPlayerItem(url: url, targetId: targetId)
         if !paused {

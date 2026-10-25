@@ -60,7 +60,7 @@ final class MP3VBRHeaderProbeTests: XCTestCase {
     }
 
     private func probe(_ data: Data, counter: Counter = Counter()) -> MP3VBRHeaderProbe {
-        MP3VBRHeaderProbe { _, n in counter.add(n); return data.prefix(n) }
+        MP3VBRHeaderProbe { _, start, n in counter.add(start); return Data(data.dropFirst(start).prefix(n)) }
     }
 
     func testProbeCachesXingAndFollowsALargeID3Tag() async {
@@ -85,7 +85,7 @@ final class MP3VBRHeaderProbeTests: XCTestCase {
 
     func testFailedProbePlaysAsToday() async {
         let url = URL(string: "https://example.com/down.mp3")!
-        let p = MP3VBRHeaderProbe { _, _ in throw URLError(.timedOut) }
+        let p = MP3VBRHeaderProbe { _, _, _ in throw URLError(.timedOut) }
         await p.prefetch(url)?.value
         XCTAssertNil(p.cachedAnswer(for: url))
         XCTAssertFalse(AVPlayerStreamPlaybackClient.wantsPreciseTiming(for: url, probe: p))

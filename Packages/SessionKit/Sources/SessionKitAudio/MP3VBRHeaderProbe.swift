@@ -21,6 +21,16 @@ public enum MP3VBRHeaderParser {
     /// How far past the ID3 tag the parser looks for a frame start. Encoders sometimes pad with zeros.
     static let maxSyncScan = 4096
 
+    /// Where the audio starts when the bytes begin with an ID3v2 tag (its header and footer included); nil for
+    /// no tag, too few bytes to tell, or a malformed size.
+    public static func id3TagEnd(_ data: Data) -> Int? {
+        let bytes = [UInt8](data.prefix(10))
+        guard bytes.count == 10, bytes.starts(with: [0x49, 0x44, 0x33]) else { return nil }
+        let sizeBytes = bytes[6...9]
+        guard sizeBytes.allSatisfy({ $0 & 0x80 == 0 }) else { return nil }
+        return 10 + sizeBytes.reduce(0) { ($0 << 7) | Int($1) } + (bytes[5] & 0x10 != 0 ? 10 : 0)
+    }
+
     public static func parse(_ data: Data) -> MP3FirstFrameHeader {
         let bytes = [UInt8](data)
         var offset = 0
@@ -80,7 +90,7 @@ public enum MP3VBRHeaderParser {
 /// when the episode is configured, off the main actor. Any failure, timeout or unknown answer means "no key",
 /// which is how streams behaved before.
 public final class MP3VBRHeaderProbe: @unchecked Sendable {
-    public typealias Fetch = @Sendable (_ url: URL, _ byteCount: Int) async throws -> Data
+    public typealias Fetch = @Sendable (_ url: URL, _ start: Int, _ byteCount: Int) async throws -> Data
 
     public static let shared = MP3VBRHeaderProbe()
     static let firstReadBytes = 4096
@@ -128,6 +138,12 @@ public final class MP3VBRHeaderProbe: @unchecked Sendable {
         return task
     }
 
+    /// Sets an answer directly. Tests use it to land an answer at an exact moment.
+    func record(_ answer: Bool, for url: URL) {
+        lock.lock(); defer { lock.unlock() }
+        answers[url] = answer
+    }
+
     private func finish(_ url: URL, _ result: Bool?) {
         lock.lock(); defer { lock.unlock() }
         tasks[url] = nil
@@ -137,15 +153,24 @@ public final class MP3VBRHeaderProbe: @unchecked Sendable {
     /// nil when the bytes could not be read, so a later configure may try again.
     func probe(_ url: URL) async -> Bool? {
         do {
+            // Read the start of the file. If an ID3 tag (often with cover art, hundreds of KB) runs past it,
+            // read the frame region at the tag's end instead of the whole tag.
+            var start = 0
             var length = Self.firstReadBytes
-            for _ in 0..<2 {
-                let header = MP3VBRHeaderParser.parse(try await fetch(url, length))
-                if case .needMoreData(let needed) = header {
-                    guard needed <= Self.maxReadBytes, needed > length else { return false }
-                    length = needed
-                    continue
+            for _ in 0..<3 {
+                let data = try await fetch(url, start, length)
+                let header = MP3VBRHeaderParser.parse(data)
+                guard case .needMoreData(let needed) = header else {
+                    return MP3VBRHeaderParser.warrantsPreciseTiming(header)
                 }
-                return MP3VBRHeaderParser.warrantsPreciseTiming(header)
+                if start == 0, let tagEnd = MP3VBRHeaderParser.id3TagEnd(data), tagEnd >= data.count {
+                    start = tagEnd
+                    length = Self.firstReadBytes
+                } else if needed > length, needed <= Self.maxReadBytes {
+                    length = needed
+                } else {
+                    return false
+                }
             }
             return false
         } catch {
@@ -153,18 +178,20 @@ public final class MP3VBRHeaderProbe: @unchecked Sendable {
         }
     }
 
-    /// A `Range: bytes=0-(n-1)` read that stops after n bytes even if the server ignores the range.
+    /// A `Range: bytes=start-(start+n-1)` read that stops after n bytes even if the server ignores the range.
+    /// A server that ignores a non-zero start (anything but 206) fails the read, so the answer is "no key".
     public static func rangedFetch(timeout: TimeInterval) -> Fetch {
-        { url, byteCount in
+        { url, start, byteCount in
             var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
-            request.setValue("bytes=0-\(byteCount - 1)", forHTTPHeaderField: "Range")
+            request.setValue("bytes=\(start)-\(start + byteCount - 1)", forHTTPHeaderField: "Range")
             let configuration = URLSessionConfiguration.ephemeral
             configuration.timeoutIntervalForRequest = timeout
             configuration.timeoutIntervalForResource = timeout
             let session = URLSession(configuration: configuration)
             defer { session.invalidateAndCancel() }
             let (stream, response) = try await session.bytes(for: request)
-            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            if let http = response as? HTTPURLResponse,
+               !(200..<300).contains(http.statusCode) || (start > 0 && http.statusCode != 206) {
                 throw URLError(.badServerResponse)
             }
             var data = Data()
