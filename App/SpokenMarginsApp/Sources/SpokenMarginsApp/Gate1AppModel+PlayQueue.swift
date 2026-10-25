@@ -88,7 +88,9 @@ extension Gate1AppModel {
                 PlayQueueController.update(self) { queue in items.forEach { queue.append($0.id) } }
                 files.forEach { self.dismissQuickAccessFile($0) }
                 self.diagnostics["quickFolderInboxQueued"] = "\(items.count)"
-            }
+            },
+            navigatesWhenFinished: false,
+            confirmationOverride: { "Queued \($0) new Quick Folder file\($0 == 1 ? "" : "s")." }
         )
     }
 }
