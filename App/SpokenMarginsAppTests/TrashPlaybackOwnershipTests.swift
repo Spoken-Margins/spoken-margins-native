@@ -18,6 +18,7 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
             fallback.id = "000-selection-fallback"
             fallback.title = "A third item"
             try store.saveItem(fallback)
+            try model.refreshLibraryRows(store: store) // saved behind the model's back: the trash tap picks its replacement from the rows
             model.openItem(id: "item-pill")
             XCTAssertEqual(model.activeItemId, "item-pill")
             XCTAssertEqual(model.snapshot.itemId, playingItem)
