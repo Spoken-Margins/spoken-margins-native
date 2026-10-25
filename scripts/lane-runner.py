@@ -494,6 +494,9 @@ def fresh_rerun_outcome(rerun: dict) -> str:
     Default taken on PR #2179): that is a real failure, not a startup stall."""
     if rerun.get('boot'):
         return f'the fresh clone did not boot ({rerun["boot"]}); {TWO_STALLS_RULE}'
+    if rerun.get('not_ready'):
+        return (f'the fresh clone booted but failed its readiness step (verify-tests.py `{rerun["not_ready"]}`), so '
+                f'no test ran on it; {TWO_STALLS_RULE}')
     if rerun.get('verdict') == 'FAIL':
         failed = rerun.get('failed') or []
         return (f'fresh-clone rerun: {len(failed)} test(s) failed ({", ".join(failed)}); verdict FAIL (a failing '
@@ -2520,6 +2523,11 @@ def t3_verdict(summaries: list[dict], statuses: list[str]) -> str:
 READINESS_STEPS = ('simulator-boot', 'simulator-ready')
 
 
+def failed_step_name(manifest: dict) -> str | None:
+    """The first step of a verify-tests.py manifest that exited non-zero; a readiness step that ran out of time counts too."""
+    return next((step.get('name') for step in manifest.get('steps', []) if step.get('exit_code')), None)
+
+
 def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
               device_available=lambda: True) -> tuple[list, list, list, list]:
     """Run each plan's selectors; stop at the first crash flood (AGENTS.md: don't reboot in a loop).
@@ -2564,6 +2572,9 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
                            f'{stall.get("after_seconds")}s after launch); the first retry passed '
                            f'{found["passed"]} test(s), which counts as a PASS (owner\'s call 2026-10-11). Logged '
                            f'on #{STALL_ISSUE}. evidence: {output}/{found["step"]}-stall-{stall.get("attempt")}/')
+        retried = sorted({t for step in manifest.get('steps', []) for t in step.get('passed_on_retry') or []})
+        if retried:  # owner, 2026-10-24 (#2596): fail-then-pass on a rerun is a pass, and the report names it
+            details.append(f'{plan}: passed on retry: {", ".join(retried)}')
         for test in summary['failed'][:10]:
             details.append(f'{test} — expected: passes. observed: failed. evidence: {output}/tests.xcresult')
         if summary['out_of_time']:
@@ -2585,14 +2596,18 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
                 statuses.append('not run')
             break
         if manifest.get('status') != 'verified':
-            stopped_at = next((step.get('name') for step in manifest.get('steps', []) if step.get('exit_code')),
-                              None)  # a readiness step that ran out of time counts too
+            stopped_at = failed_step_name(manifest)
             gone = not device_available()
-            if gone or stopped_at in READINESS_STEPS or (rerun and rerun.get('boot')):
+            # A fresh clone that booted but failed readiness is like one that won't boot: the stalled run's own
+            # steps passed readiness, so they can't show it (#2530).
+            fresh_unusable = rerun and (rerun.get('boot') or rerun.get('not_ready'))
+            if gone or stopped_at in READINESS_STEPS or fresh_unusable:
                 summary['device_lost'] = True
                 skipped = [p for p, _ in plans[position + 1:]]
                 why = ('the fresh simulator is gone (no longer listed by `simctl list devices available`)' if gone
                        else 'the fresh clone for a rerun did not boot' if rerun and rerun.get('boot')
+                       else 'the fresh clone for a rerun booted but was not ready '
+                            f'(verify-tests.py `{rerun["not_ready"]}`)' if fresh_unusable
                        else f'the fresh simulator was not ready (verify-tests.py `{stopped_at}`)')
                 details.append(f'{plan}: {why}, so this is the lane\'s fault, not the PR\'s'
                                + (f'; not run: {", ".join(skipped)}.' if skipped else '.'))
@@ -2793,6 +2808,9 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
             if shown['failed']:
                 rerun['verdict'] = 'FAIL'
                 return {**fresh, 'fresh_clone_rerun': rerun}
+            if fresh.get('status') != 'verified' and failed_step_name(fresh) in READINESS_STEPS:
+                rerun['not_ready'] = failed_step_name(fresh)  # the later plans would only fail to find a ready device (#2530)
+                return {**manifest, 'fresh_clone_rerun': rerun}
             if shown['flood']:  # still INCONCLUSIVE (nothing failed), but the flood must stop the later plans
                 return {**fresh, 'fresh_clone_rerun': rerun}
             return {**manifest, 'fresh_clone_rerun': rerun}  # two stalls: the stalled run's INCONCLUSIVE stands

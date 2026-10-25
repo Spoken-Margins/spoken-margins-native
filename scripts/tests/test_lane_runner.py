@@ -3785,6 +3785,20 @@ class FreshCloneRerunTests(unittest.TestCase):
         self.assertTrue(any('not run: adapters' in line for line in details))
         self.assertIn('simctl boot U2 failed', json.loads((evidence / lane.FRESH_RERUNS).read_text())[0]['boot'])
 
+    def test_a_fresh_clone_that_boots_but_fails_readiness_runs_nothing_more(self):
+        # #2530 (audit of #2179 on 6933707): the stalled run's own steps passed readiness, so only the rerun's
+        # manifest shows the fresh clone is not ready. The adapters plan must not start on it.
+        not_ready = {'status': 'failed_or_incomplete', 'error': 'simulator-ready: Process exit 148',
+                     'steps': [{'name': 'simulator-ready', 'exit_code': 148, 'errors': ['Process exit 148']}]}
+        (verdict, _, ran, details, _, _), released, devices, outputs, evidence = self.run_t3(
+            [stalled_out_manifest(), not_ready], grouped={'app': ['T/A'], 'adapters': ['T/B']})
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertEqual((devices, outputs), (['U1', 'U2'], ['verify-app', 'verify-app-fresh']))
+        self.assertEqual(released, ['U1', 'U2'])
+        self.assertTrue(any('booted but was not ready (verify-tests.py `simulator-ready`)' in line
+                            and 'not run: adapters' in line for line in details), details)
+        self.assertEqual(json.loads((evidence / lane.FRESH_RERUNS).read_text())[0]['not_ready'], 'simulator-ready')
+
     def test_a_fresh_clone_marked_unsafe_by_its_failed_boot_is_not_a_crash_flood(self):
         # Audit on 484c63b: the failed boot marks U2 unsafe ('simctl boot failed'). No watcher ever ran on U2, so
         # the report must not say the SpringBoard watcher stopped it or ping the owner about a crash.

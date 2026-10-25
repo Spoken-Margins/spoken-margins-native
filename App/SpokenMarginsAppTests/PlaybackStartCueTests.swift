@@ -452,6 +452,40 @@ final class PlaybackStartCueTests: XCTestCase {
         XCTAssertFalse(waitingActive)
     }
 
+    /// The hang probe reads `MainThreadOperationLabels.shared.current` while the main thread is stuck, so the
+    /// chime and the waiting sound must each run under their own label, or a hang in them says `operation: none`
+    /// (#2512). The waiting sound's label must not still carry the chime's.
+    func testChimeAndWaitingSoundRunUnderTheirHangLabels() async throws {
+        var chimeLabels: [String] = []
+        var waitingLabels: [String] = []
+        let cue = PlaybackStartCue(
+            now: { [unowned self] in self.clock },
+            playChime: {
+                chimeLabels.append(MainThreadOperationLabels.shared.current)
+                return "played"
+            },
+            scheduleWaitingCue: { _ in
+                waitingLabels.append(MainThreadOperationLabels.shared.current)
+                return "scheduled"
+            },
+            waitingCueDelay: 0.3,
+            waitingCuePeriod: 0.2,
+            stopChime: {},
+            checkNow: {},
+            record: { [unowned self] key, value in self.recorded[key] = value }
+        )
+
+        cue.observe(snapshot("article", .starting))
+        clock += 1
+        try await waitUntil { waitingLabels.count == 1 }
+        cue.observe(snapshot("article", .paused)) // ends the cue's checks
+
+        XCTAssertEqual(chimeLabels.count, 1)
+        XCTAssertEqual(chimeLabels.first?.split(separator: ">").last, "playbackStartChime")
+        XCTAssertEqual(waitingLabels.first?.split(separator: ">").last, "playbackWaitingCue")
+        XCTAssertFalse(waitingLabels.first?.contains("playbackStartChime") ?? true)
+    }
+
     /// Waits for the cue's timer on a loaded simulator, where a fixed sleep can end before it fires.
     private func waitUntil(timeout: TimeInterval = 10, _ condition: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)

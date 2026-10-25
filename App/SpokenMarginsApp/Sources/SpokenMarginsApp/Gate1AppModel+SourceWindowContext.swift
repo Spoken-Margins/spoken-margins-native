@@ -53,13 +53,16 @@ extension Gate1AppModel {
         diagnostics[diagnosticKey] = "captured:\(totalMs)ms;segments=\(files.count);before=\(window.coversBeforeAnchor ? 1 : 0);after=\(window.coversAfterAnchor ? 1 : 0);end=\(window.endReason)"
         // #652: drop the files when the Margin is gone or its context is already ready, since nothing would use them.
         // If the Margins can't be read, keep them: a later schedule may still need them.
-        guard !files.isEmpty, let store, let margins = try? store.loadInterjections(sessionId: window.request.sessionId) else { return }
-        let interjection = margins.first(where: { $0.id == window.request.interjectionId })
-        guard let interjection, HeardSourceWindowFiles.isStillNeeded(by: interjection) else {
-            heardSourceWindows.discardInBackground(key)
-            return
+        // The Margin read and the schedule run on the main thread after the write; label them for the hang probe (#2512).
+        hangTelemetry.labels.scoped("heardSourceWindow") {
+            guard !files.isEmpty, let store, let margins = try? store.loadInterjections(sessionId: window.request.sessionId) else { return }
+            let interjection = margins.first(where: { $0.id == window.request.interjectionId })
+            guard let interjection, HeardSourceWindowFiles.isStillNeeded(by: interjection) else {
+                heardSourceWindows.discardInBackground(key)
+                return
+            }
+            scheduleSourceWindowContextIfNeeded(for: interjection)
         }
-        scheduleSourceWindowContextIfNeeded(for: interjection)
     }
 
     /// No heard audio yet: the tap delivers it about a minute after playback resumes. If it never arrives (the

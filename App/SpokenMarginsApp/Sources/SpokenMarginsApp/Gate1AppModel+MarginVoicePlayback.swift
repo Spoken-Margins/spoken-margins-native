@@ -204,9 +204,9 @@ extension Gate1AppModel {
             importedCommentaryAutoPlayTask?.cancel()
             importedCommentaryAutoPlayTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(420))
-                guard !Task.isCancelled,
-                      self?.pendingImportedCommentary?.id == prompt.id else { return }
-                self?.listenToPendingImportedCommentary()
+                guard !Task.isCancelled, let self,
+                      self.pendingImportedCommentary?.id == prompt.id else { return }
+                self.hangTelemetry.labels.scoped("importedCommentaryAutoPlay") { self.listenToPendingImportedCommentary() }
             }
         }
     }
@@ -252,7 +252,7 @@ extension Gate1AppModel {
         if playingImportedCommentary != nil || playingInterjectionAudioId != nil { stopInterjectionAudioPlayback() }
         if !momentVoiceIsOpenInLog { recordMarginVoiceEvent("start", player: "moment") } // not on a resume
         #if os(iOS)
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: [.duckOthers])
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
     }

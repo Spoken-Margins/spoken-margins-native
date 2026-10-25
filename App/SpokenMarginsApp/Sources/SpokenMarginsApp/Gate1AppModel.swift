@@ -252,7 +252,7 @@ final class Gate1AppModel: ObservableObject {
             }
         }
     }
-    @Published private(set) var marginRows: [MarginRow] = []
+    @Published var marginRows: [MarginRow] = []
     @Published private(set) var offlineStorageSnapshot = OfflineStorageSnapshot()
     @Published var recordingCaptureHealth: MarginCaptureSupervisor.Health = .capturing // written by Gate1AppModel+MarginCapture only
     var captureWatcher = MarginCaptureWatcher()
@@ -2830,7 +2830,7 @@ final class Gate1AppModel: ObservableObject {
                 speechPreviewSynthesizer.stopSpeaking(at: .immediate)
             }
             #if os(iOS)
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+            try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: [.duckOthers])
             try AVAudioSession.sharedInstance().setActive(true)
             #endif
             let utterance = AVSpeechUtterance(string: "Spoken Margins preview. This is the \(label) path.")
@@ -3193,11 +3193,13 @@ final class Gate1AppModel: ObservableObject {
             for link in sortedLinks {
                 do {
                     let data = try await Self.fetchTranscriptLink(link)
-                    if let timeline = try SourceTranscriptParsing.transcriptTimeline(from: data, link: link, itemId: itemId, durationMs: durationMs),
-                       !timeline.segments.isEmpty {
+                    // Parsing a transcript file can be large; it runs off the main thread, like the fetch.
+                    let parsed = try await Task.detached(priority: .userInitiated) {
+                        try SourceTranscriptParsing.transcriptTimeline(from: data, link: link, itemId: itemId, durationMs: durationMs)
+                    }.value
+                    if let timeline = parsed, !timeline.segments.isEmpty {
                         await MainActor.run {
-                            self.diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "attached:\(link.type)"
-                            self.attachSourceTranscriptTimeline(timeline, itemId: itemId)
+                            self.finishDiscoveredSourceTranscript(timeline, itemId: itemId, linkType: link.type)
                         }
                         return
                     }
@@ -3207,12 +3209,7 @@ final class Gate1AppModel: ObservableObject {
                 }
             }
             await MainActor.run {
-                self.diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "unavailable:\(lastFailure)"
-                self.diagnostics["sourceTranscriptionStatus"] = "unavailable"
-                if self.activeItemId == itemId {
-                    self.sourceTranscriptStatus = "unavailable"
-                    self.snapshot.sourceTranscriptStatus = "unavailable"
-                }
+                self.markSourceTranscriptUnavailable(itemId: itemId, lastFailure: lastFailure)
             }
         }
     }
@@ -3266,24 +3263,11 @@ final class Gate1AppModel: ObservableObject {
                     durationMs: item.media?.durationMs
                 )
                 await MainActor.run {
-                    self.importedPodcastPlacement.releaseFullSourceTranscription(itemId: item.id)
-                    self.attachSourceTranscriptTimeline(timeline, itemId: item.id)
+                    self.finishFullSourceTranscription(timeline, itemId: item.id)
                 }
             } catch {
                 await MainActor.run {
-                    self.importedPodcastPlacement.releaseFullSourceTranscription(itemId: item.id)
-                    self.diagnostics["sourceTranscriptionStatus"] = "unavailable"
-                    self.diagnostics["sourceTranscriptionError"] = String(describing: error)
-                    if self.activeItemId == item.id {
-                        self.sourceTranscriptStatus = "unavailable"
-                        self.snapshot.sourceTranscriptStatus = "unavailable"
-                    }
-                    if self.pendingMapGenerationItemId == item.id {
-                        self.pendingMapGenerationItemId = nil
-                    }
-                    if self.activeItemId == item.id, self.lastError == nil {
-                        self.statusMessage = "Audio ready. Source transcript and Listening Map are unavailable; notes will use timestamp context."
-                    }
+                    self.failFullSourceTranscription(itemId: item.id, error: error)
                 }
             }
         }
