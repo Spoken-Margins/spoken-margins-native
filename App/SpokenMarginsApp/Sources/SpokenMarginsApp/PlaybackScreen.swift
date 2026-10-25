@@ -62,14 +62,10 @@ struct PlaybackScreen: View {
     @FocusState private var followUpFocused: Bool
 
     /// Back to the Library while playback goes on. The Library label lower down stays; this one is where a listener
-    /// looks first.
+    /// looks first. On Now it sits in line with the title, so the screen gets no taller (#2262).
     private var libraryExitButton: some View {
         Button(action: model.openLibrary) {
-            if selectedPane == .timeline {
-                Label("Library", systemImage: "books.vertical")
-            } else {
-                Label("Library", systemImage: "chevron.left").labelStyle(.titleAndIcon)
-            }
+            Image(systemName: "chevron.left").font(.body.weight(.semibold)).minimumTapTarget()
         }
         .accessibilityLabel("Library")
         .accessibilityHint("Leaves this screen. Playback keeps going.")
@@ -189,8 +185,6 @@ struct PlaybackScreen: View {
             .toolbarBackground(AppColors.listeningBackground, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
-                // A way out that needs no gesture, in the nav bar's own empty space, so the screen gets no taller
-                // (#2262). Timeline's leading slot already goes back to Now, so its exit sits at the other end.
                 if selectedPane == .timeline {
                     ToolbarItem(placement: .topBarLeading) {
                         Button { selectedPane = .now } label: {
@@ -198,8 +192,7 @@ struct PlaybackScreen: View {
                         }
                         .accessibilityIdentifier("timeline.nowPlaying.button")
                     }
-                    ToolbarItem(placement: .topBarTrailing) { libraryExitButton }
-                } else {
+                } else if selectedPane == .margins {
                     ToolbarItem(placement: .topBarLeading) { libraryExitButton }
                 }
                 if selectedPane != .timeline {
@@ -726,12 +719,15 @@ struct PlaybackScreen: View {
 
     private var playbackHeader: some View {
         VStack(alignment: .leading, spacing: 12) {
-            PlaybackSourceTitleView(
-                title: model.playbackItemHeaderTitle,
-                sleepTimerState: model.sleepTimerState,
-                sleepTimerRemainingSeconds: model.sleepTimerRemainingSeconds,
-                showItem: model.openCurrentPlaybackItem
-            )
+            HStack(alignment: .top, spacing: 4) {
+                libraryExitButton
+                PlaybackSourceTitleView(
+                    title: model.playbackItemHeaderTitle,
+                    sleepTimerState: model.sleepTimerState,
+                    sleepTimerRemainingSeconds: model.sleepTimerRemainingSeconds,
+                    showItem: model.openCurrentPlaybackItem
+                )
+            }
 
             if model.selectedItem.isNativeAudio,
                let show = model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
