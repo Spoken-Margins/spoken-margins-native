@@ -668,13 +668,14 @@ class Ops:
                          '--jq', '.[] | {body, user: {login: .user.login}} | @json']).stdout
         return [json.loads(line) for line in out.splitlines() if line.strip()]
 
-    def open_issue_titles(self) -> list[str]:
-        out = self.must(['gh', 'issue', 'list', '-R', REPO, '--state', 'open', '--limit', '500',
-                         '--json', 'title', '--jq', '.[].title']).stdout
-        return [line for line in out.splitlines() if line.strip()]
+    def open_flake_markers(self) -> set[str]:
+        """The tests that already have an open flake issue, read from the marker in each trusted issue's body."""
+        out = self.must(['gh', 'api', '--paginate', f'repos/{REPO}/issues?state=open&per_page=100',
+                         '--jq', '.[] | {body, author_association, user: {login: .user.login}} | @json']).stdout or ''
+        return flake_markers([json.loads(line) for line in out.splitlines() if line.strip()])
 
     def open_flake_issue(self, title: str, body: str) -> str:
-        res = self.must(['gh', 'issue', 'create', '-R', REPO, '--title', title[:120], '--body', body,
+        res = self.must(['gh', 'issue', 'create', '-R', REPO, '--title', title, '--body', body,
                          '--label', 'ready', '--milestone', 'Showcase'])
         return (res.stdout or '').strip()
 
@@ -873,20 +874,38 @@ def tally_counts(comments: list[dict], now: dt.datetime) -> dict[str, list[str]]
     return {test: list(runs) for test, runs in seen.items()}
 
 
-def tests_due_an_issue(counts: dict[str, list[str]], open_titles: list[str]) -> list[str]:
-    """Tests with 3 or more retry-passes in the window and no open issue naming them in its title."""
-    titles = [t.lower() for t in open_titles]
+FLAKE_MARKER = re.compile(r'<!-- flake-test: (.+?) -->')
+FLAKE_TITLE_MAX = 120
+
+
+def flake_marker(test: str) -> str:
+    """The line in a flake issue's body that says which test it is for: the full test id, matched exactly."""
+    return f'<!-- flake-test: {test.replace("-->", "")} -->'
+
+
+def flake_markers(issues: list[dict]) -> set[str]:
+    """Test ids named by a marker in the body of a trusted open issue (#1822: a stranger's marker can't hide a flake)."""
+    return {match.group(1) for issue in comment_trust.trusted_only(issues)
+            for match in FLAKE_MARKER.finditer(issue.get('body') or '')}
+
+
+def tests_due_an_issue(counts: dict[str, list[str]], open_markers: set[str]) -> list[str]:
+    """Tests with 3 or more retry-passes in the window and no open issue carrying their exact marker. The title
+    can't decide this: it is cut to fit, and a short name is a prefix of a longer one."""
     return sorted(test for test, runs in counts.items() if len(runs) >= TALLY_THRESHOLD
-                  and not any(test.rsplit('/', 1)[-1].removesuffix('()').lower() in t for t in titles))
+                  and test.replace('-->', '') not in open_markers)
 
 
 def flake_issue_text(test: str, runs: list[str]) -> tuple[str, str]:
     name = test.rsplit('/', 1)[-1].removesuffix('()')
     links = '\n'.join(f'- https://github.com/{REPO}/actions/runs/{r}' for r in runs)
-    return (f'Flaky: {name} failed, then passed on retry, {len(runs)} times in 7 days',
-            f'`{test}` failed on its first run and passed on a re-run in {len(runs)} hosted integration runs in the '
-            f'last 7 days (tally on #{TALLY_ISSUE}). The run still counted as a pass (owner, 2026-10-24), so '
-            f'fix the test or the code under it rather than leave it to retry.\n\nRuns:\n{links}\n')
+    prefix = 'Flaky: '
+    room = FLAKE_TITLE_MAX - len(prefix)
+    return (prefix + (name if len(name) <= room else name[:room - 1] + '\u2026'),
+            f'{flake_marker(test)}\n\n`{test}` failed on its first run and passed on a re-run in {len(runs)} hosted '
+            f'integration runs in the last 7 days (tally on #{TALLY_ISSUE}). The run still counted as a pass '
+            f'(owner, 2026-10-24), so fix the test or the code under it rather than leave it to retry.\n\n'
+            f'Runs:\n{links}\n')
 
 
 def record_flakes(ops, flaky: list[str], sha: str, run_id: str) -> list[str]:
@@ -898,7 +917,7 @@ def record_flakes(ops, flaky: list[str], sha: str, run_id: str) -> list[str]:
         for test in flaky:
             ops.post_tally(tally_line(test, sha, run_id, now) + f'\n\n`{test}` passed on retry in run {run_id}.')
         counts = tally_counts(ops.tally_comments(), now)
-        for test in tests_due_an_issue(counts, ops.open_issue_titles()):
+        for test in tests_due_an_issue(counts, ops.open_flake_markers()):
             if test in flaky:
                 title, body = flake_issue_text(test, counts[test])
                 opened.append(ops.open_flake_issue(title, body))

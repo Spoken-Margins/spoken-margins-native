@@ -776,20 +776,47 @@ class FlakeTallyTests(unittest.TestCase):
 
     def test_an_issue_is_due_at_three_and_not_when_one_is_open(self):
         counts = {TEST: ['1', '2', '3'], OTHER: ['4', '5']}
-        self.assertEqual(run.tests_due_an_issue(counts, []), [TEST])
-        name = TEST.rsplit('/', 1)[-1]
-        self.assertEqual(run.tests_due_an_issue(counts, [f'Flaky: {name.upper()} is red']), [])
+        self.assertEqual(run.tests_due_an_issue(counts, set()), [TEST])
+        self.assertEqual(run.tests_due_an_issue(counts, {TEST}), [])
+
+    def issue_for(self, test, login='github-actions[bot]', association='NONE'):
+        title, body = run.flake_issue_text(test, ['1', '2', '3'])
+        return {'title': title, 'body': body, 'author_association': association, 'user': {'login': login}}
+
+    def test_a_long_test_name_does_not_open_a_duplicate(self):
+        long_test = 'SpokenMarginsAppTests/Gate1AppModelPlaybackTests/' + 'testResumeAfterTheRouteChangesWhileTheSourceIsBuffering' * 3
+        title, _ = run.flake_issue_text(long_test, ['1', '2', '3'])
+        self.assertLessEqual(len(title), run.FLAKE_TITLE_MAX)
+        self.assertTrue(title.endswith('…'))  # cut to fit, so a match on the title could never succeed
+        markers = run.flake_markers([self.issue_for(long_test)])
+        self.assertEqual(run.tests_due_an_issue({long_test: ['1', '2', '3']}, markers), [])
+
+    def test_a_name_that_is_a_prefix_of_an_open_issues_name_is_still_due(self):
+        longer = TEST + 'AfterARouteChange'
+        markers = run.flake_markers([self.issue_for(longer)])
+        self.assertEqual(run.tests_due_an_issue({TEST: ['1', '2', '3']}, markers), [TEST])
+        self.assertEqual(run.tests_due_an_issue({longer: ['1', '2', '3']}, markers), [])
+
+    def test_a_short_name_still_dedupes_through_its_marker(self):
+        markers = run.flake_markers([self.issue_for(TEST)])
+        self.assertEqual(markers, {TEST})
+        self.assertEqual(run.tests_due_an_issue({TEST: ['1', '2', '3']}, markers), [])
+
+    def test_a_strangers_marker_does_not_hide_a_flake(self):
+        stranger = self.issue_for(TEST, login='mallory')
+        self.assertEqual(run.flake_markers([stranger]), set())
+        self.assertEqual(run.flake_markers([self.issue_for(TEST, login='mallory', association='COLLABORATOR')]), {TEST})
 
     def test_a_hosted_trunk_run_tallies_and_opens_the_issue_once(self):
         class Tally(run.Ops):
             def __init__(self):
-                self.posted, self.opened, self.titles = [], [], []
+                self.posted, self.opened, self.issues = [], [], []
                 self.old = [self_comment.comment(TEST, '1'), self_comment.comment(TEST, '2')]
                 self.logs = []
             def log(self, text): self.logs.append(text)
             def post_tally(self, body): self.posted.append(body); self.old.append({'body': body, 'user': {'login': 'github-actions[bot]'}})
             def tally_comments(self): return self.old
-            def open_issue_titles(self): return self.titles
+            def open_flake_markers(self): return run.flake_markers(self.issues)
             def open_flake_issue(self, title, body): self.opened.append((title, body)); return 'url'
         self_comment = self
         ops = Tally()
@@ -799,7 +826,7 @@ class FlakeTallyTests(unittest.TestCase):
         self.assertTrue(ops.posted[0].startswith(f'flake-tally: {TEST} {SHA[:7]} 9 '))
         self.assertEqual((opened, len(ops.opened)), (['url'], 1))
         self.assertIn(TEST.rsplit('/', 1)[-1], ops.opened[0][0])
-        ops.titles = [ops.opened[0][0]]
+        ops.issues = [{'body': ops.opened[0][1], 'user': {'login': 'github-actions[bot]'}}]
         self.assertEqual(run.record_flakes(ops, [TEST], SHA, '10'), [])
 
     def test_a_branch_proof_run_tallies_nothing(self):
