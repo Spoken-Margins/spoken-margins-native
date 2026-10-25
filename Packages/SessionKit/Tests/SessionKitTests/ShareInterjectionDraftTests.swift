@@ -83,13 +83,15 @@ final class ShareInterjectionDraftTests: XCTestCase {
 
     func testAnchorBeforeKeepsSuffixAndAfterKeepsPrefixWithoutNormalization() {
         var draft = makeDraft()
-        XCTAssertEqual(BoundedAnchorContext.maximumCharactersPerSide, 500)
+        // The draft's comment is 14 characters, so the rule gives 280 before and 120 after (ExcerptCapRule, #2237).
+        XCTAssertEqual(ExcerptCapRule.beforeCap(commentLength: 14), 280)
+        XCTAssertEqual(ExcerptCapRule.afterMaximum, 120)
         let middle = String(repeating: "e\u{301}👩🏽‍💻", count: 250)
         let value = " \nBEFORE" + middle + "AFTER\t "
         draft.setAnchorBefore(value)
         draft.setAnchorAfter(value)
-        XCTAssertTrue(draft.anchorBefore == String(value.suffix(500)), "Before must retain the last 500 characters")
-        XCTAssertTrue(draft.anchorAfter == String(value.prefix(500)), "After must retain the first 500 characters")
+        XCTAssertTrue(draft.anchorBefore == String(value.suffix(280)), "Before must retain the last 280 characters")
+        XCTAssertTrue(draft.anchorAfter == String(value.prefix(120)), "After must retain the first 120 characters")
         for short in ["", " \n café\t "] {
             draft.setAnchorBefore(short)
             draft.setAnchorAfter(short)

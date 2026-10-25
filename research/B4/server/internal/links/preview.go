@@ -11,7 +11,16 @@ import (
 	"unicode/utf8"
 )
 
-const MaxExcerptCharacters = 500
+// The share page's excerpt caps (owner, 2026-10-20, D16 in docs/legal/attorney-questions.md; #2237). They are the
+// ceilings of the app's ExcerptCapRule (Packages/SessionKit/Sources/SessionKit/ExcerptCapRule.swift), which scales the
+// "before" side to the comment (280 to 800 characters) and holds the "after" side to 120. The server checks only the
+// ceilings, in Unicode code points; the app also keeps every excerpt under its cap in code points. Builds 32 and 34
+// reject a packet whose context runs over 500 per side, so the "before" ceiling stays at 500 here and in the app
+// until those builds are retired (the same text goes into the packet and the page).
+const (
+	MaxBeforeCharacters = 500
+	MaxAfterCharacters  = 120
+)
 
 type Margin struct {
 	Text   string `json:"text"`
@@ -48,7 +57,7 @@ func ParsePreview(data []byte) (Preview, error) {
 		return p, errors.New("links: missing preview")
 	}
 	for _, m := range p.Margins {
-		if utf8.RuneCountInString(m.Before) > MaxExcerptCharacters || utf8.RuneCountInString(m.After) > MaxExcerptCharacters {
+		if utf8.RuneCountInString(m.Before) > MaxBeforeCharacters || utf8.RuneCountInString(m.After) > MaxAfterCharacters {
 			return p, errors.New("links: excerpt too long")
 		}
 	}

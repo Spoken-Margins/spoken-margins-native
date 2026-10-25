@@ -70,9 +70,10 @@ extension Gate1AppModel {
         sharingState.drafts = candidates.map { interjection in
             let transcript = SharedMarginTextRequirement.initialReviewedText(for: interjection)
             let hasAudio = interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)) != nil
-            let context = BoundedAnchorContext.select(
+            let context = ExcerptCapRule.select(
                 before: interjection.anchor.anchorBefore,
-                after: interjection.anchor.anchorAfter
+                after: interjection.anchor.anchorAfter,
+                commentLength: ExcerptCapRule.commentLength(transcript: transcript)
             )
             return ShareInterjectionDraft(
                 interjection: interjection,

@@ -110,11 +110,13 @@ extension ShareInterjectionDraft {
     }
 
     public mutating func setAnchorBefore(_ value: String) {
-        anchorBefore = String(value.suffix(BoundedAnchorContext.maximumCharactersPerSide))
+        anchorBefore = ExcerptCapRule.hardLimit(
+            value, cap: ExcerptCapRule.beforeCap(commentLength: ExcerptCapRule.commentLength(transcript: approvedTranscript)), keepingEnd: true
+        )
     }
 
     public mutating func setAnchorAfter(_ value: String) {
-        anchorAfter = String(value.prefix(BoundedAnchorContext.maximumCharactersPerSide))
+        anchorAfter = ExcerptCapRule.hardLimit(value, cap: ExcerptCapRule.afterMaximum, keepingEnd: false)
     }
 
     public mutating func setCleanupDecision(decisionID: String, accepted: Bool, hasOriginalAudio: Bool) -> Bool {

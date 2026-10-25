@@ -289,12 +289,14 @@ public struct PortableAnchorEvidence: Codable, Equatable, Sendable {
 
     public func bounded(
         prefix replacementPrefix: String? = nil,
-        suffix replacementSuffix: String? = nil
+        suffix replacementSuffix: String? = nil,
+        commentLength: Int? = nil
     ) -> PortableAnchorEvidence {
-        let context = BoundedAnchorContext.select(
-            before: replacementPrefix ?? prefix ?? "",
-            after: replacementSuffix ?? suffix ?? ""
-        )
+        let before = replacementPrefix ?? prefix ?? ""
+        let after = replacementSuffix ?? suffix ?? ""
+        // A Margin's packet follows the excerpt cap rule (#2237); anything else (a Listening Map) keeps its bound.
+        let context = commentLength.map { ExcerptCapRule.select(before: before, after: after, commentLength: $0) }
+            ?? BoundedAnchorContext.select(before: before, after: after)
         return PortableAnchorEvidence(
             anchorType: anchorType,
             startChar: startChar,
