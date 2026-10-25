@@ -14,11 +14,11 @@ extension Gate1AppModel {
         return signature
     }
 
-    /// One frontier read: the manifest from the store, then the file check off the main thread (#2652).
+    /// One frontier read, store and files both off the main thread (#2652, #2256).
     func readRenderFrontier(store: SQLiteSessionStore, itemID: String, signature: TTSRenderSignature, text: String, canonical: String, root: URL) async throws -> Double {
-        let manifest = try store.loadPreparedAudioManifests(itemId: itemID).first { $0.signature == signature }
-        return await Task.detached(priority: .utility) {
-            PreparedRenderFrontier.fraction(manifest: manifest, signature: signature, sourceText: text, canonicalSourceText: canonical, root: root)
+        try await Task.detached(priority: .utility) {
+            let manifest = try store.loadPreparedAudioManifests(itemId: itemID).first { $0.signature == signature }
+            return PreparedRenderFrontier.fraction(manifest: manifest, signature: signature, sourceText: text, canonicalSourceText: canonical, root: root)
         }.value
     }
 }
