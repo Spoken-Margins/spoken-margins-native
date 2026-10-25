@@ -12,6 +12,7 @@ final class BackgroundRefreshGate {
     private var libraryGeneration = 0
     private var itemTask: Task<Void, Never>?
     private var libraryTask: Task<Void, Never>?
+    private var mustPublishPending = false
     private var isPublishingItem = false
 
     /// Starts a reload and returns its number; the reload before it can no longer publish.
@@ -21,14 +22,26 @@ final class BackgroundRefreshGate {
         return itemGeneration
     }
 
-    func beginLibrary() -> Int {
+    /// A reload that a tap asked to publish (`mustPublish`) and that a newer reload overtook before publishing hands
+    /// the obligation on: the newer one must publish too, or the tap's change would never show.
+    func beginLibrary(mustPublish: Bool = false) -> (generation: Int, mustPublish: Bool) {
         libraryGeneration &+= 1
         libraryTask?.cancel()
-        return libraryGeneration
+        mustPublishPending = mustPublishPending || mustPublish
+        return (libraryGeneration, mustPublishPending)
     }
 
-    /// Returns once the newest Library reload has published or been dropped. For tests that tap, then read the rows.
-    func settledLibrary() async { await libraryTask?.value }
+    func libraryWasPublished() { mustPublishPending = false }
+
+    /// Returns once the newest Library reload has published or been dropped, following reloads that overtake it.
+    /// For tests that tap, then read the rows.
+    func settledLibrary() async {
+        while true {
+            let generation = libraryGeneration
+            await libraryTask?.value
+            if generation == libraryGeneration { return }
+        }
+    }
 
     func holdItem(_ task: Task<Void, Never>) { itemTask = task }
     func holdLibrary(_ task: Task<Void, Never>) { libraryTask = task }
@@ -94,7 +107,7 @@ extension Gate1AppModel {
     /// and leaves the Preparing Audio lists alone when their writer changed them during the read.
     func refreshLibraryRowsInBackground(mustPublish: Bool = false) {
         guard let store else { return }
-        let generation = backgroundRefresh.beginLibrary()
+        let (generation, publishRequired) = backgroundRefresh.beginLibrary(mustPublish: mustPublish)
         let read = navigationLibraryRead
         backgroundRefresh.holdLibrary(Task { [weak self] in
             for _ in 0..<3 {
@@ -106,8 +119,9 @@ extension Gate1AppModel {
                 // `libraryItems`, so the revision can't see them: a list that changed during the read is read again.
                 let rowsMoved = self.libraryPresentationRevision != revision
                 let listsMoved = self.audioPreparationLists != listsBefore
-                if (rowsMoved || listsMoved) && !mustPublish { continue }
+                if (rowsMoved || listsMoved) && !publishRequired { continue }
                 self.publishLibrary(data)
+                self.backgroundRefresh.libraryWasPublished()
                 if !listsMoved { self.publishAudioPreparationPresentation(from: data, store: store) }
                 return
             }
