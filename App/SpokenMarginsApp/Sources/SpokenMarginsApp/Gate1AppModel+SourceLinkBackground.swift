@@ -147,8 +147,9 @@ extension Gate1AppModel {
         guard let store = try? requireStore(), voiceover.claim(itemId: itemId) else { return }
         let transcriber = sourceTranscriptionClient
         Task { [weak self] in
-            await voiceover.remember(sharedURL: sharedURL, article: article, itemId: itemId, fetched: fetched, store: store, transcriber: transcriber) {
-                self?.diagnostics["sharedLinkVoiceover"] = $0
+            await voiceover.remember(sharedURL: sharedURL, article: article, itemId: itemId, fetched: fetched, store: store, transcriber: transcriber) { result in
+                guard let self else { return }
+                self.hangTelemetry.labels.scoped("sharedLinkVoiceover") { self.diagnostics["sharedLinkVoiceover"] = result }
             }
         }
     }

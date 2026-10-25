@@ -254,8 +254,10 @@ extension Gate1AppModel {
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 50_000_000)
             guard let self else { return }
-            self.finishInterjection()
-            self.marginCapture.finalizeFinish(at: Date(), stillRecording: self.snapshot.isRecording)
+            self.hangTelemetry.labels.scoped("marginSaveFinish") {
+                self.finishInterjection()
+                self.marginCapture.finalizeFinish(at: Date(), stillRecording: self.snapshot.isRecording)
+            }
         }
     }
 

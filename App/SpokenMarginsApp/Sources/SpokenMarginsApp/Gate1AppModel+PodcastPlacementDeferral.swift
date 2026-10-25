@@ -23,9 +23,11 @@ extension Gate1AppModel {
         guard !deferredPodcastPlacementURLs.isEmpty else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
-            for (itemId, localURL) in self.deferredPodcastPlacementURLs {
-                self.diagnostics["podcastPlacementDeferred:\(itemId)"] = "resumed_after_session_change"
-                self.resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
+            self.hangTelemetry.labels.scoped("resumeDeferredPlacements") {
+                for (itemId, localURL) in self.deferredPodcastPlacementURLs {
+                    self.diagnostics["podcastPlacementDeferred:\(itemId)"] = "resumed_after_session_change"
+                    self.resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
+                }
             }
         }
     }

@@ -206,9 +206,9 @@ extension Gate1AppModel {
             importedCommentaryAutoPlayTask?.cancel()
             importedCommentaryAutoPlayTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(420))
-                guard !Task.isCancelled,
-                      self?.pendingImportedCommentary?.id == prompt.id else { return }
-                self?.listenToPendingImportedCommentary()
+                guard !Task.isCancelled, let self,
+                      self.pendingImportedCommentary?.id == prompt.id else { return }
+                self.hangTelemetry.labels.scoped("importedCommentaryAutoPlay") { self.listenToPendingImportedCommentary() }
             }
         }
     }
