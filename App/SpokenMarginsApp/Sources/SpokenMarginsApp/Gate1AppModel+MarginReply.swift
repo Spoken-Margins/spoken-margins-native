@@ -102,10 +102,25 @@ extension Gate1AppModel {
         if writtenMarginDraft != nil {
             marginCapture.toggleDraftReply()
             engine?.changeReplyOfCurrentCapture(to: writtenMarginDraft?.reply?.link)
-        } else if snapshot.isRecording {
+            journalWrittenMarginText() // the choice is part of what a closed app must remember
+        } else if marginCapture.replyChoice.canToggle {
+            // Also while the microphone is still being asked for: the start reads the choice made here.
             marginCapture.toggleReplyChoice()
             engine?.changeReplyOfCurrentCapture(to: marginCapture.pendingReply?.link)
         }
+    }
+
+    /// What a reopened unfinished written Margin answers: the link its journal kept, shown with the Margin's words
+    /// when that Margin is in the Library. A link whose Margin cannot be found is dropped, so the screen never
+    /// saves a reply the listener cannot see.
+    func restoredReplyChoice(for link: MarginReplyLink?) -> MarginReplyChoice {
+        guard let link else { return MarginReplyChoice() }
+        for row in sharedMarginRows {
+            let draft = MarginReplyDraft(parent: row.interjection, in: row.layer)
+            if draft.link == link { return MarginReplyChoice(suggested: draft) }
+        }
+        diagnostics["writtenMarginDraftReply"] = "dropped:parent_not_found"
+        return MarginReplyChoice()
     }
 
     /// A saved Margin becomes independent, or a reply again (`link` is the Margin it answered). Only the link

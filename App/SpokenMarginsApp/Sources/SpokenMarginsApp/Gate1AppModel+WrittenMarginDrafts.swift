@@ -74,9 +74,10 @@ extension Gate1AppModel {
                         diagnostics["writtenMarginDraftSource"] = "unavailable:\(error.localizedDescription)"
                     }
                 }
-                let capture = try engine.restoreWrittenInterjection(record.capture)
+                let choice = restoredReplyChoice(for: record.capture.replyTo)
+                let capture = try engine.restoreWrittenInterjection(record.capture.replying(to: choice.effective?.link))
                 snapshot = engine.snapshot
-                var draft = makeWrittenMarginDraft(for: capture, store: store, replyChoice: MarginReplyChoice())
+                var draft = makeWrittenMarginDraft(for: capture, store: store, replyChoice: choice)
                 draft.text = record.text
                 marginCapture.openDraft(draft)
                 diagnostics["writtenMarginDraftRestored"] = capture.id
