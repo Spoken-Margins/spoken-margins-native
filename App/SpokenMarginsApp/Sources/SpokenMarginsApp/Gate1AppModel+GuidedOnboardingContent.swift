@@ -83,7 +83,7 @@ extension Gate1AppModel {
                 snapshot = SessionSnapshot()
                 diagnostics["guidedOnboardingProgress"] = "reset_for_audio_change"
             }
-            try refreshLibraryRows(store: store)
+            refreshLibraryRowsInBackground()
             diagnostics["guidedOnboardingRemote"] = "ready:v\(payload.manifest.contentVersion)"
         } catch {
             diagnostics["guidedOnboardingRemote"] = "fallback:\(String(describing: type(of: error)))"

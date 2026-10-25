@@ -2686,7 +2686,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
     #endif
 
-    func testTrashUndoPreservesItemSessions() throws {
+    func testTrashUndoPreservesItemSessions() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.startItem(id: "item-pill")
@@ -2700,6 +2700,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNil(model.feedbackEvent)
 
         model.undoLastTrash()
+        await model.settleLibraryReload()
         model.openItem(id: "item-pill")
 
         XCTAssertTrue(model.libraryItems.contains(where: { $0.id == "item-pill" }))
@@ -2758,7 +2759,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         }
     }
 
-    func testUnfinishedLibraryCompletionUndoPreservesHistoryAndSearch() throws {
+    func testUnfinishedLibraryCompletionUndoPreservesHistoryAndSearch() async throws {
         let keys = ["libraryContentTypeFilter", "libraryListeningStateFilter", "libraryOfflineStateFilter", "librarySort", "libraryUnfinishedDefaultApplied"]
         let saved = keys.map { ($0, UserDefaults.standard.object(forKey: $0)) }
         defer {
@@ -2775,13 +2776,16 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let snapshot = model.snapshot
         XCTAssertTrue(model.visibleLibraryItems.contains { $0.id == "item-pill" })
         model.markItemCompleted(id: "item-pill")
+        await model.settleLibraryReload()
         XCTAssertFalse(model.visibleLibraryItems.contains { $0.id == "item-pill" })
         try XCTUnwrap(model.feedbackEvent?.action, "Marking complete offers Undo on the banner").perform()
+        await model.settleLibraryReload()
         XCTAssertNil(model.feedbackEvent?.action, "Undo answers with a plain confirmation")
         XCTAssertTrue(model.visibleLibraryItems.contains { $0.id == "item-pill" })
         XCTAssertEqual(model.selectedItem.sessions, history)
         XCTAssertEqual(model.snapshot, snapshot)
         model.markItemCompleted(id: "item-pill")
+        await model.settleLibraryReload()
         model.libraryQuery.query = "pill"
         XCTAssertTrue(model.libraryHidesCompleted)
         XCTAssertFalse(model.visibleLibraryItems.contains { $0.id == "item-pill" })
@@ -2793,19 +2797,21 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.libraryQuery.listeningState, .unfinished)
         model.libraryQuery.query = ""
         for item in model.libraryItems where !item.isCompleted { model.markItemCompleted(id: item.id) }
+        await model.settleLibraryReload()
         XCTAssertTrue(model.libraryIsCaughtUp)
         model.showCompletedLibraryItems()
         XCTAssertFalse(model.libraryIsCaughtUp)
         XCTAssertFalse(model.visibleLibraryItems.isEmpty)
     }
 
-    func testMarkItemCompletedPersistsListeningStateAndStopsOfferingItAsContinueHero() throws {
+    func testMarkItemCompletedPersistsListeningStateAndStopsOfferingItAsContinueHero() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.startItem(id: "item-pill")
 
         let history = model.selectedItem.sessions
         model.markItemCompleted(id: "item-pill")
+        await model.settleLibraryReload()
 
         let row = try XCTUnwrap(model.libraryItems.first(where: { $0.id == "item-pill" }))
         XCTAssertTrue(row.isCompleted)
@@ -2820,17 +2826,19 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
 
     // #273: once the 10-second undo banner was gone, nothing could mark an item unfinished again.
-    func testItemMarkedCompleteByHandCanBeMarkedUnfinishedAfterTheUndoBannerIsGone() throws {
+    func testItemMarkedCompleteByHandCanBeMarkedUnfinishedAfterTheUndoBannerIsGone() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.declineCurrentTerms()
         model.startItem(id: "item-pill")
         let history = model.selectedItem.sessions
         model.markItemCompleted(id: "item-pill")
+        await model.settleLibraryReload()
         model.dismissFeedback()
         XCTAssertTrue(try XCTUnwrap(model.libraryItems.first { $0.id == "item-pill" }).canMarkUnfinished)
 
         model.markItemUnfinished(id: "item-pill")
+        await model.settleLibraryReload()
 
         let row = try XCTUnwrap(model.libraryItems.first { $0.id == "item-pill" })
         XCTAssertFalse(row.isCompleted)
@@ -2841,7 +2849,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.sessions, history, "the listening position is unchanged")
     }
 
-    func testUnplayedItemCanBeMarkedCompletedWithoutStartingPlayback() throws {
+    func testUnplayedItemCanBeMarkedCompletedWithoutStartingPlayback() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -2855,6 +2863,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.openItem(id: itemID)
         let history = model.selectedItem.sessions
         model.markItemCompleted(id: itemID)
+        await model.settleLibraryReload()
         model.openItem(id: itemID)
 
         XCTAssertTrue(try XCTUnwrap(model.libraryItems.first { $0.id == itemID }).isCompleted)

@@ -93,13 +93,14 @@ final class FeedbackBannerTests: XCTestCase {
 
     /// #1149: marking an item complete is confirmed on the shared top banner with an Undo button. It used
     /// to be a row inside the Library list that pushed every row down.
-    func testMarkingCompleteOffersUndoOnTheSharedBannerAndUndoRestoresTheItem() throws {
+    func testMarkingCompleteOffersUndoOnTheSharedBannerAndUndoRestoresTheItem() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.declineCurrentTerms()
         let title = try XCTUnwrap(model.libraryItems.first { $0.id == "item-pill" }).title
 
         model.markItemCompleted(id: "item-pill")
+        await model.settleLibraryReload()
 
         let event = try XCTUnwrap(model.feedbackEvent)
         XCTAssertEqual(event.kind, .success)
@@ -111,6 +112,7 @@ final class FeedbackBannerTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(model.libraryItems.first { $0.id == "item-pill" }).isCompleted)
 
         undo.perform()
+        await model.settleLibraryReload()
 
         XCTAssertFalse(try XCTUnwrap(model.libraryItems.first { $0.id == "item-pill" }).isCompleted)
         XCTAssertEqual(model.feedbackEvent?.message, ManualCompletionMessages.undone(title: title))
@@ -118,7 +120,7 @@ final class FeedbackBannerTests: XCTestCase {
     }
 
     /// #1149: a second completion replaces the first banner, and the Undo left on screen undoes the newest.
-    func testTwoQuickCompletionsLeaveOneBannerWhoseUndoUndoesTheNewest() throws {
+    func testTwoQuickCompletionsLeaveOneBannerWhoseUndoUndoesTheNewest() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.declineCurrentTerms()
@@ -128,13 +130,16 @@ final class FeedbackBannerTests: XCTestCase {
         let secondId = try XCTUnwrap(model.libraryItems.first { $0.title == "Second Article" }).id
 
         model.markItemCompleted(id: "item-pill")
+        await model.settleLibraryReload()
         let first = try XCTUnwrap(model.feedbackEvent)
         model.markItemCompleted(id: secondId)
+        await model.settleLibraryReload()
         let newest = try XCTUnwrap(model.feedbackEvent)
 
         XCTAssertNotEqual(first.id, newest.id, "The second completion replaces the first banner")
         XCTAssertEqual(newest.message, ManualCompletionMessages.completed(title: "Second Article"))
         try XCTUnwrap(newest.action).perform()
+        await model.settleLibraryReload()
 
         XCTAssertFalse(try XCTUnwrap(model.libraryItems.first { $0.id == secondId }).isCompleted)
         XCTAssertTrue(try XCTUnwrap(model.libraryItems.first { $0.id == "item-pill" }).isCompleted,
@@ -142,7 +147,7 @@ final class FeedbackBannerTests: XCTestCase {
     }
 
     /// #1149: a long title is shortened, so the banner stays a couple of lines beside its Undo button.
-    func testALongTitleDoesNotMakeTheCompletionBannerTall() throws {
+    func testALongTitleDoesNotMakeTheCompletionBannerTall() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.declineCurrentTerms()
@@ -153,6 +158,7 @@ final class FeedbackBannerTests: XCTestCase {
         let id = try XCTUnwrap(model.libraryItems.first { $0.title == long }).id
 
         model.markItemCompleted(id: id)
+        await model.settleLibraryReload()
 
         let message = try XCTUnwrap(model.feedbackEvent?.message)
         XCTAssertEqual(message, ManualCompletionMessages.completed(title: long))
