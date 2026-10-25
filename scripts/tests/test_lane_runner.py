@@ -4068,6 +4068,31 @@ class RetryPassTests(unittest.TestCase):
         self.assertEqual(opened, ['https://github.com/o/r/issues/9'])
         self.assertIn(f'<!-- flake-test: {self.RETRIED} -->', tally.issues[0][1])
 
+    def test_an_open_flake_issue_the_workflow_bot_opened_still_counts(self):
+        # The lane opens flake issues as github-actions[bot], whose author_association is NONE; missing it opened a
+        # duplicate `ready` issue on every later retry-pass (audit on 0102f32).
+        issues = [{'body': f'<!-- flake-test: {self.RETRIED} -->', 'author_association': 'NONE',
+                   'user': {'login': 'github-actions[bot]'}},
+                  {'body': '<!-- flake-test: T/Owner/testA() -->', 'author_association': 'OWNER', 'user': {'login': 'o'}},
+                  {'body': '<!-- flake-test: T/Stranger/testB() -->', 'author_association': 'NONE',
+                   'user': {'login': 'mallory'}}]
+        repo_tally = lane.RepoTally.__new__(lane.RepoTally)
+        repo_tally.repo = 'o/r'
+        repo_tally.client = mock.Mock()
+        repo_tally.client.api.return_value = '\n'.join(json.dumps(i) for i in issues) + '\n'
+        self.assertEqual(repo_tally.open_markers(), {self.RETRIED, 'T/Owner/testA()'})
+        self.assertIn('user', repo_tally.client.api.call_args[0][2])
+
+    def test_a_test_name_with_spaces_is_still_counted(self):
+        spaced = 'SpokenMarginsAppTests/Playback/plays the next item()'
+        def earlier(run, days):
+            when = (self.NOW - datetime.timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            return {'user': {'login': 'github-actions[bot]'}, 'body': f'flake-tally: {spaced} abcdef1 {run} {when}'}
+        tally = self.Tally([earlier('1', 2), earlier('2', 3)])
+        opened = lane.log_retry_passes(self.evidence([spaced]), 'o/r', 'abcdef1234', '77', tally, self.NOW)
+        self.assertEqual(len(opened), 1)
+        self.assertIn(f'<!-- flake-test: {spaced} -->', tally.issues[0][1])
+
     def test_a_tally_error_warns_and_the_verdict_stays_pass(self):
         tally = self.Tally(fail=True)
         with mock.patch('builtins.print') as shown:

@@ -591,25 +591,31 @@ def retry_passes(evidence: Path) -> list[str]:
                    for step in _read_manifest(output).get('steps', []) for t in step.get('passed_on_retry') or []})
 
 
+def _tally_trusted(item: dict) -> bool:
+    """A comment or issue from a collaborator or the workflow's bot (#1822). The bot's author_association is NONE,
+    so it is matched by login; the lane opens its flake issues and posts its tallies as the bot."""
+    return (item.get('user') or {}).get('login') == TALLY_BOT or item.get('author_association') in TALLY_TRUSTED
+
+
 def tally_counts(comments: list[dict], now: datetime.datetime) -> dict[str, list[str]]:
     """Retry-passes per test in the last 7 days -> their run ids. Only comments from a collaborator or the workflow's
-    bot count (#1822), so a stranger's look-alike line can't open an issue. The same run counts once per test."""
+    bot count (#1822), so a stranger's look-alike line can't open an issue. The same run counts once per test.
+    The test is everything between the prefix and the last three fields, so a name with spaces still counts."""
     seen: dict[str, dict[str, None]] = {}
     window = datetime.timedelta(days=TALLY_WINDOW_DAYS)
     for comment in comments:
-        who = (comment.get('user') or {}).get('login')
-        if who != TALLY_BOT and comment.get('author_association') not in TALLY_TRUSTED:
+        if not _tally_trusted(comment):
             continue
         first = (comment.get('body') or '').splitlines()[:1]
         parts = first[0].split() if first else []
-        if len(parts) != 5 or parts[0] != TALLY_PREFIX:
+        if len(parts) < 5 or parts[0] != TALLY_PREFIX:
             continue
         try:
-            when = datetime.datetime.strptime(parts[4], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
+            when = datetime.datetime.strptime(parts[-1], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
         except ValueError:
             continue
         if now - window <= when <= now:
-            seen.setdefault(parts[1], {})[parts[3]] = None
+            seen.setdefault(' '.join(parts[1:-3]), {})[parts[-2]] = None
     return {test: list(runs) for test, runs in seen.items()}
 
 
@@ -661,10 +667,11 @@ class RepoTally:
 
     def open_markers(self) -> set[str]:
         lines = self.client.api('--paginate', '--jq',
-                                '.[] | select(.pull_request == null) | {body, author_association} | @json',
+                                '.[] | select(.pull_request == null) | {body, author_association, '
+                                'user: {login: .user.login}} | @json',
                                 f'repos/{self.repo}/issues?state=open&per_page=100')
         issues = [json.loads(line) for line in lines.splitlines() if line.strip()]
-        return {m for issue in issues if issue.get('author_association') in TALLY_TRUSTED
+        return {m for issue in issues if _tally_trusted(issue)
                 for m in re.findall(r'<!-- flake-test: (.+?) -->', issue.get('body') or '')}
 
     def open_issue(self, title: str, body: str) -> str:
