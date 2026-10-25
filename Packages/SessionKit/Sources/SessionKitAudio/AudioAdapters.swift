@@ -1826,6 +1826,9 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     public var heardSourceWindowHandler: (@Sendable (HeardAudioWindow) -> Void)?
     #endif
     private let remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)?
+    /// A headphone double-press arrives as next track. When set, it gets the press instead of skip forward,
+    /// so the app can add a Margin by the listener's setting (#2031). Skip forward stays skip forward.
+    public var nextTrackHandler: (@Sendable () -> Void)?
     private let interruptionHandler: (@Sendable (AudioPlaybackInterruptionEvent) -> Void)?
     private let audioSessionNotificationCenter: NotificationCenter
     private var mediaContext: PlaybackMediaContext?
@@ -3182,7 +3185,13 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             self?.dispatchRemoteCommand(.skipForward) == true ? .success : .noSuchContent
         }
         register(center.nextTrackCommand) { [weak self] _ in
-            self?.dispatchRemoteCommand(.skipForward) == true ? .success : .noSuchContent
+            guard let self else { return .noSuchContent }
+            guard let nextTrackHandler = self.nextTrackHandler else {
+                return self.dispatchRemoteCommand(.skipForward) ? .success : .noSuchContent
+            }
+            guard self.activeTargetId != nil else { return .noSuchContent }
+            nextTrackHandler()
+            return .success
         }
         register(center.changePlaybackPositionCommand) { [weak self] event in
             guard let event = event as? MPChangePlaybackPositionCommandEvent else {

@@ -247,6 +247,20 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertFalse(availability.canPreviousTrack)
     }
 
+    /// #2031: a headphone double-press is the next-track command, so it is enabled only while it adds a Margin.
+    func testNextTrackIsEnabledOnlyWhenDoublePressAddsAMargin() {
+        let playing = compactSnapshot(
+            targetType: TargetType.itemTextTTS.rawValue,
+            availableCommands: [.pause, .skipForward],
+            durationMs: nil
+        )
+        XCTAssertFalse(Gate2NowPlayingCommandAvailability(snapshot: playing).canNextTrack)
+        XCTAssertTrue(Gate2NowPlayingCommandAvailability(snapshot: playing, headphoneDoublePressAddsMargin: true).canNextTrack)
+        var noSkip = playing
+        noSkip.availableCommands = [.pause]
+        XCTAssertFalse(Gate2NowPlayingCommandAvailability(snapshot: noSkip, headphoneDoublePressAddsMargin: true).canNextTrack)
+    }
+
     func testNowPlayingTransportStaysOffWhileRecordingIfTheSurfaceCannotFinish() {
         var recording = compactSnapshot(
             targetType: TargetType.itemTextTTS.rawValue,

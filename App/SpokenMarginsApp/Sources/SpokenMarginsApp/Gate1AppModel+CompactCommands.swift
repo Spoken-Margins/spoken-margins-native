@@ -26,6 +26,25 @@ extension Gate1AppModel {
         playbackRate: Double? = nil,
         origin: String = "app_ui"
     ) {
+        // A headphone double-press (next track) adds a Margin, or skips forward by the listener's setting (#2031).
+        // Skip forward from the Lock Screen or the screen never reaches this branch.
+        if command == .skipForward, origin.hasSuffix(HeadphoneRemoteSignal.nextTrackOriginSuffix) {
+            let setting = HeadphoneDoublePressAction(
+                storedValue: UserDefaults.standard.string(forKey: HeadphoneDoublePressAction.storageKey)
+            )
+            let decision = HeadphoneDoublePressPolicy.decide(
+                signal: .nextTrack, setting: setting, isRecording: snapshot.isRecording
+            )
+            recordDeveloperDiagnostic("transport.headphone_double_press", [
+                "setting": setting.rawValue, "decision": String(describing: decision), "origin": origin,
+            ])
+            if decision == .startMargin {
+                // The same start path as the on-screen Add a Margin, so permission and ownership checks apply.
+                dispatchGate2CompactCommand(.beginInterjection, origin: origin)
+                return
+            }
+            // End and skip decisions are the ordinary skip-forward command, which the recording branch below ends.
+        }
         // A headphone click, car button or Lock Screen play/pause while a Margin records ends it (#1030).
         // Only from Now Playing: a stale queued widget command must not save a Margin. A save already
         // under way from the screen is not asked twice. Bluetooth headphones switching to the hands-free

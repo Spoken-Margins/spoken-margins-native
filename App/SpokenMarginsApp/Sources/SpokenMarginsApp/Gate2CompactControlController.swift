@@ -30,7 +30,7 @@ struct Gate2NowPlayingCommandAvailability: Equatable {
     var canPreviousTrack: Bool
     var canNextTrack: Bool
 
-    init(snapshot: CompactControlSnapshot) {
+    init(snapshot: CompactControlSnapshot, headphoneDoublePressAddsMargin: Bool = false) {
         let canSendPlay = snapshot.availableCommands.contains(.play) || snapshot.availableCommands.contains(.togglePlayPause)
         let canSendPause = snapshot.availableCommands.contains(.pause) || snapshot.availableCommands.contains(.togglePlayPause)
         // Keep both native transport commands registered for the lifetime of the
@@ -50,10 +50,14 @@ struct Gate2NowPlayingCommandAvailability: Equatable {
         // and gives the commands semantics that the canonical session does not
         // own.
         canPreviousTrack = false
-        canNextTrack = false
+        // Exception (#2031): a headphone double-press arrives as next track, so while it adds a Margin the
+        // command stays enabled whenever skip forward is. Not checked on a phone: whether iOS then swaps the
+        // Lock Screen skip icons for track icons is the thing to look at.
+        canNextTrack = headphoneDoublePressAddsMargin && canSkipForward
         // While a Margin records these commands end it. Disabled, iOS drops the headphone click before it
         // reaches the app (#1030).
         if snapshot.transportCommandsEndMargin {
+            canNextTrack = headphoneDoublePressAddsMargin
             canPlay = true
             canPause = true
             canTogglePlayPause = true
@@ -369,6 +373,11 @@ final class Gate2CompactControlController {
         queuedApplicationCommandHandler = applicationCommandHandler
         liveSpeechNowPlaying.commandHandler = { [weak self] command, playbackRate in
             self?.queuedCommandHandler?(command, "now_playing_live_speech", nil, nil, playbackRate)
+        }
+        liveSpeechNowPlaying.nextTrackHandler = { [weak self] in
+            self?.queuedCommandHandler?(
+                .skipForward, "now_playing_live_speech" + HeadphoneRemoteSignal.nextTrackOriginSuffix, nil, nil, nil
+            )
         }
         installQueuedWidgetCommandProcessor()
         publishCurrentSnapshot(force: true)
@@ -1127,6 +1136,8 @@ enum Gate2AppState {
 @MainActor
 private final class Gate2LiveSpeechNowPlayingController {
     var commandHandler: (@MainActor (CompactControlCommand, Double?) -> Void)?
+    /// A headphone double-press: the next-track remote command, kept distinct from skip forward (#2031).
+    var nextTrackHandler: (@MainActor () -> Void)?
     private(set) var lastRemoteCommand = "none"
     private(set) var lastRemoteCommandDetail = "none"
     private(set) var status = "media_coordinator"
@@ -1223,7 +1234,10 @@ private final class Gate2LiveSpeechNowPlayingController {
     private func configureRemoteCommandAvailability(for snapshot: CompactControlSnapshot) {
         #if canImport(MediaPlayer)
         let center = MPRemoteCommandCenter.shared()
-        let availability = Gate2NowPlayingCommandAvailability(snapshot: snapshot)
+        let addsMargin = HeadphoneDoublePressAction(
+            storedValue: UserDefaults.standard.string(forKey: HeadphoneDoublePressAction.storageKey)
+        ) == .addMargin
+        let availability = Gate2NowPlayingCommandAvailability(snapshot: snapshot, headphoneDoublePressAddsMargin: addsMargin)
         center.playCommand.isEnabled = availability.canPlay
         center.pauseCommand.isEnabled = availability.canPause
         center.togglePlayPauseCommand.isEnabled = availability.canTogglePlayPause
@@ -1262,6 +1276,15 @@ private final class Gate2LiveSpeechNowPlayingController {
         register(center.skipBackwardCommand, command: .skipBack, detail: "15s")
         register(center.skipForwardCommand, command: .skipForward, detail: "15s")
         register(center.stopCommand, command: .pause, detail: "none")
+        let nextTrackTarget = center.nextTrackCommand.addTarget { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.lastRemoteCommand = "nextTrack"
+                self?.lastRemoteCommandDetail = "none"
+                self?.nextTrackHandler?()
+            }
+            return .success
+        }
+        remoteCommandTargets.append((center.nextTrackCommand, nextTrackTarget))
         let rateTarget = center.changePlaybackRateCommand.addTarget { [weak self] event in
             guard let event = event as? MPChangePlaybackRateCommandEvent else {
                 return .commandFailed
