@@ -6,6 +6,8 @@ import Foundation
 public protocol LibraryAudioPreparationHost: AnyObject {
     /// Read live at every restart decision, never captured once.
     var playbackAllowsLibraryAudioPreparation: Bool { get }
+    /// Asks iOS to keep the app running for a long run; called on every start request, even while a run is going (#905).
+    func requestContinuedAudioPreparationIfNeeded()
     /// Runs the passes until they have no more work, waiting out a heat pause or a memory backoff in between.
     func runForegroundAudioPreparationPasses() async
     /// A run ended and nothing newer owns the loop: refresh the rows that show preparation progress.
@@ -19,7 +21,8 @@ public protocol LibraryAudioPreparationHost: AnyObject {
 /// - `cancelOnly()` cancels the task and leaves it in place. The run's own finalizer then ends it and,
 ///   when playback allows, starts a fresh one. Snapshot changes, memory warnings and `deinit` use it.
 /// - `stopAndInvalidate()` cancels, bumps the generation and drops the task, so the old run can no longer
-///   restart anything or finalize a replacement. Engine rebuilds and clearing the queue use it.
+///   restart anything or finalize a replacement. Engine rebuilds, clearing the queue and the continued-processing
+///   task's expiry use it.
 @MainActor
 public final class LibraryAudioPreparationLoop {
     /// One Library item renders at a time; the foreground loop and the background task share it (#281).
@@ -46,8 +49,10 @@ public final class LibraryAudioPreparationLoop {
         generation += 1
     }
 
-    /// Starts a run unless one is going.
+    /// Starts a run unless one is going. The continued-processing request comes first on purpose:
+    /// a run may already be going when the listener asks again (#905).
     public func start(host: any LibraryAudioPreparationHost) {
+        host.requestContinuedAudioPreparationIfNeeded()
         guard !holder.hasTask else { return }
         generation += 1
         let started = generation

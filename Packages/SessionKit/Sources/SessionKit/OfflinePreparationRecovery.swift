@@ -19,6 +19,20 @@ public enum OfflinePreparationRecovery {
             || jobs.contains { !$0.isCancelled && $0.policy == .explicit }
     }
 
+    /// Expiry can happen between renders or while waiting for heat. Record it on every remaining
+    /// request, rather than relying on a renderer to notice cancellation. Never change its chunks.
+    public static func interruptedJobs(
+        _ jobs: [AudioPreparationJob], requests: Set<OfflinePreparationRun.RequestKey>
+    ) -> [AudioPreparationJob] {
+        jobs.compactMap { job in
+            guard !job.isCancelled, job.policy == .explicit,
+                  requests.contains(.init(jobId: job.id, requestedAt: job.requestedAt)) else { return nil }
+            var interrupted = job
+            interrupted.lastFailureCode = waitingForSystem
+            return interrupted
+        }
+    }
+
     /// Automatic enqueueing must not turn the listener's explicit request into charging-only work.
     public static func automaticJob(_ job: AudioPreparationJob, committedChunks: Int) -> AudioPreparationJob {
         guard job.policy != .explicit else { return job }
