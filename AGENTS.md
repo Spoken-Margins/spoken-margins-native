@@ -178,6 +178,7 @@ Replace this section when the focus changes; do not append to it.
     - A test that never caught anything and fails spuriously is deleted, unless it guards packet compatibility, database compatibility or owner data.
     - A test kept despite a high false-positive rate carries a written Cost and catch justification.
     - Tests and audits are complementary: tests prove what reading can't (formats an old build reads, invariants, real file and database behaviour); the audit judges intent and design. Audits have caught far more than tests so far (#2376).
+    - Narrowed on 2026-10-24: a passing rerun overrides a first failure (see that day's call).
   - **The repository is public.** He said "Flip." The flip was done on 2026-10-21, after the fork-job guard went onto all five self-hosted runners (#1719). The interaction limit is collaborators-only until 2027-04-21, so renew or replace it before then. Fork PR workflows need approval from all external contributors, and private vulnerability reporting is on (#1393).
   - **Phone builds sign on GitHub.** Asked "May phone builds sign on GitHub with an App Store Connect API key kept in a GitHub environment that only runs from `main`?", he said "yes to 1". Phone builds move to a GitHub-hosted Mac, signed through a `phone-build` environment limited to `main`. He creates the key himself, and no agent handles key material. His Mac only downloads and installs the build. Journeys stay on his Mac. TestFlight uploads still wait for his "upload".
   - **Showcase is the milestone name.** Asked whether he was happy with "Showcase", he said "yes". It is the solo-app milestone in "Now: Showcase" above.
@@ -192,6 +193,15 @@ Replace this section when the focus changes; do not append to it.
     - Why: open issues whose fix had merged kept `ready` and polluted the queue; 15 were found on 2026-10-22.
     - What would show it's wrong: a closed issue with `needs-human-validation` a week old that no phone plan has listed.
     - This replaces the 2026-10-14 housekeeping clause that closed only issues without `needs-human-validation` or `found-on-phone`, and the 2026-10-15 and 2026-10-17 rules that kept a merged-but-waiting issue open in the next milestone.
+- **Owner's standing call (2026-10-24).** Don't ask again:
+  - **A rerun that passes overrides a first failure.** "it makes sense to allow for a green run to override a red one, just because I think our false negative rate is really high and the false positive is fairly low."
+    - A test that fails and then passes on its rerun counts as a pass, and the run is green.
+    - A test that fails its rerun too makes the run red.
+    - Every report lists "passed on retry: <test names>".
+    - Each retry-pass is tallied as a comment on #2176.
+    - A test that passes on retry 3 or more times in 7 days gets its own `ready` issue in `Showcase`, so an intermittent real bug still surfaces.
+    - He said his 2026-10-21 "every test blocks" call was too broad on this point. This narrows that call for retry passes only. Tests still block, and there is still no quarantine and no non-blocking tier.
+    - It applies to the hosted integration run (#2602) and the lane's T3 path (#2596).
 - **Podcast anchors** continue as stream C4: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
 - **Parked, reference only:**
   - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand. Its packets use a Margin kind this build can't read.
