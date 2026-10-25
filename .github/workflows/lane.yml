@@ -276,15 +276,25 @@ jobs:
           # The checkout keeps no credentials; the job token is handed to this one command.
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
-      # Rolling key: every run saves its cache and the next restores the newest. verify-tests.py keeps it in the lane
-      # state folder, and Xcode bounds the store itself.
-      - name: Hosted Mac - Xcode compilation cache
+      # The compilation cache goes through scripts/ci-cas-cache.sh, not straight into actions/cache (#2619, from #2617):
+      # the store's data files are sparse, plain tar saved their holes as zeros, and restoring a 481 MB archive wrote
+      # until the runner's disk was full, before the build began. The script archives them sparse, refuses a restore
+      # that would fill the disk, and costs a cold build, never a red check, when anything goes wrong. `sparse` in the
+      # key keeps the earlier plain-tar entries (xcode-cas-27.0-) from ever being restored; the prefix is shared with
+      # hosted-app-macos.yml, so a lane run starts from the trunk's warm store when its own PR has none.
+      # Rolling key: the newest entry restores. verify-tests.py keeps the store in the lane state folder, and Xcode
+      # bounds it itself.
+      - name: Hosted Mac - restore the Xcode compilation cache
         if: runner.environment == 'github-hosted'
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
         with:
-          path: ${{ runner.temp }}/lane-state/compilation-cache
-          key: xcode-cas-27.0-lane-${{ github.run_id }}
-          restore-keys: xcode-cas-27.0-
+          path: ${{ runner.temp }}/cas-pack
+          key: xcode-cas-sparse-27.0-lane-${{ github.run_id }}
+          restore-keys: xcode-cas-sparse-27.0-
+      - name: Hosted Mac - unpack the Xcode compilation cache
+        if: runner.environment == 'github-hosted'
+        run: CAS="$RUNNER_TEMP/lane-state/compilation-cache" PACK="$RUNNER_TEMP/cas-pack" bash scripts/ci-cas-cache.sh unpack
       # The image's /usr/bin/python3 is 3.9, and requirements-dev.txt pins jsonschema 4.26.0, which needs 3.10 or newer:
       # every hosted T3 run died here with "No matching distribution" (#2545). The hosted workflows all use 3.12.
       - name: Hosted Mac - Python 3.12
@@ -339,6 +349,19 @@ jobs:
           elif [ "$VERDICT" != PASS ]; then
             echo "::warning title=Lane $VERDICT::The lane reported $VERDICT, not a pass. The report on the PR says why."
           fi
+      # Saved only by a run that reported PASS: its builds succeeded, so the store holds finished compiles. A FAIL, an
+      # INCONCLUSIVE or a run that died before reporting may have stopped mid-build, and a store left by one of those
+      # is what the next run restored in #2617.
+      - name: Hosted Mac - pack the Xcode compilation cache
+        id: cas-pack
+        if: always() && runner.environment == 'github-hosted' && steps.run.outputs.verdict == 'PASS'
+        run: CAS="$RUNNER_TEMP/lane-state/compilation-cache" PACK="$RUNNER_TEMP/cas-pack" bash scripts/ci-cas-cache.sh pack
+      - name: Hosted Mac - save the Xcode compilation cache
+        if: always() && steps.cas-pack.outputs.ok == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/cas-pack
+          key: xcode-cas-sparse-27.0-lane-${{ github.run_id }}
       - name: Tidy up after a cancelled or failed run
         if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'
         env:
