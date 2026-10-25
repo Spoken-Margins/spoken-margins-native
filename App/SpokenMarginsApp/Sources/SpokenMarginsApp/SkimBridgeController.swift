@@ -209,11 +209,19 @@ final class SkimBridgeController {
                 itemId: source.itemId, proposalId: proposalId,
                 sceneId: $0.summaryScene.id, suppliedAssetId: $0.summaryScene.summaryAssetId)
         }
-        let url = assetID.flatMap { assetID in
-            resources.assets.first(where: {
-                $0.id == assetID && $0.category == .summaryBridge && $0.integrity == .valid
-            }).flatMap { host.resolvedApplicationSupportAssetURL(for: $0.relativePath) }
+        // A supplied voice imported before #1120 sits under the old cut name, so that name is tried after the new one.
+        let legacyID = plan.flatMap { plan in
+            plan.summaryScene.summaryAssetId.flatMap {
+                SummaryBridgeAssetNaming.legacyAssetID(
+                    itemId: source.itemId, proposalId: proposalId, sceneId: plan.summaryScene.id, suppliedAssetId: $0)
+            }
         }
+        let savedAsset = assetID.flatMap { assetID in
+            ([assetID] + (legacyID.map { [$0] } ?? [])).lazy.compactMap { id in
+                resources.assets.first(where: { $0.id == id && $0.category == .summaryBridge && $0.integrity == .valid })
+            }.first
+        }
+        let url = savedAsset.flatMap { host.resolvedApplicationSupportAssetURL(for: $0.relativePath) }
         let readiness = SkimReadiness.of(
             hasMap: resources.hasMap, hasPlan: plan != nil, hasReadyAudio: url != nil,
             suppliesItsOwnVoice: plan?.summaryScene.summaryAssetId != nil)
@@ -235,7 +243,7 @@ final class SkimBridgeController {
                 summarySceneId: plan.summaryScene.id,
                 destinationSceneId: plan.destinationSceneId,
                 destinationMediaTimeMs: plan.destinationMediaTimeMs,
-                summaryAssetId: assetID,
+                summaryAssetId: savedAsset?.id ?? assetID,
                 summaryAudioURL: url
             ))
         }

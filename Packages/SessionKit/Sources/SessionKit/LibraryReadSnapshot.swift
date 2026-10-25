@@ -11,6 +11,8 @@ public struct LibraryReadSnapshot: Sendable {
     public var structuredDocumentItemIds: Set<String> = []
     /// Margins other people shared, counted per item (#1792). Items with none are absent.
     public var sharedMarginsByItemId: [String: SharedMarginTally] = [:]
+    /// The listener's own active Margins, counted per item (#2394). Items with none are absent.
+    public var marginCountsByItemId: [String: Int] = [:]
 
     public init(
         items: [LibraryItemSummary],
@@ -19,7 +21,8 @@ public struct LibraryReadSnapshot: Sendable {
         jobs: [AudioPreparationJob],
         downloads: [PodcastDownloadRecord],
         structuredDocumentItemIds: Set<String> = [],
-        sharedMarginsByItemId: [String: SharedMarginTally] = [:]
+        sharedMarginsByItemId: [String: SharedMarginTally] = [:],
+        marginCountsByItemId: [String: Int] = [:]
     ) {
         self.items = items
         self.sessions = sessions
@@ -28,6 +31,7 @@ public struct LibraryReadSnapshot: Sendable {
         self.downloads = downloads
         self.structuredDocumentItemIds = structuredDocumentItemIds
         self.sharedMarginsByItemId = sharedMarginsByItemId
+        self.marginCountsByItemId = marginCountsByItemId
     }
 
     public init(
@@ -37,11 +41,12 @@ public struct LibraryReadSnapshot: Sendable {
         jobs: [AudioPreparationJob],
         downloads: [PodcastDownloadRecord],
         structuredDocumentItemIds: Set<String> = [],
-        sharedMarginsByItemId: [String: SharedMarginTally] = [:]
+        sharedMarginsByItemId: [String: SharedMarginTally] = [:],
+        marginCountsByItemId: [String: Int] = [:]
     ) {
         self.init(
             items: items.map(LibraryItemSummary.init), sessions: sessions, manifests: manifests, jobs: jobs,
             downloads: downloads, structuredDocumentItemIds: structuredDocumentItemIds,
-            sharedMarginsByItemId: sharedMarginsByItemId)
+            sharedMarginsByItemId: sharedMarginsByItemId, marginCountsByItemId: marginCountsByItemId)
     }
 }

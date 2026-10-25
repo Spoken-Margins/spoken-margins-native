@@ -202,7 +202,7 @@ jobs:
     needs: scope
     # Not with LANE_HOSTED_MAC_REST `on`: the mac-rest job below runs these tests then (#2596).
     if: >-
-      needs.scope.outputs.mac != 'false' && vars.LANE_HOSTED_MAC_REST != 'on' && (github.event_name != 'pull_request' ||
+      !cancelled() && needs.scope.result != 'skipped' && needs.scope.outputs.mac != 'false' && vars.LANE_HOSTED_MAC_REST != 'on' && (github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on'))
     # The image and Xcode the lane Mac builds with (hosted-app-macos.yml says why), so the two can't disagree.
     runs-on: xcode-27
@@ -281,7 +281,7 @@ jobs:
     name: 'hosted fast: Mac rest'
     needs: scope
     if: >-
-      needs.scope.outputs.mac != 'false' && (github.event_name != 'pull_request' ||
+      !cancelled() && needs.scope.result != 'skipped' && needs.scope.outputs.mac != 'false' && (github.event_name != 'pull_request' ||
       ((github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on') &&
        vars.LANE_HOSTED_MAC_REST == 'on'))
     runs-on: xcode-27

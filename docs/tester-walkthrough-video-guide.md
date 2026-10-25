@@ -356,7 +356,7 @@ Replace `[VIDEO URL]` after the YouTube upload.
 > Full walkthrough: [VIDEO URL]
 >
 > For feedback, take a screenshot in TestFlight. When useful, attach Settings →
-> Support & Privacy → Share Diagnostics. Please report the device,
+> Help & Privacy → Share Diagnostics. Please report the device,
 > iOS version, expected result, actual result, and whether it reproduces.
 
 ## Complete Feature-Coverage Checklist

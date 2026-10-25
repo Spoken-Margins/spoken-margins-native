@@ -28,7 +28,7 @@ struct Gate1RootView: View {
             } else {
                 switch model.screen {
                 case .home:
-                    ExperienceRootTabs(navigation: $navigation, showsMiniPlayer: !keyboardIsPresented && model.shouldShowMiniPlayer).announcesScreenChange()
+                    ExperienceRootTabs(navigation: $navigation, supertonicNotice: supertonicNotice, showsMiniPlayer: !keyboardIsPresented && model.shouldShowMiniPlayer).announcesScreenChange()
                 case .item:
                     ExperienceItemDetailScreen()
                 case .playback:
@@ -36,8 +36,6 @@ struct Gate1RootView: View {
                 case .timeline:
                     ExperienceTimelineRailScreen().announcesScreenChange()
                         .motionTransition(.move(edge: .bottom).combined(with: .opacity))
-                case .settings:
-                    SettingsScreen(supertonicNotice: supertonicNotice).announcesScreenChange()
                 case .offlineStorage:
                     ExperienceStorageScreen().announcesScreenChange()
                 case .export:
@@ -56,7 +54,7 @@ struct Gate1RootView: View {
         ) {
             // What openHome lands on, so the swipe reveals the tab it will arrive at.
             MiniPlayerDock(showsMiniPlayer: false) {
-                ExperienceRootTabs(navigation: .constant(navigation.edgeSwipePreview), showsMiniPlayer: !keyboardIsPresented && model.shouldShowMiniPlayer)
+                ExperienceRootTabs(navigation: .constant(navigation.edgeSwipePreview), supertonicNotice: supertonicNotice, showsMiniPlayer: !keyboardIsPresented && model.shouldShowMiniPlayer)
             }
         }
         .onAppear {
