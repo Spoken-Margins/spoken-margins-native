@@ -15,6 +15,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+
+import yaml
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -469,6 +471,19 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(self.hosted.count(guard), len(lane.HOSTED_FAST_CHECKS) + len(lane.HOSTED_REST_CHECK))
         self.assertIn(f"vars.{lane.HOSTED_REST_SWITCH} == 'on')", self.hosted)
         self.assertNotIn('pull_request_target:', self.hosted)
+
+    def test_a_red_portable_job_cancels_the_run_so_its_mac_jobs_free_their_slots(self):
+        # #2596: the cancel job runs on Linux, only after `portable` ended `failure`, and holds no more than actions: write.
+        # The Mac jobs must not wait for `portable` (`needs:`): the lane runner gives a missing check only 5 minutes.
+        jobs = yaml.safe_load(self.hosted)['jobs']
+        stop = jobs['stop-macs-on-red']
+        self.assertEqual(stop['needs'], 'portable')
+        self.assertEqual(stop['runs-on'], 'ubuntu-latest')
+        self.assertEqual(stop['permissions'], {'actions': 'write'})
+        self.assertIn("needs.portable.result == 'failure'", stop['if'])
+        self.assertIn('gh run cancel', stop['steps'][0]['run'])
+        for name in ('sessionkit', 'mac-rest'):
+            self.assertNotIn('needs', jobs[name], name)
 
     def test_no_workflow_runs_on_the_vps_test_runner_and_only_the_lane_open_pings_on_the_vps(self):
         # #2442: CI left the owner's VPS. linux-t1.yml is gone; the lane-open pings keep sm-vps for their shared state.
