@@ -443,6 +443,8 @@ struct ExperienceLibraryScreen: View {
                     onComplete: { model.markItemCompleted(id: row.id) },
                     onMarkUnfinished: { model.markItemUnfinished(id: row.id) },
                     onPrepareOffline: { model.prioritizeOfflinePreparation(id: row.id) },
+                    onPlayNext: { model.queuePlayNext(itemId: row.id) },
+                    onAddToQueue: { model.queueAppend(itemId: row.id) },
                     onAddToCollection: { collectionItem = row },
                     onDelete: { model.moveItemToTrash(id: row.id) }
                 )
@@ -498,6 +500,8 @@ private struct ExperienceLibraryCompactRow: View {
     let onComplete: () -> Void
     let onMarkUnfinished: () -> Void
     let onPrepareOffline: () -> Void
+    let onPlayNext: () -> Void
+    let onAddToQueue: () -> Void
     let onAddToCollection: () -> Void
     let onDelete: () -> Void
 
@@ -605,6 +609,10 @@ private struct ExperienceLibraryCompactRow: View {
             if row.offlineState != .readyOffline {
                 Button("Prepare Offline", systemImage: "arrow.down.circle", action: onPrepareOffline)
             }
+            Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward", action: onPlayNext)
+                .accessibilityIdentifier("library.playNext.\(row.id)")
+            Button("Add to Queue", systemImage: "text.line.last.and.arrowtriangle.forward", action: onAddToQueue)
+                .accessibilityIdentifier("library.addToQueue.\(row.id)")
             Button("Add to Collection…", systemImage: "folder.badge.plus", action: onAddToCollection)
                 .accessibilityIdentifier("library.addToCollection.\(row.id)")
             if row.canDelete {
@@ -640,6 +648,8 @@ private struct ExperienceLibraryCompactRow: View {
             } else if row.canMarkUnfinished {
                 Button("Mark Unfinished", action: onMarkUnfinished)
             }
+            Button("Play Next", action: onPlayNext)
+            Button("Add to Queue", action: onAddToQueue)
         }
         // The same guards as the context menu and swipe actions above (#1917).
         .accessibilityActions {

@@ -78,7 +78,7 @@ final class Gate1AppModel: ObservableObject {
             if oldValue.isRecording, !snapshot.isRecording { endCaptureWatch() }
             if !oldValue.isRecording, snapshot.isRecording { startCaptureWatch() }
             settleSpeechInterruptionResume()
-            listeningSignals.snapshotChanged(from: oldValue, to: snapshot)
+            listeningSignals.snapshotChanged(from: oldValue, to: snapshot); playQueueSnapshotChanged(from: oldValue, to: snapshot)
             updateNarrationVoiceNotice()
             if playingImportedCommentary != nil,
                oldValue.sessionId != snapshot.sessionId || oldValue.itemId != snapshot.itemId
