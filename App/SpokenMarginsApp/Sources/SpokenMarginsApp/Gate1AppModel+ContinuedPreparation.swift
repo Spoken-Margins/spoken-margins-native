@@ -86,7 +86,7 @@ extension Gate1AppModel {
 
     private func beginWaitingOutPreparationPause(key: String) {
         idleForegroundPreparationTurn() // the item stops showing as rendering while it waits
-        if let store { try? refreshLibraryRows(store: store) }
+        refreshLibraryRowsInBackground()
         diagnostics[key] = "waiting"
     }
 

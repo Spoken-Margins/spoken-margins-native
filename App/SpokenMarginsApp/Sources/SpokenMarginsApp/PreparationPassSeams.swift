@@ -33,7 +33,7 @@ extension Gate1AppModel {
         )
         guard gate != .render else { return nil }
         try? await ledger.release(reservationId: reservationId)
-        if try await coordinator.applyGate(gate, manifestId: manifestId).changed { try refreshLibraryRows(store: store) }
+        if try await coordinator.applyGate(gate, manifestId: manifestId).changed { refreshLibraryRowsInBackground() }
         diagnostics["backgroundAudioPreparation"] = gate.rawValue
         return gate
     }
