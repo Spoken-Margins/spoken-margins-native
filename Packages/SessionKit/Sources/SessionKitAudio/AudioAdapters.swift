@@ -3451,6 +3451,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
     private let baseDirectory: URL?
     private let deactivateSessionOnFinish: Bool
     private var shouldNotifyOtherAudioOnFinish = false
+    private var releasedSessionAtEnd = false
     /// A call, Siri or lost headphones while recording (#771). iOS stops the recorder on its own;
     /// without this the app kept showing "Recording".
     public var onInterruption: (@Sendable (_ event: MarginRecordingInterruptionEvent, _ recordedSeconds: TimeInterval?) -> Void)?
@@ -3647,6 +3648,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         #endif
         captureRestarts = 0
         peakPowerDb = nil
+        releasedSessionAtEnd = false
         #if os(iOS) || os(watchOS)
         shouldNotifyOtherAudioOnFinish = session.categoryOptions.contains(.mixWithOthers)
         #endif
@@ -3789,6 +3791,8 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
 
     public func finalizedRecordingIntegrity() -> FinalizedRecordingIntegrity? { finalizedIntegrity }
 
+    public func releasedAudioSessionAtEnd() -> Bool { releasedSessionAtEnd }
+
     public func pauseForReadyCue() {
         #if canImport(AVFoundation)
         guard isCaptureActive, !recorderHeldForCue, let recorder, recorder.isRecording else { return }
@@ -3844,6 +3848,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         #if os(iOS) || os(watchOS)
         if deactivateSessionOnFinish || shouldNotifyOtherAudioOnFinish {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            releasedSessionAtEnd = true
         }
         shouldNotifyOtherAudioOnFinish = false
         #endif
@@ -3871,6 +3876,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         }
         #if os(iOS) || os(watchOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        releasedSessionAtEnd = true
         #endif
         #endif
     }

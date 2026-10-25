@@ -10,7 +10,8 @@ protocol MarginOutcomeCuePlaying: AnyObject {
 }
 
 /// Like the ready cue, it never configures the audio session: it plays only when the session is already one that
-/// plays sound, and otherwise the ending stays silent, as before. A new cue replaces the one still playing.
+/// plays sound and no other app's audio would be cut off, and otherwise the ending stays silent, as before. A new
+/// cue replaces the one still playing.
 @MainActor
 final class MarginOutcomeCuePlayer: MarginOutcomeCuePlaying {
     /// Replaced by tests; the device's player otherwise.
@@ -25,8 +26,10 @@ final class MarginOutcomeCuePlayer: MarginOutcomeCuePlaying {
         if cue.repeats, playingCue == cue, player?.isPlaying == true { return "played" }
         stop()
         #if os(iOS)
-        let category = AVAudioSession.sharedInstance().category
-        guard category == .playAndRecord || category == .playback else { return "skipped:session_not_playing" }
+        let session = AVAudioSession.sharedInstance()
+        guard session.category == .playAndRecord || session.category == .playback else { return "skipped:session_not_playing" }
+        // Another app is playing over a session that doesn't mix: playing would take the session back and silence it.
+        if session.isOtherAudioPlaying, !session.categoryOptions.contains(.mixWithOthers) { return "skipped:other_audio" }
         #endif
         do {
             let player = try AVAudioPlayer(data: cue.wavData())
