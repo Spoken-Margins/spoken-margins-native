@@ -61,37 +61,7 @@ public struct WatchMarginTransfer: Codable, Equatable, Sendable {
     }
 }
 
-/// Which live session a Watch Margin belongs to (#2487).
-public enum LiveSessionWatchMatch {
-    public struct Span: Equatable, Sendable {
-        public var id: String
-        public var startedAt: Date
-        /// Nil while the session runs.
-        public var endedAt: Date?
-
-        public init(id: String, startedAt: Date, endedAt: Date?) {
-            self.id = id
-            self.startedAt = startedAt
-            self.endedAt = endedAt
-        }
-    }
-
-    /// The session whose time span holds `wallStart` (the latest-started, if spans overlap), else the most recently
-    /// started session. Nil only when there is no session.
-    public static func sessionId(for wallStart: Date, among spans: [Span]) -> String? {
-        let containing = spans.filter { span in
-            span.startedAt <= wallStart && (span.endedAt.map { wallStart <= $0 } ?? true)
-        }
-        if let match = containing.max(by: { $0.startedAt < $1.startedAt }) { return match.id }
-        return spans.max(by: { $0.startedAt < $1.startedAt })?.id
-    }
-}
-
 extension LiveSession {
-    public var span: LiveSessionWatchMatch.Span {
-        LiveSessionWatchMatch.Span(id: id, startedAt: startedAt, endedAt: endedAt)
-    }
-
     /// Adds a spoken Margin taken at `markedAt`, kept in time order. Returns false, changing nothing, when a Margin
     /// with this id is already there.
     @discardableResult
@@ -127,4 +97,39 @@ extension LiveSession {
         margins[index].text = trimmed
         return true
     }
+}
+
+/// The phone's answer to a Watch Margin (#2487 slice 1a; DESIGN section 4 point 3), sent after the recording is
+/// stored and filed: filed, with the session's name and position; already filed; or rejected, with the reason in
+/// plain words. It carries the inbox's `WatchMarginReceipt`, so the Watch can let go of exactly those bytes. The
+/// Watch build before slice 1b ignores it.
+public struct WatchMarginAnswer: Codable, Equatable, Sendable {
+    public enum Outcome: String, Codable, Equatable, Sendable {
+        case filed
+        case alreadyFiled
+        case rejected
+    }
+
+    /// The `transferUserInfo` key the answer travels under, as JSON data.
+    public static let userInfoKey = "watchMarginAnswer"
+
+    public var receipt: WatchMarginReceipt
+    public var outcome: Outcome
+    public var sessionId: String?
+    /// "Budget meeting", "a quick session", or the playing item's title when the phone knows it.
+    public var filedIn: String?
+    public var positionMs: Int?
+    public var reason: String?
+
+    public init(receipt: WatchMarginReceipt, outcome: Outcome, sessionId: String? = nil, filedIn: String? = nil, positionMs: Int? = nil, reason: String? = nil) {
+        self.receipt = receipt
+        self.outcome = outcome
+        self.sessionId = sessionId
+        self.filedIn = filedIn
+        self.positionMs = positionMs
+        self.reason = reason
+    }
+
+    /// The Watch may delete its copy only after this.
+    public var confirmsFiled: Bool { receipt.confirmsDelivery && outcome != .rejected }
 }

@@ -38,6 +38,7 @@ RUN_BY = 'integration script'
 HOSTED_RUN_BY = 'hosted integration'   # hosted-integration.yml on a GitHub-hosted Mac (#1389)
 HOSTED_VARIABLE = 'LANE_HOSTED_APP'    # the repository variable that switches hosted app tests on
 HOSTED_WORKFLOW = 'hosted-integration.yml'
+JOURNEY_TARGET = 'SpokenMarginsAppUITests'  # scripted journeys; the Mac's confirm run re-runs app tests only
 HOSTED_GRACE_SECONDS = 5 * 60        # how long a new tip waits for its hosted run to appear before the Mac tests it
 LANE_YIELD_SECONDS = 3 * 60 * 60     # lane app tests go first, unless the trunk has gone this long untested
 MIN_FREE_GB = 10
@@ -144,6 +145,12 @@ def failing_tests(body: str) -> list[str]:
     """The tests on a report's `failing:` line (report_text writes it)."""
     match = re.search(r'^failing: (.+)$', body or '', re.M)
     return [t.strip() for t in match.group(1).split(',') if t.strip()] if match else []
+
+
+def split_journeys(failed: list[str]) -> tuple[list[str], list[str]]:
+    """A report's failing tests as (app tests, scripted journeys). The journeys are the UI-test target's."""
+    journeys = [t for t in failed if t.split('/')[0] == JOURNEY_TARGET]
+    return [t for t in failed if t not in journeys], journeys
 
 
 def lane_requests_waiting(runs: list[dict]) -> list[int]:
@@ -1317,7 +1324,8 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
             prune_evidence(evidence_root)
 
 
-def hosted_not_reproduced(sha: str, report: str, failed: list[str], confirm: str, error: str = '') -> str:
+def hosted_not_reproduced(sha: str, report: str, failed: list[str], confirm: str, error: str = '',
+                          journeys: list[str] = ()) -> str:
     """#184's note when the Mac could not reproduce a hosted FAIL, so it reverted and filed nothing."""
     what = ('the failing tests passed here' if confirm == 'pass' else
             f'the failing tests gave no clear answer here ({confirm}{": " + error[:300] if error else ""})')
@@ -1325,7 +1333,23 @@ def hosted_not_reproduced(sha: str, report: str, failed: list[str], confirm: str
             f'The Mac re-ran {", ".join(f"`{t}`" for t in failed)} at `{sha[:7]}` and {what}. A failure seen only on '
             'the hosted Mac may be the hosted environment, not a merge, so nothing was reverted and no issue was '
             'filed. The next tip is tested on the hosted Mac as usual; if it fails the same way, look at the '
-            'hosted run\'s logs (its artifact) next to this.\n')
+            'hosted run\'s logs (its artifact) next to this.\n' + journeys_not_rerun(journeys))
+
+
+def journeys_not_rerun(journeys: list[str]) -> str:
+    """The part of a note about gating journeys that failed on the hosted Mac, which the Mac does not re-run."""
+    if not journeys:
+        return ''
+    return ('\nThe hosted run also failed ' + ', '.join(f'`{t}`' for t in journeys) + ', a scripted journey. The '
+            'Mac re-runs app tests only, so it did not re-run it; its evidence is the hosted run\'s artifact.\n')
+
+
+def hosted_journeys_only(sha: str, report: str, journeys: list[str]) -> str:
+    """#2667's note when a hosted FAIL names only scripted journeys: the Mac has nothing it can re-run."""
+    return (f'**Hosted FAIL on `{sha[:7]}`: only scripted journeys failed** ({report})\n\n'
+            f'The hosted run failed {", ".join(f"`{t}`" for t in journeys)} and no app test. The Mac\'s confirm run '
+            'and culprit search re-run app tests only, so it ran neither: nothing was reverted and no issue was '
+            'filed. Look at the hosted run\'s logs (its artifact) for the journey, and re-run it by hand.\n')
 
 
 def defer_to_hosted(ops: Ops, state: dict, path: Path, comments: list[dict], reports: list[tuple[str, str]],
@@ -1358,7 +1382,24 @@ def defer_to_hosted(ops: Ops, state: dict, path: Path, comments: list[dict], rep
     if why:
         say('hold: ' + why)
         return 'held'
-    sha7, failed, report = target['sha7'], target['failed'], target['report']
+    sha7, report = target['sha7'], target['report']
+    # The confirm run and the culprit search re-run app tests only (#2667): a gating journey that failed
+    # alongside them would never reproduce, and would end every FAIL as "not reproduced".
+    failed, journeys = split_journeys(target['failed'])
+    if not failed:
+        if dry_run:
+            say(f'Would note the hosted FAIL on {sha7} ({report}): only scripted journeys failed, which the Mac '
+                'does not re-run.')
+            return 'dry-run'
+        say(f'hosted FAIL on {sha7} names only scripted journeys: {", ".join(journeys)}')
+        evidence_root = ops.repo_root / 'artifacts' / 'integration-run'
+        evidence = evidence_root / f'{int(now)}-{sha7}-hosted-journeys'
+        evidence.mkdir(parents=True, exist_ok=False)
+        handled[sha7] = {'started': now, 'report': report, 'evidence': str(evidence), 'confirm': 'journeys only'}
+        save_state(path, state)  # recorded before the comment, so a retry never posts it twice
+        ops.comment(REPORT_ISSUE, hosted_journeys_only(sha7, report, journeys), evidence, 'hosted-journeys-only.md')
+        prune_evidence(evidence_root)
+        return 'handled'
     sha = ops.must(['git', 'rev-parse', '--verify', f'{sha7}^{{commit}}']).stdout.strip()
     if not re.fullmatch(r'[0-9a-f]{40}', sha):
         raise ValueError(f'{sha7} did not resolve to a full SHA')
@@ -1413,7 +1454,7 @@ def defer_to_hosted(ops: Ops, state: dict, path: Path, comments: list[dict], rep
                     record['revert'] = reverted
                 record['issues'] = ops.file_failures(groups, sha, report, evidence, cost) if not reverted else []
             else:
-                ops.comment(REPORT_ISSUE, hosted_not_reproduced(sha, report, failed, confirm, error), evidence,
+                ops.comment(REPORT_ISSUE, hosted_not_reproduced(sha, report, failed, confirm, error, journeys), evidence,
                             'hosted-not-reproduced.md')
             say(f'hosted FAIL on {sha7}: {confirm} here; ' + json.dumps({k: record[k] for k in ('revert', 'issues')
                                                                          if k in record}))

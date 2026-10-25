@@ -14,11 +14,13 @@ enum LiveSessionSpokenMargins {
     /// (a Watch Margin arrived, or a transcript finished).
     static let changedOnDisk = Notification.Name("LiveSessionSpokenMargins.changedOnDisk")
 
-    /// Changes the stored session on the file worker (off the main thread) and, when it changed, tells the open
-    /// screen. `body` returns true when it changed something.
+    /// Changes the stored session holding `marginId` on the file worker (off the main thread) and, when it changed,
+    /// tells the open screen. `body` returns true when it changed something.
     @MainActor
-    static func updateStored(_ body: @escaping @Sendable (inout LiveSession) -> Bool) async {
-        guard await LiveSessionFileWorker.shared.update(body) != nil else { return }
+    static func updateStored(
+        in files: LiveSessionFileWorker = .shared, marginId: String, _ body: @escaping @Sendable (inout LiveSession) -> Bool
+    ) async {
+        guard await files.update(marginId: marginId, body) != nil else { return }
         NotificationCenter.default.post(name: changedOnDisk, object: nil)
     }
 
@@ -29,14 +31,13 @@ enum LiveSessionSpokenMargins {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    /// Transcribes each spoken Margin in the stored session that has no words yet, and files the words in.
+    /// Transcribes each spoken Margin in an unsaved session that has no words yet, and files the words in.
     @MainActor
     static func transcribeMissing() async {
-        guard let session = await LiveSessionFileWorker.shared.load() else { return }
-        for margin in session.margins where margin.isSpoken && margin.spokenTranscript == nil {
-            guard let audioPath = margin.audioPath, let text = await transcribe(audioPath: audioPath) else { continue }
-            let id = margin.id
-            await updateStored { $0.setTranscript(text, forMarginId: id) }
+        for margin in await LiveSessionFileWorker.shared.spokenWithoutWords() {
+            guard let text = await transcribe(audioPath: margin.audioPath) else { continue }
+            let id = margin.marginId
+            await updateStored(marginId: id) { $0.setTranscript(text, forMarginId: id) }
         }
     }
 
