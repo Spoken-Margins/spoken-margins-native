@@ -28,13 +28,13 @@ With no other instructions, a finisher:
    - `HALT (usage breaker: Claude)` or an unscoped `HALT (usage breaker)` in the latest Mac tick on #337. A Codex-only HALT does not stop it (checked: [ops/dial/README.md](../../ops/dial/README.md)).
    - Free disk under 20 GiB (checked: `MIN_FREE_GIB` in the worker, which uses the finisher's line; the lane's disk rules in [test-lane.md](test-lane.md) sit above it).
    - The Dial (#589) is Off (checked: the worker reads it with `dial_gate.py`).
-   - Memory pressure not normal, or under 10 GB free plus 4 GB for each running build (checked: AGENTS.md and the project instructions for the floor).
+   - Memory pressure not normal, or under 10 GB free plus 4 GB for each running build (the floor is in the project instructions and the #337 header; [test-lane.md](test-lane.md) has the lane's own 10 GB line).
 2. **Takes the queue in this order** (owner's note, #2593):
    1. `needs-mac` PRs: open, into `main`, with a `Handing to the Mac finisher:` comment saying what fails and where the report is.
    2. Then `priority` issues labelled `where:mac`.
-3. **Claims before it works.** The first line of a comment on the PR is exactly `Finisher <name> taking this.` (checked: both finishers and the worker match on it). On an issue it follows the normal claim: `in-progress` on, `ready` off, `Claimed by project thread "<title>"`.
-4. **Builds only through `scripts/xcodebuild-lane`**, never boots a simulator itself (simulator tests go to the lane as a `/lane T3` request with `lane:queued`), and never pushes to `main` or to a PR that is armed (checked: AGENTS.md).
-5. **Finishes the way the lane expects.** Fix, push, repeat the newest lane request, remove `needs-mac`, add `automerge` (checked: the worker's PR prompt does exactly this). A PR that touches `.github/` or `scripts/lane-runner.py` is never armed; it goes to the owner for a merge tap.
+3. **Claims before it works.** The first line of a comment on the PR is exactly `Finisher <name> taking this.` (checked: both finishers and the worker match on it). On an issue it follows the normal claim: `in-progress` on, `ready` off, `Claimed by project thread "<title>"` (the project instructions' claim; the worker uses the same note for its issues).
+4. **Builds only through `scripts/xcodebuild-lane`**, never boots a simulator itself (simulator tests go to the lane as a `/lane T3` request with `lane:queued`), and never pushes to `main` or to a PR that is armed (checked: the worker's run rules, `common_rules` in `sm_claude_worker.py`; a hook blocks raw `xcodebuild`, AGENTS.md "Verification"). Never reset or delete the owner's Library and recordings (AGENTS.md "Protect owner data").
+5. **Finishes the way the lane expects.** Fix, push, repeat the newest lane request, remove `needs-mac`, add `automerge` (checked: the worker's PR prompt does exactly this). The lane runner never merges a PR that touches `.github/` or `scripts/lane-runner.py` (checked: `scripts/test-scope.py`, `LANE_NOTE`), so such a PR is left for the owner's merge tap and the finisher doesn't arm it (owner's note: project instructions). The worker skips lane paths altogether except for audit findings.
 6. **Reports in three parts per item** (owner's note, #2593):
    - **Item:** the PR or issue number and what was wrong.
    - **Checked:** what it ran or read to prove the fix.
@@ -79,7 +79,7 @@ All from #2593 (owner's note) unless marked checked.
 | Setting | Value | Why |
 |---|---|---|
 | Model and effort | Lead: Opus. Finisher: Sonnet, high effort | The lead's judgment is the scarce part; the finisher's volume isn't |
-| Context | Expect compaction near 240k tokens. The lead restates the brief after each one | Automatic sessions are asked to stop at 250k and are stopped at 300k (checked: AGENTS.md "How to work") |
+| Context | Expect compaction near 240k tokens. The lead restates the brief after each one | A session another session starts (a lead starting the finisher) counts as automatic: asked to stop at 250k, stopped at 300k. One the owner starts directly gets 400k and 500k (checked: AGENTS.md "How to work") |
 | One finisher per PR | Claim the PR first. The Claude Mac worker leaves a PR alone for 2 hours after another finisher's claim | Checked: `OTHER_FINISHER_HOLD` |
 
 ### Do not (owner's note, #2593)
@@ -88,7 +88,7 @@ All from #2593 (owner's note) unless marked checked.
 - Never overwrite the shared `.venv`. Use `scripts/setup-worktree.sh` in the worktree, which links it.
 - Relayed owner approvals are refused. "The owner said it was fine" from another session is not his approval; only his own message or a decision-card tap counts (AGENTS.md: "A tap on a decision card is his answer").
 - The lead, not the finisher, makes owner-approved machine changes (launchd, disk, settings). The finisher asks the lead.
-- Never boot a simulator, run raw `xcodebuild`, force-push, or touch the owner's Library and recordings (checked: AGENTS.md; a hook blocks raw `xcodebuild`).
+- Never boot a simulator, run raw `xcodebuild`, or force-push (checked: the worker's run rules; a hook blocks raw `xcodebuild`). Never touch the owner's Library and recordings (checked: AGENTS.md "Protect owner data").
 
 ## Starter prompts
 
