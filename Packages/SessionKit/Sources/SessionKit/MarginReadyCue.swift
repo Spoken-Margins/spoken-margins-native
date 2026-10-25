@@ -10,8 +10,17 @@ public enum MarginReadyCue {
     /// A short "ba-dum": a quick high note, then a slightly longer lower one, each faded in and out.
     public static let notes: [(frequency: Double, seconds: Double)] = [(880.0, 0.07), (659.25, 0.11)]
     public static let peak = 0.3
-    /// The player's volume. Below full so a phone microphone that hears its own speaker hears little of it.
+    /// The player's volume on the phone's speaker. Below full so a phone microphone that hears its own speaker hears little of it.
     public static let volume: Float = 0.6
+    /// The player's volume with headphones on (#2594). The speaker level is right for the speaker, but headphones put the cue
+    /// next to the ear, and Bluetooth's call profile plays it louder than the media volume the listener set.
+    /// About 10 dB below the speaker level.
+    public static let headphoneVolume: Float = 0.2
+
+    /// The volume for the current output route.
+    public static func volume(for route: ReadyCueOutputRoute) -> Float {
+        route == .headphones ? headphoneVolume : volume
+    }
 
     public static var totalSeconds: Double { notes.map(\.seconds).reduce(0, +) }
 
@@ -62,5 +71,21 @@ public struct MarginReadyCueGate: Equatable, Sendable {
         guard !hasCued, health == .capturing, capturedMs >= MarginCaptureTimings.firstAudioMs else { return false }
         hasCued = true
         return true
+    }
+}
+
+/// Where the ready cue is heard (#2594). The speaker keeps its level; anything worn on or in the ears is quieter.
+public enum ReadyCueOutputRoute: Equatable, Sendable {
+    case speaker
+    case headphones
+
+    /// AVAudioSession port types, as their raw strings, that put the sound at the ear. USB audio is included: on a phone it is
+    /// a headset or a dongle. Everything else (the built-in speaker, the receiver, AirPlay, a car, a line out) and an empty
+    /// route keep the speaker level, so a route not listed here behaves exactly as before.
+    private static let headphonePorts: Set<String> = ["BluetoothHFP", "BluetoothA2DP", "BluetoothLE", "Headphones", "USBAudio"]
+
+    /// `headphones` when any output is worn on the ears.
+    public init(outputPortTypes: [String]) {
+        self = outputPortTypes.contains(where: Self.headphonePorts.contains) ? .headphones : .speaker
     }
 }
