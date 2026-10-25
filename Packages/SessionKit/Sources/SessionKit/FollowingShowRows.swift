@@ -147,7 +147,7 @@ public enum FollowingShowRows {
         return da != db ? da > db : a.id < b.id
     }
 
-    static func displayTitle(of subscription: FeedSubscription) -> String {
+    public static func displayTitle(of subscription: FeedSubscription) -> String {
         let title = subscription.source.title?.split(whereSeparator: \.isWhitespace).joined(separator: " ") ?? ""
         return title.isEmpty ? subscription.source.host : title
     }
