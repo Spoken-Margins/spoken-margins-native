@@ -209,7 +209,7 @@ extension Gate1AppModel {
                 updated.sourceTitle = updated.sourceTitle ?? subscription.source.title
                 if updated != item {
                     try store.saveItem(updated)
-                    self.refreshLibraryRowsInBackground()
+                    self.refreshLibraryRowsInBackground(mustPublish: true)
                 }
                 self.feedSubscriptions = try store.loadFeedSubscriptions()
                 await self.performFollowedSourceRefresh(force: true)
@@ -318,7 +318,7 @@ extension Gate1AppModel {
                     item.sourceURL = subscription.source.canonicalURL
                     item.sourceTitle = item.sourceTitle ?? subscription.source.title
                     try store.saveItem(item)
-                    self.refreshLibraryRowsInBackground()
+                    self.refreshLibraryRowsInBackground(mustPublish: true)
                 }
                 self.feedSubscriptions = try store.loadFeedSubscriptions()
                 try store.saveSourceSuggestionDecision(SourceSuggestionDecision(sourceId: candidate.source.id, decision: .accepted, lastPromptAt: Date()))

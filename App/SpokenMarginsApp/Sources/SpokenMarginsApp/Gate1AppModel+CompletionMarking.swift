@@ -12,7 +12,7 @@ extension Gate1AppModel {
             guard let item = try ManualItemCompletion.markComplete(itemId: id, in: store) else { return }
             listeningSignals.finish(itemId: id)
             marginOutput.noteCompletion(ofItem: id) // One note per item mode (#587).
-            refreshLibraryRowsInBackground()
+            refreshLibraryRowsInBackground(mustPublish: true)
             try reloadSelectedItemAfterCompletionChange(id: id, store: store)
             presentCompletionUndo(itemId: id, title: item.title, markedAt: item.sourceCompletedAt ?? Date())
         } catch {
@@ -44,7 +44,7 @@ extension Gate1AppModel {
             let store = try requireStore()
             // Never a later completion, and never natural session completion.
             guard let item = try ManualItemCompletion.markUnfinished(itemId: id, markedAt: markedAt, in: store) else { return }
-            refreshLibraryRowsInBackground()
+            refreshLibraryRowsInBackground(mustPublish: true)
             try reloadSelectedItemAfterCompletionChange(id: id, store: store)
             reportConfirmation(markedAt == nil
                 ? ManualCompletionMessages.unfinished(title: item.title)

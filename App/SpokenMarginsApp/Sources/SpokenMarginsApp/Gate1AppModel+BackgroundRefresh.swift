@@ -86,19 +86,28 @@ extension Gate1AppModel {
 
     /// The Library list and the Recently deleted list from one read, published when they changed. A single-row change
     /// (a download or a prewarm tick) landing during the read makes it stale; it is read again, not dropped.
-    func refreshLibraryRowsInBackground() {
+    ///
+    /// `mustPublish` is for a tap that changed the database and expects the screen to show it (Mark complete, Undo,
+    /// Restore). Playback ticks and prewarm progress can invalidate three reads in a row, and dropping the reload then
+    /// would leave the row stale until something else reloads. On the last read it publishes the rows anyway (the
+    /// database is the truth) and leaves the Preparing Audio lists to whoever changed them.
+    func refreshLibraryRowsInBackground(mustPublish: Bool = false) {
         guard let store else { return }
         let generation = backgroundRefresh.beginLibrary()
         let read = navigationLibraryRead
         backgroundRefresh.holdLibrary(Task { [weak self] in
-            for _ in 0..<3 {
+            for attempt in 0..<3 {
                 guard let revision = self?.libraryPresentationRevision,
                       let listsBefore = self?.audioPreparationLists,
                       let data = try? await read(store) else { return }
                 guard let self, !Task.isCancelled, self.backgroundRefresh.isCurrentLibrary(generation) else { return }
                 // Moving or prioritizing a job and a chunk's progress set the Preparing Audio lists without touching
                 // `libraryItems`, so the revision can't see them: a list that changed during the read is read again.
-                if self.libraryPresentationRevision != revision || self.audioPreparationLists != listsBefore { continue }
+                if self.libraryPresentationRevision != revision || self.audioPreparationLists != listsBefore {
+                    guard mustPublish, attempt == 2 else { continue }
+                    self.publishLibrary(data)
+                    return
+                }
                 self.publishLibrary(data)
                 self.publishAudioPreparationPresentation(from: data, store: store)
                 return

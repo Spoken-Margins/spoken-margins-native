@@ -43,7 +43,7 @@ extension Gate1AppModel {
         libraryItems.removeAll { $0.id == itemId }
         recentlyDeletedItems.removeAll { $0.id == itemId }
         recentlyDeletedItems.insert(LibraryItemRow(id: itemId, title: title, status: "Recently deleted", canDelete: true), at: 0)
-        refreshLibraryRowsInBackground()
+        refreshLibraryRowsInBackground(mustPublish: true)
     }
 
     func undoLastTrash() {
@@ -95,7 +95,7 @@ extension Gate1AppModel {
             let store = try requireStore()
             let item = try store.loadItem(id: id)
             try store.restoreItem(id: id)
-            refreshLibraryRowsInBackground()
+            refreshLibraryRowsInBackground(mustPublish: true)
             dismissTrashUndo()
             reportSuccess("Restored \(item.title).")
         } catch {

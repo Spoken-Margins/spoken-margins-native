@@ -245,7 +245,7 @@ extension Gate1AppModel {
             )
             pendingStartupAudioPreparationItemIds.remove(selected.itemId)
             failedStartupAudioPreparationItemIds.remove(selected.itemId)
-            refreshLibraryRowsInBackground()
+            refreshLibraryRowsInBackground(mustPublish: true)
             diagnostics["audioPreparationSuppressed:\(selected.itemId)"] = "user"
             reportConfirmation("Removed \(itemsTitle(itemId: selected.itemId, store: store)) from audio preparation.")
         } catch {
@@ -263,7 +263,7 @@ extension Gate1AppModel {
             try store.deleteAudioPreparationJobs(ids: jobs.map(\.id))
             pendingStartupAudioPreparationItemIds.subtract(itemIds)
             failedStartupAudioPreparationItemIds.subtract(itemIds)
-            refreshLibraryRowsInBackground()
+            refreshLibraryRowsInBackground(mustPublish: true)
             diagnostics["audioPreparationQueueCleared"] = "\(jobs.count)"
             reportConfirmation("Cleared \(jobs.count) audio preparation job\(jobs.count == 1 ? "" : "s"). Existing audio and Library items were kept.")
         } catch {
