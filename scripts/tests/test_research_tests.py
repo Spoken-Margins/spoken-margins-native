@@ -174,7 +174,11 @@ class ResearchRunnerTests(unittest.TestCase):
             self.write(temporary, script, 'echo "ok   one"\necho "8 checks passed"\n')
             self.assertEqual(research_tests.caddy_suite(Path(temporary)).tests, 8)
             self.write(temporary, script, 'echo "SKIPPED caddy validate"\necho "9 checks passed, but not the Caddy ones above"\n')
-            self.assertEqual(research_tests.caddy_suite(Path(temporary)).tests, 9)   # no Caddy installed: still counted
+            partial = research_tests.caddy_suite(Path(temporary))
+            self.assertEqual(partial.tests, 9)   # no Caddy installed: the checks that ran still count
+            self.assertIn('did not run', partial.partial)   # #2605: and the missing Caddy is named, not passed over
+            self.write(temporary, script, 'echo "9 checks passed"\n')
+            self.assertIsNone(research_tests.caddy_suite(Path(temporary)).partial)   # a full run names nothing
             self.write(temporary, script, 'echo "FAIL the guard" >&2\nexit 1\n')
             self.assertIn('FAIL the guard', research_tests.caddy_suite(Path(temporary)).error)
             self.write(temporary, script, 'echo "nothing ran"\n')
@@ -237,6 +241,16 @@ class ResearchRunnerTests(unittest.TestCase):
         self.assertIn('FAILED: go y\nunittest exited 1', out.getvalue())
         with patch.object(research_tests, 'suites', return_value=[lambda: skipped]), patch.object(research_tests, 'NOT_COVERED', ()):
             self.assertEqual(research_tests.main(out=io.StringIO()), 1)
+
+    def test_main_names_a_partly_skipped_suite_as_skipped_and_still_counts_its_tests(self):
+        # #2605: verify-tests.py fails on a hosted runner for every `skipped:` line, so the Caddy suite's
+        # "but not the Caddy ones above" must print one.
+        partial = research_tests.Result('shell caddy', tests=9, partial='Caddy is missing')
+        out = io.StringIO()
+        with patch.object(research_tests, 'suites', return_value=[lambda: partial]), patch.object(research_tests, 'NOT_COVERED', ()):
+            self.assertEqual(research_tests.main(out=out), 0)
+        self.assertIn('passed: shell caddy (9 tests)\nskipped: shell caddy - Caddy is missing', out.getvalue())
+        self.assertIn('research-tests: 9 tests in 1 suites; 1 skipped; 0 not covered', out.getvalue())
 
     def test_bash_without_mapfile_skips_the_caddy_suite_by_name(self):
         # edit-caddyfile.sh uses `mapfile`; macOS /bin/bash 3.2 has none, so the suite would fail there

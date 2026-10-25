@@ -324,12 +324,18 @@ struct ListeningEditionImportScreen: View {
         }
         .fileImporter(isPresented: $choosingFile, allowedContentTypes: [.json], allowsMultipleSelection: true) { result in
             do {
-                for url in try result.get() {
-                    picked.append(.reading(url: url, id: nextEntryID))
-                    nextEntryID += 1
-                }
+                let urls = try result.get()
+                let firstID = nextEntryID
+                nextEntryID += urls.count
                 results = []
                 message = ""
+                // Read and decoded off the main thread (#2510); the rows appear when they are ready.
+                Task { @MainActor in
+                    let entries = await Task.detached(priority: .userInitiated) {
+                        urls.enumerated().map { ListeningEditionBatch.Entry.reading(url: $1, id: firstID + $0) }
+                    }.value
+                    picked.append(contentsOf: entries)
+                }
             } catch { message = error.localizedDescription; messageIsFailure = true }
         }
     }

@@ -113,7 +113,7 @@ enum PDFStructuredTextExtractor {
 
         if let title = document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String {
             let cleanedTitle = cleaned(title)
-            if !cleanedTitle.isEmpty {
+            if !cleanedTitle.isEmpty, !PDFItemTitle.isPlaceholder(cleanedTitle) {
                 appendHeading(cleanedTitle, level: 1, to: &output)
             }
         }
@@ -237,15 +237,31 @@ enum PDFStructuredTextExtractor {
     /// heading (ObsidianMarkdownParser took the first "# " line). The same title
     /// gives a re-imported PDF the same item id, so the edition guard applies.
     static func itemTitle(for document: PDFDocument, structured: StructuredDocument) -> String? {
-        if let title = document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String, !cleaned(title).isEmpty {
-            return cleaned(title)
+        let characters = Array(structured.text)
+        func text(of segment: StructuredDocument.Segment) -> String {
+            String(characters[segment.range.start..<min(segment.range.end, characters.count)])
         }
         // v1 made each line of a printed title a heading; v2 reads the title as one
         // segment (#272) but keeps v1's level on it, so its first line is v1's title.
-        let characters = Array(structured.text)
-        return structured.segments.first { ($0.role == .heading || $0.role == .title) && $0.level == 1 }.map {
-            String(characters[$0.range.start..<min($0.range.end, characters.count)])
-                .split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        let firstHeading = structured.segments.first { ($0.role == .heading || $0.role == .title) && $0.level == 1 }.map {
+            text(of: $0).split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        }
+        // With an outline the printed title has no heading level, so the first level-1 heading is
+        // the outline's "1 Introduction" (#2062): take the printed title instead.
+        let printedTitles = headingOutline(in: document).isEmpty ? []
+            : structured.segments.filter { $0.role == .title }.map(text(of:))
+        return PDFItemTitle.choose(
+            metadata: (document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String).map(cleaned),
+            printedTitles: printedTitles,
+            firstHeading: firstHeading
+        )
+    }
+
+    /// The outline entries that can be headings. Merged PDFs can carry a bookmark per source
+    /// file ("main.pdf"): not a heading (#355).
+    private static func headingOutline(in document: PDFDocument) -> [OutlineHeading] {
+        outlineHeadings(in: document).filter {
+            $0.title.range(of: #"\.pdf$"#, options: [.regularExpression, .caseInsensitive]) == nil
         }
     }
 
@@ -254,10 +270,7 @@ enum PDFStructuredTextExtractor {
     /// pages, the reference list) is labelled, and the speech path decides what is
     /// heard (I14).
     static func structuredLines(from document: PDFDocument, wordListURL: URL? = bundledWordListURL) throws -> [StructuredDocumentLine] {
-        // Merged PDFs can carry a bookmark per source file ("main.pdf"): not a heading (#355).
-        let outline = outlineHeadings(in: document).filter {
-            $0.title.range(of: #"\.pdf$"#, options: [.regularExpression, .caseInsensitive]) == nil
-        }
+        let outline = headingOutline(in: document)
         var pages: [[TextLine]] = []
         for pageIndex in 0..<document.pageCount {
             guard let page = document.page(at: pageIndex) else { pages.append([]); continue }
@@ -315,7 +328,7 @@ enum PDFStructuredTextExtractor {
 
         // The metadata title, unless the first page already prints it (v1 read it twice).
         if let title = document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String {
-            let cleanedTitle = cleaned(title)
+            let cleanedTitle = PDFItemTitle.isPlaceholder(title) ? "" : cleaned(title)
             let firstPage = normalized(pages.first?.prefix(20).map(\.text).joined(separator: " ") ?? "")
             if !cleanedTitle.isEmpty, !firstPage.contains(normalized(cleanedTitle)) {
                 result.append(StructuredDocumentLine(text: cleanedTitle, role: .title, pageIndex: 0, level: 1))
