@@ -38,7 +38,7 @@ install URL the link routes fail closed with 503. Existing config files missing
 {"source":{"title":"Episode title","show":"Show name","url":"https://publisher.example/episode"},"margins":[{"text":"My Margin","before":"Source excerpt before","after":"Source excerpt after"}]}
 ```
 
-Each excerpt is limited to 500 Unicode code points. At least one Margin and a
+The excerpt before a Margin is limited to 500 Unicode code points and the one after it to 120 (the app's `ExcerptCapRule`, #2237). At least one Margin and a
 source title are required. Unknown fields, trailing JSON, extra or duplicate
 parts are rejected. The response is 201 with `id` (16 random bytes in lowercase
 hex), `path` (`/l/<id>`) and `expiresAt` (UTC deadline). Upload attempts are

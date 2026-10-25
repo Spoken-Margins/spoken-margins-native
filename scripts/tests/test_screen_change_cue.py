@@ -1,7 +1,7 @@
 """Every screen `Gate1RootView` swaps in place tells VoiceOver the screen changed (#1914).
 
 The root view replaces whole screens instead of pushing them, so iOS sends VoiceOver no "screen changed" cue and
-focus can stay on an element that is gone. `announcesScreenChange()` posts it. Home, Timeline, Settings, Offline
+focus can stay on an element that is gone. `announcesScreenChange()` posts it. Home, Timeline, Settings (now a tab, #1254), Offline
 Storage, Export and Batch Export had no cue until #1914. A new case in the `switch model.screen` without one would
 bring that back with no other test noticing, so this scan guards it.
 """
@@ -46,7 +46,7 @@ class ScreenChangeCueTests(unittest.TestCase):
     def test_the_scan_finds_every_screen(self):
         self.assertEqual(
             set(_screen_cases()),
-            {"home", "item", "playback", "timeline", "settings", "offlineStorage", "export", "batchExport"},
+            {"home", "item", "playback", "timeline", "offlineStorage", "export", "batchExport"},
         )
 
     def test_every_swapped_screen_announces_itself_or_the_root_does(self):

@@ -3,8 +3,8 @@ import Foundation
 import SessionKit
 
 /// Drives the live session screen (#1989, #2481): Margins on a clock while something plays or is read outside
-/// the app, with nothing recorded. The session is kept in Application Support so closing the app never loses
-/// it; Lock Screen Marks arrive through `LiveSessionMarkQueue` and are merged in while the screen is open.
+/// the app, with nothing recorded. The session is kept in the session store (`LiveSessionCollection`) so closing the app never loses
+/// it; Lock Screen Marks arrive through `LiveSessionMarkQueue` and are filed by `LiveSessionFiling` (#2487 slice 1a).
 /// Every disk read and write goes through `LiveSessionFileWorker` off the main thread (#2256); the screen keeps
 /// the session in memory and only publishes what comes back.
 @MainActor
@@ -14,22 +14,37 @@ final class LiveSessionController: ObservableObject {
     @Published var errorMessage: String?
     @Published private(set) var isRecordingSpoken = false
 
-    private let files = LiveSessionFileWorker.shared
-    /// Rises with each save or discard, so the worker writes them in the order the screen made them.
+    private let files: LiveSessionFileWorker
+    /// The session this screen opened: nil opens the running one, or the setup card when none runs.
+    private let requestedSessionId: String?
+    /// Rises with each save or discard, so the worker writes them in the order the screens made them. Shared by every
+    /// screen: a counter per screen restarted at zero when the screen reopened, and the worker dropped its saves as stale.
+    private static var generationCounter = 0
     private var saveGeneration = 0
+    /// The last save or discard handed to the worker, so what follows it reads the store after it.
+    private var lastWrite: Task<Void, Never>?
     private var spokenStart: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
     private let phoneRecorder = LiveSessionPhoneRecorder()
     private var diskObserver: NSObjectProtocol?
 
+    init(sessionId: String? = nil, files: LiveSessionFileWorker = .shared) {
+        requestedSessionId = sessionId
+        self.files = files
+    }
+
     func load() {
         let generation = saveGeneration
-        Task { [weak self, files] in
-            let stored = await files.load()
+        Task { [weak self, files, requestedSessionId] in
+            let stored: LiveSession? = if let requestedSessionId {
+                await files.session(id: requestedSessionId)
+            } else {
+                await files.runningSession()
+            }
             guard let self else { return }
             // A session started or discarded while the file was read is newer than the file.
             if saveGeneration == generation { session = stored }
-            mergeMarks()
+            WatchMarginReceiver.shared.fileWaitingMarks()
             startPolling()
             observeDisk()
             sessionChanged()
@@ -54,7 +69,8 @@ final class LiveSessionController: ObservableObject {
     }
 
     func start(kind: ElsewhereKind, title: String, startPositionMs: Int?, startWhere: String?) {
-        _ = LiveSessionMarkQueue.drain() // Marks from before this session don't belong to it.
+        // Marks from before this session are filed by their time, so they don't land in it (slice 1a point 7).
+        WatchMarginReceiver.shared.fileWaitingMarks()
         let started = LiveSession(
             id: "live-\(UUID().uuidString.lowercased())", kind: kind,
             title: title.trimmingCharacters(in: .whitespacesAndNewlines), startedAt: Date(),
@@ -74,7 +90,7 @@ final class LiveSessionController: ObservableObject {
             errorMessage = error.localizedDescription
             return false
         }
-        mergeMarks()
+        WatchMarginReceiver.shared.fileWaitingMarks()
         session?.endedAt = Date()
         session?.endPositionMs = endPositionMs
         session?.endWhere = endWhere
@@ -107,10 +123,18 @@ final class LiveSessionController: ObservableObject {
 
     func removeMargin(id: String) {
         session?.margins.removeAll { $0.id == id }
+        Task { [files] in await files.forgetMargin(id: id) } // a late copy from the Watch never brings it back
         save()
     }
 
-    /// Forgets the session and its Margins.
+    /// Lets go of a session that was saved as a Library item (`Gate1AppModel.saveLiveSession` marks it saved).
+    func close() {
+        endActivities()
+        session = nil
+        sessionChanged()
+    }
+
+    /// Deletes the session and its Margins, and records that, so a late copy of one of them is refused.
     func discard() {
         if isRecordingSpoken {
             isRecordingSpoken = false
@@ -120,10 +144,12 @@ final class LiveSessionController: ObservableObject {
             }
         }
         endActivities()
+        let discarded = session?.id
         session = nil
-        saveGeneration += 1
-        let generation = saveGeneration
-        Task { [files] in await files.remove(generation: generation) }
+        let generation = nextGeneration()
+        if let discarded {
+            lastWrite = Task { [files] in await files.discard(sessionId: discarded, generation: generation) }
+        }
         sessionChanged()
     }
 
@@ -184,8 +210,9 @@ final class LiveSessionController: ObservableObject {
     /// The stored session changed underneath (a Watch Margin arrived, or a transcript finished): take in Margins
     /// and transcripts this screen doesn't have yet. What the listener changed here wins.
     private func reconcileWithDisk() {
+        guard let id = session?.id else { return }
         Task { [weak self, files] in
-            guard let stored = await files.load() else { return }
+            guard let stored = await files.session(id: id) else { return }
             self?.takeIn(stored)
         }
     }
@@ -217,10 +244,15 @@ final class LiveSessionController: ObservableObject {
         }
     }
 
-    /// Tells the Watch about the session, and files any Watch Margins that waited for one.
+    /// Tells the Watch about the running session, files anything waiting, and refreshes the Library's Live row.
     private func sessionChanged() {
-        WatchMarginReceiver.shared.publish(session: isRunning ? session : nil)
-        WatchMarginReceiver.shared.processInbox()
+        if isRunning { WatchMarginReceiver.shared.publish(session: session) } // the pass below clears it from the store
+        let written = lastWrite
+        Task {
+            await written?.value // the pass reads the store after this screen's write, so it never re-sends a stale state
+            await WatchMarginReceiver.shared.processInbox().value
+            LiveSessionBoard.shared.refresh()
+        }
     }
 
     private func startPolling() {
@@ -228,32 +260,30 @@ final class LiveSessionController: ObservableObject {
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 self?.now = Date()
-                self?.mergeMarks()
+                if self?.isRunning == true { WatchMarginReceiver.shared.fileWaitingMarks() }
                 try? await Task.sleep(for: .milliseconds(500))
             }
         }
-    }
-
-    private func mergeMarks() {
-        guard isRunning else { return }
-        let marks = LiveSessionMarkQueue.drain()
-        guard !marks.isEmpty else { return }
-        if session?.mergeMarks(marks) ?? 0 > 0 { save() }
     }
 
     /// Hands the session to the file worker. Saves land in the order they were made; an older one never
     /// overwrites a newer one.
     private func save() {
         guard let session else { return }
-        saveGeneration += 1
-        let generation = saveGeneration
-        Task { [weak self, files] in
+        let generation = nextGeneration()
+        lastWrite = Task { [weak self, files] in
             do {
                 try await files.save(session, generation: generation)
             } catch {
                 self?.errorMessage = "Couldn't save the live session: \(error.localizedDescription)"
             }
         }
+    }
+
+    private func nextGeneration() -> Int {
+        Self.generationCounter += 1
+        saveGeneration = Self.generationCounter
+        return saveGeneration
     }
 
     private func startActivity(startedAt: Date) {

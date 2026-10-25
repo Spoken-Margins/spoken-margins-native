@@ -216,7 +216,8 @@ func TestLinkHTTPUploadValidation(t *testing.T) {
 		{"empty packet", nil, []byte(linkPreview), 400},
 		{"preview over 16 KB", []byte("packet"), bytes.Repeat([]byte(" "), links.MaxPreviewBytes+1), 413},
 		{"before over 500", []byte("packet"), []byte(strings.Replace(linkPreview, "before <script>", strings.Repeat("x", 501), 1)), 400},
-		{"after over 500", []byte("packet"), []byte(strings.Replace(linkPreview, "after & text", strings.Repeat("🎧", 501), 1)), 400},
+		{"after over 120", []byte("packet"), []byte(strings.Replace(linkPreview, "after & text", strings.Repeat("🎧", 121), 1)), 400},
+		{"after exactly 120", []byte("packet"), []byte(strings.Replace(linkPreview, "after & text", strings.Repeat("🎧", 120), 1)), 201},
 		{"invalid JSON", []byte("packet"), []byte(`{}`), 400},
 		{"trailing JSON", []byte("packet"), []byte(linkPreview + ` null`), 400},
 	} {

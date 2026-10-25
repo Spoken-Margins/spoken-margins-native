@@ -205,7 +205,8 @@ public enum SpokenMarginsPackageBuilder {
                 createdAt: revision.createdAt,
                 anchor: selection.anchor.bounded(
                     prefix: revision.anchorBefore,
-                    suffix: revision.anchorAfter
+                    suffix: revision.anchorAfter,
+                    commentLength: ExcerptCapRule.commentLength(transcript: approvedTranscript)
                 ),
                 defaultRepresentationId: representation.id,
                 representations: [representation]

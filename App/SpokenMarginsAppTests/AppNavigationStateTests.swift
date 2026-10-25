@@ -66,6 +66,16 @@ final class AppNavigationStateTests: XCTestCase {
         XCTAssertEqual(navigation.followingScroll, FollowingScrollMemory(), "Following's place is its own")
     }
 
+    /// #1254: Settings is the fourth root, one tap from Library, with a path of its own.
+    func testSettingsIsTheFourthRootWithItsOwnPath() {
+        XCTAssertEqual(AppRoot.allCases.map(\.title), ["Library", "Following", "Margins", "Settings"])
+        var navigation = AppNavigationState()
+        navigation.select(.settings, recordingIsLocked: false)
+
+        XCTAssertEqual(navigation.selectedRoot, .settings)
+        XCTAssertEqual(navigation.paths[.settings], [])
+    }
+
     func testExplicitRootPushDoesNotChangeTheSelectedRoot() {
         var navigation = AppNavigationState()
         navigation.select(.sources, recordingIsLocked: false)

@@ -1391,6 +1391,14 @@ public struct WrittenInterjectionCapture: Equatable, Sendable {
         self.wasPlaying = wasPlaying
         self.replyTo = replyTo
     }
+
+    /// The same capture answering `link`, or nothing: what the listener chose, which is what a journal must keep (#473).
+    public func replying(to link: MarginReplyLink?) -> WrittenInterjectionCapture {
+        WrittenInterjectionCapture(
+            id: id, sessionId: sessionId, itemId: itemId, targetType: targetType, targetId: targetId,
+            anchor: anchor, roughPercent: roughPercent, wasPlaying: wasPlaying, replyTo: link
+        )
+    }
 }
 
 public struct ConversationTurn: Codable, Equatable, Sendable {

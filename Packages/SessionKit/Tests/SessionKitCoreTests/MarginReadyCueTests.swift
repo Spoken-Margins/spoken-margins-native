@@ -111,4 +111,23 @@ final class MarginReadyCueTests: XCTestCase {
         XCTAssertGreaterThan(MarginReadyCueHold.tailSeconds, 0, "the speaker and microphone delays outlast the cue itself")
         XCTAssertLessThan(MarginReadyCueHold.seconds, 0.3, "a listener who speaks right after the cue loses nothing")
     }
+
+    // #2594: the cue is about 10 dB quieter with headphones on, and the speaker is untouched.
+
+    func testHeadphonesGetAQuieterCueAndTheSpeakerKeepsItsLevel() {
+        XCTAssertEqual(MarginReadyCue.volume(for: .speaker), 0.6, "the speaker level the owner called right is unchanged")
+        XCTAssertLessThan(MarginReadyCue.volume(for: .headphones), MarginReadyCue.volume(for: .speaker) / 2, "clearly lower")
+        XCTAssertGreaterThan(MarginReadyCue.volume(for: .headphones), 0.05, "still audible")
+    }
+
+    func testEveryPortOnTheEarsIsHeadphonesAndEveryOtherRouteIsTheSpeaker() {
+        for port in ["BluetoothHFP", "BluetoothA2DPOutput", "BluetoothLE", "Headphones", "USBAudio"] {
+            XCTAssertEqual(ReadyCueOutputRoute(outputPortTypes: [port]), .headphones, port)
+        }
+        for port in ["Speaker", "Receiver", "AirPlay", "CarAudio", "LineOut", "HDMI", "SomethingNew"] {
+            XCTAssertEqual(ReadyCueOutputRoute(outputPortTypes: [port]), .speaker, port)
+        }
+        XCTAssertEqual(ReadyCueOutputRoute(outputPortTypes: []), .speaker, "no route known: the old level")
+        XCTAssertEqual(ReadyCueOutputRoute(outputPortTypes: ["Speaker", "BluetoothA2DPOutput"]), .headphones, "any worn output wins")
+    }
 }

@@ -13,6 +13,7 @@ struct ExperienceRootTabs: View {
     @EnvironmentObject private var model: Gate1AppModel
     @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
     @Binding var navigation: AppNavigationState
+    let supertonicNotice: SupertonicDownloadNotice
     var showsMiniPlayer = false
 
     private var rootSelection: Binding<AppRoot> {
@@ -44,6 +45,13 @@ struct ExperienceRootTabs: View {
                         .accessibilityIdentifier("navigation.tab.margins")
                 }
                 .tag(AppRoot.margins)
+
+            MiniPlayerDock(showsMiniPlayer: showsMiniPlayer) { SettingsScreen(supertonicNotice: supertonicNotice) }
+                .tabItem {
+                    Label("Settings", systemImage: AppRoot.settings.systemImage)
+                        .accessibilityIdentifier("navigation.tab.settings")
+                }
+                .tag(AppRoot.settings)
         }
         .tabViewStyle(.sidebarAdaptable)
         .tint(AppColors.evergreen)

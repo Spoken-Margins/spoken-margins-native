@@ -100,7 +100,11 @@ public struct ShareDraft: Equatable, Sendable {
             Moment(
                 marginID: margin.id,
                 voice: Self.defaultVoice(for: audio[margin.id] ?? .none),
-                quote: BoundedAnchorContext.select(before: margin.anchor.anchorBefore, after: margin.anchor.anchorAfter)
+                quote: ExcerptCapRule.select(
+                    before: margin.anchor.anchorBefore,
+                    after: margin.anchor.anchorAfter,
+                    commentLength: ExcerptCapRule.commentLength(transcript: SharedMarginTextRequirement.initialReviewedText(for: margin))
+                )
             )
         }
         let name = savedSenderName?.trimmingCharacters(in: .whitespacesAndNewlines)

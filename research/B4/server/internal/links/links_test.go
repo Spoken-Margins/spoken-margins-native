@@ -18,21 +18,25 @@ const install = "https://testflight.apple.com/join/fixture"
 
 func TestLinkPreviewValidation(t *testing.T) {
 	// Neighbouring values: ASCII, Unicode, whitespace, punctuation, empty,
-	// normalization variants, and a very long excerpt on either side.
-	for _, side := range []string{"before", "after"} {
+	// normalization variants, and a very long excerpt on either side. The sides
+	// have different caps (#2237): 500 before the Margin, 120 after it.
+	for _, side := range []struct {
+		name string
+		max  int
+	}{{"before", MaxBeforeCharacters}, {"after", MaxAfterCharacters}} {
 		for _, row := range []struct {
 			name, text string
 			valid      bool
 		}{
 			{"empty", "", true}, {"whitespace", " \t\n", true}, {"punctuation", "—.!?", true},
-			{"case", "Aa", true}, {"500 ASCII", strings.Repeat("x", 500), true},
-			{"500 Unicode", strings.Repeat("🎧", 500), true}, {"composed", "café", true},
-			{"decomposed", "cafe\u0301", true}, {"501 ASCII", strings.Repeat("x", 501), false},
-			{"501 Unicode", strings.Repeat("🎧", 501), false}, {"very long", strings.Repeat("x", 16000), false},
+			{"case", "Aa", true}, {"at the cap, ASCII", strings.Repeat("x", side.max), true},
+			{"at the cap, Unicode", strings.Repeat("🎧", side.max), true}, {"composed", "café", true},
+			{"decomposed", "cafe\u0301", true}, {"over the cap, ASCII", strings.Repeat("x", side.max+1), false},
+			{"over the cap, Unicode", strings.Repeat("🎧", side.max+1), false}, {"very long", strings.Repeat("x", 16000), false},
 		} {
-			t.Run(side+"/"+row.name, func(t *testing.T) {
+			t.Run(side.name+"/"+row.name, func(t *testing.T) {
 				p, _ := ParsePreview([]byte(fixture))
-				if side == "before" {
+				if side.name == "before" {
 					p.Margins[0].Before = row.text
 				} else {
 					p.Margins[0].After = row.text
@@ -44,6 +48,19 @@ func TestLinkPreviewValidation(t *testing.T) {
 				}
 			})
 		}
+	}
+	// The caps are not the same on both sides: 121 characters fit before a Margin, not after it.
+	p, _ := ParsePreview([]byte(fixture))
+	p.Margins[0].Before = strings.Repeat("x", MaxAfterCharacters+1)
+	p.Margins[0].After = strings.Repeat("x", MaxAfterCharacters+1)
+	data, _ := json.Marshal(p)
+	if _, err := ParsePreview(data); err == nil {
+		t.Fatal("an after excerpt of 121 characters was accepted")
+	}
+	p.Margins[0].After = ""
+	data, _ = json.Marshal(p)
+	if _, err := ParsePreview(data); err != nil {
+		t.Fatalf("a before excerpt of 121 characters was refused: %v", err)
 	}
 	for _, data := range [][]byte{[]byte(`{}`), []byte(`null`), []byte(fixture + ` {}`), []byte(strings.Replace(fixture, `"source":`, `"unknown":true,"source":`, 1)), bytes.Repeat([]byte(" "), MaxPreviewBytes+1), {0xff}} {
 		if _, err := ParsePreview(data); err == nil {
