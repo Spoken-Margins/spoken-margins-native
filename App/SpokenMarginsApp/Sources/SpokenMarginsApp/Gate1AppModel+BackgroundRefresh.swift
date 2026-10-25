@@ -24,12 +24,14 @@ final class BackgroundRefreshGate {
 
     /// A reload that a tap asked to publish (`mustPublish`) and that a newer reload overtook before publishing hands
     /// the obligation on: the newer one must publish too, or the tap's change would never show.
-    func beginLibrary(mustPublish: Bool = false) -> (generation: Int, mustPublish: Bool) {
+    func beginLibraryReload(mustPublish: Bool) -> (generation: Int, mustPublish: Bool) {
         libraryGeneration &+= 1
         libraryTask?.cancel()
         mustPublishPending = mustPublishPending || mustPublish
         return (libraryGeneration, mustPublishPending)
     }
+
+    func beginLibrary() -> Int { beginLibraryReload(mustPublish: false).generation }
 
     func libraryWasPublished() { mustPublishPending = false }
 
@@ -107,7 +109,7 @@ extension Gate1AppModel {
     /// and leaves the Preparing Audio lists alone when their writer changed them during the read.
     func refreshLibraryRowsInBackground(mustPublish: Bool = false) {
         guard let store else { return }
-        let (generation, publishRequired) = backgroundRefresh.beginLibrary(mustPublish: mustPublish)
+        let (generation, publishRequired) = backgroundRefresh.beginLibraryReload(mustPublish: mustPublish)
         let read = navigationLibraryRead
         backgroundRefresh.holdLibrary(Task { [weak self] in
             for _ in 0..<3 {
