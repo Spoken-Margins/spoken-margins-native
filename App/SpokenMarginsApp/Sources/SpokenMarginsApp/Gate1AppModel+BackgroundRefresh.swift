@@ -12,6 +12,7 @@ final class BackgroundRefreshGate {
     private var libraryGeneration = 0
     private var itemTask: Task<Void, Never>?
     private var libraryTask: Task<Void, Never>?
+    private var mustPublishPending = false
     private var isPublishingItem = false
 
     /// Starts a reload and returns its number; the reload before it can no longer publish.
@@ -21,10 +22,27 @@ final class BackgroundRefreshGate {
         return itemGeneration
     }
 
-    func beginLibrary() -> Int {
+    /// A reload that a tap asked to publish (`mustPublish`) and that a newer reload overtook before publishing hands
+    /// the obligation on: the newer one must publish too, or the tap's change would never show.
+    func beginLibraryReload(mustPublish: Bool) -> (generation: Int, mustPublish: Bool) {
         libraryGeneration &+= 1
         libraryTask?.cancel()
-        return libraryGeneration
+        mustPublishPending = mustPublishPending || mustPublish
+        return (libraryGeneration, mustPublishPending)
+    }
+
+    func beginLibrary() -> Int { beginLibraryReload(mustPublish: false).generation }
+
+    func libraryWasPublished() { mustPublishPending = false }
+
+    /// Returns once the newest Library reload has published or been dropped, following reloads that overtake it.
+    /// For tests that tap, then read the rows.
+    func settledLibrary() async {
+        while true {
+            let generation = libraryGeneration
+            await libraryTask?.value
+            if generation == libraryGeneration { return }
+        }
     }
 
     func holdItem(_ task: Task<Void, Never>) { itemTask = task }
@@ -71,6 +89,9 @@ extension Gate1AppModel {
         })
     }
 
+    /// Waits for the Library reload a tap started in the background. Production code never waits; tests do.
+    func settleLibraryReload() async { await backgroundRefresh.settledLibrary() }
+
     /// A transport tap (skip, seek, rate) that finishes the item reloads on the spot: the next tap, Play or Resume reads
     /// the finished session off `selectedItem`, and a stale one would resume it instead of offering to restart. Rare,
     /// so the main-thread read is acceptable here. Every other tap reloads in the background.
@@ -80,21 +101,32 @@ extension Gate1AppModel {
 
     /// The Library list and the Recently deleted list from one read, published when they changed. A single-row change
     /// (a download or a prewarm tick) landing during the read makes it stale; it is read again, not dropped.
-    func refreshLibraryRowsInBackground() {
+    ///
+    /// `mustPublish` is for a tap that changed the database and expects the screen to show it (Mark complete, Undo,
+    /// Restore). Playback ticks and prewarm progress can invalidate every read of a busy Library, and dropping the
+    /// reload then would leave the row stale until something else reloads. A `mustPublish` reload reads again like any
+    /// other (a synchronous reload that landed meanwhile, such as a permanent delete or Play, is newer than this read
+    /// and must not be undone by it), but its third read publishes the rows whatever moved meanwhile (the database is
+    /// the truth; the next tick refreshes a moving row), and leaves the Preparing Audio lists alone when their writer
+    /// changed them during that read.
+    func refreshLibraryRowsInBackground(mustPublish: Bool = false) {
         guard let store else { return }
-        let generation = backgroundRefresh.beginLibrary()
+        let (generation, publishRequired) = backgroundRefresh.beginLibraryReload(mustPublish: mustPublish)
         let read = navigationLibraryRead
         backgroundRefresh.holdLibrary(Task { [weak self] in
-            for _ in 0..<3 {
+            for attempt in 0..<3 {
                 guard let revision = self?.libraryPresentationRevision,
                       let listsBefore = self?.audioPreparationLists,
                       let data = try? await read(store) else { return }
                 guard let self, !Task.isCancelled, self.backgroundRefresh.isCurrentLibrary(generation) else { return }
                 // Moving or prioritizing a job and a chunk's progress set the Preparing Audio lists without touching
                 // `libraryItems`, so the revision can't see them: a list that changed during the read is read again.
-                if self.libraryPresentationRevision != revision || self.audioPreparationLists != listsBefore { continue }
+                let rowsMoved = self.libraryPresentationRevision != revision
+                let listsMoved = self.audioPreparationLists != listsBefore
+                if (rowsMoved || listsMoved) && !(publishRequired && attempt == 2) { continue }
                 self.publishLibrary(data)
-                self.publishAudioPreparationPresentation(from: data, store: store)
+                self.backgroundRefresh.libraryWasPublished()
+                if !listsMoved { self.publishAudioPreparationPresentation(from: data, store: store) }
                 return
             }
         })

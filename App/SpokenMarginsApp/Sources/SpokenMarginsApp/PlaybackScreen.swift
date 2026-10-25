@@ -61,6 +61,17 @@ struct PlaybackScreen: View {
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var followUpFocused: Bool
 
+    /// Back to the Library while playback goes on. The Library label lower down stays; this one is where a listener
+    /// looks first. On Now it sits in line with the title, so the screen gets no taller (#2262).
+    private var libraryExitButton: some View {
+        Button(action: model.openLibrary) {
+            Image(systemName: "chevron.left").font(.body.weight(.semibold)).minimumTapTarget()
+        }
+        .accessibilityLabel("Library")
+        .accessibilityHint("Leaves this screen. Playback keeps going.")
+        .accessibilityIdentifier("playback.exit.button")
+    }
+
     var body: some View {
         let _ = playbackTick
         NavigationStack {
@@ -181,6 +192,8 @@ struct PlaybackScreen: View {
                         }
                         .accessibilityIdentifier("timeline.nowPlaying.button")
                     }
+                } else if selectedPane == .margins {
+                    ToolbarItem(placement: .topBarLeading) { libraryExitButton }
                 }
                 if selectedPane != .timeline {
                     ToolbarItemGroup(placement: .keyboard) {
@@ -706,12 +719,15 @@ struct PlaybackScreen: View {
 
     private var playbackHeader: some View {
         VStack(alignment: .leading, spacing: 12) {
-            PlaybackSourceTitleView(
-                title: model.playbackItemHeaderTitle,
-                sleepTimerState: model.sleepTimerState,
-                sleepTimerRemainingSeconds: model.sleepTimerRemainingSeconds,
-                showItem: model.openCurrentPlaybackItem
-            )
+            HStack(alignment: .top, spacing: 4) {
+                libraryExitButton
+                PlaybackSourceTitleView(
+                    title: model.playbackItemHeaderTitle,
+                    sleepTimerState: model.sleepTimerState,
+                    sleepTimerRemainingSeconds: model.sleepTimerRemainingSeconds,
+                    showItem: model.openCurrentPlaybackItem
+                )
+            }
 
             if model.selectedItem.isNativeAudio,
                let show = model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
