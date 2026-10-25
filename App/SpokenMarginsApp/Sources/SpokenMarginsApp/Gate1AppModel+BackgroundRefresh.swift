@@ -91,10 +91,21 @@ extension Gate1AppModel {
                 guard let self, !Task.isCancelled, self.backgroundRefresh.isCurrentLibrary(generation) else { return }
                 if self.libraryPresentationRevision != revision { continue }
                 self.publishLibrary(data)
-                self.refreshAudioPreparationPresentation()
+                self.publishAudioPreparationPresentation(from: data, store: store)
                 return
             }
         })
+    }
+
+    /// The Preparing Audio lists from the Library read just published, so the reload costs the main thread no second
+    /// pass over the store (#2505). Stale jobs are checked again and deleted off it; they are already left out of the queue.
+    func publishAudioPreparationPresentation(from data: LibraryReadSnapshot, store: SQLiteSessionStore) {
+        let presentation = AudioPreparationPresentation(snapshot: data, activeItemId: activePlaybackItemId)
+        if audioPreparationQueue != presentation.queue { audioPreparationQueue = presentation.queue }
+        if recentlyPreparedAudio != presentation.recentlyPrepared { recentlyPreparedAudio = presentation.recentlyPrepared }
+        let stale = presentation.staleJobIds
+        guard !stale.isEmpty else { return }
+        Task.detached(priority: .utility) { _ = try? store.deleteStaleAudioPreparationJobs(among: stale) }
     }
 
     func publishLibrary(_ data: LibraryReadSnapshot) {

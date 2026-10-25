@@ -63,7 +63,7 @@ extension Gate1AppModel {
                 await ledger.discardStaleAssembly(url, reservationId: assemblyReservation.id)
                 return
             }
-            try refreshLibraryRows(store: store)
+            refreshLibraryRowsInBackground()
             let values = try url.resourceValues(forKeys: [.fileSizeKey])
             let relative = String(url.standardizedFileURL.path.dropFirst(support.standardizedFileURL.path.count + 1))
             guard try await ledger.commitPrepared(
