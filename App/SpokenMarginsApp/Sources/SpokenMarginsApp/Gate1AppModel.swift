@@ -351,6 +351,16 @@ final class Gate1AppModel: ObservableObject {
     @Published var followedSourceEntries: [FeedEntry] = [] { didSet { quickAccess.invalidateCandidates() } }
     @Published var feedSubscriptions: [FeedSubscription] = [] { didSet { quickAccess.invalidateCandidates(); listeningSignals.endListening() } }
     @Published var isRefreshingFollowedSources = false
+    /// Every stored entry of the followed shows, muted shows and played episodes included, for Following's rows and a show's screen (#1865).
+    @Published var followingShowEntries: [FeedEntry] = []
+    /// When each show was last opened; "N new" on Following counts from it (#1865).
+    @Published var followingLooked = FollowingLookedMarkers()
+    /// Following's rows, built off the main thread whenever the entries, shows or looked times change (#1865).
+    @Published var followingShowListCache = FollowingShowList()
+    /// Counts reloads of `followingShowEntries`, so a Show screen knows when to rebuild its episodes.
+    @Published var followingShowRevision = 0
+    var followingLookedLoaded = false
+    var followingLookedDirty = false
     @Published var importingFollowedSourceEntryIds: Set<String> = []
     /// The latest Play now or Add and open from Following; any later open or start makes it stale (#2124).
     var followedPlayIntent = CurrentRequest()
