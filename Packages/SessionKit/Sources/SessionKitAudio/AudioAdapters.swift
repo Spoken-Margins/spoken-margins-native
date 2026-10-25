@@ -1944,6 +1944,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             cancelAutomaticInterruptionResume()
         }
         mediaContext = context
+        // Learn whether a streamed MP3 has a Xing/VBRI header before play() builds its item (#2660).
+        if let context, let url = URL(string: context.playbackURL ?? context.targetId) {
+            MP3VBRHeaderProbe.shared.prefetch(url)
+        }
         if let context, let durationMs = context.durationMs {
             knownDurations[context.targetId] = durationMs
         }
@@ -2061,8 +2065,14 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     /// HTTP the key makes AVFoundation fetch the whole file before playing when the MP3 has no header (14 s for a
     /// 29 MB CBR file at 20 Mbit/s), or 13 to 24 MB on the first seeks when it has one. Only a VBR file with a Xing
     /// header is both cheap with the key (0.3 s to start) and wrong without it (seeks up to 9 s off).
-    static func playbackAsset(for url: URL) -> AVURLAsset {
-        AVURLAsset(url: url, options: url.isFileURL ? [AVURLAssetPreferPreciseDurationAndTimingKey: true] : nil)
+    /// A stream whose first frame was probed as Xing or VBRI gets the key too (#2660). An unprobed, failed or
+    /// other stream does not. The probe runs in `configureMediaContext`, never here.
+    static func playbackAsset(for url: URL, probe: MP3VBRHeaderProbe = .shared) -> AVURLAsset {
+        AVURLAsset(url: url, options: wantsPreciseTiming(for: url, probe: probe) ? [AVURLAssetPreferPreciseDurationAndTimingKey: true] : nil)
+    }
+
+    static func wantsPreciseTiming(for url: URL, probe: MP3VBRHeaderProbe = .shared) -> Bool {
+        url.isFileURL || probe.cachedAnswer(for: url) == true
     }
 
     var currentItemProvidesPreciseTimingForTesting: Bool? {
