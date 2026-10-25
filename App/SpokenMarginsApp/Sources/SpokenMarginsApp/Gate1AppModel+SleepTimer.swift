@@ -61,7 +61,7 @@ extension Gate1AppModel {
             if snapshot.status.isPlaybackActive { pause() }
             releaseOwnMarginReturn()
             cancelSleepTimer() // after the pause, so the volume comes back for the next time the listener plays
-            reportConfirmation(SleepTimerPolicy.expiryConfirmation(mode: mode))
+            sleepTimerExpired(mode)
         } else {
             // Only what the listener hears is warned and faded: a paused source or a recording is left alone.
             let heard = snapshot.status.isPlaybackActive && !snapshot.isRecording

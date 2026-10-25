@@ -212,6 +212,7 @@ final class Gate1FlowUITests: XCTestCase {
         openLibrarySettings()
 
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 4))
+        scrollToButton(containingLabel: "About & Legal").tap()
         XCTAssertTrue(scrollToElement("settings.ai.processing").exists)
         XCTAssertTrue(scrollToElement("settings.ai.releaseBoundary").exists)
         XCTAssertFalse(element("provider.name").exists)
