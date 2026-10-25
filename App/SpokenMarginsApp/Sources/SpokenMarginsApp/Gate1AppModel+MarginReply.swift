@@ -9,6 +9,9 @@ extension Gate1AppModel {
     /// The shared Margin the recording on screen answers, for the recording screen to name.
     var pendingMarginReply: MarginReplyDraft? { marginCapture.pendingReply }
 
+    /// The same, with the listener's switch to an independent Margin (#473).
+    var pendingMarginReplyChoice: MarginReplyChoice { marginCapture.replyChoice }
+
     /// Reply to `row` by voice, or in writing. The source moves to the Margin's position first, so the reply is
     /// anchored to the moment it answers.
     func replyToSharedMargin(_ row: SharedMarginRow, inWriting: Bool) {
@@ -69,6 +72,60 @@ extension Gate1AppModel {
             if let row = marginRows.first(where: { $0.interjection.id == id }) { _ = playMarginMoment(row) }
         case .imported(let id):
             if let row = sharedMarginRows.first(where: { $0.interjection.id == id }) { playSharedMarginMoment(row) }
+        }
+    }
+
+    // MARK: A Margin recorded over a shared Margin, or just after, answers it (#473, owner 2026-10-25)
+
+    /// The shared Margin a Margin started now answers: the one playing over it or heard in the last few seconds.
+    func sharedMarginThisMarginAnswers() -> MarginReplyDraft? {
+        guard let itemId = snapshot.itemId else { return nil }
+        return marginCapture.sharedReplyMemory.reply(forItem: itemId, at: Date())
+    }
+
+    /// Sets the suggestion for a spoken Margin unless Reply already chose one. The recording screen says whom it answers.
+    func suggestSharedMarginReply() {
+        guard !marginCapture.replyChoice.canToggle, let draft = sharedMarginThisMarginAnswers() else { return }
+        marginCapture.setPendingReply(draft)
+    }
+
+    /// A Margin started from the Lock Screen, headphones or a Live Activity goes through the engine without a link;
+    /// once it is recording, it takes the suggestion the same way.
+    func applySuggestedReplyToCompactRecording() {
+        guard snapshot.isRecording else { return }
+        suggestSharedMarginReply()
+        engine?.changeReplyOfCurrentCapture(to: marginCapture.pendingReply?.link)
+    }
+
+    /// Switches the Margin being recorded or written between a reply and an independent Margin.
+    func toggleReplyOfCurrentMargin() {
+        if writtenMarginDraft != nil {
+            marginCapture.toggleDraftReply()
+            engine?.changeReplyOfCurrentCapture(to: writtenMarginDraft?.reply?.link)
+        } else if snapshot.isRecording {
+            marginCapture.toggleReplyChoice()
+            engine?.changeReplyOfCurrentCapture(to: marginCapture.pendingReply?.link)
+        }
+    }
+
+    /// A saved Margin becomes independent, or a reply again (`link` is the Margin it answered). Only the link
+    /// changes. The store is read and written off the main thread (#2256); Margins already shared keep the link they carried.
+    func setSavedMarginReply(_ interjection: Interjection, to link: MarginReplyLink?) {
+        guard let store else { return }
+        let id = interjection.id, sessionId = interjection.sessionId
+        Task { @MainActor [weak self] in
+            do {
+                let found = try await Self.offMain {
+                    try store.updateReply(ofInterjection: id, sessionId: sessionId, to: link)
+                }
+                if !found { throw SessionKitError.persistenceFailed("margin_reply_missing") }
+                self?.hangTelemetry.labels.scoped("savedMarginReply.refresh") {
+                    self?.refreshSelectedItem()
+                    self?.refreshMarginRows()
+                }
+            } catch {
+                self?.reportFailure(error, context: "Couldn't change this Margin's reply")
+            }
         }
     }
 }

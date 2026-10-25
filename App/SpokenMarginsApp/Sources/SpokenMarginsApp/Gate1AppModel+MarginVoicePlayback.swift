@@ -75,6 +75,7 @@ extension Gate1AppModel {
 
     func stopInterjectionAudioPlayback() {
         let hadImportedMargin = playingImportedCommentary != nil
+        if hadImportedMargin { marginCapture.sharedMarginEnded() }
         if hadImportedMargin { recordMarginVoiceEvent("stop", player: "shared") }
         else if playingInterjectionAudioId != nil { recordMarginVoiceEvent("stop", player: "own") }
         marginVoicePlayer.resetSharedState()
@@ -148,6 +149,7 @@ extension Gate1AppModel {
                 mixedPlaybackVolume: mixedPlaybackVolume
             )
             recordMarginVoiceEvent("start", player: "shared") // after the start call, so a start that throws logs no start
+            if let itemId = prompt.layer.itemId { marginCapture.sharedMarginBegan(MarginReplyDraft(parent: prompt.interjection, in: prompt.layer), itemId: itemId) } // a Margin recorded over it answers it (#473)
             pendingImportedCommentary = nil
             (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.setRemoteCommandHandlingEnabled(false)
             gate2CompactControls.setNowPlayingEnabled(false)

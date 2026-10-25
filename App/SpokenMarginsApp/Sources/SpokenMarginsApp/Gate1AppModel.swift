@@ -2601,6 +2601,7 @@ final class Gate1AppModel: ObservableObject {
                     snapshot: snapshot,
                     startedAt: Date()
                 ))
+                applySuggestedReplyToCompactRecording() // answers the shared Margin heard over it or just before (#473)
             }
             if command == .setPlaybackRate,
                let playbackRate = normalizedPlaybackRate {

@@ -99,4 +99,27 @@ final class MarginReplyCaptureTests: XCTestCase {
 
         XCTAssertEqual(try margins(engine, repository).map(\.replyTo), [link, nil])
     }
+
+    // The listener switches a Margin between reply and independent (#473, owner 2026-10-25).
+
+    func testSwitchingARecordingToIndependentSavesNoLinkAndBackSavesIt() throws {
+        let (engine, repository) = try engine()
+        _ = try engine.beginInterjection(request: MarginCaptureRequest().replying(to: link))
+        engine.changeReplyOfCurrentCapture(to: nil)
+        _ = try engine.finishInterjection(audioRef: "interjections/independent.m4a")
+        _ = try engine.beginInterjection()
+        engine.changeReplyOfCurrentCapture(to: link) // the compact controls begin without a link
+        _ = try engine.finishInterjection(audioRef: "interjections/reply.m4a")
+
+        XCTAssertEqual(try margins(engine, repository).map(\.replyTo), [nil, link])
+    }
+
+    func testSwitchingAWrittenMarginChangesWhatItSaves() throws {
+        let (engine, repository) = try engine()
+        let capture = try engine.beginWrittenInterjection(replyTo: link)
+        engine.changeReplyOfCurrentCapture(to: nil)
+        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "Actually my own thought.")
+
+        XCTAssertEqual(try margins(engine, repository).first?.replyTo, nil)
+    }
 }

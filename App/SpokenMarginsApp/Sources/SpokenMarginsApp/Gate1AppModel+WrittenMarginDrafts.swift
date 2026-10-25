@@ -76,7 +76,7 @@ extension Gate1AppModel {
                 }
                 let capture = try engine.restoreWrittenInterjection(record.capture)
                 snapshot = engine.snapshot
-                var draft = makeWrittenMarginDraft(for: capture, store: store, reply: nil)
+                var draft = makeWrittenMarginDraft(for: capture, store: store, replyChoice: MarginReplyChoice())
                 draft.text = record.text
                 marginCapture.openDraft(draft)
                 diagnostics["writtenMarginDraftRestored"] = capture.id

@@ -28,9 +28,12 @@ final class MarginCaptureCoordinator: ObservableObject {
     /// Holds the object that journals the written Margin being typed (#1970). Only stored here; the model creates and uses it.
     var draftKeeper: WrittenMarginDraftKeeper?
     private(set) var pendingVoiceRequestID: UUID?
-    /// The shared Margin the spoken Margin being started answers (#473). Not published, like the request ID: the
-    /// recording screen is redrawn by `presentationContext`, which is always set after this. It goes with the context.
-    private(set) var pendingReply: MarginReplyDraft?
+    /// The shared Margin the spoken Margin being started answers (#473), and whether the listener switched it to
+    /// independent. Published so the switch redraws the recording screen. It goes with the presentation context.
+    @Published private(set) var replyChoice = MarginReplyChoice()
+    var pendingReply: MarginReplyDraft? { replyChoice.effective }
+    /// The last shared Margin heard, so a Margin recorded over it or just after answers it (#473). Not published.
+    private(set) var sharedReplyMemory = SharedMarginReplyMemory()
     /// The compact control's microphone request (#2126): Cancel or a newer request makes a late grant stale.
     private var compactRequest = CurrentRequest()
 
@@ -66,7 +69,7 @@ final class MarginCaptureCoordinator: ObservableObject {
         guard granted else {
             isRequestingPermission = false
             presentationContext = nil
-            pendingReply = nil
+            replyChoice = MarginReplyChoice()
             pendingVoiceRequestID = nil
             permissionDenied = true
             return .denied
@@ -93,7 +96,7 @@ final class MarginCaptureCoordinator: ObservableObject {
         pendingVoiceRequestID = nil
         isRequestingPermission = false
         presentationContext = nil
-        pendingReply = nil
+        replyChoice = MarginReplyChoice()
     }
 
     // MARK: A compact control's request (#2126: fenced like the in-app request)
@@ -124,11 +127,24 @@ final class MarginCaptureCoordinator: ObservableObject {
     /// Always writes, and so always notifies, even when there is no context.
     func clearPresentationContext() {
         presentationContext = nil
-        pendingReply = nil
+        replyChoice = MarginReplyChoice()
     }
 
     func setPendingReply(_ reply: MarginReplyDraft?) {
-        pendingReply = reply
+        replyChoice = MarginReplyChoice(suggested: reply)
+    }
+
+    /// Switches the Margin being started between a reply and an independent Margin (#473).
+    func toggleReplyChoice() {
+        replyChoice.toggle()
+    }
+
+    func sharedMarginBegan(_ draft: MarginReplyDraft, itemId: String) {
+        sharedReplyMemory.began(draft, itemId: itemId)
+    }
+
+    func sharedMarginEnded(at date: Date = Date()) {
+        sharedReplyMemory.ended(at: date)
     }
 
     // MARK: Finishing, and the shield that follows
@@ -168,6 +184,10 @@ final class MarginCaptureCoordinator: ObservableObject {
     /// Without a draft nothing is written, so nothing is announced.
     func setDraftText(_ text: String) {
         writtenDraft?.text = text
+    }
+
+    func toggleDraftReply() {
+        writtenDraft?.replyChoice.toggle()
     }
 
     func closeDraft() {

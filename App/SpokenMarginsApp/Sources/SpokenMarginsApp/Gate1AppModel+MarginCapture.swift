@@ -160,6 +160,7 @@ extension Gate1AppModel {
             return
         }
         guard !recordingNavigationIsLocked, handOffPlayingMarginToRecording() else { return }
+        suggestSharedMarginReply()
         let voiceCaptureRequestID = marginCapture.beginVoiceRequest()
         statusMessage = "Starting Margin..."
         lastError = nil
@@ -311,7 +312,8 @@ extension Gate1AppModel {
     func beginWrittenMargin() { beginWrittenMargin(answering: nil) }
 
     /// A written Margin that answers a shared one when `reply` is set (#473).
-    func beginWrittenMargin(answering reply: MarginReplyDraft?) {
+    func beginWrittenMargin(answering explicitReply: MarginReplyDraft?) {
+        let reply = explicitReply ?? sharedMarginThisMarginAnswers() // heard over it or just before (#473)
         guard !recordingNavigationIsLocked, !isMarginCaptureCoolingDown else { return } // the pencil sits beside Add a Margin (#148)
         guard snapshot.skimBridgeState == nil, playingImportedCommentary == nil else {
             reportFailure("Return to the source before writing a Margin.")
@@ -327,7 +329,7 @@ extension Gate1AppModel {
             lastError = nil
             marginCapture.clearPermissionDenied()
             snapshot = engine.snapshot
-            marginCapture.openDraft(makeWrittenMarginDraft(for: capture, store: store, reply: reply))
+            marginCapture.openDraft(makeWrittenMarginDraft(for: capture, store: store, replyChoice: MarginReplyChoice(suggested: reply)))
             marginCapture.clearPresentationContext()
         } catch {
             streamingSpeechQueue.resumeAfterInterjection()
@@ -336,14 +338,14 @@ extension Gate1AppModel {
     }
 
     /// The draft the written Margin screen opens with, for a capture the engine has locked to its place.
-    func makeWrittenMarginDraft(for capture: WrittenInterjectionCapture, store: SQLiteSessionStore, reply: MarginReplyDraft?) -> WrittenMarginDraft {
+    func makeWrittenMarginDraft(for capture: WrittenInterjectionCapture, store: SQLiteSessionStore, replyChoice: MarginReplyChoice) -> WrittenMarginDraft {
         WrittenMarginDraft(
             capture: capture,
             text: "",
             itemTitle: (try? store.loadItem(id: capture.itemId).title) ?? "Current item",
             targetDescription: capture.targetType == .item ? "Source" : (capture.targetType == .assistantTurn ? "Assistant response" : "Margin summary"),
             progressPercent: capture.roughPercent,
-            reply: reply
+            replyChoice: replyChoice
         )
     }
 
@@ -353,7 +355,7 @@ extension Gate1AppModel {
     /// paused under it, as when the listener switches before the recording starts.
     func switchRecordingToWrittenMargin() {
         guard snapshot.isRecording, !isFinishingInterjection, let engine else { return }
-        let reply = marginCapture.pendingReply
+        let replyChoice = marginCapture.replyChoice
         let held = heldMarginVoice
         recordFinalCaptureDiagnostics("switched_to_written")
         do {
@@ -362,7 +364,7 @@ extension Gate1AppModel {
             snapshot = engine.snapshot // the screen leaves the recording, and the capture watch ends with it
             lastError = nil
             marginCapture.clearPermissionDenied()
-            marginCapture.openDraft(makeWrittenMarginDraft(for: capture, store: store, reply: reply))
+            marginCapture.openDraft(makeWrittenMarginDraft(for: capture, store: store, replyChoice: replyChoice))
             marginCapture.clearPresentationContext()
             marginVoiceHeldForRecording = nil // no recording is coming, so a Margin of any kind stays as it is (#1672)
             if held?.kind == .shared { stopImportedCommentaryPlayback(resumeSource: false) }

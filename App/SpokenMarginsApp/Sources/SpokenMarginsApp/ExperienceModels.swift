@@ -9,8 +9,9 @@ struct WrittenMarginDraft: Equatable {
     let itemTitle: String
     let targetDescription: String
     let progressPercent: Int
-    /// The shared Margin this note answers (#473).
-    var reply: MarginReplyDraft? = nil
+    /// The shared Margin this note answers, and whether the listener switched it to independent (#473).
+    var replyChoice = MarginReplyChoice()
+    var reply: MarginReplyDraft? { replyChoice.effective }
 
     var captureID: String { capture.id }
     var priorWasPlaying: Bool { capture.wasPlaying }
