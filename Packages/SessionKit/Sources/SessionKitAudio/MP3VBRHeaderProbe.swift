@@ -89,7 +89,7 @@ public final class MP3VBRHeaderProbe: @unchecked Sendable {
     private let fetch: Fetch
     private let lock = NSLock()
     private var answers: [URL: Bool] = [:]
-    private var inFlight: Set<URL> = []
+    private var tasks: [URL: Task<Void, Never>] = [:]
 
     public init(fetch: @escaping Fetch = MP3VBRHeaderProbe.rangedFetch(timeout: 3)) {
         self.fetch = fetch
@@ -101,27 +101,36 @@ public final class MP3VBRHeaderProbe: @unchecked Sendable {
         return answers[url]
     }
 
-    /// Starts the probe for a network URL unless it is cached or already running. Returns at once.
+    private static let nonMP3Extensions: Set<String> = [
+        "m4a", "m4b", "mp4", "aac", "ogg", "oga", "opus", "wav", "flac", "caf", "aif", "aiff", "m3u8", "mov", "webm"
+    ]
+
+    /// Network URLs only, and not ones whose extension says the file is something other than MP3.
+    /// An unknown or missing extension still probes (podcast hosts redirect from extensionless URLs).
+    public static func shouldProbe(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return false }
+        return !nonMP3Extensions.contains(url.pathExtension.lowercased())
+    }
+
+    /// Starts the probe unless it is cached, and returns the running task (also when another caller started it)
+    /// so a caller can act when the answer lands. nil means nothing is running: cached, or not worth probing.
     @discardableResult
     public func prefetch(_ url: URL) -> Task<Void, Never>? {
-        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return nil }
-        guard begin(url) else { return nil }
-        return Task.detached(priority: .utility) { [self] in
+        guard Self.shouldProbe(url) else { return nil }
+        lock.lock(); defer { lock.unlock() }
+        if answers[url] != nil { return nil }
+        if let running = tasks[url] { return running }
+        let task = Task.detached(priority: .utility) { [self] in
             let result = await probe(url)
             finish(url, result)
         }
-    }
-
-    private func begin(_ url: URL) -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        if answers[url] != nil || inFlight.contains(url) { return false }
-        inFlight.insert(url)
-        return true
+        tasks[url] = task
+        return task
     }
 
     private func finish(_ url: URL, _ result: Bool?) {
         lock.lock(); defer { lock.unlock() }
-        inFlight.remove(url)
+        tasks[url] = nil
         if let result { answers[url] = result }
     }
 

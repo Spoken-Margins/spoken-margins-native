@@ -1830,6 +1830,12 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var mediaContext: PlaybackMediaContext?
     private var activeTargetId: String?
     private var activePlaybackURL: URL?
+    /// Where the Xing/VBRI answer for streamed MP3s comes from (#2660); tests inject their own.
+    var vbrProbe: MP3VBRHeaderProbe = .shared
+    /// How long after an item is built a late "VBR with header" answer may swap in a keyed item (#2660).
+    var preciseTimingSwapWindow: TimeInterval = 1.5
+    private var activeItemHasPreciseTiming = false
+    private var activeItemBuiltAt: TimeInterval = 0
     private var completedTargetId: String?
     private var playbackComplete = false
     private var lastRequestedMediaTimeMs = 0
@@ -1946,7 +1952,12 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         mediaContext = context
         // Learn whether a streamed MP3 has a Xing/VBRI header before play() builds its item (#2660).
         if let context, let url = URL(string: context.playbackURL ?? context.targetId) {
-            MP3VBRHeaderProbe.shared.prefetch(url)
+            if let task = vbrProbe.prefetch(url) {
+                Task.detached { [weak self] in
+                    await task.value
+                    DispatchQueue.main.async { self?.probeAnswered(for: url) }
+                }
+            }
         }
         if let context, let durationMs = context.durationMs {
             knownDurations[context.targetId] = durationMs
@@ -1964,6 +1975,52 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func play(targetId: String, from charOffset: Int) throws {
         try play(targetId: targetId, fromMediaTimeMs: charOffset)
+    }
+
+    /// Replaces the player and its observers with a fresh item for `url`.
+    private func installPlayerItem(url: URL, targetId: String) {
+        let setupLabel = MainThreadOperationLabels.shared.push("avPlayer.itemSetup") // names a slow setup in a hang (#2255)
+        defer { MainThreadOperationLabels.shared.pop(setupLabel) }
+        cancelPostResumeEvidenceCapture(reason: "playback_item_changed")
+        removePlayerStateObserver()
+        removeCompletionObserver()
+        removeTimeObserver()
+        let keyed = Self.wantsPreciseTiming(for: url, probe: vbrProbe)
+        let item = AVPlayerItem(asset: Self.playbackAsset(for: url, probe: vbrProbe))
+        activeItemHasPreciseTiming = keyed
+        activeItemBuiltAt = ProcessInfo.processInfo.systemUptime
+        player = AVPlayer(playerItem: item)
+        player?.volume = playbackVolume
+        player?.automaticallyWaitsToMinimizeStalling = true
+        activeTargetId = targetId
+        activePlaybackURL = url
+        observeCompletion(for: item)
+        installPlayerStateObserver()
+        installTimeObserver()
+        installContinuousPodcastEvidenceTapWhenTracksLoad(on: item)
+    }
+
+    /// The probe said a streamed MP3 is VBR with a header (#2660), after its item was built without the key.
+    /// Inside the swap window (before meaningful audio) the playing item is rebuilt keyed at the same place;
+    /// later, `requestMediaSeek` rebuilds it before the next deliberate seek. Never moves audible audio.
+    private func probeAnswered(for url: URL) {
+        guard vbrProbe.cachedAnswer(for: url) == true, !activeItemHasPreciseTiming,
+              activePlaybackURL == url, let targetId = activeTargetId, player != nil, !paused,
+              ProcessInfo.processInfo.systemUptime - activeItemBuiltAt < preciseTimingSwapWindow else { return }
+        let heardMs = currentMediaTimeMs() ?? lastRequestedMediaTimeMs
+        activePlaybackURL = nil
+        try? play(targetId: targetId, fromMediaTimeMs: max(lastRequestedMediaTimeMs, heardMs))
+    }
+
+    /// Before a deliberate seek on an unkeyed item whose URL is now known to be VBR with a header.
+    private func upgradeItemBeforeSeek() {
+        guard !activeItemHasPreciseTiming, let url = activePlaybackURL, let targetId = activeTargetId,
+              vbrProbe.cachedAnswer(for: url) == true else { return }
+        installPlayerItem(url: url, targetId: targetId)
+        if !paused {
+            player?.play()
+            player?.rate = Float(playbackRate)
+        }
     }
 
     public func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
@@ -1984,22 +2041,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         let traceStartedAt = ProcessInfo.processInfo.systemUptime
         let rebuildsItem = activeTargetId != targetId || activePlaybackURL != url || player == nil
         if activeTargetId != targetId || activePlaybackURL != url || player == nil {
-            let setupLabel = MainThreadOperationLabels.shared.push("avPlayer.itemSetup") // names a slow setup in a hang (#2255)
-            defer { MainThreadOperationLabels.shared.pop(setupLabel) }
-            cancelPostResumeEvidenceCapture(reason: "playback_item_changed")
-            removePlayerStateObserver()
-            removeCompletionObserver()
-            removeTimeObserver()
-            let item = AVPlayerItem(asset: Self.playbackAsset(for: url))
-            player = AVPlayer(playerItem: item)
-            player?.volume = playbackVolume
-            player?.automaticallyWaitsToMinimizeStalling = true
-            activeTargetId = targetId
-            activePlaybackURL = url
-            observeCompletion(for: item)
-            installPlayerStateObserver()
-            installTimeObserver()
-            installContinuousPodcastEvidenceTapWhenTracksLoad(on: item)
+            installPlayerItem(url: url, targetId: targetId)
         }
         let sessionStartedAt = ProcessInfo.processInfo.systemUptime
         #if os(iOS) || os(watchOS)
@@ -2075,6 +2117,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         url.isFileURL || probe.cachedAnswer(for: url) == true
     }
 
+    /// Whether the playing item's asset was created with the precise-timing key (for a stream, the loaded
+    /// property below stays false until the asset has loaded).
+    var currentItemWasBuiltKeyedForTesting: Bool { activeItemHasPreciseTiming }
+
     var currentItemProvidesPreciseTimingForTesting: Bool? {
         (player?.currentItem?.asset as? AVURLAsset)?.providesPreciseDurationAndTiming
     }
@@ -2087,6 +2133,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         } else {
             cancelPostResumeEvidenceCapture(reason: "playback_seeked_during_capture")
         }
+        upgradeItemBeforeSeek()
         let seconds = max(0, Double(mediaTimeMs) / 1000)
         lastRequestedMediaTimeMs = max(0, mediaTimeMs)
         guard let player, let activeTargetId else {
