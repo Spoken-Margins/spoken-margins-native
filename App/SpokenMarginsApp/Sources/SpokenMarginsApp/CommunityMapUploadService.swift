@@ -57,9 +57,7 @@ final class CommunityMapUploadService {
     ) {
         guard Self.optedIn else {
             // Opted out: nothing waits to be sent.
-            Task.detached(priority: .utility) {
-                if let folder = Self.keptFolder { try? FileManager.default.removeItem(at: folder) }
-            }
+            Task.detached(priority: .utility) { Self.kept?.removeAll() }
             return
         }
         // The store reads and kept-file checks run off the main thread (#2507); only the starts come back here.
@@ -78,18 +76,19 @@ final class CommunityMapUploadService {
         var due: [String] = []
         for record in CommunityMapUploadPolicy.dueForRetry(records, now: Date()).prefix(3) {
             let item = try? store.loadItem(id: record.itemId)
-            let kept = keptTranscript(episodeKey: record.id)
+            let kept = Self.kept?.load(episodeKey: record.id)
             guard CommunityMapUploadPolicy.prepareRetry(
                 record, item: item,
                 hasTranscript: kept != nil || (try? store.loadTranscriptTimeline(itemId: record.itemId)) != nil,
                 repository: store, now: Date()
             ) else {
-                keep(nil, episodeKey: record.id)
+                // Only the transcript read above: an upload may have kept a newer one since.
+                if let kept { Self.kept?.remove(episodeKey: record.id, ifHolding: kept) }
                 continue
             }
             if let kept, let key = item.flatMap(CommunityMapEpisodeKey.key(for:)), key != record.id {
-                keep(kept, episodeKey: key)
-                keep(nil, episodeKey: record.id)
+                Self.kept?.save(kept, episodeKey: key)
+                Self.kept?.remove(episodeKey: record.id, ifHolding: kept)
             }
             due.append(record.itemId)
         }
@@ -150,13 +149,14 @@ final class CommunityMapUploadService {
                 }
             )
             // Keep the phone's transcript only while its upload waits to be tried again (and if the record
-            // can't be read, keep it). The episode stays in flight until this is done, so a transcript that
-            // arrives meanwhile is queued, and its own attempt keeps it again.
+            // can't be read, keep it). Another attempt for this episode may have saved its own transcript
+            // after this one's was read (its gather runs off the main thread before it reaches the in-flight
+            // check), so only the transcript this upload sent is removed: the newer one stays for its retry.
             let hasQueued = queued[episodeKey] != nil
             _ = try? await reader.read { store in
                 if case .success(let record) = Result(catching: { try store.loadCommunityMapUpload(episodeKey: episodeKey) }),
                    record?.state != .failed, !hasQueued {
-                    Self.keep(nil, episodeKey: episodeKey)
+                    Self.kept?.remove(episodeKey: episodeKey, ifHolding: timeline)
                 }
             }
             inFlight.remove(episodeKey)
@@ -183,11 +183,11 @@ final class CommunityMapUploadService {
         // The map job deletes its transcript once the map is made, so the phone's transcript is
         // saved before anything is sent: an app closed mid-upload can still retry it. If it can't
         // be saved (storage full) it is still sent now, and Diagnostics says it can't be retried.
-        let unkept = transcribed.map { !keep($0, episodeKey: episodeKey) } ?? false
+        let unkept = transcribed.map { !(kept?.save($0, episodeKey: episodeKey) ?? false) } ?? false
         // A transcript the phone made for the map comes first: a stored one may be a publisher's
         // that could not upload.
         let stored = try? store.loadTranscriptTimeline(itemId: itemId)?.timeline
-        let timeline = transcribed ?? keptTranscript(episodeKey: episodeKey) ?? stored
+        let timeline = transcribed ?? kept?.load(episodeKey: episodeKey) ?? stored
         let storedChapters = timeline.map { timeline in
             CommunityMapUploadPolicy.hasPublisherChapters(map: try? store.loadListeningMap(itemId: itemId), timeline: timeline)
                 || CommunityMapUploadPolicy.hasPublisherChapters(map: nil, timeline: stored)
@@ -196,27 +196,13 @@ final class CommunityMapUploadService {
     }
 
     /// Where phone-made transcripts wait for their retry, one file per episode key (a hex hash).
-    nonisolated private static var keptFolder: URL? {
-        try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            .appending(path: "SpokenMargins/CommunityMapUploads", directoryHint: .isDirectory)
-    }
-
-    nonisolated private static func keptTranscript(episodeKey: String) -> TranscriptTimeline? {
-        guard let url = keptFolder?.appending(path: "\(episodeKey).json"), let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(TranscriptTimeline.self, from: data)
-    }
-
-    /// Saves the transcript for a retry, or with nil removes it. Says whether it was saved.
-    @discardableResult
-    nonisolated private static func keep(_ timeline: TranscriptTimeline?, episodeKey: String) -> Bool {
-        guard let url = keptFolder?.appending(path: "\(episodeKey).json") else { return false }
-        guard let timeline else {
-            try? FileManager.default.removeItem(at: url)
-            return true
-        }
-        guard let data = try? JSONEncoder().encode(timeline) else { return false }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        return (try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])) != nil
+    nonisolated private static let kept: CommunityMapKeptTranscripts? = (try? FileManager.default.url(
+        for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+    )).map {
+        CommunityMapKeptTranscripts(
+            folder: $0.appending(path: "SpokenMargins/CommunityMapUploads", directoryHint: .isDirectory),
+            protection: .completeFileProtectionUntilFirstUserAuthentication
+        )
     }
 
     /// The downloaded audio's length, for an episode whose feed doesn't give one.
