@@ -35,6 +35,14 @@ extension Gate1AppModel {
         quickAccess.isRefreshing || isRefreshingFollowedSources
     }
 
+    /// Connects the folder state to the model at launch: change forwarding, diagnostics, and the inbox that feeds the
+    /// play queue after each refresh (#1990).
+    func wireQuickAccessFolder() {
+        quickAccess.forwardWillChange(to: objectWillChange)
+        quickAccess.recordDiagnostic = { [weak self] key, value in self?.diagnostics[key] = value }
+        quickAccess.onFilesRefreshed = { [weak self] in self?.quickFolderInboxRefreshed() }
+    }
+
     func dismissQuickAccessFile(_ file: QuickAccessFile) { quickAccess.dismiss(file) }
 
     /// Brings a dismissed Quick Folder file back into Following (#477).
