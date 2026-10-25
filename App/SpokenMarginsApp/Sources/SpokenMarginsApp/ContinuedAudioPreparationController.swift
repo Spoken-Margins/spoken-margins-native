@@ -24,6 +24,8 @@ final class ContinuedAudioPreparationController {
         /// The audio preparation queue, as a run reads it.
         /// Includes manifests of jobs the running banner already knows, even after queue removal.
         var jobs: @MainActor ([OfflinePreparationRun.Job]) -> [OfflinePreparationRun.Job]
+        /// False while playback or a restored speech session holds the Library's rendering back (#2694).
+        var canPrepare: @MainActor () -> Bool
         /// True while the preparation loop is rendering or waiting out a heat pause.
         var isRunning: @MainActor () -> Bool
         var isCoolingDown: @MainActor () -> Bool
@@ -84,7 +86,8 @@ final class ContinuedAudioPreparationController {
         guard OfflinePreparationRun.shouldRequestContinuedProcessing(
             progress,
             alreadyRequested: alreadyRequested,
-            appIsActive: UIApplication.shared.applicationState == .active
+            appIsActive: UIApplication.shared.applicationState == .active,
+            preparationAllowed: hooks.canPrepare()
         ) else { return }
         let request = BGContinuedProcessingTaskRequest(
             identifier: Self.identifier,

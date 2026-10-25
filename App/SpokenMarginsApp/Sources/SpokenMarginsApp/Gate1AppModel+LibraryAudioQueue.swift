@@ -365,6 +365,7 @@ extension Gate1AppModel {
                 refreshLibraryRowsInBackground()
                 diagnostics["explicitAudioPreparation:\(item.id)"] = "queued"
                 reportConfirmation("Prioritized \(item.title) for audio preparation.")
+                holdsLibraryAudioForRestoredSpeech = false // the listener asked for this one (#2694)
                 scheduleAudioPreparationBackgroundTask()
                 startForegroundAudioPreparationIfNeeded()
             }

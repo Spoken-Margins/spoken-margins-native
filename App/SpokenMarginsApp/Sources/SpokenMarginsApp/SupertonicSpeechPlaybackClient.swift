@@ -448,23 +448,6 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var shouldResumeAfterInterruption = false
     private var activeRenderControl: RenderTaskControl?
 
-    /// Speculative Library work can share the serial renderer only while the
-    /// listener has two contiguous committed chunks beyond the audible chunk.
-    var canYieldRendererToLibrary: Bool {
-        lock.withLock {
-            guard transportIntent == .playing else { return true }
-            guard !fallbackIsActive, pendingAutoplayOffset == nil, startedTargetId != nil else { return false }
-            if generationState == .ready { return true }
-            var offset = currentStartOffset + currentChunkLength
-            for _ in 0..<2 {
-                if offset >= preparedSpeechProjection.text.count { return true }
-                guard let chunk = renderedCache[offset] else { return false }
-                offset += chunk.request.sourceLength
-            }
-            return true
-        }
-    }
-
     init(
         renderer: any SupertonicRendering,
         voice: SupertonicVoiceID,

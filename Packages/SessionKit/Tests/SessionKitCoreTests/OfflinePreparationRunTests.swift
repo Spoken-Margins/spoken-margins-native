@@ -45,14 +45,18 @@ final class OfflinePreparationRunTests: XCTestCase {
 
     func testAskedForOnlyWhenTheAppIsOnScreenAndTheRunIsLongEnough() {
         let long = OfflinePreparationRun.Progress(completedChunks: 36, totalChunks: 129)
-        XCTAssertTrue(OfflinePreparationRun.shouldRequestContinuedProcessing(long, alreadyRequested: false, appIsActive: true))
+        XCTAssertTrue(OfflinePreparationRun.shouldRequestContinuedProcessing(long, alreadyRequested: false, appIsActive: true, preparationAllowed: true))
         XCTAssertFalse(
-            OfflinePreparationRun.shouldRequestContinuedProcessing(long, alreadyRequested: false, appIsActive: false),
+            OfflinePreparationRun.shouldRequestContinuedProcessing(long, alreadyRequested: false, appIsActive: false, preparationAllowed: true),
             "iOS takes the request only while the app is on screen"
         )
         XCTAssertFalse(
-            OfflinePreparationRun.shouldRequestContinuedProcessing(long, alreadyRequested: true, appIsActive: true),
+            OfflinePreparationRun.shouldRequestContinuedProcessing(long, alreadyRequested: true, appIsActive: true, preparationAllowed: true),
             "one request covers the queue"
+        )
+        XCTAssertFalse(
+            OfflinePreparationRun.shouldRequestContinuedProcessing(long, alreadyRequested: false, appIsActive: true, preparationAllowed: false),
+            "no card while speech playback or a restored session holds the Library back (#2694)"
         )
     }
 
@@ -61,19 +65,19 @@ final class OfflinePreparationRunTests: XCTestCase {
         for remaining in 0..<minimum {
             let progress = OfflinePreparationRun.Progress(completedChunks: 10, totalChunks: 10 + remaining)
             XCTAssertFalse(
-                OfflinePreparationRun.shouldRequestContinuedProcessing(progress, alreadyRequested: false, appIsActive: true),
+                OfflinePreparationRun.shouldRequestContinuedProcessing(progress, alreadyRequested: false, appIsActive: true, preparationAllowed: true),
                 "\(remaining) chunks left"
             )
         }
         let atMinimum = OfflinePreparationRun.Progress(completedChunks: 0, totalChunks: minimum)
-        XCTAssertTrue(OfflinePreparationRun.shouldRequestContinuedProcessing(atMinimum, alreadyRequested: false, appIsActive: true))
-        XCTAssertFalse(OfflinePreparationRun.shouldRequestContinuedProcessing(.init(completedChunks: 0, totalChunks: 0), alreadyRequested: false, appIsActive: true))
+        XCTAssertTrue(OfflinePreparationRun.shouldRequestContinuedProcessing(atMinimum, alreadyRequested: false, appIsActive: true, preparationAllowed: true))
+        XCTAssertFalse(OfflinePreparationRun.shouldRequestContinuedProcessing(.init(completedChunks: 0, totalChunks: 0), alreadyRequested: false, appIsActive: true, preparationAllowed: true))
     }
 
     func testAnOpeningBufferAloneNeverAsksForContinuedProcessing() {
         let progress = OfflinePreparationRun.explicitProgress([job(.demandWindow, .preparing, done: 0, of: 2), job(.whileCharging, .preparing, done: 0, of: 400)])
         XCTAssertEqual(progress.totalChunks, 0)
-        XCTAssertFalse(OfflinePreparationRun.shouldRequestContinuedProcessing(progress, alreadyRequested: false, appIsActive: true))
+        XCTAssertFalse(OfflinePreparationRun.shouldRequestContinuedProcessing(progress, alreadyRequested: false, appIsActive: true, preparationAllowed: true))
     }
 
     // MARK: Requests iOS or the listener ended

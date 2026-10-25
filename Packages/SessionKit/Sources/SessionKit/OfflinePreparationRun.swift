@@ -124,12 +124,17 @@ public enum OfflinePreparationRun {
 
     /// iOS accepts continued processing only for work the listener just started in the app, so the
     /// request is made while the app is on screen. One request covers the whole queue.
+    ///
+    /// `preparationAllowed` is false while playback or a restored speech session holds the Library
+    /// back (#2694): a card then would report a run that cannot start, and end as failed.
     public static func shouldRequestContinuedProcessing(
         _ progress: Progress,
         alreadyRequested: Bool,
-        appIsActive: Bool
+        appIsActive: Bool,
+        preparationAllowed: Bool
     ) -> Bool {
-        appIsActive && !alreadyRequested && progress.remainingChunks >= minimumChunksForContinuedProcessing
+        preparationAllowed && appIsActive && !alreadyRequested
+            && progress.remainingChunks >= minimumChunksForContinuedProcessing
     }
 
     // MARK: The system progress banner

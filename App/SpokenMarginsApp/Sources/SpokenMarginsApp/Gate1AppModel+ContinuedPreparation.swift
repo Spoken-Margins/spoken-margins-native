@@ -13,12 +13,15 @@ extension Gate1AppModel {
         libraryAudioLoop.stopAndInvalidate()
     }
 
-    /// Live playback leaves the renderer free. Apart from the memory backoff so a loop that a
+    /// The Library renders only while the listener isn't hearing on-device speech, and not right after
+    /// a relaunch that restored a speech session (#2694). Apart from the memory backoff so a loop that a
     /// memory warning cancelled restarts and waits the backoff out (#1107).
     var playbackAllowsLibraryAudioPreparation: Bool {
-        !snapshot.status.isPlaybackActive || isMediaPlaybackSnapshot
-            || snapshot.preparedTextAudioStatus == "ready"
-            || (speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.canYieldRendererToLibrary == true
+        LibraryAudioPreparationPlayback.allows(
+            isMediaPlayback: isMediaPlaybackSnapshot,
+            isPlaybackActive: snapshot.status.isPlaybackActive,
+            holdsForRestoredSpeech: holdsLibraryAudioForRestoredSpeech
+        )
     }
 
     func idleForegroundPreparationTurn() { libraryAudioLoop.turns.stopped(.foreground) }
@@ -145,6 +148,7 @@ extension Gate1AppModel {
         ContinuedAudioPreparationController.shared.install(
             ContinuedAudioPreparationController.Hooks(
                 jobs: { [weak self] previous in self?.explicitPreparationJobs(including: previous) ?? [] },
+                canPrepare: { [weak self] in self?.canPrepareLibraryAudio ?? false },
                 isRunning: { [weak self] in self?.isForegroundAudioPreparationRunning ?? false },
                 isCoolingDown: { [weak self] in self?.isWaitingOutPreparationHeat ?? false },
                 stop: { [weak self] in self?.stopForegroundAudioPreparation() },

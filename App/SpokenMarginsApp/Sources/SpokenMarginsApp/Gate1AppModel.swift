@@ -85,7 +85,10 @@ final class Gate1AppModel: ObservableObject {
                 || oldValue.targetId != snapshot.targetId || snapshot.status.isPlaybackActive {
                 stopImportedCommentaryPlayback(resumeSource: false)
             }
-            if snapshot.status.isPlaybackActive { releaseOwnMarginReturn() }
+            if snapshot.status.isPlaybackActive {
+                releaseOwnMarginReturn()
+                holdsLibraryAudioForRestoredSpeech = false
+            }
             if let status = snapshot.preparedTextAudioStatus, status != preparedTextAudioStatus { preparedTextAudioStatus = status } // an equal write still publishes
             if let snapshotSourceTranscriptStatus = snapshot.sourceTranscriptStatus, snapshotSourceTranscriptStatus != sourceTranscriptStatus,
                !(sourceTranscriptStatus == "transcribing" && snapshotSourceTranscriptStatus == "not_started") {
@@ -576,6 +579,9 @@ final class Gate1AppModel: ObservableObject {
     private let preparedTextAudioStarterDurationMs = 30_000
     static let startupAudioChunkCount = LibraryRowBuilder.startupAudioChunkCount
     var preparationSeams = PreparationPassSeams()
+    /// Set when a relaunch restores a speech session: the Library renders nothing until the listener plays it
+    /// or asks for offline audio (#2694).
+    var holdsLibraryAudioForRestoredSpeech = false
     var isWaitingOutPreparationHeat = false // the foreground loop sleeps until the phone cools (#905)
     static let lastPreparedAudioNoticeDateKey = AudioPreparationQueueProjection.lastNoticeDateDefaultsKey
     let sourceWindowContextBeforeMs = SourceAnchorContextResolver.windowBeforeMs

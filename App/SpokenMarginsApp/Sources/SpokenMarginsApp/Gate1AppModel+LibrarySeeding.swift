@@ -103,6 +103,8 @@ extension Gate1AppModel {
                 selectedItem = try loadItemDetail(id: restoredSession.itemId, store: store)
                 diagnostics["restoredSession"] = restoredSession.id
                 diagnostics["restoredSessionMode"] = "paused_without_autoplay"
+                // The listener is about to resume speech on an app that was just killed or struggling (#2694).
+                holdsLibraryAudioForRestoredSpeech = !isMediaPlaybackSnapshot
             } else if let first = rows.first {
                 activeItemId = first.id
                 selectedItem = try loadItemDetail(id: first.id, store: store)
