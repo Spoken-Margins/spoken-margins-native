@@ -254,7 +254,7 @@ extension Gate1AppModel {
         if playingImportedCommentary != nil || playingInterjectionAudioId != nil { stopInterjectionAudioPlayback() }
         if !momentVoiceIsOpenInLog { recordMarginVoiceEvent("start", player: "moment") } // not on a resume
         #if os(iOS)
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: [.duckOthers])
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
     }

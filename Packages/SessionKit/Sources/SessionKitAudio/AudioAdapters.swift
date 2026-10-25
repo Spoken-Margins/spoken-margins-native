@@ -955,9 +955,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
             replaceSynthesizer()
         }
         #if os(iOS)
-        try AVAudioSession.sharedInstance().setCategory(
-            .playback,
-            mode: .spokenAudio,
+        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(
             options: PlaybackAudioSessionPolicy.options(mixes: mixesWithOtherAudio, lowersBackground: lowersBackgroundAudio)
         )
         try AVAudioSession.sharedInstance().setActive(true)
@@ -1015,7 +1013,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
         if synthesizer.isSpeaking || !chunksByUtteranceId.isEmpty { replaceSynthesizer() }
         resetPlaybackStateForPreview()
         #if os(iOS)
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: [.duckOthers])
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
         synthesizer.speak(makeUtterance(textToSpeak, mode: mode))
@@ -1054,9 +1052,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
         mixesWithOtherAudio = enabled
         #if canImport(AVFoundation) && os(iOS)
         guard !paused, synthesizer.isSpeaking || !chunksByUtteranceId.isEmpty else { return }
-        try AVAudioSession.sharedInstance().setCategory(
-            .playback,
-            mode: .spokenAudio,
+        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(
             options: PlaybackAudioSessionPolicy.options(mixes: enabled, lowersBackground: lowersBackgroundAudio)
         )
         try AVAudioSession.sharedInstance().setActive(true)
@@ -1575,9 +1571,7 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
         #if os(watchOS)
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [])
         #else
-        try AVAudioSession.sharedInstance().setCategory(
-            .playback,
-            mode: .spokenAudio,
+        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(
             options: PlaybackAudioSessionPolicy.options(mixes: mixesWithOtherAudio, lowersBackground: lowersBackgroundAudio)
         )
         #endif
@@ -2063,8 +2057,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     /// A downloaded episode asks for precise timing (#2094). Without it, a seek in a VBR MP3 played audio up to
     /// about five minutes from where the clock said, on macOS with real decoding, while the clock read the
     /// requested time; with it every seek landed within 13 ms. The cost on a local file is a frame scan only when
-    /// the MP3 has no Xing header (about 1.2 s for an hour). Streams keep the default until it is measured how
-    /// much of the file precise timing makes AVFoundation fetch before playing.
+    /// the MP3 has no Xing header (about 1.2 s for an hour). Streams keep the default (#2110, `ops/stream-seek`): over
+    /// HTTP the key makes AVFoundation fetch the whole file before playing when the MP3 has no header (14 s for a
+    /// 29 MB CBR file at 20 Mbit/s), or 13 to 24 MB on the first seeks when it has one. Only a VBR file with a Xing
+    /// header is both cheap with the key (0.3 s to start) and wrong without it (seeks up to 9 s off).
     static func playbackAsset(for url: URL) -> AVURLAsset {
         AVURLAsset(url: url, options: url.isFileURL ? [AVURLAssetPreferPreciseDurationAndTimingKey: true] : nil)
     }
@@ -3187,9 +3183,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         #if os(watchOS)
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [])
         #else
-        try AVAudioSession.sharedInstance().setCategory(
-            .playback,
-            mode: .spokenAudio,
+        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(
             options: PlaybackAudioSessionPolicy.options(mixes: mixesWithOtherAudio, lowersBackground: lowersBackgroundAudio)
         )
         #endif
@@ -3451,6 +3445,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
     private let baseDirectory: URL?
     private let deactivateSessionOnFinish: Bool
     private var shouldNotifyOtherAudioOnFinish = false
+    private var releasedSessionAtEnd = false
     /// A call, Siri or lost headphones while recording (#771). iOS stops the recorder on its own;
     /// without this the app kept showing "Recording".
     public var onInterruption: (@Sendable (_ event: MarginRecordingInterruptionEvent, _ recordedSeconds: TimeInterval?) -> Void)?
@@ -3647,6 +3642,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         #endif
         captureRestarts = 0
         peakPowerDb = nil
+        releasedSessionAtEnd = false
         #if os(iOS) || os(watchOS)
         shouldNotifyOtherAudioOnFinish = session.categoryOptions.contains(.mixWithOthers)
         #endif
@@ -3789,6 +3785,8 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
 
     public func finalizedRecordingIntegrity() -> FinalizedRecordingIntegrity? { finalizedIntegrity }
 
+    public func releasedAudioSessionAtEnd() -> Bool { releasedSessionAtEnd }
+
     public func pauseForReadyCue() {
         #if canImport(AVFoundation)
         guard isCaptureActive, !recorderHeldForCue, let recorder, recorder.isRecording else { return }
@@ -3844,6 +3842,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         #if os(iOS) || os(watchOS)
         if deactivateSessionOnFinish || shouldNotifyOtherAudioOnFinish {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            releasedSessionAtEnd = true
         }
         shouldNotifyOtherAudioOnFinish = false
         #endif
@@ -3871,6 +3870,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         }
         #if os(iOS) || os(watchOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        releasedSessionAtEnd = true
         #endif
         #endif
     }

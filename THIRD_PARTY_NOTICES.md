@@ -169,6 +169,16 @@ Stands in for a browser page in the page-reading tests. Not shipped.
 
 Checks the repository's JSON contracts. Installed from requirements-dev.txt with its format-nongpl extra, which pulls in further small validator packages (for example idna, webcolors, jsonpointer, referencing); all are build-time only and none ships.
 
+### PyYAML (Python) 6.0.2
+
+- Licence: MIT
+- From: Kirill Simonov and the PyYAML contributors
+- Source: <https://github.com/yaml/pyyaml>
+- Where: `scripts`
+- Licence text: <https://github.com/yaml/pyyaml/blob/main/LICENSE>
+
+Parses the workflow files in scripts/tests/test_workflow_files.py. Installed from requirements-dev.txt; build-time only and none ships.
+
 ### lxml (Python) 6.1.3
 
 - Licence: BSD-3-Clause

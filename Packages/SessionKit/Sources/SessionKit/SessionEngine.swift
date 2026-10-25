@@ -1755,6 +1755,10 @@ public final class SessionEngine {
         }
     }
 
+    public func recordingReleasedAudioSession() -> Bool {
+        recorder.releasedAudioSessionAtEnd()
+    }
+
     @discardableResult
     public func beginWrittenInterjection(replyTo: MarginReplyLink? = nil) throws -> WrittenInterjectionCapture {
         try requireNavigationAllowed("beginWrittenInterjection")

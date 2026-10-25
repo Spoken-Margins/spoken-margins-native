@@ -144,5 +144,112 @@ class LaneVerdictSteps(unittest.TestCase):
         self.assertEqual(len(missing), 1)
 
 
+TEST_COMMAND = re.compile(r'\b(xcodebuild|swift test|verify-tests\.py|sm_integration_run\.py|hosted_t3_check\.py|lane-runner\.py)\b')
+IGNORES_FAILURE = re.compile(r'\|\|\s*(true|:)\s*$')
+# check-build29-database.sh runs `swift test` for its fixture writer, so a job that calls it runs a test (shipped-build-compat).
+TEST_RUNNING = re.compile(r'test-without-building|verify-tests|swift test|unittest|sm_integration_run|hosted_t3_check|check-build29-database')
+
+# Steps allowed to carry continue-on-error: true, by (workflow file, job id). Each one is a ping or a report-of-a-report
+# that is not a test result ("Not a lane result: a failure here must not make the run look red" in lane.yml).
+# A new entry here needs the same kind of reason; a test or build step never belongs on this list.
+# A cache-only step (`uses: actions/cache/...`, no `run:`) may carry it in any job.
+CONTINUE_ON_ERROR_ALLOWED = {
+    ('lane.yml', 'lane-lost'),
+    ('lane.yml', 'lane-open-lane'),
+    ('lane.yml', 'lane-open-automerge'),
+}
+
+
+def is_cache_restore_only(step):
+    """A step that only restores or saves a cache (`uses: actions/cache/...`, no `run:`). A failed restore must cost a
+    cold build, never a red check (hosted-app-macos.yml, #2617); it runs no test, so it can't hide a failed one."""
+    return str(step.get('uses', '')).startswith('actions/cache/') and 'run' not in step
+
+
+def logical_lines(script):
+    """A script's lines with backslash continuations joined, so a pipeline over several lines is one line."""
+    return re.sub(r'\\\n\s*', ' ', script).splitlines()
+
+
+def all_steps():
+    """(workflow file name, job id, job, step) for every step of every workflow."""
+    for path in WORKFLOWS:
+        for job_id, job in parse(path)['jobs'].items():
+            for step in job.get('steps', []):
+                yield path.name, job_id, job, step
+
+
+class WorkflowHonesty(unittest.TestCase):
+    """A check that is green must have tested what its name says (#2596). These rules catch the ways it was not."""
+
+    def test_a_verdict_step_never_exits_zero_and_fails_an_inconclusive_that_is_not_a_hold(self):
+        gating = 0
+        for name, job_id, _, step in all_steps():
+            if step.get('name') != 'Verdict' or 'INCONCLUSIVE' not in step.get('run', ''):
+                continue
+            gating += 1
+            script = step['run']
+            with self.subTest(workflow=name, job=job_id):
+                self.assertNotRegex(script, r'\bexit 0\b', 'a Verdict step must not end the job green early')
+                branch = re.search(r'INCONCLUSIVE\s*\][^\n]*\n?\s*then(.*?)(?:\n\s*elif|\n\s*else|\n\s*fi)', script, re.S)
+                self.assertIsNotNone(branch, 'no branch for INCONCLUSIVE')
+                self.assertIn('exit 1', branch.group(1), 'INCONCLUSIVE (not a hold) must make the check red')
+        self.assertGreaterEqual(gating, 3, 'lane, automerge and automerge-mac Verdict steps gate on INCONCLUSIVE')
+
+    def test_continue_on_error_is_only_on_the_listed_ping_and_report_jobs(self):
+        for path in WORKFLOWS:
+            for job_id, job in parse(path)['jobs'].items():
+                where = (path.name, job_id)
+                flagged = job.get('continue-on-error') is True or any(
+                    step.get('continue-on-error') is True and not is_cache_restore_only(step)
+                    for step in job.get('steps', []))
+                if flagged:
+                    self.assertIn(where, CONTINUE_ON_ERROR_ALLOWED,
+                                  f'{where}: continue-on-error: true can turn a failed test into a green check')
+                    for step in job.get('steps', []):
+                        self.assertFalse(TEST_RUNNING.search(step.get('run', '')) and step.get('continue-on-error') is True,
+                                         f'{where}: a test or build step must not continue on error')
+
+    def test_a_build_or_test_command_that_ignores_its_exit_status_is_checked_after_it(self):
+        # `xcodebuild ... | tee | grep ... || true` keeps a build from dying in the pipe, but the step must then
+        # prove the success marker itself (`grep -q 'BUILD SUCCEEDED' log`), or a failed build passes.
+        seen = 0
+        for name, job_id, _, step in all_steps():
+            script = step.get('run', '')
+            for line in logical_lines(script):
+                if TEST_COMMAND.search(line) and IGNORES_FAILURE.search(line.strip()):
+                    seen += 1
+                    with self.subTest(workflow=name, job=job_id, step=step.get('name')):
+                        self.assertRegex(script, r'grep -q[F]? [^\n]*(SUCCEEDED|passed)',
+                                         'no success check after a command whose exit status is ignored')
+        self.assertGreaterEqual(seen, 4, 'the build steps of hosted-app-macos and phone-build use this pattern')
+
+    def test_the_hosted_app_check_says_it_builds_and_runs_no_tests_unless_asked(self):
+        job = parse(ROOT / '.github/workflows/hosted-app-macos.yml')['jobs']['app']
+        self.assertRegex(job.get('name', ''), r'build.*tests only when asked')
+
+    def test_a_job_that_only_builds_has_build_in_its_name(self):
+        for path in WORKFLOWS:
+            for job_id, job in parse(path)['jobs'].items():
+                scripts = '\n'.join(step.get('run', '') for step in job.get('steps', []))
+                if re.search(r'\bxcodebuild\b', scripts) and not TEST_RUNNING.search(scripts):
+                    with self.subTest(workflow=path.name, job=job_id):
+                        self.assertRegex(str(job.get('name', job_id)).lower(), r'build|archive|phone',
+                                         'a job that only builds must not be named like a test result')
+
+    def test_hosted_t3_still_reconciles_its_tests_whatever_the_earlier_steps_did(self):
+        steps = parse(ROOT / '.github/workflows/hosted-app-macos.yml')['jobs']['app']['steps']
+        reconcile = [step for step in steps if 'hosted_t3_check.py reconcile' in step.get('run', '')]
+        self.assertEqual(len(reconcile), 1)
+        self.assertIn('always()', reconcile[0].get('if', ''))
+        self.assertIsNot(reconcile[0].get('continue-on-error'), True)
+
+    def test_the_rules_notice_a_dishonest_step(self):
+        # The rules above, applied to made-up text, so a weakened rule fails here.
+        self.assertTrue(IGNORES_FAILURE.search('xcodebuild build | tee log | grep BUILD || true'))
+        self.assertTrue(TEST_COMMAND.search(logical_lines('xcodebuild -scheme X \\\n  build | grep BUILD || true')[0]))
+        self.assertIsNone(re.search(r'grep -q[F]? [^\n]*(SUCCEEDED|passed)', 'xcodebuild build | grep BUILD || true'))
+
+
 if __name__ == '__main__':
     unittest.main()

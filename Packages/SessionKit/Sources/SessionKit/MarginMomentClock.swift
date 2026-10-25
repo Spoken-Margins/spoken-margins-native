@@ -80,8 +80,16 @@ public enum MarginMomentClock: Sendable, Equatable {
     /// `sentenceStart`, and how many characters the scan turned into an array (what a test pins, #2506).
     static func sentenceStartScan(atOrAfter offset: Int, before limit: Int, in text: String) -> (start: Int, charactersRead: Int) {
         guard offset > 0 else { return (0, 0) }
-        let from = max(0, offset - windowLookBehind)
-        guard let windowStart = text.index(text.startIndex, offsetBy: from, limitedBy: text.endIndex) else { return (offset, 0) }
+        var from = max(0, offset - windowLookBehind)
+        guard var windowStart = text.index(text.startIndex, offsetBy: from, limitedBy: text.endIndex) else { return (offset, 0) }
+        // A window that opens inside a run of whitespace would miss the line breaks before it, and a blank line
+        // (two breaks) is a sentence start. Open it where the run began.
+        while windowStart > text.startIndex {
+            let before = text.index(before: windowStart)
+            guard text[before].isWhitespace else { break }
+            windowStart = before
+            from -= 1
+        }
         var charactersRead = 0
         // Past `reach` a start is the Margin's or later, and the answer is `offset`, so nothing there needs reading.
         let reach = max(limit, offset) - from + windowLookAhead

@@ -45,12 +45,6 @@ struct ExperienceMarginsScreen: View {
             .navigationTitle("Margins")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: model.openSettings) {
-                        Image(systemName: "gearshape").frame(width: 44, height: 44)
-                    }
-                    .accessibilityLabel("Settings")
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Export Sessions", systemImage: "square.and.arrow.up.on.square", action: openBatchExport)
                         .accessibilityIdentifier("margins.export.button")

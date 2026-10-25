@@ -229,8 +229,8 @@ final class Gate1AppModel: ObservableObject {
         offlineState: LibraryOfflineStateFilter(rawValue: UserDefaults.standard.string(forKey: "libraryOfflineStateFilter") ?? "") ?? .all,
         sort: LibrarySort(rawValue: UserDefaults.standard.string(forKey: "librarySort") ?? "") ?? .recentlyAdded
     )
-    @Published private(set) var sleepTimerState: SleepTimerState = .inactive
-    @Published private(set) var sleepTimerRemainingSeconds: Int?
+    @Published var sleepTimerState: SleepTimerState = .inactive // set by Gate1AppModel+SleepTimer.swift
+    @Published var sleepTimerRemainingSeconds: Int?
     @Published var libraryAccessError: String?
     @Published var recentlyDeletedItems: [LibraryItemRow] = []
     @Published var trashUndo: TrashUndoState?
@@ -252,7 +252,7 @@ final class Gate1AppModel: ObservableObject {
             }
         }
     }
-    @Published private(set) var marginRows: [MarginRow] = []
+    @Published var marginRows: [MarginRow] = []
     @Published private(set) var offlineStorageSnapshot = OfflineStorageSnapshot()
     @Published var recordingCaptureHealth: MarginCaptureSupervisor.Health = .capturing // written by Gate1AppModel+MarginCapture only
     var captureWatcher = MarginCaptureWatcher()
@@ -521,7 +521,7 @@ final class Gate1AppModel: ObservableObject {
     var activeItemId = "item-pill"
     var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
     private var playbackProgressTask: Task<Void, Never>?
-    private var sleepTimerTask: Task<Void, Never>?
+    let sleepTimerFade = SleepTimerFadeController() // the timer's ticker, fade and cue; its functions are in Gate1AppModel+SleepTimer.swift (#1979)
     var onDeviceSpeechGenerationDelayTask: Task<Void, Never>?
     var trashUndoDismissTask: Task<Void, Never>?
     /// Background time while on-device narration starts, on every path into "starting" (#854).
@@ -1628,63 +1628,6 @@ final class Gate1AppModel: ObservableObject {
             streamingSpeechQueue.relinquishToCanonicalPlayback()
             refreshSelectedItemInBackground()
             reportSuccess("Paused.")
-        }
-    }
-
-    var sleepTimerIsActive: Bool {
-        SleepTimerPolicy.isActive(sleepTimerState)
-    }
-
-    var sleepTimerDescription: String {
-        SleepTimerPolicy.description(state: sleepTimerState, remainingSeconds: sleepTimerRemainingSeconds)
-    }
-
-    var canUseEndOfChapterSleepTimer: Bool {
-        SleepTimerPolicy.endOfChapterTarget(chapters: selectedItem.mediaChapters, currentMediaTimeMs: snapshot.currentMediaTimeMs) != nil
-    }
-
-    func armSleepTimer(_ mode: SleepTimerMode) {
-        guard let state = SleepTimerPolicy.arm(mode, now: Date(), chapters: selectedItem.mediaChapters, currentMediaTimeMs: snapshot.currentMediaTimeMs) else { return }
-        sleepTimerState = state
-        startSleepTimerTicker()
-        reconcileSleepTimer(now: Date())
-    }
-
-    func extendSleepTimerBy15Minutes() {
-        let now = Date()
-        sleepTimerState = SleepTimerPolicy.extend(sleepTimerState, now: now)
-        startSleepTimerTicker()
-        reconcileSleepTimer(now: now)
-    }
-
-    func cancelSleepTimer() {
-        sleepTimerTask?.cancel()
-        sleepTimerTask = nil
-        sleepTimerState = .inactive
-        sleepTimerRemainingSeconds = nil
-    }
-
-    private func startSleepTimerTicker() {
-        sleepTimerTask?.cancel()
-        sleepTimerTask = Task { [weak self] in
-            while !Task.isCancelled {
-                guard let self else { return }
-                self.reconcileSleepTimer(now: Date())
-                try? await Task.sleep(for: .seconds(1))
-            }
-        }
-    }
-
-    func reconcileSleepTimer(now: Date) {
-        if let mode = SleepTimerPolicy.reconcile(
-            state: &sleepTimerState, remainingSeconds: &sleepTimerRemainingSeconds,
-            now: now, isRecording: snapshot.isRecording,
-            currentMediaTimeMs: snapshot.currentMediaTimeMs, chapters: selectedItem.mediaChapters
-        ) {
-            if snapshot.status.isPlaybackActive { pause() }
-            releaseOwnMarginReturn()
-            cancelSleepTimer()
-            reportConfirmation(SleepTimerPolicy.expiryConfirmation(mode: mode))
         }
     }
 
@@ -2825,7 +2768,7 @@ final class Gate1AppModel: ObservableObject {
                 speechPreviewSynthesizer.stopSpeaking(at: .immediate)
             }
             #if os(iOS)
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+            try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: [.duckOthers])
             try AVAudioSession.sharedInstance().setActive(true)
             #endif
             let utterance = AVSpeechUtterance(string: "Spoken Margins preview. This is the \(label) path.")
@@ -3087,11 +3030,9 @@ final class Gate1AppModel: ObservableObject {
             cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         }
         episodeMapPreparer.cancel(itemId: itemId)
-        if let directory = try? episodeMapDirectory(itemId: itemId),
-           FileManager.default.fileExists(atPath: directory.path) {
-            try? FileManager.default.removeItem(at: directory)
-        }
-        try? purgeTransientEpisodeTranscriptionCaches(itemId: itemId)
+        // The map folder holds the transient folder, so one removal covers both; the files go off the main thread (#2510).
+        Self.removeEpisodeTranscriptionFilesInBackground(itemId: itemId, directories: [try? episodeMapDirectory(itemId: itemId)].compactMap { $0 })
+        try? deleteTransientTranscriptAssets(itemId: itemId)
         for job in (try? store?.loadEpisodeMapPreparationJobs()) ?? [] where job.itemId == itemId {
             try? store?.deleteEpisodeMapPreparationJob(id: job.id)
         }
@@ -3101,12 +3042,12 @@ final class Gate1AppModel: ObservableObject {
         let expiration = now.addingTimeInterval(-7 * 24 * 60 * 60)
         for job in (try? store.loadEpisodeMapPreparationJobs()) ?? [] where
             job.isCancelled || job.requestedAt < expiration {
-            try? purgeTransientEpisodeTranscriptionCaches(itemId: job.itemId)
-            if (try? store.loadEditionFingerprintSpine(itemId: job.itemId)) == nil,
-               let directory = try? episodeMapDirectory(itemId: job.itemId),
-               FileManager.default.fileExists(atPath: directory.path) {
-                try? FileManager.default.removeItem(at: directory)
-            }
+            // Without a saved map the whole folder goes; with one, only the transient folder (#2510: off the main thread).
+            let directory = try? episodeMapDirectory(itemId: job.itemId)
+            let hasMap = (try? store.loadEditionFingerprintSpine(itemId: job.itemId)) != nil
+            let doomed = hasMap ? directory?.appending(path: "Transient", directoryHint: .isDirectory) : directory
+            Self.removeEpisodeTranscriptionFilesInBackground(itemId: job.itemId, directories: [doomed].compactMap { $0 })
+            try? deleteTransientTranscriptAssets(itemId: job.itemId)
             try? store.deleteEpisodeMapPreparationJob(id: job.id)
         }
     }

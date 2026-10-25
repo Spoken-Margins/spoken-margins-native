@@ -11,7 +11,7 @@ import SessionKitPersistence
 /// listener's IP address), so it is opt-in until requests go through an anonymous relay.
 @MainActor
 final class CommunityMapFetchService {
-    /// Settings > Support & Privacy > "Look up community maps". Off unless the listener turns it on.
+    /// Settings > Help & Privacy > "Look up community maps". Off unless the listener turns it on.
     static let optInKey = "communityMapLookupOptIn"
     static let shared = CommunityMapFetchService()
     /// Until when each episode isn't asked about again, as hashes and dates only.

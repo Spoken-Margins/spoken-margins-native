@@ -83,3 +83,11 @@ extension Gate1AppModel {
         return (event, tag)
     }
 }
+
+extension Gate1AppModel {
+    /// The sleep timer has paused playback: the banner and one soft tap, for a listener whose phone is face down (#1978).
+    func sleepTimerExpired(_ mode: SleepTimerMode) {
+        AppHaptics.play(.ended)
+        reportConfirmation(SleepTimerPolicy.expiryConfirmation(mode: mode))
+    }
+}
