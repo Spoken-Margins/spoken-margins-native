@@ -33,7 +33,7 @@ Times are UTC unless a zone is named. "Pause" is the way to stop that one job wi
 |---|---|---|---|---|---|
 | `SM Mac tick` scheduled task (`~/.claude/scheduled-tasks/sm-mac-tick/SKILL.md`) | Every 2 hours (`docs/workstreams/kickoff.md`) | Claude and Codex usage, runners, disk, memory, the main checkout, the Test Desk work list | One comment on #337 (breaker, pacing advice, scorecard, `- Test Desk: GO` line); fast-forwards the main checkout | Owner | Disable the scheduled task |
 | `SM integration run` scheduled task | Understudy only (`docs/workstreams/test-lane.md`). `ops/testdesk/` replaces it once the launchd job has posted a real report (#1178) | | Reports on #184 | Owner | Disable the scheduled task |
-| Mac finisher | A loop in the thread "Mac finisher" | `needs-mac` PRs | Commits to those PR branches, comments | Owner, and the project instructions | Pause is built in: HALT, disk under 20 GB, Dial Off |
+| [Mac finisher](workstreams/finisher.md) | A loop in the thread "Mac finisher" | `needs-mac` PRs | Commits to those PR branches, comments | Owner, and the project instructions | Pause is built in: HALT, disk under 20 GB, Dial Off |
 | Managed Test Desk | Started by hand or by the coordinator when the tick says `Test Desk: GO` | The work list the tick names | Reports on #184 | Coordinator | End the session |
 | Claude Mac worker | Not live. #1599 (PR #1604) | | | | |
 
