@@ -855,7 +855,7 @@ final class Gate1FlowUITests: XCTestCase {
         element("playback.margins.button").tap()
         XCTAssertTrue(element("margins.screen").waitForExistence(timeout: 4))
         XCTAssertTrue(element("miniPlayer.bar").exists)
-        let savedMargin = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "margins.row.")).firstMatch
+        let savedMargin = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "margins.rowDetails.")).firstMatch
         XCTAssertTrue(savedMargin.waitForExistence(timeout: 4))
         savedMargin.tap()
         XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 4), "Tapping the saved Margin row did not open its detail")
@@ -939,7 +939,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(search.waitForExistence(timeout: 4))
         search.tap()
         search.typeText("amber doorway")
-        let note = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "margins.row.")).firstMatch
+        let note = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "margins.rowDetails.")).firstMatch
         XCTAssertTrue(note.waitForExistence(timeout: 4))
         note.tap()
         XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 4))
@@ -1080,6 +1080,7 @@ final class Gate1FlowUITests: XCTestCase {
         tapRoot("Margins")
         XCTAssertTrue(element("margins.scope.picker").waitForExistence(timeout: 4))
         captureScreen(named: "margins-scoped-workspace")
+        app.buttons["margins.exportMenu.button"].tap()
         let exportSessions = app.buttons["margins.export.button"]
         XCTAssertTrue(exportSessions.waitForExistence(timeout: 2))
         exportSessions.tap()
@@ -1109,7 +1110,9 @@ final class Gate1FlowUITests: XCTestCase {
         scrollToElement("playback.home.button").tap()
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 4))
         tapRoot("Margins")
-        let exportSessions = scrollToElement("margins.export.button")
+        app.buttons["margins.exportMenu.button"].tap()
+        let exportSessions = app.buttons["margins.export.button"]
+        XCTAssertTrue(exportSessions.waitForExistence(timeout: 2))
         exportSessions.tap()
         XCTAssertTrue(element("batchExport.screen").waitForExistence(timeout: 4))
         let filter = scrollToElement("batchExport.filter.picker")
