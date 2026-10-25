@@ -211,6 +211,7 @@ Replace this section when the focus changes; do not append to it.
   - **Render in bursts, not a sustained grind.** He asked that fast voices render ahead and rest "so heat dissipates instead of... just grinding away" (#2703).
   - **Privacy-preserving telemetry is welcome later; opt-in until it meets the 2026-10-05 bar.** "it is reasonable that we do have telemetry eventually in the app, and especially if the telemetry is privacy-preserving." He would like a public community service of real, sustained on-device TTS performance. Until then, voice performance stays in the local Diagnostics export (#2701).
   - **Kokoro and Phonon become download options.** "Phonon is sweet. I'd love to get those two as options." (#2704, #2705)
+  - **The voice list stays bundled in the app; no hosted catalog.** "that would require us to have a CDN, and I'm not terribly interested in paying for another thing. So I'm okay with shipping voices links in the app, and we'll just have to take it as a risk". He also declined a Hugging Face page, which has the same risk. New voices arrive with app updates, and links stay pinned to upstream revisions (#2706).
 - **Podcast anchors** continue as stream C4: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
 - **Parked, reference only:**
   - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand. Its packets use a Margin kind this build can't read.
