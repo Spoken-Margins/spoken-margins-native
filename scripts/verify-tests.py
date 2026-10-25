@@ -520,7 +520,8 @@ RUNNER_TEST_TRIGGERS = ('scripts/', '.github/', '.gitignore')
 # Packages/ and App/; the BUILDING.md test reads that file, README.md, package.json, .gitattributes,
 # the hosted workflow and the App Group names in App/; the SessionKit pass key's reader guard reads every
 # Swift file of the package (re-measured 2026-10-09; the guard added 2026-10-10, #1328), and the
-# starter-catalog test reads Site/onboarding/ and research/B1/ (#1732). A diff that touches those inputs
+# starter-catalog test reads Site/onboarding/ and research/B1/ (#1732); the task-cost map test reads
+# docs/task-cost-map.json and App/ (#2396). A diff that touches those inputs
 # (and no lane path) runs just
 # these (a module, or a module.Class); the rest of the suite reads only scripts/.
 # To re-measure the list, copy scripts/, .github/ and .gitignore into a fresh git repository, run
@@ -540,9 +541,11 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_row_accessibility_actions', 'test_voiceover_label_nits',
                        'test_increase_contrast_wiring', 'test_reduce_motion', 'test_tap_target_styles',
                        # The article-entry inventory reads App/ Swift files (#2363).
-                       'test_article_entry_followups')
+                       'test_article_entry_followups',
+                       # The task-cost map checks its controls against App/ Swift files (#2396).
+                       'test_task_cost_map')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
-                      'docs/sharing-test-kit/', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
+                      'docs/sharing-test-kit/', 'docs/task-cost-map.json', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
                       # test_third_party_notices reads the dependency manifests and its own list (#1823).
                       'docs/legal/', 'THIRD_PARTY_NOTICES.md', 'requirements-dev.txt', 'Site/', 'Tools/',
                       'Config/', 'fixtures/', 'traces/', 'schemas/',

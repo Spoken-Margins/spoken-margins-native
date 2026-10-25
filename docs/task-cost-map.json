@@ -1,0 +1,600 @@
+{
+  "about": "Listener tap costs from the likely starting screen (#2396). A swipe counts as one tap; typing and speaking cost nothing; choosing a destination in a system sheet costs one. budget is the most taps the route may take: lower it when a change makes the route cheaper, and raise it only on purpose, in the diff that adds the step. docs/task-cost-map.md says how to read it.",
+  "countedKinds": [
+    "tap",
+    "swipe",
+    "system"
+  ],
+  "freeKinds": [
+    "type",
+    "speak"
+  ],
+  "actions": [
+    {
+      "id": "mark-complete",
+      "action": "Mark an item complete",
+      "recheck": "Library keeps its scroll position by row id (FollowingScrollMemory); about 0.3 s jump on return, 0 taps.",
+      "routes": [
+        {
+          "route": "Swipe the Library row",
+          "start": "Library tab",
+          "budget": 1,
+          "leavesScreen": false,
+          "steps": [
+            {
+              "do": "swipe",
+              "label": "Swipe right on the row (Mark Complete)",
+              "marker": "\"library.complete.",
+              "file": "ExperienceLibraryScreen.swift"
+            }
+          ]
+        },
+        {
+          "route": "From the playing item, back to Library, swipe",
+          "start": "Playback screen",
+          "budget": 2,
+          "leavesScreen": false,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "Library",
+              "marker": "\"playback.home.button",
+              "file": "PlaybackScreen.swift"
+            },
+            {
+              "do": "swipe",
+              "label": "Swipe right on the pinned Continue row",
+              "marker": "\"library.complete.",
+              "file": "ExperienceLibraryScreen.swift"
+            }
+          ]
+        },
+        {
+          "route": "From the playing item, via Item options",
+          "start": "Playback screen",
+          "budget": 4,
+          "leavesScreen": true,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "More",
+              "marker": "\"playback.options.button",
+              "file": "PlaybackScreen.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Item",
+              "marker": "\"playback.item.button",
+              "file": "PlaybackScreen.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Item options menu",
+              "marker": "Item options",
+              "file": "ExperienceItemDetailScreen.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Mark Complete",
+              "marker": "\"item.markComplete.button",
+              "file": "ExperienceItemDetailScreen.swift"
+            }
+          ],
+          "note": "Expensive: the menu has no identifier of its own; #2393 asks for a cheaper way from playback."
+        }
+      ]
+    },
+    {
+      "id": "add-margin",
+      "action": "Add a Margin while an item plays",
+      "recheck": "None: the prior screen returns after save.",
+      "routes": [
+        {
+          "route": "Spoken, from playback",
+          "start": "Playback screen",
+          "budget": 2,
+          "leavesScreen": true,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "Add a Margin",
+              "marker": "\"playback.interject.button",
+              "file": "PlaybackScreen.swift"
+            },
+            {
+              "do": "speak",
+              "label": "Speak"
+            },
+            {
+              "do": "tap",
+              "label": "Save & resume",
+              "marker": "\"recording.finish.button",
+              "file": "ExperienceRecordingScreen.swift"
+            }
+          ]
+        },
+        {
+          "route": "Written, from playback",
+          "start": "Playback screen",
+          "budget": 2,
+          "leavesScreen": true,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "Write a Margin (pencil)",
+              "marker": "\"playback.write.button",
+              "file": "PlaybackScreen.swift"
+            },
+            {
+              "do": "type",
+              "label": "Type"
+            },
+            {
+              "do": "tap",
+              "label": "Save",
+              "marker": "\"writtenMargin.save.button",
+              "file": "ExperienceWrittenMarginScreen.swift"
+            }
+          ]
+        },
+        {
+          "route": "Spoken, from the mini player",
+          "start": "A tab with the mini player",
+          "budget": 2,
+          "leavesScreen": true,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "Add a Margin",
+              "marker": "\"miniPlayer.interject.button",
+              "file": "MiniPlayer.swift"
+            },
+            {
+              "do": "speak",
+              "label": "Speak"
+            },
+            {
+              "do": "tap",
+              "label": "Save & resume",
+              "marker": "\"recording.finish.button",
+              "file": "ExperienceRecordingScreen.swift"
+            }
+          ]
+        },
+        {
+          "route": "Written, from the mini player",
+          "start": "A tab with the mini player",
+          "budget": 3,
+          "leavesScreen": true,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "Open the player",
+              "marker": "\"miniPlayer.open.button",
+              "file": "MiniPlayer.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Write a Margin (pencil)",
+              "marker": "\"playback.write.button",
+              "file": "PlaybackScreen.swift"
+            },
+            {
+              "do": "type",
+              "label": "Type"
+            },
+            {
+              "do": "tap",
+              "label": "Save",
+              "marker": "\"writtenMargin.save.button",
+              "file": "ExperienceWrittenMarginScreen.swift"
+            }
+          ],
+          "note": "The mini player has no pencil."
+        }
+      ]
+    },
+    {
+      "id": "find-item",
+      "action": "Find a specific item",
+      "recheck": "Search text, filters and sort persist in model.libraryQuery: 0 taps.",
+      "routes": [
+        {
+          "route": "Search the Library, then open",
+          "start": "Library tab",
+          "budget": 2,
+          "leavesScreen": true,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "Search field",
+              "marker": "\"library.search.field",
+              "file": "ExperienceLibraryScreen.swift"
+            },
+            {
+              "do": "type",
+              "label": "Type the title"
+            },
+            {
+              "do": "tap",
+              "label": "Open the row",
+              "marker": "\"library.row.",
+              "file": "ExperienceLibraryScreen.swift"
+            }
+          ]
+        },
+        {
+          "route": "Find a completed item",
+          "start": "Library tab",
+          "budget": 3,
+          "leavesScreen": true,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "Search field",
+              "marker": "\"library.search.field",
+              "file": "ExperienceLibraryScreen.swift"
+            },
+            {
+              "do": "type",
+              "label": "Type the title"
+            },
+            {
+              "do": "tap",
+              "label": "Include completed in search",
+              "marker": "\"library.completed.visibility",
+              "file": "ExperienceLibraryScreen.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Open the row",
+              "marker": "\"library.row.",
+              "file": "ExperienceLibraryScreen.swift"
+            }
+          ],
+          "note": "Completed items are hidden by default (+1 tap)."
+        }
+      ]
+    },
+    {
+      "id": "resume-listening",
+      "action": "Resume the item last played",
+      "recheck": "Not applicable: playback opens.",
+      "routes": [
+        {
+          "route": "Continue row play button",
+          "start": "Library tab",
+          "budget": 1,
+          "leavesScreen": true,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "Continue listening",
+              "marker": "\"queue.start.",
+              "file": "ExperienceLibraryScreen.swift"
+            }
+          ],
+          "note": "Needs a session above 0% and below 99%. Unheard shared Margins add a dialog tap (newMarginsOffer.skip)."
+        }
+      ]
+    },
+    {
+      "id": "share-margin",
+      "action": "Share a Margin",
+      "recheck": "Margins has no scroll memory: the list returns at the top.",
+      "routes": [
+        {
+          "route": "Margins tab, one item's Margins",
+          "start": "Margins tab",
+          "budget": 4,
+          "leavesScreen": false,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "Share on the item heading",
+              "marker": "\"margins.shareItem.",
+              "file": "ExperienceMarginsScreen.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Review",
+              "marker": "\"build23.sender.select.continue",
+              "file": "Build23SenderSharingExperience.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Share",
+              "marker": "\"build23.sender.review.share",
+              "file": "Build23SenderSharingExperience.swift"
+            },
+            {
+              "do": "system",
+              "label": "Choose a destination in the iOS share sheet"
+            }
+          ]
+        },
+        {
+          "route": "Margins tab, from another tab",
+          "start": "Any tab",
+          "budget": 5,
+          "leavesScreen": false,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "Margins tab",
+              "marker": "\"navigation.tab.margins",
+              "file": "ExperienceRootViews.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Share on the item heading",
+              "marker": "\"margins.shareItem.",
+              "file": "ExperienceMarginsScreen.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Review",
+              "marker": "\"build23.sender.select.continue",
+              "file": "Build23SenderSharingExperience.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Share",
+              "marker": "\"build23.sender.review.share",
+              "file": "Build23SenderSharingExperience.swift"
+            },
+            {
+              "do": "system",
+              "label": "Choose a destination in the iOS share sheet"
+            }
+          ]
+        },
+        {
+          "route": "One written Margin as Markdown",
+          "start": "Margins tab",
+          "budget": 3,
+          "leavesScreen": false,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "Open the row",
+              "marker": "\"margins.row.",
+              "file": "ExperienceMarginsScreen.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Share as Markdown",
+              "marker": "\"marginDetail.shareMarkdown.button",
+              "file": "ExperienceMarginDetailView.swift"
+            },
+            {
+              "do": "system",
+              "label": "Choose a destination in the iOS share sheet"
+            }
+          ]
+        },
+        {
+          "route": "From playback",
+          "start": "Playback screen",
+          "budget": 6,
+          "leavesScreen": true,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "More",
+              "marker": "\"playback.options.button",
+              "file": "PlaybackScreen.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Export",
+              "marker": "\"playback.export.button",
+              "file": "PlaybackScreen.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Share Margins",
+              "marker": "Share Margins",
+              "file": "ExportScreen.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Review",
+              "marker": "\"build23.sender.select.continue",
+              "file": "Build23SenderSharingExperience.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Share",
+              "marker": "\"build23.sender.review.share",
+              "file": "Build23SenderSharingExperience.swift"
+            },
+            {
+              "do": "system",
+              "label": "Choose a destination in the iOS share sheet"
+            }
+          ],
+          "note": "Expensive: six steps and two screens. After finishing an item, playback.finished.share.button skips the first."
+        }
+      ]
+    },
+    {
+      "id": "check-item-margins",
+      "action": "Check whether an item has Margins",
+      "recheck": "Opening the item leaves the Library; returning restores its place.",
+      "routes": [
+        {
+          "route": "Open the item from the Library",
+          "start": "Library tab",
+          "budget": 1,
+          "leavesScreen": true,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "Open the row; Review Margins shows when any exist",
+              "marker": "\"item.reviewMargins.button",
+              "file": "ExperienceItemDetailScreen.swift"
+            }
+          ],
+          "note": "The Library row shows only other people's shared Margins (#2394 adds a count)."
+        },
+        {
+          "route": "Margins tab grouped headings",
+          "start": "Any tab",
+          "budget": 1,
+          "leavesScreen": false,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "Margins tab (headings carry counts)",
+              "marker": "\"navigation.tab.margins",
+              "file": "ExperienceRootViews.swift"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "follow-show",
+      "action": "Follow a new show",
+      "recheck": "Library plus is a sheet over the Library; the Following routes push Manage Feeds.",
+      "routes": [
+        {
+          "route": "Search by name",
+          "start": "Library tab",
+          "budget": 3,
+          "leavesScreen": false,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "Add source",
+              "marker": "\"home.addSource.button",
+              "file": "ExperienceLibraryScreen.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Search podcasts",
+              "marker": "\"sourceLink.searchPodcasts.button",
+              "file": "ExperienceAddSourceFlow.swift"
+            },
+            {
+              "do": "type",
+              "label": "Type the name"
+            },
+            {
+              "do": "tap",
+              "label": "Follow",
+              "marker": "\"catalog.search.follow.",
+              "file": "CatalogDrawer.swift"
+            }
+          ]
+        },
+        {
+          "route": "By link",
+          "start": "Following tab",
+          "budget": 4,
+          "leavesScreen": false,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "Following tab",
+              "marker": "\"navigation.tab.sources",
+              "file": "ExperienceRootViews.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Manage feeds",
+              "marker": "\"sources.manageFeeds",
+              "file": "ExperienceSourcesScreen.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Paste into the link field",
+              "marker": "\"sources.follow.url",
+              "file": "ExperienceSourcesScreen.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Follow",
+              "marker": "\"sources.follow.button",
+              "file": "ExperienceSourcesScreen.swift"
+            }
+          ],
+          "note": "Plus a system Paste tap when the clipboard is read."
+        },
+        {
+          "route": "Browse the catalog",
+          "start": "Following tab",
+          "budget": 4,
+          "leavesScreen": false,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "Following tab",
+              "marker": "\"navigation.tab.sources",
+              "file": "ExperienceRootViews.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Manage feeds",
+              "marker": "\"sources.manageFeeds",
+              "file": "ExperienceSourcesScreen.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Browse catalog",
+              "marker": "\"sources.browseCatalog",
+              "file": "ExperienceSourcesScreen.swift"
+            },
+            {
+              "do": "tap",
+              "label": "Follow",
+              "marker": "\"catalog.follow.",
+              "file": "CatalogDrawer.swift"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "collect-episodes",
+      "action": "Collect the day's episodes (three shows)",
+      "recheck": "Following keeps its scroll position by row id (FollowingScrollMemory).",
+      "routes": [
+        {
+          "route": "Swipe each new episode into the Library",
+          "start": "Following tab",
+          "budget": 4,
+          "leavesScreen": false,
+          "steps": [
+            {
+              "do": "tap",
+              "label": "Following tab",
+              "marker": "\"navigation.tab.sources",
+              "file": "ExperienceRootViews.swift"
+            },
+            {
+              "do": "swipe",
+              "label": "Swipe right on episode 1",
+              "marker": "\"sources.entry.",
+              "file": "ExperienceSourcesScreen.swift"
+            },
+            {
+              "do": "swipe",
+              "label": "Swipe right on episode 2",
+              "marker": "\"sources.entry.",
+              "file": "ExperienceSourcesScreen.swift"
+            },
+            {
+              "do": "swipe",
+              "label": "Swipe right on episode 3",
+              "marker": "\"sources.entry.",
+              "file": "ExperienceSourcesScreen.swift"
+            }
+          ],
+          "note": "Following lists episodes, not shows, so the four-tabs 'tap into three shows' check does not apply yet. Re-check when Following becomes per-show rows (#1865)."
+        }
+      ]
+    }
+  ]
+}
