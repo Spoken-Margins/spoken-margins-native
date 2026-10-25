@@ -83,6 +83,8 @@ public enum LibrarySort: String, Codable, Equatable, CaseIterable, Sendable {
     case recentlyListened = "recently_listened"
     case title
     case progress
+    /// Newest publication date first; items with no usable date follow the dated ones (#1867).
+    case published
 }
 
 public struct LibraryQuery: Codable, Equatable, Sendable {

@@ -61,7 +61,7 @@ extension Gate1AppModel {
         diagnostics["renderedSpeechCacheLimitMB"] = String(renderedSpeechCacheLimitMB)
         diagnostics["apiKeyConfigured"] = providerAPIKey.isEmpty ? "false" : "true"
         if rebuildEngineForCurrentSettings() {
-            screen = .settings
+            showSettingsTab()
             reportConfirmation("Provider settings saved.")
         }
     }
@@ -380,7 +380,7 @@ extension Gate1AppModel {
             Task { await discardPreviewAudio(at: priorURL) }
         }
         #if os(iOS)
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: [.duckOthers])
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
         supertonicPreviewPlayer = try AVAudioPlayer(contentsOf: url)

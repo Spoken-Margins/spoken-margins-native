@@ -396,4 +396,73 @@ final class MarginMomentClockTests: XCTestCase {
         let expected = (offset / sentence.count + 1) * sentence.count
         XCTAssertEqual(MarginMomentClock.sentenceStart(atOrAfter: offset, before: text.count, in: text), expected)
     }
+
+    // MARK: Reading only the window around the Margin (#2506)
+
+    /// The scan the lead-in used before it read a window: the whole text as an array, from the first character.
+    private func scanFromTheStart(atOrAfter offset: Int, before limit: Int, in text: String) -> Int {
+        guard offset > 0 else { return 0 }
+        let characters = Array(text)
+        var index = 0
+        while index < characters.count {
+            if let start = MarginMomentClock.nextSentenceStart(in: characters, at: &index), start >= offset {
+                return start < limit ? start : offset
+            }
+        }
+        return offset
+    }
+
+    func testWindowedSentenceStartMatchesAScanFromTheStart() {
+        // Fragments that exercise the stop rules, repeated in a fixed but irregular order, so every offset lands
+        // somewhere different in a sentence, an abbreviation, a quote, a break or an accent.
+        let fragments = [
+            "Words go here and there.", "He met Dr. Smith at 3.5 percent.", "\"Why?\" he asked.", "Levels fell... mRNA rose.",
+            "It is in Washington, D.C. Then more.", "Fig. 3 shows it!", "Café 👩🏽‍💻 fini.", "A heading\n\nwith no stop",
+            "Vitamin A. Then rest.", "wrapped\nline goes on."
+        ]
+        var text = ""
+        var step = 7
+        while text.count < 6_000 {
+            step = (step * 31 + 11) % 97
+            text += fragments[step % fragments.count] + (step % 5 == 0 ? "   " : " ")
+        }
+        let count = text.count
+        for offset in stride(from: 1, to: count, by: 37) {
+            for reach in [3, 40, 420, 2_500] {
+                let limit = min(count, offset + reach)
+                XCTAssertEqual(
+                    MarginMomentClock.sentenceStart(atOrAfter: offset, before: limit, in: text),
+                    scanFromTheStart(atOrAfter: offset, before: limit, in: text),
+                    "offset \(offset), limit \(limit)")
+            }
+        }
+    }
+
+    func testASentenceStartAfterABlankLineAndALongRunOfSpacesIsFound() {
+        // The window opens 256 characters before the Margin, inside the padding, so it must reach back to the blank line.
+        let text = "Heading\n\n" + String(repeating: " ", count: 300) + "Text goes on here and on."
+        let paragraphStart = text.count - "Text goes on here and on.".count
+        for offset in [paragraphStart - 280, paragraphStart - 100, paragraphStart - 2] {
+            let limit = min(text.count, offset + 420)
+            XCTAssertEqual(
+                MarginMomentClock.sentenceStart(atOrAfter: offset, before: limit, in: text),
+                scanFromTheStart(atOrAfter: offset, before: limit, in: text),
+                "offset \(offset)")
+        }
+        XCTAssertEqual(MarginMomentClock.sentenceStart(atOrAfter: paragraphStart - 100, before: text.count, in: text), paragraphStart)
+    }
+
+    func testASentenceStartReadsAWindowNotTheWholeText() {
+        let sentence = "Words go here and there. "
+        let text = String(repeating: sentence, count: 80_000) // 2,000,000 characters
+        let offset = 1_000_007
+        let scan = MarginMomentClock.sentenceStartScan(atOrAfter: offset, before: offset + 420, in: text)
+        XCTAssertEqual(scan.start, (offset / sentence.count + 1) * sentence.count)
+        XCTAssertLessThan(scan.charactersRead, 5_000, "the lead-in's sentence start should not turn the article into an array")
+        // A stretch with no stop at all grows the window until the Margin, and still agrees with the full scan.
+        let unbroken = String(repeating: "word ", count: 4_000)
+        let long = MarginMomentClock.sentenceStartScan(atOrAfter: 5_000, before: 15_000, in: unbroken)
+        XCTAssertEqual(long.start, 5_000)
+        XCTAssertLessThan(long.charactersRead, 40_000)
+    }
 }

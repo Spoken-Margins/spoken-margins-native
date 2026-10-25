@@ -18,7 +18,9 @@ extension Gate1AppModel {
         let title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         // The audio link names the episode. A GUID alone does not (some feeds reuse short ones, and
         // many give every episode the show's page as its link), so it needs the title beside it.
-        guard let itemId = try store.listItems().first(where: { item in
+        // Summaries name the candidates; only those items are read whole, for the GUID and the packet's rule (#2506).
+        let candidateIDs = entry.recoveryCandidateItemIDs(among: try store.listItemSummaries())
+        guard let itemId = try candidateIDs.lazy.compactMap({ try? store.loadItem(id: $0) }).first(where: { item in
             let sameEpisode: Bool
             if let audioURL, item.media?.url == audioURL {
                 sameEpisode = true

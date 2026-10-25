@@ -1,10 +1,9 @@
 import Foundation
-import SessionKit
 
 /// What the foreground preparation loop asks of the model that owns it (#995). The loop never holds
 /// its host while idle; it holds it for the length of one run, as the model's own task did before.
 @MainActor
-protocol LibraryAudioPreparationHost: AnyObject {
+public protocol LibraryAudioPreparationHost: AnyObject {
     /// Read live at every restart decision, never captured once.
     var playbackAllowsLibraryAudioPreparation: Bool { get }
     /// Asks iOS to keep the app running for a long run; called on every start request, even while a run is going (#905).
@@ -25,32 +24,34 @@ protocol LibraryAudioPreparationHost: AnyObject {
 ///   restart anything or finalize a replacement. Engine rebuilds, clearing the queue and the continued-processing
 ///   task's expiry use it.
 @MainActor
-final class LibraryAudioPreparationLoop {
+public final class LibraryAudioPreparationLoop {
     /// One Library item renders at a time; the foreground loop and the background task share it (#281).
-    let renderGate = SerialWorkGate()
+    public let renderGate = SerialWorkGate()
     /// Which item the two passes are on (#281, #534).
-    var turns = LibraryAudioPreparationTurns()
+    public var turns = LibraryAudioPreparationTurns()
     /// Bumped by every start and every invalidation. A run that finds a different number on its way out is stale.
-    private(set) var generation = 0
+    public private(set) var generation = 0
 
     private let holder = TaskHolder()
 
+    public init() {}
+
     /// True from `start` until the run's finalizer (or an invalidation) drops the task.
-    nonisolated var isRunning: Bool { holder.hasTask }
+    public nonisolated var isRunning: Bool { holder.hasTask }
 
     /// Callable from the model's `deinit`, which is not on the main actor.
-    nonisolated func cancelOnly() {
+    public nonisolated func cancelOnly() {
         holder.cancel()
     }
 
-    func stopAndInvalidate() {
+    public func stopAndInvalidate() {
         holder.cancelAndClear()
         generation += 1
     }
 
     /// Starts a run unless one is going. The continued-processing request comes first on purpose:
     /// a run may already be going when the listener asks again (#905).
-    func start(host: any LibraryAudioPreparationHost) {
+    public func start(host: any LibraryAudioPreparationHost) {
         host.requestContinuedAudioPreparationIfNeeded()
         guard !holder.hasTask else { return }
         generation += 1

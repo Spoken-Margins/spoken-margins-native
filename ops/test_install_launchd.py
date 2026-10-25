@@ -16,7 +16,7 @@ installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
 
 HOME = '/Users/someone'
-CHECKOUTS = ('SpokenMarginsOps/repo/', 'Documents/GitHub/spoken-margins-native/')
+CHECKOUTS = ('SpokenMarginsOps/repo/', 'Documents/GitHub/spoken-margins-native/', 'Library/Caches/SpokenMarginsLane/tools/')
 
 
 def render_all(home=HOME):
@@ -27,6 +27,7 @@ def render_all(home=HOME):
 class TemplateTests(unittest.TestCase):
     def test_the_live_jobs_are_found(self):
         self.assertEqual(set(installer.jobs()), {'claude-worker', 'codex-audit', 'disk-relief', 'lane-power-guard',
+                                                 'lane-tools-refresh',
                                                  'keep-awake', 'integration-run', 'daily-phone-plan', 'phone-build'})
 
     def test_every_template_renders_to_a_plist_with_no_placeholder_or_home_left(self):

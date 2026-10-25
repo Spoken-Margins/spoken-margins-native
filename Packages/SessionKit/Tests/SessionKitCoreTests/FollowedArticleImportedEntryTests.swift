@@ -136,4 +136,24 @@ final class FollowedArticleImportedEntryTests: XCTestCase {
                        "another item's record is not this item's")
         XCTAssertEqual(entryId([:]), entry.id, "a unique page match still joins the entry with no records at all")
     }
+
+    /// The notes are written behind the caller (#2509): a burst of them leaves every record on disk, in order,
+    /// and a fresh instance (a relaunch) reads all of them back.
+    func testABurstOfNotesIsWrittenBehindTheCallerAndReadBackByAFreshInstance() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("followed-article-entries.json")
+        let writer = ListeningSignalImportedEntries(fileURL: file)
+        let entry = FeedEntry(id: "entry", subscriptionId: "sub", canonicalURL: "https://news.example/a", title: "A", state: .imported)
+        for index in 0..<200 {
+            writer.note(itemId: "item-\(index)", for: FeedEntry(id: "entry-\(index)", subscriptionId: entry.subscriptionId,
+                canonicalURL: entry.canonicalURL, title: entry.title, state: .imported))
+        }
+        let reader = ListeningSignalImportedEntries(fileURL: file)
+        let records = reader.entryIds()
+        XCTAssertEqual(records.count, 200)
+        XCTAssertEqual(records[ListeningSignalImportedEntries.itemKey("item-199")], "entry-199")
+        let onDisk = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: file))
+        XCTAssertEqual(onDisk, records, "the file holds the last write, which has all 200 records")
+    }
 }

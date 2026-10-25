@@ -21,8 +21,8 @@ protocol EpisodeMapPreparerHost: AnyObject {
     func episodeMapDirectory(itemId: String) throws -> URL
     func requireOfflineLedger(store: SQLiteSessionStore, rootDirectory: @autoclosure () throws -> URL) rethrows -> OfflineStorageLedger
     func safePodcastEvidenceComponent(_ value: String) -> String
-    func purgeSourceTranscriptionAudioCaches(itemId: String) throws
-    func purgeTransientEpisodeTranscriptionCaches(itemId: String) throws
+    func purgeSourceTranscriptionAudioCaches(itemId: String) async throws
+    func purgeTransientEpisodeTranscriptionCaches(itemId: String) async throws
     /// The summary bridge audio for one scene. It is shared with package import and imported-podcast placement.
     func prepareSummaryBridgeAsset(
         itemId: String,
@@ -324,7 +324,7 @@ final class EpisodeMapPreparer {
                     job.transientTranscriptRelativePath = relativePath
                     try store.saveEpisodeMapPreparationJob(job)
                 }
-                try host.purgeSourceTranscriptionAudioCaches(itemId: item.id)
+                try await host.purgeSourceTranscriptionAudioCaches(itemId: item.id)
                 if let publisherChapters = try store.loadTranscriptTimeline(itemId: item.id)?.timeline.chapters,
                    !publisherChapters.isEmpty {
                     timeline.chapters = publisherChapters
@@ -413,7 +413,8 @@ final class EpisodeMapPreparer {
                     asset.itemId == item.id && asset.category == .fingerprintMap {
                     try store.updateOwnedOfflineAsset(id: asset.id) { $0.protections.remove(.activeEpisodeMapPreparation) }
                 }
-                try host.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
+                try await host.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
+                try Task.checkCancellation() // the purge now suspends; a cancel that lands there must not complete the run
                 job.stage = .completed
                 try store.saveEpisodeMapPreparationJob(job)
                 try store.deleteEpisodeMapPreparationJob(id: job.id)
@@ -430,9 +431,9 @@ final class EpisodeMapPreparer {
                 try? host.store?.saveEpisodeMapPreparationJob(job)
                 if stop.keepsJob {
                     // The saved transcript stays, so the next pass skips transcription; only scratch audio goes.
-                    try? host.purgeSourceTranscriptionAudioCaches(itemId: item.id)
+                    try? await host.purgeSourceTranscriptionAudioCaches(itemId: item.id)
                 } else {
-                    try? host.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
+                    try? await host.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
                 }
                 self.status = EpisodeMapRunGuard.pausedStatus(stop)
                 host.recordEpisodeMapDiagnostic("episodeMapPreparation:\(item.id)", diagnostic)

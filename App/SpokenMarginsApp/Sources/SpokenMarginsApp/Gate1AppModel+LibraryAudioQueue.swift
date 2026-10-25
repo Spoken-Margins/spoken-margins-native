@@ -41,8 +41,9 @@ extension Gate1AppModel {
         #if canImport(BackgroundTasks) && canImport(UIKit)
         let enabled = automaticAudioPreparationPolicy == .whileCharging
         Task { [weak self] in
-            if enabled { await self?.enqueueAutomaticAudioPreparationJobs() }
-            self?.scheduleAudioPreparationBackgroundTask()
+            guard let self else { return }
+            if enabled { await self.enqueueAutomaticAudioPreparationJobs() }
+            self.hangTelemetry.labels.scoped("scheduleAudioPreparation") { self.scheduleAudioPreparationBackgroundTask() }
         }
         #endif
     }
@@ -69,11 +70,12 @@ extension Gate1AppModel {
         }
         do {
             let store = try requireStore()
-            let item = try store.loadItem(id: itemId)
-            guard item.deletedAt == nil, item.sourceCompletedAt == nil,
+            // A summary has everything these checks read; the item's text is not needed to decide (#2506).
+            guard let item = try store.loadItemSummary(id: itemId),
+                  item.deletedAt == nil, item.sourceCompletedAt == nil,
                   !PreparationChunkGate.itemAlreadyListened(try store.loadSessions(itemId: itemId)),
                   LibraryRowBuilder.shouldPrewarmTextAudio(for: item),
-                  item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                  item.hasListenableText else {
                 return
             }
             pendingStartupAudioPreparationItemIds.insert(itemId)
@@ -132,7 +134,7 @@ extension Gate1AppModel {
             )
             diagnostics["startupAudioPreparation:\(itemId)"] = manifest.chunks.count < targetChunkCount
                 ? "queued_0_of_\(targetChunkCount)" : "ready_from_cache"
-            try refreshLibraryRows(store: store)
+            refreshLibraryRowsInBackground()
             startForegroundAudioPreparationIfNeeded()
         } catch PreparedAudioEnqueue.Rejection.staleSource {
             diagnostics["startupAudioPreparation:\(itemId)"] = "retired_source"
@@ -205,20 +207,13 @@ extension Gate1AppModel {
         announceNewCompletions: Bool = false,
         now: Date = Date()
     ) throws {
-        let itemsById = Dictionary(uniqueKeysWithValues: try store.listItemSummaries().map { ($0.id, $0) })
-        let manifests = try store.loadPreparedAudioManifests()
-        let manifestsById = Dictionary(uniqueKeysWithValues: manifests.map { ($0.id, $0) })
-        let activeItemId = activePlaybackItemId
-        let storedJobs = try store.loadAudioPreparationJobs()
-        let staleJobIds = Set(LibraryAudioPreparationAdmission.staleJobIds(
-            storedJobs, items: Array(itemsById.values), sessionsByItemId: Dictionary(grouping: try store.loadSessions(), by: \.itemId)
-        ))
-        try store.deleteAudioPreparationJobs(ids: Array(staleJobIds))
-        let jobs = AudioPreparationQueueProjection.orderedJobs(storedJobs, staleJobIds: staleJobIds, activeItemId: activeItemId)
-        let titlesByItemId = itemsById.mapValues(\.title)
-        audioPreparationQueue = AudioPreparationQueueProjection.queueRows(
-            jobs: jobs, manifestsById: manifestsById, titlesByItemId: titlesByItemId, activeItemId: activeItemId)
-        recentlyPreparedAudio = AudioPreparationQueueProjection.recentlyPrepared(manifests: manifests, titlesByItemId: titlesByItemId)
+        let presentation = AudioPreparationPresentation(
+            items: try store.listItemSummaries(), sessions: try store.loadSessions(),
+            manifests: try store.loadPreparedAudioManifests(), jobs: try store.loadAudioPreparationJobs(),
+            activeItemId: activePlaybackItemId)
+        try store.deleteAudioPreparationJobs(ids: presentation.staleJobIds)
+        audioPreparationQueue = presentation.queue
+        recentlyPreparedAudio = presentation.recentlyPrepared
 
         guard announceNewCompletions else { return }
         let defaults = UserDefaults.standard
@@ -361,16 +356,18 @@ extension Gate1AppModel {
                 plan: plan
             )
             guard manifest.state != .readyOffline else {
-                try refreshLibraryRows(store: store)
+                refreshLibraryRowsInBackground()
                 reportConfirmation("\(item.title) is already available offline.")
                 return
             }
-            _ = try PreparedAudioEnqueue.configureJob(manifest: manifest, sourceText: sourceText, repository: store, request: .explicit)
-            try refreshLibraryRows(store: store)
-            diagnostics["explicitAudioPreparation:\(item.id)"] = "queued"
-            reportConfirmation("Prioritized \(item.title) for audio preparation.")
-            scheduleAudioPreparationBackgroundTask()
-            startForegroundAudioPreparationIfNeeded()
+            try hangTelemetry.labels.scoped("explicitAudioPreparationQueued") {
+                _ = try PreparedAudioEnqueue.configureJob(manifest: manifest, sourceText: sourceText, repository: store, request: .explicit)
+                refreshLibraryRowsInBackground()
+                diagnostics["explicitAudioPreparation:\(item.id)"] = "queued"
+                reportConfirmation("Prioritized \(item.title) for audio preparation.")
+                scheduleAudioPreparationBackgroundTask()
+                startForegroundAudioPreparationIfNeeded()
+            }
         } catch PreparedAudioEnqueue.Rejection.staleSource {
             diagnostics["explicitAudioPreparation:\(item.id)"] = "retired_source"
         } catch {

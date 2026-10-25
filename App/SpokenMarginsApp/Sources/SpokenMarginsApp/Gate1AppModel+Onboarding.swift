@@ -70,11 +70,7 @@ extension Gate1AppModel {
     func reconcileOnboardingEvidence(store: SQLiteSessionStore) throws {
         let items = try store.listItemSummaries()
         var evidence = OnboardingEvidenceClassifier.sourceSteps(items: items)
-        let hasSavedInterjection = try store.loadSessions().contains { session in
-            ((try? store.loadInterjections(sessionId: session.id)) ?? [])
-                .contains(where: { $0.status == "active" })
-        }
-        if hasSavedInterjection {
+        if try store.hasActiveInterjection() {
             evidence.insert(.firstInterjection)
         }
         markOnboardingSteps(evidence)
@@ -100,7 +96,7 @@ extension Gate1AppModel {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_ai_settings_from_onboarding") else { return }
         continueGuidedOnboardingPastAI()
         isHelpPresented = false
-        screen = .settings
+        showSettingsTab()
     }
 
     func finishGuidedOnboarding() {

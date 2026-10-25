@@ -15,6 +15,8 @@ public protocol LibraryItemFields {
     var sourceTitle: String? { get }
     var sourceURL: String? { get }
     var createdAt: Date? { get }
+    /// The feed's publication date as written (`Item.publishedAt`), for the Library's Published sort (#1867).
+    var publishedAt: String? { get }
     var sourceCompletedAt: Date? { get }
     /// Whether the item has text with something in it besides whitespace.
     var hasListenableText: Bool { get }
@@ -30,6 +32,12 @@ extension Item: LibraryItemFields {
     public var textCharacterCount: Int? {
         ListeningTimeEstimator.characterCount(of: text)
     }
+}
+
+/// A repository that can find the items made from one web address without reading the rest of the Library. A re-import
+/// uses it, so finding "have I imported this before" does not parse every document's text.
+public protocol ItemAddressLookup {
+    func listItems(withExternalReference address: String) throws -> [Item]
 }
 
 /// An item as the Library list needs it: every field of `Item` the rows read, and no `text` or `documentStructure`.
@@ -49,6 +57,7 @@ public struct LibraryItemSummary: LibraryItemFields, Equatable, Sendable {
     public var sourceTitle: String?
     public var sourceURL: String?
     public var createdAt: Date?
+    public var publishedAt: String?
     public var sourceCompletedAt: Date?
     public var hasListenableText: Bool
     public var textCharacterCount: Int?
@@ -66,6 +75,7 @@ public struct LibraryItemSummary: LibraryItemFields, Equatable, Sendable {
         sourceTitle: String? = nil,
         sourceURL: String? = nil,
         createdAt: Date? = nil,
+        publishedAt: String? = nil,
         sourceCompletedAt: Date? = nil,
         hasListenableText: Bool,
         textCharacterCount: Int?
@@ -82,6 +92,7 @@ public struct LibraryItemSummary: LibraryItemFields, Equatable, Sendable {
         self.sourceTitle = sourceTitle
         self.sourceURL = sourceURL
         self.createdAt = createdAt
+        self.publishedAt = publishedAt
         self.sourceCompletedAt = sourceCompletedAt
         self.hasListenableText = hasListenableText
         self.textCharacterCount = textCharacterCount
@@ -93,7 +104,7 @@ public struct LibraryItemSummary: LibraryItemFields, Equatable, Sendable {
             id: item.id, title: item.title, mediaType: item.mediaType, status: item.status,
             externalReference: item.externalReference, externalReferenceType: item.externalReferenceType,
             media: item.media, deletedAt: item.deletedAt, author: item.author, sourceTitle: item.sourceTitle,
-            sourceURL: item.sourceURL, createdAt: item.createdAt, sourceCompletedAt: item.sourceCompletedAt,
-            hasListenableText: item.hasListenableText, textCharacterCount: item.textCharacterCount)
+            sourceURL: item.sourceURL, createdAt: item.createdAt, publishedAt: item.publishedAt,
+            sourceCompletedAt: item.sourceCompletedAt, hasListenableText: item.hasListenableText, textCharacterCount: item.textCharacterCount)
     }
 }

@@ -111,7 +111,7 @@ extension Gate1AppModel {
             refreshSelectedItem()
             reportSuccess("Deleted transcript.")
         }
-        refreshMarginRows()
+        refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
     }
 
     func deleteInterjection(_ interjection: Interjection) {
@@ -124,7 +124,7 @@ extension Gate1AppModel {
             reportSuccess("Deleted Margin.")
             presentMarginDeleteUndo(interjection)
         }
-        refreshMarginRows()
+        refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
     }
 
     func setInterjectionStarredForSharing(_ interjectionID: String, sessionId: String? = nil, starred: Bool) {
@@ -137,7 +137,7 @@ extension Gate1AppModel {
             interjection.isStarredForSharing = starred ? true : nil
             try store.saveInterjection(interjection)
             refreshSelectedItem()
-            refreshMarginRows()
+            refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
             diagnostics["shareCuration:\(interjectionID)"] = starred ? "starred" : "unstarred"
         } catch {
             reportFailure(error, context: "Margin sharing star could not be saved")
@@ -157,7 +157,7 @@ extension Gate1AppModel {
             }
             interjection.isStarredForSharing = starred ? true : nil
             try store.saveInterjection(interjection)
-            refreshMarginRows()
+            refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
             if snapshot.sessionId == row.interjection.sessionId { refreshSelectedItem() }
             diagnostics["marginCuration:\(row.id)"] = starred ? "starred" : "unstarred"
         } catch {
@@ -177,7 +177,7 @@ extension Gate1AppModel {
             interjection.privateSharingNote = bounded.isEmpty ? nil : bounded
             try store.saveInterjection(interjection)
             refreshSelectedItem()
-            refreshMarginRows()
+            refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
             diagnostics["shareCurationNote:\(interjectionID)"] = bounded.isEmpty ? "empty" : "saved"
         } catch {
             reportFailure(error, context: "Private sharing note could not be saved")

@@ -87,7 +87,7 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
             ruleListIdentifier = "spoken-margins-claude-share.v1"
         } else {
             configuration.userContentController.addUserScript(WKUserScript(
-                source: try extractorScript(),
+                source: try await extractorScript(),
                 injectionTime: .atDocumentEnd,
                 forMainFrameOnly: true,
                 in: .defaultClient
@@ -206,7 +206,18 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
         finish(.failure(error))
     }
 
-    private func extractorScript() throws -> String {
+    /// The bundled script is about 750 KB and never changes while the app runs: read it once, off the main actor,
+    /// and keep it (#2508). Every page after the first adds it from memory.
+    private static var cachedExtractorScript: String?
+
+    private func extractorScript() async throws -> String {
+        if let cached = Self.cachedExtractorScript { return cached }
+        let script = try await Task.detached(priority: .userInitiated) { try Self.readExtractorScript() }.value
+        Self.cachedExtractorScript = script
+        return script
+    }
+
+    nonisolated private static func readExtractorScript() throws -> String {
         guard let url = Bundle.main.url(forResource: "browserTextCapture", withExtension: "js") else {
             throw ReadablePageExtractionError.missingExtractor
         }

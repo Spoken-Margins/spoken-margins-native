@@ -52,7 +52,7 @@ extension Gate1AppModel {
                 return
             }
             do {
-                snapshot = try engine.resumePlayback()
+                snapshot = try engine.resumePlaybackAfterInterruption()
                 refreshSelectedItem()
                 diagnostics["mediaPlaybackInterruption"] = "resumed"
             } catch {
@@ -79,7 +79,7 @@ extension Gate1AppModel {
             },
             attempt: { [weak self] in
                 guard let self else { return }
-                snapshot = try engine.resumePlayback()
+                snapshot = try engine.resumePlaybackAfterInterruption()
                 refreshSelectedItem()
             },
             report: { [weak self] outcome in

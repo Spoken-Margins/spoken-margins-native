@@ -33,7 +33,7 @@ verification = load('verification', 'verify-tests.py')
 supertonic = load('validate_supertonic_assets', 'validate-supertonic-assets.py')
 
 FAST_PLAN_METHODS = ('fast', 'portable', 'hosted_sessionkit', 'mac_rest', 'host_steps', 'package_steps', 'package_core',
-                     'shipped_compat', 'hot_file_ratchet',
+                     'shipped_compat', 'tools_steps', 'hot_file_ratchet',
                      'ops_steps')
 
 
@@ -98,7 +98,7 @@ class PortableStepTable(unittest.TestCase):
     def test_the_portable_plan_runs_its_steps_and_names_each_one_it_leaves_out(self):
         calls, skipped, slots, printed = self.run_portable()
         names = [name for name, _ in calls]
-        self.assertEqual(names, ['runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'browser', 'share-link',
+        self.assertEqual(names, ['runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'browser', 'share-link',
                                  'research'])
         self.assertEqual(skipped, verification.PORTABLE_LEFT_OUT)
         for name in verification.PORTABLE_LEFT_OUT:

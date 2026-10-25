@@ -1,6 +1,5 @@
 import XCTest
 @testable import SessionKit
-@testable import SpokenMarginsApp
 
 /// #995: the foreground preparation loop's generation guard and its two ways to stop. Each run parks in a
 /// scripted host until the test lets it return, so the order "A invalidated, B started, A exiting" is exact.

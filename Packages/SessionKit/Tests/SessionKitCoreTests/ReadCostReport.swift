@@ -58,6 +58,11 @@ struct ReadCostReport {
             ("loadFeedEntries(all)", { _ = try store.loadFeedEntries(subscriptionId: nil) }),
             ("loadFeedEntries(one source)", { _ = try store.loadFeedEntries(subscriptionId: "feed-1") }),
             ("hasLiveItem(id:)", { _ = try store.hasLiveItem(id: article) }),
+            ("hasActiveInterjection()", { _ = try store.hasActiveInterjection() }),
+            ("loadItemSummary(id:)", { _ = try store.loadItemSummary(id: article) }),
+            ("listDeletedItemSummaries()", { _ = try store.listDeletedItemSummaries() }),
+            ("loadActiveMarginCountsByItem()", { _ = try store.loadActiveMarginCountsByItem() }),
+            ("activeInterjectionCountsBySession()", { _ = try store.activeInterjectionCountsBySession() }),
             ("allMarginAudioPaths()", { _ = try store.allMarginAudioPaths() }),
             ("quarantinedRecordCount()", { _ = try store.quarantinedRecordCount() })
         ] + backgroundReads(store, article: article) + screens(store, article: article)

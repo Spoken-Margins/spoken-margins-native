@@ -10,6 +10,7 @@ struct ExperienceSourcesScreen: View {
     }
 
     @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -76,12 +77,6 @@ struct ExperienceSourcesScreen: View {
                 .navigationTitle("Following")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button(action: model.openSettings) {
-                            Image(systemName: "gearshape").frame(width: 44, height: 44)
-                        }
-                        .accessibilityLabel("Settings")
-                    }
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         Button(action: { model.refreshQuickAddFeed() }) {
                             if model.isRefreshingQuickAddFeed { ProgressView() } else { Image(systemName: "arrow.clockwise") }
@@ -96,9 +91,9 @@ struct ExperienceSourcesScreen: View {
                     ManageFeedsScreen(focusFeedURLOnAppear: focusFeedURLOnManage)
                         .miniPlayerKeepOut()
                 }
-                .task { model.refreshQuickAddFeed(force: false) }
+                .task { if !isEdgeSwipePreview { model.refreshQuickAddFeed(force: false) } } // the swipe's preview fetches nothing (#106)
                 // The catalog tags followed shows with a kind and subjects (I2), and gives their artwork (#773).
-                .task { await catalogDrawer.loadSnapshot() }
+                .task { if !isEdgeSwipePreview { await catalogDrawer.loadSnapshot() } }
                 // Re-read the artwork when the shows, the catalog or a refresh changes it (#773).
                 .task(id: ArtworkKey(
                     subscriptionIDs: model.feedSubscriptions.map(\.id),
@@ -594,6 +589,49 @@ struct SourceInboxRow: View {
     @State private var confirmsUnfollow = false
 
     var body: some View {
+        // The row is a Button and a More menu side by side, so the menu is not nested inside the Button. A
+        // listener who can't swipe precisely or hold for the context menu reaches the same actions from the menu (#1932).
+        HStack(spacing: 0) {
+            rowButton
+            moreMenu
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(AppColors.panel)
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            Button(action: addInPlace) {
+                Label("Add", systemImage: "plus.circle.fill")
+            }
+            .tint(AppColors.evergreen)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button(action: dismiss) {
+                Label("Dismiss", systemImage: "xmark")
+            }
+            .tint(AppColors.plum)
+            // Second and not a full swipe: the first button above is the one a long swipe takes.
+            if subscription != nil {
+                Button { confirmsUnfollow = true } label: {
+                    Label("Unfollow", systemImage: "minus.circle")
+                }
+                .tint(AppColors.secondaryText)
+            }
+        }
+        .contextMenu { rowActions }
+        .confirmationDialog(
+            FollowingRowActions.unfollowQuestion(showTitle: subscriptionTitle),
+            isPresented: $confirmsUnfollow,
+            titleVisibility: .visible
+        ) {
+            Button("Unfollow", role: .destructive) {
+                if let subscription { model.unfollowSource(id: subscription.id) }
+            }
+        } message: {
+            Text("Items already in your Library will be kept.")
+        }
+    }
+
+    private var rowButton: some View {
         Button(action: addAndOpen) {
             if dynamicTypeSize.isAccessibilitySize {
                 // Artwork and the chevron share the top line so the text gets the whole row width (#1936).
@@ -615,57 +653,9 @@ struct SourceInboxRow: View {
         }
         .buttonStyle(.plain)
         .disabled(isImporting)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(AppColors.panel)
         .accessibilityIdentifier(identifier)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint("Adds this entry to Library and opens it.")
-        .swipeActions(edge: .leading, allowsFullSwipe: true) {
-            Button(action: addInPlace) {
-                Label("Add", systemImage: "plus.circle.fill")
-            }
-            .tint(AppColors.evergreen)
-        }
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button(action: dismiss) {
-                Label("Dismiss", systemImage: "xmark")
-            }
-            .tint(AppColors.plum)
-            // Second and not a full swipe: the first button above is the one a long swipe takes.
-            if subscription != nil {
-                Button { confirmsUnfollow = true } label: {
-                    Label("Unfollow", systemImage: "minus.circle")
-                }
-                .tint(AppColors.secondaryText)
-            }
-        }
-        .contextMenu {
-            Button(action: addInPlace) { Label("Add to Library", systemImage: "plus.circle") }
-            if isFeedEntry {
-                Button(action: playNow) { Label("Play now", systemImage: "play.fill") }
-            }
-            Button(action: dismiss) { Label("Dismiss", systemImage: "xmark") }
-            if let subscription {
-                Button { model.toggleMuteSource(id: subscription.id) } label: {
-                    Label(FollowingRowActions.muteTitle(showTitle: subscriptionTitle), systemImage: "speaker.slash")
-                }
-                Button(role: .destructive) { confirmsUnfollow = true } label: {
-                    Label(FollowingRowActions.unfollowTitle(showTitle: subscriptionTitle), systemImage: "minus.circle")
-                }
-            }
-        }
-        .confirmationDialog(
-            FollowingRowActions.unfollowQuestion(showTitle: subscriptionTitle),
-            isPresented: $confirmsUnfollow,
-            titleVisibility: .visible
-        ) {
-            Button("Unfollow", role: .destructive) {
-                if let subscription { model.unfollowSource(id: subscription.id) }
-            }
-        } message: {
-            Text("Items already in your Library will be kept.")
-        }
         .accessibilityAction(named: "Add to Library", addAndOpen)
         .accessibilityAction(named: "Dismiss", dismiss)
         .accessibilityActions {
@@ -676,6 +666,39 @@ struct SourceInboxRow: View {
                 Button("Unfollow this show") { confirmsUnfollow = true }
             }
         }
+    }
+
+    /// Every action the swipes and the long press offer, so the More menu and the context menu stay the same list.
+    @ViewBuilder
+    private var rowActions: some View {
+        Button(action: addInPlace) { Label("Add to Library", systemImage: "plus.circle") }
+        if isFeedEntry {
+            Button(action: playNow) { Label("Play now", systemImage: "play.fill") }
+        }
+        Button(action: dismiss) { Label("Dismiss", systemImage: "xmark") }
+        if let subscription {
+            Button { model.toggleMuteSource(id: subscription.id) } label: {
+                Label(FollowingRowActions.muteTitle(showTitle: subscriptionTitle), systemImage: "speaker.slash")
+            }
+            Button(role: .destructive) { confirmsUnfollow = true } label: {
+                Label(FollowingRowActions.unfollowTitle(showTitle: subscriptionTitle), systemImage: "minus.circle")
+            }
+        }
+    }
+
+    /// A visible control for the row's actions, at least 44 pt, for a listener who can't swipe or hold precisely.
+    private var moreMenu: some View {
+        Menu { rowActions } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.title3)
+                .foregroundStyle(AppColors.evergreen)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .disabled(isImporting)
+        .accessibilityLabel("More actions")
+        .accessibilityHint(title)
+        .accessibilityIdentifier("\(identifier).more")
     }
 
     /// The followed show this entry came from; nil for a Quick Folder file.

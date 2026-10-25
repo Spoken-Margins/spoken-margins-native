@@ -27,7 +27,7 @@ Runs the voice models on the phone. ONNX Runtime's own third-party components (M
 
 Reads and writes .spokenmargins packets.
 
-### Defuddle 0.19.1
+### Defuddle 0.19.5
 
 - Licence: MIT
 - From: Steph Ango
@@ -64,7 +64,7 @@ Compiled into Defuddle's bundle.
 
 Compiled into Defuddle's bundle.
 
-### @xmldom/xmldom 0.9.10
+### @xmldom/xmldom 0.9.12
 
 - Licence: MIT
 - From: Christopher J. Brody and contributors
@@ -168,6 +168,26 @@ Stands in for a browser page in the page-reading tests. Not shipped.
 - Licence text: <https://github.com/python-jsonschema/jsonschema/blob/main/COPYING>
 
 Checks the repository's JSON contracts. Installed from requirements-dev.txt with its format-nongpl extra, which pulls in further small validator packages (for example idna, webcolors, jsonpointer, referencing); all are build-time only and none ships.
+
+### PyYAML (Python) 6.0.2
+
+- Licence: MIT
+- From: Kirill Simonov and the PyYAML contributors
+- Source: <https://github.com/yaml/pyyaml>
+- Where: `scripts`
+- Licence text: <https://github.com/yaml/pyyaml/blob/main/LICENSE>
+
+Parses the workflow files in scripts/tests/test_workflow_files.py. Installed from requirements-dev.txt; build-time only and none ships.
+
+### lxml (Python) 6.1.3
+
+- Licence: BSD-3-Clause
+- From: lxml developers
+- Source: <https://github.com/lxml/lxml>
+- Where: `research/C1/tools`
+- Licence text: <https://github.com/lxml/lxml/blob/master/doc/licenses/BSD.txt>
+
+Parses HTML in the research ground-truth tests (research/C1/tools). Installed from requirements-dev.txt so the hosted research step really runs them (#2596); build-time only and none ships.
 
 ### Design prototypes' npm packages
 

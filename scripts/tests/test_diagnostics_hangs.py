@@ -117,6 +117,20 @@ class Report(unittest.TestCase):
         self.assertIn('1 CPU-exception reports', text)
         self.assertIn("What this data can't show", text)
 
+    def test_exports_read_table_names_each_exports_budget_word(self):
+        self.assertEqual([dh.budget_word(w) for w in (
+            'hangs=0 skipped=0 budget=ok',
+            'hangs=2 skipped=0 longestHangMs=640 budget=broken(hang,tap)',
+            '', 'no such field')], ['ok', 'broken(hang,tap)', '–', '–'])
+        path = Path(self.folder) / 'Spoken Margins diagnostics d.json'
+        path.write_text(json.dumps({
+            'developerBuild': '0.1 (36) · abcdef1', 'exportedAt': '2026-10-22T09:00:00Z',
+            'responsiveness': 'hangs=1 skipped=0 longestHangMs=900 budget=broken(hang)',
+            'playbackEvents': json.dumps({'events': [hang('2026-10-22T08:00:00.000Z', 10, 900)]})}))
+        text = dh.render_summary(dh.build_report([dh.load_export(path)], {'abcdef1': 'yes'}))
+        self.assertIn('broken(hang)', text.split('### Exports read')[1].split("### What this data")[0])
+        self.assertNotIn('broken(hang)', dh.render_summary(self.report))
+
     def test_watchdog_shapes(self):
         rows = [
             ({'reason': 'foreground_watchdog', 'fgWatchdog': '2'}, 'watchdog', 2),

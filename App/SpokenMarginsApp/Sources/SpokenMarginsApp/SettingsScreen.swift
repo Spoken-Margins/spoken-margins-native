@@ -7,10 +7,13 @@ import UIKit
 
 struct SettingsScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var focusedField: Field?
     @State private var showsAdvancedAISettings = false
     @State private var showsDeveloperTools = false
+    @State private var showsImportInbox = false
+    @State private var showsAboutAndLegal = false
     @State private var pendingPermanentDeletion: LibraryItemRow?
     @State private var pendingInboxDeletion: ImportInboxEntry?
     @State private var isEmptyRecentlyDeletedConfirmationPresented = false
@@ -25,11 +28,11 @@ struct SettingsScreen: View {
     @AppStorage(CommunityMapUploadService.optInKey) private var helpsMakeListeningMaps = false
     @AppStorage(CommunityMapFetchService.optInKey) private var looksUpCommunityMaps = false
     /// The Supertonic download card's "Open Voices" lands here and opens Voices (#1820).
-    private let supertonicNotice: SupertonicDownloadNotice?
+    @ObservedObject private var supertonicNotice: SupertonicDownloadNotice
     @State private var showsVoices = false
 
-    init(supertonicNotice: SupertonicDownloadNotice? = nil) {
-        self.supertonicNotice = supertonicNotice
+    init(supertonicNotice: SupertonicDownloadNotice) {
+        _supertonicNotice = ObservedObject(wrappedValue: supertonicNotice)
     }
 
     private enum Field {
@@ -42,12 +45,7 @@ struct SettingsScreen: View {
     var body: some View {
         NavigationStack {
             Form {
-                MarginOutputSettingsSection()
-                Section("Bring Your Own Listening Map") {
-                    NavigationLink("Import Listening Edition") { ListeningEditionImportScreen().miniPlayerKeepOut() }
-                    NavigationLink("Read Later Services") { ReadLaterScreen().miniPlayerKeepOut() }
-                }
-                Section("Playback & Voice") {
+                Section("Voice") {
                     Picker("Playback Controls", selection: $usesVerbosePlaybackActions) {
                         Text("Labeled").tag(true)
                         Text("Compact").tag(false)
@@ -192,7 +190,7 @@ struct SettingsScreen: View {
                         model.mediaSkipSettingsChanged()
                     }
                 }
-                Section("Offline Storage") {
+                Section("Storage") {
                     Button(action: model.openOfflineStorage) {
                         HStack {
                             Label("Manage Offline Storage", systemImage: "internaldrive")
@@ -238,122 +236,74 @@ struct SettingsScreen: View {
                     Text("While Charging uses durable jobs and pauses between parts of an item when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                }
-                Section("AI Features") {
-                    if model.remoteProviderExperienceEnabled {
-                        LabeledContent("Provider", value: "OpenAI")
-                            .accessibilityIdentifier("provider.name")
-                        LabeledContent("Data Sharing", value: model.aiDataSharingConsentDescription)
-                        if model.aiDataSharingConsent == .grantedV1 {
-                            Button("Revoke OpenAI Data Sharing", role: .destructive, action: model.revokeAIDataSharingConsent)
-                                .accessibilityIdentifier("provider.revokeConsent.button")
-                        }
-                        SecureField("API Key", text: $model.providerAPIKey)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .focused($focusedField, equals: .apiKey)
-                            .accessibilityIdentifier("provider.apiKey.field")
-                        Button("Save Provider Settings", action: model.saveProviderSettings)
-                            .accessibilityIdentifier("provider.save.button")
-                        Button("Delete API Key", role: .destructive, action: model.deleteProviderAPIKey)
-                            .disabled(model.providerAPIKey.isEmpty)
-                            .accessibilityIdentifier("provider.deleteAPIKey.button")
-                        Button("Probe Provider", action: model.probeProvider)
-                            .accessibilityIdentifier("provider.probe.button")
-                        LabeledContent("Probe", value: model.providerProbeStatus)
-                        DisclosureGroup("Advanced model settings", isExpanded: $showsAdvancedAISettings) {
-                            TextField("Listening Map Model", text: $model.listeningMapModel)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .focused($focusedField, equals: .mapModel)
-                                .accessibilityIdentifier("provider.mapModel.field")
-                            TextField("Summary Model", text: $model.summaryModel)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .focused($focusedField, equals: .summaryModel)
-                                .accessibilityIdentifier("provider.summaryModel.field")
-                            TextField("Conversation Model", text: $model.conversationModel)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .focused($focusedField, equals: .conversationModel)
-                                .accessibilityIdentifier("provider.conversationModel.field")
-                        }
-                        .accessibilityIdentifier("provider.advanced.disclosure")
-                    } else {
-                        LabeledContent("Processing", value: "On device")
-                            .accessibilityIdentifier("settings.ai.processing")
-                        LabeledContent("Apple Foundation Model", value: model.localFoundationModelAvailabilityDescription)
-                        Text("Margin summaries stay on this device. Publisher podcast chapters and deterministic native-text Listening Maps do not require AI. AI-generated Listening Maps, remote providers, and API keys are disabled in this release.")
-                            .font(.caption)
-                            .foregroundStyle(AppColors.secondaryText)
-                            .accessibilityIdentifier("settings.ai.releaseBoundary")
-                    }
-                }
-                .onCompatibleChange(of: model.listeningMapModel) { _ in model.settingsValueChanged() }
-                .onCompatibleChange(of: model.summaryModel) { _ in model.settingsValueChanged() }
-                .onCompatibleChange(of: model.conversationModel) { _ in model.settingsValueChanged() }
-                Section("Recently Deleted") {
-                    if model.recentlyDeletedItems.isEmpty {
-                        Text("Items moved here can be restored. Nothing is deleted automatically.")
-                            .foregroundStyle(AppColors.secondaryText)
-                    } else {
-                        Button("Empty Recently Deleted", role: .destructive) {
-                            isEmptyRecentlyDeletedConfirmationPresented = true
-                        }
-                        .accessibilityIdentifier("recentlyDeleted.empty.button")
-                        ForEach(model.recentlyDeletedItems) { item in
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(item.title)
-                                    .font(.headline)
-                                HStack {
-                                    Button("Restore") { model.restoreItem(id: item.id) }
+                    DisclosureGroup("Recently Deleted\(model.recentlyDeletedItems.isEmpty ? "" : " (\(model.recentlyDeletedItems.count))")") {
+                        if model.recentlyDeletedItems.isEmpty {
+                            Text("Items moved here can be restored. Nothing is deleted automatically.")
+                                .foregroundStyle(AppColors.secondaryText)
+                        } else {
+                            Button("Empty Recently Deleted", role: .destructive) {
+                                isEmptyRecentlyDeletedConfirmationPresented = true
+                            }
+                            .accessibilityIdentifier("recentlyDeleted.empty.button")
+                            ForEach(model.recentlyDeletedItems) { item in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(item.title)
+                                        .font(.headline)
+                                    HStack {
+                                        Button("Restore") { model.restoreItem(id: item.id) }
+                                            .buttonStyle(.borderless)
+                                            .accessibilityLabel("Restore \(item.title)")
+                                            .accessibilityIdentifier("recentlyDeleted.restore.\(item.id)")
+                                        Button("Delete Permanently", role: .destructive) {
+                                            pendingPermanentDeletion = item
+                                        }
                                         .buttonStyle(.borderless)
-                                        .accessibilityLabel("Restore \(item.title)")
-                                        .accessibilityIdentifier("recentlyDeleted.restore.\(item.id)")
-                                    Button("Delete Permanently", role: .destructive) {
-                                        pendingPermanentDeletion = item
+                                        .accessibilityLabel("Delete \(item.title) Permanently")
+                                        .accessibilityIdentifier("recentlyDeleted.delete.\(item.id)")
                                     }
-                                    .buttonStyle(.borderless)
-                                    .accessibilityLabel("Delete \(item.title) Permanently")
-                                    .accessibilityIdentifier("recentlyDeleted.delete.\(item.id)")
                                 }
                             }
                         }
                     }
                 }
-                Section("Import Inbox") {
-                    PendingLinksWaitingLine(count: model.sourceLinksWaitingForNetwork)
-                    if model.importInbox.isEmpty {
-                        Text("No failed shares.")
-                            .foregroundStyle(AppColors.secondaryText)
-                    } else {
-                        ForEach(model.importInbox) { entry in
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(entry.title)
-                                    .font(.headline)
-                                Text(entry.source)
-                                    .font(.caption)
-                                    .foregroundStyle(AppColors.secondaryText)
-                                    .lineLimit(2)
-                                FailureMessageLabel(entry.reason)
-                                    .font(.caption)
-                                HStack {
-                                    Button("Retry") {
-                                        model.retryImportInboxEntry(entry)
+                MarginOutputSettingsSection()
+                Section("Import & Export") {
+                    NavigationLink("Import Listening Edition") { ListeningEditionImportScreen().miniPlayerKeepOut() }
+                    NavigationLink("Read Later Services") { ReadLaterScreen().miniPlayerKeepOut() }
+                    DisclosureGroup("Import Inbox", isExpanded: $showsImportInbox) {
+                        PendingLinksWaitingLine(count: model.sourceLinksWaitingForNetwork)
+                        if model.importInbox.isEmpty {
+                            Text("No failed shares.")
+                                .foregroundStyle(AppColors.secondaryText)
+                        } else {
+                            ForEach(model.importInbox) { entry in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(entry.title)
+                                        .font(.headline)
+                                    Text(entry.source)
+                                        .font(.caption)
+                                        .foregroundStyle(AppColors.secondaryText)
+                                        .lineLimit(2)
+                                    FailureMessageLabel(entry.reason)
+                                        .font(.caption)
+                                    HStack {
+                                        Button("Retry") {
+                                            model.retryImportInboxEntry(entry)
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .accessibilityIdentifier("importInbox.retry.\(entry.id)")
+                                        Button("Delete", role: .destructive) {
+                                            pendingInboxDeletion = entry
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .accessibilityIdentifier("importInbox.delete.\(entry.id)")
                                     }
-                                    .buttonStyle(.borderless)
-                                    .accessibilityIdentifier("importInbox.retry.\(entry.id)")
-                                    Button("Delete", role: .destructive) {
-                                        pendingInboxDeletion = entry
-                                    }
-                                    .buttonStyle(.borderless)
-                                    .accessibilityIdentifier("importInbox.delete.\(entry.id)")
                                 }
                             }
                         }
                     }
                 }
-                Section("Support & Privacy") {
+                Section("Help & Privacy") {
                     Button(action: model.openHelp) {
                         Label("How Spoken Margins Works", systemImage: "questionmark.circle")
                     }
@@ -378,23 +328,6 @@ struct SettingsScreen: View {
                         }
                     }
                     .accessibilityIdentifier("settings.communityMapLookup.toggle")
-                    NavigationLink("Terms of Use") {
-                        SpokenMarginsTermsView(allowsAcceptance: !model.hasAcceptedCurrentTerms)
-                            .miniPlayerKeepOut()
-                    }
-                    .accessibilityIdentifier("settings.terms.link")
-                    LabeledContent("Terms Status", value: model.termsAcceptanceDescription)
-                        .accessibilityIdentifier("settings.terms.status")
-                    NavigationLink("Legal · On-Device Voice") {
-                        SupertonicLegalView()
-                            .miniPlayerKeepOut()
-                    }
-                    .accessibilityIdentifier("settings.legal.supertonic.link")
-                    NavigationLink("Legal · Open-Source Licenses") {
-                        OpenSourceLicensesView()
-                            .miniPlayerKeepOut()
-                    }
-                    .accessibilityIdentifier("settings.legal.openSource.link")
                     #if canImport(UIKit)
                     Button {
                         isPreparingDiagnostics = true
@@ -454,8 +387,80 @@ struct SettingsScreen: View {
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                     #endif
-                    LabeledContent("Version", value: AppLinks.versionDescription)
                 }
+                Section {
+                    DisclosureGroup("About & Legal", isExpanded: $showsAboutAndLegal) {
+                        if model.remoteProviderExperienceEnabled {
+                            LabeledContent("Provider", value: "OpenAI")
+                                .accessibilityIdentifier("provider.name")
+                            LabeledContent("Data Sharing", value: model.aiDataSharingConsentDescription)
+                            if model.aiDataSharingConsent == .grantedV1 {
+                                Button("Revoke OpenAI Data Sharing", role: .destructive, action: model.revokeAIDataSharingConsent)
+                                    .accessibilityIdentifier("provider.revokeConsent.button")
+                            }
+                            SecureField("API Key", text: $model.providerAPIKey)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .focused($focusedField, equals: .apiKey)
+                                .accessibilityIdentifier("provider.apiKey.field")
+                            Button("Save Provider Settings", action: model.saveProviderSettings)
+                                .accessibilityIdentifier("provider.save.button")
+                            Button("Delete API Key", role: .destructive, action: model.deleteProviderAPIKey)
+                                .disabled(model.providerAPIKey.isEmpty)
+                                .accessibilityIdentifier("provider.deleteAPIKey.button")
+                            Button("Probe Provider", action: model.probeProvider)
+                                .accessibilityIdentifier("provider.probe.button")
+                            LabeledContent("Probe", value: model.providerProbeStatus)
+                            DisclosureGroup("Advanced model settings", isExpanded: $showsAdvancedAISettings) {
+                                TextField("Listening Map Model", text: $model.listeningMapModel)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                    .focused($focusedField, equals: .mapModel)
+                                    .accessibilityIdentifier("provider.mapModel.field")
+                                TextField("Summary Model", text: $model.summaryModel)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                    .focused($focusedField, equals: .summaryModel)
+                                    .accessibilityIdentifier("provider.summaryModel.field")
+                                TextField("Conversation Model", text: $model.conversationModel)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                    .focused($focusedField, equals: .conversationModel)
+                                    .accessibilityIdentifier("provider.conversationModel.field")
+                            }
+                            .accessibilityIdentifier("provider.advanced.disclosure")
+                        } else {
+                            LabeledContent("Processing", value: "On device")
+                                .accessibilityIdentifier("settings.ai.processing")
+                            LabeledContent("Apple Foundation Model", value: model.localFoundationModelAvailabilityDescription)
+                            Text("Margin summaries stay on this device. Publisher podcast chapters and deterministic native-text Listening Maps do not require AI. AI-generated Listening Maps, remote providers, and API keys are disabled in this release.")
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
+                                .accessibilityIdentifier("settings.ai.releaseBoundary")
+                        }
+                        NavigationLink("Terms of Use") {
+                            SpokenMarginsTermsView(allowsAcceptance: !model.hasAcceptedCurrentTerms)
+                                .miniPlayerKeepOut()
+                        }
+                        .accessibilityIdentifier("settings.terms.link")
+                        LabeledContent("Terms Status", value: model.termsAcceptanceDescription)
+                            .accessibilityIdentifier("settings.terms.status")
+                        NavigationLink("Legal · On-Device Voice") {
+                            SupertonicLegalView()
+                                .miniPlayerKeepOut()
+                        }
+                        .accessibilityIdentifier("settings.legal.supertonic.link")
+                        NavigationLink("Legal · Open-Source Licenses") {
+                            OpenSourceLicensesView()
+                                .miniPlayerKeepOut()
+                        }
+                        .accessibilityIdentifier("settings.legal.openSource.link")
+                        LabeledContent("Version", value: AppLinks.versionDescription)
+                    }
+                }
+                .onCompatibleChange(of: model.listeningMapModel) { _ in model.settingsValueChanged() }
+                .onCompatibleChange(of: model.summaryModel) { _ in model.settingsValueChanged() }
+                .onCompatibleChange(of: model.conversationModel) { _ in model.settingsValueChanged() }
                 #if DEBUG
                 Section("Developer") {
                     DisclosureGroup("Developer tools", isExpanded: $showsDeveloperTools) {
@@ -511,20 +516,21 @@ struct SettingsScreen: View {
             .tint(AppColors.evergreen)
             .navigationTitle("Settings")
             .onAppear {
+                guard !isEdgeSwipePreview else { return }  // a swipe's preview starts no refresh (#106)
                 model.refreshSpeechVoiceOptions()
                 model.refreshImportInbox()
-                if supertonicNotice?.takeVoicesRequest() == true { showsVoices = true }
+                // A failed share must be seen, so the Inbox opens itself when it has something in it.
+                if !model.importInbox.isEmpty || model.sourceLinksWaitingForNetwork > 0 { showsImportInbox = true }
+                if supertonicNotice.takeVoicesRequest() { showsVoices = true }
+            }
+            // Settings is a tab now, so the card's button can land while it is already showing (#1254).
+            .onCompatibleChange(of: supertonicNotice.opensVoices) { requested in
+                if requested, supertonicNotice.takeVoicesRequest() { showsVoices = true }
             }
             .navigationDestination(isPresented: $showsVoices) {
                 VoicesSettingsScreen(voices: model.requireVoiceDownloads()).miniPlayerKeepOut()
             }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: model.openHome) {
-                        Label("Home", systemImage: "arrow.left")
-                    }
-                    .accessibilityIdentifier("settings.home.button")
-                }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
                     Button("Done") { focusedField = nil }

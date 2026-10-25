@@ -33,7 +33,7 @@ Times are UTC unless a zone is named. "Pause" is the way to stop that one job wi
 |---|---|---|---|---|---|
 | `SM Mac tick` scheduled task (`~/.claude/scheduled-tasks/sm-mac-tick/SKILL.md`) | Every 2 hours (`docs/workstreams/kickoff.md`) | Claude and Codex usage, runners, disk, memory, the main checkout, the Test Desk work list | One comment on #337 (breaker, pacing advice, scorecard, `- Test Desk: GO` line); fast-forwards the main checkout | Owner | Disable the scheduled task |
 | `SM integration run` scheduled task | Understudy only (`docs/workstreams/test-lane.md`). `ops/testdesk/` replaces it once the launchd job has posted a real report (#1178) | | Reports on #184 | Owner | Disable the scheduled task |
-| Mac finisher | A loop in the thread "Mac finisher" | `needs-mac` PRs | Commits to those PR branches, comments | Owner, and the project instructions | Pause is built in: HALT, disk under 20 GB, Dial Off |
+| [Mac finisher](workstreams/finisher.md) | A loop in the thread "Mac finisher" | `needs-mac` PRs | Commits to those PR branches, comments | Owner, and the project instructions | Pause is built in: HALT, disk under 20 GB, Dial Off |
 | Managed Test Desk | Started by hand or by the coordinator when the tick says `Test Desk: GO` | The work list the tick names | Reports on #184 | Coordinator | End the session |
 | Claude Mac worker | Not live. #1599 (PR #1604) | | | | |
 
@@ -47,6 +47,7 @@ Times are UTC unless a zone is named. "Pause" is the way to stop that one job wi
 | `disk-relief` (`ops/disk/`) | Every 15 min, and at load | Free space, worktrees, session folders | Deletes rebuildable caches and finished worktrees, moves old artifacts to the external drive | Owner | `launchctl bootout` of the label |
 | `keep-awake` (`ops/power/`) | Every 60 s, and at load | Running builds, agent transcripts | Starts Amphetamine sessions | Owner | `launchctl bootout` of the label, or take out `--lid` for heat |
 | `lane-power-guard` (`ops/lane/`) | Every 15 s, and at load | Power source, lid, runner state | Stops and starts the lane runner services it paused | Owner | `launchctl bootout` of the label |
+| `lane-tools-refresh` (`ops/lane/`, #2536) | Hourly, and at load | The lane tools copy (`SM_LANE_TOOLS`), `origin/main`, the lane's running jobs | Moves the copy to `main`; refreshes its `.venv` and `node_modules` when requirements or the lockfile changed; comments on #337 (once a day per problem) when it cannot | Owner | `launchctl bootout` of the label |
 | GitHub Actions runner services `actions.runner.uncomposed-spoken-margins-native.*` | Always on | Queued jobs | Run `lane.yml` (`lane`, `automerge`, `release`) and `shipped-build-compat.yml` jobs for labels `sm-lane`, `sm-lane-build`, `sm-lane-priority` | Owner; not in this repo | `launchctl bootout` of the service. The power guard restarts only runners it paused itself. |
 
 ### VPS (plists and units in this repo; live state **not checked**)

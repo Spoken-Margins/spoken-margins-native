@@ -19,12 +19,9 @@ let package = Package(
         .library(name: "SessionKitSpeechFrontEnd", targets: ["SessionKitSpeechFrontEnd"]),
         .library(name: "SessionKitEPUB", targets: ["SessionKitEPUB"]),
         .library(name: "SessionKitFeeds", targets: ["SessionKitFeeds"]),
-        // Mac tool for co-op test packets (#856). The app never links it.
-        .executable(name: "coop-packet", targets: ["CoopPacket"]),
         .executable(name: "speech-bench", targets: ["SpeechBench"]),
         // Renders the guided tour clip with the bundled Kitten voice (#2051). The app never links it.
         .executable(name: "tour-render", targets: ["TourRender"]),
-        .executable(name: "phone-plan", targets: ["PhonePlan"]),
         // The daily Substack format canary (#2027), run by .github/workflows/substack-canary.yml. The app never links it.
         .executable(name: "substack-canary", targets: ["SubstackCanary"]),
         // The last shipped build's packet reader, for the app's own test bundle only (#1039): it
@@ -50,7 +47,6 @@ let package = Package(
             name: "SessionKit",
             dependencies: [.target(name: "CBZip2")]
         ),
-        .executableTarget(name: "PhonePlan", dependencies: ["SessionKit"]),
         .target(
             name: "SessionKitPersistence",
             dependencies: ["SessionKit"],
@@ -138,11 +134,6 @@ let package = Package(
             name: "TourRender",
             dependencies: ["SessionKit", "SessionKitSupertonic"]
         ),
-        .executableTarget(
-            name: "CoopPacket",
-            dependencies: ["SessionKit", "SessionKitAudio", "SessionKitPersistence", "SessionKitSharing", "ShippedPacketReader"],
-            exclude: ["README.md"]
-        ),
         // Every file a test reads from outside the package, by name (#1387). Not a product: only the tests link it.
         .target(name: "SessionKitTestInputs", path: "Tests/TestInputs"),
         // Tests of the Foundation-only modules. Also runs on Linux (see the end of this file).
@@ -175,7 +166,6 @@ let package = Package(
                 "SessionKitFeeds",
                 "ShippedPacketReader",
                 "ShippedSessionKit",
-                "CoopPacket",
                 "SessionKitTestInputs",
                 .product(name: "ZIPFoundation", package: "ZIPFoundation")
             ],

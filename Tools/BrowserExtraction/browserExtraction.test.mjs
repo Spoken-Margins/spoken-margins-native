@@ -191,7 +191,7 @@ test("readable capture hands the app Defuddle's Markdown with the page's source 
   assert.match(payload.createdAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
   assert.deepEqual(payload.metadata, {
     extractor: "defuddle",
-    extractorVersion: "0.19.1",
+    extractorVersion: "0.19.5",
     networkFallback: false,
     userAgent: "test-agent"
   });
@@ -725,12 +725,12 @@ test("built resources contain the pinned extractor and Safari preprocessor", () 
   const capture = fs.readFileSync("App/SharedResources/browserTextCapture.js", "utf8");
   const popup = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/Scripts/popup.js", "utf8");
   const preprocessor = fs.readFileSync("App/SpokenMarginsShareExtension/Resources/SourceLinkPreprocessor.js", "utf8");
-  assert.match(capture, /Bundled Defuddle 0\.19\.1/);
+  assert.match(capture, /Bundled Defuddle 0\.19\.5/);
   assert.doesNotMatch(capture, /onMessage\.addListener/);
   assert.doesNotMatch(popup, /tabs\.sendMessage/);
   assert.match(popup, /scripting\.executeScript/);
   assert.match(popup, /does not have access to this tab/);
-  assert.match(preprocessor, /Bundled Defuddle 0\.19\.1/);
+  assert.match(preprocessor, /Bundled Defuddle 0\.19\.5/);
   assert.match(preprocessor, /SourceLinkPreprocessor/);
   assert.match(preprocessor, /plain_text/);
 });
@@ -948,7 +948,7 @@ test("Safari preprocessor hands over an article page as Markdown with its source
     publishedAt: "2026-09-01",
     contentFormat: "markdown",
     extractor: "defuddle",
-    extractorVersion: "0.19.1",
+    extractorVersion: "0.19.5",
     networkFallback: false
   });
   assert.match(markdown, /^## First section\n\nUseful article prose\./);

@@ -29,6 +29,8 @@ public struct LibraryItemRow: Identifiable, Hashable, Sendable {
     public var startupAudioCompletedChunkCount: Int
     public var startupAudioTargetChunkCount: Int
     public let addedAt: Date?
+    /// When the publisher released it, for the Published sort (#1867); nil when the feed gave no usable date.
+    public var publishedAt: Date?
     public let lastListenedAt: Date?
     public let storageRecencyRank: Int
     /// A PDF read through the structured-document reader (#359).
@@ -38,6 +40,8 @@ public struct LibraryItemRow: Identifiable, Hashable, Sendable {
     public var textCharacterCount: Int?  // a text item's length for its time estimate (#305); nil for recorded audio
     /// Margins other people shared on this item, and how many of them the listener hasn't heard (#1792).
     public var sharedMargins = SharedMarginTally.none
+    /// How many Margins the listener has made on this item (#2394), so a row can be cleared without opening it to look.
+    public var marginCount = 0
 
     public init(
         id: String,

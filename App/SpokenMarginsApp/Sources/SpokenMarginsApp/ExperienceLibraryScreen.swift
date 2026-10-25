@@ -19,6 +19,7 @@ struct ExperienceLibraryScreen: View {
     @State private var newMarginsOfferItemId: String?
     @State private var collectionItem: LibraryItemRow?
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     /// A copied link on offer at the top of the Library (#1379).
     @StateObject private var clipboardLink = ClipboardLinkOfferModel()
 
@@ -90,7 +91,7 @@ struct ExperienceLibraryScreen: View {
                 .environmentObject(model)
         }
         .newMarginsOffer(itemId: $newMarginsOfferItemId)
-        .task { await clipboardLink.refresh() }
+        .task { if !isEdgeSwipePreview { await clipboardLink.refresh() } } // the swipe's preview reads nothing (#106)
         .onCompatibleChange(of: scenePhase) { phase in
             if phase == .active { Task { await clipboardLink.refresh() } }
         }
@@ -112,7 +113,6 @@ struct ExperienceLibraryScreen: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
             Menu {
-                Button("Settings", systemImage: "gearshape", action: model.openSettings)
                 Button("Help", systemImage: "questionmark.circle", action: model.openHelp)
                 Divider()
                 Button("Preparing Audio", systemImage: "waveform.badge.magnifyingglass") {
@@ -446,6 +446,8 @@ struct ExperienceLibraryScreen: View {
                     onComplete: { model.markItemCompleted(id: row.id) },
                     onMarkUnfinished: { model.markItemUnfinished(id: row.id) },
                     onPrepareOffline: { model.prioritizeOfflinePreparation(id: row.id) },
+                    onPlayNext: { model.queuePlayNext(itemId: row.id) },
+                    onAddToQueue: { model.queueAppend(itemId: row.id) },
                     onAddToCollection: { collectionItem = row },
                     onDelete: { model.moveItemToTrash(id: row.id) }
                 )
@@ -501,6 +503,8 @@ private struct ExperienceLibraryCompactRow: View {
     let onComplete: () -> Void
     let onMarkUnfinished: () -> Void
     let onPrepareOffline: () -> Void
+    let onPlayNext: () -> Void
+    let onAddToQueue: () -> Void
     let onAddToCollection: () -> Void
     let onDelete: () -> Void
 
@@ -553,6 +557,7 @@ private struct ExperienceLibraryCompactRow: View {
                     .font(.subheadline)
                     .foregroundStyle(AppColors.secondaryText)
                     .multilineTextAlignment(.leading)
+                ownMarginsLine
                 sharedMarginsLine
             }
             .fixedSize(horizontal: false, vertical: true)
@@ -608,6 +613,10 @@ private struct ExperienceLibraryCompactRow: View {
             if row.offlineState != .readyOffline {
                 Button("Prepare Offline", systemImage: "arrow.down.circle", action: onPrepareOffline)
             }
+            Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward", action: onPlayNext)
+                .accessibilityIdentifier("library.playNext.\(row.id)")
+            Button("Add to Queue", systemImage: "text.line.last.and.arrowtriangle.forward", action: onAddToQueue)
+                .accessibilityIdentifier("library.addToQueue.\(row.id)")
             Button("Add to Collection…", systemImage: "folder.badge.plus", action: onAddToCollection)
                 .accessibilityIdentifier("library.addToCollection.\(row.id)")
             if row.canDelete {
@@ -643,6 +652,8 @@ private struct ExperienceLibraryCompactRow: View {
             } else if row.canMarkUnfinished {
                 Button("Mark Unfinished", action: onMarkUnfinished)
             }
+            Button("Play Next", action: onPlayNext)
+            Button("Add to Queue", action: onAddToQueue)
         }
         // The same guards as the context menu and swipe actions above (#1917).
         .accessibilityActions {
@@ -676,6 +687,17 @@ private struct ExperienceLibraryCompactRow: View {
             }
         } else {
             Text(detail.rest).lineLimit(detailLineLimit)
+        }
+    }
+
+    /// How many Margins the listener has made here, so a nearly-finished item can be cleared without opening it to look (#2394).
+    /// Quiet at zero. The count is words; the icon is only a hint.
+    @ViewBuilder private var ownMarginsLine: some View {
+        if let line = LibraryRowWording.marginCountLine(row.marginCount) {
+            Label(line, systemImage: "bubble.left")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AppColors.secondaryText)
+                .accessibilityIdentifier("library.margins.\(row.id)")
         }
     }
 

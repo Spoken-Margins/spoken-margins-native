@@ -50,6 +50,22 @@ final class LiveSessionCollectionTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: currentURL), Data(todaysCurrentJSON.utf8))
     }
 
+    /// A session's start, saved and loaded again and again, stays where the first save put it: the nearest millisecond.
+    /// The format style truncates, and a millisecond read back sits a hair under itself, so each later save dropped one
+    /// (a start of …56.668066 came back from the store as …56.667 on the lane, #2543).
+    func testAStartSavedAndLoadedRepeatedlyKeepsItsMillisecond() throws {
+        for offset in [0.668066, 0.0004999, 0.0005, 0.999_6, 0.123, 0.5] {
+            let started = Date(timeIntervalSince1970: 1_792_873_556 + offset)
+            let nearestMs = (started.timeIntervalSince1970 * 1_000).rounded() / 1_000
+            var session = LiveSession(id: "live-ms", title: "Budget meeting", startedAt: started)
+            for _ in 0 ..< 5 {
+                try LiveSessionStore.save(session, in: root)
+                session = try XCTUnwrap(LiveSessionStore.load(from: root))
+                XCTAssertEqual(session.startedAt.timeIntervalSince1970, nearestMs, accuracy: 0.000_01, "offset \(offset)")
+            }
+        }
+    }
+
     func testTheBuildBeforeThisOneStillReadsCurrentJSONAfterThisBuildWritesIt() async throws {
         try writeTodaysCurrent()
         let worker = LiveSessionFileWorker(root: root)
