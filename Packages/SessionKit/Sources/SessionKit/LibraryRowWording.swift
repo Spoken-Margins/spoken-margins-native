@@ -67,6 +67,13 @@ public enum LibraryRowWording {
         !value.contains(" ") && (value.contains("://") || value.lowercased().hasPrefix("www."))
     }
 
+    /// The Library row's count of the listener's own Margins: "1 Margin", "3 Margins". Nil for none, so a row with
+    /// no Margins stays quiet (#2394). The words carry it; the row adds an icon, never a colour alone.
+    public static func marginCountLine(_ count: Int) -> String? {
+        guard count > 0 else { return nil }
+        return count == 1 ? "1 Margin" : "\(count) Margins"
+    }
+
     /// The site of a web address, without "www."; nil for any other kind of address.
     private static func webSiteName(_ value: String) -> String? {
         let lowered = value.lowercased()

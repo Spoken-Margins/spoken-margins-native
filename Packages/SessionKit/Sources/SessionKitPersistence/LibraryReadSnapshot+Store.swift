@@ -7,6 +7,7 @@ extension LibraryReadSnapshot {
         try Self(items: store.listItemSummaries(includeDeleted: true), sessions: store.loadSessions(),
                  manifests: store.loadPreparedAudioManifests(), jobs: store.loadAudioPreparationJobs(),
                  downloads: store.loadPodcastDownloads(), structuredDocumentItemIds: store.loadStructuredDocumentItemIds(),
-                 sharedMarginsByItemId: store.loadSharedMarginTallies())
+                 sharedMarginsByItemId: store.loadSharedMarginTallies(),
+                 marginCountsByItemId: store.loadActiveMarginCountsByItem())
     }
 }
