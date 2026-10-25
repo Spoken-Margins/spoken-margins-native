@@ -114,12 +114,14 @@ final class PlaybackStartCue: ObservableObject {
             guard !Task.isCancelled, let self else { return }
             self.checkNow?()
             guard !Task.isCancelled, self.watch.takeCue(at: self.now()) else { return }
-            let result = self.playChime?() ?? self.playSoftChime()
+            let result = MainThreadOperationLabels.shared.scoped("playbackStartChime") { self.playChime?() ?? self.playSoftChime() }
             self.record("lastPlaybackStartCue", "\(waiting):" + result)
             guard result == "played" else { return }
             // The waiting sound is placed on the audio clock now, so it still sounds if the app is in the background.
             let chimedAt = ContinuousClock.now
-            let waitingResult = self.scheduleWaitingCue?(self.waitingCueDelay) ?? self.scheduleWaitingLoop(after: self.waitingCueDelay)
+            let waitingResult = MainThreadOperationLabels.shared.scoped("playbackWaitingCue") {
+                self.scheduleWaitingCue?(self.waitingCueDelay) ?? self.scheduleWaitingLoop(after: self.waitingCueDelay)
+            }
             self.record("lastWaitingCue", "\(waiting):" + waitingResult)
             // Speech that begins under the chime stops it here, not at the next regular check.
             try? await Task.sleep(for: .seconds(Self.checkDuringChime))

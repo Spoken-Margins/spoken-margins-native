@@ -31,4 +31,50 @@ extension Gate1AppModel {
         engine?.transcriptionRequested(interjectionId: interjection.id, sessionId: interjection.sessionId)
         scheduleTranscription(for: interjection)
     }
+
+    // MARK: Source transcript finishes (#2512)
+    // The main-actor stretches that end a source-transcript import, labelled so a hang names them.
+
+    func finishDiscoveredSourceTranscript(_ timeline: TranscriptTimeline, itemId: String, linkType: String) {
+        hangTelemetry.labels.scoped("sourceTranscriptAttach") {
+            diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "attached:\(linkType)"
+            attachSourceTranscriptTimeline(timeline, itemId: itemId)
+        }
+    }
+
+    func markSourceTranscriptUnavailable(itemId: String, lastFailure: String) {
+        hangTelemetry.labels.scoped("sourceTranscriptUnavailable") {
+            diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "unavailable:\(lastFailure)"
+            diagnostics["sourceTranscriptionStatus"] = "unavailable"
+            if activeItemId == itemId {
+                sourceTranscriptStatus = "unavailable"
+                snapshot.sourceTranscriptStatus = "unavailable"
+            }
+        }
+    }
+
+    func finishFullSourceTranscription(_ timeline: TranscriptTimeline, itemId: String) {
+        hangTelemetry.labels.scoped("sourceTranscriptAttach") {
+            importedPodcastPlacement.releaseFullSourceTranscription(itemId: itemId)
+            attachSourceTranscriptTimeline(timeline, itemId: itemId)
+        }
+    }
+
+    func failFullSourceTranscription(itemId: String, error: Error) {
+        hangTelemetry.labels.scoped("sourceTranscriptionFailed") {
+            importedPodcastPlacement.releaseFullSourceTranscription(itemId: itemId)
+            diagnostics["sourceTranscriptionStatus"] = "unavailable"
+            diagnostics["sourceTranscriptionError"] = String(describing: error)
+            if activeItemId == itemId {
+                sourceTranscriptStatus = "unavailable"
+                snapshot.sourceTranscriptStatus = "unavailable"
+            }
+            if pendingMapGenerationItemId == itemId {
+                pendingMapGenerationItemId = nil
+            }
+            if activeItemId == itemId, lastError == nil {
+                statusMessage = "Audio ready. Source transcript and Listening Map are unavailable; notes will use timestamp context."
+            }
+        }
+    }
 }

@@ -1,0 +1,38 @@
+# Workflow files parse (#2596). A workflow file that is not valid YAML makes GitHub run none of its jobs and report
+# nothing, so a PR that broke lane.yml (#2604) showed only the other workflows' green checks. This workflow is the
+# one check that notices, and it is built so it can't be skipped:
+#   - no `paths` or `paths-ignore` on the pull_request trigger, so it runs on every PR, docs-only ones too;
+#   - no repository-variable switch and no `needs`, so nothing else has to parse or pass for it to run;
+#   - one job that runs one test file, scripts/tests/test_workflow_files.py, which parses every
+#     .github/workflows/*.yml (this one included) and checks the lane Verdict steps.
+# Its own file is parsed by that test too. If this file itself is broken, the check named below is missing from the
+# PR, and a PR that touches .github/ is proven only when this check is present on its head and green.
+# The same test also runs in the fast plan (scripts/tests is discovered), so the Mac and hosted-portable run it as well.
+name: workflow-files
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [next, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workflow-files-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parse:
+    name: 'workflow files parse'
+    # Same-repo PRs only, as in every other workflow. Always true for workflow_dispatch.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # Ruby ships on the hosted Linux image; the test uses it (or PyYAML) as the real YAML parser.
+      - name: Parse every workflow file and check the Verdict steps
+        run: python3 -m unittest -v scripts/tests/test_workflow_files.py

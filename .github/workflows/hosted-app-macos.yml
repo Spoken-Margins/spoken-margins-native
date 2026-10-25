@@ -14,7 +14,8 @@
 #
 # Caching: not DerivedData itself (GBs, and a restored copy is stale against a fresh checkout's file times).
 # Instead Xcode's compilation cache (#1331), with the same prefix mapping the lane uses so cached compiles
-# don't depend on the checkout path, plus the SwiftPM package checkouts and the LFS voice models.
+# don't depend on the checkout path, plus the SwiftPM package checkouts and the LFS voice models. The
+# compilation cache is archived sparse by scripts/ci-cas-cache.sh (#2617).
 #
 # What stays on the owner's Mac (owner, 2026-10-16): journeys (T4/T5, Test Desk), phone builds and signing.
 # Nothing here signs, archives or uploads, and nothing here holds a secret.
@@ -88,6 +89,7 @@ jobs:
     env:
       DERIVED: ${{ github.workspace }}/.build/hosted-dd
       CAS: ${{ github.workspace }}/.build/compilation-cache
+      CAS_PACK: ${{ github.workspace }}/.build/compilation-cache-pack
       SPM: ${{ github.workspace }}/.build/spm
       RESULTS: ${{ github.workspace }}/.build/hosted-results
     steps:
@@ -137,12 +139,20 @@ jobs:
           path: ${{ env.SPM }}
           key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
           restore-keys: spm-
-      # Rolling key: every run saves its cache, the next restores the newest. Xcode bounds the store itself.
+      # The compilation cache goes through scripts/ci-cas-cache.sh, not straight into actions/cache (#2617): the
+      # store's data files are sparse, plain tar saved their holes as zeros, and restoring a 481 MB archive wrote
+      # until the runner's disk was full, before the build began. The script archives them sparse, refuses a
+      # restore that would fill the disk, and costs a cold build, never a red check, when anything goes wrong.
+      # `sparse` in the key keeps the earlier entries, saved as plain tar, from ever being restored.
+      # Rolling key: the newest entry restores. Xcode bounds the store itself.
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
         with:
-          path: ${{ env.CAS }}
-          key: xcode-cas-27.0-${{ github.run_id }}
-          restore-keys: xcode-cas-27.0-
+          path: ${{ env.CAS_PACK }}
+          key: xcode-cas-sparse-27.0-${{ github.run_id }}
+          restore-keys: xcode-cas-sparse-27.0-
+      - name: Unpack the compilation cache
+        run: CAS="$CAS" PACK="$CAS_PACK" bash scripts/ci-cas-cache.sh unpack
 
       - name: Toolchain
         run: |
@@ -275,12 +285,20 @@ jobs:
         with:
           path: ${{ env.SPM }}
           key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
+      # The compilation cache is saved only by a run whose simulator build succeeded (a failed build's store was
+      # what the next run restored in #2617), and only off a pull request: GitHub lets a PR read the trunk's caches
+      # but a PR's own save is read by nobody else, and at about 600 MB each they pushed the LFS and package caches
+      # out of the repository's 10 GB. The trunk's push runs keep the warm one.
+      - name: Pack the compilation cache
+        id: cas-pack
+        if: always() && steps.t2-sim.outcome == 'success' && github.event_name != 'pull_request'
+        run: CAS="$CAS" PACK="$CAS_PACK" bash scripts/ci-cas-cache.sh pack
       - name: Save the compilation cache
-        if: always() && steps.t2-sim.outcome != 'skipped'
+        if: always() && steps.cas-pack.outputs.ok == 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          path: ${{ env.CAS }}
-          key: xcode-cas-27.0-${{ github.run_id }}
+          path: ${{ env.CAS_PACK }}
+          key: xcode-cas-sparse-27.0-${{ github.run_id }}
 
       # Passes only when every requested test completed and passed: a missing, skipped or failed test, a test
       # outside the request, or a run that completed nothing fails (#2138), by verify-tests.py's reconcile. It runs
