@@ -87,11 +87,12 @@ extension Gate1AppModel {
         backgroundRefresh.holdLibrary(Task { [weak self] in
             for _ in 0..<3 {
                 guard let revision = self?.libraryPresentationRevision,
+                      let listsBefore = self?.audioPreparationLists,
                       let data = try? await read(store) else { return }
                 guard let self, !Task.isCancelled, self.backgroundRefresh.isCurrentLibrary(generation) else { return }
                 if self.libraryPresentationRevision != revision { continue }
                 self.publishLibrary(data)
-                self.publishAudioPreparationPresentation(from: data, store: store)
+                self.publishAudioPreparationPresentation(from: data, store: store, ifUnchangedSince: listsBefore)
                 return
             }
         })
@@ -99,13 +100,28 @@ extension Gate1AppModel {
 
     /// The Preparing Audio lists from the Library read just published, so the reload costs the main thread no second
     /// pass over the store (#2505). Stale jobs are checked again and deleted off it; they are already left out of the queue.
-    func publishAudioPreparationPresentation(from data: LibraryReadSnapshot, store: SQLiteSessionStore) {
+    ///
+    /// Other writers (moving or prioritizing a job, a chunk's progress) set the lists without touching `libraryItems`, so
+    /// `libraryPresentationRevision` can't tell they ran. The lists as they were when the read began are kept, and a
+    /// list that changed since is newer than this read and is left as it is.
+    func publishAudioPreparationPresentation(
+        from data: LibraryReadSnapshot, store: SQLiteSessionStore,
+        ifUnchangedSince before: (queue: [AudioPreparationQueueRow], recentlyPrepared: [RecentlyPreparedAudioRow])
+    ) {
         let presentation = AudioPreparationPresentation(snapshot: data, activeItemId: activePlaybackItemId)
-        if audioPreparationQueue != presentation.queue { audioPreparationQueue = presentation.queue }
-        if recentlyPreparedAudio != presentation.recentlyPrepared { recentlyPreparedAudio = presentation.recentlyPrepared }
+        if audioPreparationQueue == before.queue, audioPreparationQueue != presentation.queue {
+            audioPreparationQueue = presentation.queue
+        }
+        if recentlyPreparedAudio == before.recentlyPrepared, recentlyPreparedAudio != presentation.recentlyPrepared {
+            recentlyPreparedAudio = presentation.recentlyPrepared
+        }
         let stale = presentation.staleJobIds
         guard !stale.isEmpty else { return }
         Task.detached(priority: .utility) { _ = try? store.deleteStaleAudioPreparationJobs(among: stale) }
+    }
+
+    var audioPreparationLists: (queue: [AudioPreparationQueueRow], recentlyPrepared: [RecentlyPreparedAudioRow]) {
+        (audioPreparationQueue, recentlyPreparedAudio)
     }
 
     func publishLibrary(_ data: LibraryReadSnapshot) {
