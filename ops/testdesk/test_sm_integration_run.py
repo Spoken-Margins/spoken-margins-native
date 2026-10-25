@@ -321,6 +321,134 @@ class ReportTextTests(unittest.TestCase):
         self.assertIn('why inconclusive: git worktree add failed: disk full', body)
 
 
+class OutcomeWordingTests(unittest.TestCase):
+    """Every sentence the report says about how a run ended comes from describe(outcome(...)), so these tables run
+    every combination of the record's parts through it (#2590, third audit round: the earlier rounds each fixed
+    one branch and the next audit found another)."""
+    A, B, R, G, P = 'App/a', 'App/b', 'App/r', 'Journey/g', 'Journey/p'
+    VERDICT_SENTENCES = ('outcome', 'failing', 'culprit_why', 'candidate')
+
+    def rows(self):
+        def subsets(items):
+            return [tuple(x for i, x in enumerate(items) if mask >> i & 1) for mask in range(1 << len(items))]
+        for verdict in ('PASS', 'FAIL', 'INCONCLUSIVE'):
+            for first in subsets((self.A, self.B)):
+                for confirmed in subsets((self.A, self.B)):
+                    for retried in subsets((self.A, self.R)):
+                        for gating in subsets((self.G,)):
+                            for probation in subsets((self.P,)):
+                                for trunk in (True, False):
+                                    yield dict(verdict=verdict, first_failures=first, confirmed=confirmed,
+                                               retry_passes=retried, gating_failed=gating, probation_failed=probation,
+                                               trunk=trunk, reruns=2 if first else 0)
+
+    def check(self, row):
+        """The problems with the words for one input row; [] when they never contradict the verdict."""
+        o = run.outcome(**row)
+        w = run.describe(o, sha7='abcdef0', scripted='scripted journeys passed (1 of 1)')
+        said = ' '.join(w[k] for k in self.VERDICT_SENTENCES).lower()
+        problems = []
+        unresolved = set(o.failing)
+        # Cole's 2026-10-24 retry rule: fail then pass is green; fail then fail, or fail and never passed, is red.
+        should_fail = row['verdict'] != 'INCONCLUSIVE' and bool(
+            set(row['confirmed']) | (set(row['first_failures']) - set(row['retry_passes'])) | set(row['gating_failed']))
+        if row['verdict'] != 'INCONCLUSIVE' and (o.verdict == 'FAIL') != should_fail:
+            problems.append(f'verdict {o.verdict} but should_fail={should_fail}')
+        if row['verdict'] == 'INCONCLUSIVE' and o.verdict != 'INCONCLUSIVE':
+            problems.append('an inconclusive run became ' + o.verdict)
+        if o.verdict == 'FAIL':
+            if 'passed' in said:
+                problems.append('a FAIL says passed: ' + said)
+            if not w['outcome'].startswith('FAIL'):
+                problems.append('FAIL outcome sentence: ' + w['outcome'])
+            for name in unresolved:
+                if name not in w['failing'] or name not in w['outcome']:
+                    problems.append(f'{name} failed but is not named as failing')
+            if not unresolved:
+                problems.append('a FAIL with nothing failing')
+        if o.verdict == 'PASS':
+            if w['failing'] or 'FAIL' in w['outcome'] or w['culprit_why'] or unresolved:
+                problems.append('a PASS names an unresolved failure: ' + str(w))
+            for name in row['first_failures']:  # a cleared failure is named only as a retry-pass
+                if name in said:
+                    problems.append(f'a PASS names {name} outside the retry line')
+                if name not in w['retry']:
+                    problems.append(f'{name} failed first and passed later but is not named as passed on retry')
+        if o.verdict == 'INCONCLUSIVE' and ('PASS' in w['outcome'] or w['candidate']):
+            problems.append('an INCONCLUSIVE run claims a pass: ' + str(w))
+        failed_for_good = set(o.confirmed) | set(o.gating_failed)
+        listed = {n for n in row['retry_passes'] if n not in failed_for_good}
+        for name in listed:
+            if name not in w['retry']:
+                problems.append(f'retry-pass {name} is not named')
+        for name in {self.A, self.B, self.R} - listed:
+            if name in w['retry']:
+                problems.append(f'{name} is listed as passed on retry but is not a retry-pass')
+        if not listed and w['retry'] != 'passed on retry: none':
+            problems.append('no retry-pass but the line says: ' + w['retry'])
+        for name in row['probation_failed']:
+            if name in said or 'not verdict input' not in w['probation'] or name not in w['probation']:
+                problems.append(f'probation failure {name} is not named as not verdict input')
+        if not row['probation_failed'] and w['probation']:
+            problems.append('a probation line with no probation failure')
+        if run.outcome(**dict(row, probation_failed=())).verdict != o.verdict:
+            problems.append('a probation failure changed the verdict')
+        if o.verdict == 'PASS':
+            if row['trunk'] and 'is the current phone candidate' not in w['candidate']:
+                problems.append('a trunk PASS does not name the candidate')
+            if not row['trunk'] and ('no phone candidate' not in w['candidate']
+                                     or 'is the current phone candidate' in w['candidate']):
+                problems.append('a branch PASS calls itself a candidate')
+        elif w['candidate']:
+            problems.append('a candidate line on ' + o.verdict)
+        if o.verdict == 'FAIL' and not o.confirmed and 'gating scripted journey failed' not in w['culprit_why']:
+            problems.append('a journey-only FAIL has no culprit reason')
+        if (o.verdict != 'FAIL' or o.confirmed) and w['culprit_why']:
+            problems.append('a culprit reason when the app tests are searchable')
+        return problems
+
+    def test_the_words_never_contradict_the_verdict_in_any_combination(self):
+        bad, count = {}, 0
+        for row in self.rows():
+            count += 1
+            problems = self.check(row)
+            if problems:
+                bad[str(row)] = problems
+        self.assertEqual(count, 3 * 4 * 4 * 4 * 2 * 2 * 2)
+        self.assertEqual(len(bad), 0, '\n'.join(f'{k}: {v}' for k, v in list(bad.items())[:5]))
+
+    def test_the_audits_case_a_gating_journey_fails_while_the_app_plan_passes(self):
+        # 327a481: confirmed=[], verdict FAIL, failed=[journey] was reported as "passed on a re-run".
+        row = dict(verdict='FAIL', first_failures=(), confirmed=(), retry_passes=(), gating_failed=(self.G,),
+                   probation_failed=(), trunk=True, reruns=0)
+        self.assertEqual(self.check(row), [])
+        words = run.describe(run.outcome(**row))
+        self.assertEqual(words['failing'], f'failing: {self.G}')
+        self.assertIn('gating scripted journey failed', words['culprit_why'])
+        self.assertNotIn('passed', words['culprit_why'])
+
+    def test_the_check_itself_catches_the_old_wording(self):
+        row = dict(verdict='FAIL', first_failures=(), confirmed=(), retry_passes=(), gating_failed=(self.G,),
+                   probation_failed=(), trunk=True, reruns=0)
+        real = run.describe
+        old = 'each failing test passed on a re-run, so there is no stable failure to bisect'
+        with patch.object(run, 'describe', lambda o, **kw: dict(real(o, **kw), culprit_why=old)):
+            self.assertTrue(any('passed' in p for p in self.check(row)))
+
+    def test_a_first_failure_nothing_passed_is_red_and_a_retry_pass_is_named(self):
+        red = run.outcome('PASS', first_failures=(self.A,), reruns=2)   # failed, and no re-run cleared it
+        self.assertEqual((red.verdict, red.confirmed), ('FAIL', (self.A,)))
+        green = run.outcome('FAIL', first_failures=(self.A,), retry_passes=(self.A,), reruns=2)
+        self.assertEqual((green.verdict, green.retry_passes), ('PASS', (self.A,)))
+        self.assertIn(self.A, run.describe(green)['retry'])
+        self.assertEqual(run.describe(green)['failing'], '')
+
+    def test_a_proof_run_of_another_branch_is_never_a_phone_candidate(self):
+        words = run.describe(run.outcome('PASS', trunk=False), sha7='abcdef0')
+        self.assertIn('no phone candidate', words['candidate'])
+        self.assertNotIn('is the current phone candidate', words['candidate'])
+
+
 class DiagnosisTests(unittest.TestCase):
     def test_claude_is_headless_read_only_and_cannot_ask(self):
         cmd = run.claude_command(Path('/mac/evidence'))
@@ -498,9 +626,10 @@ class FakeOps(run.Ops):
         self.posted.append(body)
         return 'https://github.com/report/1'
 
-    def diagnose(self, wt, evidence, sha, failed, suspects):
+    def diagnose(self, wt, evidence, sha, failed, suspects, journeys=()):
         self.diagnosed.append((failed, suspects))
-        return run.fallback_groups(failed), None
+        self.diagnosed_journeys = tuple(journeys)
+        return run.fallback_groups(failed, journeys), None
 
     def file_failures(self, groups, sha, report, evidence, cost):
         self.filed.append([g['tests'] for g in groups])
@@ -793,6 +922,55 @@ class CulpritTests(unittest.TestCase):
                     self.assertEqual(run.tick(ops), 'PASS')
             self.assertEqual((ops.reverts, ops.comments), ([], []))
             self.assertFalse(any(e[0] in ('commits_since', 'check') for e in ops.events))
+
+
+class ScriptedJourneyOutcomeTests(unittest.TestCase):
+    """The Mac tick, end to end, when the app plan passes but a scripted journey does not (#2590, audit on 327a481)."""
+    GATING = JOURNEY + '/testOpen'
+    LISTING = {'gating': [{'test': JOURNEY, 'journey': 'J1'}], 'probation': [{'test': JOURNEY + '2', 'journey': 'J2'}]}
+
+    def journeys(self, gating, probation):
+        step = {'name': 'xcode-tests', 'errors': [], 'exit_code': 0, 'passed_on_retry': [],
+                'tests': {self.GATING: {'status': gating}, JOURNEY + '2/testOpen': {'status': probation}},
+                'gating': {self.GATING: gating}, 'probation': {JOURNEY + '2/testOpen': probation}}
+        return {'status': 'verified', 'steps': [step]}
+
+    def tick(self, plans):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = CulpritOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')], listing=self.LISTING)
+            with recording_slot(ops.events), patch.object(run.revert, 'load_test_scope', return_value=real_scope()):
+                verdict = run.tick(ops)
+        return ops, verdict
+
+    def test_a_gating_journey_that_fails_is_a_fail_and_never_passed_on_a_rerun(self):
+        ops, verdict = self.tick([manifest({TEST: 'passed'}), self.journeys('failed', 'passed')])
+        self.assertEqual(verdict, 'FAIL')
+        self.assertFalse(any(e[0] in ('commits_since', 'check') for e in ops.events))   # nothing searchable
+        note = ops.comments[0][1]
+        self.assertIn('no single culprit merge: a gating scripted journey failed', note)
+        self.assertNotIn('passed on a re-run', note)
+        report = ops.posted[0]
+        self.assertIn('— FAIL', report)
+        self.assertIn(f'failing: {JOURNEY}', report)
+        self.assertIn('passed on retry: none', report)
+        self.assertNotIn('phone candidate', report)
+        self.assertEqual(ops.diagnosed_journeys, (JOURNEY,))
+
+    def test_a_probation_journey_that_fails_is_named_and_not_verdict_input(self):
+        ops, verdict = self.tick([manifest({TEST: 'passed'}), self.journeys('passed', 'failed')])
+        self.assertEqual(verdict, 'PASS')
+        self.assertIn(f'probation scripted journeys that failed (not verdict input): {JOURNEY}2', ops.posted[0])
+        self.assertNotIn('failing:', ops.posted[0])
+        self.assertEqual((ops.comments, ops.diagnosed), ([], []))
+
+    def test_an_app_failure_and_a_gating_failure_search_only_the_app_test(self):
+        plans = [manifest({TEST: 'failed'}), manifest({TEST: 'failed'}), manifest({TEST: 'failed'}),
+                 self.journeys('failed', 'passed')]
+        ops, verdict = self.tick(plans)
+        self.assertEqual(verdict, 'FAIL')
+        self.assertTrue(any(e[0] == 'check' for e in ops.events))
+        self.assertIn('failing: ' + ', '.join(sorted([JOURNEY, TEST])), ops.posted[0])
+        self.assertEqual(ops.diagnosed[0][0], sorted([JOURNEY, TEST]))
 
 
 class FlakeTallyTests(unittest.TestCase):

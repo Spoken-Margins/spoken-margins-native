@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
 import datetime as dt
 import fcntl
 import json
@@ -261,7 +262,7 @@ def settle(first: dict, reruns: list[dict]) -> dict:
     for rerun in reruns:
         reported.update(rerun.get('retried', []))
     if first['verdict'] != 'FAIL':
-        return dict(first, flaky=sorted(reported), confirmed=[])
+        return dict(first, flaky=sorted(reported), confirmed=[], first_failures=first['failed'])
     completed = [r for r in reruns if r['verdict'] != 'INCONCLUSIVE']
     cleared, notes = [], {}
     for test in first['failed']:
@@ -275,8 +276,121 @@ def settle(first: dict, reruns: list[dict]) -> dict:
     confirmed = [t for t in first['failed'] if t not in cleared]
     flaky = sorted(reported)
     return dict(first, verdict='FAIL' if confirmed else 'PASS', failed=confirmed, flaky=flaky, flaky_notes=notes,
-                confirmed=confirmed,
+                confirmed=confirmed, first_failures=first['failed'],
                 errors=first['errors'] + [e for r in reruns for e in r['errors']] if confirmed else first['errors'])
+
+
+@dataclasses.dataclass(frozen=True)
+class Outcome:
+    """Everything the report says about how a run ended, as one small record (#2590, third audit round).
+
+    Never read the sentences about an outcome off partial fields of the result dict (`confirmed`, `flaky`,
+    `verdict`...): build this with `outcome()` and take the words from `describe()`, the one place they are made.
+    Earlier rounds each fixed one branch of those sentences and the next audit found another, e.g. a gating
+    journey that failed was reported as "passed on a re-run"."""
+    verdict: str                 # PASS, FAIL or INCONCLUSIVE
+    first_failures: tuple        # the app plan's first-run failures
+    confirmed: tuple             # app tests that failed in the first run and that no re-run passed
+    retry_passes: tuple          # tests that failed, then passed (xcodebuild's retry, our re-runs, the journeys' retry)
+    gating_failed: tuple         # gating scripted journeys that did not pass: verdict input
+    probation_failed: tuple      # probation scripted journeys that failed: NOT verdict input
+    trunk: bool                  # the trunk's tip, or a proof run of another branch
+    reruns: int = 0
+    notes: tuple = ()            # ((test, ' (passed in 1 of 2 re-runs, failed in the rest)'), ...)
+
+    @property
+    def failing(self) -> tuple:
+        """What the report lists as failing: the verdict's failures, or what failed before an incomplete run stopped."""
+        if self.verdict == 'FAIL':
+            return tuple(sorted(set(self.confirmed) | set(self.gating_failed)))
+        if self.verdict == 'INCONCLUSIVE':
+            return tuple(sorted(set(self.first_failures) - set(self.retry_passes)))
+        return ()
+
+
+def outcome(verdict: str, *, first_failures=(), confirmed=(), retry_passes=(), gating_failed=(), probation_failed=(),
+            trunk: bool = True, reruns: int = 0, notes=None) -> Outcome:
+    """Build an Outcome whose parts cannot contradict each other.
+
+    The retry rule (owner, 2026-10-24: fail then pass is green, fail then fail is red) is applied here, once:
+    a first-run failure that was not passed on retry is confirmed, and a test that ended failed is never a
+    retry-pass. An INCONCLUSIVE run stays so. Otherwise the verdict is FAIL exactly when a confirmed app
+    failure or a gating journey failure remains, whatever `verdict` the caller passed in."""
+    first, passes = set(first_failures), set(retry_passes)
+    gating = set(gating_failed)
+    probation = set(probation_failed) - gating
+    confirmed_set = set(confirmed)
+    if verdict != 'INCONCLUSIVE':
+        confirmed_set |= first - passes
+        verdict = 'FAIL' if confirmed_set or gating else 'PASS'
+    passes -= confirmed_set | gating
+    return Outcome(verdict, tuple(sorted(first)), tuple(sorted(confirmed_set)), tuple(sorted(passes)),
+                   tuple(sorted(gating)), tuple(sorted(probation)), bool(trunk), int(reruns),
+                   tuple(sorted((notes or {}).items())))
+
+
+def outcome_of(result: dict, trunk: bool = True) -> Outcome:
+    """The Outcome of a result dict (`run_tests`'s, or an error result with only a verdict and failed list)."""
+    verdict = result['verdict']
+    failed = result.get('failed', [])
+    return outcome(verdict,
+                   first_failures=result.get('first_failures', failed if verdict == 'INCONCLUSIVE' else []),
+                   confirmed=result.get('confirmed', failed if verdict == 'FAIL' else []),
+                   retry_passes=result.get('flaky', []), gating_failed=result.get('gating_failed', []),
+                   probation_failed=result.get('probation_failed', []), trunk=trunk,
+                   reruns=result.get('reruns', 0), notes=result.get('flaky_notes'))
+
+
+def failure_basis(journey: bool) -> str:
+    """How a failure was established, for the diagnosis prompt and the issue text."""
+    if journey:
+        return ("failed in the scripted-journeys run, including xcodebuild's own retry "
+                '(this script does not re-run journeys)')
+    return f'failed in the first run and no re-run (of {RERUNS}, same build) cleared it'
+
+
+def describe(o: Outcome, *, sha7: str = '', scripted: str = '') -> dict:
+    """The owner-facing words about an outcome: a pure function of the record, and the only maker of these
+    sentences. Keys: `outcome` (one line), `failing`, `retry`, `probation`, `rerun`, `candidate` and `culprit_why`;
+    '' when a line does not apply. OutcomeWordingTests runs every combination of the record's parts through it."""
+    names = ', '.join
+    notes = dict(o.notes)
+    if o.verdict == 'FAIL':
+        parts = []
+        if o.confirmed:
+            parts.append(f'app tests that failed in the first run and that no re-run cleared: {names(o.confirmed)}')
+        if o.gating_failed:
+            parts.append('gating scripted journeys that failed (this script does not re-run journeys): '
+                         + names(o.gating_failed))
+        line = 'FAIL: ' + '; '.join(parts) + '.'
+    elif o.verdict == 'PASS':
+        line = 'PASS: every app test and gating scripted journey ended green' + (
+            f', {len(o.retry_passes)} of them only on a retry (named below).' if o.retry_passes else '.')
+    else:
+        line = 'INCONCLUSIVE: the run did not finish or ran no test, so it proves nothing either way.'
+    if o.verdict == 'FAIL':
+        failing = 'failing: ' + names(o.failing)
+    else:
+        failing = 'failed before the run stopped: ' + names(o.failing) if o.failing else ''
+    if o.verdict == 'FAIL' and not o.confirmed:  # only a journey failed: the search re-runs app tests
+        culprit_why = (f'a gating scripted journey failed ({names(o.gating_failed)}); the culprit search re-runs '
+                       'only app tests, so it was not run')
+    else:
+        culprit_why = ''
+    return {
+        'outcome': line,
+        'failing': failing,
+        'retry': 'passed on retry: ' + (names(t + notes.get(t, '') for t in o.retry_passes)
+                                        if o.retry_passes else 'none'),
+        'probation': (f'probation scripted journeys that failed (not verdict input): {names(o.probation_failed)}'
+                      if o.probation_failed else ''),
+        'rerun': (f'failing tests re-run {o.reruns} times on the same build'
+                  if o.reruns and o.first_failures else ''),
+        'candidate': ('' if o.verdict != 'PASS' else
+                      f'{sha7} is the current phone candidate: app tests passed; {scripted}; attended journeys not run.'
+                      if o.trunk else f"{sha7} is not {BASE_BRANCH}'s tip: a proof run, so it is no phone candidate."),
+        'culprit_why': culprit_why,
+    }
 
 
 def script_results(listing: dict, records: dict) -> dict:
@@ -330,11 +444,13 @@ def tip_label(trunk_tip: bool) -> str:
 def report_text(sha: str, result: dict, *, started: float, finished: float, previous: Optional[str],
                 suspects: list[str], evidence, hosted: bool = False, trunk_tip: bool = True) -> str:
     c = result['counts']
+    o = outcome_of(result, trunk_tip)  # every sentence about the outcome, the verdict too, comes from this record
+    words = describe(o, sha7=sha[:7], scripted=scripted_summary(result.get('journeys') or {}))
     day = dt.datetime.fromtimestamp(started).strftime('%Y-%m-%d')
     why = (f'{BASE_BRANCH} moved from {previous}, the last tip with an integration report' if previous
            else f'no integration report on #{REPORT_ISSUE} in the last {REPORT_LOOKBACK.days} days')
     lines = ['```text',
-             f"Lane report integration-{sha[:7]} — {result['verdict']}",
+             f"Lane report integration-{sha[:7]} — {o.verdict}",
              f"commit {sha[:8]} ({tip_label(trunk_tip)}) · integration run: --plan app · "
              f'{clock(started)}–{clock(finished)} local, {day}',
              f'run by: {HOSTED_RUN_BY if hosted else RUN_BY}',
@@ -345,35 +461,27 @@ def report_text(sha: str, result: dict, *, started: float, finished: float, prev
                                        f'and no lane app tests were waiting, or {BASE_BRANCH} had gone 3 hours untested.'),
              'ran:',
              f"  1. --plan app: {c['passed']} passed, {c['failed']} failed, {c['skipped']} skipped  ← verdict input"]
-    if result.get('reruns'):
-        lines.append(f"  2. failing tests re-run {result['reruns']} times on the same build")
+    if words['rerun']:
+        lines.append('  2. ' + words['rerun'])
     if result.get('journeys'):
         lines.append('  scripted journeys (only those on gating are verdict input): '
                      + ', '.join(f'{t.rsplit("/", 1)[-1]} {s}' for t, s in sorted(result['journeys'].items())))
         if result.get('journeys_due'):
             lines.append('  ' + result['journeys_due'])
-    if result['failed']:
-        lines.append('failing: ' + ', '.join(result['failed']))
-    notes = result.get('flaky_notes', {})
-    lines.append('passed on retry: ' + (', '.join(t + notes.get(t, '') for t in result['flaky']) if result.get('flaky')
-                                        else 'none'))
+    lines.append('outcome: ' + words['outcome'])
+    lines += [words[k] for k in ('failing', 'probation') if words[k]]
+    lines.append(words['retry'])
     lines.append('crashes: ' + (', '.join(Path(p).name for p in result['crashes'])
                                 if result.get('crashes') else 'none recorded'))
-    if result['verdict'] == 'FAIL':
+    if o.verdict == 'FAIL':
         lines.append('merges since the last PASS: ' + (', '.join(suspects) if suspects else 'unknown'))
-    if result['verdict'] == 'INCONCLUSIVE' and result['errors']:
+    if o.verdict == 'INCONCLUSIVE' and result['errors']:
         lines.append('why inconclusive: ' + '; '.join(dict.fromkeys(result['errors']))[:1500])
     lines += [NOT_RUN, NOT_VERIFIED, f'evidence: {evidence}', '```']
     if result.get('attachments'):
         lines += ['', *report_lines(result['attachments'])]
-    if result['verdict'] == 'PASS' and not trunk_tip:
-        lines += ['', f'{sha[:7]} is not {BASE_BRANCH}\'s tip: a proof run, so it is no phone candidate.']
-    elif result['verdict'] == 'PASS':
-        # Say what the pass covers: app tests alone are not a full candidate (#1465).
-        journeys = result.get('journeys') or {}
-        scripted = scripted_summary(journeys)
-        lines += ['', f'{sha[:7]} is the current phone candidate: app tests passed; {scripted}; '
-                      'attended journeys not run.']
+    if words['candidate']:  # says what the pass covers: app tests alone are not a full candidate (#1465)
+        lines += ['', words['candidate']]
     return '\n'.join(lines) + '\n'
 
 
@@ -431,18 +539,18 @@ DIAGNOSIS_SCHEMA = {
                        **{k: {'type': 'string'} for k in GROUP_KEYS}}}}}}
 
 
-def fallback_groups(failed: list[str]) -> list[dict]:
+def fallback_groups(failed: list[str], journeys: tuple = ()) -> list[dict]:
     return [{'tests': [t], 'title': f'{t.rsplit("/", 1)[-1]} fails on {BASE_BRANCH}',
              'steps': f'Run `--plan app --only-testing {t}` at the tip below.',
              'expected': 'The test scenario passes its assertions.',
-             'actual': 'The scenario fails an assertion in the first run and in both re-runs; '
+             'actual': f'The scenario fails an assertion: it {failure_basis(t in journeys)}; '
                        'see xcode-tests.log in the evidence folder.',
              'root_cause': 'Unconfirmed: the Claude diagnosis was unavailable or invalid. Read the test and evidence.',
              'suspect': 'unknown'}
             for t in failed]
 
 
-def diagnoses(answer: Optional[dict], failed: list[str]) -> list[dict]:
+def diagnoses(answer: Optional[dict], failed: list[str], journeys: tuple = ()) -> list[dict]:
     """Accept only a complete partition of the observed failures; fall back to one issue per test."""
     try:
         groups, seen = answer['groups'], []
@@ -455,15 +563,17 @@ def diagnoses(answer: Optional[dict], failed: list[str]) -> list[dict]:
             raise ValueError('not a partition')
         return groups
     except (ValueError, TypeError, KeyError):
-        return fallback_groups(failed)
+        return fallback_groups(failed, journeys)
 
 
-def diagnosis_prompt(sha: str, failed: list[str], suspects: list[str], evidence: Path) -> str:
+def diagnosis_prompt(sha: str, failed: list[str], suspects: list[str], evidence: Path, journeys: tuple = ()) -> str:
     return '\n'.join([
         'You are diagnosing confirmed test failures on the merged tip of the trunk (`main`) for Spoken Margins.',
         'Read AGENTS.md first. You are read-only: read the failing tests, the code they exercise and the',
-        f'evidence logs under {evidence} (xcode-tests.log in each plan folder). Each test below failed in',
-        f'the first run and in {RERUNS} re-runs on the same build, so treat it as real, not flaky.',
+        f'evidence logs under {evidence} (xcode-tests.log in each plan folder). '
+        + (f'Each app test below {failure_basis(False)}; ' if len(journeys) < len(failed) else '')
+        + (f'the scripted journeys ({", ".join(journeys)}) {failure_basis(True)}; ' if journeys else '')
+        + 'treat every failure as real, not flaky.',
         'Group tests only when they share a root cause. For each group give a symptom title a listener',
         'would recognise, the steps, expected and actual behaviour, the root cause (mark what is inference),',
         'and the suspect: the merge below most likely to have caused it, as "#<PR>: <why>", or "unknown".',
@@ -703,13 +813,13 @@ class Ops:
         token = res.stdout.strip() if res.returncode == 0 else ''
         return token or None
 
-    def diagnose(self, wt: Path, evidence: Path, sha: str, failed: list[str],
-                 suspects: list[str]) -> tuple[list[dict], Optional[float]]:
+    def diagnose(self, wt: Path, evidence: Path, sha: str, failed: list[str], suspects: list[str],
+                 journeys: tuple = ()) -> tuple[list[dict], Optional[float]]:
         token = self.claude_token()
         if not token or not CLAUDE.exists():
             self.log('diagnosis skipped: ' + ('no Claude token in the Keychain' if not token else f'{CLAUDE} missing'))
-            return fallback_groups(failed), None
-        prompt = diagnosis_prompt(sha, failed, suspects, evidence)
+            return fallback_groups(failed, journeys), None
+        prompt = diagnosis_prompt(sha, failed, suspects, evidence, journeys)
         (evidence / 'diagnosis-prompt.txt').write_text(prompt)
         env = {k: v for k, v in os.environ.items() if k != 'ANTHROPIC_API_KEY'}
         env['CLAUDE_CODE_OAUTH_TOKEN'] = token
@@ -719,12 +829,12 @@ class Ops:
             answer = json.loads(res.stdout)
         except ValueError:
             self.log(f'diagnosis failed: exit {res.returncode}: {(res.stderr or res.stdout)[-300:]}')
-            return fallback_groups(failed), None
+            return fallback_groups(failed, journeys), None
         cost = answer.get('total_cost_usd')
         if answer.get('is_error'):
             self.log(f"diagnosis failed: {answer.get('subtype')}: {str(answer.get('result'))[:300]}")
-            return fallback_groups(failed), cost
-        return diagnoses(answer.get('structured_output'), failed), cost
+            return fallback_groups(failed, journeys), cost
+        return diagnoses(answer.get('structured_output'), failed, journeys), cost
 
     # Culprit search and revert (#1180)
 
@@ -1009,15 +1119,21 @@ def run_tests(ops: Ops, wt: Path, evidence: Path, fds: tuple) -> dict:
     result = dict(settle(first, reruns), reruns=len(reruns))
     listing_path = wt / 'TestPlans' / 'scripted-journeys.json'
     listing = json.loads(listing_path.read_text()) if listing_path.exists() else {}
+    gating_failed, probation_failed = [], []
     if result['verdict'] != 'INCONCLUSIVE' and (listing.get('gating') or listing.get('probation')):
         journeys = summarize(ops.test_plan(wt, evidence / 'journeys', 'journeys', fds))
         result['journeys'] = script_results(listing, journeys['journeys'])
         result['attachments'] = result['attachments'] + journeys['attachments']
         result['flaky'] = sorted(set(result['flaky']) | set(journeys['retried']))  # the scripted journeys retry too
-        gating_failed = [t for t, s in result['journeys'].items()
-                         if t in {e['test'].removesuffix('()') for e in listing.get('gating', [])} and s != 'passed']
-        if gating_failed and result['verdict'] == 'PASS':
-            result.update(verdict='FAIL', failed=sorted(gating_failed))
+        gating = {e['test'].removesuffix('()') for e in listing.get('gating', [])}
+        gating_failed = sorted(t for t, s in result['journeys'].items() if t in gating and s != 'passed')
+        probation_failed = sorted(t for t, s in result['journeys'].items()
+                                  if t not in gating and s in ('failed', 'missing'))
+    # The verdict and every list the report prints are settled once, here, from the record (see Outcome).
+    final = outcome_of(dict(result, gating_failed=gating_failed, probation_failed=probation_failed))
+    result.update(verdict=final.verdict, failed=list(final.failing), confirmed=list(final.confirmed),
+                  flaky=list(final.retry_passes), gating_failed=list(final.gating_failed),
+                  probation_failed=list(final.probation_failed))
     return result
 
 
@@ -1142,11 +1258,11 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
             ops.must(['scripts/setup-worktree.sh'], cwd=wt)
             result = run_tests(ops, wt, evidence, fds)
             ops.log('simulator build ' + keep_sim_build(ops, wt, evidence / 'app' / 'manifest.json', sha))
-            if result['verdict'] == 'FAIL' and result.get('confirmed'):
-                result['culprit'] = search_culprit(ops, wt, evidence, green, sha, result['confirmed'], fds)
-            elif result['verdict'] == 'FAIL':  # every failure passed on a re-run: no merge can be blamed for it
-                result['culprit'] = {'status': 'unknown', 'checks': [],
-                                     'why': 'each failing test passed on a re-run, so there is no stable failure to bisect'}
+            final = outcome_of(result)
+            if final.confirmed:  # the search re-runs app tests, so only app failures can be searched
+                result['culprit'] = search_culprit(ops, wt, evidence, green, sha, list(final.confirmed), fds)
+            elif final.verdict == 'FAIL':  # only a gating journey failed; its words come from describe()
+                result['culprit'] = {'status': 'unknown', 'checks': [], 'why': describe(final)['culprit_why']}
         except Exception as error:
             result = dict(summarize({'error': str(error)}), flaky=[])
         finally:
@@ -1176,7 +1292,8 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
             save_state(path, state)
             say(f"{result['verdict']} {sha[:7]}: {report}")
             if result['verdict'] == 'FAIL':
-                groups, cost = ops.diagnose(wt, evidence, sha, result['failed'], suspects)
+                groups, cost = ops.diagnose(wt, evidence, sha, result['failed'], suspects,
+                                            journeys=tuple(result.get('gating_failed', ())))
                 try:
                     reverted = act_on_culprit(ops, wt, evidence, sha, report, result, groups, cost, suspects)
                 except Exception as error:  # noqa: BLE001 - the failure issue below must still be filed
