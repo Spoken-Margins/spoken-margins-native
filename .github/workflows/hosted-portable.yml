@@ -22,6 +22,23 @@
 # and its two parents (the base, then the PR's head). The runner reads it from the check run and matches the tree
 # against its own merge (lane-runner.py hosted_fast_checks).
 #
+# Scope (#2596): the two Mac jobs wait for the `scope` job (hosted Linux, about 20 seconds), which asks
+# scripts/test-scope.py mac_checks_required whether the diff reaches a Swift input. If every changed path is one the
+# Mac checks can ignore (docs, ops, most scripts, non-Swift tooling), both Mac jobs are skipped and cost no hosted-Mac
+# minute; lane-runner.py asks the same function and then merges on the portable check alone. A skipped job is not a
+# pass: its check run ends `skipped`, which the runner never reads as one. Unknown paths, a dispatch without a base
+# and any trouble reading the diff all say `mac=true`.
+#
+# One Mac job (#2596): with LANE_HOSTED_MAC_REST `on`, `mac-rest` runs SessionKit's build and SessionKitCoreTests
+# (`--plan fast-hosted-sessionkit`) and then `--plan fast-mac-rest` on the same hosted Mac, and records one notice,
+# for both plans (`plan=fast-hosted-sessionkit+fast-mac-rest`), under its stable check name. The `sessionkit` job above then does not run (a second machine
+# start, checkout, cache restore and SessionKit build for about the same tests), and the runner requires only the
+# portable check and "hosted fast: Mac rest". With the variable off, `sessionkit` runs alone as before.
+#
+# When the Linux job fails, the `stop-macs-on-red` job cancels the run, so the Mac jobs of the merged layout (`scope`,
+# then `mac-rest`, or `sessionkit` with the variable off) stop or leave the queue (#2596): a PR the cheap job
+# already fails has no use for a hosted-Mac slot, and the org has five of them.
+#
 # Dispatch it by hand on any branch with `gh workflow run hosted-portable.yml --ref <branch>`.
 #
 # No secrets, a read-only token, no pull_request_target, no Git LFS (the voice models stay pointers; the
@@ -145,11 +162,52 @@ jobs:
           seconds=$(( $(date +%s) - STARTED ))
           echo "hosted-portable took ${seconds}s on ubuntu-latest." | tee -a "$GITHUB_STEP_SUMMARY"
 
-  sessionkit:
-    name: 'hosted fast: SessionKit core'
+  scope:
+    # #2596: one cheap Linux job decides whether the Mac jobs below have anything to test. Runs the PR's own merge
+    # commit's copy of test-scope.py with no credentials and no write token; its only output is `mac`.
+    name: 'hosted fast: scope'
     if: >-
       github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mac: ${{ steps.scope.outputs.mac }}
+      reason: ${{ steps.scope.outputs.reason }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Do the Mac checks have anything to test?
+        id: scope
+        env:
+          BASE: ${{ inputs.base }}
+        run: |
+          # A PR: the merge commit's parent 1 is the base, parent 2 the PR's head (the changed-files rule of the
+          # Mac rest job). A dispatch with a base: the dispatched commit against that base's tip. A dispatch without
+          # a base has no diff to look at, so the Mac checks run.
+          list="$RUNNER_TEMP/changed-files.txt"
+          if git rev-parse --verify --quiet HEAD^2 > /dev/null; then
+            git diff --name-only --no-renames "$(git merge-base HEAD^1 HEAD^2)" HEAD^2 > "$list" || rm -f "$list"
+          elif [ -n "$BASE" ]; then
+            git fetch --no-tags origin "+refs/heads/$BASE:refs/remotes/origin/$BASE" &&
+              git diff --name-only --no-renames "$(git merge-base HEAD "refs/remotes/origin/$BASE")" HEAD > "$list" || rm -f "$list"
+          fi
+          if [ -s "$list" ]; then
+            python3 scripts/test-scope.py --mac-required "$list" | tee -a "$GITHUB_OUTPUT" || echo "mac=true" >> "$GITHUB_OUTPUT"
+          else
+            { echo "mac=true"; echo "reason=no changed-file list, so the Mac checks run"; } | tee -a "$GITHUB_OUTPUT"
+          fi
+          grep -q '^mac=' "$GITHUB_OUTPUT" || echo "mac=true" >> "$GITHUB_OUTPUT"
+
+  sessionkit:
+    name: 'hosted fast: SessionKit core'
+    needs: scope
+    # Not with LANE_HOSTED_MAC_REST `on`: the mac-rest job below runs these tests then (#2596).
+    if: >-
+      !cancelled() && needs.scope.result != 'skipped' && needs.scope.outputs.mac != 'false' && vars.LANE_HOSTED_MAC_REST != 'on' && (github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on'))
     # The image and Xcode the lane Mac builds with (hosted-app-macos.yml says why), so the two can't disagree.
     runs-on: xcode-27
     timeout-minutes: 40
@@ -225,14 +283,16 @@ jobs:
     # Mac's), and RealSpeechTranscriberTests skipped, with no en_US SpeechTranscriber model. macos-26 matches the lane
     # Mac's OS but has no Xcode 27, and Xcode 26.6 does not compile SessionKit's tests (run 39836269608). #2469 tracks it.
     name: 'hosted fast: Mac rest'
+    needs: scope
     if: >-
-      github.event_name != 'pull_request' ||
+      !cancelled() && needs.scope.result != 'skipped' && needs.scope.outputs.mac != 'false' && (github.event_name != 'pull_request' ||
       ((github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on') &&
-       vars.LANE_HOSTED_MAC_REST == 'on')
+       vars.LANE_HOSTED_MAC_REST == 'on'))
     runs-on: xcode-27
-    # SessionKit's build (cached dependencies), its two serial targets, and the compatibility checks when the diff
-    # reaches them (the lane's own budget for those is 40 minutes).
-    timeout-minutes: 60
+    # SessionKit's build (cached dependencies) and SessionKitCoreTests (the `sessionkit` job's 40 minutes before they
+    # moved here, #2596), its two serial targets, and the compatibility checks when the diff reaches them (the lane's
+    # own budget for those is 40 minutes).
+    timeout-minutes: 75
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
       HOMEBREW_NO_AUTO_UPDATE: 1
@@ -286,6 +346,11 @@ jobs:
           restore-keys: sessionkit-macos-xcode27.0-
       - name: Python tools
         run: bash scripts/bootstrap-python-tools.sh
+      # Before BlackHole, as the `sessionkit` job ran them (#2596). The second plan's build is then incremental.
+      - name: SessionKit build and SessionKitCoreTests
+        run: |
+          swift --version
+          .venv/bin/python scripts/verify-tests.py --plan fast-hosted-sessionkit
       # Hosted Macs have no audio hardware, and AVPlayer's clock does not move without a running output (#909).
       # BlackHole gives Core Audio one. brew refuses to run as root; the cask's installer asks for sudo itself,
       # which is passwordless on hosted runners. verify-tests.py checks the output starts before the audio tests.
@@ -325,13 +390,36 @@ jobs:
         if: success() && (github.event_name == 'pull_request' || inputs.base != '')
         run: |
           # GitHub's merge commit: parent 1 is the base, parent 2 the PR's head. The runner matches the tree.
+          # Both plans in the name: an older job's plan=fast-mac-rest ran no core tests and must not stand for them.
           parents=$(git cat-file -p HEAD | awk '/^parent /{print $2}' | tr '\n' ' ')
-          echo "::notice title=lane-hosted-tested::plan=fast-mac-rest tree=$(git rev-parse 'HEAD^{tree}') parents=$parents"
+          echo "::notice title=lane-hosted-tested::plan=fast-hosted-sessionkit+fast-mac-rest tree=$(git rev-parse 'HEAD^{tree}') parents=$parents"
       - name: Report time
         if: always()
         run: |
           seconds=$(( $(date +%s) - STARTED ))
           echo "hosted fast Mac rest took ${seconds}s on xcode-27." | tee -a "$GITHUB_STEP_SUMMARY"
+
+  stop-macs-on-red:
+    # #2596: the org's hosted-Mac pool is five jobs wide. In the 24 h to 2026-10-24, 22 Mac jobs of this workflow kept
+    # running (or sat queued) for 398 Mac-minutes after the Linux job of the same run had failed, and the author's
+    # next push cancelled them: 9% of the day's Mac minutes, which were other PRs' queue wait. When `portable` ends
+    # red this job cancels the run. The failed check keeps its `failure` conclusion, which is what the lane runner
+    # reads (hosted_fast_records); the Mac checks end `cancelled`. No PR code runs here: the only step is `gh run
+    # cancel`, with a token that may write to Actions and nothing else.
+    name: stop-macs-on-red
+    needs: portable
+    if: always() && needs.portable.result == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the Mac jobs of this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN: ${{ github.run_id }}
+        run: gh run cancel "$RUN" || true
 
   owner-tap-alert:
     # When the jobs above finish, tell the owner's phone if this PR now waits only for his merge tap (#2047, #2442):
@@ -343,7 +431,7 @@ jobs:
     # no credentials kept, never from the PR, and this is the only job here whose token may comment. A base that
     # doesn't have the script yet skips quietly. Pull requests from this repository only.
     name: owner-tap-alert
-    needs: [portable, sessionkit, mac-rest]
+    needs: [portable, scope, sessionkit, mac-rest]
     if: always() && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5

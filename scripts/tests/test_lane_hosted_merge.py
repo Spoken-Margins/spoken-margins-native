@@ -18,9 +18,10 @@ FakeGitHub, HEAD, MERGE, lane, comment = (runner_tests.FakeGitHub, runner_tests.
 scope = scope_tests.scope
 ON = {'LANE_HOSTED_FAST': 'on', 'LANE_HOSTED_MAC_REST': 'on'}
 PAIR_ONLY = {'LANE_HOSTED_FAST': 'on'}  # today's switches until #2469: the hosted pair, Mac rest on the build Mac
-CHECKS = {**lane.HOSTED_FAST_CHECKS, **lane.HOSTED_REST_CHECK}
+CHECKS = lane.HOSTED_MERGED_CHECKS  # #2596: SessionKit core runs inside the Mac-rest job, so two checks stand for a Swift diff
 STOOD = {name: {'plan': plan, 'tree': 'a' * 40, 'base': MERGE, 'head': HEAD, 'url': f'https://example.test/{plan}',
-                'runner': 'GitHub-hosted'} for name, plan in CHECKS.items()}
+                'runner': 'GitHub-hosted'} for name, plan in {**CHECKS, **lane.HOSTED_FAST_CHECKS}.items()}
+# STOOD also holds the pair's SessionKit core record, which only the `sessionkit` job (LANE_HOSTED_MAC_REST off) writes.
 RUNNING = f'"hosted fast: Mac rest" {lane.NOT_FINISHED} on {HEAD[:7]}'
 STALE = f'"hosted fast: portable" tested it on main at {MERGE[:7]}, and main since: its commits touch build inputs (x)'
 FAILED = f'"hosted fast: Mac rest" ended failure on {HEAD[:7]}'
@@ -78,7 +79,7 @@ class HostedRestChecksTests(unittest.TestCase):
         """hosted_rest_checks over a scripted sequence of (found, why) answers, on a fake clock."""
         answers, clock, dispatched = list(answers), Clock(), []
         def once(*args, **kwargs):
-            # all three checks, the Mac rest among them, unless the caller asked for the pair alone
+            # the portable check and the Mac rest, unless the caller asked for the pair alone
             self.assertEqual(set(args[-1]), set(CHECKS if checks is None else checks))
             if seen is not None:
                 seen.append(args[4])  # the base tip this poll compared the checks with
@@ -225,9 +226,11 @@ class MacRestIsAHardConditionTests(unittest.TestCase):
 
     def test_a_mac_rest_record_for_another_head_tree_or_plan_never_stands(self):
         rest = 'hosted fast: Mac rest'
-        for name, record in (('another head', ('fast-mac-rest', self.TREE, MERGE, 'b' * 40)),
-                             ('another tree', ('fast-mac-rest', 'f' * 40, MERGE, HEAD)),
-                             ('another plan', ('fast-portable', self.TREE, MERGE, HEAD))):
+        plan = CHECKS[rest]
+        for name, record in (('another head', (plan, self.TREE, MERGE, 'b' * 40)),
+                             ('another tree', (plan, 'f' * 40, MERGE, HEAD)),
+                             ('another plan', ('fast-portable', self.TREE, MERGE, HEAD)),
+                             ('the old job, with no core tests', ('fast-mac-rest', self.TREE, MERGE, HEAD))):
             with self.subTest(name):
                 found, why = self.stands(self.all_three(**{rest: record}))
                 self.assertIsNone(found)

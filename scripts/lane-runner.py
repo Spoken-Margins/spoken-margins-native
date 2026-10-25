@@ -140,6 +140,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import datetime
 import functools
 import hashlib
 import json
@@ -573,6 +574,112 @@ def log_recovered_stalls(evidence: Path, pr: int, head: str, report_url: str, po
             except Exception as error:  # noqa: BLE001 - the report already says the stall happened
                 print(f'Could not log the recovered stall on #{STALL_ISSUE}: {error!r}', flush=True)
     return posted
+
+
+TALLY_ISSUE = 2176  # retry-passes are tallied here (owner, 2026-10-24); same issue and line format as the hosted integration run
+TALLY_PREFIX = 'flake-tally:'
+TALLY_WINDOW_DAYS = 7
+TALLY_THRESHOLD = 3
+TALLY_BOT = 'github-actions[bot]'
+TALLY_TRUSTED = ('OWNER', 'MEMBER', 'COLLABORATOR')
+
+
+def retry_passes(evidence: Path) -> list[str]:
+    """Every test that failed and then passed on a rerun, from the verify-* manifests under <evidence>
+    (a fresh-clone rerun is evidence only)."""
+    return sorted({t for output in evidence.glob('verify-*') if not output.name.endswith('-fresh')
+                   for step in _read_manifest(output).get('steps', []) for t in step.get('passed_on_retry') or []})
+
+
+def _tally_trusted(item: dict) -> bool:
+    """A comment or issue from a collaborator or the workflow's bot (#1822). The bot's author_association is NONE,
+    so it is matched by login; the lane opens its flake issues and posts its tallies as the bot."""
+    return (item.get('user') or {}).get('login') == TALLY_BOT or item.get('author_association') in TALLY_TRUSTED
+
+
+def tally_counts(comments: list[dict], now: datetime.datetime) -> dict[str, list[str]]:
+    """Retry-passes per test in the last 7 days -> their run ids. Only comments from a collaborator or the workflow's
+    bot count (#1822), so a stranger's look-alike line can't open an issue. The same run counts once per test.
+    The test is everything between the prefix and the last three fields, so a name with spaces still counts."""
+    seen: dict[str, dict[str, None]] = {}
+    window = datetime.timedelta(days=TALLY_WINDOW_DAYS)
+    for comment in comments:
+        if not _tally_trusted(comment):
+            continue
+        first = (comment.get('body') or '').splitlines()[:1]
+        parts = first[0].split() if first else []
+        if len(parts) < 5 or parts[0] != TALLY_PREFIX:
+            continue
+        try:
+            when = datetime.datetime.strptime(parts[-1], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
+        except ValueError:
+            continue
+        if now - window <= when <= now:
+            seen.setdefault(' '.join(parts[1:-3]), {})[parts[-2]] = None
+    return {test: list(runs) for test, runs in seen.items()}
+
+
+def log_retry_passes(evidence: Path, repo: str, head: str, run_id: str, tally, now=None) -> list[str]:
+    """One comment per retry-pass on #2176, then a `ready` Showcase issue for any test with 3 or more retry-passes in
+    7 days (owner, 2026-10-24; #2596). `tally` offers post(body), comments(), open_markers() and open_issue(title, body).
+
+    Best effort like log_recovered_stalls: the report is already posted, and nothing here can change the verdict.
+    Returns the issues opened.
+    """
+    opened: list[str] = []
+    try:
+        tests = retry_passes(evidence)
+        if not tests:
+            return opened
+        now = now or datetime.datetime.now(datetime.timezone.utc)
+        stamp = now.strftime('%Y-%m-%dT%H:%M:%SZ')
+        for test in tests:
+            tally.post(f'{TALLY_PREFIX} {test} {head[:7]} {run_id} {stamp}\n\n`{test}` passed on retry in lane run {run_id}.')
+        counts = tally_counts(tally.comments(), now)
+        marked = tally.open_markers()
+        for test in tests:
+            if len(counts.get(test, [])) >= TALLY_THRESHOLD and test not in marked:
+                name = test.rsplit('/', 1)[-1].removesuffix('()')
+                links = '\n'.join(f'- https://github.com/{repo}/actions/runs/{r}' for r in counts[test])
+                opened.append(tally.open_issue(
+                    'Flaky: ' + name[:110],
+                    f'<!-- flake-test: {test.replace("-->", "")} -->\n\n`{test}` failed on its first run and passed on a '
+                    f're-run in {len(counts[test])} runs in the last 7 days (tally on #{TALLY_ISSUE}). The run still counted '
+                    f'as a pass (owner, 2026-10-24), so fix the test or the code under it rather than leave it to retry.\n\n'
+                    f'Runs:\n{links}\n'))
+    except Exception as error:  # noqa: BLE001 - the report already names the retry-pass
+        print(f'Could not tally the retry-passes on #{TALLY_ISSUE}: {error!r}', flush=True)
+    return opened
+
+
+class RepoTally:
+    """log_retry_passes's GitHub side: #2176's comments and the open flake issues."""
+
+    def __init__(self, repo: str):
+        self.repo = repo
+        self.client = Repo(repo)
+
+    def post(self, body: str) -> None:
+        self.client.comment(TALLY_ISSUE, body)
+
+    def comments(self) -> list[dict]:
+        return self.client.issue_comments(TALLY_ISSUE)
+
+    def open_markers(self) -> set[str]:
+        lines = self.client.api('--paginate', '--jq',
+                                '.[] | select(.pull_request == null) | {body, author_association, '
+                                'user: {login: .user.login}} | @json',
+                                f'repos/{self.repo}/issues?state=open&per_page=100')
+        issues = [json.loads(line) for line in lines.splitlines() if line.strip()]
+        return {m for issue in issues if _tally_trusted(issue)
+                for m in re.findall(r'<!-- flake-test: (.+?) -->', issue.get('body') or '')}
+
+    def open_issue(self, title: str, body: str) -> str:
+        done = subprocess.run(['gh', 'issue', 'create', '-R', self.repo, '--title', title, '--body', body,
+                               '--label', 'ready', '--milestone', 'Showcase'], capture_output=True, text=True)
+        if done.returncode:
+            raise RuntimeError(done.stderr.strip()[:200])
+        return done.stdout.strip()
 
 
 def flush_ledger(pr: int, head: str, post) -> list[str]:
@@ -1056,7 +1163,16 @@ HOSTED_FAST_CHECKS = {'hosted fast: portable': 'fast-portable',
 # #2459: the third hosted check, --plan fast-mac-rest on a GitHub-hosted Mac (hosted-portable.yml `mac-rest`). With
 # it, the automerge job runs on hosted Linux and runs no test itself. Anything but `on` keeps merging on the build Mac.
 HOSTED_REST_SWITCH = 'LANE_HOSTED_MAC_REST'
-HOSTED_REST_CHECK = {'hosted fast: Mac rest': 'fast-mac-rest'}
+# The plan it records names both plans it runs (#2596): the job before SessionKit core moved into it recorded
+# fast-mac-rest with no core tests, so such a record, still on a PR from before the move, must not stand for them.
+HOSTED_REST_CHECK = {'hosted fast: Mac rest': 'fast-hosted-sessionkit+fast-mac-rest'}
+# #2596: a diff with no Swift inputs needs only this one. The two Mac jobs are skipped for it (hosted-portable.yml's
+# `scope` job asks the same test-scope.py function), so the runner must not wait for them or fall back to the build Mac.
+HOSTED_PORTABLE_CHECK = {'hosted fast: portable': 'fast-portable'}
+# SessionKit core and Mac rest run as one hosted Mac job (#2596): with LANE_HOSTED_MAC_REST `on` a Swift diff needs only
+# these two checks. The Mac-rest job records plan fast-hosted-sessionkit+fast-mac-rest after running both. The pair
+# (HOSTED_FAST_CHECKS) is what the `sessionkit` job still records with the variable off.
+HOSTED_MERGED_CHECKS = {**HOSTED_PORTABLE_CHECK, **HOSTED_REST_CHECK}
 HOSTED_TESTED_TITLE = 'lane-hosted-tested'
 HOSTED_TESTED = re.compile(r'^plan=(\S+) tree=([0-9a-f]{40}) parents=([0-9a-f]{40}) ([0-9a-f]{40})\s*$')
 
@@ -1070,6 +1186,26 @@ def hosted_rest_on(env=None) -> bool:
     LANE_HOSTED_MAC_REST is `on`. test-scope.py's hosted_merge_routing reads the same two variables."""
     env = os.environ if env is None else env
     return hosted_fast_on(env) and env.get(HOSTED_REST_SWITCH, '').strip().lower() == 'on'
+
+
+def hosted_check_set(tree: Path, base: str) -> tuple[dict, str | None]:
+    """(the hosted checks a merge waits for, why the Mac ones are not among them or None) for the PR in <tree>.
+
+    #2596: when every changed path is one the Mac checks can ignore (test-scope.py mac_checks_required, from the
+    base branch like the other policies), only the portable check is required, and the reason is printed. Anything
+    that goes wrong, or a base without the function yet, requires all three: a skipped Mac job is never read as a pass
+    (a "skipped" conclusion still stops hosted_fast_records), only left out when the diff cannot need it."""
+    full = HOSTED_MERGED_CHECKS
+    try:
+        policy = base_policy(tree, base, 'scripts/test-scope.py')
+        required = getattr(policy, 'mac_checks_required', None)
+        if required is None:
+            return full, None
+        paths, _ = committed_changes(tree, base)
+        needed, why = required(paths)
+    except Exception:  # noqa: BLE001 - any doubt requires the Mac checks
+        return full, None
+    return (full, None) if needed else (HOSTED_PORTABLE_CHECK, why)
 
 
 def hosted_tested(annotations: list[dict]) -> dict | None:
@@ -1193,6 +1329,9 @@ def _fast_checks_stand(github, tree: Path, base: str, head: str, base_sha: str, 
 def hosted_fast_ran(found: dict) -> str:
     bases = sorted({record['base'][:7] for record in found.values()})
     where = sorted({record.get('runner', 'GitHub-hosted') for record in found.values()})
+    if set(found) == set(HOSTED_PORTABLE_CHECK):
+        return (f'host tests ({" and ".join(where)}: --plan fast-portable with next at {", ".join(bases)}; the SessionKit '
+                'and Mac-rest checks were not required: no Swift inputs; none on the Mac)')
     if set(HOSTED_REST_CHECK) <= set(found):
         return (f'host tests ({" and ".join(where)}: --plan fast-portable, SessionKitCoreTests and --plan fast-mac-rest '
                 f'with next at {", ".join(bases)}; none on the Mac)')
@@ -1250,12 +1389,12 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
                        records=hosted_fast_records, wait: float | None = None, poll: float = HOSTED_FAST_POLL,
                        grace: float = HOSTED_MISSING_GRACE, clock=time.monotonic, sleep=time.sleep,
                        out=sys.stdout, checks: dict | None = None, newest_base=None) -> tuple[dict | None, str]:
-    """(all three hosted checks standing for <head> merged onto <base> at <base_sha>, '') or (None, why not), for the
+    """(the portable and Mac-rest hosted checks standing for <head> merged onto <base> at <base_sha>, '') or (None, why not), for the
     hosted automerge job (#2459). It never runs a test. While a check is still running, or missing within <grace>,
     it waits, up to <wait> seconds (HOSTED_REST_WAIT in a lane job, else none). When one passed on an older next that
     has since moved in ways that matter, it calls dispatch() (up to HOSTED_REDISPATCHES times: a fresh run of hosted-portable.yml on the PR's
     branch, merged onto <base>) and waits for that. alive() names why to stop (the PR moved on, say) or is falsy.
-    checks: the checks to wait for, all three by default; the hosted pair alone (HOSTED_FAST_CHECKS) when the hosted
+    checks: the checks to wait for, the portable check and "hosted fast: Mac rest" by default (#2596); the hosted pair alone (HOSTED_FAST_CHECKS) when the hosted
     job only waits for them before handing the run to the build Mac (LANE_HOSTED_MAC_REST off).
     newest_base: a callable that fetches and returns the base branch's tip. Each poll compares the checks with it, not
     with the tip this job started on, because a fresh run is merged onto the newest tip and main moves while the job
@@ -1263,7 +1402,7 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
     env = os.environ if env is None else env
     if wait is None:
         wait = HOSTED_REST_WAIT if env.get('GITHUB_ACTIONS') == 'true' else 0
-    checks = {**HOSTED_FAST_CHECKS, **HOSTED_REST_CHECK} if checks is None else checks
+    checks = HOSTED_MERGED_CHECKS if checks is None else checks
     started = clock()
     deadline = started + wait
     dispatches, dispatched_at, running_seen = 0, started, False
@@ -1846,6 +1985,7 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                 f'Merge {base} into your branch and push; the automerge label runs it again.']
         rest = rest_hosted  # merge on the three hosted checks, testing nothing here (#2459)
         pair = False  # wait here for the hosted pair, then hand the run to the build Mac (#2459, Mac rest off)
+        only_portable = None  # why the Mac checks are not required for this diff (#2596), when they are not
         if hosted:
             # Recheck with the current base's policy on every merge attempt, including reused checks.
             policy = base_policy(ROOT, base, 'scripts/test-scope.py')
@@ -1857,6 +1997,12 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                 else:
                     return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', [
                         'The current diff requires the Mac; remove and re-add automerge to route it again.']
+        if (rest or pair) and hosted_fast_on():
+            _, only_portable = hosted_check_set(ROOT, base)
+            if only_portable:  # merge on the portable check alone, with the Mac off: the Mac jobs were skipped
+                rest, pair = True, False
+                if only_portable not in notes:
+                    notes.append(only_portable)
         if skipped is None:
             if rest or pair:
                 held = t3_gate(comments) if attempt == 1 else None
@@ -1875,7 +2021,8 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                                                 dispatch=lambda: github.dispatch_hosted_checks(pull['head']['ref'],
                                                                                                base),
                                                 newest_base=newest_base,
-                                                **({'checks': HOSTED_FAST_CHECKS} if pair else {}))
+                                                **({'checks': HOSTED_FAST_CHECKS} if pair else
+                                                   {'checks': HOSTED_PORTABLE_CHECK} if only_portable else {}))
                 if why.startswith(MOVED_ON):
                     return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', notes + [f'not merged: {why}']
                 if not found:
@@ -2056,7 +2203,8 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
         rest = False
         if reason and hosted_rest_on():
             found, _ = hosted_rest_checks(github, ROOT, base, head, base_sha, alive=lambda: None,
-                                          dispatch=lambda: 'not from here', wait=0)
+                                          dispatch=lambda: 'not from here', wait=0,
+                                          checks=hosted_check_set(ROOT, base)[0])
             rest = found is not None
             reason = None if rest else reason
         if reason and hosted:  # the hosted job never runs the Mac's host tests: the Mac's release run does
@@ -2573,8 +2721,6 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
                            f'{found["passed"]} test(s), which counts as a PASS (owner\'s call 2026-10-11). Logged '
                            f'on #{STALL_ISSUE}. evidence: {output}/{found["step"]}-stall-{stall.get("attempt")}/')
         retried = sorted({t for step in manifest.get('steps', []) for t in step.get('passed_on_retry') or []})
-        if retried:  # owner, 2026-10-24 (#2596): fail-then-pass on a rerun is a pass, and the report names it
-            details.append(f'{plan}: passed on retry: {", ".join(retried)}')
         for test in summary['failed'][:10]:
             details.append(f'{test} — expected: passes. observed: failed. evidence: {output}/tests.xcresult')
         if summary['out_of_time']:
@@ -2589,6 +2735,8 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
         if manifest.get('status') != 'verified' and not summary['failed']:
             details.append(f'{plan}: {manifest.get("error") or manifest.get("status")}. evidence: {output}/manifest.json')
             details += [f'{plan}: {line}' for line in failed_step_errors(manifest, output)]
+        # owner, 2026-10-24 (#2596): fail-then-pass on a rerun is a pass, and every report names it, or says none
+        details.append(f'{plan}: passed on retry: {", ".join(retried) if retried else "none"}')
         if summary['flood']:
             skipped = [p for p, _ in plans[position + 1:]]
             if skipped:
@@ -3695,6 +3843,7 @@ def main(argv=None) -> int:
     if request['tier'] == 'T3':
         log_recovered_stalls(evidence, args.pr, head, t3_url, lambda text: Repo(repo).comment(STALL_ISSUE, text),
                              verdict)
+        log_retry_passes(evidence, repo, head, os.environ.get('GITHUB_RUN_ID') or f'pr{args.pr}', RepoTally(repo))
     record_outcome(verdict, is_hold(verdict, moved + details))
     _, desk_waiting = pending_requests(github.comments())
     if explicit:

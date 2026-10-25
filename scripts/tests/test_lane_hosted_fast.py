@@ -7,6 +7,7 @@ ways that matter, a check that didn't pass), and with the switch off nothing cha
 (#2160) was read here until #2442 retired it.
 """
 import contextlib
+import copy as copy_module
 import io
 import json
 import re
@@ -15,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+
+import yaml
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -317,7 +320,8 @@ class HostedChecksStandTests(unittest.TestCase):
 
 class RunAutomergeTests(unittest.TestCase):
     SCOPE = {'tier': 'T2', 'why': ['App/x.swift']}
-    FOUND = {'hosted fast: portable': {'plan': 'fast-portable', 'tree': 'e' * 40, 'base': 'd' * 40, 'head': 'a' * 40}}
+    FOUND = {name: {'plan': plan, 'tree': 'e' * 40, 'base': 'd' * 40, 'head': 'a' * 40}
+             for name, plan in lane.HOSTED_FAST_CHECKS.items()}
 
     def run_it(self, **kwargs):
         calls = []
@@ -460,15 +464,45 @@ class WorkflowTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertIn(f"name: '{name}'", self.hosted)
                 self.assertIn(f'::notice title={lane.HOSTED_TESTED_TITLE}::plan={plan} tree=', self.hosted)
-                self.assertIn(f'--plan {plan}', self.hosted)
+                for part in plan.split('+'):  # Mac rest records both plans it runs (#2596)
+                    self.assertIn(f'--plan {part}', self.hosted)
 
     def test_both_jobs_run_on_a_pr_only_from_this_repo_and_only_with_the_switch_on(self):
         guard = ("(github.event.pull_request.head.repo.full_name == github.repository && "
                  f"vars.{lane.HOSTED_FAST_SWITCH} == 'on')")
         # The pair, and the Mac-rest check (#2459), which runs on a PR only with LANE_HOSTED_MAC_REST `on` too.
-        self.assertEqual(self.hosted.count(guard), len(lane.HOSTED_FAST_CHECKS) + len(lane.HOSTED_REST_CHECK))
+        # plus the `scope` job (#2596), which has the same guard
+        self.assertEqual(self.hosted.count(guard), len(lane.HOSTED_FAST_CHECKS) + len(lane.HOSTED_REST_CHECK) + 1)
         self.assertIn(f"vars.{lane.HOSTED_REST_SWITCH} == 'on')", self.hosted)
         self.assertNotIn('pull_request_target:', self.hosted)
+
+    def test_a_red_portable_job_cancels_the_run_so_its_mac_jobs_free_their_slots(self):
+        # #2596: the cancel job runs on Linux, only after `portable` ended `failure`, and holds no more than actions: write.
+        # The Mac jobs may wait only for the ~20 s `scope` job: the lane runner gives a missing check only 5 minutes.
+        jobs = yaml.safe_load(self.hosted)['jobs']
+        stop = jobs['stop-macs-on-red']
+        self.assertEqual(stop['needs'], 'portable')
+        self.assertEqual(stop['runs-on'], 'ubuntu-latest')
+        self.assertEqual(stop['permissions'], {'actions': 'write'})
+        self.assertIn("needs.portable.result == 'failure'", stop['if'])
+        self.assertIn('gh run cancel', stop['steps'][0]['run'])
+        for name in ('sessionkit', 'mac-rest'):
+            self.assertEqual(self.slow_needs(jobs[name]), [], name)
+        # Only `scope` (a Linux job of about 20 seconds, #2650) may come first; any other need fails the check.
+        for allowed in ('scope', ['scope']):
+            copy = copy_module.deepcopy(jobs['mac-rest'])
+            copy['needs'] = allowed
+            self.assertEqual(self.slow_needs(copy), [], allowed)
+        for slow in ('portable', ['scope', 'portable'], ['sessionkit']):
+            copy = copy_module.deepcopy(jobs['mac-rest'])
+            copy['needs'] = slow
+            self.assertNotEqual(self.slow_needs(copy), [], slow)
+
+    @staticmethod
+    def slow_needs(job):
+        needs = job.get('needs', [])
+        needs = [needs] if isinstance(needs, str) else list(needs)
+        return [name for name in needs if name != 'scope']
 
     def test_no_workflow_runs_on_the_vps_test_runner_and_only_the_lane_open_pings_on_the_vps(self):
         # #2442: CI left the owner's VPS. linux-t1.yml is gone; the lane-open pings keep sm-vps for their shared state.

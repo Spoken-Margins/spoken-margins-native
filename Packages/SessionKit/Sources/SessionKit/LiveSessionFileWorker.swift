@@ -65,10 +65,10 @@ public actor LiveSessionFileWorker {
     /// Application Support: the store is `LiveSession/…` under it, and recording paths ("SpokenMargins/interjections/…")
     /// are relative to it.
     public nonisolated let root: URL?
-    private let collection: LiveSessionCollection?
+    let collection: LiveSessionCollection?
     /// The store in memory, read once (after taking in `current.json`) and written through.
     private var cache: [String: LiveSession]?
-    private var deletions = LiveSessionFiling.Deletions()
+    var deletions = LiveSessionFiling.Deletions()
     private var watchInbox: WatchMarginInbox?
     /// The newest screen save written, per session. A save the screen made earlier that arrives later is dropped,
     /// so an older copy never overwrites a newer one.
@@ -78,6 +78,33 @@ public actor LiveSessionFileWorker {
     /// screen's reconcile never drops a Margin or its words. Each entry is cleared once a screen save carries it.
     private var unseenMargins: [String: [String: LiveSessionMargin]] = [:]
     private var unseenTranscripts: [String: [String: String]] = [:]
+    /// A start, End or Resume from the Watch that the screen's copy may not have taken in yet, per session (#2487
+    /// slice 1b). A screen save that lacks it gets it back, so a stale save never reopens or re-ends a session.
+    var unseenLifecycle: [String: Lifecycle] = [:]
+
+    struct Lifecycle: Equatable {
+        var startedAt: Date
+        var endedAt: Date?
+        var endReason: String?
+        var endNote: String?
+        var resumedAt: Date?
+
+        init(_ session: LiveSession) {
+            startedAt = session.startedAt
+            endedAt = session.endedAt
+            endReason = session.endReason
+            endNote = session.endNote
+            resumedAt = session.resumedAt
+        }
+
+        func apply(to session: inout LiveSession) {
+            session.startedAt = startedAt
+            session.endedAt = endedAt
+            session.endReason = endReason
+            session.endNote = endNote
+            session.resumedAt = resumedAt
+        }
+    }
     private let makeId: @Sendable () -> String
 
     public init(root: URL?, makeId: @escaping @Sendable () -> String = { UUID().uuidString.lowercased() }) {
@@ -109,7 +136,7 @@ public actor LiveSessionFileWorker {
     // MARK: Reading
 
     @discardableResult
-    private func sessions() -> [String: LiveSession] {
+    func sessions() -> [String: LiveSession] {
         if let cache { return cache }
         guard let collection else { return [:] }
         try? collection.migrateLegacyCurrent()
@@ -188,6 +215,17 @@ public actor LiveSessionFileWorker {
         let elsewhere = Set(sessions().values.filter { $0.id != session.id }.flatMap { $0.margins.map(\.id) })
         merged.margins.removeAll { deletions.marginIds.contains($0.id) || elsewhere.contains($0.id) }
         if merged.isQuick == true, merged.margins.isEmpty { return false }
+        // A new named session: the later start ends the earlier one (slice 1b; DESIGN default 1).
+        if sessions()[merged.id] == nil, LiveSessionWatchSessions.isRunningNamed(merged) {
+            let all = LiveSessionWatchSessions.phoneStarted(merged, sessions: sessions())
+            if all[0].endedAt != nil { unseenLifecycle[merged.id] = Lifecycle(all[0]) }
+            for other in all.dropFirst() {
+                if let before = sessions()[other.id] { noteUnseen(from: before, to: other) }
+                unseenLifecycle[other.id] = Lifecycle(other)
+            }
+            try persist(all)
+            return true
+        }
         try persist([merged])
         return true
     }
@@ -332,17 +370,22 @@ public actor LiveSessionFileWorker {
             }
             return nil
         }
+        // The Watch's own checksum, when it sent one, so a damaged copy is caught and sent again (slice 1b).
         let metadata = WatchMarginTransferMetadata(
-            captureId: captureId, audioFileExtension: "m4a", byteCount: digest.byteCount, sha256: digest.sha256,
+            captureId: captureId, audioFileExtension: "m4a", byteCount: digest.byteCount,
+            sha256: transfer.sha256.isEmpty ? digest.sha256 : transfer.sha256.lowercased(),
             durationMs: transfer.durationMs, recordedAt: transfer.wallStart, anchor: nil
         )
         guard let receipt = try? inbox.receive(file: audioURL, metadata: metadata) else { return nil }
         guard receipt.confirmsDelivery else {
             return WatchMarginAnswer(receipt: receipt, outcome: .rejected, reason: "The recording arrived damaged. Send it again.")
         }
+        // The Watch's clock, corrected by its measured offset; the raw time is kept as evidence (DESIGN section 4 point 8).
+        let corrected = LiveSessionWatchSessions.phoneTime(transfer.wallStart, clock: transfer.clock)
+        let offset = transfer.clock.flatMap { $0.isFresh(at: transfer.wallStart) ? $0.offset : nil }
         let decision = LiveSessionFiling.decide(
-            .init(marginId: transfer.marginId, markedAt: transfer.wallStart), sessions: candidates(), deletions: deletions,
-            playerRuns: playerRuns, now: now
+            .init(marginId: transfer.marginId, markedAt: transfer.wallStart, clockOffset: offset, sessionId: transfer.sessionId),
+            sessions: candidates(), deletions: deletions, playerRuns: playerRuns, now: now
         )
         switch decision {
         case .alreadyFiled:
@@ -367,14 +410,16 @@ public actor LiveSessionFileWorker {
         }
         if case let .playerItem(itemId, positionMs) = decision {
             pass.placements.append(PlayerPlacement(
-                marginId: transfer.marginId, itemId: itemId, positionMs: positionMs, markedAt: transfer.wallStart,
+                marginId: transfer.marginId, itemId: itemId, positionMs: positionMs, markedAt: corrected.time,
                 audioPath: transfer.audioPath, durationMs: transfer.durationMs, spokenOn: "watch"
             ))
             try? inbox.markIncorporated(captureId)
             dropStoredAudio(inbox, captureId)
             return WatchMarginAnswer(receipt: receipt, outcome: .filed, filedIn: "what was playing", positionMs: positionMs)
         }
-        var margin = LiveSessionMargin(id: transfer.marginId, text: "", markedAt: transfer.wallStart)
+        var margin = LiveSessionMargin(id: transfer.marginId, text: "", markedAt: corrected.time)
+        margin.deviceMarkedAt = transfer.wallStart
+        margin.clockNote = corrected.note
         margin.audioPath = transfer.audioPath
         margin.durationMs = transfer.durationMs
         margin.spokenOn = "watch"
@@ -402,7 +447,10 @@ public actor LiveSessionFileWorker {
             guard let session = sessions()[id] else { return nil }
             target = session
         case let .newNamedSession(id):
+            // Its start is still on its way from the Watch (the file came first); the start fills it in.
             target = LiveSession(id: id, kind: .other, startedAt: margin.markedAt, endedAt: margin.markedAt)
+            target.ownerDevice = WatchDevice.watch.rawValue
+            target.endReason = LiveSessionWatchSessions.EndReason.placeholder.rawValue
         case .newQuick:
             target = LiveSessionFiling.quickSession(id: "quick-\(makeId())", holding: placed)
         case .alreadyFiled, .rejected, .playerItem:
@@ -451,7 +499,7 @@ public actor LiveSessionFileWorker {
         session.isQuick == true ? "a quick session" : title(of: session)
     }
 
-    private func openWatchInbox() -> WatchMarginInbox? {
+    func openWatchInbox() -> WatchMarginInbox? {
         if let watchInbox { return watchInbox }
         guard let receivedDirectory else { return nil }
         watchInbox = try? WatchMarginInbox(directory: receivedDirectory)
@@ -463,7 +511,7 @@ public actor LiveSessionFileWorker {
         if let url = inbox.audioURL(captureId) { try? FileManager.default.removeItem(at: url) }
     }
 
-    private func persist(_ changed: [LiveSession]) throws {
+    func persist(_ changed: [LiveSession]) throws {
         guard let collection else { return }
         var all = sessions()
         for session in changed {
@@ -476,7 +524,7 @@ public actor LiveSessionFileWorker {
 
     // MARK: Margins the screen hasn't seen
 
-    private func noteUnseen(from before: LiveSession, to after: LiveSession) {
+    func noteUnseen(from before: LiveSession, to after: LiveSession) {
         let old = Dictionary(before.margins.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         for margin in after.margins {
             if let earlier = old[margin.id] {
@@ -492,6 +540,16 @@ public actor LiveSessionFileWorker {
     /// The screen's copy with anything this worker filed that it hasn't taken in yet.
     private func keepingUnseen(in session: LiveSession) -> LiveSession {
         var merged = session
+        if let lifecycle = unseenLifecycle[session.id] {
+            if Lifecycle(session) == lifecycle {
+                unseenLifecycle[session.id] = nil // the screen has it
+            } else {
+                lifecycle.apply(to: &merged)
+                for index in merged.margins.indices {
+                    merged.margins[index].sessionOffsetMs = max(0, Int((merged.margins[index].markedAt.timeIntervalSince(merged.startedAt) * 1_000).rounded()))
+                }
+            }
+        }
         for (id, margin) in unseenMargins[session.id] ?? [:] {
             if merged.margins.contains(where: { $0.id == id }) {
                 unseenMargins[session.id]?[id] = nil

@@ -43,34 +43,7 @@ public struct WatchMarginTransferMetadata: Codable, Equatable, Sendable {
     }
 }
 
-/// Phone to Watch: what happened to a transferred Margin.
-public struct WatchMarginReceipt: Codable, Equatable, Sendable {
-    public enum Status: String, Codable, Equatable, Sendable {
-        /// Stored durably on the phone for the first time.
-        case stored
-        /// Already stored; nothing new was imported.
-        case duplicate
-        /// The file's size didn't match: the transfer was cut short. Send it again.
-        case incomplete
-        /// The size matched but the bytes didn't. Send it again.
-        case checksumMismatch
-    }
-
-    public var captureId: String
-    public var sha256: String
-    public var status: Status
-
-    public init(captureId: String, sha256: String, status: Status) {
-        self.captureId = captureId
-        self.sha256 = sha256
-        self.status = status
-    }
-
-    /// The phone holds these exact bytes, so the Watch may let them go.
-    public var confirmsDelivery: Bool {
-        status == .stored || status == .duplicate
-    }
-}
+// `WatchMarginReceipt` moved to WatchContract.swift (#2487 slice 1b), which the Watch app compiles too.
 
 public enum WatchMarginStoreError: Error, Equatable {
     /// Capture ids name folders, so only letters, digits, `-` and `_` are allowed.
