@@ -52,6 +52,10 @@ extension Gate1AppModel {
     /// with no file, or one that can't be read, every followed show is stamped "now" so nothing counts as new
     /// until a later refresh brings an episode. Until that has finished, `markShowLooked` only updates memory
     /// and sets `followingLookedDirty`; the merge then saves once.
+    /// The seed reads the followed shows from the store in the same detached read, not `feedSubscriptions`, which
+    /// is still empty when Following opens before the first feed refresh lands; seeding from it then saved an
+    /// empty file and every show showed all its episodes as new (#2690 audit). If that read fails, nothing is
+    /// marked loaded, so the next reload seeds.
     func reloadFollowingShowEntries() async {
         guard let store else { return }
         let needsMarkers = !followingLookedLoaded
@@ -59,17 +63,18 @@ extension Gate1AppModel {
         let result = await Task.detached(priority: .userInitiated) {
             let entries = (try? store.loadFeedEntries(subscriptionId: nil)) ?? []
             let saved = needsMarkers ? url.flatMap { FollowingLookedMarkers.loadIfPresent(from: $0) } : nil
-            return (entries, saved)
+            let followed = needsMarkers && saved == nil ? try? store.loadFeedSubscriptions().map(\.id) : nil
+            return (entries, saved, followed)
         }.value
         followingShowEntries = result.0
         followingShowRevision += 1
-        if needsMarkers, !followingLookedLoaded {
+        if needsMarkers, !followingLookedLoaded, result.1 != nil || result.2 != nil {
             followingLookedLoaded = true
             var merged = followingLooked
             if let saved = result.1 {
                 merged.merge(saved)
-            } else if !feedSubscriptions.isEmpty {
-                merged.seed(feedSubscriptions.map(\.id))
+            } else if let followed = result.2, !followed.isEmpty {
+                merged.seed(followed)
             }
             let changed = merged != followingLooked
             followingLooked = merged

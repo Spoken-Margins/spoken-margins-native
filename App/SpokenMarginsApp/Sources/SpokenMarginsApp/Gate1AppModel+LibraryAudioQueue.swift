@@ -19,6 +19,13 @@ extension Gate1AppModel {
     var pendingStartupAudioPreparationItemIds: Set<String> { get { startupAudioPreparation.pendingItemIds } set { startupAudioPreparation.pendingItemIds = newValue } }
     var failedStartupAudioPreparationItemIds: Set<String> { get { startupAudioPreparation.failedItemIds } set { startupAudioPreparation.failedItemIds = newValue } }
     var startupAudioPreparationCooldown: RetryCooldown { get { startupAudioPreparation.cooldown } set { startupAudioPreparation.cooldown = newValue } }
+
+    /// The cooldown is per item and voice, because the startup job is: a not-ready job for voice A must not hold
+    /// back voice B's after the listener switches (#2690 audit). Clearing an item clears every voice.
+    static func startupAudioCooldownKey(_ itemId: String, _ voice: SupertonicVoiceID) -> String { "\(itemId)|\(voice.rawValue)" }
+    static func startupAudioCooldownKeys<S: Sequence>(_ itemIds: S) -> Set<String> where S.Element == String {
+        Set(itemIds.flatMap { id in SupertonicVoiceID.allCases.map { startupAudioCooldownKey(id, $0) } })
+    }
 }
 
 #if canImport(UIKit)
@@ -75,11 +82,11 @@ extension Gate1AppModel {
     func scheduleStartupAudioPreparationIfNeeded(itemId: String) {
         guard audioPlaybackClientOverride == nil,
               hasAcceptedCurrentTerms,
-              ttsVoiceSelection.supertonicVoice != nil,
+              let voice = ttsVoiceSelection.supertonicVoice,
               !suppressedAutomaticAudioPreparationItemIds.contains(itemId),
               !liveSpeechFallbackItemIds.contains(itemId),
               !pendingStartupAudioPreparationItemIds.contains(itemId),
-              startupAudioPreparationCooldown.canAttempt(itemId),
+              startupAudioPreparationCooldown.canAttempt(Self.startupAudioCooldownKey(itemId, voice)),
               libraryItems.first(where: { $0.id == itemId })?.startupAudioState != .ready else {
             return
         }
@@ -103,7 +110,7 @@ extension Gate1AppModel {
         } catch {
             failedStartupAudioPreparationItemIds.insert(itemId)
             updateLibraryStartupAudioState(itemId: itemId, state: .failed)
-            startupAudioPreparationCooldown.recordFailure(itemId)
+            startupAudioPreparationCooldown.recordFailure(Self.startupAudioCooldownKey(itemId, voice))
             diagnostics["startupAudioPreparation:\(itemId)"] = "enqueue_failed:\(error.localizedDescription)"
         }
     }
@@ -150,9 +157,9 @@ extension Gate1AppModel {
             )
             if manifest.chunks.count < targetChunkCount {
                 // Not ready yet: the queued job is the answer, so later triggers wait instead of re-enqueueing.
-                startupAudioPreparationCooldown.recordFailure(itemId)
+                startupAudioPreparationCooldown.recordFailure(Self.startupAudioCooldownKey(itemId, voice))
             } else {
-                startupAudioPreparationCooldown.recordSuccess(itemId)
+                startupAudioPreparationCooldown.recordSuccess(Self.startupAudioCooldownKey(itemId, voice))
             }
             diagnostics["startupAudioPreparation:\(itemId)"] = manifest.chunks.count < targetChunkCount
                 ? "queued_0_of_\(targetChunkCount)" : "ready_from_cache"
@@ -168,7 +175,9 @@ extension Gate1AppModel {
         } catch {
             failedStartupAudioPreparationItemIds.insert(itemId)
             updateLibraryStartupAudioState(itemId: itemId, state: .failed)
-            startupAudioPreparationCooldown.recordFailure(itemId)
+            if let voice = ttsVoiceSelection.supertonicVoice {
+                startupAudioPreparationCooldown.recordFailure(Self.startupAudioCooldownKey(itemId, voice))
+            }
             diagnostics["startupAudioPreparation:\(itemId)"] = "failed:\(error.localizedDescription)"
         }
     }
@@ -268,7 +277,7 @@ extension Gate1AppModel {
             )
             pendingStartupAudioPreparationItemIds.remove(selected.itemId)
             failedStartupAudioPreparationItemIds.remove(selected.itemId)
-            startupAudioPreparationCooldown.clear(selected.itemId)
+            startupAudioPreparationCooldown.clear(Self.startupAudioCooldownKeys([selected.itemId]))
             refreshLibraryRowsInBackground(mustPublish: true)
             diagnostics["audioPreparationSuppressed:\(selected.itemId)"] = "user"
             reportConfirmation("Removed \(itemsTitle(itemId: selected.itemId, store: store)) from audio preparation.")
@@ -287,7 +296,7 @@ extension Gate1AppModel {
             try store.deleteAudioPreparationJobs(ids: jobs.map(\.id))
             pendingStartupAudioPreparationItemIds.subtract(itemIds)
             failedStartupAudioPreparationItemIds.subtract(itemIds)
-            startupAudioPreparationCooldown.clear(itemIds)
+            startupAudioPreparationCooldown.clear(Self.startupAudioCooldownKeys(itemIds))
             refreshLibraryRowsInBackground(mustPublish: true)
             diagnostics["audioPreparationQueueCleared"] = "\(jobs.count)"
             reportConfirmation("Cleared \(jobs.count) audio preparation job\(jobs.count == 1 ? "" : "s"). Existing audio and Library items were kept.")
@@ -359,7 +368,7 @@ extension Gate1AppModel {
         do {
             allowAudioPreparation(itemId: item.id)
             failedStartupAudioPreparationItemIds.remove(item.id)
-            startupAudioPreparationCooldown.clear(item.id)
+            startupAudioPreparationCooldown.clear(Self.startupAudioCooldownKeys([item.id]))
             let store = try requireStore()
             let support = try applicationSupportDirectory()
             guard let assets = SupertonicAssetResolver.location() else {
