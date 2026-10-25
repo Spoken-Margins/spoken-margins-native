@@ -1,0 +1,158 @@
+"""#2596: the hosted Mac checks run, and the runner waits for them, only when the diff reaches a Swift input.
+
+Before: every PR ran SessionKit core and Mac rest on a hosted Mac, and the runner required both. 22 of 62 PRs in one day
+touched no Swift input and spent 23% of the Mac minutes, with a queue p90 of about 52 minutes; a skipped job would have
+sent the runner to the build Mac after its 5-minute grace.
+"""
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import test_lane_runner as runner_tests
+import test_test_scope as scope_tests
+import test_lane_hosted_fast as fast_tests
+
+lane = runner_tests.lane
+scope = scope_tests.scope
+ROOT = Path(__file__).resolve().parents[2]
+HEAD, MERGE = 'a' * 40, 'b' * 40
+
+
+class MacChecksRequiredTests(unittest.TestCase):
+    def required(self, *paths):
+        return scope.mac_checks_required(paths)
+
+    def test_an_ops_docs_or_workflow_free_diff_needs_no_mac_check(self):
+        for paths in (('docs/areas.md',), ('ops/claude/sm_claude_worker.py',), ('AGENTS.md', 'docs/x.md'),
+                      ('Design/brief.md',), ('scripts/sm_project_sync.py',), ('scripts/tests/test_sm_project_sync.py',),
+                      ('.claude/skills/x/SKILL.md',), ('Site/index.html',)):
+            with self.subTest(paths=paths):
+                needed, why = self.required(*paths)
+                self.assertFalse(needed)
+                self.assertEqual(why, 'Mac checks not required: no Swift inputs')
+
+    def test_a_swift_input_still_needs_them(self):
+        for path in ('Packages/SessionKit/Sources/SessionKit/X.swift', 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/A.swift',
+                     'project.yml', 'Package.resolved', 'TestPlans/fast.json', 'Contracts/schemas/x.json',
+                     'Elsewhere/Thing.swift', 'SpokenMarginsNative.xcodeproj/project.pbxproj'):
+            with self.subTest(path=path):
+                self.assertTrue(self.required(path)[0])
+
+    def test_a_workflow_or_script_that_drives_the_mac_jobs_needs_them(self):
+        for path in ('.github/workflows/hosted-portable.yml', '.github/workflows/lane.yml', '.github/actions/x/action.yml',
+                     'scripts/verify-tests.py', 'scripts/lane-runner.py', 'scripts/test-scope.py',
+                     'scripts/sessionkit_pass.py', 'scripts/tests/test_lane_runner.py', 'scripts/xcodebuild-lane'):
+            with self.subTest(path=path):
+                self.assertTrue(self.required(path)[0])
+
+    def test_one_swift_path_among_ops_paths_needs_them(self):
+        needed, why = self.required('docs/a.md', 'ops/b.py', 'Packages/SessionKit/Sources/SessionKit/X.swift')
+        self.assertTrue(needed)
+        self.assertIn('X.swift', why)
+
+    def test_nothing_known_or_an_unlisted_path_needs_them(self):
+        self.assertTrue(self.required()[0])
+        self.assertTrue(self.required('SomeNewTopLevelFolder/file.dat')[0])
+
+    def test_everything_the_sessionkit_tests_read_by_path_needs_them(self):
+        import sessionkit_pass
+        for read in sessionkit_pass.READS:
+            path = read + 'x' if read.endswith('/') else read
+            with self.subTest(read=read):
+                self.assertTrue(self.required(path)[0])
+
+    def test_the_cli_prints_what_the_workflow_writes_to_its_outputs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            listing = Path(temporary) / 'files.txt'
+            for lines, expected in (('docs/a.md\nops/b.py\n', 'mac=false'), ('docs/a.md\nproject.yml\n', 'mac=true')):
+                listing.write_text(lines)
+                out = subprocess.run([sys.executable, str(ROOT / 'scripts/test-scope.py'), '--mac-required',
+                                      str(listing)], capture_output=True, text=True, check=True).stdout.splitlines()
+                self.assertEqual(out[0], expected)
+                self.assertTrue(out[1].startswith('reason='))
+            missing = subprocess.run([sys.executable, str(ROOT / 'scripts/test-scope.py'), '--mac-required',
+                                      str(Path(temporary) / 'absent.txt')], capture_output=True, text=True).stdout
+            self.assertTrue(missing.startswith('mac=true'))
+
+
+class HostedCheckSetTests(unittest.TestCase):
+    FULL = {**lane.HOSTED_FAST_CHECKS, **lane.HOSTED_REST_CHECK}
+
+    def check_set(self, paths, policy=scope):
+        with mock.patch.object(lane, 'base_policy', return_value=policy), \
+                mock.patch.object(lane, 'committed_changes', return_value=(paths, {})):
+            return lane.hosted_check_set(Path('.'), 'main')
+
+    def test_an_ops_only_diff_requires_the_portable_check_alone_and_says_why(self):
+        checks, why = self.check_set(['ops/claude/x.py', 'docs/y.md'])
+        self.assertEqual(checks, lane.HOSTED_PORTABLE_CHECK)
+        self.assertEqual(why, 'Mac checks not required: no Swift inputs')
+
+    def test_a_swift_diff_still_requires_all_three(self):
+        self.assertEqual(self.check_set(['Packages/SessionKit/Sources/SessionKit/X.swift']), (self.FULL, None))
+
+    def test_a_workflow_only_diff_to_the_mac_jobs_own_workflow_requires_all_three(self):
+        self.assertEqual(self.check_set(['.github/workflows/hosted-portable.yml']), (self.FULL, None))
+
+    def test_a_base_without_the_rule_or_a_failure_requires_all_three(self):
+        self.assertEqual(self.check_set(['docs/y.md'], policy=None), (self.FULL, None))
+        self.assertEqual(self.check_set(['docs/y.md'], policy=object()), (self.FULL, None))
+        with mock.patch.object(lane, 'base_policy', side_effect=RuntimeError('x')):
+            self.assertEqual(lane.hosted_check_set(Path('.'), 'main'), (self.FULL, None))
+
+    def test_the_portable_check_is_the_one_the_workflow_names(self):
+        self.assertEqual(lane.HOSTED_PORTABLE_CHECK, {'hosted fast: portable': 'fast-portable'})
+        self.assertEqual(set(lane.HOSTED_PORTABLE_CHECK), set(lane.HOSTED_FAST_CHECKS) - {'hosted fast: SessionKit core'})
+
+    def test_a_skipped_mac_check_is_never_a_pass_when_the_runner_does_ask_for_it(self):
+        # The runner leaves the Mac checks out only by the diff's own paths. If it asks for them, "skipped" fails to stand.
+        github = fast_tests.passing(HEAD, checks=lane.HOSTED_FAST_CHECKS)
+        github.runs['hosted fast: SessionKit core'][0]['conclusion'] = 'skipped'
+        found, why = lane.hosted_fast_records(github, HEAD, checks=lane.HOSTED_FAST_CHECKS)
+        self.assertIsNone(found)
+
+    def test_the_portable_check_alone_stands_and_the_report_says_the_mac_ones_were_not_required(self):
+        github = fast_tests.passing(HEAD, checks=lane.HOSTED_PORTABLE_CHECK)
+        found, why = lane.hosted_fast_records(github, HEAD, checks=lane.HOSTED_PORTABLE_CHECK)
+        self.assertEqual(set(found), set(lane.HOSTED_PORTABLE_CHECK))
+        ran = lane.hosted_fast_ran(found)
+        self.assertIn('not required: no Swift inputs', ran)
+        self.assertIn('none on the Mac', ran)
+        self.assertNotIn('Mac: --plan fast-mac-rest', ran)
+
+
+class WorkflowScopeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import yaml
+        cls.jobs = yaml.safe_load((ROOT / '.github/workflows/hosted-portable.yml').read_text())['jobs']
+
+    def test_there_is_a_cheap_linux_scope_job(self):
+        scope_job = self.jobs['scope']
+        self.assertEqual(scope_job['runs-on'], 'ubuntu-latest')
+        self.assertEqual(scope_job['name'], 'hosted fast: scope')
+        self.assertIn('mac', scope_job['outputs'])
+
+    def test_both_mac_jobs_wait_for_it_and_skip_when_it_says_no_swift_inputs(self):
+        for name in ('sessionkit', 'mac-rest'):
+            with self.subTest(job=name):
+                job = self.jobs[name]
+                self.assertEqual(job['needs'], 'scope')
+                self.assertIn("needs.scope.outputs.mac != 'false'", job['if'])
+                self.assertIn('xcode', ' '.join(job['runs-on']).lower() + str(job['runs-on']).lower())
+
+    def test_the_portable_job_does_not_wait_for_the_scope_job(self):
+        self.assertNotIn('needs', self.jobs['portable'])
+
+    def test_the_scope_job_fails_safe(self):
+        text = (ROOT / '.github/workflows/hosted-portable.yml').read_text()
+        self.assertIn('echo "mac=true" >> "$GITHUB_OUTPUT"', text)
+        self.assertIn('--mac-required', text)
+
+
+if __name__ == '__main__':
+    unittest.main()

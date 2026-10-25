@@ -317,6 +317,56 @@ def hosted_merge_routing(result, env=None):
     return dict(result, automerge=list(HOSTED_RUNNER))
 
 
+# #2596: the hosted Mac checks (hosted-portable.yml: SessionKit core and Mac rest) prove nothing for a diff that
+# reaches no Swift input, yet 22 of 62 PRs in a day were such diffs and spent 23% of the Mac minutes. A diff needs the
+# Mac checks unless EVERY changed path is on the not-needed list below; a path nobody listed is needed (fail safe).
+# The workflow's `scope` job and lane-runner.py both ask mac_checks_required, so the checks that run and the checks
+# the runner waits for cannot disagree about a diff (the runner reads this file from the base branch).
+# What the SessionKit tests read by path (scripts/sessionkit_pass.py READS; test_mac_checks_scope.py keeps them equal).
+MAC_READS = ('Packages/SessionKit/', 'Contracts/', 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/',
+             'App/SpokenMarginsAppTests/', 'App/SpokenMarginsApp/Resources/Kitten/',
+             'App/SpokenMarginsApp/Resources/Supertonic/', 'App/SpokenMarginsApp/Resources/VoiceCatalog/',
+             'research/C2/frontend/', 'research/B2/', 'research/B4/', 'research/C2/pocket/',
+             'research/C2/passages.json', 'research/C2/results/darwin/', 'Site/onboarding/catalog/',
+             'Site/onboarding/v1/', 'README.md', 'traces/', 'fixtures/')
+# Swift inputs and the machinery of the Mac jobs. Every workflow counts: they are the jobs' own definitions.
+MAC_PREFIXES = MAC_READS + ('Packages/', 'App/', 'Config/', 'TestPlans/', 'SpokenMarginsNative.xcodeproj/',
+                            '.github/workflows/', '.github/actions/', 'ops/disk/', 'ops/power/')
+MAC_FILES = {'project.yml', 'Package.swift', 'Package.resolved', 'requirements-dev.txt', '.nvmrc'}
+# scripts/ files that drive the Mac jobs, or that the Apple-tool runner tests (verify-tests.py
+# PORTABLE_RUNNER_TESTS_LEFT_OUT) exercise: matched on the file name, in scripts/ and scripts/tests/.
+MAC_SCRIPT_NAME = re.compile(r'lane|verif|test-scope|test_scope|phone|sim[_-]|sessionkit|xcode|host|audio|freeze|'
+                             r'build29|shipped|bootstrap|slots|ledger|package|fast|trunk', re.I)
+MAC_NOT_NEEDED_PREFIXES = ('docs/', 'Design/', 'references/', 'tmp/', '.claude/', 'research/', 'Site/', 'ops/',
+                           '.github/', 'Tools/BrowserExtraction/', 'Contracts/docs/')
+MAC_NOT_NEEDED_FILES = T0_FILES | BROWSER_FILES | {'AGENTS.md', 'CLAUDE.md'}
+
+
+def mac_check_reason(path):
+    """Why <path> needs the hosted Mac checks, or None when it does not."""
+    if path.startswith(MAC_PREFIXES) or path in MAC_FILES or path.endswith(('.swift', '.xcodeproj')):
+        return f'{path} is a Swift input or part of the Mac jobs'
+    if path.startswith('scripts/'):
+        if MAC_SCRIPT_NAME.search(Path(path).name):
+            return f'{path} drives or is tested by the Mac jobs'
+        return None
+    if path.startswith(MAC_NOT_NEEDED_PREFIXES) or path in MAC_NOT_NEEDED_FILES or path.endswith('.md'):
+        return None
+    return f'{path} is not on the list of paths the Mac checks can ignore'
+
+
+def mac_checks_required(paths):
+    """(required, reason) for the hosted Mac checks. An empty list is required: nothing is known about the diff."""
+    paths = list(paths)
+    if not paths:
+        return True, 'no changed paths were given'
+    for path in sorted(paths):
+        why = mac_check_reason(path)
+        if why:
+            return True, why
+    return False, 'Mac checks not required: no Swift inputs'
+
+
 # Ops folders whose tests skip themselves on Linux (ops/power's amph is AppleScript): a pass there proves nothing.
 MAC_ONLY_OPS = ('ops/power/',)
 
@@ -448,9 +498,19 @@ def main(argv=None):
     parser.add_argument('--base', help='the base ref (default: origin/<trunk>)')
     parser.add_argument('--files', nargs='+')
     parser.add_argument('--json', action='store_true')
+    parser.add_argument('--mac-required', metavar='FILE',
+                        help='read changed paths (one per line) and print mac=true|false and reason= lines for '
+                             '$GITHUB_OUTPUT; any trouble reading says true')
     parser.add_argument('--runner-routing', nargs=3, metavar=('EVENT', 'FILES', 'RUNNERS'),
                         help='route lane jobs from event JSON and paginated gh API JSON files')
     args = parser.parse_args(argv)
+    if args.mac_required:
+        try:
+            required, why = mac_checks_required(Path(args.mac_required).read_text().splitlines())
+        except (OSError, ValueError) as error:
+            required, why = True, f'the changed paths could not be read ({error!r})'
+        print(f'mac={"true" if required else "false"}\nreason={why}')
+        return 0
     if args.runner_routing:
         try:
             event, files, runners = [json.loads(Path(path).read_text()) for path in args.runner_routing]
