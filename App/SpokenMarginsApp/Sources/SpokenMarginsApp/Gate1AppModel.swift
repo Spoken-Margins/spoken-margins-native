@@ -723,8 +723,7 @@ final class Gate1AppModel: ObservableObject {
         // are still starting, and the catalog is not needed on other screens.
         sanitizeTTSMode()
         settingsValueChanged()
-        quickAccess.forwardWillChange(to: objectWillChange)
-        quickAccess.recordDiagnostic = { [weak self] key, value in self?.diagnostics[key] = value }
+        wireQuickAccessFolder()
         refreshQuickAccessFolder()
         streamingSpeechQueue.onTurnDrained = { [weak self] turnId in
             self?.finishStreamingTurnIfReady(turnId)

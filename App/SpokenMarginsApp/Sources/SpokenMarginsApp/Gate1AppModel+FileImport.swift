@@ -146,7 +146,10 @@ extension Gate1AppModel {
         securityScopedURLs: [URL],
         refreshQuickFolderWhenFinished: Bool = false,
         openImportedItemWhenFinished: Bool = false,
-        quickAccessFileToDismiss: QuickAccessFile? = nil
+        quickAccessFileToDismiss: QuickAccessFile? = nil,
+        onImported: (([Item]) -> Void)? = nil,
+        navigatesWhenFinished: Bool = true,
+        confirmationOverride: ((Int) -> String)? = nil
     ) {
         guard !urls.isEmpty else {
             reportFailure("Choose at least one Markdown, text, or PDF file to import.")
@@ -185,7 +188,10 @@ extension Gate1AppModel {
                     batch,
                     refreshQuickFolderWhenFinished: refreshQuickFolderWhenFinished,
                     openImportedItemWhenFinished: openImportedItemWhenFinished,
-                    quickAccessFileToDismiss: quickAccessFileToDismiss
+                    quickAccessFileToDismiss: quickAccessFileToDismiss,
+                    onImported: onImported,
+                    navigatesWhenFinished: navigatesWhenFinished,
+                    confirmationOverride: confirmationOverride
                 )
             }
         }
@@ -237,7 +243,10 @@ extension Gate1AppModel {
         _ batch: ObsidianImportBatch,
         refreshQuickFolderWhenFinished: Bool,
         openImportedItemWhenFinished: Bool,
-        quickAccessFileToDismiss: QuickAccessFile?
+        quickAccessFileToDismiss: QuickAccessFile?,
+        onImported: (([Item]) -> Void)? = nil,
+        navigatesWhenFinished: Bool = true,
+        confirmationOverride: ((Int) -> String)? = nil
     ) {
         defer {
             sourceImportTask = nil
@@ -278,23 +287,26 @@ extension Gate1AppModel {
                 installEngine(try makeEngine(store: store))
             }
             libraryItems = try loadLibraryRows(store: store)
-            if openImportedItemWhenFinished, let item = imported.first {
-                activeItemId = item.id
-                selectedItem = try loadItemDetail(id: item.id, store: store)
-                screen = .item
-            } else if preservesActiveSession {
-                activeItemId = preservedActiveItemId
-                if !preservedSelectedItemId.isEmpty {
-                    selectedItem = try loadItemDetail(id: preservedSelectedItemId, store: store)
+            if navigatesWhenFinished {
+                if openImportedItemWhenFinished, let item = imported.first {
+                    activeItemId = item.id
+                    selectedItem = try loadItemDetail(id: item.id, store: store)
+                    screen = .item
+                } else if preservesActiveSession {
+                    activeItemId = preservedActiveItemId
+                    if !preservedSelectedItemId.isEmpty {
+                        selectedItem = try loadItemDetail(id: preservedSelectedItemId, store: store)
+                    }
+                } else {
+                    activeItemId = imported.first?.id ?? activeItemId
+                    selectedItem = try loadItemDetail(id: activeItemId, store: store)
+                    screen = .home
                 }
-            } else {
-                activeItemId = imported.first?.id ?? activeItemId
-                selectedItem = try loadItemDetail(id: activeItemId, store: store)
-                screen = .home
             }
             if let quickAccessFileToDismiss {
                 dismissQuickAccessFile(quickAccessFileToDismiss)
             }
+            onImported?(imported)
             imported.forEach { scheduleTextAudioPrewarmIfNeeded(itemId: $0.id) }
             if let structure = imported.compactMap(\.documentStructure).last {
                 recordPDFExtractionDiagnostics(structure)
@@ -303,7 +315,7 @@ extension Gate1AppModel {
             diagnostics["lastObsidianImportFailures"] = "\(failures.count)"
             markOnboardingSteps([.addedOwnSource, .addedFromFiles])
             let suffix = failures.isEmpty ? "" : " \(failures.count) failed."
-            reportConfirmation("Imported \(imported.count) source file\(imported.count == 1 ? "" : "s").\(suffix)")
+            reportConfirmation(confirmationOverride?(imported.count) ?? "Imported \(imported.count) source file\(imported.count == 1 ? "" : "s").\(suffix)")
         } catch {
             reportFailure(error, context: "File import failed")
         }

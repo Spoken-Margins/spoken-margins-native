@@ -477,7 +477,7 @@ struct ExperienceAddSourceFlow: View {
     private var allowedContentTypes: [UTType] {
         switch fileRequest {
         case .documentOrBook, .none:
-            [UTType(filenameExtension: "md") ?? .plainText, .plainText, .pdf, UTType(filenameExtension: "epub") ?? .data, .json]
+            [UTType(filenameExtension: "md") ?? .plainText, .plainText, .pdf, UTType(filenameExtension: "epub") ?? .data, .json, .folder]
         case .audiobook:
             [.mp3, .mpeg4Audio, .mpeg4Movie, UTType(filenameExtension: "m4b") ?? .audio]
         case .quickFolder:
@@ -496,13 +496,16 @@ struct ExperienceAddSourceFlow: View {
     /// the Library and nothing opens (#2373). Everything else goes the way it always did. The sheet closes unless
     /// something could not be imported, and then it says what, under the Files button.
     private func importDocumentsAndCollections(_ picked: [URL]) {
-        let editionURLs = picked.filter { $0.pathExtension.lowercased() == "json" }
-        let urls = picked.filter { $0.pathExtension.lowercased() != "json" }
+        // A picked folder (#2672) goes to the edition import too, which walks it for `.json` collection files.
+        let folders = picked.filter { $0.hasDirectoryPath || ((try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true) }
+        let files = picked.filter { url in !folders.contains(url) }
+        let editionURLs = files.filter { $0.pathExtension.lowercased() == "json" }
+        let urls = files.filter { $0.pathExtension.lowercased() != "json" }
         fileImportError = nil
-        guard !editionURLs.isEmpty else { importDocuments(urls, closes: !picked.isEmpty); return }
+        guard !editionURLs.isEmpty || !folders.isEmpty else { importDocuments(urls, closes: !picked.isEmpty); return }
         // The edition files are read off the main thread (#2510), so the rest waits for them.
         Task { @MainActor in
-            let editionsImported = await model.importListeningEditionFiles(editionURLs)
+            let editionsImported = await model.importListeningEditionFiles(editionURLs, folders: folders)
             if !editionsImported { fileImportError = model.lastError }
             model.hangTelemetry.labels.scoped("addSheet.documentImport") { importDocuments(urls, closes: editionsImported) }
         }

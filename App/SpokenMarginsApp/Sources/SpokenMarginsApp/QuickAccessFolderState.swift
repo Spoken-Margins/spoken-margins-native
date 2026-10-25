@@ -13,6 +13,9 @@ final class QuickAccessFolderState: ObservableObject {
     static let folderBookmarkKey = "quickAccessFolderBookmark"
     static let folderNameKey = "quickAccessFolderName"
     static let dismissedFilesKey = "dismissedQuickAccessFilesV1"
+    /// Added in #1990 slice 3. Absent in earlier builds' defaults, which reads as off and no baseline.
+    static let inboxFeedsQueueKey = "quickFolderFeedsQueueV1"
+    static let inboxSeenFilesKey = "quickFolderInboxSeenFilesV1"
 
     /// What the state reaches outside itself for, so a test can pin the order of scoped-access calls and
     /// hold a scan open. The defaults are the app's real behaviour.
@@ -47,6 +50,27 @@ final class QuickAccessFolderState: ObservableObject {
     }
     @Published private(set) var isRefreshing = false
 
+    /// Opt-in (#1990): files that newly appear in the folder are imported and appended to the play queue.
+    @Published var inboxFeedsQueue: Bool {
+        didSet {
+            defaults.set(inboxFeedsQueue, forKey: Self.inboxFeedsQueueKey)
+            // Turning it on starts from the files already there; they are not swept into the queue.
+            if inboxFeedsQueue != oldValue { inboxSeenFileIds = nil }
+            if inboxFeedsQueue { refresh() }
+        }
+    }
+
+    /// Ids of folder files the inbox has already taken in. Nil until a baseline is taken for this folder.
+    var inboxSeenFileIds: Set<String>? {
+        get { defaults.object(forKey: Self.inboxSeenFilesKey) == nil ? nil : Set(defaults.stringArray(forKey: Self.inboxSeenFilesKey) ?? []) }
+        set {
+            if let newValue { defaults.set(newValue.sorted(), forKey: Self.inboxSeenFilesKey) } else { defaults.removeObject(forKey: Self.inboxSeenFilesKey) }
+        }
+    }
+
+    /// Runs after a refresh stored the folder's files. The model installs it.
+    var onFilesRefreshed: () -> Void = {}
+
     /// Writes a diagnostics value. The model installs this; it is not a published field, so a diagnostics
     /// write never invalidates a view that watches this state.
     var recordDiagnostic: (String, String) -> Void = { _, _ in }
@@ -63,6 +87,7 @@ final class QuickAccessFolderState: ObservableObject {
         self.dependencies = dependencies
         folderName = defaults.string(forKey: Self.folderNameKey) ?? "No folder selected"
         dismissedFileKeys = Set(defaults.stringArray(forKey: Self.dismissedFilesKey) ?? [])
+        inboxFeedsQueue = defaults.bool(forKey: Self.inboxFeedsQueueKey)
     }
 
     deinit {
@@ -139,6 +164,7 @@ final class QuickAccessFolderState: ObservableObject {
         defaults.set(bookmark, forKey: Self.folderBookmarkKey)
         defaults.set(url.lastPathComponent, forKey: Self.folderNameKey)
         folderName = url.lastPathComponent
+        inboxSeenFileIds = nil // a different folder: files already in it are not new
         refresh()
         whenSaved()
     }
@@ -221,6 +247,7 @@ final class QuickAccessFolderState: ObservableObject {
             self.folderName = folderURL.lastPathComponent
             self.recordDiagnostic("quickAccessFolder", folderURL.lastPathComponent)
             self.recordDiagnostic("quickAccessRecentFiles", "\(self.recentFiles.count)")
+            self.onFilesRefreshed()
         }
     }
 
