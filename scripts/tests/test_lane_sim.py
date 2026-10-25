@@ -361,6 +361,8 @@ class TemplateTests(unittest.TestCase):
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as temporary, \
                     mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}), \
                     mock.patch.object(lane_sim.subprocess, 'check_output', side_effect=command), \
+                    mock.patch.object(lane_sim, 'bounded_output', side_effect=command), \
+                    mock.patch.object(lane_sim, 'ensure_simctl_ready'), \
                     mock.patch.object(lane_sim, 'boot', side_effect=lane_sim.BootError('flood') if stage == 'boot' else boot) as guarded, \
                     mock.patch.object(lane_sim, 'unsafe_devices', return_value={'T': {'reason': 'flood'}}), \
                     mock.patch.object(lane_sim, 'start_watcher'), \
@@ -404,6 +406,8 @@ class TemplateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary, \
                 mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}), \
                 mock.patch.object(lane_sim.subprocess, 'check_output', side_effect=command), \
+                mock.patch.object(lane_sim, 'bounded_output', side_effect=command), \
+                mock.patch.object(lane_sim, 'ensure_simctl_ready'), \
                 mock.patch.object(lane_sim, 'boot', side_effect=boot), \
                 mock.patch.object(lane_sim, 'start_watcher'), \
                 mock.patch.object(lane_sim, 'release', side_effect=release), \
@@ -450,6 +454,8 @@ class TemplateTests(unittest.TestCase):
 
                 with mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}), \
                         mock.patch.object(lane_sim.subprocess, 'check_output', side_effect=command), \
+                        mock.patch.object(lane_sim, 'bounded_output', side_effect=command), \
+                        mock.patch.object(lane_sim, 'ensure_simctl_ready'), \
                         mock.patch.object(lane_sim, 'boot', side_effect=boot), \
                         mock.patch.object(lane_sim, 'start_watcher'), \
                         mock.patch.object(lane_sim, 'release'), \
@@ -496,6 +502,8 @@ class TemplateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary, \
                 mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}), \
                 mock.patch.object(lane_sim.subprocess, 'check_output', side_effect=command), \
+                mock.patch.object(lane_sim, 'bounded_output', side_effect=command), \
+                mock.patch.object(lane_sim, 'ensure_simctl_ready'), \
                 mock.patch.object(lane_sim, 'boot', side_effect=boot), \
                 mock.patch.object(lane_sim, 'start_watcher') as watcher, \
                 mock.patch.object(lane_sim, 'release', side_effect=release), \

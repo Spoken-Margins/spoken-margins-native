@@ -180,9 +180,11 @@ struct ExperienceItemDetailScreen: View {
         Task { @MainActor in
             do {
                 let title = try await episodeLinker.link(itemId: itemId, to: pasted, store: store)
-                refreshEpisodeLinkStatus()
-                model.refreshSpokenMarginsPackageImportAfterAddingSource()
-                model.reportConfirmation("Linked to \u{201C}\(title)\u{201D}. Margins a friend shares by link for it will land on this file.")
+                model.hangTelemetry.labels.scoped("episodeLinked") {
+                    refreshEpisodeLinkStatus()
+                    model.refreshSpokenMarginsPackageImportAfterAddingSource()
+                    model.reportConfirmation("Linked to \u{201C}\(title)\u{201D}. Margins a friend shares by link for it will land on this file.")
+                }
             } catch {
                 model.reportFailure(error.localizedDescription, itemId: itemId)
             }

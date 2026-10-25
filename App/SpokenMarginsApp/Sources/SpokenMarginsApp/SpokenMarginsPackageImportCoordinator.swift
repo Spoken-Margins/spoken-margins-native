@@ -323,21 +323,21 @@ final class SpokenMarginsPackageImportCoordinator {
                 localAudioAdmission = try await verifyLocalAudioForImport(item, contents: review.contents)
             }
             let itemText = item?.text
-            let disposition: ImportedCommentaryImportDisposition
-            if let digest = review.contents.manifest.contentDigest,
-               let existing = try store.loadImportedCommentaryLayer(packageDigest: digest) {
-                try SpokenMarginsPackageImporter.repairAssociation(
-                    existing: existing,
-                    contents: review.contents,
-                    itemId: itemId,
-                    localItem: localItem,
-                    itemText: itemText,
-                    repository: store
-                )
-                if let itemId { environment.recordDiagnostic("lastSpokenMarginsPackageRepair", "reassociated:\(existing.id):\(itemId)") }
-                disposition = .duplicate(existingLayerId: existing.id)
-            } else {
-                disposition = try SpokenMarginsPackageImporter.importPackage(
+            let disposition: ImportedCommentaryImportDisposition = try MainThreadOperationLabels.shared.scoped("packageImportCommit") {
+                if let digest = review.contents.manifest.contentDigest,
+                   let existing = try store.loadImportedCommentaryLayer(packageDigest: digest) {
+                    try SpokenMarginsPackageImporter.repairAssociation(
+                        existing: existing,
+                        contents: review.contents,
+                        itemId: itemId,
+                        localItem: localItem,
+                        itemText: itemText,
+                        repository: store
+                    )
+                    if let itemId { environment.recordDiagnostic("lastSpokenMarginsPackageRepair", "reassociated:\(existing.id):\(itemId)") }
+                    return .duplicate(existingLayerId: existing.id)
+                }
+                return try SpokenMarginsPackageImporter.importPackage(
                     review.contents,
                     itemId: itemId,
                     localItem: localItem,
