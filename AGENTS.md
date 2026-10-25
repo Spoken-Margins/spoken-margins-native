@@ -202,6 +202,11 @@ Replace this section when the focus changes; do not append to it.
     - A test that passes on retry 3 or more times in 7 days gets its own `ready` issue in `Showcase`, so an intermittent real bug still surfaces.
     - He said his 2026-10-21 "every test blocks" call was too broad on this point. This narrows that call for retry passes only. Tests still block, and there is still no quarantine and no non-blocking tier.
     - It applies to the hosted integration run (#2602) and the lane's T3 path (#2596).
+- **Owner's standing call (2026-10-25).** Don't ask again:
+  - **A Margin recorded during a friend's Margin is a reply, and he can switch it to independent.** Asked how he should reply to a friend's Margin while it plays (1: a recording made during it becomes a reply, with a toggle; 2: a Reply button on the playing card; 3: leave it), he said: "I think I prefer number one with the margin you record during someone else's becoming a reply, and then the option to toggle that as a independent margin." (#473)
+    - A Margin recorded while a shared Margin plays, or within a short window after it ends, is saved as a reply to it by default, on every capture path (in-app button, headphone double-press, Siri). The window is a default taken: 20 seconds.
+    - The recording screen, the written-Margin screen and the saved Margin show whom it answers, with a control to make it independent (and back). There is no new Reply button on the playing card.
+    - The packet format is unchanged; the reply link already round-trips, so Builds 32 and 34 read these packets as before.
 - **Podcast anchors** continue as stream C4: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
 - **Parked, reference only:**
   - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand. Its packets use a Margin kind this build can't read.
