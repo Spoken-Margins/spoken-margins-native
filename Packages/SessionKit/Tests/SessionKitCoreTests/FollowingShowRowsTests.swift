@@ -219,4 +219,45 @@ final class FollowingShowRowsTests: XCTestCase {
         XCTAssertEqual(markers.lookedAt.keys.sorted(), ["a"])
         XCTAssertFalse(markers.prune(keeping: ["a"]))
     }
+
+    func testFirstRunSeedsEveryFollowedShowSoNothingIsNewUntilARefreshBringsEpisodes() {
+        var markers = FollowingLookedMarkers()
+        markers.seed(["a", "b"], at: day(20))
+        let waiting = [entry("n1", in: "a", day: 5), entry("n2", in: "b", day: 6)]
+        XCTAssertEqual(build([show("a"), show("b")], waiting, looked: markers.lookedAt).rows.map(\.newCount), [0, 0])
+        let later = waiting + [entry("n3", in: "a", day: 22)]
+        XCTAssertEqual(build([show("a"), show("b")], later, looked: markers.lookedAt).rows.first { $0.id == "a" }?.newCount, 1)
+    }
+
+    func testSeedingKeepsExistingMarkersAndRemoveForgetsAShow() {
+        var markers = FollowingLookedMarkers(lookedAt: ["a": day(1)])
+        markers.seed(["a", "b"], at: day(9))
+        XCTAssertEqual(markers.lookedAt, ["a": day(1), "b": day(9)])
+        markers.remove("a")
+        XCTAssertEqual(markers.lookedAt.keys.sorted(), ["b"])
+    }
+
+    func testAMissingOrCorruptFileIsNilSoTheCallerSeeds() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("looked-\(UUID().uuidString)/\(FollowingLookedMarkers.fileName)")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        XCTAssertNil(FollowingLookedMarkers.loadIfPresent(from: url))
+        try FollowingLookedMarkers().save(to: url)
+        XCTAssertNotNil(FollowingLookedMarkers.loadIfPresent(from: url))
+        try Data("{".utf8).write(to: url)
+        XCTAssertNil(FollowingLookedMarkers.loadIfPresent(from: url))
+    }
+
+    func testSubSecondPrecisionSurvivesTheFileSoAnEntrySeenJustBeforeTheOpenIsNotNew() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("looked-\(UUID().uuidString)/\(FollowingLookedMarkers.fileName)")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let opened = day(5).addingTimeInterval(0.9)
+        var markers = FollowingLookedMarkers()
+        markers.markLooked("a", at: opened)
+        try markers.save(to: url)
+        let loaded = FollowingLookedMarkers.load(from: url)
+        XCTAssertEqual(loaded.lookedAt["a"], opened)
+        var seenJustBefore = entry("e", in: "a", day: 4)
+        seenJustBefore.firstSeenAt = day(5).addingTimeInterval(0.4)
+        XCTAssertEqual(build([show("a")], [seenJustBefore], looked: loaded.lookedAt).rows[0].newCount, 0)
+    }
 }

@@ -1,6 +1,19 @@
 import Foundation
 import SessionKit
 
+/// Writes the looked-times file one save at a time, newest value last: a save that was queued earlier but
+/// runs later is dropped, so a stale snapshot can never overwrite a newer one.
+actor FollowingLookedWriter {
+    static let shared = FollowingLookedWriter()
+    private var lastVersion = -Double.infinity
+
+    func save(_ markers: FollowingLookedMarkers, to url: URL, version: Double) {
+        guard version >= lastVersion else { return }
+        lastVersion = version
+        try? markers.save(to: url)
+    }
+}
+
 /// Following's one-row-per-show list and the Show screen (#1865). The rows are built in
 /// `FollowingShowRows` (SessionKit, host-tested); this file loads their inputs and carries the actions.
 extension Gate1AppModel {
@@ -10,37 +23,52 @@ extension Gate1AppModel {
         FollowingRankingModel.directory?.appending(path: FollowingLookedMarkers.fileName, directoryHint: .notDirectory)
     }
 
-    /// The rows Following shows now. Cheap: the entries are already in memory.
-    func followingShowList() -> FollowingShowList {
-        FollowingShowRows.build(
-            subscriptions: feedSubscriptions,
-            entries: followingShowEntries,
-            lookedAt: followingLooked.lookedAt
-        )
+    /// Loads the looked times once, before anything can save them. The file is a few hundred bytes. With no
+    /// file, or one that can't be read, every followed show is stamped "now" so nothing counts as new until a
+    /// later refresh brings an episode, and that is saved.
+    func loadFollowingLookedIfNeeded() {
+        guard !followingLookedLoaded else { return }
+        followingLookedLoaded = true
+        guard let url = Self.followingLookedURL else { return }
+        if let saved = FollowingLookedMarkers.loadIfPresent(from: url) {
+            followingLooked = saved
+        } else if !feedSubscriptions.isEmpty {
+            var seeded = followingLooked
+            seeded.seed(feedSubscriptions.map(\.id))
+            followingLooked = seeded
+            saveFollowingLooked()
+        }
     }
 
-    /// Reads every stored entry off the main thread (feeds keep up to 200 each) and the saved looked times
-    /// once. Muted shows and played episodes are in it, unlike `followedSourceEntries`.
+    /// Reads every stored entry off the main thread (feeds keep up to 200 each), then builds the rows there
+    /// too. Muted shows and played episodes are in it, unlike `followedSourceEntries`.
     func reloadFollowingShowEntries() async {
         guard let store else { return }
-        let url = Self.followingLookedURL
+        loadFollowingLookedIfNeeded()
         let loaded = await Task.detached(priority: .userInitiated) {
             (try? store.loadFeedEntries(subscriptionId: nil)) ?? []
         }.value
         followingShowEntries = loaded
-        if followingLooked.lookedAt.isEmpty, let url {
-            let saved = await Task.detached(priority: .utility) { FollowingLookedMarkers.load(from: url) }.value
-            // A show opened while the file was loading keeps its newer time.
-            var merged = saved
-            for (id, date) in followingLooked.lookedAt { merged.markLooked(id, at: max(date, saved.lookedAt[id] ?? date)) }
-            followingLooked = merged
-        }
+        followingShowRevision += 1
+        await rebuildFollowingShowList()
+    }
+
+    /// Builds the rows from the current inputs off the main thread; `body` only reads the result.
+    func rebuildFollowingShowList() async {
+        let subscriptions = feedSubscriptions, entries = followingShowEntries, looked = followingLooked.lookedAt
+        let list = await Task.detached(priority: .userInitiated) {
+            FollowingShowRows.build(subscriptions: subscriptions, entries: entries, lookedAt: looked)
+        }.value
+        followingShowListCache = list
     }
 
     /// The listener opened the show: what has arrived so far is no longer new.
     func markShowLooked(id: String) {
+        guard feedSubscriptions.contains(where: { $0.id == id }) else { return }
+        loadFollowingLookedIfNeeded()
         followingLooked.markLooked(id)
         saveFollowingLooked()
+        Task { [weak self] in await self?.rebuildFollowingShowList() }
     }
 
     private func saveFollowingLooked() {
@@ -48,7 +76,8 @@ extension Gate1AppModel {
         var pruned = followingLooked
         pruned.prune(keeping: Set(feedSubscriptions.map(\.id)))
         let markers = pruned
-        Task.detached(priority: .utility) { try? markers.save(to: url) }
+        let version = ProcessInfo.processInfo.systemUptime
+        Task { await FollowingLookedWriter.shared.save(markers, to: url, version: version) }
     }
 
     /// ▶ on a row: plays the show's newest unplayed episode. It enters the Library as it starts and not before.
@@ -64,7 +93,9 @@ extension Gate1AppModel {
     func unfollowShowWithUndo(_ subscription: FeedSubscription) {
         let title = subscription.source.title ?? subscription.source.host
         let feedURL = subscription.source.canonicalURL
+        followingLooked.remove(subscription.id)
         unfollowSource(id: subscription.id)
+        saveFollowingLooked()
         let action = UserFeedbackEvent.Action(
             title: FollowingDismissMessages.undoTitle,
             accessibilityLabel: FollowingRowActions.undoUnfollowAccessibilityLabel(showTitle: title),

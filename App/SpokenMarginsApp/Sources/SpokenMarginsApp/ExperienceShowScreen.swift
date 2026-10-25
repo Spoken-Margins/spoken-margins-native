@@ -12,6 +12,8 @@ struct ExperienceShowScreen: View {
     let artwork: FollowingArtworkCache
     /// When the listener last looked, as of opening: the episodes marked New stay marked while the screen is up.
     @State private var lookedAtOnOpen: Date?
+    /// Built off the main thread when the entries reload; `body` only reads it.
+    @State private var episodes: [FollowingShowEpisode] = []
 
     init(subscriptionID: String, lookedAtOnOpen: Date?, artwork: FollowingArtworkCache) {
         self.subscriptionID = subscriptionID
@@ -34,17 +36,22 @@ struct ExperienceShowScreen: View {
         }
         .background(AppColors.bone)
         .accessibilityIdentifier("show.screen")
-        .onAppear { model.markShowLooked(id: subscriptionID) }
-        .onDisappear { model.markShowLooked(id: subscriptionID) }
+        .onAppear { if subscription != nil { model.markShowLooked(id: subscriptionID) } }
+        .onDisappear { if subscription != nil { model.markShowLooked(id: subscriptionID) } }
+        .task(id: model.followingShowRevision) {
+            guard let subscription else { return }
+            let entries = model.followingShowEntries, looked = lookedAtOnOpen
+            episodes = await Task.detached(priority: .userInitiated) {
+                FollowingShowRows.episodes(of: subscription, in: entries, lookedAt: looked)
+            }.value
+        }
     }
 
     private func content(for subscription: FeedSubscription) -> some View {
         let title = FollowingShowRows.displayTitle(of: subscription)
-        let episodes = FollowingShowRows.episodes(of: subscription, in: model.followingShowEntries, lookedAt: lookedAtOnOpen)
         let newCount = subscription.state == .muted ? 0 : episodes.filter(\.isNew).count
         return List {
-            header(for: subscription, title: title)
-                .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+            headerRows(for: subscription, title: title)
             Section {
                 if episodes.isEmpty {
                     Text("No episodes yet. Pull down on Following to look for new ones.")
@@ -86,54 +93,59 @@ struct ExperienceShowScreen: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private func header(for subscription: FeedSubscription, title: String) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 14) {
-                ShowArtworkView(url: artwork.artworkURL(for: subscription.id), title: title, size: 72)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(AppColors.text)
-                    Text("Following since \(subscription.createdAt.formatted(date: .abbreviated, time: .omitted))")
-                        .font(.subheadline)
-                        .foregroundStyle(AppColors.secondaryText)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+    /// Each control is its own list row, so a tap on one can never reach another (Unfollow in particular).
+    @ViewBuilder
+    private func headerRows(for subscription: FeedSubscription, title: String) -> some View {
+        HStack(spacing: 14) {
+            ShowArtworkView(url: artwork.artworkURL(for: subscription.id), title: title, size: 72)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(AppColors.text)
+                Text("Following since \(subscription.createdAt.formatted(date: .abbreviated, time: .omitted))")
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.secondaryText)
             }
-            // Quiet: the show sinks to Following's collapsed group, stops counting new episodes and stops
-            // appearing in the New list. It is still followed and its episodes are still listed here.
-            Toggle(isOn: Binding(
-                get: { subscription.state == .muted },
-                set: { _ in model.toggleMuteSource(id: subscription.id) }
-            )) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Quiet").font(.body.weight(.semibold))
-                    Text("Moves this show to the bottom of Following with no count.")
-                        .font(.footnote)
-                        .foregroundStyle(AppColors.secondaryText)
-                }
-            }
-            .frame(minHeight: 44)
-            .tint(AppColors.evergreen)
-            .accessibilityIdentifier("show.quiet")
-            Picker("New episodes", selection: Binding(
-                get: { subscription.newItemPolicy ?? .letMePick },
-                set: { model.setFeedNewItemPolicy(id: subscription.id, policy: $0) }
-            )) {
-                Text("Let me pick").tag(FeedNewItemPolicy.letMePick)
-                Text("Add every new item").tag(FeedNewItemPolicy.addEveryNewItem)
-            }
-            .frame(minHeight: 44)
-            .accessibilityIdentifier("show.newItemPolicy")
-            Button(role: .destructive) {
-                model.unfollowShowWithUndo(subscription)
-            } label: {
-                Label(FollowingRowActions.unfollowTitle(showTitle: subscription.source.title ?? subscription.source.host), systemImage: "minus.circle")
-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            }
-            .accessibilityHint("Stops following this show. Items already in your Library are kept. You can undo right after.")
-            .accessibilityIdentifier("show.unfollow")
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
+        // Quiet: the show sinks to Following's collapsed group, stops counting new episodes and stops
+        // appearing in the New list. It is still followed and its episodes are still listed here.
+        Toggle(isOn: Binding(
+            get: { subscription.state == .muted },
+            set: { _ in model.toggleMuteSource(id: subscription.id) }
+        )) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Quiet").font(.body.weight(.semibold))
+                Text("Moves this show to the bottom of Following with no count.")
+                    .font(.footnote)
+                    .foregroundStyle(AppColors.secondaryText)
+            }
+        }
+        .frame(minHeight: 44)
+        .tint(AppColors.evergreen)
+        .accessibilityIdentifier("show.quiet")
+        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+        Picker("New episodes", selection: Binding(
+            get: { subscription.newItemPolicy ?? .letMePick },
+            set: { model.setFeedNewItemPolicy(id: subscription.id, policy: $0) }
+        )) {
+            Text("Let me pick").tag(FeedNewItemPolicy.letMePick)
+            Text("Add every new item").tag(FeedNewItemPolicy.addEveryNewItem)
+        }
+        .frame(minHeight: 44)
+        .accessibilityIdentifier("show.newItemPolicy")
+        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+        Button(role: .destructive) {
+            model.unfollowShowWithUndo(subscription)
+        } label: {
+            Label(FollowingRowActions.unfollowTitle(showTitle: subscription.source.title ?? subscription.source.host), systemImage: "minus.circle")
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .buttonStyle(.borderless)
+        .accessibilityHint("Stops following this show. Items already in your Library are kept. You can undo right after.")
+        .accessibilityIdentifier("show.unfollow")
+        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
     }
 
     /// A waiting episode keeps the row actions Following's stream had: add, play now, dismiss. A played one is

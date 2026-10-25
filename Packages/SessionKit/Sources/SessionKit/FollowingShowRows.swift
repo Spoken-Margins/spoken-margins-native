@@ -31,6 +31,11 @@ public struct FollowingShowList: Equatable, Sendable {
     public var quiet: [FollowingShowRow]
 
     public var quietTitle: String { "Quiet (\(quiet.count))" }
+
+    public init(rows: [FollowingShowRow] = [], quiet: [FollowingShowRow] = []) {
+        self.rows = rows
+        self.quiet = quiet
+    }
 }
 
 /// One episode on a show's screen.
@@ -163,6 +168,14 @@ public struct FollowingLookedMarkers: Codable, Equatable, Sendable {
         lookedAt[subscriptionID] = date
     }
 
+    /// Gives every show in `subscriptionIDs` that has no marker the time `date`, so nothing counts as new
+    /// until a later refresh brings an episode. Used on the first run and after a lost or corrupt file.
+    public mutating func seed(_ subscriptionIDs: some Sequence<String>, at date: Date = Date()) {
+        for id in subscriptionIDs where lookedAt[id] == nil { lookedAt[id] = date }
+    }
+
+    public mutating func remove(_ subscriptionID: String) { lookedAt[subscriptionID] = nil }
+
     /// Drops markers of shows no longer followed. Returns whether anything changed.
     @discardableResult
     public mutating func prune(keeping subscriptionIDs: Set<String>) -> Bool {
@@ -172,16 +185,20 @@ public struct FollowingLookedMarkers: Codable, Equatable, Sendable {
         return true
     }
 
+    /// The saved markers, or nil when the file is missing or unreadable (the caller then seeds).
+    /// Dates are stored as full-precision seconds, so an entry first seen a moment before a show was
+    /// opened never compares as newer after a round trip.
+    public static func loadIfPresent(from url: URL) -> FollowingLookedMarkers? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(FollowingLookedMarkers.self, from: data)
+    }
+
     public static func load(from url: URL) -> FollowingLookedMarkers {
-        guard let data = try? Data(contentsOf: url) else { return FollowingLookedMarkers() }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return (try? decoder.decode(FollowingLookedMarkers.self, from: data)) ?? FollowingLookedMarkers()
+        loadIfPresent(from: url) ?? FollowingLookedMarkers()
     }
 
     public func save(to url: URL) throws {
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys]
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try encoder.encode(self).write(to: url, options: .atomic)

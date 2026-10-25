@@ -25,7 +25,7 @@ struct ExperienceSourcesScreen: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            let list = model.followingShowList()
+            let list = model.followingShowListCache
             List {
                 // An item's Follow can find several feeds; the choice shows here too, not only on the follow screen.
                 if !model.followedSourceCandidates.isEmpty {
