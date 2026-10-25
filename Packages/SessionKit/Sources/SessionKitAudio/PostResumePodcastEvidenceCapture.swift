@@ -148,6 +148,13 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     /// `pendingStablePostSeekStartMs` from the ring on every buffer and cut a landmark again and again (#2626).
     private var stablePostSeekServedEpoch = 0
     private var generatingLandmarkKeys: Set<String> = []
+    private var missedKeys: Set<String> = []
+    /// Landmarks that were due but never made: their audio left the ring first, or generation failed twice (#2654).
+    var missedLandmarkKeys: Set<String> { lock.withLock { missedKeys } }
+    /// How a landmark's signature is made. A test swaps it to force a failed generation.
+    var signatureBuilder: @Sendable ([AVAudioPCMBuffer]) throws -> SHSignature = {
+        try PostResumePodcastEvidenceTapContext.signature(from: $0)
+    }
     /// The minute before and after each Margin, as heard, for source-context transcription (#156).
     private var heardRecorder: HeardAudioWindowRecorder?
     private var heardDownsampleFactor = 1
@@ -535,22 +542,31 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                     + grid * SparseFingerprintSchedule.periodicIntervalMs
                 let end = start + SparseFingerprintSchedule.targetDurationMs
                 let key = "grid-\(grid)"
-                guard !generatingLandmarkKeys.contains(key),
-                      let chunks = bufferedChunksWithoutLock(startMs: start, endMs: end) else { return nil }
-                generatingLandmarkKeys.insert(key)
+                if let chunks = bufferedChunksWithoutLock(startMs: start, endMs: end) {
+                    generatingLandmarkKeys.insert(key)
+                    sparseSchedule.markCaptured(gridIndex: grid)
+                    return (key, grid, grid == 0 ? .initialPlayback : .periodicPlayback, sparseSchedule.continuityEpoch, chunks)
+                }
+                // The point is due only once its whole window is behind the newest buffer, so a window the ring
+                // can't give now (it left the 20 s ring, or has a hole) never comes back. Drop it as missed and
+                // go on to the post-seek landmark, instead of returning nil on every buffer (#2654).
+                missedKeys.insert(key)
                 sparseSchedule.markCaptured(gridIndex: grid)
-                return (key, grid, grid == 0 ? .initialPlayback : .periodicPlayback, sparseSchedule.continuityEpoch, chunks)
             }
             if sparseSchedule.continuityEpoch > stablePostSeekServedEpoch {
                 if pendingStablePostSeekStartMs == nil { pendingStablePostSeekStartMs = ring.first?.startMediaTimeMs }
                 if let start = pendingStablePostSeekStartMs,
                    current - start >= SparseFingerprintSchedule.targetDurationMs {
                     let key = "seek-\(sparseSchedule.continuityEpoch)"
-                    guard !generatingLandmarkKeys.contains(key),
-                          let chunks = bufferedChunksWithoutLock(
-                            startMs: start,
-                            endMs: start + SparseFingerprintSchedule.targetDurationMs
-                          ) else { return nil }
+                    guard let chunks = bufferedChunksWithoutLock(
+                        startMs: start,
+                        endMs: start + SparseFingerprintSchedule.targetDurationMs
+                    ) else {
+                        // Same flaw as the grid branch: a start that left the ring or sits before a hole would
+                        // be asked for on every buffer. Measure again from what the ring holds now.
+                        pendingStablePostSeekStartMs = nil
+                        return nil
+                    }
                     generatingLandmarkKeys.insert(key)
                     pendingStablePostSeekStartMs = nil
                     stablePostSeekServedEpoch = sparseSchedule.continuityEpoch
@@ -562,23 +578,32 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         guard let candidate, let first = candidate.chunks.first, let last = candidate.chunks.last else { return }
         completionQueue.async { [weak self, resultHandler] in
             defer { _ = self?.lock.withLock { self?.generatingLandmarkKeys.remove(candidate.key) } }
-            do {
-                let signature = try Self.signature(from: candidate.chunks.map(\.buffer))
-                resultHandler(.landmark(CapturedEpisodeFingerprintLandmark(
-                    itemId: itemId,
-                    sourceMediaStartMs: first.startMediaTimeMs,
-                    sourceMediaEndMs: last.endMediaTimeMs,
-                    anchorMediaTimeMs: first.startMediaTimeMs,
-                    continuityEpoch: candidate.epoch,
-                    gridIndex: candidate.gridIndex,
-                    trigger: candidate.trigger,
-                    signatureData: signature.dataRepresentation,
-                    durationMs: max(1, Int((signature.duration * 1_000).rounded()))
-                )))
-            } catch {
-                // Sparse landmarks are opportunistic. Per-Margin evidence has
-                // its own explicit failure result and must not be conflated.
+            guard let self else { return }
+            // Sparse landmarks are opportunistic, and per-Margin evidence has its own failure result. A failed
+            // generation is tried once more, then recorded as missed: its grid point or seek epoch is already
+            // marked served, so without this a failure left no landmark and no trace (#2654).
+            var signature: SHSignature?
+            for _ in 0..<2 {
+                if let made = try? self.signatureBuilder(candidate.chunks.map(\.buffer)) {
+                    signature = made
+                    break
+                }
             }
+            guard let signature else {
+                self.lock.withLock { _ = self.missedKeys.insert(candidate.key) }
+                return
+            }
+            resultHandler(.landmark(CapturedEpisodeFingerprintLandmark(
+                itemId: itemId,
+                sourceMediaStartMs: first.startMediaTimeMs,
+                sourceMediaEndMs: last.endMediaTimeMs,
+                anchorMediaTimeMs: first.startMediaTimeMs,
+                continuityEpoch: candidate.epoch,
+                gridIndex: candidate.gridIndex,
+                trigger: candidate.trigger,
+                signatureData: signature.dataRepresentation,
+                durationMs: max(1, Int((signature.duration * 1_000).rounded()))
+            )))
         }
     }
 
@@ -608,7 +633,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         return Int((seconds * 1_000).rounded())
     }
 
-    private static func signature(from buffers: [AVAudioPCMBuffer]) throws -> SHSignature {
+    static func signature(from buffers: [AVAudioPCMBuffer]) throws -> SHSignature {
         let generator = SHSignatureGenerator()
         for buffer in buffers { try generator.append(buffer, at: nil) }
         let signature = generator.signature()
