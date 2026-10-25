@@ -82,7 +82,7 @@ public enum ReadyCueOutputRoute: Equatable, Sendable {
     /// AVAudioSession port types, as their raw strings, that put the sound at the ear. USB audio is included: on a phone it is
     /// a headset or a dongle. Everything else (the built-in speaker, the receiver, AirPlay, a car, a line out) and an empty
     /// route keep the speaker level, so a route not listed here behaves exactly as before.
-    private static let headphonePorts: Set<String> = ["BluetoothHFP", "BluetoothA2DP", "BluetoothLE", "Headphones", "USBAudio"]
+    private static let headphonePorts: Set<String> = ["BluetoothHFP", "BluetoothA2DPOutput", "BluetoothLE", "Headphones", "USBAudio"]
 
     /// `headphones` when any output is worn on the ears.
     public init(outputPortTypes: [String]) {

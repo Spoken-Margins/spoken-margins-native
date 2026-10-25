@@ -121,13 +121,13 @@ final class MarginReadyCueTests: XCTestCase {
     }
 
     func testEveryPortOnTheEarsIsHeadphonesAndEveryOtherRouteIsTheSpeaker() {
-        for port in ["BluetoothHFP", "BluetoothA2DP", "BluetoothLE", "Headphones", "USBAudio"] {
+        for port in ["BluetoothHFP", "BluetoothA2DPOutput", "BluetoothLE", "Headphones", "USBAudio"] {
             XCTAssertEqual(ReadyCueOutputRoute(outputPortTypes: [port]), .headphones, port)
         }
         for port in ["Speaker", "Receiver", "AirPlay", "CarAudio", "LineOut", "HDMI", "SomethingNew"] {
             XCTAssertEqual(ReadyCueOutputRoute(outputPortTypes: [port]), .speaker, port)
         }
         XCTAssertEqual(ReadyCueOutputRoute(outputPortTypes: []), .speaker, "no route known: the old level")
-        XCTAssertEqual(ReadyCueOutputRoute(outputPortTypes: ["Speaker", "BluetoothA2DP"]), .headphones, "any worn output wins")
+        XCTAssertEqual(ReadyCueOutputRoute(outputPortTypes: ["Speaker", "BluetoothA2DPOutput"]), .headphones, "any worn output wins")
     }
 }
