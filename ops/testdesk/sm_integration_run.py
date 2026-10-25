@@ -241,12 +241,15 @@ def summarize(manifest: dict) -> dict:
 
 
 def settle(first: dict, reruns: list[dict]) -> dict:
-    """Re-run evidence for a FAIL. A test that failed on the first run is a failure for the verdict even when a
-    completed re-run passed it (owner, 2026-10-21: every failure means a real bug, and no flake tolerance, #2590).
+    """Apply the retry rule to a FAIL: a test that passed in a completed re-run on the same build is flaky and
+    counts as a pass; a test no completed re-run passed is a failure (owner, 2026-10-24: "it makes sense to allow
+    for a green run to override a red one, just because I think our false negative rate is really high and the
+    false positive is fairly low"). Replaces the 2026-10-21 reading that made a first-run failure final (#2590).
 
-    The re-runs only say how it failed. `confirmed` holds the tests that no completed re-run passed; `flaky` holds
-    the ones that passed in at least one, with `flaky_notes` saying "failed 1 of 3 runs" so the report is plain.
-    A re-run that stopped (INCONCLUSIVE) is no information about a test either way."""
+    Nothing is hidden: `flaky` is every test that passed on retry, the report prints them, and the hosted run
+    tallies each on #2176 (`flake_tally`). A re-run that stopped (INCONCLUSIVE) is no information either way: it
+    can't clear a test, and it can't keep a failure confirmed that another re-run's pass has already cleared
+    (#1417). A test that passed in one re-run and failed in another is flaky too; `flaky_notes` says so."""
     if first['verdict'] != 'FAIL':
         return dict(first, flaky=[], confirmed=[])
     completed = [r for r in reruns if r['verdict'] != 'INCONCLUSIVE']
@@ -256,9 +259,11 @@ def settle(first: dict, reruns: list[dict]) -> dict:
         if not passes:
             continue
         flaky.append(test)
-        notes[test] = f' (failed {1 + len(completed) - passes} of {1 + len(completed)} runs, so a failure, not a pass)'
+        if any(r['tests'].get(test) == 'failed' for r in completed):
+            notes[test] = f' (passed in {passes} of {len(completed)} re-runs, failed in the rest)'
     confirmed = [t for t in first['failed'] if t not in flaky]
-    return dict(first, flaky=flaky, flaky_notes=notes, confirmed=confirmed,
+    return dict(first, verdict='FAIL' if confirmed else 'PASS', failed=confirmed, flaky=flaky, flaky_notes=notes,
+                confirmed=confirmed,
                 errors=first['errors'] + [e for r in reruns for e in r['errors']] if confirmed else first['errors'])
 
 
@@ -338,8 +343,8 @@ def report_text(sha: str, result: dict, *, started: float, finished: float, prev
     if result['failed']:
         lines.append('failing: ' + ', '.join(result['failed']))
     notes = result.get('flaky_notes', {})
-    lines.append('flaky: ' + (', '.join(t + notes.get(t, '') for t in result['flaky']) if result.get('flaky')
-                              else 'none this run'))
+    lines.append('passed on retry: ' + (', '.join(t + notes.get(t, '') for t in result['flaky']) if result.get('flaky')
+                                        else 'none'))
     lines.append('crashes: ' + (', '.join(Path(p).name for p in result['crashes'])
                                 if result.get('crashes') else 'none recorded'))
     if result['verdict'] == 'FAIL':
@@ -654,6 +659,25 @@ class Ops:
                     'error': f'{plan}: runner exit {result.returncode}, no manifest; see {output.name}-runner.log'}
         return json.loads(path.read_text())
 
+    def post_tally(self, body: str) -> None:
+        self.must(['gh', 'api', '--method', 'POST', f'repos/{REPO}/issues/{TALLY_ISSUE}/comments', '-f', f'body={body}'])
+
+    def tally_comments(self) -> list[dict]:
+        since = (dt.datetime.now(dt.timezone.utc) - TALLY_WINDOW).strftime('%Y-%m-%dT%H:%M:%SZ')
+        out = self.must(['gh', 'api', '--paginate', f'repos/{REPO}/issues/{TALLY_ISSUE}/comments?since={since}&per_page=100',
+                         '--jq', '.[] | {body, user: {login: .user.login}} | @json']).stdout
+        return [json.loads(line) for line in out.splitlines() if line.strip()]
+
+    def open_issue_titles(self) -> list[str]:
+        out = self.must(['gh', 'issue', 'list', '-R', REPO, '--state', 'open', '--limit', '500',
+                         '--json', 'title', '--jq', '.[].title']).stdout
+        return [line for line in out.splitlines() if line.strip()]
+
+    def open_flake_issue(self, title: str, body: str) -> str:
+        res = self.must(['gh', 'issue', 'create', '-R', REPO, '--title', title[:120], '--body', body,
+                         '--label', 'ready', '--milestone', 'Showcase'])
+        return (res.stdout or '').strip()
+
     def post_report(self, body: str, evidence: Path) -> str:
         path = evidence / 'report.md'
         path.write_text(body)
@@ -816,6 +840,71 @@ class Ops:
                 if match:
                     filed.append(int(match.group(1)))
         return filed
+
+
+TALLY_ISSUE = 2176
+TALLY_PREFIX = 'flake-tally:'
+TALLY_WINDOW = dt.timedelta(days=7)
+TALLY_THRESHOLD = 3
+
+
+def tally_line(test: str, sha: str, run_id: str, when: dt.datetime) -> str:
+    """The machine-readable first line of a tally comment: one test that failed, then passed on retry."""
+    return f'{TALLY_PREFIX} {test} {sha[:7]} {run_id} {when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}'
+
+
+def tally_counts(comments: list[dict], now: dt.datetime) -> dict[str, list[str]]:
+    """Retry-passes per test in the last 7 days -> their run ids. Only comments by the workflow's own bot count
+    (#1822): a stranger's look-alike line on #2176 can't open an issue. The same run counts once per test."""
+    seen: dict[str, dict[str, None]] = {}
+    for comment in comments:
+        if comment_trust.author_login(comment) != 'github-actions[bot]':
+            continue
+        first = (comment.get('body') or '').splitlines()[:1]
+        parts = first[0].split() if first else []
+        if len(parts) != 5 or parts[0] != TALLY_PREFIX:
+            continue
+        try:
+            when = dt.datetime.strptime(parts[4], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=dt.timezone.utc)
+        except ValueError:
+            continue
+        if now - TALLY_WINDOW <= when <= now:
+            seen.setdefault(parts[1], {})[parts[3]] = None
+    return {test: list(runs) for test, runs in seen.items()}
+
+
+def tests_due_an_issue(counts: dict[str, list[str]], open_titles: list[str]) -> list[str]:
+    """Tests with 3 or more retry-passes in the window and no open issue naming them in its title."""
+    titles = [t.lower() for t in open_titles]
+    return sorted(test for test, runs in counts.items() if len(runs) >= TALLY_THRESHOLD
+                  and not any(test.rsplit('/', 1)[-1].removesuffix('()').lower() in t for t in titles))
+
+
+def flake_issue_text(test: str, runs: list[str]) -> tuple[str, str]:
+    name = test.rsplit('/', 1)[-1].removesuffix('()')
+    links = '\n'.join(f'- https://github.com/{REPO}/actions/runs/{r}' for r in runs)
+    return (f'Flaky: {name} failed, then passed on retry, {len(runs)} times in 7 days',
+            f'`{test}` failed on its first run and passed on a re-run in {len(runs)} hosted integration runs in the '
+            f'last 7 days (tally on #{TALLY_ISSUE}). The run still counted as a pass (owner, 2026-10-24), so '
+            f'fix the test or the code under it rather than leave it to retry.\n\nRuns:\n{links}\n')
+
+
+def record_flakes(ops, flaky: list[str], sha: str, run_id: str) -> list[str]:
+    """Hosted trunk runs only: one comment per retry-pass on #2176, then open an issue for any test over the
+    threshold. Never raises: the report is already out. Returns the issue lines opened."""
+    opened = []
+    try:
+        now = dt.datetime.now(dt.timezone.utc)
+        for test in flaky:
+            ops.post_tally(tally_line(test, sha, run_id, now) + f'\n\n`{test}` passed on retry in run {run_id}.')
+        counts = tally_counts(ops.tally_comments(), now)
+        for test in tests_due_an_issue(counts, ops.open_issue_titles()):
+            if test in flaky:
+                title, body = flake_issue_text(test, counts[test])
+                opened.append(ops.open_flake_issue(title, body))
+    except Exception as error:  # noqa: BLE001
+        ops.log('flake tally failed: ' + str(error)[:300])
+    return opened
 
 
 def save_state(path: Path, state: dict) -> None:
@@ -1238,6 +1327,9 @@ def hosted_run(ops: Ops, sha: str, *, post: bool = True) -> str:
         ops.log('--no-report: the report is not posted to #184:\n' + body)
         report = f'not posted ({evidence / "report.md"})'
     ops.log(f"{result['verdict']} {sha[:7]}: {report}")
+    if post and result.get('flaky') and os.environ.get('GITHUB_RUN_ID'):  # the trunk's tip only, as with the report
+        for line in record_flakes(ops, result['flaky'], sha, os.environ['GITHUB_RUN_ID']):
+            ops.log('opened ' + line)
     return result['verdict']
 
 
