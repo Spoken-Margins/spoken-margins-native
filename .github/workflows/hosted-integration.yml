@@ -35,7 +35,7 @@ permissions:
 # One run at a time, newest tip wins: GitHub keeps one pending run and cancels older pending ones, but never
 # cancels the run in progress (a half-run tip would post nothing). Tips that land meanwhile are tested together.
 concurrency:
-  group: hosted-integration
+  group: hosted-integration-${{ github.ref_name == (vars.SM_TRUNK || 'main') && 'trunk' || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -46,7 +46,8 @@ env:
 jobs:
   integration:
     name: 'integration run on ${{ github.ref_name }}'
-    if: vars.LANE_HOSTED_APP == 'on' && github.ref_name == (vars.SM_TRUNK || 'main')
+    # A manual dispatch may run from any branch to prove a change to this job; it posts no report (--no-report below).
+    if: vars.LANE_HOSTED_APP == 'on' && (github.ref_name == (vars.SM_TRUNK || 'main') || github.event_name == 'workflow_dispatch')
     runs-on: xcode-27
     # The Mac takes about 18 min; hosted builds are 2-3.5x slower (hosted-app-macos.yml), plus re-runs and journeys.
     timeout-minutes: 150
@@ -96,6 +97,16 @@ jobs:
       - name: Crash-report folder
         run: mkdir -p "$HOME/Library/Logs/DiagnosticReports"
 
+      # Every tool the run shells out to (verify-tests.py --plan app, sm_integration_run.py, sim_builds.py), checked
+      # up front so a missing one fails the job here by name instead of surfacing as a report line.
+      - name: Check the tools the run needs
+        run: |
+          missing=0
+          for tool in xcodegen xcodebuild xcrun git git-lfs gh python3 ditto pgrep; do
+            if command -v "$tool" >/dev/null; then echo "ok      $tool"; else echo "::error::$tool is missing on this image"; missing=1; fi
+          done
+          [ "$missing" -eq 0 ]
+
       - name: Toolchain
         run: |
           xcodebuild -version
@@ -112,7 +123,16 @@ jobs:
           SM_INTEGRATION_IOS: '27'
           SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
           SHA: ${{ github.sha }}
-        run: python3 ops/testdesk/sm_integration_run.py --hosted --sha "$SHA"
+          # The app plan's 600 s budget is the owner's Mac. This 3-core hosted Mac ran 928 tests and was cut off at
+          # the budget (run 40113636036), so the plan gets an hour here (verify-tests.py plan_timeout). The job's
+          # timeout-minutes above covers it with the build, the boot and the journeys.
+          SM_PLAN_TIMEOUT_SECONDS: '3600'
+        # Exits nonzero unless the verdict is PASS, so INCONCLUSIVE (including a run that executed 0 tests) and FAIL
+        # turn the job red. The report on #184 is posted first (#2590).
+        run: |
+          extra=()
+          [ "$GITHUB_REF_NAME" = "$SM_TRUNK" ] || extra=(--no-report)
+          python3 ops/testdesk/sm_integration_run.py --hosted --sha "$SHA" ${extra[@]+"${extra[@]}"}
 
       # Logs and manifests only: the script deletes the .xcresult bundles before the upload.
       - name: Keep the evidence
@@ -128,8 +148,11 @@ jobs:
       # symlinks and modes, so no second compression. About 290 MB on 2026-10-18 at 1-2 tips a day. 2 days: a desk
       # wants today's tip, and storage counts against the account's quota while the repo is private.
       # Absent when the build failed or wasn't this SHA's.
+      # Only for a run of the trunk's tip: desks take the newest `sim-app-*` of any commit, so a branch's proof run
+      # must never leave one (#2590). Its step above already passes --no-report for such a run, and the script packs
+      # nothing then.
       - name: Keep the simulator app for desks
-        if: always()
+        if: always() && github.ref_name == (vars.SM_TRUNK || 'main')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sim-app-${{ github.sha }}
