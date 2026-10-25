@@ -2572,6 +2572,9 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
                            f'{stall.get("after_seconds")}s after launch); the first retry passed '
                            f'{found["passed"]} test(s), which counts as a PASS (owner\'s call 2026-10-11). Logged '
                            f'on #{STALL_ISSUE}. evidence: {output}/{found["step"]}-stall-{stall.get("attempt")}/')
+        retried = sorted({t for step in manifest.get('steps', []) for t in step.get('passed_on_retry') or []})
+        if retried:  # owner, 2026-10-24 (#2596): fail-then-pass on a rerun is a pass, and the report names it
+            details.append(f'{plan}: passed on retry: {", ".join(retried)}')
         for test in summary['failed'][:10]:
             details.append(f'{test} — expected: passes. observed: failed. evidence: {output}/tests.xcresult')
         if summary['out_of_time']:
