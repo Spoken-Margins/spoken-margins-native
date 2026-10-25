@@ -67,6 +67,8 @@ public final class SessionEngine {
     /// Set when a listener's start command arrives; the next published start carries it (#357).
     private var playbackRequestedAt: Date?
     private(set) var recordingAnchor: Anchor?
+    /// The words just before the place the recording being made is anchored to, for the recording screen's cue (#1491).
+    public var recordingContextBefore: String? { recordingAnchor?.anchorBefore }
     private var recordingTargetType: InterjectionTargetType?
     /// The shared Margin the recording being made answers, carried from the begin request to the saved Margin (#473).
     private var recordingReplyTo: MarginReplyLink?

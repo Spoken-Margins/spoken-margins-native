@@ -219,7 +219,7 @@ final class LiveSessionController: ObservableObject {
 
     private func takeIn(_ stored: LiveSession) {
         guard stored.id == session?.id else { return }
-        var changed = false
+        var changed = takeInLifecycle(stored)
         for margin in stored.margins {
             if let index = session?.margins.firstIndex(where: { $0.id == margin.id }) {
                 if let text = margin.spokenTranscript, session?.margins[index].spokenTranscript == nil {
@@ -235,6 +235,23 @@ final class LiveSessionController: ObservableObject {
         save()
     }
 
+    /// An End, Resume or later start that came from the Watch (slice 1b) is the store's to say: take it in. The
+    /// screen's own End is never undone, because the Watch's changes are the only ones that set these fields.
+    private func takeInLifecycle(_ stored: LiveSession) -> Bool {
+        guard let current = session else { return false }
+        let endedByWatch = current.endedAt == nil && stored.endedAt != nil && stored.endReason != nil
+        let resumedByWatch = current.endedAt != nil && stored.endedAt == nil
+            && (stored.resumedAt.map { $0 > (current.endedAt ?? .distantFuture) } ?? false)
+        guard endedByWatch || resumedByWatch else { return false }
+        session?.endedAt = stored.endedAt
+        session?.endReason = stored.endReason
+        session?.endNote = stored.endNote
+        session?.resumedAt = stored.resumedAt
+        session?.startedAt = stored.startedAt
+        if endedByWatch { endActivities() }
+        return true
+    }
+
     private func observeDisk() {
         guard diskObserver == nil else { return }
         diskObserver = NotificationCenter.default.addObserver(
@@ -244,9 +261,9 @@ final class LiveSessionController: ObservableObject {
         }
     }
 
-    /// Tells the Watch about the running session, files anything waiting, and refreshes the Library's Live row.
+    /// Files anything waiting, tells the Watch the phone's view of the session (the pass sends the board), and
+    /// refreshes the Library's Live row.
     private func sessionChanged() {
-        if isRunning { WatchMarginReceiver.shared.publish(session: session) } // the pass below clears it from the store
         let written = lastWrite
         Task {
             await written?.value // the pass reads the store after this screen's write, so it never re-sends a stale state

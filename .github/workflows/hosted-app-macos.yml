@@ -2,7 +2,13 @@
 # device (T2), then, when `tests` names any, run those app-hosted test classes or methods in a fresh
 # simulator (T3). The lane does both on the owner's Mac today (scripts/lane-runner.py, verify-tests.py).
 #
-# T2 runs on every PR that changes app code and on the trunk's new tips. `LANE_HOSTED_APP` (lane routing) is
+# T2 runs on every PR that changes something the app builds or bundles, and on the trunk's new tips (#2596).
+# That is App/, Packages/, project.yml, the generated project, and the Contracts and Site files project.yml
+# bundles into the app (scripts/verify-bundle.py checks them). It skips Packages/SessionKit/Tests and
+# Packages/SessionKitTools: the app links only SessionKit's library products, so a diff there cannot change the
+# build. *.md is not excluded, because App/SpokenMarginsApp/Resources bundles .md files. This is not a required
+# check, so path filters are enough. scripts/tests/test_hosted_app_paths.py keeps the lists in step with project.yml.
+# `LANE_HOSTED_APP` (lane routing) is
 # separate: it stays off until hosted T3 passes.
 # T3 is started by hand (workflow_dispatch) until it passes on the hosted image (#2365).
 #
@@ -26,12 +32,33 @@ on:
   # the default branch but not another PR's, so these runs keep a warm compilation cache where every PR can read it.
   push:
     branches: [main]
-    paths: ['App/**', 'Packages/**', 'project.yml', 'SpokenMarginsNative.xcodeproj/**']
-  # T2 on every PR that changes app code (owner, 2026-10-22), so a cloud thread's app change is built on a Mac
-  # before audit and merge. Same paths as the push trigger; a docs, ops or scripts PR starts no Mac.
+    paths:
+      - 'App/**'
+      - 'Packages/**'
+      - 'project.yml'
+      - 'SpokenMarginsNative.xcodeproj/**'
+      - 'Contracts/fixtures/**'
+      - 'Contracts/traces/**'
+      - 'Contracts/voice-models/licenses/**'
+      - 'Site/onboarding/catalog/v1/catalog.json'
+      - '!Packages/SessionKit/Tests/**'
+      - '!Packages/SessionKitTools/**'
+  # T2 on every PR that changes what the app builds (owner, 2026-10-22), so a cloud thread's app change is built
+  # on a Mac before audit and merge. Same paths as the push trigger (a test keeps them identical); a docs, ops
+  # or scripts PR starts no Mac.
   pull_request:
     branches: [main]
-    paths: ['App/**', 'Packages/**', 'project.yml', 'SpokenMarginsNative.xcodeproj/**']
+    paths:
+      - 'App/**'
+      - 'Packages/**'
+      - 'project.yml'
+      - 'SpokenMarginsNative.xcodeproj/**'
+      - 'Contracts/fixtures/**'
+      - 'Contracts/traces/**'
+      - 'Contracts/voice-models/licenses/**'
+      - 'Site/onboarding/catalog/v1/catalog.json'
+      - '!Packages/SessionKit/Tests/**'
+      - '!Packages/SessionKitTools/**'
   workflow_dispatch:
     inputs:
       tests:

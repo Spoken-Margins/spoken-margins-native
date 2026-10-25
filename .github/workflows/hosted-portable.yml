@@ -35,6 +35,10 @@
 # start, checkout, cache restore and SessionKit build for about the same tests), and the runner requires only the
 # portable check and "hosted fast: Mac rest". With the variable off, `sessionkit` runs alone as before.
 #
+# When the Linux job fails, the `stop-macs-on-red` job cancels the run, so the Mac jobs of the merged layout (`scope`,
+# then `mac-rest`, or `sessionkit` with the variable off) stop or leave the queue (#2596): a PR the cheap job
+# already fails has no use for a hosted-Mac slot, and the org has five of them.
+#
 # Dispatch it by hand on any branch with `gh workflow run hosted-portable.yml --ref <branch>`.
 #
 # No secrets, a read-only token, no pull_request_target, no Git LFS (the voice models stay pointers; the
@@ -394,6 +398,28 @@ jobs:
         run: |
           seconds=$(( $(date +%s) - STARTED ))
           echo "hosted fast Mac rest took ${seconds}s on xcode-27." | tee -a "$GITHUB_STEP_SUMMARY"
+
+  stop-macs-on-red:
+    # #2596: the org's hosted-Mac pool is five jobs wide. In the 24 h to 2026-10-24, 22 Mac jobs of this workflow kept
+    # running (or sat queued) for 398 Mac-minutes after the Linux job of the same run had failed, and the author's
+    # next push cancelled them: 9% of the day's Mac minutes, which were other PRs' queue wait. When `portable` ends
+    # red this job cancels the run. The failed check keeps its `failure` conclusion, which is what the lane runner
+    # reads (hosted_fast_records); the Mac checks end `cancelled`. No PR code runs here: the only step is `gh run
+    # cancel`, with a token that may write to Actions and nothing else.
+    name: stop-macs-on-red
+    needs: portable
+    if: always() && needs.portable.result == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the Mac jobs of this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN: ${{ github.run_id }}
+        run: gh run cancel "$RUN" || true
 
   owner-tap-alert:
     # When the jobs above finish, tell the owner's phone if this PR now waits only for his merge tap (#2047, #2442):
