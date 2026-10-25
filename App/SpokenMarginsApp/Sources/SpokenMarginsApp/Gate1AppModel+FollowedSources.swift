@@ -147,9 +147,12 @@ extension Gate1AppModel {
         }
     }
 
+    /// Thrown instead of repeating a discovery that failed moments ago.
+    struct FollowDiscoveryCoolingDown: Error {}
+
     /// One discovery per item and link, shared by the Follow button, the suggestion card and the
     /// tap, so all three show the same feeds and the same name. "No feed" is kept for the session;
-    /// other failures (offline, timeouts) are retried on the next open.
+    /// other failures (offline, timeouts) are retried after a growing cooldown, not on every open.
     private func sharedFollowDiscovery(
         item: Item,
         preferredURL: URL,
@@ -157,11 +160,14 @@ extension Gate1AppModel {
     ) async throws -> [SourceCandidateEvidence] {
         let key = item.id + "\u{1f}" + preferredURL.absoluteString
         if let task = followDiscoveries[key] { return try await task.value }
+        // A recent failure counts as served for this trigger; the next attempt waits out the cooldown (#2653).
+        guard followDiscoveryCooldown.canAttempt(key) else { throw FollowDiscoveryCoolingDown() }
         let task = Task { try await self.discoverFollowCandidates(item: item, preferredURL: preferredURL, coordinator: coordinator) }
         followDiscoveries[key] = task
         do {
             let candidates = try await task.value
             // Whichever path ran discovery, the Follow button can use what it found.
+            followDiscoveryCooldown.recordSuccess(key)
             if followOffers[item.id] == nil {
                 followOffers[item.id] = ManualFollowPolicy.offer(itemId: item.id, mediaType: item.mediaType, candidates: candidates)
             }
@@ -170,6 +176,7 @@ extension Gate1AppModel {
             throw FollowedSourceError.noFeedCandidates
         } catch {
             followDiscoveries[key] = nil
+            followDiscoveryCooldown.recordFailure(key)
             throw error
         }
     }

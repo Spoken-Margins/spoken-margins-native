@@ -507,6 +507,7 @@ final class Gate1AppModel: ObservableObject {
     let sharedLinkVoiceover = SharedLinkVoiceover() // tests replace its page fetch (#810)
     var sourceSuggestionChecks: Set<String> = []
     var followDiscoveries: [String: Task<[SourceCandidateEvidence], Error>] = [:]
+    var followDiscoveryCooldown = RetryCooldown(base: 60, ceiling: 30 * 60) // a failed discovery isn't redone on every refresh (#2653)
     @Published var followOffers: [String: FollowOffer] = [:]
     var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
     private let recordingClientOverride: RecordingClient?
@@ -558,6 +559,7 @@ final class Gate1AppModel: ObservableObject {
     )
     var pendingStartupAudioPreparationItemIds: Set<String> = []
     var failedStartupAudioPreparationItemIds: Set<String> = []
+    var startupAudioPreparationCooldown = RetryCooldown(base: 30, ceiling: 10 * 60) // failed or not-ready items wait before the next trigger retries (#2653)
     var isImportingPendingSourceLinkHandoffs = false
     /// Browser-text payloads one path is importing now; the link open and the drain both suspend, so each skips what the other holds (#2510).
     var browserTextPayloadsInFlight = Set<String>()

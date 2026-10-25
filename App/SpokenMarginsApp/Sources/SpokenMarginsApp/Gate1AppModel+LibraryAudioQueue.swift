@@ -65,6 +65,7 @@ extension Gate1AppModel {
               !suppressedAutomaticAudioPreparationItemIds.contains(itemId),
               !liveSpeechFallbackItemIds.contains(itemId),
               !pendingStartupAudioPreparationItemIds.contains(itemId),
+              startupAudioPreparationCooldown.canAttempt(itemId),
               libraryItems.first(where: { $0.id == itemId })?.startupAudioState != .ready else {
             return
         }
@@ -88,6 +89,7 @@ extension Gate1AppModel {
         } catch {
             failedStartupAudioPreparationItemIds.insert(itemId)
             updateLibraryStartupAudioState(itemId: itemId, state: .failed)
+            startupAudioPreparationCooldown.recordFailure(itemId)
             diagnostics["startupAudioPreparation:\(itemId)"] = "enqueue_failed:\(error.localizedDescription)"
         }
     }
@@ -132,6 +134,12 @@ extension Gate1AppModel {
                 manifest: manifest, sourceText: sourceText, repository: store,
                 request: .startup(maximumChunkCount: targetChunkCount, requestedAt: item.createdAt)
             )
+            if manifest.chunks.count < targetChunkCount {
+                // Not ready yet: the queued job is the answer, so later triggers wait instead of re-enqueueing.
+                startupAudioPreparationCooldown.recordFailure(itemId)
+            } else {
+                startupAudioPreparationCooldown.recordSuccess(itemId)
+            }
             diagnostics["startupAudioPreparation:\(itemId)"] = manifest.chunks.count < targetChunkCount
                 ? "queued_0_of_\(targetChunkCount)" : "ready_from_cache"
             refreshLibraryRowsInBackground()
@@ -146,6 +154,7 @@ extension Gate1AppModel {
         } catch {
             failedStartupAudioPreparationItemIds.insert(itemId)
             updateLibraryStartupAudioState(itemId: itemId, state: .failed)
+            startupAudioPreparationCooldown.recordFailure(itemId)
             diagnostics["startupAudioPreparation:\(itemId)"] = "failed:\(error.localizedDescription)"
         }
     }
@@ -245,6 +254,7 @@ extension Gate1AppModel {
             )
             pendingStartupAudioPreparationItemIds.remove(selected.itemId)
             failedStartupAudioPreparationItemIds.remove(selected.itemId)
+            startupAudioPreparationCooldown.clear(selected.itemId)
             try refreshLibraryRows(store: store)
             diagnostics["audioPreparationSuppressed:\(selected.itemId)"] = "user"
             reportConfirmation("Removed \(itemsTitle(itemId: selected.itemId, store: store)) from audio preparation.")
@@ -263,6 +273,7 @@ extension Gate1AppModel {
             try store.deleteAudioPreparationJobs(ids: jobs.map(\.id))
             pendingStartupAudioPreparationItemIds.subtract(itemIds)
             failedStartupAudioPreparationItemIds.subtract(itemIds)
+            startupAudioPreparationCooldown.clear(itemIds)
             try refreshLibraryRows(store: store)
             diagnostics["audioPreparationQueueCleared"] = "\(jobs.count)"
             reportConfirmation("Cleared \(jobs.count) audio preparation job\(jobs.count == 1 ? "" : "s"). Existing audio and Library items were kept.")
@@ -334,6 +345,7 @@ extension Gate1AppModel {
         do {
             allowAudioPreparation(itemId: item.id)
             failedStartupAudioPreparationItemIds.remove(item.id)
+            startupAudioPreparationCooldown.clear(item.id)
             let store = try requireStore()
             let support = try applicationSupportDirectory()
             guard let assets = SupertonicAssetResolver.location() else {
