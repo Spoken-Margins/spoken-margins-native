@@ -86,7 +86,9 @@ final class WatchContractAppTests: XCTestCase {
         let session = await files.session(id: "live-watch-meeting")
         let stored = try XCTUnwrap(session?.margins.first)
         XCTAssertEqual(stored.id, margin.marginId)
-        XCTAssertEqual(stored.deviceMarkedAt, margin.wallStart, "the raw Watch time is kept")
+        // The file's metadata carries the time as seconds since 1970, so a `Date()` comes back a few ulps off.
+        let deviceMarkedAt = try XCTUnwrap(stored.deviceMarkedAt, "the raw Watch time is kept")
+        XCTAssertEqual(deviceMarkedAt.timeIntervalSince(margin.wallStart), 0, accuracy: 0.001, "the raw Watch time is kept")
         XCTAssertEqual(stored.markedAt.timeIntervalSince(margin.wallStart), -120, accuracy: 0.001, "corrected by the offset")
         XCTAssertEqual(stored.text, "johnny was talking about the budget")
     }
