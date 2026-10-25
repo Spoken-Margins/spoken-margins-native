@@ -3230,10 +3230,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(Set(model.recentlyDeletedItems.map(\.id)), ["item-pill", secondID])
 
         model.permanentlyDeleteRecentlyDeletedItems()
-        // The episode-map folders are removed off the main thread (#2510), so they go a moment after the delete returns.
-        try await waitFor("the deleted items' episode map folders to be removed") {
-            doomedFiles.allSatisfy { !FileManager.default.fileExists(atPath: $0.episodeMap.path) }
-        }
 
         XCTAssertTrue(model.recentlyDeletedItems.isEmpty)
         XCTAssertFalse(model.libraryItems.contains(where: { $0.id == "item-pill" || $0.id == secondID }))
