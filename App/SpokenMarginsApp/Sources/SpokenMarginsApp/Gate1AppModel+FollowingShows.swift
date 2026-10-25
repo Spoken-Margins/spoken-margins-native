@@ -1,6 +1,29 @@
 import Foundation
 import SessionKit
 
+/// Following's stored state (#1865), held as one value so `Gate1AppModel.swift` doesn't grow (hot-file ratchet).
+struct FollowingShowsState {
+    /// Every stored entry of the followed shows, muted shows and played episodes included, for Following's rows and a show's screen.
+    var entries: [FeedEntry] = []
+    /// When each show was last opened; "N new" on Following counts from it.
+    var looked = FollowingLookedMarkers()
+    /// Following's rows, built off the main thread whenever the entries, shows or looked times change.
+    var listCache = FollowingShowList()
+    /// Counts reloads of `entries`, so a Show screen knows when to rebuild its episodes.
+    var revision = 0
+    var lookedLoaded = false
+    var lookedDirty = false
+}
+
+extension Gate1AppModel {
+    var followingShowEntries: [FeedEntry] { get { followingShows.entries } set { followingShows.entries = newValue } }
+    var followingLooked: FollowingLookedMarkers { get { followingShows.looked } set { followingShows.looked = newValue } }
+    var followingShowListCache: FollowingShowList { get { followingShows.listCache } set { followingShows.listCache = newValue } }
+    var followingShowRevision: Int { get { followingShows.revision } set { followingShows.revision = newValue } }
+    var followingLookedLoaded: Bool { get { followingShows.lookedLoaded } set { followingShows.lookedLoaded = newValue } }
+    var followingLookedDirty: Bool { get { followingShows.lookedDirty } set { followingShows.lookedDirty = newValue } }
+}
+
 /// Writes the looked-times file one save at a time, newest value last: a save that was queued earlier but
 /// runs later is dropped, so a stale snapshot can never overwrite a newer one.
 actor FollowingLookedWriter {

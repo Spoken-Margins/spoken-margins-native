@@ -3,6 +3,20 @@ import SessionKit
 import SessionKitFeeds
 import SessionKitPersistence
 
+/// Feed discovery's bookkeeping, held as one value so `Gate1AppModel.swift` doesn't grow (hot-file ratchet).
+struct FollowDiscoveryState {
+    var suggestionChecks: Set<String> = []
+    var discoveries: [String: Task<[SourceCandidateEvidence], Error>] = [:]
+    /// A failed discovery isn't redone on every refresh (#2653).
+    var cooldown = RetryCooldown(base: 60, ceiling: 30 * 60)
+}
+
+extension Gate1AppModel {
+    var sourceSuggestionChecks: Set<String> { get { followDiscovery.suggestionChecks } set { followDiscovery.suggestionChecks = newValue } }
+    var followDiscoveries: [String: Task<[SourceCandidateEvidence], Error>] { get { followDiscovery.discoveries } set { followDiscovery.discoveries = newValue } }
+    var followDiscoveryCooldown: RetryCooldown { get { followDiscovery.cooldown } set { followDiscovery.cooldown = newValue } }
+}
+
 /// Following actions, discovery and refresh (#1008), moved unchanged out of Gate1AppModel.swift.
 /// Stored state, observers and the discovery test seam remain in the model.
 extension Gate1AppModel {

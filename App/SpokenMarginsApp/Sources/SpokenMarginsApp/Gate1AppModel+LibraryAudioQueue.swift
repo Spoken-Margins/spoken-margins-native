@@ -7,6 +7,20 @@ import SessionKitSharing
 import SessionKitSupertonic
 import SessionKitPersistence
 import SessionKitFeeds
+/// Startup audio preparation's bookkeeping, held as one value so `Gate1AppModel.swift` doesn't grow (hot-file ratchet).
+struct StartupAudioPreparationState {
+    var pendingItemIds: Set<String> = []
+    var failedItemIds: Set<String> = []
+    /// Failed or not-ready items wait before the next trigger retries (#2653).
+    var cooldown = RetryCooldown(base: 30, ceiling: 10 * 60)
+}
+
+extension Gate1AppModel {
+    var pendingStartupAudioPreparationItemIds: Set<String> { get { startupAudioPreparation.pendingItemIds } set { startupAudioPreparation.pendingItemIds = newValue } }
+    var failedStartupAudioPreparationItemIds: Set<String> { get { startupAudioPreparation.failedItemIds } set { startupAudioPreparation.failedItemIds = newValue } }
+    var startupAudioPreparationCooldown: RetryCooldown { get { startupAudioPreparation.cooldown } set { startupAudioPreparation.cooldown = newValue } }
+}
+
 #if canImport(UIKit)
 import UIKit
 #endif
