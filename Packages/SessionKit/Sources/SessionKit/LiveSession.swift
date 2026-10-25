@@ -43,6 +43,16 @@ public struct LiveSession: Codable, Equatable, Sendable {
     /// The Library item this session was saved as. A saved session stays in the session store, so a late copy of
     /// one of its Margins is still known, but takes no new Margins.
     public var savedItemId: String?
+    /// The device that started it, "phone" or "watch" (#2487 slice 1b; WATCH.md 3.1). Nil reads as the phone. Like
+    /// the fields below it is optional, so an earlier build reads the session and ignores it.
+    public var ownerDevice: String?
+    /// Why it ended, when not by the listener on the phone: `LiveSessionWatchSessions.EndReason`.
+    public var endReason: String?
+    /// The end in plain words, when the phone ended a session the Watch started: "Lecture ended at 10:20, when you
+    /// started Meeting on iPhone". The Watch shows it.
+    public var endNote: String?
+    /// When Resume last reopened it (DESIGN section 2 point 6).
+    public var resumedAt: Date?
 
     public init(
         id: String, kind: ElsewhereKind = .meeting, title: String = "", startedAt: Date, endedAt: Date? = nil,
@@ -130,6 +140,12 @@ public struct LiveSessionMargin: Codable, Equatable, Sendable, Identifiable {
     /// How it came to be filed here, when not simply during the session (#2487 slice 1a): "after the session
     /// ended" or "moved from a quick session". Evidence for the listener and the export; never used to place it.
     public var filingNote: String?
+    /// When the recording device's own clock said it was taken, before correcting for that clock (#2487 slice 1b;
+    /// DESIGN section 4 point 8). `markedAt` is the corrected time. Nil for a Margin taken on the phone.
+    public var deviceMarkedAt: Date?
+    /// How its time was corrected, when worth saying: "Watch clock 2.4 s ahead, corrected" or "Watch clock, not
+    /// checked". Evidence for the listener and the export; never used to place it.
+    public var clockNote: String?
 
     public init(
         id: String, text: String, markedAt: Date, sessionOffsetMs: Int = 0, whereNote: String? = nil, isBlindMark: Bool = false,

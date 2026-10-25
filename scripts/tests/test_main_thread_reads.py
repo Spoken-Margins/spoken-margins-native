@@ -554,7 +554,7 @@ class TheRepository(unittest.TestCase):
         left_out = []
         mtr.read_sources(ROOT, left_out)
         names = {Path(rel).name for rel in left_out}
-        self.assertTrue({'WatchOfflineModels.swift', 'Gate3WatchConnectivityController.swift',
+        self.assertTrue({'WatchOfflineModels.swift', 'WatchPackageRenderCoordinator.swift',
                          'SourceLinkShareViewController.swift'} <= names, names)
         base_files = {k: e['file'] for k, e in mtr.load_baseline(ROOT / mtr.BASELINE).items()}
         self.assertEqual([k for k in mtr.load_baseline(ROOT / mtr.BASELINE) if Path(base_files[k]).name in names], [])
