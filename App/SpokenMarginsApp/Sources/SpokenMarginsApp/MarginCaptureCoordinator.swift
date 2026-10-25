@@ -29,8 +29,9 @@ final class MarginCaptureCoordinator: ObservableObject {
     var draftKeeper: WrittenMarginDraftKeeper?
     private(set) var pendingVoiceRequestID: UUID?
     /// The shared Margin the spoken Margin being started answers (#473), and whether the listener switched it to
-    /// independent. Published so the switch redraws the recording screen. It goes with the presentation context.
-    @Published private(set) var replyChoice = MarginReplyChoice()
+    /// independent. Not published, like the request ID: the recording screen is redrawn by `presentationContext`,
+    /// which is always set after this and cleared with it. Only the switch (`toggleReplyChoice`) announces itself.
+    private(set) var replyChoice = MarginReplyChoice()
     var pendingReply: MarginReplyDraft? { replyChoice.effective }
     /// The last shared Margin heard, so a Margin recorded over it or just after answers it (#473). Not published.
     private(set) var sharedReplyMemory = SharedMarginReplyMemory()
@@ -136,6 +137,7 @@ final class MarginCaptureCoordinator: ObservableObject {
 
     /// Switches the Margin being started between a reply and an independent Margin (#473).
     func toggleReplyChoice() {
+        objectWillChange.send()
         replyChoice.toggle()
     }
 
