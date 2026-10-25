@@ -188,6 +188,7 @@ extension Gate1AppModel {
                         let message = fallbackReason.listenerExplanation
                         self.statusMessage = message
                         self.presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
+                        AppHaptics.play(.warning)
                     }
                 },
                 onRestore: { [weak self] itemId in
