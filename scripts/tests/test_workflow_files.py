@@ -152,11 +152,18 @@ TEST_RUNNING = re.compile(r'test-without-building|verify-tests|swift test|unitte
 # Steps allowed to carry continue-on-error: true, by (workflow file, job id). Each one is a ping or a report-of-a-report
 # that is not a test result ("Not a lane result: a failure here must not make the run look red" in lane.yml).
 # A new entry here needs the same kind of reason; a test or build step never belongs on this list.
+# A cache-only step (`uses: actions/cache/...`, no `run:`) may carry it in any job.
 CONTINUE_ON_ERROR_ALLOWED = {
     ('lane.yml', 'lane-lost'),
     ('lane.yml', 'lane-open-lane'),
     ('lane.yml', 'lane-open-automerge'),
 }
+
+
+def is_cache_restore_only(step):
+    """A step that only restores or saves a cache (`uses: actions/cache/...`, no `run:`). A failed restore must cost a
+    cold build, never a red check (hosted-app-macos.yml, #2617); it runs no test, so it can't hide a failed one."""
+    return str(step.get('uses', '')).startswith('actions/cache/') and 'run' not in step
 
 
 def logical_lines(script):
@@ -194,7 +201,8 @@ class WorkflowHonesty(unittest.TestCase):
             for job_id, job in parse(path)['jobs'].items():
                 where = (path.name, job_id)
                 flagged = job.get('continue-on-error') is True or any(
-                    step.get('continue-on-error') is True for step in job.get('steps', []))
+                    step.get('continue-on-error') is True and not is_cache_restore_only(step)
+                    for step in job.get('steps', []))
                 if flagged:
                     self.assertIn(where, CONTINUE_ON_ERROR_ALLOWED,
                                   f'{where}: continue-on-error: true can turn a failed test into a green check')
