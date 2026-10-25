@@ -76,13 +76,10 @@ struct ExperienceRecordingView: View {
     /// The shared Margin this recording answers (#473).
     @ViewBuilder
     private var replyCaption: some View {
-        if let reply = model.pendingMarginReply {
-            Label(reply.caption, systemImage: "arrowshape.turn.up.left.fill")
-                .font(.subheadline)
-                .foregroundStyle(.white)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("recording.replyCaption.label")
-        }
+        ExperienceReplyChoiceRow(
+            choice: model.pendingMarginReplyChoice, captionColor: .white, identifierPrefix: "recording",
+            switchReply: model.toggleReplyOfCurrentMargin
+        )
     }
 
     /// The words and the icon carry the state together, never colour alone (#937).

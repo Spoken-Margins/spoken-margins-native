@@ -99,4 +99,55 @@ final class MarginReplyCaptureTests: XCTestCase {
 
         XCTAssertEqual(try margins(engine, repository).map(\.replyTo), [link, nil])
     }
+
+    // The listener switches a Margin between reply and independent (#473, owner 2026-10-25).
+
+    func testSwitchingARecordingToIndependentSavesNoLinkAndBackSavesIt() throws {
+        let (engine, repository) = try engine()
+        _ = try engine.beginInterjection(request: MarginCaptureRequest().replying(to: link))
+        engine.changeReplyOfCurrentCapture(to: nil)
+        _ = try engine.finishInterjection(audioRef: "interjections/independent.m4a")
+        _ = try engine.beginInterjection()
+        engine.changeReplyOfCurrentCapture(to: link) // the compact controls begin without a link
+        _ = try engine.finishInterjection(audioRef: "interjections/reply.m4a")
+
+        XCTAssertEqual(try margins(engine, repository).map(\.replyTo), [nil, link])
+    }
+
+    func testSwitchingAWrittenMarginChangesWhatItSaves() throws {
+        let (engine, repository) = try engine()
+        let capture = try engine.beginWrittenInterjection(replyTo: link)
+        engine.changeReplyOfCurrentCapture(to: nil)
+        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "Actually my own thought.")
+
+        XCTAssertEqual(try margins(engine, repository).first?.replyTo, nil)
+    }
+}
+
+/// The choice a listener made on a written Margin is what its journal keeps (#473): switching to independent
+/// has to survive the app being closed before Save.
+final class WrittenCaptureReplyChoiceTests: XCTestCase {
+    private let link = MarginReplyLink.replying(
+        to: MarginPacketIdentity(packageDigest: String(repeating: "b", count: 64), packageScopedId: "b-1"), parentConversationId: nil)
+
+    private var capture: WrittenInterjectionCapture {
+        WrittenInterjectionCapture(
+            id: "c", sessionId: "s", itemId: "i", targetType: .item, targetId: "i",
+            anchor: Anchor(anchorType: .text, startChar: 0, endChar: 4, anchorBefore: "", anchorAfter: ""),
+            roughPercent: 5, wasPlaying: true, replyTo: link
+        )
+    }
+
+    func testReplyingChangesOnlyTheLink() {
+        let independent = capture.replying(to: nil)
+        XCTAssertNil(independent.replyTo)
+        XCTAssertEqual(independent.replying(to: link), capture)
+    }
+
+    func testAnIndependentChoiceIsWhatTheJournalRestores() {
+        let record = WrittenMarginDraftRecord(capture: capture.replying(to: nil), text: "t", updatedAt: Date(timeIntervalSince1970: 1))
+        XCTAssertNil(record.capture.replyTo)
+        let kept = WrittenMarginDraftRecord(capture: capture, text: "t", updatedAt: Date(timeIntervalSince1970: 1))
+        XCTAssertEqual(kept.capture.replyTo, link)
+    }
 }

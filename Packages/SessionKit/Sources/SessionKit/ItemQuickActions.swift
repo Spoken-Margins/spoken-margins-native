@@ -5,6 +5,8 @@ import Foundation
 public enum ItemQuickAction: String, Equatable, Sendable {
     case markComplete
     case markUnfinished
+    case playNext
+    case addToQueue
     case addToCollection
     case prepareOffline
 
@@ -20,7 +22,7 @@ public enum ItemQuickAction: String, Equatable, Sendable {
     public static func actions(for row: LibraryItemRow) -> [ItemQuickAction] {
         var actions: [ItemQuickAction] = []
         if let completion = completionAction(for: row) { actions.append(completion) }
-        actions.append(.addToCollection)
+        actions.append(contentsOf: [.playNext, .addToQueue, .addToCollection])
         if row.offlineState != .readyOffline { actions.append(.prepareOffline) }
         return actions
     }

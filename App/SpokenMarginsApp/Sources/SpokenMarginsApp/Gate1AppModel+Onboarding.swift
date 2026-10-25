@@ -96,7 +96,7 @@ extension Gate1AppModel {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_ai_settings_from_onboarding") else { return }
         continueGuidedOnboardingPastAI()
         isHelpPresented = false
-        screen = .settings
+        showSettingsTab()
     }
 
     func finishGuidedOnboarding() {
