@@ -1052,6 +1052,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
 
     public func savePreparedAudioManifest(_ manifest: PreparedAudioManifest) throws {
         try save(kind: "prepared_audio_manifest", id: manifest.id, sessionId: nil, itemId: manifest.itemId, value: manifest)
+        PreparedAudioChangeSignal.shared.bump() // wakes the playback frontier poll (#2652)
     }
 
     public func loadPreparedAudioManifest(id: String) throws -> PreparedAudioManifest? {
@@ -1071,7 +1072,10 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         )
     }
 
-    public func deletePreparedAudioManifest(id: String) throws { try deleteRecord(kind: "prepared_audio_manifest", id: id) }
+    public func deletePreparedAudioManifest(id: String) throws {
+        try deleteRecord(kind: "prepared_audio_manifest", id: id)
+        PreparedAudioChangeSignal.shared.bump()
+    }
 
     public func saveAudioPreparationJob(_ job: AudioPreparationJob) throws {
         try save(kind: "audio_preparation_job", id: job.id, sessionId: nil, itemId: job.itemId, value: job)
