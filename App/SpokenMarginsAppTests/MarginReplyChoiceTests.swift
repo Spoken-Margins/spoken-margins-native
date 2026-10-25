@@ -1,4 +1,5 @@
 import SessionKit
+import SessionKitPersistence
 import XCTest
 @testable import SpokenMarginsApp
 #if canImport(UIKit)
@@ -79,6 +80,47 @@ final class MarginReplyChoiceTests: XCTestCase {
         draft.replyChoice.toggle()
         NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
         XCTAssertEqual(try journal.load().drafts.first?.replyTo, reply.link)
+    }
+
+    /// Audit on `d04b220`: a cold launch restored the draft before the shared Margins were listed, so every
+    /// journaled reply was dropped as "parent not found" and saved independent.
+    func testAColdLaunchKeepsAReplyWhoseMarginIsInTheLibrary() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "reply-restore-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: NoopRecordingClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let reply = try importedReply(into: model.requireStore(), itemId: "item-pill")
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin(answering: reply)
+        model.updateWrittenMarginText("typed before the app closed")
+        XCTAssertEqual(model.writtenMarginDraft?.reply?.link, reply.link)
+        NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
+
+        let reopened = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: NoopRecordingClient(), databaseURLOverride: databaseURL)
+        reopened.bootstrapLibraryIfNeeded()
+        defer { reopened.cancelWrittenMargin() } // the journal lives in the host's Application Support
+        XCTAssertEqual(reopened.writtenMarginDraft?.text, "typed before the app closed")
+        XCTAssertEqual(reopened.writtenMarginDraft?.reply?.link, reply.link, "the reply the listener left is restored")
+        XCTAssertNil(reopened.diagnostics["writtenMarginDraftReply"])
+    }
+
+    private func importedReply(into store: SQLiteSessionStore, itemId: String) throws -> MarginReplyDraft {
+        var layer = ImportedCommentaryLayer(
+            id: "restore-layer", itemId: itemId, packageDigest: String(repeating: "b", count: 64), packageId: "p",
+            itemIdentity: SharedItemIdentity(itemType: .text, canonicalURL: nil, title: "Seeded"),
+            displayLabel: "Ana", importedAt: now
+        )
+        layer.isEnabled = true
+        let margin = ImportedCommentaryInterjection(
+            id: "restore-m1", layerId: layer.id, packageScopedId: "restore-m1-scoped", createdAt: now,
+            anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "Words",
+            resolution: ImportedAnchorResolution(evidenceClass: .exactEdition)
+        )
+        try store.saveImportedCommentaryLayer(layer)
+        try store.saveImportedCommentaryInterjection(margin)
+        return MarginReplyDraft(parent: margin, in: layer)
     }
 
     func testARestoredLinkWhoseMarginCannotBeShownIsDroppedNotHidden() {
