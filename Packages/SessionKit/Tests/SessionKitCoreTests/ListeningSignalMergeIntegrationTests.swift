@@ -85,7 +85,7 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
         try assertOrdered([
             "guard let item = try ManualItemCompletion.markComplete(itemId: id, in: store) else { return }",
             "listeningSignals.finish(itemId: id)",
-            "try refreshLibraryRows(store: store)",
+            "refreshLibraryRowsInBackground()",
             "presentCompletionUndo(itemId: id, title: item.title, markedAt: item.sourceCompletedAt ?? Date())",
         ], in: completion)
         XCTAssertFalse(completion.contains("try store.saveItem"), "Completion stays in the host-tested helper")
