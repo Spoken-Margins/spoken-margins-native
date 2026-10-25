@@ -409,6 +409,42 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["followedPublisherAudio"]?.contains("deferred_until_opened"), true)
     }
 
+    /// #2368: the page a background import skipped is read the first time the listener opens the item, and only then.
+    /// Not at import, and not again by another background refresh.
+    func testABackgroundSubstackImportLooksUpItsVoiceoverWhenTheListenerOpensIt() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let databaseURL = root.appendingPathComponent("background-substack-open.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        model.readablePageExtractor = RefusingPublisherPageExtractor()
+        var fetched: [URL] = []
+        model.sharedLinkVoiceover.fetchPage = { url in
+            fetched.append(url)
+            return (html: "<html><head></head></html>", finalURL: url)
+        }
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        try store.saveFeedSubscription(FeedSubscription(id: "s", source: SourceIdentity(id: "zvi", kind: .articleFeed,
+            canonicalURL: "https://thezvi.substack.com/feed", host: "thezvi.substack.com", title: "Zvi"), lastRefreshAt: Date()))
+        let body = String(repeating: "A free post, full text in the feed. ", count: 120)
+        let entry = FeedEntry(id: "with-body", subscriptionId: "s", canonicalURL: "https://thezvi.substack.com/p/with-body",
+            title: "With body", bodyWordCount: 720, fullBody: body, publisherPlatform: "substack")
+        try store.saveFeedEntry(entry)
+
+        model.importFollowedSourceEntry(entry, startedByListener: false)
+        try await waitFor("background feed-text import") {
+            (try? store.loadFeedEntries(subscriptionId: "s").first?.state) == .imported
+        }
+        let row = try XCTUnwrap(model.libraryItems.first { $0.title == entry.title })
+        XCTAssertEqual(fetched, [], "importing nobody opened reads no page")
+
+        model.openItem(id: row.id)
+        try await waitFor("the lookup on open") { fetched.count == 1 }
+        XCTAssertEqual(fetched.first?.absoluteString, entry.canonicalURL)
+        model.openItem(id: row.id)
+        XCTAssertEqual(fetched.count, 1, "opening it again in the same launch does not read the page again")
+    }
+
     func testConfirmedNarrationWithoutStoredBodyUsesTheArticleExtractor() async throws {
         let entry = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: "https://publisher.example/p/article",
             audioURL: "https://publisher.example/recording.mp3", title: "Article", bodyWordCount: 720,
