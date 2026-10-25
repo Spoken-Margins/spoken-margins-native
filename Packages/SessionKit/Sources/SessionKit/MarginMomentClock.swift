@@ -68,16 +68,55 @@ public enum MarginMomentClock: Sendable, Equatable {
     /// except after an abbreviation (`Mr.`, `e.g.`, an initial) or before a lower-case word (`Wait... then`). A blank
     /// line ends one too, which is how a heading with no punctuation of its own ends. Initialisms (`U.S. Army`) and
     /// names with initials don't end one, unless a word that opens sentences follows (`Vitamin A. Then`).
+    ///
+    /// Only the stretch of text around `offset` is looked at (#2506): the text can be megabytes, and a sentence break
+    /// is decided by a few characters on each side of it. The window starts `windowLookBehind` characters before
+    /// `offset` and grows until it holds the answer, so a text with no break for a page still gets the same result as
+    /// a scan from the start (`testWindowedSentenceStartMatchesAScanFromTheStart`).
     public static func sentenceStart(atOrAfter offset: Int, before limit: Int, in text: String) -> Int {
-        guard offset > 0 else { return 0 }
-        let characters = Array(text)
-        var index = 0
-        while index < characters.count {
-            let next = nextSentenceStart(in: characters, at: &index)
-            if let start = next, start >= offset { return start < limit ? start : offset }
-        }
-        return offset
+        sentenceStartScan(atOrAfter: offset, before: limit, in: text).start
     }
+
+    /// `sentenceStart`, and how many characters the scan turned into an array (what a test pins, #2506).
+    static func sentenceStartScan(atOrAfter offset: Int, before limit: Int, in text: String) -> (start: Int, charactersRead: Int) {
+        guard offset > 0 else { return (0, 0) }
+        var from = max(0, offset - windowLookBehind)
+        guard var windowStart = text.index(text.startIndex, offsetBy: from, limitedBy: text.endIndex) else { return (offset, 0) }
+        // A window that opens inside a run of whitespace would miss the line breaks before it, and a blank line
+        // (two breaks) is a sentence start. Open it where the run began.
+        while windowStart > text.startIndex {
+            let before = text.index(before: windowStart)
+            guard text[before].isWhitespace else { break }
+            windowStart = before
+            from -= 1
+        }
+        var charactersRead = 0
+        // Past `reach` a start is the Margin's or later, and the answer is `offset`, so nothing there needs reading.
+        let reach = max(limit, offset) - from + windowLookAhead
+        var length = min(reach, windowGrowth)
+        while true {
+            let windowEnd = text.index(windowStart, offsetBy: length, limitedBy: text.endIndex)
+            let characters = Array(text[windowStart..<(windowEnd ?? text.endIndex)])
+            charactersRead += characters.count
+            let isWholeStretch = windowEnd == nil || length >= reach
+            // A stop near the end of a shorter window can't be judged yet: the word after it may be cut.
+            let judged = isWholeStretch ? characters.count : characters.count - windowLookAhead
+            var index = 0
+            while index < characters.count {
+                guard let start = nextSentenceStart(in: characters, at: &index), from + start >= offset else { continue }
+                if start > judged { break }
+                return (from + start < limit ? from + start : offset, charactersRead)
+            }
+            if isWholeStretch { return (offset, charactersRead) }
+            length = min(reach, length * 4)
+        }
+    }
+
+    /// Characters read before the offset, so the abbreviation and initial checks see the words around a stop.
+    private static let windowLookBehind = 256
+    /// Characters read past the Margin (or the end of the window) so the word after a stop is whole.
+    private static let windowLookAhead = 128
+    private static let windowGrowth = 2_048
 
     private static let terminators: Set<Character> = [".", "!", "?", "\u{2026}"]
     private static let closers: Set<Character> = ["\"", "'", "\u{201D}", "\u{2019}", ")", "]", "}", "\u{00BB}"]
@@ -90,7 +129,7 @@ public enum MarginMomentClock: Sendable, Equatable {
 
     /// If a sentence break sits at `index`, the index where the next sentence starts. Moves `index` past what it
     /// looked at, so a run such as `?!` or `..."` is read once.
-    private static func nextSentenceStart(in characters: [Character], at index: inout Int) -> Int? {
+    static func nextSentenceStart(in characters: [Character], at index: inout Int) -> Int? {
         let here = index
         let character = characters[here]
         if character.isNewline {

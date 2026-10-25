@@ -450,9 +450,13 @@ public protocol RecordingClient {
     func pauseForReadyCue()
     /// The cue has started, or did not play (0 seconds): listen again after `seconds`.
     func resumeAfterReadyCue(after seconds: TimeInterval)
+    /// The last recording to end turned the audio session off, handing it back to other apps. Playing anything
+    /// now would turn it on again and interrupt them, so the outcome cue (#1977) stays silent.
+    func releasedAudioSessionAtEnd() -> Bool
 }
 
 extension RecordingClient {
+    public func releasedAudioSessionAtEnd() -> Bool { false }
     public func recordingInProgressRef() -> String? { nil }
     public func finalizedRecordingIntegrity() -> FinalizedRecordingIntegrity? { nil }
     public func captureReading() -> RecordingCaptureReading? { nil }

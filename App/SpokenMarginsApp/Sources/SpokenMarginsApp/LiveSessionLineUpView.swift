@@ -184,8 +184,10 @@ struct LiveSessionLineUpView: View {
         Task {
             do {
                 try await model.saveLiveSession(session, transcript: transcript, placed: result.placed, recordingURL: recordingURL)
-                stopAccess()
-                onSaved()
+                model.hangTelemetry.labels.scoped("liveSessionLineUpSaved") {
+                    stopAccess()
+                    onSaved()
+                }
             } catch {
                 errorMessage = "Couldn't save: \(error.localizedDescription)"
             }

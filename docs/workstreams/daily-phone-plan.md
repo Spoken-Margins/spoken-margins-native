@@ -6,21 +6,22 @@ The input is every `status: needs-human-validation` issue, open or closed in the
 
 One read-only Claude call proposes the walkthrough. The SessionKit `PhoneValidationPlan` audits complete coverage, exact control names from the selected commit, concrete sources, actions, expected results and time estimates. It groups checks on the same concrete source into one step. Two fixes share a check only when its expected result proves both. A missing source, label or written check becomes a named block for the coordinator to resolve, rather than invented instructions. Every check carries issue numbers. Plans can exceed ten minutes rather than hide outstanding checks.
 
-The daily job holds the rolling builder's lock and its disk/memory gates. `daily-ready` pins one existing binary, which rolling retention preserves. The Desktop installer chooses that binary while the pass is pending; subsequent rolling builds still update `latest` normally. After all runnable checks have explicit results the pin is released, provided it still names that pass's binary. At most one extra binary is retained. No app uninstall, reset, reseed, migration or owner data operation is added.
+The daily job holds the rolling builder's lock and its disk/memory gates. `daily-ready` pins one existing binary, which rolling retention preserves. The Desktop installer chooses that binary while the pass is pending, unless the pin is more than 24 hours old and `latest` is a different build: a pin the daily plans have stopped refreshing (three unanswered days, a failed writer) never holds the installer back (#2529); subsequent rolling builds still update `latest` normally. After all runnable checks have explicit results the pin is released, provided it still names that pass's binary. At most one extra binary is retained. No app uninstall, reset, reseed, migration or owner data operation is added.
 
 ## Deploy on the Mac
 
 This PR does not install a job or change the Desktop copy of the shortcut.
 
 1. From the main checkout, compile the Foundation-only tool once:
-   `swift build --package-path Packages/SessionKit -c release --product phone-plan --disable-sandbox`
+   `swift build --package-path Packages/SessionKitTools -c release --product phone-plan --disable-sandbox`
+   It lands in `Packages/SessionKitTools/.build/release/phone-plan`. A binary built before #1873 at `Packages/SessionKit/.build/release/phone-plan` is still used until this one exists.
 2. Configure the authenticated project-chat relay in the LaunchAgent environment: `SM_DAILY_RELAY_URL` and `SM_DAILY_RELAY_TOKEN`. It uses the existing Dial/lane-open `/fire` contract (`ops/lane/README.md`); `SM_LANE_OPEN_URL` and `SM_LANE_OPEN_TOKEN` are accepted too. Keep the token out of git. Authenticate the Claude CLI under this Mac login as for the audit. `SM_DAILY_CLAUDE` and `SM_DAILY_VALIDATOR` can override executable paths.
 3. Refresh the Desktop **Install Spoken Margins on iPhone.command** from `scripts/install-phone-build.command` so it honors the daily pin. Keep the existing Desktop name. The rolling LaunchAgent is unchanged.
 4. Render the job with `ops/install-launchd.py --print daily-phone-plan`, add the relay variables to its `EnvironmentVariables`, save it as `~/Library/LaunchAgents/com.spokenmargins.daily-phone-plan.plist`, then run:
    `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.spokenmargins.daily-phone-plan.plist`
 5. Run `scripts/daily-phone-plan --on-request` for a first attended delivery. Confirm one project-chat announcement, one Mac notification with the duration, and the same commit in the plan, binary and Settings > Version. Run the walkthrough on the phone without deleting existing content.
 
-A missing relay or validator is a visible error in `~/SpokenMargins-phone/daily-plan.log`. A failed writer is never automatically retried for that slot; correct the evidence and use `--on-request`. A delivery retry reuses its audited proposal. Per-channel receipts prevent routine duplicate announcements. An interrupted relay response has the normal network ambiguity: the coordinator must deduplicate using the pass ID supplied in the message.
+A missing relay or validator is a visible error in `~/SpokenMargins-phone/daily-plan.log`. A failed writer is never automatically retried for that slot; correct the evidence and use `--on-request`. An `--on-request` run whose writer times out or fails still delivers a plain plan (each Owner check as written, every issue listed as waiting for the coordinator, no PASS can be applied from it) so the pin moves (#2529). A delivery retry reuses its audited proposal. Per-channel receipts prevent routine duplicate announcements. An interrupted relay response has the normal network ambiguity: the coordinator must deduplicate using the pass ID supplied in the message.
 
 ## One owner reply
 

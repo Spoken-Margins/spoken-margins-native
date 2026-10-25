@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 from pathlib import Path
@@ -57,6 +58,15 @@ elif args[0] == "bootstatus":
         with open(os.path.join(os.environ["SM_LANE_CRASH_REPORTS"], "SpringBoard-2026-09-29-095801.ips"), "w") as handle:
             handle.write("FBSystemShellInitialize com.apple.CoreSimulator.SimDevice." + args[1])
         time.sleep(60)
+    if os.environ.get("FAKE_SYSTEM_CRASH"):  # one isolated Apple system-process crash, then a normal boot
+        time.sleep(0.2)
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S.0000 %z")
+        head = {"app_name": "AppIntentsLiveEntityService", "bundleID": "com.apple.AppIntentsLiveEntityService"}
+        body = {"captureTime": stamp, "procName": "AppIntentsLiveEntityService",
+                "coalitionName": "com.apple.CoreSimulator.SimDevice." + args[1]}
+        with open(os.path.join(os.environ["SM_LANE_CRASH_REPORTS"], "AppIntentsLiveEntityService-1.ips"), "w") as handle:
+            handle.write(json.dumps(head) + "\n" + json.dumps(body))
+        time.sleep(1.5)
     time.sleep(float(os.environ.get("FAKE_READY_SECONDS", "0.1")))
 elif args[0] == "shutdown":
     log({"shutdown": args[1], "at": time.time()})
@@ -223,6 +233,115 @@ class RuntimePairTests(unittest.TestCase):
         self.assertIn('iOS-27-1: iPhone-Duo', message)
 
 
+class CrashPolicyTests(unittest.TestCase):
+    """AGENTS.md: a lone system-process crash is noted and work continues; a flood (three or more crashes of the
+    same process within a minute) stops the run; a crash of our own app or extensions always fails."""
+
+    def setUp(self):
+        self.folder = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__('shutil').rmtree(self.folder, ignore_errors=True))
+        self.count = 0
+
+    def write(self, process, bundle, at=0, path=None, device=UDID, header=True):
+        """One .ips report for `process` crashing `at` seconds after 12:00:00, as macOS writes them."""
+        self.count += 1
+        stamp = f'2026-10-23 12:{at // 60:02d}:{at % 60:02d}.0000 +0000'
+        head = {'app_name': process, 'timestamp': stamp, 'name': process}
+        if bundle:
+            head['bundleID'] = bundle
+        body = {'captureTime': stamp, 'procName': process,
+                'procPath': path or f'/Volumes/VOLUME/RuntimeRoot/usr/libexec/{process}',
+                'coalitionName': f'com.apple.CoreSimulator.SimDevice.{device}'}
+        report = self.folder / f'{process}-{self.count}.ips'
+        report.write_text((json.dumps(head) + '\n' if header else '') + json.dumps(body))
+        return report
+
+    def verdict(self, *reports):
+        warnings = []
+        found = lane_sim.new_crash(self.folder, {}, UDID, warnings)
+        return found, warnings
+
+    def test_a_table_of_crash_sets(self):
+        apple = 'com.apple.AppIntentsLiveEntityService'
+        rows = [
+            ('one system process crashing once is a warning', lambda: [self.write('AppIntentsLiveEntityService', apple)],
+             False, 1),
+            ('two of the same process in a minute are still warnings', lambda: [
+                self.write('AppIntentsLiveEntityService', apple, 0), self.write('AppIntentsLiveEntityService', apple, 30)],
+             False, 2),
+            ('three of the same process within a minute are a flood', lambda: [
+                self.write('AppIntentsLiveEntityService', apple, 0), self.write('AppIntentsLiveEntityService', apple, 20),
+                self.write('AppIntentsLiveEntityService', apple, 59)], True, None),
+            ('three of the same process spread over minutes are warnings', lambda: [
+                self.write('AppIntentsLiveEntityService', apple, 0), self.write('AppIntentsLiveEntityService', apple, 100),
+                self.write('AppIntentsLiveEntityService', apple, 200)], False, 3),
+            ('three different processes do not add up to a flood', lambda: [
+                self.write('AppIntentsLiveEntityService', apple, 0), self.write('mediaserverd', 'com.apple.mediaserverd', 5),
+                self.write('backboardd', 'com.apple.backboardd', 9)], False, 3),
+            ('our app fails', lambda: [self.write('SpokenMarginsApp', 'com.spokenmargins.native')], True, None),
+            ('our extension fails', lambda: [self.write('SpokenMarginsShare', 'com.spokenmargins.native.share')], True, None),
+            ('our process fails even without a bundle id', lambda: [self.write('SpokenMarginsApp', None)], True, None),
+            ('SpringBoard fails (its restarts start the #184 flood)', lambda: [
+                self.write('SpringBoard', 'com.apple.springboard')], True, None),
+            ('a warning does not hide our app crashing beside it', lambda: [
+                self.write('AppIntentsLiveEntityService', apple), self.write('SpokenMarginsApp', 'com.spokenmargins.native')],
+             True, None),
+            ('a system process with no bundle id but a runtime path is a warning', lambda: [
+                self.write('someRuntimeDaemon', None)], False, 1),
+            ('an unknown process fails as before', lambda: [
+                self.write('mystery', None, path='/Users/USER/mystery')], True, None),
+            ('a report that is not JSON fails as before', lambda: [
+                (self.folder / 'x.ips').write_text(f'com.apple.CoreSimulator.SimDevice.{UDID}')], True, None),
+            ('another device\'s crashes are not ours', lambda: [
+                self.write('SpokenMarginsApp', 'com.spokenmargins.native', device='99999999-0000')], False, 0),
+        ]
+        for label, make, fatal, warned in rows:
+            with self.subTest(label):
+                for old in self.folder.iterdir():
+                    old.unlink()
+                make()
+                found, warnings = self.verdict()
+                self.assertEqual(found is not None, fatal)
+                if warned is not None:
+                    self.assertEqual(len(warnings), warned)
+
+    def test_a_warning_names_the_process_and_the_report(self):
+        self.write('AppIntentsLiveEntityService', 'com.apple.AppIntentsLiveEntityService')
+        _, warnings = self.verdict()
+        self.assertEqual(len(warnings), 1)
+        self.assertIn('AppIntentsLiveEntityService', warnings[0])
+        self.assertIn('.ips', warnings[0])
+
+    def test_late_report_applies_the_same_policy(self):
+        now = time.time()
+        stamp = datetime.datetime.fromtimestamp(now).astimezone().strftime('%Y-%m-%d %H:%M:%S.%f %z')
+        head = {'app_name': 'AppIntentsLiveEntityService', 'bundleID': 'com.apple.AppIntentsLiveEntityService'}
+        body = {'captureTime': stamp, 'procName': 'AppIntentsLiveEntityService',
+                'coalitionName': f'com.apple.CoreSimulator.SimDevice.{UDID}'}
+        (self.folder / 'a.ips').write_text(json.dumps(head) + '\n' + json.dumps(body))
+        window = (now - 10, now + 10)
+        warnings = []
+        self.assertIsNone(lane_sim.late_report(self.folder, UDID, window, warnings))
+        self.assertEqual(len(warnings), 1)
+        head.update(app_name='SpokenMarginsApp', bundleID='com.spokenmargins.native')
+        body['procName'] = 'SpokenMarginsApp'
+        (self.folder / 'b.ips').write_text(json.dumps(head) + '\n' + json.dumps(body))
+        self.assertEqual(lane_sim.late_report(self.folder, UDID, window, []).name, 'b.ips')
+
+    def test_callers_without_a_warnings_list_still_see_every_crash(self):
+        # The audit on 2433396: verify-tests.py and check_posterboard_repair.py call new_crash with no
+        # `warnings`. They count crashes themselves (a lone crash is a recorded warning there, a flood stops the
+        # step, and the PosterBoard check fails on its first report), so the boot policy must not hide one.
+        import check_posterboard_repair
+        report = self.write('WidgetRenderer_Default', 'com.apple.WidgetRenderer')
+        self.assertEqual(lane_sim.new_crash(self.folder, {}, UDID), report)
+        self.assertEqual(check_posterboard_repair.new_crash(self.folder, {}, UDID), report)
+        now = time.time()
+        stamp = datetime.datetime.fromtimestamp(now).astimezone().strftime('%Y-%m-%d %H:%M:%S.%f %z')
+        report.write_text(report.read_text().replace('2026-10-23 12:00:00.0000 +0000', stamp))
+        self.assertEqual(lane_sim.late_report(self.folder, UDID, (now - 10, now + 10)), report)
+
+
 class TemplateTests(unittest.TestCase):
     def test_failed_template_is_deleted_without_clone_or_completion_marker(self):
         commands = []
@@ -242,6 +361,8 @@ class TemplateTests(unittest.TestCase):
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as temporary, \
                     mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}), \
                     mock.patch.object(lane_sim.subprocess, 'check_output', side_effect=command), \
+                    mock.patch.object(lane_sim, 'bounded_output', side_effect=command), \
+                    mock.patch.object(lane_sim, 'ensure_simctl_ready'), \
                     mock.patch.object(lane_sim, 'boot', side_effect=lane_sim.BootError('flood') if stage == 'boot' else boot) as guarded, \
                     mock.patch.object(lane_sim, 'unsafe_devices', return_value={'T': {'reason': 'flood'}}), \
                     mock.patch.object(lane_sim, 'start_watcher'), \
@@ -285,6 +406,8 @@ class TemplateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary, \
                 mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}), \
                 mock.patch.object(lane_sim.subprocess, 'check_output', side_effect=command), \
+                mock.patch.object(lane_sim, 'bounded_output', side_effect=command), \
+                mock.patch.object(lane_sim, 'ensure_simctl_ready'), \
                 mock.patch.object(lane_sim, 'boot', side_effect=boot), \
                 mock.patch.object(lane_sim, 'start_watcher'), \
                 mock.patch.object(lane_sim, 'release', side_effect=release), \
@@ -331,6 +454,8 @@ class TemplateTests(unittest.TestCase):
 
                 with mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}), \
                         mock.patch.object(lane_sim.subprocess, 'check_output', side_effect=command), \
+                        mock.patch.object(lane_sim, 'bounded_output', side_effect=command), \
+                        mock.patch.object(lane_sim, 'ensure_simctl_ready'), \
                         mock.patch.object(lane_sim, 'boot', side_effect=boot), \
                         mock.patch.object(lane_sim, 'start_watcher'), \
                         mock.patch.object(lane_sim, 'release'), \
@@ -377,6 +502,8 @@ class TemplateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary, \
                 mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}), \
                 mock.patch.object(lane_sim.subprocess, 'check_output', side_effect=command), \
+                mock.patch.object(lane_sim, 'bounded_output', side_effect=command), \
+                mock.patch.object(lane_sim, 'ensure_simctl_ready'), \
                 mock.patch.object(lane_sim, 'boot', side_effect=boot), \
                 mock.patch.object(lane_sim, 'start_watcher') as watcher, \
                 mock.patch.object(lane_sim, 'release', side_effect=release), \
@@ -670,6 +797,17 @@ class LaneSimTests(unittest.TestCase):
                 lane_sim.boot(UDID, 'test', out=self.quiet)
         self.assertIn({'shutdown': UDID}, self.records())
         self.assertIn('crashed during boot', lane_sim.unsafe_devices()[UDID]['reason'])
+
+    def test_boot_goes_on_after_an_isolated_system_crash_and_names_it(self):
+        # The third hosted-T3 gap: AppIntentsLiveEntityService crashed once during a first boot and the whole
+        # run was INCONCLUSIVE. AGENTS.md says a lone system-process crash is noted and work continues.
+        info, output = {}, __import__('io').StringIO()
+        with mock.patch.dict(os.environ, {'FAKE_SYSTEM_CRASH': '1'}):
+            lane_sim.boot(UDID, 'test', out=output, info=info)
+        self.assertEqual(len(info['crash_warnings']), 1)
+        self.assertIn('AppIntentsLiveEntityService', info['crash_warnings'][0])
+        self.assertIn('warning:', output.getvalue())
+        self.assertNotIn(UDID, lane_sim.unsafe_devices())
 
     def test_no_build_can_start_while_a_simulator_boots(self):
         # Deterministic: the fake boot holds itself open until released, so the build attempt always lands

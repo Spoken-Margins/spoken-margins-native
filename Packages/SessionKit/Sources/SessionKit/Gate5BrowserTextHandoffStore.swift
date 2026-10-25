@@ -19,8 +19,9 @@ public enum Gate5BrowserTextHandoffStoreError: Error, Equatable, LocalizedError 
 
 /// The browser-text payloads the Safari extension and Shortcuts leave in the App Group for the app to import,
 /// and the ones that failed to import and wait to be retried. The folder is passed in, so the app group lookup
-/// (and its legacy-build identifier) stays in the app.
-public struct Gate5BrowserTextHandoffStore {
+/// (and its legacy-build identifier) stays in the app. It holds a folder URL and `FileManager.default`, which is
+/// safe to use from any thread; the app drains handoffs off the main thread (#2510).
+public struct Gate5BrowserTextHandoffStore: @unchecked Sendable {
     private static let payloadDirectoryName = "BrowserTextHandoffs"
     private static let failedPayloadDirectoryName = "FailedBrowserTextHandoffs"
 

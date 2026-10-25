@@ -88,8 +88,8 @@ extension Gate1AppModel {
         case .staged:
             return .opened
         case .restoreAudio(let restore):
-            Task { @MainActor [weak self] in
-                defer { try? FileManager.default.removeItem(at: restore.directory) }
+            Task { @MainActor [weak self, labels = hangTelemetry.labels] in
+                defer { labels.scoped("restoreAudioCleanup") { _ = try? FileManager.default.removeItem(at: restore.directory) } }
                 guard let self else { return }
                 await self.packageImport.restoreAudio(restore)
                 withExtendedLifetime(self) {} // the model stays retained until the work ends, as the old task body did

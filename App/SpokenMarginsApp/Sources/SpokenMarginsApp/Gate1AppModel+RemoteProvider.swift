@@ -36,7 +36,7 @@ extension Gate1AppModel {
         guard force || snapshot.pendingAiJobStatus == "pending" else { return }
         guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             markProviderFailure("provider_api_key_missing", userMessage: "AI provider API key required.", itemId: itemId)
-            screen = .settings
+            showSettingsTab()
             return
         }
         guard aiDataSharingConsent == .grantedV1 else {

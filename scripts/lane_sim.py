@@ -12,6 +12,9 @@ So each boot:
 - at a boot stall (SpringBoard restarted or vanished while booting), boot_with_retry deletes that device and
   boots one fresh device in its place, once, for callers that can make one, unless a crash report for the stalled
   device lands within LATE_REPORT_WAIT (a possible flood: no retry); each stall is logged on #1802;
+- treats an isolated crash of an Apple system process during boot as a warning, named in `info['crash_warnings']`
+  and the log (AGENTS.md: continue after a lone crash); our own processes, SpringBoard, an unreadable report
+  and a flood (three of the same process within a minute) still stop the run;
 - watches the device's SpringBoard process until it is ready, and stops at the first restart or
   disappearance (crash reports reach DiagnosticReports about 80 s late, after a flood is under way),
   with crash reports as a second signal.
@@ -46,6 +49,7 @@ import subprocess
 import sys
 import time
 
+from simctl_preflight import bounded_output, problem as simctl_problem
 from lane_slots import (annotate_holder, build_slot_file, disable_second_slot, memory_pressure_level, second_slot_back_on_at, simulator_boot_lock,
                         simulator_jobs_running, state_dir, PRESSURE_NAMES, SLOTS)
 
@@ -94,6 +98,28 @@ def simctl() -> list[str]:
     return shlex.split(os.environ.get('SM_LANE_SIMCTL', 'xcrun simctl'))
 
 
+# A `simctl list` normally answers in about a second; 60 s is the stuck case (#2591), not a slow one.
+SIMCTL_TIMEOUT = 60
+
+
+def ensure_simctl_ready() -> None:
+    """Raise BootError, naming the fix, when `xcrun simctl` would wait on Xcode's first-launch install (#2591).
+
+    Skipped for a stand-in simctl (SM_LANE_SIMCTL, the tests' fakes). Costs one plist read and one small file read."""
+    if os.environ.get('SM_LANE_SIMCTL'):
+        return
+    found = simctl_problem()
+    if found:
+        raise BootError(found)
+
+
+def simctl_output(args: list, timeout: float = SIMCTL_TIMEOUT) -> str:
+    """`simctl <args>`'s output, after the first-launch preflight; a timeout kills its whole process group, so no
+    `xcodebuild -runFirstLaunch` child is orphaned (17 were on 2026-10-24, #2591)."""
+    ensure_simctl_ready()
+    return bounded_output(simctl() + list(args), timeout=timeout)
+
+
 def unsafe_path() -> Path:
     return state_dir() / 'unsafe-simulators.json'
 
@@ -113,14 +139,14 @@ def mark_unsafe(udid: str, reason: str) -> None:
 
 
 def booted_udids() -> set:
-    listing = json.loads(subprocess.check_output(simctl() + ['list', 'devices', 'booted', '--json'], text=True))
+    listing = json.loads(simctl_output(['list', 'devices', 'booted', '--json']))
     return {d['udid'] for group in listing.get('devices', {}).values() for d in group}
 
 
 def is_available(udid: str) -> bool:
     """Whether simctl still lists the device as available; True when simctl can't say."""
     try:
-        listing = json.loads(subprocess.check_output(simctl() + ['list', 'devices', 'available', '--json'], text=True))
+        listing = json.loads(simctl_output(['list', 'devices', 'available', '--json']))
     except (OSError, ValueError, subprocess.SubprocessError):
         return True
     return any(d.get('udid') == udid for group in listing.get('devices', {}).values() for d in group)
@@ -157,7 +183,7 @@ PLAIN_IPHONE = re.compile(r'com\.apple\.CoreSimulator\.SimDeviceType\.iPhone-(\d
 def runtimes_listing() -> dict | None:
     """`simctl list runtimes --json`, or None when simctl does not give one."""
     try:
-        listing = json.loads(subprocess.check_output(simctl() + ['list', 'runtimes', '--json'], text=True, timeout=60))
+        listing = json.loads(simctl_output(['list', 'runtimes', '--json'], timeout=60))
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
     return listing if isinstance(listing, dict) else None
@@ -190,7 +216,7 @@ def runtime_survey(listing: dict | None) -> str:
 def device_type(runtime: str | None = None) -> str:
     """`pick_device_type` for this Mac and `runtime`; the usual iPhone when simctl can't list device types."""
     try:
-        listing = json.loads(subprocess.check_output(simctl() + ['list', 'devicetypes', '--json'], text=True, timeout=60))
+        listing = json.loads(simctl_output(['list', 'devicetypes', '--json'], timeout=60))
     except (OSError, ValueError, subprocess.SubprocessError):
         return DEVICE_TYPE
     if not isinstance(listing, dict) or not listing.get('devicetypes'):
@@ -225,7 +251,7 @@ def pick_runtime(listing: dict, major: int = IOS_MAJOR, preferred: str = DEVICE_
 
 
 def newest_runtime(major: int = IOS_MAJOR) -> str | None:
-    return pick_runtime(json.loads(subprocess.check_output(simctl() + ['list', 'runtimes', '--json'], text=True)), major)
+    return pick_runtime(json.loads(simctl_output(['list', 'runtimes', '--json'])), major)
 
 
 def create_temporary(name: str) -> str:
@@ -233,7 +259,7 @@ def create_temporary(name: str) -> str:
     runtime = newest_runtime()
     if not runtime:
         raise BootError(f'No iOS {IOS_MAJOR} simulator runtime is installed.')
-    return subprocess.check_output(simctl() + ['create', name, device_type(runtime), runtime], text=True).strip()
+    return simctl_output(['create', name, device_type(runtime), runtime], timeout=120).strip()
 
 
 def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
@@ -262,8 +288,7 @@ def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
             saved = {}
 
         def owned_devices():
-            listed = json.loads(subprocess.check_output(simctl() + ['list', 'devices', 'available', '--json'],
-                                                        text=True, timeout=120))['devices']
+            listed = json.loads(simctl_output(['list', 'devices', 'available', '--json'], timeout=120))['devices']
             return {d['udid']: (r, d) for r, group in listed.items() for d in group
                     if d.get('name') == template_name and d.get('deviceTypeIdentifier') == phone}
 
@@ -272,7 +297,7 @@ def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
         ready = (bool(saved.get('boot_window')) and saved.get('key') == key and udid in owned and owned[udid][0] == runtime
                  and owned[udid][1].get('state') == 'Shutdown' and udid not in unsafe_devices())
         if ready:
-            report = late_report(crash_reports_dir(), udid, saved['boot_window'])
+            report = late_report(crash_reports_dir(), udid, saved['boot_window'], [])
             if report:
                 mark_unsafe(udid, f'late crash report for template boot: {report.name}')
                 ready = False
@@ -282,8 +307,7 @@ def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
             for old in owned:
                 release(old)
             def create():
-                return subprocess.check_output(simctl() + ['create', template_name, phone, runtime],
-                                               text=True, timeout=120).strip()
+                return simctl_output(['create', template_name, phone, runtime], timeout=120).strip()
 
             def replace(stalled):
                 release(stalled)
@@ -306,7 +330,7 @@ def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
                 completed = udid not in unsafe_devices()
             finally:
                 release(udid, keep=completed)
-            report = late_report(crash_reports_dir(), udid, info['boot_window'])
+            report = late_report(crash_reports_dir(), udid, info['boot_window'], [])
             stopped = owned_devices().get(udid)
             if udid in unsafe_devices() or report or not stopped or stopped[1].get('state') != 'Shutdown':
                 if report:
@@ -316,7 +340,7 @@ def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
                 raise BootError('The T3 template was unsafe or did not shut down; it was deleted and no clone was made.')
             marker.write_text(json.dumps({'udid': udid, 'key': key, 'boot_window': info['boot_window']}) + '\n')
         print(f'[lane] cloning first-booted template {udid} for {name}', file=out, flush=True)
-        return subprocess.check_output(simctl() + ['clone', udid, name], text=True, timeout=120).strip()
+        return simctl_output(['clone', udid, name], timeout=120).strip()
 
 
 def crash_reports(reports: Path):
@@ -338,19 +362,95 @@ def crash_snapshot(reports: Path) -> dict:
     return snapshot
 
 
-def new_crash(reports: Path, baseline: dict, udid: str) -> Path | None:
+FLOOD_COUNT, FLOOD_SECONDS = 3, 60  # AGENTS.md: three or more crashes of the same process within a minute
+
+
+def crash_process(text: str) -> tuple | None:
+    """(process name, bundle id, process path) from a .ips report, or None when it can't be read.
+
+    Line 1 is a JSON header (app_name, bundleID); the body has procName and procPath.
+    """
+    try:
+        head = json.loads(text.split('\n', 1)[0])
+    except ValueError:
+        return None
+    if not isinstance(head, dict):
+        return None
+    body = re.search(r'"procName"\s*:\s*"([^"]+)"', text)
+    path = re.search(r'"procPath"\s*:\s*"([^"]+)"', text)
+    name = (body.group(1) if body else None) or head.get('app_name') or head.get('name')
+    if not name:
+        return None
+    return name, head.get('bundleID') or '', path.group(1).replace('\\/', '/') if path else ''
+
+
+def crash_is_warning(process: tuple | None) -> bool:
+    """An Apple system process of the simulator crashing is a warning; anything else stays a failure.
+
+    Ours (the app and its extensions) always fails. SpringBoard stays a failure: a restart is where the #184
+    flood began, and SpringBoardMonitor treats it the same way. A report that can't be read, or a process that
+    isn't recognisably the simulator's own system, fails as it always did.
+    """
+    if process is None:
+        return False
+    name, bundle, path = process
+    if name.startswith('SpokenMargins') or bundle.startswith('com.spokenmargins') or name == 'SpringBoard' \
+            or bundle == 'com.apple.springboard':
+        return False
+    return bundle.startswith('com.apple.') or '/RuntimeRoot/' in path
+
+
+def judge_crashes(found: list, warnings: list | None = None) -> Path | None:
+    """The report that should stop the boot among found = [(path, text)], or None; the rest are warnings.
+
+    Each warning is added to `warnings` once, as "<process> crashed (<report name>)". A flood of one process
+    (FLOOD_COUNT within FLOOD_SECONDS; an unreadable time counts as inside) stops the run on its latest report.
+    """
+    warned, times = [], {}
+    for path, text in found:
+        process = crash_process(text)
+        if not crash_is_warning(process):
+            return path
+        when = report_time(text)
+        times.setdefault(process[0], []).append((when, path))
+        warned.append((process[0], path))
+    for entries in times.values():
+        dated = sorted(entries, key=lambda e: (e[0] is None, e[0] or 0))
+        for index in range(len(dated) - FLOOD_COUNT + 1):
+            span = dated[index:index + FLOOD_COUNT]
+            if any(w is None for w, _ in span) or span[-1][0] - span[0][0] <= FLOOD_SECONDS:
+                return span[-1][1]
+    if warnings is not None:
+        for process, path in warned:
+            line = f'{process} crashed ({path.name})'
+            if line not in warnings:
+                warnings.append(line)
+    return None
+
+
+def new_crash(reports: Path, baseline: dict, udid: str, warnings: list | None = None) -> Path | None:
+    """The new crash report naming the device that should stop its boot, or None.
+
+    A caller that passes `warnings` (the lane boot) gets the boot policy: an isolated crash of an Apple system
+    process is recorded there and the boot goes on (crash_is_warning, judge_crashes). Without `warnings` the
+    first report is returned as before: verify-tests.py and check_posterboard_repair.py count crashes themselves.
+    """
     if not reports.is_dir():
         return None
+    found = []
     for path in crash_reports(reports):
         try:
             stat = path.stat()
             if baseline.get(path) == (stat.st_mtime_ns, stat.st_size):
                 continue
-            if f'com.apple.CoreSimulator.SimDevice.{udid}' in path.read_text(errors='replace'):
-                return path
+            text = path.read_text(errors='replace')
         except OSError:
             continue
-    return None
+        if f'com.apple.CoreSimulator.SimDevice.{udid}' in text:
+            found.append((path, text))
+    if warnings is None:
+        return found[0][0] if found else None
+    return judge_crashes(found, warnings)
 
 
 def device_processes(udid: str, ps_output: str | None = None) -> tuple:
@@ -437,11 +537,16 @@ def report_time(text: str) -> float | None:
         return None
 
 
-def late_report(reports: Path, udid: str, window: tuple) -> Path | None:
-    """A crash report naming the device for a crash inside the boot window (a later app crash doesn't count)."""
+def late_report(reports: Path, udid: str, window: tuple, warnings: list | None = None) -> Path | None:
+    """A crash report naming the device for a crash inside the boot window (a later app crash doesn't count).
+
+    With `warnings`, only a report that should stop the run counts and isolated system-process crashes go there;
+    without it, the first report counts, as in new_crash.
+    """
     start, end = window
     if not reports.is_dir():
         return None
+    found = []
     for path in crash_reports(reports):
         try:
             if path.stat().st_mtime < start:
@@ -451,8 +556,10 @@ def late_report(reports: Path, udid: str, window: tuple) -> Path | None:
             continue
         when = report_time(text)
         if f'com.apple.CoreSimulator.SimDevice.{udid}' in text and when is not None and start - 1 <= when <= end + 1:
-            return path
-    return None
+            found.append((path, text))
+    if warnings is None:
+        return found[0][0] if found else None
+    return judge_crashes(found, warnings)
 
 
 def watch(udid: str, poll: float = 1.0, monitor: SpringBoardMonitor | None = None, crash_window: tuple | None = None,
@@ -467,6 +574,7 @@ def watch(udid: str, poll: float = 1.0, monitor: SpringBoardMonitor | None = Non
     monitor = monitor or SpringBoardMonitor(udid)
     recheck = crash_window
     warn_since = None
+    seen_warnings, logged = [], 0
     while True:
         # The brake: with two simulators up, pressure at warn for too long means back to one.
         if simulator_jobs_running() >= 2 and memory_pressure_level() not in (1, None):
@@ -481,7 +589,11 @@ def watch(udid: str, poll: float = 1.0, monitor: SpringBoardMonitor | None = Non
             print(f'[lane] no crash report for the boot of {udid}', flush=True)
             recheck = None
         if recheck:
-            found = late_report(crash_reports_dir(), udid, recheck)
+            found = late_report(crash_reports_dir(), udid, recheck, seen_warnings)
+            for line in seen_warnings[logged:]:
+                print(f'[lane] warning: {line} during the boot of {udid}; not a stop', flush=True)
+                record_event(udid, f'late crash warning: {line}')
+            logged = len(seen_warnings)
             if found:
                 mark_unsafe(udid, f'late crash report for a crash during boot: {found.name}')
                 print(f'[lane] {found.name} reports a crash during the boot of {udid}; marked unsafe', flush=True)
@@ -726,6 +838,7 @@ def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lo
                 record_event(udid, f'boot started ({"first boot" if first_boot else "existing device"}, '
                                    f'memory pressure {pressure}, {period} period)')
                 baseline = crash_snapshot(reports)
+                crash_warnings = info.setdefault('crash_warnings', [])
                 try:
                     booted = subprocess.run(simctl() + ['boot', udid], capture_output=True, text=True, timeout=120)
                 except subprocess.TimeoutExpired:
@@ -741,7 +854,7 @@ def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lo
                                          stderr=subprocess.DEVNULL)
                 try:
                     tolerated = wait_until_ready(udid, lambda: ready.poll() is not None, SpringBoardMonitor(udid),
-                                                 lambda: new_crash(reports, baseline, udid), timeout, out=out,
+                                                 lambda: new_crash(reports, baseline, udid, crash_warnings), timeout, out=out,
                                                  tolerate_until=FIRST_BOOT_TOLERANCE if first_boot else None,
                                                  record=lambda text: record_event(udid, text))
                 except BootError as error:
@@ -758,6 +871,10 @@ def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lo
                 info.update(boot_window=(wall_start, time.time()), tolerated=tolerated)
                 record_event(udid, f'ready after {seconds:.0f}s' + (f', one change tolerated: {tolerated}' if tolerated
                                                                     else ', no SpringBoard change'))
+                for line in crash_warnings:
+                    record_event(udid, f'warning, boot goes on: {line}')
+                    print(f'[lane] warning: {line} while booting {udid}; an isolated system-process crash does not stop the run',
+                          file=out, flush=True)
                 mark_quiet(udid)
                 return seconds
     except TimeoutError as error:
@@ -822,7 +939,7 @@ def boot_with_retry(udid: str, label: str, replace=None, out=sys.stderr, timeout
     print(f'[lane] boot stall on {udid}: {first}; waiting {LATE_REPORT_WAIT}s for any late crash report before a retry',
           file=out, flush=True)
     time.sleep(LATE_REPORT_WAIT)
-    report = late_report(crash_reports_dir(), udid, window)
+    report = late_report(crash_reports_dir(), udid, window, info.setdefault('crash_warnings', []))
     if report:
         mark_unsafe(udid, f'late crash report for a crash during boot: {report.name}')
         record_event(udid, f'boot stall with a crash report ({report.name}): no retry, a possible crash flood')

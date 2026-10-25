@@ -1282,11 +1282,7 @@ private final class Gate2LiveSpeechNowPlayingController {
         guard snapshot.status.isPlaybackActive || snapshot.status == .paused else { return nil }
         do {
             let session = AVAudioSession.sharedInstance()
-            if session.category != .playback
-                || session.mode != .spokenAudio
-                || !session.categoryOptions.isEmpty {
-                try session.setCategory(.playback, mode: .spokenAudio, options: [])
-            }
+            try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: [], session: session)
             try session.setActive(true)
             return nil
         } catch {
