@@ -2830,7 +2830,7 @@ final class Gate1AppModel: ObservableObject {
                 speechPreviewSynthesizer.stopSpeaking(at: .immediate)
             }
             #if os(iOS)
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+            try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: [.duckOthers])
             try AVAudioSession.sharedInstance().setActive(true)
             #endif
             let utterance = AVSpeechUtterance(string: "Spoken Margins preview. This is the \(label) path.")

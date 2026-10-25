@@ -86,7 +86,7 @@ final class MarginVoicePlayer: ObservableObject {
     /// leaves no leveling diagnostics and starts no leveling work, as it did when the model made the URL inline.
     func startOwn(_ interjection: Interjection, url: () -> URL, rate: Double) throws {
         #if os(iOS)
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: [.duckOthers])
         try AVAudioSession.sharedInstance().setActive(true)
         sessionOptions = [.duckOthers]
         #endif
@@ -128,7 +128,7 @@ final class MarginVoicePlayer: ObservableObject {
         } else {
             #if os(iOS)
             // A recording over the voice changed the category; the voice plays in its own again.
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: sessionOptions)
+            try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: sessionOptions)
             try AVAudioSession.sharedInstance().setActive(true)
             #endif
             player.playImmediately(atRate: Float(rate))
@@ -151,7 +151,7 @@ final class MarginVoicePlayer: ObservableObject {
     ) throws {
         #if os(iOS)
         let options = PlaybackAudioSessionPolicy.options(mixes: mixesWithOtherAudio, lowersBackground: lowersBackgroundAudio)
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: options)
+        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: options)
         try AVAudioSession.sharedInstance().setActive(true)
         sessionOptions = options
         #endif
@@ -225,7 +225,7 @@ final class MarginVoicePlayer: ObservableObject {
         } else {
             #if os(iOS)
             // A recording over the voice (#1672) changed the category; the voice plays in its own again.
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: sessionOptions)
+            try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: sessionOptions)
             try AVAudioSession.sharedInstance().setActive(true)
             #endif
             player.playImmediately(atRate: Float(rate))
