@@ -3230,6 +3230,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(Set(model.recentlyDeletedItems.map(\.id)), ["item-pill", secondID])
 
         model.permanentlyDeleteRecentlyDeletedItems()
+        // The episode-map folders are removed off the main thread (#2510), so they go a moment after the delete returns.
+        try await waitFor("the deleted items' episode map folders to be removed") {
+            doomedFiles.allSatisfy { !FileManager.default.fileExists(atPath: $0.episodeMap.path) }
+        }
 
         XCTAssertTrue(model.recentlyDeletedItems.isEmpty)
         XCTAssertFalse(model.libraryItems.contains(where: { $0.id == "item-pill" || $0.id == secondID }))
@@ -3238,7 +3242,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
     /// #1035: "Permanently deleted" has to take the item's spoken Margin recordings off the phone, not
     /// only their database rows. The recordings are real files in the app's own Application Support folder.
-    func testPermanentDeleteRemovesTheItemsMarginRecordingsAndKeepsALiveItemsOwn() throws {
+    func testPermanentDeleteRemovesTheItemsMarginRecordingsAndKeepsALiveItemsOwn() async throws {
         // Start playback needs the Terms on a fresh simulator: with no stored answer the voice defaults to
         // James, and the Terms gate holds the start. Earlier tests in a full run happen to clear it.
         let restoreTerms = acceptTerms()
@@ -3267,6 +3271,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.moveItemToTrash(id: "item-pill")
 
         model.permanentlyDeleteItem(id: "item-pill")
+        // The episode-map folder is removed off the main thread (#2510), so it goes a moment after the delete returns.
+        try await waitFor("the deleted item's episode map folder to be removed") {
+            !FileManager.default.fileExists(atPath: doomedFiles.episodeMap.path)
+        }
 
         XCTAssertFalse(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
         for file in doomed {
@@ -3278,7 +3286,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(try store.loadInterjections(itemId: liveID).count, 1)
     }
 
-    func testEmptyRecentlyDeletedRemovesEveryTrashedItemsMarginRecordings() throws {
+    func testEmptyRecentlyDeletedRemovesEveryTrashedItemsMarginRecordings() async throws {
         // Start playback needs the Terms on a fresh simulator: with no stored answer the voice defaults to
         // James, and the Terms gate holds the start. Earlier tests in a full run happen to clear it.
         let restoreTerms = acceptTerms()
@@ -3316,6 +3324,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(Set(model.recentlyDeletedItems.map(\.id)), Set(trashed))
 
         model.permanentlyDeleteRecentlyDeletedItems()
+        // The episode-map folders are removed off the main thread (#2510), so they go a moment after the delete returns.
+        try await waitFor("the deleted items' episode map folders to be removed") {
+            doomedFiles.allSatisfy { !FileManager.default.fileExists(atPath: $0.episodeMap.path) }
+        }
 
         XCTAssertTrue(model.recentlyDeletedItems.isEmpty)
         for file in doomed {
