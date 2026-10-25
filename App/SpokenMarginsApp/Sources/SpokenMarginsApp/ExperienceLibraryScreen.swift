@@ -551,6 +551,7 @@ private struct ExperienceLibraryCompactRow: View {
                     .font(.subheadline)
                     .foregroundStyle(AppColors.secondaryText)
                     .multilineTextAlignment(.leading)
+                ownMarginsLine
                 sharedMarginsLine
             }
             .fixedSize(horizontal: false, vertical: true)
@@ -674,6 +675,17 @@ private struct ExperienceLibraryCompactRow: View {
             }
         } else {
             Text(detail.rest).lineLimit(detailLineLimit)
+        }
+    }
+
+    /// How many Margins the listener has made here, so a nearly-finished item can be cleared without opening it to look (#2394).
+    /// Quiet at zero. The count is words; the icon is only a hint.
+    @ViewBuilder private var ownMarginsLine: some View {
+        if let line = LibraryRowWording.marginCountLine(row.marginCount) {
+            Label(line, systemImage: "bubble.left")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AppColors.secondaryText)
+                .accessibilityIdentifier("library.margins.\(row.id)")
         }
     }
 
