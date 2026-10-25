@@ -57,18 +57,18 @@ final class EpisodeMapStoredNamesTests: XCTestCase {
         let asset = try await importSummary(itemID: "p19-system 996:\u{E9}/A.1_",
             safeItemDirectory: "p19-system-996---A.1_", voice: .system, renderedExtension: "m4a")
         XCTAssertEqual(asset.id,
-            "summary-bridge-p19-system-996---A.1_-p19-map-996-p19-scene-1-system-com.apple.voice.test-en_US-natural-rate-v2")
+            "summary-bridge-p19-system-996---A.1_-p19-map-996-xbbdab9273043b5f0-p19-scene-1-xb2b41cd1af2794ab-system-com.apple.voice.test-en_US-natural-rate-v2")
         XCTAssertEqual(asset.relativePath,
-            "SpokenMargins/EpisodeMaps/p19-system-996---A.1_/SummaryBridges/summary-bridge-p19-system-996---A.1_-p19-map-996-p19-scene-1-system-com.apple.voice.test-en_US-natural-rate-v2.m4a")
+            "SpokenMargins/EpisodeMaps/p19-system-996---A.1_/SummaryBridges/summary-bridge-p19-system-996---A.1_-p19-map-996-xbbdab9273043b5f0-p19-scene-1-xb2b41cd1af2794ab-system-com.apple.voice.test-en_US-natural-rate-v2.m4a")
     }
 
     func testSystemSummaryWithoutRenderedExtensionSavesCAFFallback() async throws {
         let asset = try await importSummary(itemID: "p19-extensionless-996",
             safeItemDirectory: "p19-extensionless-996", voice: .system, renderedExtension: "")
         XCTAssertEqual(asset.id,
-            "summary-bridge-p19-extensionless-996-p19-map-996-p19-scene-1-system-com.apple.voice.test-en_US-natural-rate-v2")
+            "summary-bridge-p19-extensionless-996-p19-map-996-xbbdab9273043b5f0-p19-scene-1-xb2b41cd1af2794ab-system-com.apple.voice.test-en_US-natural-rate-v2")
         XCTAssertEqual(asset.relativePath,
-            "SpokenMargins/EpisodeMaps/p19-extensionless-996/SummaryBridges/summary-bridge-p19-extensionless-996-p19-map-996-p19-scene-1-system-com.apple.voice.test-en_US-natural-rate-v2.caf")
+            "SpokenMargins/EpisodeMaps/p19-extensionless-996/SummaryBridges/summary-bridge-p19-extensionless-996-p19-map-996-xbbdab9273043b5f0-p19-scene-1-xb2b41cd1af2794ab-system-com.apple.voice.test-en_US-natural-rate-v2.caf")
     }
 
     func testJamesSummaryWithoutSupertonicDownloadSavesKittenKeyAndEmptySystemIdentifier() async throws {
@@ -77,19 +77,46 @@ final class EpisodeMapStoredNamesTests: XCTestCase {
         let asset = try await importSummary(itemID: "p19-james-996",
             safeItemDirectory: "p19-james-996", voice: .james)
         XCTAssertEqual(asset.id,
-            "summary-bridge-p19-james-996-p19-map-996-p19-scene-1-kitten--natural-rate-v2")
+            "summary-bridge-p19-james-996-p19-map-996-xbbdab9273043b5f0-p19-scene-1-xb2b41cd1af2794ab-kitten--natural-rate-v2")
         XCTAssertEqual(asset.relativePath,
-            "SpokenMargins/EpisodeMaps/p19-james-996/SummaryBridges/summary-bridge-p19-james-996-p19-map-996-p19-scene-1-kitten--natural-rate-v2.wav")
+            "SpokenMargins/EpisodeMaps/p19-james-996/SummaryBridges/summary-bridge-p19-james-996-p19-map-996-xbbdab9273043b5f0-p19-scene-1-xb2b41cd1af2794ab-kitten--natural-rate-v2.wav")
     }
 
     func testSuppliedAuthorSummarySavesSuppliedKeyAndM4AImportPath() async throws {
         let asset = try await importSummary(itemID: "p19-author-996",
             safeItemDirectory: "p19-author-996", voice: .system, supplied: true)
         XCTAssertEqual(asset.id,
-            "summary-bridge-p19-author-996-p19-map-996-p19-scene-1-supplied-p19-author--caf-")
+            "summary-bridge-p19-author-996-p19-map-996-xbbdab9273043b5f0-p19-scene-1-xb2b41cd1af2794ab-supplied-p19-author--caf--xb05344fc930f4c44")
         XCTAssertEqual(asset.relativePath,
-            "SpokenMargins/EpisodeMaps/p19-author-996/SummaryBridges/summary-bridge-p19-author-996-p19-map-996-p19-scene-1-supplied-p19-author--caf-.m4a")
+            "SpokenMargins/EpisodeMaps/p19-author-996/SummaryBridges/summary-bridge-p19-author-996-p19-map-996-xbbdab9273043b5f0-p19-scene-1-xb2b41cd1af2794ab-supplied-p19-author--caf--xb05344fc930f4c44.m4a")
         XCTAssertFalse(asset.isReproducible, "The author's voice is adopted, not synthesized")
+    }
+
+    /// #1120: a voice a hand-made packet supplied before ids carried a hash sits under the old cut name. It is still
+    /// found, not detached and not "prepared" again.
+    func testASuppliedVoiceSavedUnderTheOldCutNameStillCountsAsPrepared() async throws {
+        preserveVoiceDefaults()
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(),
+                                  databaseURLOverride: root.appending(path: "library.sqlite"))
+        let store = try model.libraryStoreForTesting()
+        try store.saveItem(Item(id: "p1120-item", title: "P1120", mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil, externalReference: nil, status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, durationMs: 10_000)))
+        let oldVoice = root.appending(path: "old-voice.m4a")
+        try Self.writeAudio(to: oldVoice)
+        let oldName = "summary-bridge-p1120-item-p1120-map-p1120-scene-supplied-v-"
+        try store.saveOwnedOfflineAsset(OwnedOfflineAsset(id: oldName, itemId: "p1120-item", category: .summaryBridge,
+            relativePath: oldVoice.path, byteCount: 1, isReproducible: false))
+        let scene = PortableListeningMapScene(id: "p1120-scene", order: 0, title: "Summary",
+            summaryText: "Hello.", summaryAssetId: "v\u{E9}", summaryProvenance: .modelGenerated, eligibility: .eligible,
+            startAnchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 0),
+            endAnchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 1_000))
+        let found = try await model.prepareSummaryBridgeAsset(itemId: "p1120-item", proposalId: "p1120-map", scene: scene, store: store)
+        XCTAssertEqual(found?.id, oldName)
+        XCTAssertNotEqual(model.summaryBridgeAssetID(itemId: "p1120-item", proposalId: "p1120-map", sceneId: "p1120-scene",
+                                                    suppliedAssetId: "v\u{E9}"), oldName, "new imports use the hashed name")
     }
 
     /// The exact-audio packet fixture from LocalAudioListeningPackageTests, reduced to one scene.

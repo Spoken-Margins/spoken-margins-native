@@ -438,6 +438,20 @@ final class MarginMomentClockTests: XCTestCase {
         }
     }
 
+    func testASentenceStartAfterABlankLineAndALongRunOfSpacesIsFound() {
+        // The window opens 256 characters before the Margin, inside the padding, so it must reach back to the blank line.
+        let text = "Heading\n\n" + String(repeating: " ", count: 300) + "Text goes on here and on."
+        let paragraphStart = text.count - "Text goes on here and on.".count
+        for offset in [paragraphStart - 280, paragraphStart - 100, paragraphStart - 2] {
+            let limit = min(text.count, offset + 420)
+            XCTAssertEqual(
+                MarginMomentClock.sentenceStart(atOrAfter: offset, before: limit, in: text),
+                scanFromTheStart(atOrAfter: offset, before: limit, in: text),
+                "offset \(offset)")
+        }
+        XCTAssertEqual(MarginMomentClock.sentenceStart(atOrAfter: paragraphStart - 100, before: text.count, in: text), paragraphStart)
+    }
+
     func testASentenceStartReadsAWindowNotTheWholeText() {
         let sentence = "Words go here and there. "
         let text = String(repeating: sentence, count: 80_000) // 2,000,000 characters

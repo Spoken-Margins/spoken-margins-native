@@ -2057,8 +2057,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     /// A downloaded episode asks for precise timing (#2094). Without it, a seek in a VBR MP3 played audio up to
     /// about five minutes from where the clock said, on macOS with real decoding, while the clock read the
     /// requested time; with it every seek landed within 13 ms. The cost on a local file is a frame scan only when
-    /// the MP3 has no Xing header (about 1.2 s for an hour). Streams keep the default until it is measured how
-    /// much of the file precise timing makes AVFoundation fetch before playing.
+    /// the MP3 has no Xing header (about 1.2 s for an hour). Streams keep the default (#2110, `ops/stream-seek`): over
+    /// HTTP the key makes AVFoundation fetch the whole file before playing when the MP3 has no header (14 s for a
+    /// 29 MB CBR file at 20 Mbit/s), or 13 to 24 MB on the first seeks when it has one. Only a VBR file with a Xing
+    /// header is both cheap with the key (0.3 s to start) and wrong without it (seeks up to 9 s off).
     static func playbackAsset(for url: URL) -> AVURLAsset {
         AVURLAsset(url: url, options: url.isFileURL ? [AVURLAssetPreferPreciseDurationAndTimingKey: true] : nil)
     }
