@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import dataclasses
 import datetime as dt
 import fcntl
 import json
@@ -24,7 +23,7 @@ import signal
 import subprocess
 import sys
 import time
-from typing import Callable, Optional
+from typing import Callable, NamedTuple, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 import sm_paths  # noqa: E402
@@ -280,8 +279,8 @@ def settle(first: dict, reruns: list[dict]) -> dict:
                 errors=first['errors'] + [e for r in reruns for e in r['errors']] if confirmed else first['errors'])
 
 
-@dataclasses.dataclass(frozen=True)
-class Outcome:
+
+class Outcome(NamedTuple):
     """Everything the report says about how a run ended, as one small record (#2590, third audit round).
 
     Never read the sentences about an outcome off partial fields of the result dict (`confirmed`, `flaky`,
