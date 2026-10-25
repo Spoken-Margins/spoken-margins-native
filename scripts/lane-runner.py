@@ -140,6 +140,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import datetime
 import functools
 import hashlib
 import json
@@ -573,6 +574,105 @@ def log_recovered_stalls(evidence: Path, pr: int, head: str, report_url: str, po
             except Exception as error:  # noqa: BLE001 - the report already says the stall happened
                 print(f'Could not log the recovered stall on #{STALL_ISSUE}: {error!r}', flush=True)
     return posted
+
+
+TALLY_ISSUE = 2176  # retry-passes are tallied here (owner, 2026-10-24); same issue and line format as the hosted integration run
+TALLY_PREFIX = 'flake-tally:'
+TALLY_WINDOW_DAYS = 7
+TALLY_THRESHOLD = 3
+TALLY_BOT = 'github-actions[bot]'
+TALLY_TRUSTED = ('OWNER', 'MEMBER', 'COLLABORATOR')
+
+
+def retry_passes(evidence: Path) -> list[str]:
+    """Every test that failed and then passed on a rerun, from the verify-* manifests under <evidence>
+    (a fresh-clone rerun is evidence only)."""
+    return sorted({t for output in evidence.glob('verify-*') if not output.name.endswith('-fresh')
+                   for step in _read_manifest(output).get('steps', []) for t in step.get('passed_on_retry') or []})
+
+
+def tally_counts(comments: list[dict], now: datetime.datetime) -> dict[str, list[str]]:
+    """Retry-passes per test in the last 7 days -> their run ids. Only comments from a collaborator or the workflow's
+    bot count (#1822), so a stranger's look-alike line can't open an issue. The same run counts once per test."""
+    seen: dict[str, dict[str, None]] = {}
+    window = datetime.timedelta(days=TALLY_WINDOW_DAYS)
+    for comment in comments:
+        who = (comment.get('user') or {}).get('login')
+        if who != TALLY_BOT and comment.get('author_association') not in TALLY_TRUSTED:
+            continue
+        first = (comment.get('body') or '').splitlines()[:1]
+        parts = first[0].split() if first else []
+        if len(parts) != 5 or parts[0] != TALLY_PREFIX:
+            continue
+        try:
+            when = datetime.datetime.strptime(parts[4], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
+        except ValueError:
+            continue
+        if now - window <= when <= now:
+            seen.setdefault(parts[1], {})[parts[3]] = None
+    return {test: list(runs) for test, runs in seen.items()}
+
+
+def log_retry_passes(evidence: Path, repo: str, head: str, run_id: str, tally, now=None) -> list[str]:
+    """One comment per retry-pass on #2176, then a `ready` Showcase issue for any test with 3 or more retry-passes in
+    7 days (owner, 2026-10-24; #2596). `tally` offers post(body), comments(), open_markers() and open_issue(title, body).
+
+    Best effort like log_recovered_stalls: the report is already posted, and nothing here can change the verdict.
+    Returns the issues opened.
+    """
+    opened: list[str] = []
+    try:
+        tests = retry_passes(evidence)
+        if not tests:
+            return opened
+        now = now or datetime.datetime.now(datetime.timezone.utc)
+        stamp = now.strftime('%Y-%m-%dT%H:%M:%SZ')
+        for test in tests:
+            tally.post(f'{TALLY_PREFIX} {test} {head[:7]} {run_id} {stamp}\n\n`{test}` passed on retry in lane run {run_id}.')
+        counts = tally_counts(tally.comments(), now)
+        marked = tally.open_markers()
+        for test in tests:
+            if len(counts.get(test, [])) >= TALLY_THRESHOLD and test not in marked:
+                name = test.rsplit('/', 1)[-1].removesuffix('()')
+                links = '\n'.join(f'- https://github.com/{repo}/actions/runs/{r}' for r in counts[test])
+                opened.append(tally.open_issue(
+                    'Flaky: ' + name[:110],
+                    f'<!-- flake-test: {test.replace("-->", "")} -->\n\n`{test}` failed on its first run and passed on a '
+                    f're-run in {len(counts[test])} runs in the last 7 days (tally on #{TALLY_ISSUE}). The run still counted '
+                    f'as a pass (owner, 2026-10-24), so fix the test or the code under it rather than leave it to retry.\n\n'
+                    f'Runs:\n{links}\n'))
+    except Exception as error:  # noqa: BLE001 - the report already names the retry-pass
+        print(f'Could not tally the retry-passes on #{TALLY_ISSUE}: {error!r}', flush=True)
+    return opened
+
+
+class RepoTally:
+    """log_retry_passes's GitHub side: #2176's comments and the open flake issues."""
+
+    def __init__(self, repo: str):
+        self.repo = repo
+        self.client = Repo(repo)
+
+    def post(self, body: str) -> None:
+        self.client.comment(TALLY_ISSUE, body)
+
+    def comments(self) -> list[dict]:
+        return self.client.issue_comments(TALLY_ISSUE)
+
+    def open_markers(self) -> set[str]:
+        lines = self.client.api('--paginate', '--jq',
+                                '.[] | select(.pull_request == null) | {body, author_association} | @json',
+                                f'repos/{self.repo}/issues?state=open&per_page=100')
+        issues = [json.loads(line) for line in lines.splitlines() if line.strip()]
+        return {m for issue in issues if issue.get('author_association') in TALLY_TRUSTED
+                for m in re.findall(r'<!-- flake-test: (.+?) -->', issue.get('body') or '')}
+
+    def open_issue(self, title: str, body: str) -> str:
+        done = subprocess.run(['gh', 'issue', 'create', '-R', self.repo, '--title', title, '--body', body,
+                               '--label', 'ready', '--milestone', 'Showcase'], capture_output=True, text=True)
+        if done.returncode:
+            raise RuntimeError(done.stderr.strip()[:200])
+        return done.stdout.strip()
 
 
 def flush_ledger(pr: int, head: str, post) -> list[str]:
@@ -2573,8 +2673,6 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
                            f'{found["passed"]} test(s), which counts as a PASS (owner\'s call 2026-10-11). Logged '
                            f'on #{STALL_ISSUE}. evidence: {output}/{found["step"]}-stall-{stall.get("attempt")}/')
         retried = sorted({t for step in manifest.get('steps', []) for t in step.get('passed_on_retry') or []})
-        if retried:  # owner, 2026-10-24 (#2596): fail-then-pass on a rerun is a pass, and the report names it
-            details.append(f'{plan}: passed on retry: {", ".join(retried)}')
         for test in summary['failed'][:10]:
             details.append(f'{test} — expected: passes. observed: failed. evidence: {output}/tests.xcresult')
         if summary['out_of_time']:
@@ -2589,6 +2687,8 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
         if manifest.get('status') != 'verified' and not summary['failed']:
             details.append(f'{plan}: {manifest.get("error") or manifest.get("status")}. evidence: {output}/manifest.json')
             details += [f'{plan}: {line}' for line in failed_step_errors(manifest, output)]
+        # owner, 2026-10-24 (#2596): fail-then-pass on a rerun is a pass, and every report names it, or says none
+        details.append(f'{plan}: passed on retry: {", ".join(retried) if retried else "none"}')
         if summary['flood']:
             skipped = [p for p, _ in plans[position + 1:]]
             if skipped:
@@ -3695,6 +3795,7 @@ def main(argv=None) -> int:
     if request['tier'] == 'T3':
         log_recovered_stalls(evidence, args.pr, head, t3_url, lambda text: Repo(repo).comment(STALL_ISSUE, text),
                              verdict)
+        log_retry_passes(evidence, repo, head, os.environ.get('GITHUB_RUN_ID') or f'pr{args.pr}', RepoTally(repo))
     record_outcome(verdict, is_hold(verdict, moved + details))
     _, desk_waiting = pending_requests(github.comments())
     if explicit:

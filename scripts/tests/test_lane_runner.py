@@ -1,11 +1,13 @@
 import os
 os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
 import contextlib
+import datetime
 import importlib.util
 import json
 import os
 import re
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -3506,7 +3508,8 @@ class RecoveredStallTests(unittest.TestCase):
     def test_one_stall_recovered_on_the_first_retry_is_a_pass_the_report_says_so(self):
         verdict, details = self.plan(stalled_step())
         self.assertEqual(verdict, 'PASS')
-        self.assertEqual(len(details), 1)
+        self.assertEqual(len(details), 2)  # the stall note, then the always-present retry line (#2596)
+        self.assertEqual(details[1], 'app: passed on retry: none')
         self.assertIn('app: recovered after 1 startup stall', details[0])
         self.assertIn('passed 3 test(s)', details[0])
         self.assertIn('Logged on #1802', details[0])
@@ -3993,3 +3996,82 @@ class PruneLaneFolderTests(unittest.TestCase):
         (broken / 'ops/disk/sm_lane_prune.py').write_text('raise SystemExit(3)\n')
         self.assertIn('failed', self.prune(broken))
         self.assertTrue(self.old.exists())
+
+
+class RetryPassTests(unittest.TestCase):
+    """Owner's call 2026-10-24 (#2596, #2176): every T3 report says what passed on retry, and each retry-pass is tallied."""
+
+    RETRIED = 'SpokenMarginsAppTests/FlakyTests/testSometimes()'
+    NOW = datetime.datetime(2026, 10, 25, 1, 0, tzinfo=datetime.timezone.utc)
+
+    def manifest(self, retried=()):
+        step = {'name': 'xcode-tests', 'exit_code': 0, 'tests': {'T/A/test0': {'status': 'passed'}}}
+        if retried:
+            step['passed_on_retry'] = list(retried)
+        return {'status': 'verified', 'steps': [{'name': 'build-for-testing', 'exit_code': 0, 'errors': []}, step]}
+
+    class Tally:
+        def __init__(self, comments=(), markers=(), fail=False):
+            self.posted, self.issues, self._comments, self._markers, self.fail = [], [], list(comments), set(markers), fail
+
+        def post(self, body):
+            if self.fail:
+                raise RuntimeError('gh is down')
+            self.posted.append(body)
+            self._comments.append({'user': {'login': 'github-actions[bot]'}, 'body': body})
+
+        def comments(self):
+            return self._comments
+
+        def open_markers(self):
+            return self._markers
+
+        def open_issue(self, title, body):
+            self.issues.append((title, body))
+            return 'https://github.com/o/r/issues/9'
+
+    def evidence(self, retried):
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, folder, True)
+        (folder / 'verify-app').mkdir()
+        (folder / 'verify-app' / 'manifest.json').write_text(json.dumps(self.manifest(retried)))
+        return folder
+
+    def test_a_report_with_no_retry_says_none_for_each_plan(self):
+        _, _, _, details = lane.run_plans({'app': ['T/A'], 'adapters': ['T/B']}, lambda *_: self.manifest(), Path('/e'))
+        self.assertEqual([d for d in details if 'passed on retry' in d],
+                         ['app: passed on retry: none', 'adapters: passed on retry: none'])
+
+    def test_a_report_with_a_retry_names_the_test(self):
+        _, _, _, details = lane.run_plans({'app': ['T/A']}, lambda *_: self.manifest([self.RETRIED]), Path('/e'))
+        self.assertIn(f'app: passed on retry: {self.RETRIED}', details)
+
+    def test_a_retry_pass_is_tallied_once_in_the_integration_runs_format(self):
+        tally = self.Tally()
+        lane.log_retry_passes(self.evidence([self.RETRIED]), 'o/r', 'abcdef1234', '77', tally, self.NOW)
+        self.assertEqual(len(tally.posted), 1)
+        self.assertEqual(tally.posted[0].splitlines()[0], f'flake-tally: {self.RETRIED} abcdef1 77 2026-10-25T01:00:00Z')
+        self.assertEqual(tally.issues, [])
+
+    def test_no_retry_means_no_tally(self):
+        tally = self.Tally()
+        lane.log_retry_passes(self.evidence([]), 'o/r', 'abcdef1234', '77', tally)
+        self.assertEqual(tally.posted, [])
+
+    def test_a_third_retry_pass_in_seven_days_opens_one_issue(self):
+        def earlier(run, days, login='github-actions[bot]'):
+            when = (self.NOW - datetime.timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            return {'user': {'login': login}, 'body': f'flake-tally: {self.RETRIED} abcdef1 {run} {when}'}
+        # Two in-window runs plus this one make three; a run 9 days back and a stranger's look-alike don't count.
+        tally = self.Tally([earlier('1', 2), earlier('2', 6), earlier('3', 9), earlier('4', 1, 'mallory')])
+        opened = lane.log_retry_passes(self.evidence([self.RETRIED]), 'o/r', 'abcdef1234', '77', tally, self.NOW)
+        self.assertEqual(opened, ['https://github.com/o/r/issues/9'])
+        self.assertIn(f'<!-- flake-test: {self.RETRIED} -->', tally.issues[0][1])
+
+    def test_a_tally_error_warns_and_the_verdict_stays_pass(self):
+        tally = self.Tally(fail=True)
+        with mock.patch('builtins.print') as shown:
+            lane.log_retry_passes(self.evidence([self.RETRIED]), 'o/r', 'abcdef1234', '77', tally)
+        self.assertIn('Could not tally', shown.call_args[0][0])
+        summaries, statuses, _, _ = lane.run_plans({'app': ['T/A']}, lambda *_: self.manifest([self.RETRIED]), Path('/e'))
+        self.assertEqual(lane.t3_verdict(summaries, statuses), 'PASS')
