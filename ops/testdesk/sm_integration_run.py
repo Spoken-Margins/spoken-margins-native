@@ -198,6 +198,7 @@ def summarize(manifest: dict) -> dict:
     counts = dict.fromkeys(('passed', 'failed', 'skipped'), 0)
     failed, journeys, errors, attachments, crashes = [], {}, [], [], []
     statuses = {}
+    retried = set()
     incomplete = False
     for step in manifest.get('steps', []):
         errors.extend(step.get('errors', []))
@@ -216,6 +217,10 @@ def summarize(manifest: dict) -> dict:
                 statuses[name] = status
                 if status == 'failed':
                     failed.append(name)
+        # verify-tests.py's manifest is the one source of retry-passes (xcodebuild -retry-tests-on-failure
+        # records a fail-then-pass as status 'passed' with passed_on_retry); only a test that ended passed counts.
+        retried.update(name for name in step.get('passed_on_retry') or []
+                       if step.get('tests', {}).get(name, {}).get('status') == 'passed')
     if not any(status in ('passed', 'failed') for status in statuses.values()):
         # A plan that ran no test proves nothing, whatever its manifest says (#2590: a hosted run with no
         # xcodegen posted INCONCLUSIVE with 0 tests while its job showed green).
@@ -236,7 +241,7 @@ def summarize(manifest: dict) -> dict:
             # A run that executed nothing proves nothing, whatever its status says (#2590).
             errors.append('the app plan ran 0 tests, so nothing was verified')
     return {'verdict': verdict, 'counts': counts, 'failed': sorted(set(failed)), 'tests': statuses,
-            'journeys': journeys, 'attachments': attachments, 'crashes': crashes,
+            'retried': sorted(retried), 'journeys': journeys, 'attachments': attachments, 'crashes': crashes,
             'errors': errors + ([manifest['error']] if manifest.get('error') else [])}
 
 
@@ -250,18 +255,25 @@ def settle(first: dict, reruns: list[dict]) -> dict:
     tallies each on #2176 (`flake_tally`). A re-run that stopped (INCONCLUSIVE) is no information either way: it
     can't clear a test, and it can't keep a failure confirmed that another re-run's pass has already cleared
     (#1417). A test that passed in one re-run and failed in another is flaky too; `flaky_notes` says so."""
+    # Retry-passes come from the verify-tests manifest (`retried`, from every step of every run) plus any
+    # test this script re-ran and saw pass. A verdict of PASS or INCONCLUSIVE still reports the first.
+    reported = set(first.get('retried', []))
+    for rerun in reruns:
+        reported.update(rerun.get('retried', []))
     if first['verdict'] != 'FAIL':
-        return dict(first, flaky=[], confirmed=[])
+        return dict(first, flaky=sorted(reported), confirmed=[])
     completed = [r for r in reruns if r['verdict'] != 'INCONCLUSIVE']
-    flaky, notes = [], {}
+    cleared, notes = [], {}
     for test in first['failed']:
         passes = sum(1 for r in completed if r['tests'].get(test) == 'passed')
         if not passes:
             continue
-        flaky.append(test)
+        cleared.append(test)
+        reported.add(test)
         if any(r['tests'].get(test) == 'failed' for r in completed):
             notes[test] = f' (passed in {passes} of {len(completed)} re-runs, failed in the rest)'
-    confirmed = [t for t in first['failed'] if t not in flaky]
+    confirmed = [t for t in first['failed'] if t not in cleared]
+    flaky = sorted(reported)
     return dict(first, verdict='FAIL' if confirmed else 'PASS', failed=confirmed, flaky=flaky, flaky_notes=notes,
                 confirmed=confirmed,
                 errors=first['errors'] + [e for r in reruns for e in r['errors']] if confirmed else first['errors'])
@@ -1001,6 +1013,7 @@ def run_tests(ops: Ops, wt: Path, evidence: Path, fds: tuple) -> dict:
         journeys = summarize(ops.test_plan(wt, evidence / 'journeys', 'journeys', fds))
         result['journeys'] = script_results(listing, journeys['journeys'])
         result['attachments'] = result['attachments'] + journeys['attachments']
+        result['flaky'] = sorted(set(result['flaky']) | set(journeys['retried']))  # the scripted journeys retry too
         gating_failed = [t for t, s in result['journeys'].items()
                          if t in {e['test'].removesuffix('()') for e in listing.get('gating', [])} and s != 'passed']
         if gating_failed and result['verdict'] == 'PASS':

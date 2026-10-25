@@ -26,9 +26,9 @@ GB = 10**9
 REPORTED_AT = 1791514182.0  # 2026-10-09T02:49:42Z, the time FakeOps gives its reports
 
 
-def manifest(tests: dict, interrupted=False, probation=None):
+def manifest(tests: dict, interrupted=False, probation=None, retried=()):
     step = {'name': 'xcode-tests', 'tests': {t: {'status': s} for t, s in tests.items()},
-            'probation': probation or {}, 'errors': [], 'exit_code': 0}
+            'probation': probation or {}, 'errors': [], 'exit_code': 0, 'passed_on_retry': list(retried)}
     if interrupted:
         step.update(interrupted=True, exit_code=124, simulator_crash_report='SpringBoard.ips')
     failed = any(s == 'failed' and t not in (probation or {}) for t, s in tests.items())
@@ -197,6 +197,41 @@ class VerdictTests(unittest.TestCase):
                 settled = run.settle(first, reruns)
                 self.assertEqual((settled['verdict'], settled['failed'], settled['flaky']),
                                  ('PASS', [], sorted([TEST, OTHER])))
+
+    def test_a_test_xcodebuild_retried_is_named_in_the_report_and_tallied_once(self):
+        # verify-tests.py runs xcodebuild with -retry-tests-on-failure: fail-then-pass is status passed with
+        # passed_on_retry in the step. The manifest is the source of retry-passes; the script's own re-runs add to it.
+        counts = {'passed': 0, 'failed': 0, 'skipped': 0}
+        first = run.summarize(manifest({TEST: 'passed', OTHER: 'passed'}, retried=[TEST]))
+        settled = run.settle(first, [])
+        self.assertEqual((settled['verdict'], settled['flaky']), ('PASS', [TEST]))
+        text = run.report_text('a' * 40, dict(settled, reruns=0, crashes=[], counts=counts),
+                               started=0, finished=1, previous=None, suspects=[], evidence=Path('/e'))
+        self.assertIn(f'passed on retry: {TEST}', text)
+        ops = types.SimpleNamespace(posted=[], post_tally=lambda body: ops.posted.append(body),
+                                    tally_comments=lambda: [], open_flake_markers=lambda: [], log=print)
+        run.record_flakes(ops, settled['flaky'], SHA, '1')
+        self.assertEqual(len(ops.posted), 1)
+        self.assertIn(TEST, ops.posted[0])
+        # and a retry inside xcodebuild plus a script re-run of another test are both named, each once
+        failing = run.summarize(manifest({TEST: 'passed', OTHER: 'failed'}, retried=[TEST]))
+        both = run.settle(failing, [run.summarize(manifest({TEST: 'passed', OTHER: 'passed'}, retried=[TEST]))] * 2)
+        self.assertEqual((both['verdict'], both['flaky']), ('PASS', sorted([TEST, OTHER])))
+
+    def test_a_run_with_no_retries_says_none(self):
+        counts = {'passed': 0, 'failed': 0, 'skipped': 0}
+        settled = run.settle(run.summarize(manifest({TEST: 'passed'})), [])
+        self.assertEqual((settled['verdict'], settled['flaky']), ('PASS', []))
+        text = run.report_text('a' * 40, dict(settled, reruns=0, crashes=[], counts=counts),
+                               started=0, finished=1, previous=None, suspects=[], evidence=Path('/e'))
+        self.assertIn('passed on retry: none', text)
+
+    def test_a_test_that_fails_both_attempts_is_still_a_fail_and_never_a_retry_pass(self):
+        # Even if a manifest wrongly lists it, a test that ended failed is not a retry-pass.
+        first = run.summarize(manifest({TEST: 'failed'}, retried=[TEST]))
+        self.assertEqual((first['verdict'], first['failed'], first['retried']), ('FAIL', [TEST], []))
+        settled = run.settle(first, [run.summarize(manifest({TEST: 'failed'}))] * 2)
+        self.assertEqual((settled['verdict'], settled['failed'], settled['flaky']), ('FAIL', [TEST], []))
 
     def test_every_report_has_a_passed_on_retry_line(self):
         first = run.summarize(manifest({TEST: 'failed', OTHER: 'failed'}))
