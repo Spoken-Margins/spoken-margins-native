@@ -725,6 +725,7 @@ final class Gate1AppModel: ObservableObject {
         settingsValueChanged()
         quickAccess.forwardWillChange(to: objectWillChange)
         quickAccess.recordDiagnostic = { [weak self] key, value in self?.diagnostics[key] = value }
+        quickAccess.onFilesRefreshed = { [weak self] in self?.quickFolderInboxRefreshed() }
         refreshQuickAccessFolder()
         streamingSpeechQueue.onTurnDrained = { [weak self] turnId in
             self?.finishStreamingTurnIfReady(turnId)
