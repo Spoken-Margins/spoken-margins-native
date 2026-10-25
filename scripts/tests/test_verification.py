@@ -669,6 +669,10 @@ class VerificationTests(unittest.TestCase):
                      'THIRD_PARTY_NOTICES.md', 'Design/UXProposal20260909/package.json'):
             self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
         self.assertEqual(verification.runner_test_scope(['docs/a.md'])[0], 'none')
+        # The task-cost map test (#2396) checks the map's budgets and markers: a PR that edits only the map
+        # must run it before the merge, not leave the red to the next PR that touches scripts/.
+        self.assertIn('test_task_cost_map', verification.RUNNER_TEST_READERS)
+        self.assertEqual(verification.runner_test_scope(['docs/task-cost-map.json'])[0], 'readers')
         # A manifest, model or font file added anywhere must run the check in the PR that adds it, not in the
         # next PR that touches scripts/.
         for path in ('ops/x/requirements.txt', 'Design/New/fonts/a.ttf', 'docs/y/package.json', 'ops/m/voice.onnx',

@@ -84,6 +84,66 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertEqual(model.activePlaybackItemId, secondId)
     }
 
+    /// A read that the test holds open: call N waits for `release(N)` and announces itself on `started`.
+    private final class HeldReads: @unchecked Sendable {
+        private let lock = NSLock()
+        private var calls = 0
+        let started = AsyncStream<Void>.makeStream()
+        let releases = (0..<4).map { _ in AsyncStream<Void>.makeStream() }
+        var count: Int { lock.withLock { calls } }
+        func next() -> Int { lock.withLock { calls += 1; return calls } }
+        func release(_ call: Int) { releases[call - 1].continuation.yield(()) }
+    }
+
+    private func holdReads(_ held: HeldReads, on model: Gate1AppModel) {
+        model.navigationLibraryRead = { store in
+            let call = held.next()
+            let data = try LibraryReadSnapshot.read(store: store)
+            held.started.continuation.yield(())
+            for await _ in held.releases[call - 1].stream { break }
+            return data
+        }
+    }
+
+    func testATapReloadOvertakenBySynchronousRowsReadsAgainInsteadOfRestoringOldRows() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let held = HeldReads()
+        holdReads(held, on: model)
+        var started = held.started.stream.makeAsyncIterator()
+
+        model.refreshLibraryRowsInBackground(mustPublish: true)
+        await started.next()
+        // A synchronous reload (permanent delete, Play) lands while the first read is out; that read is now older.
+        model.libraryItems = [LibraryItemRow(id: "newer-item", title: "Newer state", status: "Ready", canDelete: true)]
+        held.release(1)
+        await started.next()
+        held.release(2)
+        await model.settleLibraryReload()
+
+        XCTAssertEqual(held.count, 2, "the older read must not publish over the newer rows; the reload reads again")
+        XCTAssertNotEqual(model.libraryItems.map(\.id), ["newer-item"], "the second read, which saw no change, publishes the stored Library")
+    }
+
+    func testATapReloadThatKeepsBeingOvertakenPublishesOnItsThirdRead() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let held = HeldReads()
+        holdReads(held, on: model)
+        var started = held.started.stream.makeAsyncIterator()
+
+        model.refreshLibraryRowsInBackground(mustPublish: true)
+        for call in 1...3 {
+            await started.next()
+            model.libraryItems = [LibraryItemRow(id: "churn-\(call)", title: "Churn", status: "Ready", canDelete: true)]
+            held.release(call)
+        }
+        await model.settleLibraryReload()
+
+        XCTAssertEqual(held.count, 3, "three reads, then the tap's rows are published whatever moved")
+        XCTAssertFalse(model.libraryItems.map(\.id).contains { $0.hasPrefix("churn-") }, "the tapped change must show under churn")
+    }
+
     func testASkipThatFinishesTheItemShowsTheFinishedSessionAtOnce() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
