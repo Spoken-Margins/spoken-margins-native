@@ -855,7 +855,7 @@ final class Gate1FlowUITests: XCTestCase {
         element("playback.margins.button").tap()
         XCTAssertTrue(element("margins.screen").waitForExistence(timeout: 4))
         XCTAssertTrue(element("miniPlayer.bar").exists)
-        let savedMargin = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "margins.row.")).firstMatch
+        let savedMargin = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "margins.rowDetails.")).firstMatch
         XCTAssertTrue(savedMargin.waitForExistence(timeout: 4))
         savedMargin.tap()
         XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 4), "Tapping the saved Margin row did not open its detail")
@@ -939,7 +939,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(search.waitForExistence(timeout: 4))
         search.tap()
         search.typeText("amber doorway")
-        let note = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "margins.row.")).firstMatch
+        let note = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "margins.rowDetails.")).firstMatch
         XCTAssertTrue(note.waitForExistence(timeout: 4))
         note.tap()
         XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 4))
