@@ -70,6 +70,9 @@ final class ListeningEditionFolderWalkTests: XCTestCase {
         XCTAssertTrue(summary.isFailure)
         XCTAssertTrue(summary.message.contains("Imported 2 of 3 files."), summary.message)
         XCTAssertTrue(summary.message.contains("notes.json"), summary.message)
+        let cut = summary.appending(ListeningEditionFolderWalk.truncationNote())
+        XCTAssertTrue(cut.message.hasPrefix(summary.message) && cut.message.hasSuffix(ListeningEditionFolderWalk.truncationNote()))
+        XCTAssertEqual(cut.isFailure, summary.isFailure)
     }
 
     func testMessages() {

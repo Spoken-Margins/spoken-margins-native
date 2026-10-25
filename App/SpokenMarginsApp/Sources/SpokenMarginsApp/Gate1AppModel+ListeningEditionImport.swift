@@ -61,7 +61,7 @@ extension Gate1AppModel {
         let lines = hangTelemetry.labels.scoped("listeningEditionFiles.import") { importListeningEditions(loaded.entries) }
         var summary = ListeningEditionBatch.summary(of: lines)
         if loaded.truncated {
-            summary = .init(message: summary.message + " " + ListeningEditionFolderWalk.truncationNote(), isFailure: summary.isFailure)
+            summary = summary.appending(ListeningEditionFolderWalk.truncationNote())
         }
         if lines.contains(where: { $0.outcome.isSuccess }) { markOnboardingSteps([.addedOwnSource, .addedFromFiles]) }
         if summary.isFailure {
