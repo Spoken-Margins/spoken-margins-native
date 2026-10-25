@@ -5,6 +5,8 @@ import Foundation
 public enum ItemQuickAction: String, Equatable, Sendable {
     case markComplete
     case markUnfinished
+    case playNext
+    case addToQueue
     case addToCollection
     case prepareOffline
 
@@ -16,7 +18,7 @@ public enum ItemQuickAction: String, Equatable, Sendable {
         } else if row.canMarkUnfinished {
             actions.append(.markUnfinished)
         }
-        actions.append(.addToCollection)
+        actions.append(contentsOf: [.playNext, .addToQueue, .addToCollection])
         if row.offlineState != .readyOffline { actions.append(.prepareOffline) }
         return actions
     }

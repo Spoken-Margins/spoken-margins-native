@@ -10,25 +10,25 @@ final class ItemQuickActionsTests: XCTestCase {
         return row
     }
 
-    func testAnItemNotYetCompleteOffersCompleteCollectionAndOffline() {
-        XCTAssertEqual(ItemQuickAction.actions(for: row(completed: false)), [.markComplete, .addToCollection, .prepareOffline])
+    func testAnItemNotYetCompleteOffersCompleteQueueCollectionAndOffline() {
+        XCTAssertEqual(ItemQuickAction.actions(for: row(completed: false)), [.markComplete, .playNext, .addToQueue, .addToCollection, .prepareOffline])
     }
 
     func testAnItemMarkedCompleteByHandOffersMarkUnfinished() {
         XCTAssertEqual(
             ItemQuickAction.actions(for: row(completed: true, canMarkUnfinished: true)),
-            [.markUnfinished, .addToCollection, .prepareOffline]
+            [.markUnfinished, .playNext, .addToQueue, .addToCollection, .prepareOffline]
         )
     }
 
     func testAnItemFinishedByListeningOffersNeitherCompletionAction() {
-        XCTAssertEqual(ItemQuickAction.actions(for: row(completed: true)), [.addToCollection, .prepareOffline])
+        XCTAssertEqual(ItemQuickAction.actions(for: row(completed: true)), [.playNext, .addToQueue, .addToCollection, .prepareOffline])
     }
 
     func testAnItemAlreadyOfflineHasNoPrepareOffline() {
         XCTAssertEqual(
             ItemQuickAction.actions(for: row(completed: false, offline: .readyOffline)),
-            [.markComplete, .addToCollection]
+            [.markComplete, .playNext, .addToQueue, .addToCollection]
         )
     }
 }
