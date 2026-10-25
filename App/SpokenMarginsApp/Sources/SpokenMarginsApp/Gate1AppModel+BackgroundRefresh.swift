@@ -88,28 +88,27 @@ extension Gate1AppModel {
     /// (a download or a prewarm tick) landing during the read makes it stale; it is read again, not dropped.
     ///
     /// `mustPublish` is for a tap that changed the database and expects the screen to show it (Mark complete, Undo,
-    /// Restore). Playback ticks and prewarm progress can invalidate three reads in a row, and dropping the reload then
-    /// would leave the row stale until something else reloads. On the last read it publishes the rows anyway (the
-    /// database is the truth) and leaves the Preparing Audio lists to whoever changed them.
+    /// Restore). Playback ticks and prewarm progress can invalidate every read of a busy Library, and dropping the
+    /// reload then would leave the row stale until something else reloads. A `mustPublish` reload reads once and
+    /// publishes the rows whatever moved meanwhile (the database is the truth; the next tick refreshes a moving row),
+    /// and leaves the Preparing Audio lists alone when their writer changed them during the read.
     func refreshLibraryRowsInBackground(mustPublish: Bool = false) {
         guard let store else { return }
         let generation = backgroundRefresh.beginLibrary()
         let read = navigationLibraryRead
         backgroundRefresh.holdLibrary(Task { [weak self] in
-            for attempt in 0..<3 {
+            for _ in 0..<3 {
                 guard let revision = self?.libraryPresentationRevision,
                       let listsBefore = self?.audioPreparationLists,
                       let data = try? await read(store) else { return }
                 guard let self, !Task.isCancelled, self.backgroundRefresh.isCurrentLibrary(generation) else { return }
                 // Moving or prioritizing a job and a chunk's progress set the Preparing Audio lists without touching
                 // `libraryItems`, so the revision can't see them: a list that changed during the read is read again.
-                if self.libraryPresentationRevision != revision || self.audioPreparationLists != listsBefore {
-                    guard mustPublish, attempt == 2 else { continue }
-                    self.publishLibrary(data)
-                    return
-                }
+                let rowsMoved = self.libraryPresentationRevision != revision
+                let listsMoved = self.audioPreparationLists != listsBefore
+                if (rowsMoved || listsMoved) && !mustPublish { continue }
                 self.publishLibrary(data)
-                self.publishAudioPreparationPresentation(from: data, store: store)
+                if !listsMoved { self.publishAudioPreparationPresentation(from: data, store: store) }
                 return
             }
         })

@@ -2783,7 +2783,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNil(model.feedbackEvent?.action, "Undo answers with a plain confirmation")
         XCTAssertTrue(model.visibleLibraryItems.contains { $0.id == "item-pill" })
         XCTAssertEqual(model.selectedItem.sessions, history)
-        XCTAssertEqual(model.snapshot, snapshot)
+        // The waits above let playback move on (the chapter title changes), so compare the session, not the whole snapshot.
+        XCTAssertEqual(model.snapshot.sessionId, snapshot.sessionId)
+        XCTAssertEqual(model.snapshot.itemId, snapshot.itemId)
+        XCTAssertEqual(model.snapshot.status, snapshot.status)
         model.markItemCompleted(id: "item-pill")
         await model.settleLibraryReload()
         model.libraryQuery.query = "pill"
