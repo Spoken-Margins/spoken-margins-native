@@ -955,9 +955,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
             replaceSynthesizer()
         }
         #if os(iOS)
-        try AVAudioSession.sharedInstance().setCategory(
-            .playback,
-            mode: .spokenAudio,
+        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(
             options: PlaybackAudioSessionPolicy.options(mixes: mixesWithOtherAudio, lowersBackground: lowersBackgroundAudio)
         )
         try AVAudioSession.sharedInstance().setActive(true)
@@ -1015,7 +1013,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
         if synthesizer.isSpeaking || !chunksByUtteranceId.isEmpty { replaceSynthesizer() }
         resetPlaybackStateForPreview()
         #if os(iOS)
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: [.duckOthers])
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
         synthesizer.speak(makeUtterance(textToSpeak, mode: mode))
@@ -1054,9 +1052,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
         mixesWithOtherAudio = enabled
         #if canImport(AVFoundation) && os(iOS)
         guard !paused, synthesizer.isSpeaking || !chunksByUtteranceId.isEmpty else { return }
-        try AVAudioSession.sharedInstance().setCategory(
-            .playback,
-            mode: .spokenAudio,
+        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(
             options: PlaybackAudioSessionPolicy.options(mixes: enabled, lowersBackground: lowersBackgroundAudio)
         )
         try AVAudioSession.sharedInstance().setActive(true)
@@ -1575,9 +1571,7 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
         #if os(watchOS)
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [])
         #else
-        try AVAudioSession.sharedInstance().setCategory(
-            .playback,
-            mode: .spokenAudio,
+        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(
             options: PlaybackAudioSessionPolicy.options(mixes: mixesWithOtherAudio, lowersBackground: lowersBackgroundAudio)
         )
         #endif
@@ -3187,9 +3181,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         #if os(watchOS)
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [])
         #else
-        try AVAudioSession.sharedInstance().setCategory(
-            .playback,
-            mode: .spokenAudio,
+        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(
             options: PlaybackAudioSessionPolicy.options(mixes: mixesWithOtherAudio, lowersBackground: lowersBackgroundAudio)
         )
         #endif

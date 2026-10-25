@@ -193,6 +193,24 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.lastError, "Record at least one Margin on this item before sharing.")
     }
 
+    /// #1254: Settings is a tab, so every route to it (the Offline Storage back button, a missing API key) lands
+    /// on the tab bar's home with the Settings tab requested, never on a screen of its own.
+    func testEveryRouteToSettingsAsksForTheSettingsTab() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+
+        model.openOfflineStorage()
+        XCTAssertEqual(model.screen, .offlineStorage)
+        model.returnToSettingsFromOfflineStorage()
+        XCTAssertEqual(model.screen, .home)
+        XCTAssertEqual(model.requestedExperienceRoot, .settings)
+
+        model.requestedExperienceRoot = nil
+        model.openAISettingsFromSummaryPrompt()
+        XCTAssertEqual(model.screen, .home)
+        XCTAssertEqual(model.requestedExperienceRoot, .settings)
+    }
+
     func testNextChapterUnavailableForFinalChapterAndDerivativePlayback() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         let first = Chapter(id: "a", title: "Opening", startChar: 0, endChar: 50, percent: 0)
@@ -1745,7 +1763,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.snapshot.isRecording)
         let recordingSnapshot = model.snapshot
 
-        model.screen = .settings
+        model.screen = .item
         model.openHome()
         model.openSettings()
         model.openHelp()

@@ -278,10 +278,18 @@ def test_records(log):
             previous = records[identifier]
             attempts = previous.setdefault('attempts', [dict(previous)])
             attempts.append(result)
-            # A passing retry must never erase the original failure or skip.
-            previous['status'] = next(s for s in ('failed', 'skipped', 'passed')
-                                      if any(a['status'] == s for a in attempts))
-            previous['seconds'] = sum(a['seconds'] for a in attempts)
+            seconds_total = sum(a['seconds'] for a in attempts)
+            if result['status'] == 'passed' and any(a['status'] == 'failed' for a in attempts[:-1]) \
+                    and not any(a['status'] == 'skipped' for a in attempts):
+                # Owner, 2026-10-24: a test that fails and then passes on a rerun counts as a pass (#2596). The report
+                # names it. A skip, or a failing last attempt, still counts as before.
+                previous['status'] = 'passed'
+                previous['passed_on_retry'] = True
+            else:
+                previous['status'] = next(s for s in ('failed', 'skipped', 'passed')
+                                          if any(a['status'] == s for a in attempts))
+                previous.pop('passed_on_retry', None)
+            previous['seconds'] = seconds_total
         else:
             records[identifier] = result
     return records
@@ -361,12 +369,21 @@ def xcresult_test_records(payload):
                 if not bundle or not re.fullmatch(r'\w+/test\w+', name):
                     raise ValueError(f'Unknown xcresult test identifier: {bundle}/{name}')
                 identifier = f'{bundle}/{name}'
-                result = {'status': worst([status(node), *attempts(node)]),
+                runs = list(attempts(node))
+                retried = len(runs) > 1 and runs[-1] == 'passed' and 'failed' in runs[:-1] and 'skipped' not in runs
+                # Owner, 2026-10-24 (#2596): fail-then-pass on a rerun is a pass; fail-then-fail stays failed.
+                result = {'status': 'passed' if retried else worst([status(node), *runs]),
                           'seconds': float(node.get('durationInSeconds', 0))}
+                if retried:
+                    result['passed_on_retry'] = True
                 if identifier in records:
                     previous = records[identifier]
                     result['status'] = worst([previous['status'], result['status']])
                     result['seconds'] += previous['seconds']
+                    if result['status'] != 'passed' or not (previous.get('passed_on_retry') or result.get('passed_on_retry')):
+                        result.pop('passed_on_retry', None)
+                    else:
+                        result['passed_on_retry'] = True
                 records[identifier] = result
             else:
                 visit(node.get('children', []), bundle)
@@ -391,6 +408,10 @@ def completed_test_records(log, result_bundle):
             previous = records[identifier]
             previous['status'] = next(s for s in ('failed', 'skipped', 'passed')
                                       if s in (previous['status'], result['status']))
+            if previous['status'] == 'passed' and result.get('passed_on_retry'):
+                previous['passed_on_retry'] = True
+            elif previous['status'] != 'passed':
+                previous.pop('passed_on_retry', None)
     return records, payload
 
 
@@ -502,6 +523,7 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
                        'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved',
                        'test_building_md', 'test_third_party_notices', 'test_main_thread_reads',
+                       'test_repeat_trigger_scan',
                        'test_starter_catalog',
                        # The accessibility source scans read App/ Swift files (#2041).
                        'test_screen_change_cue', 'test_selected_trait', 'test_screen_title_heading',
@@ -536,7 +558,7 @@ def on_hosted_runner(environ=None):
     return environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
 
 
-PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'browser', 'share-link', 'research')
+PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'browser', 'share-link', 'research')
 PORTABLE_LEFT_OUT = {
     'package-build': 'needs the Swift toolchain on macOS; hosted-sessionkit-linux.yml builds the Foundation-only modules on Linux',
     'package-core': 'needs the Swift toolchain on macOS (SessionKitCoreTests also run in hosted-sessionkit-linux.yml)',
@@ -1383,6 +1405,7 @@ class Run:
             entry['tests'] = records
             entry['counts'] = {status: sum(r['status'] == status for r in records.values())
                                for status in ('passed', 'failed', 'skipped')}
+            entry['passed_on_retry'] = sorted(n for n, r in records.items() if r.get('passed_on_retry'))
             errors.extend(reconcile(expected, records, allowed_skips, probation or ()))
             if probation is not None:  # scripted journeys: each listed test's result, by status
                 entry['gating'] = {test: records.get(test, {}).get('status', 'missing')
@@ -1617,6 +1640,8 @@ class Run:
         self.command('inventory', [sys.executable, 'scripts/test_inventory.py'])
         # New main-thread store, file or audio work fails here, in seconds, instead of on the phone (#2257).
         self.command('main-thread-reads', [sys.executable, 'scripts/main_thread_reads.py'], timeout=120)
+        # A once-per-trigger check that stays true after it fires (#2626) fails here, not on the phone (#2633).
+        self.command('repeat-trigger-scan', [sys.executable, 'scripts/repeat_trigger_scan.py'])
         if not (ROOT / 'node_modules').exists():
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         # A lockfile that moved since node_modules was installed can fail the bundle check with "is stale". The
@@ -1946,6 +1971,7 @@ class Run:
                     self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
                                  'test-without-building', '-parallel-testing-enabled', 'NO',
                                  '-collect-test-diagnostics', 'never',
+                                 '-retry-tests-on-failure', '-test-iterations', '2',
                                  '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
                                  timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup,
                                  allowed_skips=lane_audio_window.unasked(expected, asked))

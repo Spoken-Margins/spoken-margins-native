@@ -50,7 +50,7 @@ struct MarginOutputDestinationsSection: View {
     @State private var choosingFolder = false
 
     var body: some View {
-        Section("Margin Output") {
+        Section("Notes Folder") {
             ForEach(coordinator.rows) { row in
                 NavigationLink {
                     MarginOutputDestinationScreen(coordinator: coordinator, id: row.id)

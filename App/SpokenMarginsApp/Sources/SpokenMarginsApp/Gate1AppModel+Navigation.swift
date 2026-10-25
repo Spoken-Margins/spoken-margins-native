@@ -63,7 +63,13 @@ extension Gate1AppModel {
 
     func openSettings() {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_settings") else { return }
-        screen = .settings
+        showSettingsTab()
+    }
+
+    /// Settings is the fourth tab (#1254), so any route to it lands on the tab bar's home with that tab selected.
+    func showSettingsTab() {
+        if !recordingNavigationIsLocked { openHome() }
+        requestedExperienceRoot = .settings
     }
 
     func openHelp() {
@@ -74,7 +80,7 @@ extension Gate1AppModel {
     func openAISettingsFromSummaryPrompt() {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_ai_settings") else { return }
         isAISetupNeededPresented = false
-        screen = .settings
+        showSettingsTab()
     }
 
     func openPlayback() {
@@ -119,7 +125,7 @@ extension Gate1AppModel {
 
     func returnToSettingsFromOfflineStorage() {
         guard !rejectNavigationOrSessionMutationWhileRecording("return_to_settings") else { return }
-        screen = .settings
+        showSettingsTab()
     }
 
     func openExport() {
