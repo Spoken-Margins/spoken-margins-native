@@ -9,8 +9,8 @@ import SQLite3
 @MainActor
 final class TrashPlaybackOwnershipTests: XCTestCase {
     /// The viewed item and the playing item are deliberately different. The older trash test never opened B.
-    func testTrashingViewedItemPreservesOtherPlaybackAndUndoDoesNotRestartIt() throws {
-        try withLibrary { model, audio, database in
+    func testTrashingViewedItemPreservesOtherPlaybackAndUndoDoesNotRestartIt() async throws {
+        try await withLibrary { model, audio, database in
             let playingItem = try startArticle(model)
             let session = try XCTUnwrap(model.snapshot.sessionId)
             let store = try SQLiteSessionStore(path: database.path)
@@ -18,6 +18,7 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
             fallback.id = "000-selection-fallback"
             fallback.title = "A third item"
             try store.saveItem(fallback)
+            try model.refreshLibraryRows(store: store) // saved behind the model's back: the trash tap picks its replacement from the rows
             model.openItem(id: "item-pill")
             XCTAssertEqual(model.activeItemId, "item-pill")
             XCTAssertEqual(model.snapshot.itemId, playingItem)
@@ -39,6 +40,7 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
             XCTAssertEqual(model.snapshot.currentTextStart, 5, "Deleting B must not stop A's progress ticker")
 
             model.undoLastTrash()
+            await model.settleLibraryReload()
             XCTAssertTrue(model.libraryItems.contains { $0.id == "item-pill" })
             XCTAssertEqual(model.snapshot.itemId, playingItem)
             XCTAssertEqual(model.snapshot.sessionId, session)
@@ -56,8 +58,8 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
         }
     }
 
-    func testTrashingPlayingItemWhileViewingAnotherClosesItsSessionAndPreservesItsPlace() throws {
-        try withLibrary { model, audio, database in
+    func testTrashingPlayingItemWhileViewingAnotherClosesItsSessionAndPreservesItsPlace() async throws {
+        try await withLibrary { model, audio, database in
             let playingItem = try startArticle(model)
             let session = try XCTUnwrap(model.snapshot.sessionId)
             model.openItem(id: "item-pill")
@@ -79,6 +81,7 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
             XCTAssertEqual(saved.status, "in_progress")
 
             model.undoLastTrash()
+            await model.settleLibraryReload()
             XCTAssertTrue(model.libraryItems.contains { $0.id == playingItem })
             XCTAssertFalse(audio.isPlaying)
             XCTAssertNil(model.snapshot.sessionId)
@@ -86,8 +89,8 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
         }
     }
 
-    func testTrashingViewedItemPreservesAnotherPausedSession() throws {
-        try withLibrary { model, audio, _ in
+    func testTrashingViewedItemPreservesAnotherPausedSession() async throws {
+        try await withLibrary { model, audio, _ in
             let playingItem = try startArticle(model)
             model.pause()
             let session = model.snapshot.sessionId
@@ -104,8 +107,8 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
         }
     }
 
-    func testTrashingPausedItemWhileViewingAnotherClosesItsSessionWithoutResuming() throws {
-        try withLibrary { model, audio, _ in
+    func testTrashingPausedItemWhileViewingAnotherClosesItsSessionWithoutResuming() async throws {
+        try await withLibrary { model, audio, _ in
             let playingItem = try startArticle(model)
             model.pause()
             model.openItem(id: "item-pill")
@@ -113,6 +116,7 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
 
             model.moveItemToTrash(id: playingItem)
             model.undoLastTrash()
+            await model.settleLibraryReload()
 
             XCTAssertNil(model.lastError)
             XCTAssertFalse(audio.isPlaying)
@@ -123,8 +127,8 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
         }
     }
 
-    func testTrashingWithoutPlaybackAndUndoLeaveThePlayerIdle() throws {
-        try withLibrary { model, audio, _ in
+    func testTrashingWithoutPlaybackAndUndoLeaveThePlayerIdle() async throws {
+        try await withLibrary { model, audio, _ in
             model.openItem(id: "item-pill")
             model.moveItemToTrash(id: "item-pill")
             XCTAssertTrue(model.recentlyDeletedItems.contains { $0.id == "item-pill" })
@@ -132,6 +136,7 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
             XCTAssertNil(model.engine?.currentSession)
 
             model.undoLastTrash()
+            await model.settleLibraryReload()
 
             XCTAssertNil(model.lastError)
             XCTAssertTrue(model.libraryItems.contains { $0.id == "item-pill" })
@@ -142,8 +147,8 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
         }
     }
 
-    func testTrashingAnImportThatHasNeverPlayedDoesNotRequireASession() throws {
-        try withLibrary { model, audio, _ in
+    func testTrashingAnImportThatHasNeverPlayedDoesNotRequireASession() async throws {
+        try await withLibrary { model, audio, _ in
             let item = "item-unplayed"
             XCTAssertTrue(model.importBrowserText(BrowserTextHandoff(
                 itemId: item,
@@ -157,6 +162,7 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
 
             model.moveItemToTrash(id: item)
             model.undoLastTrash()
+            await model.settleLibraryReload()
 
             XCTAssertNil(model.lastError)
             XCTAssertTrue(model.libraryItems.contains { $0.id == item })
@@ -166,8 +172,8 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
         }
     }
 
-    func testFailedTrashWriteKeepsTheItemAndReportsFailureAfterStoppingPlayback() throws {
-        try withLibrary { model, audio, database in
+    func testFailedTrashWriteKeepsTheItemAndReportsFailureAfterStoppingPlayback() async throws {
+        try await withLibrary { model, audio, database in
             let playingItem = try startArticle(model)
             let session = try XCTUnwrap(model.snapshot.sessionId)
             audio.currentOffset = 5
@@ -191,8 +197,8 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
         }
     }
 
-    func testFailedAudioStopDoesNotTrashThePlayingItem() throws {
-        try withLibrary { model, audio, database in
+    func testFailedAudioStopDoesNotTrashThePlayingItem() async throws {
+        try await withLibrary { model, audio, database in
             let playingItem = try startArticle(model)
             let session = model.snapshot.sessionId
             audio.refusesStop = true
@@ -229,7 +235,7 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
         return try XCTUnwrap(model.snapshot.itemId)
     }
 
-    private func withLibrary(_ body: (Gate1AppModel, TrashOwnershipAudioClient, URL) throws -> Void) throws {
+    private func withLibrary(_ body: (Gate1AppModel, TrashOwnershipAudioClient, URL) async throws -> Void) async throws {
         let preferences = VoicePreferencesSnapshot.capture()
         defer { preferences.restore() }
         SpokenMarginsTerms.recordAcceptance()
@@ -241,7 +247,7 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
         let model = Gate1AppModel(audioPlaybackClient: audio, databaseURLOverride: database)
         model.resetAndSeed()
         defer { if model.engine?.currentSession != nil { model.endSession() } }
-        try body(model, audio, database)
+        try await body(model, audio, database)
     }
 }
 
