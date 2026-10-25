@@ -156,12 +156,14 @@ extension Gate1AppModel {
     private func sharedFollowDiscovery(
         item: Item,
         preferredURL: URL,
-        coordinator: FollowedSourceCoordinator
+        coordinator: FollowedSourceCoordinator,
+        listenerTapped: Bool = false
     ) async throws -> [SourceCandidateEvidence] {
         let key = item.id + "\u{1f}" + preferredURL.absoluteString
         if let task = followDiscoveries[key] { return try await task.value }
-        // A recent failure counts as served for this trigger; the next attempt waits out the cooldown (#2653).
-        guard followDiscoveryCooldown.canAttempt(key) else { throw FollowDiscoveryCoolingDown() }
+        // A recent failure counts as served for an automatic trigger; the next one waits out the cooldown (#2653).
+        // A Follow tap always tries again, so the listener never sees a refusal for a failure they didn't cause.
+        guard listenerTapped || followDiscoveryCooldown.canAttempt(key) else { throw FollowDiscoveryCoolingDown() }
         let task = Task { try await self.discoverFollowCandidates(item: item, preferredURL: preferredURL, coordinator: coordinator) }
         followDiscoveries[key] = task
         do {
@@ -195,7 +197,8 @@ extension Gate1AppModel {
                 let candidates = try await self.sharedFollowDiscovery(
                     item: item,
                     preferredURL: preferredURL,
-                    coordinator: coordinator
+                    coordinator: coordinator,
+                    listenerTapped: true
                 )
                 guard let candidate = candidates.first else { throw FollowedSourceError.noFeedCandidates }
                 guard candidates.count == 1, !candidate.needsConfirmation else {
