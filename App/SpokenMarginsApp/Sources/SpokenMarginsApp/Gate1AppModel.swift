@@ -360,6 +360,7 @@ final class Gate1AppModel: ObservableObject {
     /// Counts reloads of `followingShowEntries`, so a Show screen knows when to rebuild its episodes.
     @Published var followingShowRevision = 0
     var followingLookedLoaded = false
+    var followingLookedDirty = false
     @Published var importingFollowedSourceEntryIds: Set<String> = []
     /// The latest Play now or Add and open from Following; any later open or start makes it stale (#2124).
     var followedPlayIntent = CurrentRequest()

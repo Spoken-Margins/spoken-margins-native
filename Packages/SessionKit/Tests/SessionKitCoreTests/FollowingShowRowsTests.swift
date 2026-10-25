@@ -213,6 +213,15 @@ final class FollowingShowRowsTests: XCTestCase {
         XCTAssertEqual(FollowingLookedMarkers.load(from: url), FollowingLookedMarkers())
     }
 
+    func testMergeKeepsTheNewerDatePerShow() {
+        var memory = FollowingLookedMarkers(lookedAt: ["a": Date(timeIntervalSince1970: 200), "b": Date(timeIntervalSince1970: 50)])
+        let disk = FollowingLookedMarkers(lookedAt: ["a": Date(timeIntervalSince1970: 100), "b": Date(timeIntervalSince1970: 90), "c": Date(timeIntervalSince1970: 10)])
+        memory.merge(disk)
+        XCTAssertEqual(memory.lookedAt["a"], Date(timeIntervalSince1970: 200))
+        XCTAssertEqual(memory.lookedAt["b"], Date(timeIntervalSince1970: 90))
+        XCTAssertEqual(memory.lookedAt["c"], Date(timeIntervalSince1970: 10))
+    }
+
     func testPruneDropsOnlyUnfollowedShows() {
         var markers = FollowingLookedMarkers(lookedAt: ["a": day(1), "gone": day(2)])
         XCTAssertTrue(markers.prune(keeping: ["a", "b"]))

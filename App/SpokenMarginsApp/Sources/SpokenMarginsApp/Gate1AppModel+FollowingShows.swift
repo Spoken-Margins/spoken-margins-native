@@ -23,33 +23,38 @@ extension Gate1AppModel {
         FollowingRankingModel.directory?.appending(path: FollowingLookedMarkers.fileName, directoryHint: .notDirectory)
     }
 
-    /// Loads the looked times once, before anything can save them. The file is a few hundred bytes. With no
-    /// file, or one that can't be read, every followed show is stamped "now" so nothing counts as new until a
-    /// later refresh brings an episode, and that is saved.
-    func loadFollowingLookedIfNeeded() {
-        guard !followingLookedLoaded else { return }
-        followingLookedLoaded = true
-        guard let url = Self.followingLookedURL else { return }
-        if let saved = FollowingLookedMarkers.loadIfPresent(from: url) {
-            followingLooked = saved
-        } else if !feedSubscriptions.isEmpty {
-            var seeded = followingLooked
-            seeded.seed(feedSubscriptions.map(\.id))
-            followingLooked = seeded
-            saveFollowingLooked()
-        }
-    }
-
-    /// Reads every stored entry off the main thread (feeds keep up to 200 each), then builds the rows there
-    /// too. Muted shows and played episodes are in it, unlike `followedSourceEntries`.
+    /// Reads every stored entry and the looked-times file off the main thread (feeds keep up to 200 each),
+    /// then builds the rows there too. Muted shows and played episodes are in it, unlike
+    /// `followedSourceEntries`. The first run also merges the file into memory (the newer date wins per show):
+    /// with no file, or one that can't be read, every followed show is stamped "now" so nothing counts as new
+    /// until a later refresh brings an episode. Until that has finished, `markShowLooked` only updates memory
+    /// and sets `followingLookedDirty`; the merge then saves once.
     func reloadFollowingShowEntries() async {
         guard let store else { return }
-        loadFollowingLookedIfNeeded()
-        let loaded = await Task.detached(priority: .userInitiated) {
-            (try? store.loadFeedEntries(subscriptionId: nil)) ?? []
+        let needsMarkers = !followingLookedLoaded
+        let url = Self.followingLookedURL
+        let result = await Task.detached(priority: .userInitiated) {
+            let entries = (try? store.loadFeedEntries(subscriptionId: nil)) ?? []
+            let saved = needsMarkers ? url.flatMap { FollowingLookedMarkers.loadIfPresent(from: $0) } : nil
+            return (entries, saved)
         }.value
-        followingShowEntries = loaded
+        followingShowEntries = result.0
         followingShowRevision += 1
+        if needsMarkers, !followingLookedLoaded {
+            followingLookedLoaded = true
+            var merged = followingLooked
+            if let saved = result.1 {
+                merged.merge(saved)
+            } else if !feedSubscriptions.isEmpty {
+                merged.seed(feedSubscriptions.map(\.id))
+            }
+            let changed = merged != followingLooked
+            followingLooked = merged
+            if changed || followingLookedDirty || result.1 == nil {
+                followingLookedDirty = false
+                saveFollowingLooked()
+            }
+        }
         await rebuildFollowingShowList()
     }
 
@@ -65,9 +70,12 @@ extension Gate1AppModel {
     /// The listener opened the show: what has arrived so far is no longer new.
     func markShowLooked(id: String) {
         guard feedSubscriptions.contains(where: { $0.id == id }) else { return }
-        loadFollowingLookedIfNeeded()
         followingLooked.markLooked(id)
-        saveFollowingLooked()
+        if followingLookedLoaded {
+            saveFollowingLooked()
+        } else {
+            followingLookedDirty = true
+        }
         Task { [weak self] in await self?.rebuildFollowingShowList() }
     }
 
@@ -95,7 +103,7 @@ extension Gate1AppModel {
         let feedURL = subscription.source.canonicalURL
         followingLooked.remove(subscription.id)
         unfollowSource(id: subscription.id)
-        saveFollowingLooked()
+        if followingLookedLoaded { saveFollowingLooked() } else { followingLookedDirty = true }
         let action = UserFeedbackEvent.Action(
             title: FollowingDismissMessages.undoTitle,
             accessibilityLabel: FollowingRowActions.undoUnfollowAccessibilityLabel(showTitle: title),

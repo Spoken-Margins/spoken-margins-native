@@ -102,6 +102,7 @@ struct ExperienceShowScreen: View {
                 Text(title)
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(AppColors.text)
+                    .accessibilityAddTraits(.isHeader)
                 Text("Following since \(subscription.createdAt.formatted(date: .abbreviated, time: .omitted))")
                     .font(.subheadline)
                     .foregroundStyle(AppColors.secondaryText)

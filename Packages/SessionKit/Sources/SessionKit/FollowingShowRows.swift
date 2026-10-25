@@ -174,6 +174,11 @@ public struct FollowingLookedMarkers: Codable, Equatable, Sendable {
         for id in subscriptionIDs where lookedAt[id] == nil { lookedAt[id] = date }
     }
 
+    /// Folds in markers read from disk: per show, the newer date wins.
+    public mutating func merge(_ other: FollowingLookedMarkers) {
+        for (id, date) in other.lookedAt where (lookedAt[id] ?? .distantPast) < date { lookedAt[id] = date }
+    }
+
     public mutating func remove(_ subscriptionID: String) { lookedAt[subscriptionID] = nil }
 
     /// Drops markers of shows no longer followed. Returns whether anything changed.
