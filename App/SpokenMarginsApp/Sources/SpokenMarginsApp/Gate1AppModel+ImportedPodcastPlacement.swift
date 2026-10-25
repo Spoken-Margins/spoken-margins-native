@@ -21,7 +21,7 @@ extension Gate1AppModel {
             localAudiobookDigest: { [weak self] item in self?.localAudiobookDigest(for: item) },
             applicationSupportDirectory: { [weak self] in try? self?.applicationSupportDirectory() },
             listenerHasListeningMap: { itemId, store in try Gate1AppModel.listenerHasListeningMap(itemId: itemId, store: store) },
-            purgeTransientCaches: { [weak self] itemId in try self?.purgeTransientEpisodeTranscriptionCaches(itemId: itemId) },
+            purgeTransientCaches: { [weak self] itemId in try await self?.purgeTransientEpisodeTranscriptionCaches(itemId: itemId) },
             prepareSummaryBridgeAsset: { [weak self] itemId, proposalId, scene, store in
                 _ = try? await self?.prepareSummaryBridgeAsset(itemId: itemId, proposalId: proposalId, scene: scene, store: store)
             },

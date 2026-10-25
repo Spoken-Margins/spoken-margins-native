@@ -322,6 +322,84 @@ final class EpisodeMapPreparerTests: XCTestCase {
         model.pendingMapGenerationItemId = nil
         XCTAssertNil(model.pendingMapGenerationItemId)
     }
+
+    // MARK: clean-up files go off the main thread (#2510)
+
+    private struct Leftovers {
+        let chunks: URL
+        let mapDirectory: URL
+        let transient: URL
+    }
+
+    /// What a run leaves for the clean-up: exported audio chunks in Caches, a transient transcript folder in the map
+    /// folder, and the ledger row that names it.
+    private func seedLeftovers(_ fixture: Fixture) throws -> Leftovers {
+        let caches = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let chunks = SourceTranscriptionCaches.directory(for: .chunks, itemId: fixture.itemId, cachesDirectory: caches)
+        try FileManager.default.createDirectory(at: chunks, withIntermediateDirectories: true)
+        try Data(count: 64).write(to: chunks.appending(path: "chunk-0.caf"))
+        let mapDirectory = try fixture.model.episodeMapDirectory(itemId: fixture.itemId)
+        let transient = mapDirectory.appending(path: "Transient", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: transient, withIntermediateDirectories: true)
+        try Data(count: 8).write(to: transient.appending(path: "timeline.json"))
+        try fixture.store.saveOwnedOfflineAsset(OwnedOfflineAsset(
+            id: "episode-transcript-\(fixture.itemId)", itemId: fixture.itemId, category: .transientEpisodeTranscript,
+            relativePath: "Transient/timeline.json", byteCount: 8, isReproducible: true
+        ))
+        return Leftovers(chunks: chunks, mapDirectory: mapDirectory, transient: transient)
+    }
+
+    func testTheAwaitedPurgeRemovesTheAudioChunksTheTransientFolderAndItsLedgerRow() async throws {
+        let fixture = try makeFixture()
+        let left = try seedLeftovers(fixture)
+        let summaryBridge = left.mapDirectory.appending(path: "SummaryBridges/kept.caf")
+        try FileManager.default.createDirectory(at: summaryBridge.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(count: 8).write(to: summaryBridge)
+
+        try await fixture.model.purgeTransientEpisodeTranscriptionCaches(itemId: fixture.itemId)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: left.chunks.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: left.transient.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: summaryBridge.path), "only the transient folder goes, not the finished map")
+        XCTAssertEqual(try fixture.store.loadOwnedOfflineAssets().filter { $0.itemId == fixture.itemId }, [])
+    }
+
+    func testRemovingAnItemsMapArtifactsDeletesItsFilesInTheBackground() async throws {
+        let fixture = try makeFixture()
+        let left = try seedLeftovers(fixture)
+
+        fixture.model.removeEpisodeMapArtifacts(itemId: fixture.itemId)
+
+        XCTAssertEqual(try fixture.store.loadOwnedOfflineAssets().filter { $0.itemId == fixture.itemId }, [], "the ledger row goes at once")
+        try await waitUntil("the map folder and the audio chunks to be removed") {
+            !FileManager.default.fileExists(atPath: left.mapDirectory.path)
+                && !FileManager.default.fileExists(atPath: left.chunks.path)
+        }
+    }
+
+    func testTheExpiredJobCleanUpKeepsASavedMapAndRemovesOnlyItsTransientFolder() async throws {
+        let fixture = try makeFixture()
+        let left = try seedLeftovers(fixture)
+        let kept = left.mapDirectory.appending(path: "SummaryBridges/kept.caf")
+        try FileManager.default.createDirectory(at: kept.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(count: 8).write(to: kept)
+        try fixture.store.saveEpisodeMapPreparationJob(EpisodeMapPreparationJob(
+            id: "episode-map-job-\(fixture.itemId)", itemId: fixture.itemId, policy: .whileCharging,
+            requestedAt: Date().addingTimeInterval(-8 * 24 * 60 * 60)
+        ))
+        try fixture.store.saveEditionFingerprintSpine(EditionFingerprintSpineArtifact(
+            id: "spine-\(fixture.itemId)", itemId: fixture.itemId, landmarks: []
+        ))
+
+        fixture.model.purgeExpiredEpisodeMapPreparationJobs(store: fixture.store)
+
+        XCTAssertEqual(try fixture.store.loadEpisodeMapPreparationJobs(), [])
+        try await waitUntil("the transient folder and the audio chunks to be removed") {
+            !FileManager.default.fileExists(atPath: left.transient.path)
+                && !FileManager.default.fileExists(atPath: left.chunks.path)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: kept.path), "a saved map keeps its folder")
+    }
 }
 
 @MainActor

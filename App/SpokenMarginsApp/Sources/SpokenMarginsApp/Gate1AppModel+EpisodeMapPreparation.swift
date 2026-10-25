@@ -190,23 +190,47 @@ extension Gate1AppModel {
         }
     }
 
-    func purgeTransientEpisodeTranscriptionCaches(itemId: String) throws {
-        try purgeSourceTranscriptionAudioCaches(itemId: itemId)
-        let transientDirectory = try episodeMapDirectory(itemId: itemId)
-            .appending(path: "Transient", directoryHint: .isDirectory)
-        if FileManager.default.fileExists(atPath: transientDirectory.path) {
-            try FileManager.default.removeItem(at: transientDirectory)
+    /// The file half of a purge: the exported audio chunks of the whole episode, then each folder in `directories`.
+    /// It is a plain function so a caller picks the thread: the awaited purge below and the background removal both
+    /// run it off the main thread (#2510).
+    nonisolated static func removeEpisodeTranscriptionFiles(itemId: String, directories: [URL]) throws {
+        try SourceTranscriptionCaches.purge(itemId: itemId)
+        for directory in directories where FileManager.default.fileExists(atPath: directory.path) {
+            try FileManager.default.removeItem(at: directory)
         }
-        if let store {
-            for asset in try store.loadOwnedOfflineAssets() where
-                asset.itemId == itemId && asset.category == .transientEpisodeTranscript {
-                try store.deleteOwnedOfflineAsset(id: asset.id)
+    }
+
+    /// For the callers that cannot wait: deletes a trashed item and the launch clean-up of old jobs. Each folder goes
+    /// on its own, so one failure leaves the rest to be removed, as the `try?` calls before it did (#2510).
+    nonisolated static func removeEpisodeTranscriptionFilesInBackground(itemId: String, directories: [URL]) {
+        Task.detached(priority: .utility) {
+            try? SourceTranscriptionCaches.purge(itemId: itemId)
+            for directory in directories where FileManager.default.fileExists(atPath: directory.path) {
+                try? FileManager.default.removeItem(at: directory)
             }
         }
     }
 
-    func purgeSourceTranscriptionAudioCaches(itemId: String) throws {
-        try SourceTranscriptionCaches.purge(itemId: itemId)
+    /// The transcript rows the run recorded for the item; the files they name are removed with the folders.
+    func deleteTransientTranscriptAssets(itemId: String) throws {
+        guard let store else { return }
+        for asset in try store.loadOwnedOfflineAssets() where
+            asset.itemId == itemId && asset.category == .transientEpisodeTranscript {
+            try store.deleteOwnedOfflineAsset(id: asset.id)
+        }
+    }
+
+    func purgeTransientEpisodeTranscriptionCaches(itemId: String) async throws {
+        let transientDirectory = try episodeMapDirectory(itemId: itemId)
+            .appending(path: "Transient", directoryHint: .isDirectory)
+        try await Gate1AppModel.offMain {
+            try Gate1AppModel.removeEpisodeTranscriptionFiles(itemId: itemId, directories: [transientDirectory])
+        }
+        try deleteTransientTranscriptAssets(itemId: itemId)
+    }
+
+    func purgeSourceTranscriptionAudioCaches(itemId: String) async throws {
+        try await Gate1AppModel.offMain { try SourceTranscriptionCaches.purge(itemId: itemId) }
     }
 
     func submitAutomaticEpisodeMapPreparationIfNeeded() {
