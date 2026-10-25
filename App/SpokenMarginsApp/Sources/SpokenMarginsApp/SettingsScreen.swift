@@ -9,6 +9,7 @@ struct SettingsScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
+    @AppStorage(HeadphoneDoublePressAction.storageKey) private var headphoneDoublePress = HeadphoneDoublePressAction.default.rawValue
     @FocusState private var focusedField: Field?
     @State private var showsAdvancedAISettings = false
     @State private var showsDeveloperTools = false
@@ -180,6 +181,14 @@ struct SettingsScreen: View {
                     .onCompatibleChange(of: model.mediaSkipBackSeconds) { _ in
                         model.mediaSkipSettingsChanged()
                     }
+                    Picker("Headphone double-press", selection: $headphoneDoublePress) {
+                        Text("Add a Margin").tag(HeadphoneDoublePressAction.addMargin.rawValue)
+                        Text("Skip forward").tag(HeadphoneDoublePressAction.skipForward.rawValue)
+                    }
+                    .accessibilityIdentifier("settings.headphoneDoublePress.picker")
+                    Text("Triple-press still skips back.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
                     Picker("Native Audio Forward", selection: $model.mediaSkipForwardSeconds) {
                         ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
                             Text("\(seconds) seconds").tag(seconds)
