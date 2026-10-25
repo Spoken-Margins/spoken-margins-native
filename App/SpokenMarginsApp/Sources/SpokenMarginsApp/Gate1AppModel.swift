@@ -2539,12 +2539,7 @@ final class Gate1AppModel: ObservableObject {
             } else {
                 updateGate2CompactState()
             }
-            if command == .beginInterjection, snapshot.isRecording {
-                marginCapture.setPresentationContext(RecordingPresentationContext(
-                    snapshot: snapshot,
-                    startedAt: Date()
-                ))
-            }
+            if command == .beginInterjection, snapshot.isRecording { compactRecordingBegan() }
             if command == .setPlaybackRate,
                let playbackRate = normalizedPlaybackRate {
                 if isMediaPlaybackSnapshot {

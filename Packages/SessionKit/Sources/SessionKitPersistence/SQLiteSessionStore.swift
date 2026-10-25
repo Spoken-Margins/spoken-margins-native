@@ -380,6 +380,17 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try loadBySession(kind: "interjection", sessionId: sessionId)
     }
 
+    /// Makes a saved Margin a reply to `link`'s Margin, or independent when `link` is nil (#473). Only the link changes;
+    /// the words, recording and place stay, and the stored payload is the same shape older builds read. Returns false
+    /// when the session holds no such Margin. Packets already shared keep the link they were made with.
+    @discardableResult
+    public func updateReply(ofInterjection interjectionId: String, sessionId: String, to link: MarginReplyLink?) throws -> Bool {
+        guard var saved = try loadInterjections(sessionId: sessionId).first(where: { $0.id == interjectionId }) else { return false }
+        saved.replyTo = link
+        try saveInterjection(saved)
+        return true
+    }
+
     /// Whether any session has a Margin that is still active: the yes or no onboarding wants where it used to decode
     /// every session and every Margin to look for one (#2506). SQLite stops at the first match and returns no payload.
     /// A Margin counts when its session is in the store, as when `loadInterjections(sessionId:)` was asked for each session.

@@ -1739,6 +1739,22 @@ public final class SessionEngine {
         recorder.finalizedRecordingIntegrity()
     }
 
+    /// Changes which shared Margin the Margin being recorded or written answers (#473): the listener switched it
+    /// to independent, or back. Does nothing when no Margin is being captured.
+    public func changeReplyOfCurrentCapture(to link: MarginReplyLink?) {
+        if currentSession?.phase == .recordingInterjection {
+            recordingReplyTo = link
+            updateRecordingDraft { $0.replyTo = link }
+        }
+        if let capture = pendingWrittenInterjection {
+            pendingWrittenInterjection = WrittenInterjectionCapture(
+                id: capture.id, sessionId: capture.sessionId, itemId: capture.itemId, targetType: capture.targetType,
+                targetId: capture.targetId, anchor: capture.anchor, roughPercent: capture.roughPercent,
+                wasPlaying: capture.wasPlaying, replyTo: link
+            )
+        }
+    }
+
     public func recordingReleasedAudioSession() -> Bool {
         recorder.releasedAudioSessionAtEnd()
     }

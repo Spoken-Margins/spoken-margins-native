@@ -30,7 +30,7 @@ final class WrittenMarginDraftKeeper {
     }
 
     func textChanged(_ draft: WrittenMarginDraft) {
-        saver.textChanged(draft.text, capture: draft.capture)
+        saver.textChanged(draft.text, capture: draft.capture.replying(to: draft.reply?.link))
     }
 
     func discard(captureId: String) {
@@ -39,6 +39,6 @@ final class WrittenMarginDraftKeeper {
 
     private func flush() {
         guard let draft = currentDraft() else { return }
-        saver.flush(draft.text, capture: draft.capture)
+        saver.flush(draft.text, capture: draft.capture.replying(to: draft.reply?.link))
     }
 }
