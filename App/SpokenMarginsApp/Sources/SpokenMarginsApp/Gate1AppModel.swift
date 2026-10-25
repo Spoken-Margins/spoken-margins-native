@@ -2663,13 +2663,19 @@ final class Gate1AppModel: ObservableObject {
             guard let text = PreparedSpeechHooks.preparedText(of: item, in: store), !text.isEmpty else { return }
             let source = try store.loadCanonicalSource(itemId: itemID)
             let canonical = source?.segments.map(\.text).joined(separator: "\n\n") ?? ""
+            // Quiet once complete; wakes when a manifest is written or invalidated (#2652).
+            var poll = RenderFrontierPollPolicy()
             while !Task.isCancelled, renderFrontierKey == key {
-                let manifest = try store.loadPreparedAudioManifests(itemId: itemID).first { $0.signature == signature }
-                let fraction = await Task.detached(priority: .utility) {
-                    PreparedRenderFrontier.fraction(manifest: manifest, signature: signature, sourceText: text, canonicalSourceText: canonical, root: root)
-                }.value
-                guard !Task.isCancelled, renderFrontierKey == key else { return }
-                if renderedSourceFraction != fraction { renderedSourceFraction = fraction }
+                let generation = PreparedAudioChangeSignal.shared.generation
+                if poll.shouldRead(generation: generation) {
+                    let manifest = try store.loadPreparedAudioManifests(itemId: itemID).first { $0.signature == signature }
+                    let fraction = await Task.detached(priority: .utility) {
+                        PreparedRenderFrontier.fraction(manifest: manifest, signature: signature, sourceText: text, canonicalSourceText: canonical, root: root)
+                    }.value
+                    guard !Task.isCancelled, renderFrontierKey == key else { return }
+                    if renderedSourceFraction != fraction { renderedSourceFraction = fraction }
+                    poll.record(fraction: fraction, generation: generation)
+                }
                 try await Task.sleep(for: .seconds(2))
             }
         } catch {

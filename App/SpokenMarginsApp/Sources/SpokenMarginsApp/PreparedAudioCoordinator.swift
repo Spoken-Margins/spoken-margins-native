@@ -127,6 +127,12 @@ actor PreparedAudioCoordinator {
         self.fileManager = fileManager
     }
 
+    /// Every manifest write goes through here so the playback screen's frontier poll can wake (#2652).
+    private func saveManifest(_ manifest: PreparedAudioManifest) throws {
+        try repository.savePreparedAudioManifest(manifest)
+        PreparedAudioChangeSignal.shared.bump()
+    }
+
     func begin(
         itemId: String,
         sourceText: String,
@@ -173,7 +179,7 @@ actor PreparedAudioCoordinator {
                 existing.state = .preparing
                 existing.failureCode = nil
                 existing.updatedAt = Date()
-                try repository.savePreparedAudioManifest(existing)
+                try saveManifest(existing)
             } else if existing.state == .needsRepreparation {
                 // Its narration was detached or a chunk failed its checksum (#278). Keep only the
                 // chunks whose files are still intact, render the rest, and assemble again.
@@ -182,7 +188,7 @@ actor PreparedAudioCoordinator {
                 existing.state = .preparing
                 existing.failureCode = nil
                 existing.updatedAt = Date()
-                try repository.savePreparedAudioManifest(existing)
+                try saveManifest(existing)
             }
             return existing
         }
@@ -190,7 +196,7 @@ actor PreparedAudioCoordinator {
             var invalid = old
             invalid.state = .needsRepreparation
             invalid.updatedAt = Date()
-            try repository.savePreparedAudioManifest(invalid)
+            try saveManifest(invalid)
         }
         let manifest = PreparedAudioManifest(
             id: manifestId,
@@ -201,7 +207,7 @@ actor PreparedAudioCoordinator {
             plannedChunkCount: plan.count,
             articleIdentity: NarrationChunkPlanner.identity(ofArticle: sourceText)
         )
-        try repository.savePreparedAudioManifest(manifest)
+        try saveManifest(manifest)
         if schedulesJob {
             try repository.saveAudioPreparationJob(AudioPreparationJob(
                 id: "job-\(manifestId)",
@@ -308,7 +314,7 @@ actor PreparedAudioCoordinator {
         try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: repository) { saved, item in
             guard stillCurrent(item), stillAllowed(saved) else { return false }
             try commitFile?()
-            try repository.savePreparedAudioManifest(manifest)
+            try saveManifest(manifest)
             if manifest.state == .readyOffline {
                 try repository.deleteAudioPreparationJob(id: "job-\(manifest.id)")
             } else if var job = try repository.loadAudioPreparationJobs().first(where: { $0.manifestId == manifest.id }) {
@@ -326,7 +332,7 @@ actor PreparedAudioCoordinator {
             var manifest = current
             manifest.state = .stopped
             manifest.updatedAt = Date()
-            try repository.savePreparedAudioManifest(manifest)
+            try saveManifest(manifest)
             if var job = try repository.loadAudioPreparationJobs().first(where: { $0.manifestId == manifestId }) {
                 job.isCancelled = true
                 try repository.saveAudioPreparationJob(job)
@@ -343,7 +349,7 @@ actor PreparedAudioCoordinator {
             manifest.state = .preparing
             manifest.failureCode = nil
             manifest.updatedAt = Date()
-            try repository.savePreparedAudioManifest(manifest)
+            try saveManifest(manifest)
             var job = (try repository.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifestId })
                 ?? AudioPreparationJob(id: "job-\(manifestId)", itemId: itemId, manifestId: manifestId, policy: .explicit)
             job.policy = .explicit
@@ -365,7 +371,7 @@ actor PreparedAudioCoordinator {
             guard let state = PreparationChunkGate.manifestState(after: decision, current: manifest.state) else { return (manifest, false) }
             manifest.state = state
             manifest.updatedAt = Date()
-            try repository.savePreparedAudioManifest(manifest)
+            try saveManifest(manifest)
             return (manifest, true)
         } ?? (nil, false)
     }
@@ -384,7 +390,7 @@ actor PreparedAudioCoordinator {
             guard present.count < manifest.chunks.count else { return manifest }
             manifest.chunks = present
             manifest.updatedAt = Date()
-            try repository.savePreparedAudioManifest(manifest)
+            try saveManifest(manifest)
             if var job = try repository.loadAudioPreparationJobs().first(where: { $0.manifestId == manifestId }) {
                 job.nextChunkIndex = manifest.chunks.count
                 try repository.saveAudioPreparationJob(job)
@@ -478,7 +484,7 @@ actor PreparedAudioCoordinator {
             invalid.state = .needsRepreparation
             invalid.failureCode = "chunk_checksum_mismatch"
             invalid.updatedAt = Date()
-            try repository.savePreparedAudioManifest(invalid)
+            try saveManifest(invalid)
             return nil
         }
         return PreparedChunkLookupResult(audioURL: url, duration: Double(chunk.durationMs) / 1_000)
