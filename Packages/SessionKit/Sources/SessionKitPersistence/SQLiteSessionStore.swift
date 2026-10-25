@@ -380,6 +380,17 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try loadBySession(kind: "interjection", sessionId: sessionId)
     }
 
+    /// Makes a saved Margin a reply to `link`'s Margin, or independent when `link` is nil (#473). Only the link changes;
+    /// the words, recording and place stay, and the stored payload is the same shape older builds read. Returns false
+    /// when the session holds no such Margin. Packets already shared keep the link they were made with.
+    @discardableResult
+    public func updateReply(ofInterjection interjectionId: String, sessionId: String, to link: MarginReplyLink?) throws -> Bool {
+        guard var saved = try loadInterjections(sessionId: sessionId).first(where: { $0.id == interjectionId }) else { return false }
+        saved.replyTo = link
+        try saveInterjection(saved)
+        return true
+    }
+
     /// Whether any session has a Margin that is still active: the yes or no onboarding wants where it used to decode
     /// every session and every Margin to look for one (#2506). SQLite stops at the first match and returns no payload.
     /// A Margin counts when its session is in the store, as when `loadInterjections(sessionId:)` was asked for each session.
@@ -428,6 +439,36 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
                 let step = sqlite3_step(statement)
                 if step == SQLITE_DONE { return }
                 guard step == SQLITE_ROW else { throw SessionKitError.persistenceFailed("step_active_interjection_counts") }
+                guard let raw = sqlite3_column_text(statement, 0) else { continue }
+                counts[String(cString: raw)] = Int(sqlite3_column_int64(statement, 1))
+            }
+        }
+        return counts
+    }
+
+    /// How many active Margins of the listener's own each item has, for the items that have any: the Library row's count
+    /// (#2394). The count is made in SQLite from the `item_id` column, so no payload is copied; an item with none is
+    /// absent, as a count of zero. Friends' Margins are counted apart (`loadSharedMarginTallies`).
+    public func loadActiveMarginCountsByItem() throws -> [String: Int] {
+        var counts: [String: Int] = [:]
+        let timer = StoreReadTimer(readMeter, method: #function)
+        defer { timer?.finish(rows: counts.count, bytes: 0) }
+        try withReadConnection { connection in
+            var statement: OpaquePointer?
+            let sql = """
+                SELECT item_id, count(*) FROM records
+                WHERE kind = 'interjection' AND item_id IS NOT NULL
+                  AND CASE WHEN json_valid(payload) THEN json_extract(payload, '$.status') = 'active' ELSE 0 END
+                GROUP BY item_id;
+                """
+            guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_active_margin_counts_by_item")
+            }
+            defer { sqlite3_finalize(statement) }
+            while true {
+                let step = sqlite3_step(statement)
+                if step == SQLITE_DONE { return }
+                guard step == SQLITE_ROW else { throw SessionKitError.persistenceFailed("step_active_margin_counts_by_item") }
                 guard let raw = sqlite3_column_text(statement, 0) else { continue }
                 counts[String(cString: raw)] = Int(sqlite3_column_int64(statement, 1))
             }
@@ -1296,6 +1337,18 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return includeDeleted ? items : items.filter { $0.deletedAt == nil }
     }
 
+    /// The items whose `externalReference` is exactly `address`, deleted ones included. SQLite looks for the address's
+    /// stored spelling in each payload as plain text first, so only the few items that name it are decoded; the
+    /// reference is compared again after decoding, so a longer address that contains this one never matches.
+    public func listItems(withExternalReference address: String) throws -> [Item] {
+        guard let needle = (try? encoder.encode(address)).flatMap({ String(data: $0, encoding: .utf8) }) else { return [] }
+        let items: [Item] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? AND instr(payload, ?) > 0 ORDER BY updated_at DESC, id;",
+            ["item", needle]
+        )
+        return items.filter { $0.externalReference == address }
+    }
+
     /// Whether `id` is an item in the Library that is not in the trash: the yes or no a caller wants when it would
     /// otherwise read every item to look for one id (#2506). Reads and decodes that one row.
     public func hasLiveItem(id: String) throws -> Bool {
@@ -1999,6 +2052,7 @@ private struct ImportedWatchSyncEvent: Codable {
 }
 
 extension SQLiteSessionStore: ItemRevisionReading {}
+extension SQLiteSessionStore: ItemAddressLookup {}
 
 /// I13 documents live in the existing records table as kind
 /// "structured_document", one row per item and extraction version. No table or

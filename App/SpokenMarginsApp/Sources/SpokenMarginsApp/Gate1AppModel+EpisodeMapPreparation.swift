@@ -85,9 +85,11 @@ extension Gate1AppModel {
     private nonisolated static func summaryBridgeAssetID(
         itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String?, voiceKey: String
     ) -> String {
-        let safe = PodcastAnchorEvidencePaths.safeComponent
-        let key = suppliedAssetId.map { "supplied-\(safe($0))" } ?? voiceKey
-        return "summary-bridge-\(safe(itemId))-\(safe(proposalId))-\(safe(sceneId))-\(key)"
+        // An id the name cut would change carries a hash of the whole id, so two ids can't share a file (#1120).
+        SummaryBridgeAssetNaming.assetID(
+            itemId: itemId, proposalId: proposalId, sceneId: sceneId, suppliedAssetId: suppliedAssetId,
+            generatedVoiceKey: suppliedAssetId == nil ? voiceKey : ""
+        )
     }
 
     func prepareSummaryBridgeAsset(
@@ -101,9 +103,17 @@ extension Gate1AppModel {
         let usesKitten = summaryBridgeUsesKitten
         let assetID = summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id,
                                            suppliedAssetId: scene.summaryAssetId, usesKitten: usesKitten)
+        // A supplied voice imported before #1120 sits under the old cut name; it still counts as prepared.
+        let legacyID = scene.summaryAssetId.flatMap {
+            SummaryBridgeAssetNaming.legacyAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id, suppliedAssetId: $0)
+        }
         // The whole asset table, read off the main thread (#2255).
-        let saved = try await Task.detached(priority: .userInitiated) {
-            try store.loadOwnedOfflineAssets().first(where: { $0.id == assetID && $0.integrity == .valid })
+        let saved = try await Task.detached(priority: .userInitiated) { () throws -> OwnedOfflineAsset? in
+            let assets = try store.loadOwnedOfflineAssets()
+            for id in [assetID] + (legacyID.map { [$0] } ?? []) {
+                if let found = assets.first(where: { $0.id == id && $0.integrity == .valid }) { return found }
+            }
+            return nil
         }.value
         if let existing = saved, resolvedApplicationSupportAssetURL(for: existing.relativePath) != nil { return existing }
         // An authored voice is part of the imported experience, not a request
@@ -180,23 +190,47 @@ extension Gate1AppModel {
         }
     }
 
-    func purgeTransientEpisodeTranscriptionCaches(itemId: String) throws {
-        try purgeSourceTranscriptionAudioCaches(itemId: itemId)
-        let transientDirectory = try episodeMapDirectory(itemId: itemId)
-            .appending(path: "Transient", directoryHint: .isDirectory)
-        if FileManager.default.fileExists(atPath: transientDirectory.path) {
-            try FileManager.default.removeItem(at: transientDirectory)
+    /// The file half of a purge: the exported audio chunks of the whole episode, then each folder in `directories`.
+    /// It is a plain function so a caller picks the thread: the awaited purge below and the background removal both
+    /// run it off the main thread (#2510).
+    nonisolated static func removeEpisodeTranscriptionFiles(itemId: String, directories: [URL]) throws {
+        try SourceTranscriptionCaches.purge(itemId: itemId)
+        for directory in directories where FileManager.default.fileExists(atPath: directory.path) {
+            try FileManager.default.removeItem(at: directory)
         }
-        if let store {
-            for asset in try store.loadOwnedOfflineAssets() where
-                asset.itemId == itemId && asset.category == .transientEpisodeTranscript {
-                try store.deleteOwnedOfflineAsset(id: asset.id)
+    }
+
+    /// For the callers that cannot wait: deletes a trashed item and the launch clean-up of old jobs. Each folder goes
+    /// on its own, so one failure leaves the rest to be removed, as the `try?` calls before it did (#2510).
+    nonisolated static func removeEpisodeTranscriptionFilesInBackground(itemId: String, directories: [URL]) {
+        Task.detached(priority: .utility) {
+            try? SourceTranscriptionCaches.purge(itemId: itemId)
+            for directory in directories where FileManager.default.fileExists(atPath: directory.path) {
+                try? FileManager.default.removeItem(at: directory)
             }
         }
     }
 
-    func purgeSourceTranscriptionAudioCaches(itemId: String) throws {
-        try SourceTranscriptionCaches.purge(itemId: itemId)
+    /// The transcript rows the run recorded for the item; the files they name are removed with the folders.
+    func deleteTransientTranscriptAssets(itemId: String) throws {
+        guard let store else { return }
+        for asset in try store.loadOwnedOfflineAssets() where
+            asset.itemId == itemId && asset.category == .transientEpisodeTranscript {
+            try store.deleteOwnedOfflineAsset(id: asset.id)
+        }
+    }
+
+    func purgeTransientEpisodeTranscriptionCaches(itemId: String) async throws {
+        let transientDirectory = try episodeMapDirectory(itemId: itemId)
+            .appending(path: "Transient", directoryHint: .isDirectory)
+        try await Gate1AppModel.offMain {
+            try Gate1AppModel.removeEpisodeTranscriptionFiles(itemId: itemId, directories: [transientDirectory])
+        }
+        try deleteTransientTranscriptAssets(itemId: itemId)
+    }
+
+    func purgeSourceTranscriptionAudioCaches(itemId: String) async throws {
+        try await Gate1AppModel.offMain { try SourceTranscriptionCaches.purge(itemId: itemId) }
     }
 
     func submitAutomaticEpisodeMapPreparationIfNeeded() {

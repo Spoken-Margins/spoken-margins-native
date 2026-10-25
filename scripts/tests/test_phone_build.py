@@ -847,16 +847,60 @@ class HostedPhoneBuildTests(unittest.TestCase):
         self.assertFalse((self.phone / 'latest').exists())
         self.assertTrue(json.loads((self.phone / 'last-attempt.json').read_text())['result'].startswith('failed'))
 
+
+class PhoneBuildSourceChoiceTests(unittest.TestCase):
+    """Where the build comes from (#2357): the environment wins, then the source file, then `mac`.
+
+    Asks `source()` directly. The test used to run two whole builds through the script to see which one ran, and
+    failed once under load (#2600) for reasons unrelated to the choice."""
+
+    def setUp(self):
+        self.module = load_phone_build()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(unittest.mock.patch.stopall)
+        env = {k: v for k, v in os.environ.items() if k != 'SM_PHONE_SOURCE'}
+        env['SM_PHONE_DIR'] = self.tmp.name
+        unittest.mock.patch.dict(os.environ, env, clear=True).start()
+
+    def choose(self, file_text=None, **env):
+        path = Path(self.tmp.name) / 'source'
+        path.unlink(missing_ok=True)
+        if file_text is not None:
+            path.write_text(file_text)
+        with unittest.mock.patch.dict(os.environ, env):
+            return self.module.source()
+
     def test_the_source_file_switches_and_the_environment_wins(self):
-        del self.env['SM_PHONE_SOURCE']
-        self.phone.mkdir()
-        (self.phone / 'source').write_text('hosted\n')
-        done = self.run_build()
-        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        self.assertIn('downloading the hosted phone build', done.stdout)
-        done = self.run_build(SM_PHONE_SOURCE='mac')
-        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        self.assertIn('-configuration Release', self.log.read_text())  # built here
+        self.assertEqual(self.choose(), 'mac')
+        self.assertEqual(self.choose('hosted\n'), 'hosted')
+        self.assertEqual(self.choose('hosted\n', SM_PHONE_SOURCE='mac'), 'mac')
+        self.assertEqual(self.choose('mac\n', SM_PHONE_SOURCE='hosted'), 'hosted')
+
+    def test_an_empty_or_unknown_choice_builds_here(self):
+        for text in ('', '\n', 'cloud\n', 'Hosted\n'):
+            with self.subTest(text=text):
+                self.assertEqual(self.choose(text), 'mac')
+        self.assertEqual(self.choose('hosted\n', SM_PHONE_SOURCE='cloud'), 'mac')
+
+    def test_only_the_first_word_of_the_file_counts(self):
+        self.assertEqual(self.choose('hosted # switched on 10-24\n'), 'hosted')
+        self.assertEqual(self.choose('# hosted\n'), 'mac')
+
+class PhoneBuildFolderTests(unittest.TestCase):
+    def test_two_builds_of_one_commit_in_the_same_second_get_different_folders(self):
+        # #2537: the folder is named by the second and the commit, so the second build used to fail.
+        module = load_phone_build()
+        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.dict(os.environ, {'SM_PHONE_DIR': tmp}):
+            sha = 'ab' * 20
+            first = module.new_build_folder('20261023-094656', sha)
+            second = module.new_build_folder('20261023-094656', sha)
+            third = module.new_build_folder('20261023-094656', sha)
+            self.assertEqual([first.name, second.name, third.name],
+                             ['20261023-094656-abababa', '20261023-094657-abababa', '20261023-094658-abababa'])
+            for folder in (first, second, third):
+                self.assertRegex(folder.name, r'\d{8}-\d{6}-[0-9a-f]{7}$')  # still what prune() matches
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), [first.name, second.name, third.name])
 
 
 class PhoneBuildCoalescingTests(unittest.TestCase):

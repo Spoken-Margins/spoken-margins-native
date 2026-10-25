@@ -24,7 +24,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
     }
 
     func foregroundAudioPreparationLoopDidEnd() {
-        if let store { try? refreshLibraryRows(store: store) }
+        refreshLibraryRowsInBackground()
     }
 
     func performBackgroundPreparationPass() async -> BackgroundPreparationWorkResult {
@@ -95,7 +95,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
     /// The background task stopped: its item stops showing progress, and the foreground loop picks its own work again (#534).
     func libraryAudioBackgroundDrainEnded() {
         libraryAudioLoop.turns.stopped(.background)
-        if let store { try? refreshLibraryRows(store: store) }
+        refreshLibraryRowsInBackground()
         if canPrepareLibraryAudio, UIApplication.shared.applicationState == .active { startForegroundAudioPreparationIfNeeded() }
     }
     #endif
@@ -184,7 +184,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                                                        itemAlreadyListened: item.sourceCompletedAt != nil || PreparationChunkGate.itemAlreadyListened(store.loadSessions(itemId: item.id)))
             let gated = try await coordinator.applyGate(gate, manifestId: manifest.id) // applied to the saved manifest: chunks committed meanwhile stay
             manifest = gated.manifest ?? manifest
-            if gated.changed { try refreshLibraryRows(store: store) }
+            if gated.changed { refreshLibraryRowsInBackground() }
             if gate == .dropListenedItem {
                 // Removing speculative work must never invalidate committed audio.
                 try store.deleteAudioPreparationJob(id: job.id)
@@ -323,7 +323,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 if job.maximumChunkCount != nil {
                     failedStartupAudioPreparationItemIds.insert(job.itemId)
                 }
-                try? refreshLibraryRows(store: store)
+                refreshLibraryRowsInBackground()
             }
             diagnostics["backgroundAudioPreparation"] = "paused:\(error.localizedDescription)"
             if attemptedJob?.policy == .explicit {

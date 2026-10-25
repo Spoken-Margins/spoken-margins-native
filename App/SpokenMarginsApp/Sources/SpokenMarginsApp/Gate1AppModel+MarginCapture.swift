@@ -35,12 +35,13 @@ extension Gate1AppModel {
     }
 
     func endCaptureWatch() {
+        MarginOutcomeCuePlayer.shared.stop() // a dead microphone's repeating cue ends with the recording (#1977)
         captureWatcher.stop()
         recordingCaptureHealth = .capturing
         gate2CompactControls.setMicrophone(.capturing)
     }
 
-    private func captureHealthChanged(_ health: MarginCaptureSupervisor.Health, restarts: Int) {
+    func captureHealthChanged(_ health: MarginCaptureSupervisor.Health, restarts: Int) {
         let wasCapturing = recordingCaptureHealth == .capturing
         recordingCaptureHealth = health
         gate2CompactControls.setMicrophone(health.liveActivityMicrophone)
@@ -52,13 +53,17 @@ extension Gate1AppModel {
         diagnostics["lastVoiceCapture"] = Self.captureSummary(fields)
         switch health {
         case .capturing where !wasCapturing:
+            // Recovery from a dead microphone lands here too: the repeating cue ends with it (#1977).
+            MarginOutcomeCuePlayer.shared.stop()
             reportSuccess("Recording Margin.")
         case .notCapturing:
+            // The source is paused for the recording, so a dead microphone is otherwise silence: say so, softly, until the listener acts (#1977).
+            playOutcomeCue(.micStopped)
             reportFailure(captureWatcher.hasKeepableAudio
                 ? Self.keptAudioMessage
                 : "The microphone isn't recording, so nothing is being saved. Tap Try again, or cancel and write the Margin instead.")
         default:
-            break
+            MarginOutcomeCuePlayer.shared.stop()
         }
         // The health may be unchanged while only the keepable state flipped: redraw for Try again.
         objectWillChange.send()
@@ -67,12 +72,15 @@ extension Gate1AppModel {
     /// The listener tapped Try again on a recording screen that says the microphone isn't recording.
     func retryMicrophone() {
         guard snapshot.isRecording else { return }
+        // The new recorder starts inside `retry()`: end the microphone cue first, or its tail opens the new file.
+        MarginOutcomeCuePlayer.shared.stop()
         if captureWatcher.retry() {
             lastError = nil
         } else {
             // Speech arrived since the last poll: a restart would delete it. Redraw without Try again.
-            if case .notCapturing = captureWatcher.health, lastError != Self.keptAudioMessage {
-                reportFailure(Self.keptAudioMessage)
+            if case .notCapturing = captureWatcher.health {
+                playOutcomeCue(.micStopped) // nothing restarted, so the microphone is still stopped
+                if lastError != Self.keptAudioMessage { reportFailure(Self.keptAudioMessage) }
             }
             objectWillChange.send()
         }
@@ -127,8 +135,21 @@ extension Gate1AppModel {
 
     /// Save was tapped on a recording that took in no audio: say so, and don't keep an empty voice as a Margin.
     private func discardEmptyRecording() {
-        cancelInterjection()
+        cancelInterjection(feeling: .warning) // one tap for the miss, not a cancel's and then a warning's
+        playOutcomeCue(MarginOutcomeCue(verdict: .discardEmpty))
         reportFailure("Nothing was recorded, so no Margin was saved. The microphone didn't pick up any sound. Try again, or write the Margin instead.")
+    }
+
+    /// Every outcome cue goes through here (#1977). When the recorder ended by turning the audio session off, it
+    /// handed the session back to another app's audio; a cue would turn it on again and leave that audio
+    /// interrupted, so the ending stays silent and the diagnostics key says why.
+    private func playOutcomeCue(_ cue: MarginOutcomeCue) {
+        if engine?.recordingReleasedAudioSession() == true {
+            MarginOutcomeCuePlayer.shared.stop()
+            diagnostics["outcomeCue"] = "skipped:session_released"
+            return
+        }
+        diagnostics["outcomeCue"] = MarginOutcomeCuePlayer.shared.play(cue)
     }
 
     /// Reports interrupted, unexpectedly short or unverified saved audio without claiming a capture cause.
@@ -136,10 +157,16 @@ extension Gate1AppModel {
         let integrity = engine?.finalizedRecordingIntegrity()
         if let integrity { recordDeveloperDiagnostic("margin.capture.finalized", integrity.diagnosticFields) }
         if let integrity, integrity.fileMs == nil {
+            AppHaptics.play(.warning)
+            playOutcomeCue(.savedMaybeCut)
             reportWarning("Margin saved, but its recording could not be checked. Please play it back.")
         } else if (integrity?.qualifying(verdict) ?? verdict) == .saveCutShort {
+            AppHaptics.play(.warning)
+            playOutcomeCue(MarginOutcomeCue(verdict: .saveCutShort))
             reportWarning("Margin saved, but part of it may be missing.")
         } else {
+            AppHaptics.play(.saved)
+            playOutcomeCue(MarginOutcomeCue(verdict: .save))
             reportConfirmation("Margin saved. Transcription is continuing in the background.")
         }
     }
@@ -160,7 +187,9 @@ extension Gate1AppModel {
             return
         }
         guard !recordingNavigationIsLocked, handOffPlayingMarginToRecording() else { return }
+        suggestSharedMarginReply()
         let voiceCaptureRequestID = marginCapture.beginVoiceRequest()
+        AppHaptics.play(.started)
         statusMessage = "Starting Margin..."
         lastError = nil
         diagnostics["lastInterjectionTap"] = "begin"
@@ -253,8 +282,10 @@ extension Gate1AppModel {
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 50_000_000)
             guard let self else { return }
-            self.finishInterjection()
-            self.marginCapture.finalizeFinish(at: Date(), stillRecording: self.snapshot.isRecording)
+            self.hangTelemetry.labels.scoped("marginSaveFinish") {
+                self.finishInterjection()
+                self.marginCapture.finalizeFinish(at: Date(), stillRecording: self.snapshot.isRecording)
+            }
         }
     }
 
@@ -287,7 +318,10 @@ extension Gate1AppModel {
         changeOnboardingProgress { $0.firstInterjectionSaved() }
     }
 
-    func cancelInterjection() {
+    func cancelInterjection() { cancelInterjection(feeling: .ended) }
+
+    /// `feeling` is the one tap the cancel makes: a plain cancel ends softly, a discarded empty recording warns.
+    func cancelInterjection(feeling: HapticKind) {
         let held = heldMarginVoice
         if isRequestingRecordingPermission && !snapshot.isRecording {
             marginCapture.abandonVoiceRequest()
@@ -299,6 +333,7 @@ extension Gate1AppModel {
         run { engine in
             snapshot = try engine.cancelInterjection(resumesSource: held == nil)
             refreshSelectedItem()
+            AppHaptics.play(feeling)
             reportSuccess("Cancelled Margin.")
         }
         if !snapshot.isRecording {
@@ -311,7 +346,8 @@ extension Gate1AppModel {
     func beginWrittenMargin() { beginWrittenMargin(answering: nil) }
 
     /// A written Margin that answers a shared one when `reply` is set (#473).
-    func beginWrittenMargin(answering reply: MarginReplyDraft?) {
+    func beginWrittenMargin(answering explicitReply: MarginReplyDraft?) {
+        let reply = explicitReply ?? sharedMarginThisMarginAnswers() // heard over it or just before (#473)
         guard !recordingNavigationIsLocked, !isMarginCaptureCoolingDown else { return } // the pencil sits beside Add a Margin (#148)
         guard snapshot.skimBridgeState == nil, playingImportedCommentary == nil else {
             reportFailure("Return to the source before writing a Margin.")
@@ -327,7 +363,7 @@ extension Gate1AppModel {
             lastError = nil
             marginCapture.clearPermissionDenied()
             snapshot = engine.snapshot
-            marginCapture.openDraft(makeWrittenMarginDraft(for: capture, store: store, reply: reply))
+            marginCapture.openDraft(makeWrittenMarginDraft(for: capture, store: store, replyChoice: MarginReplyChoice(suggested: reply)))
             marginCapture.clearPresentationContext()
         } catch {
             streamingSpeechQueue.resumeAfterInterjection()
@@ -336,14 +372,14 @@ extension Gate1AppModel {
     }
 
     /// The draft the written Margin screen opens with, for a capture the engine has locked to its place.
-    func makeWrittenMarginDraft(for capture: WrittenInterjectionCapture, store: SQLiteSessionStore, reply: MarginReplyDraft?) -> WrittenMarginDraft {
+    func makeWrittenMarginDraft(for capture: WrittenInterjectionCapture, store: SQLiteSessionStore, replyChoice: MarginReplyChoice) -> WrittenMarginDraft {
         WrittenMarginDraft(
             capture: capture,
             text: "",
             itemTitle: (try? store.loadItem(id: capture.itemId).title) ?? "Current item",
             targetDescription: capture.targetType == .item ? "Source" : (capture.targetType == .assistantTurn ? "Assistant response" : "Margin summary"),
             progressPercent: capture.roughPercent,
-            reply: reply
+            replyChoice: replyChoice
         )
     }
 
@@ -353,7 +389,7 @@ extension Gate1AppModel {
     /// paused under it, as when the listener switches before the recording starts.
     func switchRecordingToWrittenMargin() {
         guard snapshot.isRecording, !isFinishingInterjection, let engine else { return }
-        let reply = marginCapture.pendingReply
+        let replyChoice = marginCapture.replyChoice
         let held = heldMarginVoice
         recordFinalCaptureDiagnostics("switched_to_written")
         do {
@@ -362,7 +398,7 @@ extension Gate1AppModel {
             snapshot = engine.snapshot // the screen leaves the recording, and the capture watch ends with it
             lastError = nil
             marginCapture.clearPermissionDenied()
-            marginCapture.openDraft(makeWrittenMarginDraft(for: capture, store: store, reply: reply))
+            marginCapture.openDraft(makeWrittenMarginDraft(for: capture, store: store, replyChoice: replyChoice))
             marginCapture.clearPresentationContext()
             marginVoiceHeldForRecording = nil // no recording is coming, so a Margin of any kind stays as it is (#1672)
             if held?.kind == .shared { stopImportedCommentaryPlayback(resumeSource: false) }
@@ -399,8 +435,10 @@ extension Gate1AppModel {
             refreshSelectedItem()
             refreshMarginRows()
             if draft.priorWasPlaying && snapshot.status == .paused {
+                AppHaptics.play(.warning)
                 reportWarning("Margin saved. Playback is paused; tap Play to continue.")
             } else {
+                AppHaptics.play(.saved)
                 reportConfirmation("Written Margin saved.")
             }
         } catch {

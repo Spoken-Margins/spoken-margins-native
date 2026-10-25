@@ -27,13 +27,13 @@ LOOKUP_CALL = re.compile(r'\b(?:rememberSharedLinkVoiceover|lookUpVoiceover|impo
 #   not-web    not a web article (PDF, file, edition): there is no post page to look up.
 INVENTORY = {
     'Gate1AppModel+FollowedSources.swift': (2, 'lookup', 'Following: publisherAudioLookup on a tap; a refresh defers it to opening (#2368)'),
-    'Gate1AppModel+ImportInbox.swift': (1, 'open-time', 'share-sheet text payloads drained at launch'),
+    'Gate1AppModel+ImportInbox.swift': (2, 'open-time', 'share-sheet text payloads drained at launch (open-time), and a clip link open, which runs importClippedPage and so the lookup (#810)'),
     'Gate1AppModel+PublisherAudio.swift': (1, 'lookup', 'importClippedPage: Safari clip, lookup after the import (#810)'),
     'Gate1AppModel+RemotePDF.swift': (3, 'not-web', 'PDF imports'),
     'Gate1AppModel+SharedItemAcquisition.swift': (1, 'open-time', 'a shared item whose article is fetched later'),
     'Gate1AppModel+SourceLinkBackground.swift': (1, 'lookup', 'link imported in the background (#810)'),
     'Gate1AppModel+SourceLinkForeground.swift': (1, 'lookup', 'link imported with the app in front (#810)'),
-    'Gate1AppModel.swift': (7, 'open-time', 'Safari clip entry points (these call importClippedPage), the import funnel itself, and Readwise read-later'),
+    'Gate1AppModel.swift': (6, 'open-time', 'Safari clip entry points (these call importClippedPage), the import funnel itself, and Readwise read-later'),
 }
 
 

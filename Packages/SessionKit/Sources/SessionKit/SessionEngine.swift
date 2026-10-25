@@ -1739,6 +1739,26 @@ public final class SessionEngine {
         recorder.finalizedRecordingIntegrity()
     }
 
+    /// Changes which shared Margin the Margin being recorded or written answers (#473): the listener switched it
+    /// to independent, or back. Does nothing when no Margin is being captured.
+    public func changeReplyOfCurrentCapture(to link: MarginReplyLink?) {
+        if currentSession?.phase == .recordingInterjection {
+            recordingReplyTo = link
+            updateRecordingDraft { $0.replyTo = link }
+        }
+        if let capture = pendingWrittenInterjection {
+            pendingWrittenInterjection = WrittenInterjectionCapture(
+                id: capture.id, sessionId: capture.sessionId, itemId: capture.itemId, targetType: capture.targetType,
+                targetId: capture.targetId, anchor: capture.anchor, roughPercent: capture.roughPercent,
+                wasPlaying: capture.wasPlaying, replyTo: link
+            )
+        }
+    }
+
+    public func recordingReleasedAudioSession() -> Bool {
+        recorder.releasedAudioSessionAtEnd()
+    }
+
     @discardableResult
     public func beginWrittenInterjection(replyTo: MarginReplyLink? = nil) throws -> WrittenInterjectionCapture {
         try requireNavigationAllowed("beginWrittenInterjection")
@@ -4536,6 +4556,14 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
         var itemId = handoff.itemId ?? browserTextItemId(title: idTitle, url: handoff.source.url)
+        // A web or share-sheet PDF's id is a slug of its title and address. When a better title is read from
+        // the same PDF (#2062), re-importing it must still find the item it already made (#556).
+        var matchedByAddress = false
+        if handoff.itemId == nil, isPDF, try existingItem(id: itemId) == nil,
+           let sameAddress = try existingPDFItemId(atHTTPSAddress: handoff.source.url) {
+            itemId = sameAddress
+            matchedByAddress = true
+        }
         if handoff.itemId == nil, handoff.captureMode == .readablePage || isPDF {
             // A corrected extraction (or a new PDF extractor) must not move existing
             // Margin anchors. Retain the original edition and give changed text its
@@ -4547,8 +4575,9 @@ public final class SessionEngine {
                 // C1 M3 step 5: a PDF re-imported with a newer extraction moves the
                 // existing item to it when every Margin and position lands on the same
                 // words (I13 rule 1d). Otherwise it stays, and the new text becomes
-                // its own edition as before.
-                if mode != .skip, let document, existing.deletedAt == nil, currentSession?.itemId != existing.id, currentItem?.id != existing.id,
+                // its own edition as before. An item found only by its address may be a different PDF now
+                // served there (a newsletter's "current.pdf"), so its text is never replaced in place.
+                if mode != .skip, !matchedByAddress, let document, existing.deletedAt == nil, currentSession?.itemId != existing.id, currentItem?.id != existing.id,
                    let store = repository as? any (SessionRepository & StructuredDocumentRepository) {
                     let job = StructuredUpgradeJob(repository: store, existing: existing, document: document)
                     if mode == .deferred { return .upgradeCandidate(job) }
@@ -4598,6 +4627,26 @@ public final class SessionEngine {
             documentStructure: handoff.documentStructure
         )
         return .records(item, deterministicMap, document)
+    }
+
+    /// The id of the PDF already imported from this https address. A listener's own copy comes before one in Recently
+    /// Deleted, and the oldest before a newer one. A later edition has `-edition-` and a SHA-256 at the end of its id;
+    /// editions are made from the original, never from each other, so only an original is a match.
+    private func existingPDFItemId(atHTTPSAddress address: String) throws -> String? {
+        guard URLComponents(string: address)?.scheme?.lowercased() == "https" else { return nil }
+        let sameAddress: [Item]
+        if let lookup = repository as? any ItemAddressLookup {
+            sameAddress = try lookup.listItems(withExternalReference: address)
+        } else {
+            sameAddress = try repository.listItems(includeDeleted: true).filter { $0.externalReference == address }
+        }
+        return sameAddress
+            .filter { $0.mediaType == "pdf" && $0.id.hasPrefix("item-browser-") && $0.id.range(of: #"-edition-[0-9a-f]{64}$"#, options: .regularExpression) == nil }
+            .min { lhs, rhs in
+                if (lhs.deletedAt == nil) != (rhs.deletedAt == nil) { return lhs.deletedAt == nil }
+                let (l, r) = (lhs.createdAt ?? .distantFuture, rhs.createdAt ?? .distantFuture)
+                return l != r ? l < r : lhs.id < rhs.id
+            }?.id
     }
 
     private func existingItem(id: String) throws -> Item? {

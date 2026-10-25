@@ -75,6 +75,7 @@ extension Gate1AppModel {
 
     func stopInterjectionAudioPlayback() {
         let hadImportedMargin = playingImportedCommentary != nil
+        if hadImportedMargin { marginCapture.sharedMarginEnded() }
         if hadImportedMargin { recordMarginVoiceEvent("stop", player: "shared") }
         else if playingInterjectionAudioId != nil { recordMarginVoiceEvent("stop", player: "own") }
         marginVoicePlayer.resetSharedState()
@@ -148,6 +149,7 @@ extension Gate1AppModel {
                 mixedPlaybackVolume: mixedPlaybackVolume
             )
             recordMarginVoiceEvent("start", player: "shared") // after the start call, so a start that throws logs no start
+            if let itemId = prompt.layer.itemId { marginCapture.sharedMarginBegan(MarginReplyDraft(parent: prompt.interjection, in: prompt.layer), itemId: itemId) } // a Margin recorded over it answers it (#473)
             pendingImportedCommentary = nil
             (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.setRemoteCommandHandlingEnabled(false)
             gate2CompactControls.setNowPlayingEnabled(false)
@@ -204,9 +206,9 @@ extension Gate1AppModel {
             importedCommentaryAutoPlayTask?.cancel()
             importedCommentaryAutoPlayTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(420))
-                guard !Task.isCancelled,
-                      self?.pendingImportedCommentary?.id == prompt.id else { return }
-                self?.listenToPendingImportedCommentary()
+                guard !Task.isCancelled, let self,
+                      self.pendingImportedCommentary?.id == prompt.id else { return }
+                self.hangTelemetry.labels.scoped("importedCommentaryAutoPlay") { self.listenToPendingImportedCommentary() }
             }
         }
     }
@@ -252,7 +254,7 @@ extension Gate1AppModel {
         if playingImportedCommentary != nil || playingInterjectionAudioId != nil { stopInterjectionAudioPlayback() }
         if !momentVoiceIsOpenInLog { recordMarginVoiceEvent("start", player: "moment") } // not on a resume
         #if os(iOS)
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: [.duckOthers])
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
     }
