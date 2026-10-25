@@ -58,3 +58,39 @@ extension Gate1AppModel {
         }
     }
 }
+
+/// The Quick Folder as an inbox (#1990 slice 3): with the setting on, files that newly appear in the folder are imported
+/// through the same Quick Folder import and appended to the play queue in filename order. It runs after each folder
+/// refresh, including the one at launch, so a file added while the app was closed is queued the next time it opens.
+extension Gate1AppModel {
+    func quickFolderInboxRefreshed() {
+        guard quickAccess.inboxFeedsQueue, !quickAccess.isRefreshing else { return }
+        let plan = QuickFolderInbox.plan(
+            files: quickAccess.recentFiles,
+            seenKeys: quickAccess.inboxSeenFileIds,
+            dismissedKeys: quickAccess.dismissedFileKeys
+        )
+        guard !plan.toImport.isEmpty else {
+            if quickAccess.inboxSeenFileIds == nil { quickAccess.inboxSeenFileIds = plan.newSeenKeys }
+            return
+        }
+        // One import at a time; the next refresh picks these up again because they are not marked seen yet.
+        guard sourceImportTask == nil, let folderURL = quickAccess.resolvedFolderURL() else { return }
+        quickAccess.inboxSeenFileIds = (quickAccess.inboxSeenFileIds ?? []).union(plan.newSeenKeys)
+        let files = plan.toImport
+        beginObsidianMarkdownImport(
+            urls: files.map { folderURL.appending(path: $0.relativePath) },
+            securityScopedURLs: [folderURL],
+            refreshQuickFolderWhenFinished: true,
+            onImported: { [weak self] items in
+                guard let self else { return }
+                // Imported items keep the order of `files`. A failed file was already reported by the import.
+                PlayQueueController.update(self) { queue in items.forEach { queue.append($0.id) } }
+                files.forEach { self.dismissQuickAccessFile($0) }
+                self.diagnostics["quickFolderInboxQueued"] = "\(items.count)"
+            },
+            navigatesWhenFinished: false,
+            confirmationOverride: { "Queued \($0) new Quick Folder file\($0 == 1 ? "" : "s")." }
+        )
+    }
+}

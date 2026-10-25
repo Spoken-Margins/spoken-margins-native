@@ -105,6 +105,11 @@ public enum ListeningEditionBatch {
     public struct Summary: Equatable, Sendable {
         public let message: String
         public let isFailure: Bool
+
+        /// The same summary with one more sentence, such as a folder walk that stopped early (#2672).
+        public func appending(_ sentence: String) -> Summary {
+            Summary(message: message + " " + sentence, isFailure: isFailure)
+        }
     }
 
     public static func summary(of lines: [Line]) -> Summary {

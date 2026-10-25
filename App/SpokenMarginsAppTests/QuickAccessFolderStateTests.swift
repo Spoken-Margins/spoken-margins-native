@@ -28,6 +28,26 @@ final class QuickAccessFolderStateTests: XCTestCase {
         super.tearDown()
     }
 
+    // MARK: Inbox feeds the queue (#1990 slice 3)
+
+    /// The setting is off by default, persists, and a completed refresh reports to the model so the inbox can run.
+    func testInboxSettingIsOffByDefaultPersistsAndRefreshReportsToTheModel() async throws {
+        let fixture = try makeFixture()
+        XCTAssertFalse(fixture.state.inboxFeedsQueue)
+        var refreshed = 0
+        fixture.state.onFilesRefreshed = { refreshed += 1 }
+        fixture.state.inboxFeedsQueue = true
+        try await waitFor("toggle starts a scan") { fixture.bench.scansStarted == 1 }
+        fixture.bench.finishScan(0, with: Self.scan(["a"]))
+        try await waitFor("refresh reports") { refreshed == 1 }
+        XCTAssertNil(fixture.state.inboxSeenFileIds, "turning it on starts with no baseline")
+        fixture.state.inboxSeenFileIds = ["a"]
+        XCTAssertTrue(QuickAccessFolderState(defaults: fixture.defaults, dependencies: fixture.bench.dependencies()).inboxFeedsQueue)
+        XCTAssertEqual(QuickAccessFolderState(defaults: fixture.defaults, dependencies: fixture.bench.dependencies()).inboxSeenFileIds, ["a"])
+        fixture.state.inboxFeedsQueue = false
+        XCTAssertNil(fixture.state.inboxSeenFileIds)
+    }
+
     // MARK: Stale refresh guard
 
     /// A refresh that started later wins, whichever scan finishes first. Removing the refresh-ID check makes

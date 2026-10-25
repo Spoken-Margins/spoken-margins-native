@@ -723,8 +723,7 @@ final class Gate1AppModel: ObservableObject {
         // are still starting, and the catalog is not needed on other screens.
         sanitizeTTSMode()
         settingsValueChanged()
-        quickAccess.forwardWillChange(to: objectWillChange)
-        quickAccess.recordDiagnostic = { [weak self] key, value in self?.diagnostics[key] = value }
+        wireQuickAccessFolder()
         refreshQuickAccessFolder()
         streamingSpeechQueue.onTurnDrained = { [weak self] turnId in
             self?.finishStreamingTurnIfReady(turnId)
@@ -2625,7 +2624,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     @Published private(set) var renderedSourceFraction: Double?
-    private var frontierSignatures: [String: TTSRenderSignature] = [:]
+    var frontierSignatures: [String: TTSRenderSignature] = [:]
     private var frontierPublicationKey: String?
     var renderedFractionForPlayback: Double? {
         guard frontierPublicationKey == renderFrontierKey else { return nil }
@@ -2647,27 +2646,22 @@ final class Gate1AppModel: ObservableObject {
               [TargetType.itemTextTTS.rawValue, TargetType.transcriptBackedMedia.rawValue].contains(snapshot.targetType ?? ""),
               let store else { return }
         do {
-            let signature: TTSRenderSignature
-            if let cached = frontierSignatures[voice.rawValue] { signature = cached }
-            else {
-                // Saved audio shows before the model is downloaded too (#1820).
-                signature = try await Task.detached(priority: .utility) {
-                    try SupertonicRenderIdentity.current(voice: voice)
-                }.value
-                frontierSignatures[voice.rawValue] = signature
-            }
+            let signature = try await renderFrontierSignature(for: voice)
             let root = try applicationSupportDirectory().appendingPathComponent("PreparedAudio")
             let item = try store.loadItem(id: itemID)
             guard let text = PreparedSpeechHooks.preparedText(of: item, in: store), !text.isEmpty else { return }
             let source = try store.loadCanonicalSource(itemId: itemID)
             let canonical = source?.segments.map(\.text).joined(separator: "\n\n") ?? ""
+            // Quiet once complete; wakes when a manifest is written or invalidated (#2652).
+            var poll = RenderFrontierPollPolicy()
             while !Task.isCancelled, renderFrontierKey == key {
-                let manifest = try store.loadPreparedAudioManifests(itemId: itemID).first { $0.signature == signature }
-                let fraction = await Task.detached(priority: .utility) {
-                    PreparedRenderFrontier.fraction(manifest: manifest, signature: signature, sourceText: text, canonicalSourceText: canonical, root: root)
-                }.value
-                guard !Task.isCancelled, renderFrontierKey == key else { return }
-                if renderedSourceFraction != fraction { renderedSourceFraction = fraction }
+                let generation = PreparedAudioChangeSignal.shared.generation
+                if poll.shouldRead(generation: generation) {
+                    let fraction = try await readRenderFrontier(store: store, itemID: itemID, signature: signature, text: text, canonical: canonical, root: root)
+                    guard !Task.isCancelled, renderFrontierKey == key else { return }
+                    if renderedSourceFraction != fraction { renderedSourceFraction = fraction }
+                    poll.record(fraction: fraction, generation: generation)
+                }
                 try await Task.sleep(for: .seconds(2))
             }
         } catch {
@@ -3090,12 +3084,6 @@ final class Gate1AppModel: ObservableObject {
         }
         let availableIds = Set(batchExportRows.map(\.id))
         selectedBatchExportSessionIds.formIntersection(availableIds)
-    }
-
-    func loadDeletedLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {
-        try store.listDeletedItemSummaries().map { item in
-            LibraryItemRow(id: item.id, title: item.title, status: "Recently deleted", canDelete: true)
-        }
     }
 
     static func firstURL(in text: String) -> URL? {
