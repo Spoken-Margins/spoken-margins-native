@@ -110,7 +110,6 @@ struct ExperienceLibraryScreen: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
             Menu {
-                Button("Settings", systemImage: "gearshape", action: model.openSettings)
                 Button("Help", systemImage: "questionmark.circle", action: model.openHelp)
                 Divider()
                 Button("Preparing Audio", systemImage: "waveform.badge.magnifyingglass") {

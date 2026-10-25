@@ -5,7 +5,6 @@ enum Gate1Screen: Hashable {
     case item
     case playback
     case timeline
-    case settings
     case offlineStorage
     case export
     case batchExport
