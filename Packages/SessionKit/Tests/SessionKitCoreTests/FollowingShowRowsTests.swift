@@ -287,10 +287,17 @@ final class FollowingShowRowsTests: XCTestCase {
         XCTAssertEqual(second.lookedAt, ["a": day(1), "b": day(1)], "the next launch keeps the saved times")
     }
 
-    func testTheFirstLoadMarksAFollowedShowTheFileMissesAndDropsUnfollowedOnes() {
-        let emptyFile = FollowingLookedMarkers()
-        XCTAssertEqual(FollowingLookedMarkers.afterFirstLoad(inMemory: FollowingLookedMarkers(), saved: emptyFile, followed: ["a"], now: day(2)).lookedAt,
-                       ["a": day(2)], "a file that misses a followed show never leaves it counting everything as new")
+    /// #2690 audit on c79b872: a show followed after the file existed, never opened, has no marker and counts
+    /// what arrived since it was followed. The next launch must not stamp it, or "2 new" becomes "0 new".
+    func testAShowFollowedButNeverOpenedKeepsItsNewCountAcrossALaunch() {
+        let fileFromAnEarlierLaunch = FollowingLookedMarkers(lookedAt: ["a": day(1)])
+        let next = FollowingLookedMarkers.afterFirstLoad(inMemory: FollowingLookedMarkers(), saved: fileFromAnEarlierLaunch,
+                                                         followed: ["a", "x"], now: day(6))
+        XCTAssertEqual(next.lookedAt, ["a": day(1)], "x, followed and never opened, gets no marker")
+        XCTAssertNil(next.lookedAt["x"])
+    }
+
+    func testTheFirstLoadKeepsTheNewerDateAndDropsUnfollowedShows() {
         var memory = FollowingLookedMarkers()
         memory.markLooked("a", at: day(4))
         let saved = FollowingLookedMarkers(lookedAt: ["a": day(3), "gone": day(1)])

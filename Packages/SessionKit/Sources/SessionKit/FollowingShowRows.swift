@@ -182,16 +182,17 @@ public struct FollowingLookedMarkers: Codable, Equatable, Sendable {
     public mutating func remove(_ subscriptionID: String) { lookedAt[subscriptionID] = nil }
 
     /// The markers once the first read of a launch has both the file and the store's followed shows. The newer
-    /// date wins per show; every followed show without a marker is stamped `now`, so nothing counts as new
-    /// until a later refresh brings an episode; markers of shows no longer followed go. Everything is judged
+    /// date wins per show, and markers of shows no longer followed go. Only with no readable file (the first run,
+    /// or a lost one) is every followed show stamped `now`, so nothing counts as new until a later refresh brings
+    /// an episode. With a file, a show it has no marker for was followed and never opened, and keeps counting
+    /// what arrived since: stamping it would zero that count (#2690 audit on c79b872). Everything is judged
     /// against `followed`, the store's list, never the model's in-memory list, which is still empty when
     /// Following opens before the first feed refresh lands: judged against that, the saved file came out empty
     /// and the next launch counted every episode as new (#2690 audits on 7bb846d and 6dc3a18).
     public static func afterFirstLoad(inMemory: FollowingLookedMarkers, saved: FollowingLookedMarkers?,
                                       followed: [String], now: Date = Date()) -> FollowingLookedMarkers {
         var markers = inMemory
-        if let saved { markers.merge(saved) }
-        markers.seed(followed, at: now)
+        if let saved { markers.merge(saved) } else { markers.seed(followed, at: now) }
         markers.prune(keeping: Set(followed))
         return markers
     }
