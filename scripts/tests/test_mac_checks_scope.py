@@ -4,7 +4,9 @@ Before: every PR ran SessionKit core and Mac rest on a hosted Mac, and the runne
 touched no Swift input and spent 23% of the Mac minutes, with a queue p90 of about 52 minutes; a skipped job would have
 sent the runner to the build Mac after its 5-minute grace.
 """
+import ast
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -15,9 +17,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_lane_runner as runner_tests
 import test_test_scope as scope_tests
 import test_lane_hosted_fast as fast_tests
+import test_fast_portable as portable_tests
 
 lane = runner_tests.lane
 scope = scope_tests.scope
+verification = portable_tests.verification
 ROOT = Path(__file__).resolve().parents[2]
 HEAD, MERGE = 'a' * 40, 'b' * 40
 
@@ -77,6 +81,72 @@ class MacChecksRequiredTests(unittest.TestCase):
             missing = subprocess.run([sys.executable, str(ROOT / 'scripts/test-scope.py'), '--mac-required',
                                       str(Path(temporary) / 'absent.txt')], capture_output=True, text=True).stdout
             self.assertTrue(missing.startswith('mac=true'))
+
+
+def mac_only_reach():
+    """{scripts/ path: what reaches it} for the code only the Mac jobs run (audit on 07cedaa).
+
+    The seeds are the runner tests PORTABLE_RUNNER_TESTS_LEFT_OUT names, the ops folders the portable plan leaves out
+    or that skip on Linux, and the scripts the Mac-only steps run. A seed reaches every scripts/ file it names (it
+    loads or runs it); from there, Python imports are followed all the way down. Names inside the files a seed runs
+    are not followed: lane-runner.py and verify-tests.py name nearly every script, and the tests stub what they run.
+    """
+    files = [p.relative_to(ROOT) for p in (ROOT / 'scripts').rglob('*')
+             if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.md']
+    modules = {p.stem: p for p in files if p.suffix == '.py'}
+    seeds = {Path('scripts/tests') / (prefix.split('.')[0] + '.py') for prefix in verification.PORTABLE_RUNNER_TESTS_LEFT_OUT}
+    for folder in (*verification.PORTABLE_OPS_LEFT_OUT, *scope.MAC_ONLY_OPS):
+        seeds |= {p.relative_to(ROOT) for p in (ROOT / folder).rglob('*')
+                  if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.md'}
+    commands = ' '.join([*verification.PACKAGE_RUNNER, verification.SHIPPED_COMPAT_COMMAND])
+    seeds |= {Path(name) for name in re.findall(r'scripts/[\w.-]+', commands)}
+
+    def imports(path, text):
+        try:
+            tree = ast.parse(text)
+        except (SyntaxError, ValueError):
+            return set()
+        names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names |= {alias.name.split('.')[0] for alias in node.names}
+            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                names.add(node.module.split('.')[0])
+        return {modules[name] for name in names if name in modules}
+
+    def named(text):
+        return {p for p in files if re.search(r'(?<![\w.-])' + re.escape(p.name) + r'(?![\w-])', text)}
+
+    reached, todo = {}, [(seed, 'a Mac-only seed') for seed in sorted(seeds)]
+    while todo:
+        path, by = todo.pop()
+        if path in reached:
+            continue
+        reached[path] = by
+        try:
+            text = (ROOT / path).read_text(errors='ignore')
+        except OSError:
+            continue
+        nxt = imports(path, text) | (named(text) if path in seeds else set())
+        todo += [(p, str(path)) for p in sorted(nxt) if p not in reached]
+    return {str(p): by for p, by in reached.items() if str(p).startswith('scripts/')}
+
+
+class MacOnlyReachTests(unittest.TestCase):
+    def test_every_script_only_the_mac_jobs_exercise_needs_the_mac_checks(self):
+        missed = {path: by for path, by in mac_only_reach().items() if not scope.mac_checks_required([path])[0]}
+        self.assertEqual(missed, {}, 'add these to test-scope.py MAC_SCRIPT_FILES: path -> what reaches it')
+
+    def test_the_helpers_the_audit_named_need_them(self):
+        for path in ('scripts/sm_paths.py', 'scripts/sm_build_cache.py', 'scripts/comment_trust.py'):
+            with self.subTest(path=path):
+                self.assertTrue(scope.mac_checks_required([path])[0])
+
+    def test_the_walk_finds_the_helpers_it_is_meant_to(self):
+        # A walk that found nothing would pass the test above vacuously.
+        reach = mac_only_reach()
+        for path in ('scripts/phone-build', 'scripts/sm_paths.py', 'scripts/sm_build_cache.py', 'scripts/lane-runner.py'):
+            self.assertIn(path, reach)
 
 
 class HostedCheckSetTests(unittest.TestCase):
@@ -143,6 +213,9 @@ class WorkflowScopeTests(unittest.TestCase):
                 job = self.jobs[name]
                 self.assertEqual(job['needs'], 'scope')
                 self.assertIn("needs.scope.outputs.mac != 'false'", job['if'])
+                # Without a status function GitHub adds success(), so a failed scope job would skip the Mac jobs
+                # (audit on 07cedaa). They run unless the scope job was cancelled, skipped or said mac=false.
+                self.assertTrue(job['if'].startswith("!cancelled() && needs.scope.result != 'skipped' && "), job['if'])
                 self.assertIn('xcode', ' '.join(job['runs-on']).lower() + str(job['runs-on']).lower())
 
     def test_the_portable_job_does_not_wait_for_the_scope_job(self):
