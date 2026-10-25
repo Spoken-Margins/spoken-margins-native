@@ -26,6 +26,18 @@ public enum FollowingRowActions {
         return "Mute \(name)"
     }
 
+    /// The banner after Unfollow on a show's screen (#1865): "Unfollowed Hard Fork." It carries Undo, so the
+    /// button needs no confirmation step.
+    public static func unfollowedMessage(showTitle: String?) -> String {
+        guard let name = shortened(showTitle) else { return "Unfollowed." }
+        return "Unfollowed \(name)."
+    }
+
+    public static func undoUnfollowAccessibilityLabel(showTitle: String?) -> String {
+        guard let name = shortened(showTitle) else { return "Undo Unfollow" }
+        return "Undo Unfollow, \(name)"
+    }
+
     /// The name on one line, cut at `maxShowCharacters` the way the listener counts characters, or nil
     /// when it is empty.
     static func shortened(_ title: String?) -> String? {
