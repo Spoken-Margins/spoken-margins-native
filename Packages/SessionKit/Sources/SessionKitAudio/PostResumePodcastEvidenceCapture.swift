@@ -144,6 +144,9 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     private var ring: [RingChunk] = []
     private var sparseSchedule = SparseFingerprintSchedule()
     private var pendingStablePostSeekStartMs: Int?
+    /// The newest seek epoch whose one stable-post-seek landmark was cut. Without it the branch below refilled
+    /// `pendingStablePostSeekStartMs` from the ring on every buffer and cut a landmark again and again (#2626).
+    private var stablePostSeekServedEpoch = 0
     private var generatingLandmarkKeys: Set<String> = []
     /// The minute before and after each Margin, as heard, for source-context transcription (#156).
     private var heardRecorder: HeardAudioWindowRecorder?
@@ -538,7 +541,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                 sparseSchedule.markCaptured(gridIndex: grid)
                 return (key, grid, grid == 0 ? .initialPlayback : .periodicPlayback, sparseSchedule.continuityEpoch, chunks)
             }
-            if sparseSchedule.continuityEpoch > 0 {
+            if sparseSchedule.continuityEpoch > stablePostSeekServedEpoch {
                 if pendingStablePostSeekStartMs == nil { pendingStablePostSeekStartMs = ring.first?.startMediaTimeMs }
                 if let start = pendingStablePostSeekStartMs,
                    current - start >= SparseFingerprintSchedule.targetDurationMs {
@@ -550,6 +553,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                           ) else { return nil }
                     generatingLandmarkKeys.insert(key)
                     pendingStablePostSeekStartMs = nil
+                    stablePostSeekServedEpoch = sparseSchedule.continuityEpoch
                     return (key, nil, .stablePostSeek, sparseSchedule.continuityEpoch, chunks)
                 }
             }

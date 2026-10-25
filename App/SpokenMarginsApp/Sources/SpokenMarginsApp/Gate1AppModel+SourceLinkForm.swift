@@ -51,16 +51,18 @@ extension Gate1AppModel {
                 sourceSurface: "paste",
                 startSession: startSession && !hasActiveSession
             )
-            if imported, sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines) == submittedURL {
-                sourceLinkURL = ""
-            }
-            let awaitsCandidateReview = sourceLinkCandidateReview?.request.inputURL == parsedURL.absoluteString
-            if awaitsCandidateReview {
-                sourceLinkImportState = "review"
-                sourceLinkImportMessage = "Choose the matching podcast episode."
-            } else {
-                sourceLinkImportState = imported ? "success" : "failure"
-                sourceLinkImportMessage = imported ? "Source added." : (sourceLinkSafariOffer?.message ?? lastError ?? "This source could not be added.")
+            hangTelemetry.labels.scoped("sourceLinkFormFinish") {
+                if imported, sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines) == submittedURL {
+                    sourceLinkURL = ""
+                }
+                let awaitsCandidateReview = sourceLinkCandidateReview?.request.inputURL == parsedURL.absoluteString
+                if awaitsCandidateReview {
+                    sourceLinkImportState = "review"
+                    sourceLinkImportMessage = "Choose the matching podcast episode."
+                } else {
+                    sourceLinkImportState = imported ? "success" : "failure"
+                    sourceLinkImportMessage = imported ? "Source added." : (sourceLinkSafariOffer?.message ?? lastError ?? "This source could not be added.")
+                }
             }
         }
         return true

@@ -42,6 +42,7 @@ struct ExperienceRecordingView: View {
                     replyCaption
                     recordingTime
                     if !showsMicrophonePrimer { anchor }
+                    if !showsMicrophonePrimer { justHeard }
                     feedback
                 }
                 .padding(24)
@@ -76,13 +77,10 @@ struct ExperienceRecordingView: View {
     /// The shared Margin this recording answers (#473).
     @ViewBuilder
     private var replyCaption: some View {
-        if let reply = model.pendingMarginReply {
-            Label(reply.caption, systemImage: "arrowshape.turn.up.left.fill")
-                .font(.subheadline)
-                .foregroundStyle(.white)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("recording.replyCaption.label")
-        }
+        ExperienceReplyChoiceRow(
+            choice: model.pendingMarginReplyChoice, captionColor: .white, identifierPrefix: "recording",
+            switchReply: model.toggleReplyOfCurrentMargin
+        )
     }
 
     /// The words and the icon carry the state together, never colour alone (#937).
@@ -169,6 +167,25 @@ struct ExperienceRecordingView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Recording anchor. \(context.itemTitle), \(context.locationTitle), \(context.progressPercent) percent")
         .accessibilityIdentifier("recording.anchor")
+    }
+
+    /// What was said just before recording began, so the listener can pick up the thought (#1491).
+    @ViewBuilder
+    private var justHeard: some View {
+        if let cue = model.justHeardCue {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Just heard", systemImage: "quote.opening")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(AppColors.listeningAccent)
+                Text(cue)
+                    .font(.body)
+                    .foregroundStyle(.white)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Just heard. \(cue)")
+            .accessibilityIdentifier("recording.justHeard")
+        }
     }
 
     @ViewBuilder

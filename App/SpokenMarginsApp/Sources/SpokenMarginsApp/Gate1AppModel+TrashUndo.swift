@@ -19,7 +19,7 @@ extension Gate1AppModel {
                 snapshot = try endEngineSession(engine, reason: .itemTrashed)
             }
             try store.moveItemToTrash(id: id)
-            try refreshLibraryRows(store: store)
+            showAsRecentlyDeleted(itemId: id, title: item.title)
             // An import-only item can be selected without a session. Clearing that idle selection must not
             // discard another item's live session just because its detail page was open when Delete was tapped.
             if snapshot.itemId == id { snapshot = SessionSnapshot() }
@@ -35,6 +35,15 @@ extension Gate1AppModel {
         } catch {
             reportFailure(error, context: "Move to Recently Deleted failed")
         }
+    }
+
+    /// Moves one row from the Library to Recently Deleted on the spot, then lets a background reload confirm it (#2505).
+    /// The trash tap used to rebuild every row from SQLite on the main thread; the row's new state is already known.
+    private func showAsRecentlyDeleted(itemId: String, title: String) {
+        libraryItems.removeAll { $0.id == itemId }
+        recentlyDeletedItems.removeAll { $0.id == itemId }
+        recentlyDeletedItems.insert(LibraryItemRow(id: itemId, title: title, status: "Recently deleted", canDelete: true), at: 0)
+        refreshLibraryRowsInBackground(mustPublish: true)
     }
 
     func undoLastTrash() {
@@ -86,7 +95,7 @@ extension Gate1AppModel {
             let store = try requireStore()
             let item = try store.loadItem(id: id)
             try store.restoreItem(id: id)
-            try refreshLibraryRows(store: store)
+            refreshLibraryRowsInBackground(mustPublish: true)
             dismissTrashUndo()
             reportSuccess("Restored \(item.title).")
         } catch {

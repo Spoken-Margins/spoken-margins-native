@@ -35,7 +35,7 @@ final class ImportedPodcastPlacementCoordinator {
         var localAudiobookDigest: @MainActor (Item) -> String?
         var applicationSupportDirectory: @MainActor () -> URL?
         var listenerHasListeningMap: @MainActor (String, SQLiteSessionStore) throws -> Bool
-        var purgeTransientCaches: @MainActor (String) throws -> Void
+        var purgeTransientCaches: @MainActor (String) async throws -> Void
         var prepareSummaryBridgeAsset: @MainActor (String, String, PortableListeningMapScene, SQLiteSessionStore) async -> Void
         var updateSkimAvailability: @MainActor () -> Void
         /// After the placements were invalidated for a new file: refresh the selected item if it shows `itemId`, and the rows.
@@ -128,16 +128,19 @@ final class ImportedPodcastPlacementCoordinator {
                     itemId: item.id,
                     durationMs: item.media?.durationMs
                 )
-                self.admission[item.id] = nil
-                if self.requestedURL[item.id] == localSourceURL,
-                   (try? PodcastPlacementFile(url: localSourceURL)) == sourceFile {
-                    self.resolve(itemId: item.id, localURL: localSourceURL, recipientTranscriptOverride: timeline)
+                MainThreadOperationLabels.shared.scoped("transientTranscriptResolve") {
+                    self.admission[item.id] = nil
+                    if self.requestedURL[item.id] == localSourceURL,
+                       (try? PodcastPlacementFile(url: localSourceURL)) == sourceFile {
+                        self.resolve(itemId: item.id, localURL: localSourceURL, recipientTranscriptOverride: timeline)
+                    }
                 }
-                try? self.deps.purgeTransientCaches(item.id)
+                // The purge deletes the exported audio chunks of the whole episode; it runs off the main thread (#2510).
+                try? await self.deps.purgeTransientCaches(item.id)
                 self.deps.recordDiagnostic("recipientAlignmentTranscript:\(item.id)", "consumed_and_deleted")
             } catch {
                 self.admission[item.id] = nil
-                try? self.deps.purgeTransientCaches(item.id)
+                try? await self.deps.purgeTransientCaches(item.id)
                 self.deps.recordDiagnostic(
                     "recipientAlignmentTranscript:\(item.id)", "failed_and_deleted:\(error.localizedDescription)")
             }

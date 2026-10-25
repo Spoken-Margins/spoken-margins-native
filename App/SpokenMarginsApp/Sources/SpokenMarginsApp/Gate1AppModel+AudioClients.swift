@@ -188,6 +188,7 @@ extension Gate1AppModel {
                         let message = fallbackReason.listenerExplanation
                         self.statusMessage = message
                         self.presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
+                        AppHaptics.play(.warning)
                     }
                 },
                 onRestore: { [weak self] itemId in
@@ -335,25 +336,30 @@ extension Gate1AppModel {
             preferredSkipForwardSeconds: mediaSkipForwardSeconds,
             interruptionHandler: { [weak self] event in
                 Task { @MainActor [weak self] in
-                    self?.handleMediaPlaybackInterruption(event)
+                    guard let self else { return }
+                    self.hangTelemetry.labels.scoped("mediaInterruption") { self.handleMediaPlaybackInterruption(event) }
                 }
             },
             interruptionHold: makeInterruptionBackgroundHold()
         ) { [weak self] command, mediaTimeMs, playbackRate in
             Task { @MainActor [weak self] in
-                self?.syncPlaybackProgressForLifecycle()
-                self?.dispatchGate2CompactCommand(
-                    command,
-                    mediaTimeMs: mediaTimeMs,
-                    playbackRate: playbackRate,
-                    origin: "now_playing"
-                )
+                guard let self else { return }
+                self.hangTelemetry.labels.scoped("nowPlayingCommand") {
+                    self.syncPlaybackProgressForLifecycle()
+                    self.dispatchGate2CompactCommand(
+                        command,
+                        mediaTimeMs: mediaTimeMs,
+                        playbackRate: playbackRate,
+                        origin: "now_playing"
+                    )
+                }
             }
         }
         client.playbackStartTraceHandler = { [weak self] fields in
             Task { @MainActor [weak self] in
+                guard let self else { return }
                 // #160: resume after a spoken Margin on a stream took 2.6-9.3 s; this shows where the time goes.
-                self?.recordDeveloperDiagnostic("media.start", fields)
+                self.hangTelemetry.labels.scoped("mediaStartTrace") { self.recordDeveloperDiagnostic("media.start", fields) }
             }
         }
         client.heardSourceWindowHandler = { [weak self] window in
@@ -361,14 +367,18 @@ extension Gate1AppModel {
         }
         client.playbackStallTraceHandler = { [weak self] fields in
             Task { @MainActor [weak self] in
+                guard let self else { return }
                 // #166: the clock froze on a stream while the app showed "playing"; this records the player's state.
-                self?.recordDeveloperDiagnostic(fields["event"] == "seek_abandoned" ? "media.seek_abandoned" : "media.stall", fields)
+                self.hangTelemetry.labels.scoped("mediaStallTrace") {
+                    self.recordDeveloperDiagnostic(fields["event"] == "seek_abandoned" ? "media.seek_abandoned" : "media.stall", fields)
+                }
             }
         }
         #if canImport(AVFoundation) && canImport(ShazamKit)
         client.postResumePodcastEvidenceHandler = { [weak self] result in
             Task { @MainActor [weak self] in
-                self?.handlePostResumePodcastEvidence(result)
+                guard let self else { return }
+                self.hangTelemetry.labels.scoped("postResumeEvidence") { self.handlePostResumePodcastEvidence(result) }
             }
         }
         #endif

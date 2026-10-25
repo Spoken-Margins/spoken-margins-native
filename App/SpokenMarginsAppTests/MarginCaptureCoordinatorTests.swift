@@ -175,6 +175,72 @@ final class MarginCaptureCoordinatorTests: XCTestCase {
         snapshot.chapterTitle = "Here"
         return RecordingPresentationContext(snapshot: snapshot, startedAt: now)
     }
+
+    // MARK: A Margin recorded over a friend's answers it, and can be switched to independent (#473)
+
+    private func replyDraft() -> MarginReplyDraft {
+        var layer = ImportedCommentaryLayer(
+            id: "layer", itemId: "item", packageDigest: String(repeating: "a", count: 64), packageId: "p",
+            itemIdentity: SharedItemIdentity(itemType: .podcast, canonicalURL: "https://example.com/a", title: "A"),
+            displayLabel: "Ana", importedAt: now
+        )
+        layer.isEnabled = true
+        let margin = ImportedCommentaryInterjection(
+            id: "m1", layerId: "layer", packageScopedId: "m1-scoped", createdAt: now,
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media), approvedTranscript: "Words",
+            resolution: ImportedAnchorResolution(evidenceClass: .exactEdition, localMediaTimeMs: 1_000)
+        )
+        return MarginReplyDraft(parent: margin, in: layer)
+    }
+
+    /// The switch redraws the recording screen, keeps the parent for the way back, and goes with the context.
+    /// (Fails if the choice is not published, forgets the parent, or outlives the recording.)
+    func testSwitchingTheRecordingToIndependentRedrawsAndTheChoiceEndsWithTheContext() {
+        let capture = MarginCaptureCoordinator()
+        capture.setPendingReply(replyDraft())
+        XCTAssertNotNil(capture.pendingReply)
+        var notices = 0
+        let observation = capture.objectWillChange.sink { notices += 1 }
+        defer { observation.cancel() }
+
+        capture.toggleReplyChoice()
+        XCTAssertEqual(notices, 1)
+        XCTAssertNil(capture.pendingReply, "independent saves no link")
+        XCTAssertEqual(capture.replyChoice.switchTitle, "Reply to Ana", "the way back is named")
+
+        capture.clearPresentationContext()
+        XCTAssertFalse(capture.replyChoice.canToggle, "the next Margin starts with nothing to switch")
+    }
+
+    /// The written Margin screen's draft keeps and switches its own choice.
+    func testSwitchingAWrittenDraftChangesWhatItIsAReplyTo() throws {
+        let capture = MarginCaptureCoordinator()
+        let draft = WrittenMarginDraft(
+            capture: WrittenInterjectionCapture(
+                id: "c", sessionId: "s", itemId: "item", targetType: .item, targetId: "item",
+                anchor: Anchor(anchorType: .text, startChar: 0, endChar: 4, anchorBefore: "", anchorAfter: ""),
+                roughPercent: 5, wasPlaying: false, replyTo: nil
+            ),
+            text: "", itemTitle: "A", targetDescription: "Source", progressPercent: 5,
+            replyChoice: MarginReplyChoice(suggested: replyDraft())
+        )
+        capture.openDraft(draft)
+        XCTAssertNotNil(capture.writtenDraft?.reply)
+        capture.toggleDraftReply()
+        XCTAssertNil(capture.writtenDraft?.reply)
+        capture.toggleDraftReply()
+        XCTAssertNotNil(capture.writtenDraft?.reply)
+    }
+
+    /// What the model feeds the memory is what a Margin started later answers.
+    func testTheCoordinatorRemembersTheSharedMarginHeard() {
+        let capture = MarginCaptureCoordinator()
+        let draft = replyDraft()
+        capture.sharedMarginBegan(draft, itemId: "item")
+        XCTAssertEqual(capture.sharedReplyMemory.reply(forItem: "item", at: now), draft)
+        capture.sharedMarginEnded(at: now)
+        XCTAssertNil(capture.sharedReplyMemory.reply(forItem: "item", at: now.addingTimeInterval(60)))
+    }
 }
 
 private struct AbandonNotice: Equatable {

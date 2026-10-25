@@ -88,6 +88,28 @@ public enum MarginCollection {
         }
     }
 
+    /// What one changed Margin does to the Margins list (#2505).
+    public enum RowChange: Equatable, Sendable {
+        /// Show the saved Margin in the row it already has.
+        case update
+        /// The Margin was deleted or is no longer active: drop its row.
+        case remove
+        /// Nothing to show and nothing listed.
+        case unchanged
+        /// The list can't be fixed from this one Margin (it is new to the list, or couldn't be read): rebuild it.
+        case rebuild
+    }
+
+    /// Chooses between fixing one row and rebuilding every row from every item, session and Margin.
+    /// A star, note, transcript delete or Margin delete keeps the row's item title, date and place, and its
+    /// position in the sort order, so the one saved Margin is all the list needs.
+    /// - `saved`: the Margin as it is stored now, nil when it could not be read.
+    public static func rowChange(saved: Interjection?, isListed: Bool) -> RowChange {
+        guard let saved else { return .rebuild }
+        if saved.status != "active" { return isListed ? .remove : .unchanged }
+        return isListed ? .update : .rebuild
+    }
+
     /// Reads remain in the caller's synchronous closures, in the original order.
     /// No partial result escapes if any read throws.
     /// - `loadMap`: an item's listening map, nil when it has none. Without it, text Margins carry no `place`.

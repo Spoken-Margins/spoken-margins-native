@@ -124,6 +124,7 @@ public enum LibraryRowBuilder {
             row.publishedAt = ItemMetadata.publishedDate(item.publishedAt)
             row.usesNewReader = data.structuredDocumentItemIds.contains(item.id)
             row.sharedMargins = data.sharedMarginsByItemId[item.id] ?? .none
+            row.marginCount = max(0, data.marginCountsByItemId[item.id] ?? 0)
             row.canMarkUnfinished = item.sourceCompletedAt != nil && !PreparationChunkGate.itemAlreadyListened(sessions)
             row.textCharacterCount = row.hasNativeAudio ? nil : item.textCharacterCount
             return row

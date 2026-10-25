@@ -7,7 +7,12 @@ import SwiftUI
 struct LiveSessionView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var controller = LiveSessionController()
+    @StateObject private var controller: LiveSessionController
+
+    /// `sessionId` opens that session (from the Library's Live row); nil opens the running one, or the setup card.
+    init(sessionId: String? = nil) {
+        _controller = StateObject(wrappedValue: LiveSessionController(sessionId: sessionId))
+    }
 
     // Setup
     @State private var kind: ElsewhereKind = .meeting
@@ -61,7 +66,7 @@ struct LiveSessionView: View {
         .sheet(isPresented: $showsLineUp) {
             if let session = controller.session {
                 LiveSessionLineUpView(session: session) {
-                    controller.discard()
+                    controller.close()
                     showsLineUp = false
                     dismiss()
                 }
@@ -228,6 +233,9 @@ struct LiveSessionView: View {
                     } else {
                         Text(margin.text)
                     }
+                    if let note = margin.filingNote {
+                        Text("Filed \(note)").font(.caption).foregroundStyle(AppColors.secondaryText)
+                    }
                 }
                 .padding(.vertical, 4)
             }
@@ -243,7 +251,7 @@ struct LiveSessionView: View {
 
     private func finishCard(_ session: LiveSession) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Session ended").font(.headline)
+            Text(session.isQuick == true ? "Quick session" : "Session ended").font(.headline)
             if session.kind == .meeting {
                 Text("Line it up with the meeting's transcript (.vtt, .srt, .docx or .txt) to place your Margins on what was said. You can add the recording too.")
                     .font(.caption).foregroundStyle(AppColors.secondaryText)
@@ -257,8 +265,10 @@ struct LiveSessionView: View {
                 Task {
                     do {
                         try await model.saveLiveSession(session, transcript: nil, placed: [], recordingURL: nil)
-                        controller.discard()
-                        dismiss()
+                        model.hangTelemetry.labels.scoped("liveSessionSavedAsNotes") {
+                            controller.close()
+                            dismiss()
+                        }
                     } catch {
                         controller.errorMessage = "Couldn't save: \(error.localizedDescription)"
                     }

@@ -43,6 +43,8 @@ class WhatCountsAsMainThread(unittest.TestCase):
         cases = {
             'task detached': MODEL % '    func f() { Task.detached { _ = try? store?.listItems() } }',
             'offMain helper': MODEL % '    func f() async throws { _ = try await Self.offMain { try store?.listItems() } }',
+            'StoreReader read': MODEL % '    func f() async throws { _ = try await StoreReader(store!).read { store in try store.listItems() } }',
+            'StoreReader readLatest on a reader': MODEL % '    func f() async throws { _ = try await reader.readLatest("k") { store in try store.listItems() } }',
             'detached with priority': MODEL % '    func f() { Task.detached(priority: .utility) { _ = try? store?.listItems() } }',
             'detached result assigned to a local': MODEL % '    func f() async throws {\n        let n = try await Task.detached(priority: .utility) { try store?.listItems().count }.value\n        _ = n\n    }',
             'nonisolated async func': MODEL % '    nonisolated func f() async { _ = try? store?.listItems() }',
@@ -552,7 +554,7 @@ class TheRepository(unittest.TestCase):
         left_out = []
         mtr.read_sources(ROOT, left_out)
         names = {Path(rel).name for rel in left_out}
-        self.assertTrue({'WatchOfflineModels.swift', 'Gate3WatchConnectivityController.swift',
+        self.assertTrue({'WatchOfflineModels.swift', 'WatchPackageRenderCoordinator.swift',
                          'SourceLinkShareViewController.swift'} <= names, names)
         base_files = {k: e['file'] for k, e in mtr.load_baseline(ROOT / mtr.BASELINE).items()}
         self.assertEqual([k for k in mtr.load_baseline(ROOT / mtr.BASELINE) if Path(base_files[k]).name in names], [])

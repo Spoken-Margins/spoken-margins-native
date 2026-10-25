@@ -7,6 +7,7 @@ ways that matter, a check that didn't pass), and with the switch off nothing cha
 (#2160) was read here until #2442 retired it.
 """
 import contextlib
+import copy as copy_module
 import io
 import json
 import re
@@ -15,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+
+import yaml
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -254,8 +257,12 @@ class HostedChecksStandTests(unittest.TestCase):
         self.assertTrue(all('1 commit since touch none of this PR' in line for line in lines))
         self.assertIn(tested[:7], lane.hosted_fast_ran(found))
 
-    def test_next_touching_the_prs_files_or_a_build_input_means_the_whole_plan(self):
-        for name, path in (('the PR\'s file', 'pr.txt'), ('a build input', 'scripts/verify-tests.py')):
+    def test_next_touching_the_prs_files_or_a_global_input_means_the_whole_plan(self):
+        # #2596 (Default taken 5): only the PR's own files and what every PR is built from make a hosted check stale.
+        for name, path in (('the PR\'s file', 'pr.txt'), ('project.yml', 'project.yml'),
+                           ('Package.swift', 'Packages/SessionKit/Package.swift'),
+                           ('Package.resolved', 'Package.resolved'), ('package-lock.json', 'web/package-lock.json'),
+                           ('package.json', 'package.json')):
             with self.subTest(name):
                 self.setUp()
                 head, tested, tree = self.pr()
@@ -263,6 +270,37 @@ class HostedChecksStandTests(unittest.TestCase):
                 found, why = self.stands(head, newest, self.records(head, tested, tree))
                 self.assertIsNone(found)
                 self.assertIn(f'tested it on main at {tested[:7]}', why)
+                self.assertTrue(lane.HOSTED_STALE.search(why), why)
+
+    def test_next_moving_in_scripts_or_workflows_lets_a_hosted_check_stand(self):
+        # 6 of 7 fallbacks on 2026-10-24 were a scripts/ file merged by someone else while the check ran.
+        for path in ('scripts/verify-tests.py', 'scripts/lane-runner.py', '.github/workflows/lane.yml',
+                     'ops/testdesk/x.py', 'App/SpokenMarginsApp/Sources/Other.swift'):
+            with self.subTest(path):
+                self.setUp()
+                head, tested, tree = self.pr()
+                newest = self.move_next(path)
+                found, why = self.stands(head, newest, self.records(head, tested, tree))
+                self.assertEqual(why, '')
+                self.assertEqual(set(found), set(lane.HOSTED_FAST_CHECKS))
+
+    def test_a_base_commit_the_runner_lacks_is_fetched_not_read_as_another_tree(self):
+        # The job's checkout can be older than the tip a fresh hosted run merged onto: git merge-tree cannot merge a
+        # commit it lacks, and that read as "tested a tree that is not ..." (#2596: 4 of 7 fallbacks).
+        head, tested, tree = self.pr()
+        lagging = Path(self.temporary.name) / 'lagging'
+        subprocess.run(self.git + ['clone', '-q', '-b', 'main', str(self.origin), str(lagging)], check=True,
+                       capture_output=True)
+        subprocess.run(self.git + ['-C', str(lagging), 'fetch', '-q', str(self.tree), 'HEAD'], check=True)
+        newest = self.move_next('docs/notes.md')
+        expected = lane.merged_tree(self.tree, newest, head)
+        self.assertIsNotNone(expected)
+        self.assertIsNone(lane.merged_tree(lagging, newest, head))
+        self.assertEqual(lane.merged_tree(lagging, newest, head, fetch='main'), expected)
+        found, why = lane.hosted_fast_checks(None, lagging, 'main', head, newest, env=ON,
+                                             records=self.records(head, newest, expected))
+        self.assertEqual(why, '')
+        self.assertEqual(set(found), set(lane.HOSTED_FAST_CHECKS))
 
     def test_a_record_naming_a_next_the_runner_does_not_have_falls_back(self):
         head, tested, tree = self.pr()
@@ -282,7 +320,8 @@ class HostedChecksStandTests(unittest.TestCase):
 
 class RunAutomergeTests(unittest.TestCase):
     SCOPE = {'tier': 'T2', 'why': ['App/x.swift']}
-    FOUND = {'hosted fast: portable': {'plan': 'fast-portable', 'tree': 'e' * 40, 'base': 'd' * 40, 'head': 'a' * 40}}
+    FOUND = {name: {'plan': plan, 'tree': 'e' * 40, 'base': 'd' * 40, 'head': 'a' * 40}
+             for name, plan in lane.HOSTED_FAST_CHECKS.items()}
 
     def run_it(self, **kwargs):
         calls = []
@@ -425,15 +464,45 @@ class WorkflowTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertIn(f"name: '{name}'", self.hosted)
                 self.assertIn(f'::notice title={lane.HOSTED_TESTED_TITLE}::plan={plan} tree=', self.hosted)
-                self.assertIn(f'--plan {plan}', self.hosted)
+                for part in plan.split('+'):  # Mac rest records both plans it runs (#2596)
+                    self.assertIn(f'--plan {part}', self.hosted)
 
     def test_both_jobs_run_on_a_pr_only_from_this_repo_and_only_with_the_switch_on(self):
         guard = ("(github.event.pull_request.head.repo.full_name == github.repository && "
                  f"vars.{lane.HOSTED_FAST_SWITCH} == 'on')")
         # The pair, and the Mac-rest check (#2459), which runs on a PR only with LANE_HOSTED_MAC_REST `on` too.
-        self.assertEqual(self.hosted.count(guard), len(lane.HOSTED_FAST_CHECKS) + len(lane.HOSTED_REST_CHECK))
+        # plus the `scope` job (#2596), which has the same guard
+        self.assertEqual(self.hosted.count(guard), len(lane.HOSTED_FAST_CHECKS) + len(lane.HOSTED_REST_CHECK) + 1)
         self.assertIn(f"vars.{lane.HOSTED_REST_SWITCH} == 'on')", self.hosted)
         self.assertNotIn('pull_request_target:', self.hosted)
+
+    def test_a_red_portable_job_cancels_the_run_so_its_mac_jobs_free_their_slots(self):
+        # #2596: the cancel job runs on Linux, only after `portable` ended `failure`, and holds no more than actions: write.
+        # The Mac jobs may wait only for the ~20 s `scope` job: the lane runner gives a missing check only 5 minutes.
+        jobs = yaml.safe_load(self.hosted)['jobs']
+        stop = jobs['stop-macs-on-red']
+        self.assertEqual(stop['needs'], 'portable')
+        self.assertEqual(stop['runs-on'], 'ubuntu-latest')
+        self.assertEqual(stop['permissions'], {'actions': 'write'})
+        self.assertIn("needs.portable.result == 'failure'", stop['if'])
+        self.assertIn('gh run cancel', stop['steps'][0]['run'])
+        for name in ('sessionkit', 'mac-rest'):
+            self.assertEqual(self.slow_needs(jobs[name]), [], name)
+        # Only `scope` (a Linux job of about 20 seconds, #2650) may come first; any other need fails the check.
+        for allowed in ('scope', ['scope']):
+            copy = copy_module.deepcopy(jobs['mac-rest'])
+            copy['needs'] = allowed
+            self.assertEqual(self.slow_needs(copy), [], allowed)
+        for slow in ('portable', ['scope', 'portable'], ['sessionkit']):
+            copy = copy_module.deepcopy(jobs['mac-rest'])
+            copy['needs'] = slow
+            self.assertNotEqual(self.slow_needs(copy), [], slow)
+
+    @staticmethod
+    def slow_needs(job):
+        needs = job.get('needs', [])
+        needs = [needs] if isinstance(needs, str) else list(needs)
+        return [name for name in needs if name != 'scope']
 
     def test_no_workflow_runs_on_the_vps_test_runner_and_only_the_lane_open_pings_on_the_vps(self):
         # #2442: CI left the owner's VPS. linux-t1.yml is gone; the lane-open pings keep sm-vps for their shared state.

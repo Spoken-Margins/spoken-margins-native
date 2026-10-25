@@ -36,12 +36,32 @@ public struct LiveSession: Codable, Equatable, Sendable {
     public var startWhere: String?
     public var endWhere: String?
     public var margins: [LiveSessionMargin]
+    /// True for a quick session (#2487 slice 1a): one the phone made for a Margin taken with no session running.
+    /// Its span runs from its first Margin to its last. Optional, so `current.json` from an earlier build still
+    /// reads, and an earlier build reading this one ignores it.
+    public var isQuick: Bool?
+    /// The Library item this session was saved as. A saved session stays in the session store, so a late copy of
+    /// one of its Margins is still known, but takes no new Margins.
+    public var savedItemId: String?
+    /// The device that started it, "phone" or "watch" (#2487 slice 1b; WATCH.md 3.1). Nil reads as the phone. Like
+    /// the fields below it is optional, so an earlier build reads the session and ignores it.
+    public var ownerDevice: String?
+    /// Why it ended, when not by the listener on the phone: `LiveSessionWatchSessions.EndReason`.
+    public var endReason: String?
+    /// The end in plain words, when the phone ended a session the Watch started: "Lecture ended at 10:20, when you
+    /// started Meeting on iPhone". The Watch shows it.
+    public var endNote: String?
+    /// When Resume last reopened it (DESIGN section 2 point 6).
+    public var resumedAt: Date?
 
     public init(
         id: String, kind: ElsewhereKind = .meeting, title: String = "", startedAt: Date, endedAt: Date? = nil,
         startPositionMs: Int? = nil, endPositionMs: Int? = nil,
-        startWhere: String? = nil, endWhere: String? = nil, margins: [LiveSessionMargin] = []
+        startWhere: String? = nil, endWhere: String? = nil, margins: [LiveSessionMargin] = [],
+        isQuick: Bool? = nil, savedItemId: String? = nil
     ) {
+        self.isQuick = isQuick
+        self.savedItemId = savedItemId
         self.startPositionMs = startPositionMs
         self.endPositionMs = endPositionMs
         self.id = id
@@ -117,6 +137,15 @@ public struct LiveSessionMargin: Codable, Equatable, Sendable, Identifiable {
     public var durationMs: Int?
     /// Where it was spoken: "phone" or "watch". Nil for a written Margin or a Mark.
     public var spokenOn: String?
+    /// How it came to be filed here, when not simply during the session (#2487 slice 1a): "after the session
+    /// ended" or "moved from a quick session". Evidence for the listener and the export; never used to place it.
+    public var filingNote: String?
+    /// When the recording device's own clock said it was taken, before correcting for that clock (#2487 slice 1b;
+    /// DESIGN section 4 point 8). `markedAt` is the corrected time. Nil for a Margin taken on the phone.
+    public var deviceMarkedAt: Date?
+    /// How its time was corrected, when worth saying: "Watch clock 2.4 s ahead, corrected" or "Watch clock, not
+    /// checked". Evidence for the listener and the export; never used to place it.
+    public var clockNote: String?
 
     public init(
         id: String, text: String, markedAt: Date, sessionOffsetMs: Int = 0, whereNote: String? = nil, isBlindMark: Bool = false,
@@ -178,11 +207,17 @@ public enum LiveSessionStore {
 }
 
 extension JSONEncoder.DateEncodingStrategy {
-    /// ISO 8601 with milliseconds: Margin times need more than whole seconds.
+    /// ISO 8601 with milliseconds: Margin times need more than whole seconds. The format style truncates, and a
+    /// millisecond read back sits a hair under itself, so a date saved again lost a millisecond. The date is rounded to
+    /// the nearest millisecond first, and the fraction written from that whole number; the text has the same shape.
     static var iso8601withFractions: Self {
         .custom { date, encoder in
             var container = encoder.singleValueContainer()
-            try container.encode(Date.ISO8601FormatStyle(includingFractionalSeconds: true).format(date))
+            let ms = Int64((date.timeIntervalSince1970 * 1_000).rounded())
+            let (seconds, fraction) = ms.quotientAndRemainder(dividingBy: 1_000)
+            let (whole, rest) = fraction < 0 ? (seconds - 1, fraction + 1_000) : (seconds, fraction)
+            let text = Date.ISO8601FormatStyle().format(Date(timeIntervalSince1970: TimeInterval(whole)))
+            try container.encode(text.dropLast() + String(format: ".%03lldZ", rest))
         }
     }
 }
@@ -192,9 +227,13 @@ extension JSONDecoder.DateDecodingStrategy {
         .custom { decoder in
             let container = try decoder.singleValueContainer()
             let text = try container.decode(String.self)
-            if let date = try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(text) { return date }
-            if let date = try? Date.ISO8601FormatStyle().parse(text) { return date }
-            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Not an ISO 8601 date: \(text)")
+            let parsed = (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(text))
+                ?? (try? Date.ISO8601FormatStyle().parse(text))
+            guard let parsed else {
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: "Not an ISO 8601 date: \(text)")
+            }
+            // Back on the millisecond the text names, not a hair under it.
+            return Date(timeIntervalSince1970: (parsed.timeIntervalSince1970 * 1_000).rounded() / 1_000)
         }
     }
 }

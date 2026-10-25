@@ -140,6 +140,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import datetime
 import functools
 import hashlib
 import json
@@ -494,6 +495,9 @@ def fresh_rerun_outcome(rerun: dict) -> str:
     Default taken on PR #2179): that is a real failure, not a startup stall."""
     if rerun.get('boot'):
         return f'the fresh clone did not boot ({rerun["boot"]}); {TWO_STALLS_RULE}'
+    if rerun.get('not_ready'):
+        return (f'the fresh clone booted but failed its readiness step (verify-tests.py `{rerun["not_ready"]}`), so '
+                f'no test ran on it; {TWO_STALLS_RULE}')
     if rerun.get('verdict') == 'FAIL':
         failed = rerun.get('failed') or []
         return (f'fresh-clone rerun: {len(failed)} test(s) failed ({", ".join(failed)}); verdict FAIL (a failing '
@@ -570,6 +574,112 @@ def log_recovered_stalls(evidence: Path, pr: int, head: str, report_url: str, po
             except Exception as error:  # noqa: BLE001 - the report already says the stall happened
                 print(f'Could not log the recovered stall on #{STALL_ISSUE}: {error!r}', flush=True)
     return posted
+
+
+TALLY_ISSUE = 2176  # retry-passes are tallied here (owner, 2026-10-24); same issue and line format as the hosted integration run
+TALLY_PREFIX = 'flake-tally:'
+TALLY_WINDOW_DAYS = 7
+TALLY_THRESHOLD = 3
+TALLY_BOT = 'github-actions[bot]'
+TALLY_TRUSTED = ('OWNER', 'MEMBER', 'COLLABORATOR')
+
+
+def retry_passes(evidence: Path) -> list[str]:
+    """Every test that failed and then passed on a rerun, from the verify-* manifests under <evidence>
+    (a fresh-clone rerun is evidence only)."""
+    return sorted({t for output in evidence.glob('verify-*') if not output.name.endswith('-fresh')
+                   for step in _read_manifest(output).get('steps', []) for t in step.get('passed_on_retry') or []})
+
+
+def _tally_trusted(item: dict) -> bool:
+    """A comment or issue from a collaborator or the workflow's bot (#1822). The bot's author_association is NONE,
+    so it is matched by login; the lane opens its flake issues and posts its tallies as the bot."""
+    return (item.get('user') or {}).get('login') == TALLY_BOT or item.get('author_association') in TALLY_TRUSTED
+
+
+def tally_counts(comments: list[dict], now: datetime.datetime) -> dict[str, list[str]]:
+    """Retry-passes per test in the last 7 days -> their run ids. Only comments from a collaborator or the workflow's
+    bot count (#1822), so a stranger's look-alike line can't open an issue. The same run counts once per test.
+    The test is everything between the prefix and the last three fields, so a name with spaces still counts."""
+    seen: dict[str, dict[str, None]] = {}
+    window = datetime.timedelta(days=TALLY_WINDOW_DAYS)
+    for comment in comments:
+        if not _tally_trusted(comment):
+            continue
+        first = (comment.get('body') or '').splitlines()[:1]
+        parts = first[0].split() if first else []
+        if len(parts) < 5 or parts[0] != TALLY_PREFIX:
+            continue
+        try:
+            when = datetime.datetime.strptime(parts[-1], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
+        except ValueError:
+            continue
+        if now - window <= when <= now:
+            seen.setdefault(' '.join(parts[1:-3]), {})[parts[-2]] = None
+    return {test: list(runs) for test, runs in seen.items()}
+
+
+def log_retry_passes(evidence: Path, repo: str, head: str, run_id: str, tally, now=None) -> list[str]:
+    """One comment per retry-pass on #2176, then a `ready` Showcase issue for any test with 3 or more retry-passes in
+    7 days (owner, 2026-10-24; #2596). `tally` offers post(body), comments(), open_markers() and open_issue(title, body).
+
+    Best effort like log_recovered_stalls: the report is already posted, and nothing here can change the verdict.
+    Returns the issues opened.
+    """
+    opened: list[str] = []
+    try:
+        tests = retry_passes(evidence)
+        if not tests:
+            return opened
+        now = now or datetime.datetime.now(datetime.timezone.utc)
+        stamp = now.strftime('%Y-%m-%dT%H:%M:%SZ')
+        for test in tests:
+            tally.post(f'{TALLY_PREFIX} {test} {head[:7]} {run_id} {stamp}\n\n`{test}` passed on retry in lane run {run_id}.')
+        counts = tally_counts(tally.comments(), now)
+        marked = tally.open_markers()
+        for test in tests:
+            if len(counts.get(test, [])) >= TALLY_THRESHOLD and test not in marked:
+                name = test.rsplit('/', 1)[-1].removesuffix('()')
+                links = '\n'.join(f'- https://github.com/{repo}/actions/runs/{r}' for r in counts[test])
+                opened.append(tally.open_issue(
+                    'Flaky: ' + name[:110],
+                    f'<!-- flake-test: {test.replace("-->", "")} -->\n\n`{test}` failed on its first run and passed on a '
+                    f're-run in {len(counts[test])} runs in the last 7 days (tally on #{TALLY_ISSUE}). The run still counted '
+                    f'as a pass (owner, 2026-10-24), so fix the test or the code under it rather than leave it to retry.\n\n'
+                    f'Runs:\n{links}\n'))
+    except Exception as error:  # noqa: BLE001 - the report already names the retry-pass
+        print(f'Could not tally the retry-passes on #{TALLY_ISSUE}: {error!r}', flush=True)
+    return opened
+
+
+class RepoTally:
+    """log_retry_passes's GitHub side: #2176's comments and the open flake issues."""
+
+    def __init__(self, repo: str):
+        self.repo = repo
+        self.client = Repo(repo)
+
+    def post(self, body: str) -> None:
+        self.client.comment(TALLY_ISSUE, body)
+
+    def comments(self) -> list[dict]:
+        return self.client.issue_comments(TALLY_ISSUE)
+
+    def open_markers(self) -> set[str]:
+        lines = self.client.api('--paginate', '--jq',
+                                '.[] | select(.pull_request == null) | {body, author_association, '
+                                'user: {login: .user.login}} | @json',
+                                f'repos/{self.repo}/issues?state=open&per_page=100')
+        issues = [json.loads(line) for line in lines.splitlines() if line.strip()]
+        return {m for issue in issues if _tally_trusted(issue)
+                for m in re.findall(r'<!-- flake-test: (.+?) -->', issue.get('body') or '')}
+
+    def open_issue(self, title: str, body: str) -> str:
+        done = subprocess.run(['gh', 'issue', 'create', '-R', self.repo, '--title', title, '--body', body,
+                               '--label', 'ready', '--milestone', 'Showcase'], capture_output=True, text=True)
+        if done.returncode:
+            raise RuntimeError(done.stderr.strip()[:200])
+        return done.stdout.strip()
 
 
 def flush_ledger(pr: int, head: str, post) -> list[str]:
@@ -1053,7 +1163,16 @@ HOSTED_FAST_CHECKS = {'hosted fast: portable': 'fast-portable',
 # #2459: the third hosted check, --plan fast-mac-rest on a GitHub-hosted Mac (hosted-portable.yml `mac-rest`). With
 # it, the automerge job runs on hosted Linux and runs no test itself. Anything but `on` keeps merging on the build Mac.
 HOSTED_REST_SWITCH = 'LANE_HOSTED_MAC_REST'
-HOSTED_REST_CHECK = {'hosted fast: Mac rest': 'fast-mac-rest'}
+# The plan it records names both plans it runs (#2596): the job before SessionKit core moved into it recorded
+# fast-mac-rest with no core tests, so such a record, still on a PR from before the move, must not stand for them.
+HOSTED_REST_CHECK = {'hosted fast: Mac rest': 'fast-hosted-sessionkit+fast-mac-rest'}
+# #2596: a diff with no Swift inputs needs only this one. The two Mac jobs are skipped for it (hosted-portable.yml's
+# `scope` job asks the same test-scope.py function), so the runner must not wait for them or fall back to the build Mac.
+HOSTED_PORTABLE_CHECK = {'hosted fast: portable': 'fast-portable'}
+# SessionKit core and Mac rest run as one hosted Mac job (#2596): with LANE_HOSTED_MAC_REST `on` a Swift diff needs only
+# these two checks. The Mac-rest job records plan fast-hosted-sessionkit+fast-mac-rest after running both. The pair
+# (HOSTED_FAST_CHECKS) is what the `sessionkit` job still records with the variable off.
+HOSTED_MERGED_CHECKS = {**HOSTED_PORTABLE_CHECK, **HOSTED_REST_CHECK}
 HOSTED_TESTED_TITLE = 'lane-hosted-tested'
 HOSTED_TESTED = re.compile(r'^plan=(\S+) tree=([0-9a-f]{40}) parents=([0-9a-f]{40}) ([0-9a-f]{40})\s*$')
 
@@ -1067,6 +1186,26 @@ def hosted_rest_on(env=None) -> bool:
     LANE_HOSTED_MAC_REST is `on`. test-scope.py's hosted_merge_routing reads the same two variables."""
     env = os.environ if env is None else env
     return hosted_fast_on(env) and env.get(HOSTED_REST_SWITCH, '').strip().lower() == 'on'
+
+
+def hosted_check_set(tree: Path, base: str) -> tuple[dict, str | None]:
+    """(the hosted checks a merge waits for, why the Mac ones are not among them or None) for the PR in <tree>.
+
+    #2596: when every changed path is one the Mac checks can ignore (test-scope.py mac_checks_required, from the
+    base branch like the other policies), only the portable check is required, and the reason is printed. Anything
+    that goes wrong, or a base without the function yet, requires all three: a skipped Mac job is never read as a pass
+    (a "skipped" conclusion still stops hosted_fast_records), only left out when the diff cannot need it."""
+    full = HOSTED_MERGED_CHECKS
+    try:
+        policy = base_policy(tree, base, 'scripts/test-scope.py')
+        required = getattr(policy, 'mac_checks_required', None)
+        if required is None:
+            return full, None
+        paths, _ = committed_changes(tree, base)
+        needed, why = required(paths)
+    except Exception:  # noqa: BLE001 - any doubt requires the Mac checks
+        return full, None
+    return (full, None) if needed else (HOSTED_PORTABLE_CHECK, why)
 
 
 def hosted_tested(annotations: list[dict]) -> dict | None:
@@ -1103,10 +1242,24 @@ def hosted_fast_records(github, head: str, checks: dict = HOSTED_FAST_CHECKS) ->
     return found, ''
 
 
-def merged_tree(tree: Path, base: str, head: str) -> str | None:
-    """The tree of <head> merged onto <base>, as a merge commit would hold it; None on a conflict."""
-    done = subprocess.run(['git', '-C', str(tree), 'merge-tree', '--write-tree', base, head],
-                          capture_output=True, text=True)
+def merged_tree(tree: Path, base: str, head: str, fetch: str | None = None) -> str | None:
+    """The tree of <head> merged onto <base>, as a merge commit would hold it; None on a conflict.
+
+    <fetch>: the branch <base> is a tip of. A fresh hosted run merges the PR onto the newest tip of it, which can be
+    newer than the checkout this job started with, and git merge-tree cannot merge a commit it lacks: that read as
+    "tested a tree that is not ..." three runs in a row (#2596: 4 of 7 fallbacks). When <base> is missing, the branch is
+    fetched once and the merge tried again."""
+    def merge():
+        return subprocess.run(['git', '-C', str(tree), 'merge-tree', '--write-tree', base, head],
+                              capture_output=True, text=True)
+    done = merge()
+    if done.returncode != 0 and fetch:
+        lacks = subprocess.run(['git', '-C', str(tree), 'cat-file', '-e', f'{base}^{{commit}}'],
+                               capture_output=True).returncode != 0
+        if lacks:
+            subprocess.run(git_with_token(tree) + ['fetch', '--no-tags', '--quiet', 'origin', fetch],
+                           capture_output=True)
+            done = merge()
     return done.stdout.split('\n', 1)[0].strip() if done.returncode == 0 else None
 
 
@@ -1160,11 +1313,11 @@ def _fast_checks_stand(github, tree: Path, base: str, head: str, base_sha: str, 
         if found is None:
             return None, why
         for name, record in found.items():
-            if merged_tree(tree, record['base'], head) != record['tree']:
+            if merged_tree(tree, record['base'], head, fetch=base) != record['tree']:
                 return None, (f'"{name}" tested a tree that is not {head[:7]} merged onto {base} at '
                               f'{record["base"][:7]}')
             if record['base'] != base_sha:
-                skipped, why = untested_moves(tree, record['base'], base_sha, head)
+                skipped, why = untested_moves(tree, record['base'], base_sha, head, hosted=True)
                 if skipped is None:
                     return None, f'"{name}" tested it on {base} at {record["base"][:7]}, and {base} since: {why}'
                 record['moved'] = skipped
@@ -1176,6 +1329,9 @@ def _fast_checks_stand(github, tree: Path, base: str, head: str, base_sha: str, 
 def hosted_fast_ran(found: dict) -> str:
     bases = sorted({record['base'][:7] for record in found.values()})
     where = sorted({record.get('runner', 'GitHub-hosted') for record in found.values()})
+    if set(found) == set(HOSTED_PORTABLE_CHECK):
+        return (f'host tests ({" and ".join(where)}: --plan fast-portable with next at {", ".join(bases)}; the SessionKit '
+                'and Mac-rest checks were not required: no Swift inputs; none on the Mac)')
     if set(HOSTED_REST_CHECK) <= set(found):
         return (f'host tests ({" and ".join(where)}: --plan fast-portable, SessionKitCoreTests and --plan fast-mac-rest '
                 f'with next at {", ".join(bases)}; none on the Mac)')
@@ -1188,7 +1344,7 @@ def hosted_fast_lines(found: dict) -> list[str]:
     for name, record in found.items():
         moved = record.get('moved')
         since = (f'; next\'s {len(moved)} commit{"s" if len(moved) != 1 else ""} since touch none of this PR\'s files '
-                 'and no build inputs its checks read' if moved else '')
+                 'and no project.yml, Package.swift, Package.resolved or lockfile' if moved else '')
         lines.append(f'{record.get("runner", "GitHub-hosted")} check "{name}": PASS on this head merged with next at {record["base"][:7]} '
                      f'(tree {record["tree"][:7]}){since}. {record.get("url", "")}'.rstrip())
     return lines
@@ -1204,7 +1360,9 @@ HOSTED_MISSING_GRACE = 5 * 60
 HOSTED_FAILED = re.compile(r'" ended (failure|timed_out) on ')
 HOSTED_MISSING = re.compile(r'^no ".+" check ran on ')
 # What _fast_checks_stand says when a check passed on an older next whose commits since can matter.
-HOSTED_STALE = re.compile(r'" tested (a tree that is not|it on .+ and .+ since: )')
+# A check that passed but wrote no `lane-hosted-tested` notice (a dispatch without the `base` input, or an older
+# workflow file) is run again the same way: it cannot be matched to a tree, and a fresh run on the newest base can.
+HOSTED_STALE = re.compile(r'" tested (a tree that is not|it on .+ and .+ since: )|" on .+ did not record that it tested ')
 HOSTED_WORKFLOW = 'hosted-portable.yml'
 HOSTED_REDISPATCHES = 3  # fresh runs per job when next keeps moving under them; then the Mac fallback takes it
 NEEDS_MAC = 'NEEDS_MAC'  # the hosted automerge job's cue to hand the run to lane.yml's automerge-mac job
@@ -1230,18 +1388,21 @@ def pr_moved_on(github, head: str) -> str | None:
 def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, alive, dispatch, env=None,
                        records=hosted_fast_records, wait: float | None = None, poll: float = HOSTED_FAST_POLL,
                        grace: float = HOSTED_MISSING_GRACE, clock=time.monotonic, sleep=time.sleep,
-                       out=sys.stdout, checks: dict | None = None) -> tuple[dict | None, str]:
-    """(all three hosted checks standing for <head> merged onto <base> at <base_sha>, '') or (None, why not), for the
+                       out=sys.stdout, checks: dict | None = None, newest_base=None) -> tuple[dict | None, str]:
+    """(the portable and Mac-rest hosted checks standing for <head> merged onto <base> at <base_sha>, '') or (None, why not), for the
     hosted automerge job (#2459). It never runs a test. While a check is still running, or missing within <grace>,
     it waits, up to <wait> seconds (HOSTED_REST_WAIT in a lane job, else none). When one passed on an older next that
     has since moved in ways that matter, it calls dispatch() (up to HOSTED_REDISPATCHES times: a fresh run of hosted-portable.yml on the PR's
     branch, merged onto <base>) and waits for that. alive() names why to stop (the PR moved on, say) or is falsy.
-    checks: the checks to wait for, all three by default; the hosted pair alone (HOSTED_FAST_CHECKS) when the hosted
-    job only waits for them before handing the run to the build Mac (LANE_HOSTED_MAC_REST off)."""
+    checks: the checks to wait for, the portable check and "hosted fast: Mac rest" by default (#2596); the hosted pair alone (HOSTED_FAST_CHECKS) when the hosted
+    job only waits for them before handing the run to the build Mac (LANE_HOSTED_MAC_REST off).
+    newest_base: a callable that fetches and returns the base branch's tip. Each poll compares the checks with it, not
+    with the tip this job started on, because a fresh run is merged onto the newest tip and main moves while the job
+    waits (#2596). The caller reads back the tip the last poll used."""
     env = os.environ if env is None else env
     if wait is None:
         wait = HOSTED_REST_WAIT if env.get('GITHUB_ACTIONS') == 'true' else 0
-    checks = {**HOSTED_FAST_CHECKS, **HOSTED_REST_CHECK} if checks is None else checks
+    checks = HOSTED_MERGED_CHECKS if checks is None else checks
     started = clock()
     deadline = started + wait
     dispatches, dispatched_at, running_seen = 0, started, False
@@ -1249,6 +1410,11 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
         stop = alive()
         if stop:
             return None, stop
+        if newest_base is not None:
+            try:
+                base_sha = newest_base()
+            except (OSError, subprocess.SubprocessError):
+                pass  # keep comparing with the tip we have; the push says if it moved
         found, why = _hosted_fast_checks_once(github, tree, base, head, base_sha, env, records, checks)
         if found is not None or HOSTED_FAILED.search(why):
             return found, why
@@ -1674,11 +1840,27 @@ def counts_for_pr(path: str, pr_paths) -> bool:
     return path not in HOST_UNREAD_SCRIPTS or widens_host_checks(pr_paths)
 
 
-def untested_moves(tree: Path, tested_base: str, new_base: str, head: str) -> tuple[list[str] | None, str]:
+# #2596 (Default taken 5): what makes a hosted check run on an older <base> stale. The runner re-runs the hosted checks
+# on the newest <base> when one is, and <base> merged a PR about every 20 minutes while a check takes 10 to 25, so
+# almost every check went stale on some unrelated scripts/ file (6 of 7 fallbacks on 2026-10-24). Only a commit that
+# changes what every PR is built or resolved from can invalidate a check through a file the PR doesn't touch. What
+# this lets through is a clash between two PRs' separate files, which the hosted integration run on every merged tip
+# catches (#2590), as the owner's call has it: merged tips are tested end to end.
+HOSTED_GLOBAL_INPUT_NAMES = {'Package.swift', 'Package.resolved', 'package.json', 'package-lock.json'}
+
+
+def is_hosted_global_input(path: str) -> bool:
+    return path == 'project.yml' or Path(path).name in HOSTED_GLOBAL_INPUT_NAMES
+
+
+def untested_moves(tree: Path, tested_base: str, new_base: str, head: str,
+                   hosted: bool = False) -> tuple[list[str] | None, str]:
     """(next's commits since <tested_base>, '') when they can't change what the PR's test showed, else (None, why).
 
     They can't when they touch none of the PR's files and no build input its checks read (counts_for_pr). Each
     first-parent commit counts with everything it brought in, so a merge of another PR counts with that PR's files.
+    <hosted>: the test was a hosted check (hosted-portable.yml), and only the global inputs count
+    (is_hosted_global_input), not every scripts/ file.
     """
     git = ['git', '-C', str(tree)]
     if subprocess.run(git + ['merge-base', '--is-ancestor', tested_base, new_base], capture_output=True).returncode:
@@ -1701,7 +1883,7 @@ def untested_moves(tree: Path, tested_base: str, new_base: str, head: str) -> tu
     shared = sorted(touched & mine)
     if shared:
         return None, f'its commits touch this PR\'s files ({", ".join(shared[:5])})'
-    inputs = sorted(p for p in touched if counts_for_pr(p, mine))
+    inputs = sorted(p for p in touched if (is_hosted_global_input(p) if hosted else counts_for_pr(p, mine)))
     if inputs:
         return None, f'its commits touch build inputs ({", ".join(inputs[:5])})'
     return commits, ''
@@ -1803,6 +1985,7 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                 f'Merge {base} into your branch and push; the automerge label runs it again.']
         rest = rest_hosted  # merge on the three hosted checks, testing nothing here (#2459)
         pair = False  # wait here for the hosted pair, then hand the run to the build Mac (#2459, Mac rest off)
+        only_portable = None  # why the Mac checks are not required for this diff (#2596), when they are not
         if hosted:
             # Recheck with the current base's policy on every merge attempt, including reused checks.
             policy = base_policy(ROOT, base, 'scripts/test-scope.py')
@@ -1814,6 +1997,12 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                 else:
                     return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', [
                         'The current diff requires the Mac; remove and re-add automerge to route it again.']
+        if (rest or pair) and hosted_fast_on():
+            _, only_portable = hosted_check_set(ROOT, base)
+            if only_portable:  # merge on the portable check alone, with the Mac off: the Mac jobs were skipped
+                rest, pair = True, False
+                if only_portable not in notes:
+                    notes.append(only_portable)
         if skipped is None:
             if rest or pair:
                 held = t3_gate(comments) if attempt == 1 else None
@@ -1822,15 +2011,34 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                         f'not merged: {held[1]}.',
                         'This run tested nothing and took no Mac: the T3 PASS\'s merge runs the host tests then, '
                         'or merges on the hosted checks that stand for this head.']
+                latest = {'sha': base_sha}  # the tip the checks were last compared with (hosted_rest_checks)
+
+                def newest_base():
+                    latest['sha'] = fetch_base(ROOT, base)
+                    return latest['sha']
                 found, why = hosted_rest_checks(github, ROOT, base, head, base_sha, wait=rest_wait,
                                                 alive=lambda: pr_moved_on(github, head),
                                                 dispatch=lambda: github.dispatch_hosted_checks(pull['head']['ref'],
                                                                                                base),
-                                                **({'checks': HOSTED_FAST_CHECKS} if pair else {}))
+                                                newest_base=newest_base,
+                                                **({'checks': HOSTED_FAST_CHECKS} if pair else
+                                                   {'checks': HOSTED_PORTABLE_CHECK} if only_portable else {}))
                 if why.startswith(MOVED_ON):
                     return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', notes + [f'not merged: {why}']
                 if not found:
                     return hosted_checks_missing(why, NEEDS_MAC if hosted else 'INCONCLUSIVE')
+                if latest['sha'] != base_sha:
+                    # main moved while the job waited: the checks stand for the tip they were compared with, so the
+                    # merge commit is built on that tip, not the one this job started on (#2596).
+                    base_sha = latest['sha']
+                    if context is not None:
+                        context.tested_base = base_sha
+                    remember_tested(base, base_sha)
+                    merge_sha, conflicts = build_merge_commit(ROOT, base, head, pr, pull.get('title', ''))
+                    if conflicts:
+                        return 'INCONCLUSIVE', 'no simulator', 'nothing', notes + [
+                            f'The PR does not merge cleanly into {base} ({base_sha[:7]}): {", ".join(conflicts[:10])}. '
+                            f'Merge {base} into your branch and push; the automerge label runs it again.']
                 if pair:  # the build Mac takes the hosted pair's PASS and runs only --plan fast-mac-rest
                     return NEEDS_MAC, 'hosted Linux runner', 'nothing', notes + [
                         f'the hosted fast pair passed on {head[:7]} with {base} at '
@@ -1995,7 +2203,8 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
         rest = False
         if reason and hosted_rest_on():
             found, _ = hosted_rest_checks(github, ROOT, base, head, base_sha, alive=lambda: None,
-                                          dispatch=lambda: 'not from here', wait=0)
+                                          dispatch=lambda: 'not from here', wait=0,
+                                          checks=hosted_check_set(ROOT, base)[0])
             rest = found is not None
             reason = None if rest else reason
         if reason and hosted:  # the hosted job never runs the Mac's host tests: the Mac's release run does
@@ -2450,7 +2659,9 @@ def failed_step_errors(manifest: dict, output: Path, limit: int = 3) -> list[str
 
 def t3_verdict(summaries: list[dict], statuses: list[str]) -> str:
     if statuses and all(status == 'verified' for status in statuses):
-        return 'PASS'
+        # Every plan in `grouped` holds part of a requested selector, so a plan that is verified yet passed no test ran
+        # nothing it was asked to (#2596: a class that "ran" 0 tests in the adapters plan was a PASS).
+        return 'FAIL' if any(not s['passed'] for s in summaries) else 'PASS'
     # A plan that lost its simulator failed for the lane's reasons (#411: exit 70 when the device vanished).
     if any((s['failed'] or s['build_failed']) and not s.get('device_lost') for s in summaries):
         return 'FAIL'
@@ -2458,6 +2669,11 @@ def t3_verdict(summaries: list[dict], statuses: list[str]) -> str:
 
 
 READINESS_STEPS = ('simulator-boot', 'simulator-ready')
+
+
+def failed_step_name(manifest: dict) -> str | None:
+    """The first step of a verify-tests.py manifest that exited non-zero; a readiness step that ran out of time counts too."""
+    return next((step.get('name') for step in manifest.get('steps', []) if step.get('exit_code')), None)
 
 
 def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
@@ -2504,6 +2720,7 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
                            f'{stall.get("after_seconds")}s after launch); the first retry passed '
                            f'{found["passed"]} test(s), which counts as a PASS (owner\'s call 2026-10-11). Logged '
                            f'on #{STALL_ISSUE}. evidence: {output}/{found["step"]}-stall-{stall.get("attempt")}/')
+        retried = sorted({t for step in manifest.get('steps', []) for t in step.get('passed_on_retry') or []})
         for test in summary['failed'][:10]:
             details.append(f'{test} — expected: passes. observed: failed. evidence: {output}/tests.xcresult')
         if summary['out_of_time']:
@@ -2512,9 +2729,14 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
             details.append(f'{plan}: the {what} ran out of its own {duration(limit)} budget (verify-tests.py `{step}`) '
                            f'after {summary["passed"]} passing test{"s" if summary["passed"] != 1 else ""}. '
                            'The simulator\'s boot has a separate budget and had finished before it started.')
+        if manifest.get('status') == 'verified' and not summary['passed']:
+            details.append(f'{plan}: ran 0 of the requested tests ({", ".join(s.split("/", 1)[-1] for s in selectors)}); '
+                           f'a requested test that does not run is a FAIL (#2596). evidence: {output}/manifest.json')
         if manifest.get('status') != 'verified' and not summary['failed']:
             details.append(f'{plan}: {manifest.get("error") or manifest.get("status")}. evidence: {output}/manifest.json')
             details += [f'{plan}: {line}' for line in failed_step_errors(manifest, output)]
+        # owner, 2026-10-24 (#2596): fail-then-pass on a rerun is a pass, and every report names it, or says none
+        details.append(f'{plan}: passed on retry: {", ".join(retried) if retried else "none"}')
         if summary['flood']:
             skipped = [p for p, _ in plans[position + 1:]]
             if skipped:
@@ -2522,14 +2744,18 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
                 statuses.append('not run')
             break
         if manifest.get('status') != 'verified':
-            stopped_at = next((step.get('name') for step in manifest.get('steps', []) if step.get('exit_code')),
-                              None)  # a readiness step that ran out of time counts too
+            stopped_at = failed_step_name(manifest)
             gone = not device_available()
-            if gone or stopped_at in READINESS_STEPS or (rerun and rerun.get('boot')):
+            # A fresh clone that booted but failed readiness is like one that won't boot: the stalled run's own
+            # steps passed readiness, so they can't show it (#2530).
+            fresh_unusable = rerun and (rerun.get('boot') or rerun.get('not_ready'))
+            if gone or stopped_at in READINESS_STEPS or fresh_unusable:
                 summary['device_lost'] = True
                 skipped = [p for p, _ in plans[position + 1:]]
                 why = ('the fresh simulator is gone (no longer listed by `simctl list devices available`)' if gone
                        else 'the fresh clone for a rerun did not boot' if rerun and rerun.get('boot')
+                       else 'the fresh clone for a rerun booted but was not ready '
+                            f'(verify-tests.py `{rerun["not_ready"]}`)' if fresh_unusable
                        else f'the fresh simulator was not ready (verify-tests.py `{stopped_at}`)')
                 details.append(f'{plan}: {why}, so this is the lane\'s fault, not the PR\'s'
                                + (f'; not run: {", ".join(skipped)}.' if skipped else '.'))
@@ -2730,6 +2956,9 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
             if shown['failed']:
                 rerun['verdict'] = 'FAIL'
                 return {**fresh, 'fresh_clone_rerun': rerun}
+            if fresh.get('status') != 'verified' and failed_step_name(fresh) in READINESS_STEPS:
+                rerun['not_ready'] = failed_step_name(fresh)  # the later plans would only fail to find a ready device (#2530)
+                return {**manifest, 'fresh_clone_rerun': rerun}
             if shown['flood']:  # still INCONCLUSIVE (nothing failed), but the flood must stop the later plans
                 return {**fresh, 'fresh_clone_rerun': rerun}
             return {**manifest, 'fresh_clone_rerun': rerun}  # two stalls: the stalled run's INCONCLUSIVE stands
@@ -3177,18 +3406,55 @@ def runner_device_claimed(name: str) -> bool:
     return False
 
 
+SWEEP_SIMCTL_TIMEOUT = 120  # seconds, as the old shutdown and delete had; a healthy `simctl list` takes about one
+
+
 def sweep_runner_simulators() -> None:
-    """Delete simulators earlier runner jobs left behind; a running job's claimed device stays (#440)."""
-    devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', '--json'], text=True))
-    for group in devices.get('devices', {}).values():
-        for device in group:
-            if device.get('name', '').startswith(RUNNER_SIMULATOR_PREFIX):
-                if runner_device_claimed(device['name']):
-                    print(f'Left {device["name"]} alone: a running T3 job holds it')
-                    continue
-                subprocess.run(['xcrun', 'simctl', 'shutdown', device['udid']], capture_output=True, timeout=120)
-                subprocess.run(['xcrun', 'simctl', 'delete', device['udid']], capture_output=True, timeout=120)
-                print(f'Deleted leftover simulator {device["name"]}')
+    """Delete simulators earlier runner jobs left behind; a running job's claimed device stays (#440).
+
+    Every simctl call is bounded and runs in its own process group, and the sweep is skipped, never fatal,
+    when simctl can't answer: after an Xcode update left CoreSimulator older than Xcode wanted, the bare
+    `simctl list` here ran `xcodebuild -runFirstLaunch` and waited on a password dialog forever (#2591)."""
+    try:
+        import simctl_preflight
+    except ImportError as error:  # a tree without the helper; the next job's tree sweeps instead
+        print(f'Skipped the leftover-simulator sweep: {error}')
+        return
+    why = simctl_preflight.problem()
+    if why:
+        print(f'Skipped the leftover-simulator sweep: {why}')
+        return
+
+    def simctl(*args: str) -> str | None:  # None when simctl failed; a timeout stops the whole sweep
+        command = ['xcrun', 'simctl', *args]
+        try:
+            return simctl_preflight.bounded_output(command, timeout=SWEEP_SIMCTL_TIMEOUT)
+        except (subprocess.CalledProcessError, OSError) as error:
+            print(f'`{" ".join(command)}` failed: {error}')
+            return None
+
+    try:
+        listing = simctl('list', 'devices', '--json')
+        if listing is None:
+            return
+        try:
+            devices = json.loads(listing)
+        except ValueError:
+            print('Skipped the leftover-simulator sweep: `simctl list devices --json` did not print JSON')
+            return
+        for group in devices.get('devices', {}).values():
+            for device in group:
+                if device.get('name', '').startswith(RUNNER_SIMULATOR_PREFIX):
+                    if runner_device_claimed(device['name']):
+                        print(f'Left {device["name"]} alone: a running T3 job holds it')
+                        continue
+                    simctl('shutdown', device['udid'])  # fails harmlessly on a device already shut down
+                    if simctl('delete', device['udid']) is not None:
+                        print(f'Deleted leftover simulator {device["name"]}')
+    except subprocess.TimeoutExpired as stuck:
+        print(f'Stopped the leftover-simulator sweep: `{" ".join(stuck.cmd)}` gave no answer in '
+              f'{SWEEP_SIMCTL_TIMEOUT} s and was killed with its process group; if a password dialog is '
+              f'showing, {simctl_preflight.FIX}.')
 
 
 TESTED_RECORD: Path | None = None  # main() sets it to a file in this job's RUNNER_TEMP
@@ -3309,8 +3575,16 @@ def merge_base_branch(tree: Path, base: str) -> list[str]:
     return conflicts or [merged.stderr.strip().splitlines()[-1] if merged.stderr.strip() else 'the merge failed']
 
 
-def record_outcome(verdict: str) -> None:
-    """Hand the verdict to the workflow, whose Verdict step makes the check red on FAIL (#184).
+def is_hold(verdict: str, details: list[str]) -> bool:
+    """Whether an INCONCLUSIVE report is a deliberate wait, not a lane that did not run: the run said "not merged: ..."
+    (held for T3 or an audit, owner-merge files, the PR moved on). Such a PR is not failing, so its check stays
+    green with a warning that it was held; sm_status.py and owner_tap_alert.py read a red check as a failing PR."""
+    return verdict == 'INCONCLUSIVE' and any(str(line).startswith('not merged') for line in details)
+
+
+def record_outcome(verdict: str, held: bool = False) -> None:
+    """Hand the verdict to the workflow, whose Verdict step makes the check red on FAIL (#184) and, since #2596, on
+    any INCONCLUSIVE that is not a hold (held=True): a lane that tested nothing must not show green.
 
     The script itself exits 0 once it has reported, so a lane.yml from before this change (on a PR that
     hasn't merged next) stays green on FAIL, as before, instead of posting "stopped before reporting".
@@ -3318,7 +3592,7 @@ def record_outcome(verdict: str) -> None:
     outputs = os.environ.get('GITHUB_OUTPUT')
     if outputs:
         with open(outputs, 'a') as handle:
-            handle.write(f'reported=true\nverdict={verdict}\n')
+            handle.write(f'reported=true\nverdict={verdict}\nheld={str(held).lower()}\n')
 
 
 def request_name(pr: int, run_id: str, attempt: str | None) -> str:
@@ -3569,7 +3843,8 @@ def main(argv=None) -> int:
     if request['tier'] == 'T3':
         log_recovered_stalls(evidence, args.pr, head, t3_url, lambda text: Repo(repo).comment(STALL_ISSUE, text),
                              verdict)
-    record_outcome(verdict)
+        log_retry_passes(evidence, repo, head, os.environ.get('GITHUB_RUN_ID') or f'pr{args.pr}', RepoTally(repo))
+    record_outcome(verdict, is_hold(verdict, moved + details))
     _, desk_waiting = pending_requests(github.comments())
     if explicit:
         github.relabel(RUNNING, QUEUED if desk_waiting else None)

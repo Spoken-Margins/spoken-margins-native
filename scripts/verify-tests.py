@@ -46,6 +46,16 @@ PLANS = {
     'journeys': ('SpokenMarginsReleaseTests', 'Release', 1800),
 }
 
+PLAN_TIMEOUT_ENV = 'SM_PLAN_TIMEOUT_SECONDS'
+
+
+def plan_timeout(default: int) -> int:
+    """The test step's time budget: PLANS' own, unless the caller sets SM_PLAN_TIMEOUT_SECONDS to a positive whole
+    number of seconds. PLANS' budgets are the owner's Mac; the hosted integration run (hosted-integration.yml) sets
+    it, because its 3-core hosted Mac ran the whole app plan past the 600 s budget and cut it off (#2596)."""
+    raw = os.environ.get(PLAN_TIMEOUT_ENV, '').strip()
+    return int(raw) if raw.isdigit() and int(raw) > 0 else default
+
 # A run waits at most this long for a Mac-wide build slot, then fails rather than hanging.
 BUILD_SLOT_WAIT_SECONDS = 1800
 
@@ -278,10 +288,18 @@ def test_records(log):
             previous = records[identifier]
             attempts = previous.setdefault('attempts', [dict(previous)])
             attempts.append(result)
-            # A passing retry must never erase the original failure or skip.
-            previous['status'] = next(s for s in ('failed', 'skipped', 'passed')
-                                      if any(a['status'] == s for a in attempts))
-            previous['seconds'] = sum(a['seconds'] for a in attempts)
+            seconds_total = sum(a['seconds'] for a in attempts)
+            if result['status'] == 'passed' and any(a['status'] == 'failed' for a in attempts[:-1]) \
+                    and not any(a['status'] == 'skipped' for a in attempts):
+                # Owner, 2026-10-24: a test that fails and then passes on a rerun counts as a pass (#2596). The report
+                # names it. A skip, or a failing last attempt, still counts as before.
+                previous['status'] = 'passed'
+                previous['passed_on_retry'] = True
+            else:
+                previous['status'] = next(s for s in ('failed', 'skipped', 'passed')
+                                          if any(a['status'] == s for a in attempts))
+                previous.pop('passed_on_retry', None)
+            previous['seconds'] = seconds_total
         else:
             records[identifier] = result
     return records
@@ -361,12 +379,21 @@ def xcresult_test_records(payload):
                 if not bundle or not re.fullmatch(r'\w+/test\w+', name):
                     raise ValueError(f'Unknown xcresult test identifier: {bundle}/{name}')
                 identifier = f'{bundle}/{name}'
-                result = {'status': worst([status(node), *attempts(node)]),
+                runs = list(attempts(node))
+                retried = len(runs) > 1 and runs[-1] == 'passed' and 'failed' in runs[:-1] and 'skipped' not in runs
+                # Owner, 2026-10-24 (#2596): fail-then-pass on a rerun is a pass; fail-then-fail stays failed.
+                result = {'status': 'passed' if retried else worst([status(node), *runs]),
                           'seconds': float(node.get('durationInSeconds', 0))}
+                if retried:
+                    result['passed_on_retry'] = True
                 if identifier in records:
                     previous = records[identifier]
                     result['status'] = worst([previous['status'], result['status']])
                     result['seconds'] += previous['seconds']
+                    if result['status'] != 'passed' or not (previous.get('passed_on_retry') or result.get('passed_on_retry')):
+                        result.pop('passed_on_retry', None)
+                    else:
+                        result['passed_on_retry'] = True
                 records[identifier] = result
             else:
                 visit(node.get('children', []), bundle)
@@ -391,6 +418,10 @@ def completed_test_records(log, result_bundle):
             previous = records[identifier]
             previous['status'] = next(s for s in ('failed', 'skipped', 'passed')
                                       if s in (previous['status'], result['status']))
+            if previous['status'] == 'passed' and result.get('passed_on_retry'):
+                previous['passed_on_retry'] = True
+            elif previous['status'] != 'passed':
+                previous.pop('passed_on_retry', None)
     return records, payload
 
 
@@ -489,7 +520,8 @@ RUNNER_TEST_TRIGGERS = ('scripts/', '.github/', '.gitignore')
 # Packages/ and App/; the BUILDING.md test reads that file, README.md, package.json, .gitattributes,
 # the hosted workflow and the App Group names in App/; the SessionKit pass key's reader guard reads every
 # Swift file of the package (re-measured 2026-10-09; the guard added 2026-10-10, #1328), and the
-# starter-catalog test reads Site/onboarding/ and research/B1/ (#1732). A diff that touches those inputs
+# starter-catalog test reads Site/onboarding/ and research/B1/ (#1732); the task-cost map test reads
+# docs/task-cost-map.json and App/ (#2396). A diff that touches those inputs
 # (and no lane path) runs just
 # these (a module, or a module.Class); the rest of the suite reads only scripts/.
 # To re-measure the list, copy scripts/, .github/ and .gitignore into a fresh git repository, run
@@ -502,15 +534,18 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
                        'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved',
                        'test_building_md', 'test_third_party_notices', 'test_main_thread_reads',
+                       'test_repeat_trigger_scan',
                        'test_starter_catalog',
                        # The accessibility source scans read App/ Swift files (#2041).
                        'test_screen_change_cue', 'test_selected_trait', 'test_screen_title_heading',
                        'test_row_accessibility_actions', 'test_voiceover_label_nits',
                        'test_increase_contrast_wiring', 'test_reduce_motion', 'test_tap_target_styles',
                        # The article-entry inventory reads App/ Swift files (#2363).
-                       'test_article_entry_followups')
+                       'test_article_entry_followups',
+                       # The task-cost map checks its controls against App/ Swift files (#2396).
+                       'test_task_cost_map')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
-                      'docs/sharing-test-kit/', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
+                      'docs/sharing-test-kit/', 'docs/task-cost-map.json', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
                       # test_third_party_notices reads the dependency manifests and its own list (#1823).
                       'docs/legal/', 'THIRD_PARTY_NOTICES.md', 'requirements-dev.txt', 'Site/', 'Tools/',
                       'Config/', 'fixtures/', 'traces/', 'schemas/',
@@ -536,7 +571,7 @@ def on_hosted_runner(environ=None):
     return environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
 
 
-PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'browser', 'share-link', 'research')
+PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'browser', 'share-link', 'research')
 PORTABLE_LEFT_OUT = {
     'package-build': 'needs the Swift toolchain on macOS; hosted-sessionkit-linux.yml builds the Foundation-only modules on Linux',
     'package-core': 'needs the Swift toolchain on macOS (SessionKitCoreTests also run in hosted-sessionkit-linux.yml)',
@@ -1157,6 +1192,86 @@ def hang_evidence(pid, folder, sample_seconds=3, sampler_tool=None):
 REAL_PLAYER_TEST = re.compile(r'/(?:RealPlayer[A-Z]\w*Tests|StreamSeekLifecycleTests)/')
 
 
+def on_hosted_runner(environ=None):
+    """True on a GitHub-hosted runner (GitHub sets RUNNER_ENVIRONMENT=github-hosted there, and `self-hosted` on ours)."""
+    environ = os.environ if environ is None else environ
+    return environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
+
+
+# Processes of the test run itself: a crash of one of these is ours to stop on, whoever's machine it is (#2602).
+TEST_RUN_PROCESSES = ('xctest', 'xctrunner', 'xcodebuild', 'testmanagerd')
+
+
+def hosted_system_crash(report, environ=None):
+    """True for a crash report of a system process that is not ours, on a GitHub-hosted runner only.
+
+    Not the app under test or its extensions (SpokenMargins*, com.spokenmargins*), not its test runner, not
+    SpringBoard, and not a report that can't be read: those all keep the flood stop. Everything else counts, even
+    when it names no com.apple bundle and no RuntimeRoot path: the first hosted proof's intelligencetasksd reports
+    named neither, so the Mac's stricter crash_is_warning left them as a flood (#2602). The Mac rule is unchanged."""
+    if not on_hosted_runner(environ):
+        return False
+    try:
+        process = lane_sim.crash_process(Path(report).read_text(errors='replace'))
+    except OSError:
+        return False
+    if process is None or process[0].lower().startswith(TEST_RUN_PROCESSES):
+        return False
+    name, bundle, _path = process
+    ours = name.startswith('SpokenMargins') or bundle.startswith('com.spokenmargins') \
+        or name == 'SpringBoard' or bundle == 'com.apple.springboard'
+    return not ours
+
+
+# A loaded GitHub-hosted Mac (load average ~480 at the start of the #2602 proof runs) answers simctl several times
+# slower than ours. Each proof run died on a different fixed short simctl timeout: shutdown, boot, then uninstall
+# (60 s) before any test ran. The class is "simctl call with a fixed short timeout on a slow hosted Mac" (#2602).
+HOSTED_SIMCTL_FACTOR = 4
+
+
+def simctl_timeout(seconds, environ=None):
+    """A simctl call's time budget: as given on the Mac, HOSTED_SIMCTL_FACTOR times longer on a hosted runner."""
+    return seconds * HOSTED_SIMCTL_FACTOR if on_hosted_runner(environ) else seconds
+
+
+def simctl_quietly(args, timeout=60):
+    """Run `xcrun simctl <args>` as housekeeping: a hang or a launch failure is printed, never raised.
+
+    Shutdown, uninstall and terminate only tidy the device. A TimeoutExpired from one of them used to end the run
+    with `0 passed, 0 failed` before a test ran (#2602), so none of them may decide the verdict."""
+    budget = simctl_timeout(timeout)
+    try:
+        subprocess.run(['xcrun', 'simctl', *args], cwd=ROOT, capture_output=True, timeout=budget)
+        return True
+    except subprocess.TimeoutExpired:
+        print(f'warning: simctl {" ".join(args)} did not finish in {budget}s; the run goes on without it', flush=True)
+    except OSError as error:
+        print(f'warning: simctl {" ".join(args)} could not run: {error}', flush=True)
+    return False
+
+
+def uninstall_from_reused_device(udid, bundle_id, timeout=60):
+    """Remove the app from a reused device so earlier runs' data can't leak in. A hung uninstall stops the run.
+
+    A nonzero exit ("not installed") is fine and ignored. A timeout is not: the app and its data may still be there,
+    so the run ends INCONCLUSIVE instead of testing on a dirty device (#2602). The budget scales on a hosted runner."""
+    budget = simctl_timeout(timeout)
+    try:
+        subprocess.run(['xcrun', 'simctl', 'uninstall', udid, bundle_id], cwd=ROOT, capture_output=True, timeout=budget)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f'simulator-clean: simctl uninstall {bundle_id} did not finish in {budget}s; '
+                           'the device may still hold the last run\'s data') from None
+
+
+def shut_down_without_hiding_the_error(udid, timeout=60):
+    """Shut the simulator this run booted down. A hung shutdown is noted, never raised.
+
+    This runs in a `finally`, so a TimeoutExpired from here replaced the error that ended the run: the first hosted
+    proof (#2602) reported only "simctl shutdown timed out" and the real cause of 0 tests was lost.
+    """
+    simctl_quietly(['shutdown', udid], timeout)
+
+
 class Run:
     def __init__(self, output, plan, changed=None):
         self.output = output
@@ -1185,6 +1300,16 @@ class Run:
         except OSError:
             self.crash_baseline[report] = (0, 0)
         process = re.sub(r'-\d{4}-\d{2}-\d{2}-\d{6}.*$', '', report.name)
+        # #2602: on a GitHub-hosted runner nobody's screen fills with crash dialogs, and the simulator's own system
+        # daemons (intelligencetasksd, AppIntentsLiveEntityService, ...) crash in bursts on a loaded VM, so those
+        # are counted and logged, never a reason to stop. The app, its test runner and anything unreadable still
+        # stop the run on a flood, here and everywhere; the Mac's rule is unchanged.
+        if hosted_system_crash(report):
+            counts = entry.setdefault('hosted_system_process_crashes', {})
+            counts[process] = counts.get(process, 0) + 1
+            print(f'warning: hosted runner: simulator system process {process} crashed '
+                  f'({counts[process]} so far this step); not a flood stop here', flush=True)
+            return False
         now = time.monotonic()
         self.crash_times.setdefault(process, []).append(now)
         entry.setdefault('simulator_crash_reports', []).append(str(report))
@@ -1383,6 +1508,7 @@ class Run:
             entry['tests'] = records
             entry['counts'] = {status: sum(r['status'] == status for r in records.values())
                                for status in ('passed', 'failed', 'skipped')}
+            entry['passed_on_retry'] = sorted(n for n, r in records.items() if r.get('passed_on_retry'))
             errors.extend(reconcile(expected, records, allowed_skips, probation or ()))
             if probation is not None:  # scripted journeys: each listed test's result, by status
                 entry['gating'] = {test: records.get(test, {}).get('status', 'missing')
@@ -1617,6 +1743,8 @@ class Run:
         self.command('inventory', [sys.executable, 'scripts/test_inventory.py'])
         # New main-thread store, file or audio work fails here, in seconds, instead of on the phone (#2257).
         self.command('main-thread-reads', [sys.executable, 'scripts/main_thread_reads.py'], timeout=120)
+        # A once-per-trigger check that stays true after it fires (#2626) fails here, not on the phone (#2633).
+        self.command('repeat-trigger-scan', [sys.executable, 'scripts/repeat_trigger_scan.py'])
         if not (ROOT / 'node_modules').exists():
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         # A lockfile that moved since node_modules was installed can fail the bundle check with "is stale". The
@@ -1772,13 +1900,13 @@ class Run:
         if marked:
             print(f'{TEST_RUNNER_NAME} ({chosen["udid"]}) is on the lane\'s unsafe list ({marked["reason"]}); '
                   'replacing it with a fresh one', flush=True)
-            subprocess.run(['xcrun', 'simctl', 'shutdown', chosen['udid']], cwd=ROOT, capture_output=True, timeout=60)
-            self.command('simulator-retire', ['xcrun', 'simctl', 'delete', chosen['udid']], timeout=120)
+            simctl_quietly(['shutdown', chosen['udid']])
+            self.command('simulator-retire', ['xcrun', 'simctl', 'delete', chosen['udid']], timeout=simctl_timeout(120))
             chosen, template = dedicated_simulator(listed(), ios)
         if chosen is not None:
             return chosen, False
         self.command('simulator-create', ['xcrun', 'simctl', 'create', TEST_RUNNER_NAME,
-                     template['deviceTypeIdentifier'], template['runtime']], timeout=60)
+                     template['deviceTypeIdentifier'], template['runtime']], timeout=simctl_timeout(60))
         chosen, _ = dedicated_simulator(listed(), ios)
         if chosen is None:
             raise RuntimeError(f'Could not create the {TEST_RUNNER_NAME} simulator')
@@ -1844,6 +1972,7 @@ class Run:
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed before Xcode verification')
         scheme, name, timeout = PLANS[plan]
+        timeout = plan_timeout(timeout)
         # T3 runs a few test classes or methods of a plan. Each selector must name tests in the plan.
         selectors, planned, expected = t3_selection(only, name)
         if selectors:
@@ -1876,8 +2005,8 @@ class Run:
 
                 def replace(stalled):
                     nonlocal chosen
-                    subprocess.run(['xcrun', 'simctl', 'shutdown', stalled], cwd=ROOT, capture_output=True, timeout=60)
-                    self.command('simulator-retire', ['xcrun', 'simctl', 'delete', stalled], timeout=120)
+                    simctl_quietly(['shutdown', stalled])
+                    self.command('simulator-retire', ['xcrun', 'simctl', 'delete', stalled], timeout=simctl_timeout(120))
                     chosen, _ = self.simulator(None, ios)
                     return chosen['udid']
 
@@ -1901,13 +2030,14 @@ class Run:
                     self.manifest['destination'] = chosen
                     base[base.index('-destination') + 1] = f'id={chosen["udid"]}'
                     self.save()
-            self.command('simulator-ready', ['xcrun', 'simctl', 'bootstatus', chosen['udid'], '-b'], timeout=180)
+            self.command('simulator-ready', ['xcrun', 'simctl', 'bootstatus', chosen['udid'], '-b'], timeout=simctl_timeout(180))
             if chosen.get('name') == TEST_RUNNER_NAME:
                 # Start from an empty app container so earlier runs' data can't leak into this one.
                 app = derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app'
                 bundle_id = plistlib.loads((app / 'Info.plist').read_bytes())['CFBundleIdentifier']
-                subprocess.run(['xcrun', 'simctl', 'uninstall', chosen['udid'], bundle_id],
-                               cwd=ROOT, capture_output=True, timeout=60)
+                # A device made for this run holds nothing to remove. The timeout is scaled and never fatal (#2602).
+                if not created:
+                    uninstall_from_reused_device(chosen['udid'], bundle_id)
             on_probation = None if probation is None else {
                 test for test in expected if any(selected(test, s) for s in probation)}
             result_bundle = self.output / 'tests.xcresult'
@@ -1920,9 +2050,9 @@ class Run:
                 note = {}
                 try:
                     subprocess.run(['xcrun', 'simctl', 'terminate', chosen['udid'], bundle_id],
-                                   cwd=ROOT, capture_output=True, timeout=TERMINATE_TIMEOUT_SECONDS)
+                                   cwd=ROOT, capture_output=True, timeout=simctl_timeout(TERMINATE_TIMEOUT_SECONDS))
                 except subprocess.TimeoutExpired:
-                    note['terminate'] = f'timed out after {TERMINATE_TIMEOUT_SECONDS}s'
+                    note['terminate'] = f'timed out after {simctl_timeout(TERMINATE_TIMEOUT_SECONDS)}s'
                 if result_bundle.exists():
                     result_bundle.rename(self.output / f'tests-stalled-{attempt}.xcresult')
                 return note
@@ -1946,6 +2076,7 @@ class Run:
                     self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
                                  'test-without-building', '-parallel-testing-enabled', 'NO',
                                  '-collect-test-diagnostics', 'never',
+                                 '-retry-tests-on-failure', '-test-iterations', '2',
                                  '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
                                  timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup,
                                  allowed_skips=lane_audio_window.unasked(expected, asked))
@@ -1960,8 +2091,7 @@ class Run:
                 lane_sim.mark_quiet(chosen['udid'])
             if booted_here:
                 # Don't leave an idle simulator holding memory after the run.
-                subprocess.run(['xcrun', 'simctl', 'shutdown', chosen['udid']],
-                               cwd=ROOT, capture_output=True, timeout=60)
+                shut_down_without_hiding_the_error(chosen['udid'])
             if slot:
                 if simulator_slot_fd is not None:
                     slot.close()

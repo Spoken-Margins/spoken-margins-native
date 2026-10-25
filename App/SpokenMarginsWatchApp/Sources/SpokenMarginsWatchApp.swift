@@ -1,64 +1,201 @@
 import SwiftUI
+import WatchKit
 
-/// The Watch app (#2487): one large Record / Stop control for a spoken Margin, sent to the iPhone's live session.
+/// The Watch app (#2487 slice 1b): it always says which of three states it is in, records a spoken Margin with one
+/// big Record button, starts and ends sessions, and says "Filed in…" only when the phone has filed it.
 @main
 struct SpokenMarginsWatchApp: App {
-    @StateObject private var recorder = WatchMarginRecorder()
+    @WKApplicationDelegateAdaptor private var delegate: WatchAppDelegate
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
-            WatchRecordView()
-                .environmentObject(recorder)
-                .task { recorder.activate() }
+            NavigationStack {
+                WatchHomeView()
+            }
+            .environmentObject(WatchLink.shared)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .active: WatchLink.shared.appBecameActive()
+            case .background: WatchLink.shared.appWentToBackground()
+            default: break
+            }
         }
     }
 }
 
-struct WatchRecordView: View {
-    @EnvironmentObject private var recorder: WatchMarginRecorder
+/// Sets up the connection to the phone when the app launches, in the front or for a background wake, not when its
+/// screen first appears (DESIGN section 9, changes point 10).
+final class WatchAppDelegate: NSObject, WKApplicationDelegate {
+    func applicationDidFinishLaunching() {
+        MainActor.assumeIsolated { WatchLink.shared.activate() }
+    }
+
+    func handle(_ backgroundTasks: Set<WKRefreshBackgroundTask>) {
+        MainActor.assumeIsolated {
+            for task in backgroundTasks {
+                if let connectivity = task as? WKWatchConnectivityRefreshBackgroundTask {
+                    WatchLink.shared.keep(connectivity)
+                } else {
+                    task.setTaskCompletedWithSnapshot(false)
+                }
+            }
+        }
+    }
+}
+
+/// Home: the state line and one big Record button. Below, reached with the crown: what's waiting, Start session or
+/// End, Resume, and the microphone test.
+struct WatchHomeView: View {
+    @EnvironmentObject private var link: WatchLink
+    @StateObject private var recorder = WatchMarginRecorder()
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            VStack(spacing: 8) {
-                if let title = recorder.sessionTitle {
-                    Text(title).font(.footnote).lineLimit(1)
+            let now = context.date
+            let home = link.home(now: now)
+            ScrollView {
+                VStack(spacing: 8) {
+                    stateLine(home, now: now)
+                    recordButton(home)
+                        .frame(height: 120)
+                    statusLine(home, now: now)
+                    below(home, now: now)
                 }
-                Button {
-                    recorder.toggle()
-                } label: {
-                    VStack(spacing: 4) {
-                        Image(systemName: recorder.isRecording ? "stop.fill" : "mic.fill")
-                            .font(.system(size: 40, weight: .semibold))
-                        Text(recorder.isRecording ? "Stop" : "Record")
-                            .font(.headline)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-                // Blue and orange, with the icon and word carrying the meaning too (owner is red-green colour-blind).
-                .tint(recorder.isRecording ? .orange : .blue)
-                .accessibilityLabel(recorder.isRecording ? "Stop and send the spoken Margin" : "Record a spoken Margin")
-                statusLine(now: context.date)
+                .padding(.horizontal, 4)
             }
-            .padding(.horizontal, 4)
+        }
+    }
+
+    private func stateLine(_ home: WatchSessionModel.Home, now: Date) -> some View {
+        Label(home.line(now: now), systemImage: home.symbol)
+            .font(.footnote)
+            .lineLimit(2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel(home.line(now: now))
+    }
+
+    private func recordButton(_ home: WatchSessionModel.Home) -> some View {
+        Button {
+            recorder.toggle()
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: recorder.isRecording ? "stop.fill" : "mic.fill")
+                    .font(.system(size: 40, weight: .semibold))
+                Text(recorder.isRecording ? "Stop" : "Record")
+                    .font(.headline)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        // Blue and orange, with the icon and word carrying the meaning too (the owner is red-green colour-blind).
+        .tint(recorder.isRecording ? .orange : .blue)
+        .accessibilityLabel(recorder.isRecording ? "Stop recording the spoken Margin" : "Record a spoken Margin")
+    }
+
+    @ViewBuilder
+    private func statusLine(_ home: WatchSessionModel.Home, now: Date) -> some View {
+        switch recorder.state {
+        case .recording(let since):
+            let elapsed = Int(now.timeIntervalSince(since))
+            VStack(spacing: 2) {
+                Label(String(format: "Recording %d:%02d", elapsed / 60, elapsed % 60), systemImage: "mic")
+                    .font(.footnote.monospacedDigit())
+                Text((home.session?.kind ?? .other).hint)
+                    .font(.footnote)
+                    .multilineTextAlignment(.center)
+            }
+        case .failed(let message):
+            Label(message, systemImage: "exclamationmark.triangle")
+                .font(.footnote)
+        case .idle:
+            if let id = link.lastMarginId, let display = link.ledger.display(id, now: now) {
+                Label(display.words, systemImage: display.symbol)
+                    .font(.footnote)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
     @ViewBuilder
-    private func statusLine(now: Date) -> some View {
-        switch recorder.state {
-        case .recording(let since):
-            let elapsed = Int(now.timeIntervalSince(since))
-            Text([String(format: "%d:%02d", elapsed / 60, elapsed % 60), recorder.aboutPosition(at: since)]
-                .compactMap { $0 }.joined(separator: " · "))
-                .font(.footnote.monospacedDigit())
-        case .failed(let message):
-            Text(message).font(.footnote).multilineTextAlignment(.center)
-        case .idle:
-            if let lastSent = recorder.lastSent {
-                Text(lastSent).font(.footnote).multilineTextAlignment(.center)
-            } else if let about = recorder.aboutPosition(at: now) {
-                Text(about).font(.footnote.monospacedDigit())
+    private func below(_ home: WatchSessionModel.Home, now: Date) -> some View {
+        if link.ledger.waitingCount > 0 {
+            NavigationLink {
+                WatchWaitingList()
+            } label: {
+                Label("\(link.ledger.waitingCount) waiting", systemImage: "hourglass")
             }
+        }
+        if home.session != nil {
+            Button {
+                link.endSession()
+            } label: {
+                Label("End", systemImage: "stop.circle")
+            }
+        } else {
+            if let note = home.endNote {
+                Text(note).font(.footnote).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let resumable = home.resumable, let ended = resumable.endedAt {
+                Button {
+                    link.resumeSession()
+                } label: {
+                    Label("Ended \(WatchContractFormat.timeOfDay(ended)) · Resume", systemImage: "arrow.uturn.backward.circle")
+                }
+            }
+            NavigationLink {
+                WatchStartSessionView()
+            } label: {
+                Label("Start session", systemImage: "play.circle")
+            }
+        }
+        NavigationLink {
+            WatchMicrophoneTestView()
+        } label: {
+            Label("Microphone test", systemImage: "waveform")
+        }
+    }
+}
+
+/// Start session: four kinds, one tap starts it (WATCH.md 2.2 point 3).
+struct WatchStartSessionView: View {
+    @EnvironmentObject private var link: WatchLink
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        List(WatchSessionKind.allCases, id: \.self) { kind in
+            Button(kind.label) {
+                link.startSession(kind: kind)
+                dismiss()
+            }
+        }
+        .navigationTitle("Start session")
+    }
+}
+
+/// The Margins the Watch still holds, each with its state, Retry and Delete (DESIGN section 3).
+struct WatchWaitingList: View {
+    @EnvironmentObject private var link: WatchLink
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            List {
+                ForEach(link.ledger.held) { item in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(WatchContractFormat.timeOfDay(item.transfer.wallStart))
+                            .font(.headline.monospacedDigit())
+                        if let display = link.ledger.display(item.id, now: context.date) {
+                            Label(display.words, systemImage: display.symbol).font(.footnote)
+                        }
+                        HStack {
+                            Button("Retry") { link.retry(item.id) }
+                            Button("Delete", role: .destructive) { link.delete(item.id) }
+                        }
+                        .font(.footnote)
+                    }
+                }
+            }
+            .navigationTitle("Waiting")
         }
     }
 }

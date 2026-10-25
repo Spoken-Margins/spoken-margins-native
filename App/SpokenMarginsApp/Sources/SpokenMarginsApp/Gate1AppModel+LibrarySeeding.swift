@@ -110,8 +110,8 @@ extension Gate1AppModel {
                 selectedItem = ItemDetailState()
             }
             settleReviewPlacesAtLaunch()
+            refreshMarginRows() // first: a restored reply finds the Margin it answers in these rows (#473)
             writtenMarginNotice = restoreUnfinishedWrittenMargin(store: store, availableItemIDs: availableItemIDs)
-            refreshMarginRows()
             tryRefreshOfflineStorageUsage()
             diagnostics["libraryBootstrap"] = "loaded:\(rows.count)"
             reportSuccess(rows.isEmpty ? "Add a source to begin." : "Library ready.")

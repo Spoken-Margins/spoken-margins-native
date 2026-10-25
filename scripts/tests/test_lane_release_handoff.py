@@ -290,7 +290,7 @@ class MainWiringTests(unittest.TestCase):
         self.assertIs(kwargs['room'], lane.wait_for_room_to_test_on_host)
         self.assertNotIn('hand_off', kwargs)  # it never hands off again
         self.assertIn('https://example.test/t3', args[7])
-        self.assertEqual(outcome, {'reported': 'true', 'verdict': 'FAIL'})  # for the Verdict step's warning
+        self.assertEqual(outcome, {'reported': 'true', 'verdict': 'FAIL', 'held': 'false'})  # for the Verdict step's warning
         self.assertEqual(github.labeled, ['lane:done'])
 
     def test_a_merged_release_leaves_the_labels_alone(self):
