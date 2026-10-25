@@ -10,14 +10,18 @@ public enum ItemQuickAction: String, Equatable, Sendable {
     case addToCollection
     case prepareOffline
 
+    /// The one completion action `row` offers: Mark Complete until it is complete, Mark Not Complete only when the
+    /// completion was set by hand, and nothing for an item that finished by listening. The item screen's visible
+    /// button and its menu entry both read this, so they never disagree (#2393).
+    public static func completionAction(for row: LibraryItemRow) -> ItemQuickAction? {
+        if !row.isCompleted { return .markComplete }
+        return row.canMarkUnfinished ? .markUnfinished : nil
+    }
+
     /// The actions for `row`, in menu order. The same rules as the row's own context menu.
     public static func actions(for row: LibraryItemRow) -> [ItemQuickAction] {
         var actions: [ItemQuickAction] = []
-        if !row.isCompleted {
-            actions.append(.markComplete)
-        } else if row.canMarkUnfinished {
-            actions.append(.markUnfinished)
-        }
+        if let completion = completionAction(for: row) { actions.append(completion) }
         actions.append(contentsOf: [.playNext, .addToQueue, .addToCollection])
         if row.offlineState != .readyOffline { actions.append(.prepareOffline) }
         return actions
