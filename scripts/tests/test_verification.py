@@ -216,6 +216,132 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual(step['simulator_crash_report'], crashes[-1])
             self.assertEqual(step['exit_code'], 124)
 
+    def crash_files(self, folder, process, count, bundle='com.apple.intelligencetasksd', path=None):
+        """`count` real .ips reports of one process, as macOS writes them (JSON header line, JSON body)."""
+        files = []
+        for index in range(count):
+            head = {'app_name': process, 'name': process, 'bundleID': bundle}
+            body = {'procName': process, 'procPath': path or f'/Volumes/V/RuntimeRoot/usr/libexec/{process}'}
+            report = Path(folder) / f'{process}-2026-10-24-12000{index}.ips'
+            report.write_text(json.dumps(head) + '\n' + json.dumps(body))
+            files.append(report)
+        return files
+
+    def run_with_crashes(self, folder, reports, runner):
+        run = verification.Run(Path(folder) / 'run', 'test')
+        run.manifest['destination'] = {'udid': 'synthetic-device'}
+        run.crash_baseline = {}
+        with patch.dict(os.environ, {'RUNNER_ENVIRONMENT': runner}), \
+                patch.object(verification, 'new_crash', side_effect=self.crash_reports(*reports)), \
+                patch.object(verification.subprocess, 'run') as shutdown:
+            shutdown.return_value.returncode = 0
+            try:
+                run.command('crash-check', [sys.executable, '-c', 'import time; time.sleep(3)'])
+            except RuntimeError:
+                pass
+        return run.manifest['steps'][-1]
+
+    def test_a_hosted_runner_counts_three_system_daemon_crashes_in_seconds_and_goes_on(self):
+        # #2602: intelligencetasksd crashed three times in 20 s on the hosted Mac and ended a good run.
+        with tempfile.TemporaryDirectory() as temporary:
+            reports = self.crash_files(temporary, 'intelligencetasksd', 3)
+            step = self.run_with_crashes(temporary, reports, 'github-hosted')
+            self.assertEqual(step['exit_code'], 0)
+            self.assertNotIn('simulator_crash_report', step)
+            self.assertEqual(step['hosted_system_process_crashes'], {'intelligencetasksd': 3})
+
+    def test_a_hosted_runner_counts_a_daemon_report_that_names_no_apple_bundle_or_runtime_path(self):
+        # #2602: run 40126811473's intelligencetasksd reports were not recognised as Apple's, so three in 20 s stopped the run.
+        with tempfile.TemporaryDirectory() as temporary:
+            reports = self.crash_files(temporary, 'intelligencetasksd', 3, bundle='', path='/usr/libexec/intelligencetasksd')
+            step = self.run_with_crashes(temporary, reports, 'github-hosted')
+            self.assertEqual(step['exit_code'], 0)
+            self.assertEqual(step['hosted_system_process_crashes'], {'intelligencetasksd': 3})
+
+    def test_a_hosted_runner_still_stops_on_a_flood_of_the_app_or_its_test_runner(self):
+        for process, bundle, path in (('SpokenMarginsApp', 'com.spokenmargins.native', None),
+                                      ('SpokenMarginsAppUITests-Runner', 'com.spokenmargins.UITests.xctrunner', None),
+                                      ('xctest', 'com.apple.dt.xctest', '/Volumes/V/RuntimeRoot/usr/bin/xctest'),
+                                      ('SpringBoard', 'com.apple.springboard', None)):
+            with self.subTest(process=process), tempfile.TemporaryDirectory() as temporary:
+                reports = self.crash_files(temporary, process, 3, bundle=bundle, path=path)
+                step = self.run_with_crashes(temporary, reports, 'github-hosted')
+                self.assertEqual(step['exit_code'], 124)
+                self.assertEqual(step['simulator_crash_report'], str(reports[-1]))
+                self.assertNotIn('hosted_system_process_crashes', step)
+
+    def test_a_hosted_runner_stops_on_a_report_it_cannot_read(self):
+        reports = [f'intelligencetasksd-2026-10-24-12000{i}.ips' for i in range(3)]
+        with tempfile.TemporaryDirectory() as temporary:
+            step = self.run_with_crashes(temporary, reports, 'github-hosted')
+            self.assertEqual(step['exit_code'], 124)
+
+    def test_a_self_hosted_runner_stops_on_the_same_daemon_flood(self):
+        # The Mac's rule is unchanged: crash dialogs fill Cole's screen.
+        for runner in ('self-hosted', ''):
+            with self.subTest(runner=runner), tempfile.TemporaryDirectory() as temporary:
+                reports = self.crash_files(temporary, 'intelligencetasksd', 3)
+                step = self.run_with_crashes(temporary, reports, runner)
+                self.assertEqual(step['exit_code'], 124)
+                self.assertEqual(step['simulator_crash_report'], str(reports[-1]))
+
+    @patch.dict(os.environ, {'RUNNER_ENVIRONMENT': 'self-hosted'})  # a hosted runner scales the budget (#2602)
+    def test_a_hung_shutdown_after_a_run_does_not_replace_the_error_that_ended_it(self):
+        # #2602: the finally's 60 s shutdown timed out on a hosted Mac and its TimeoutExpired hid why 0 tests ran.
+        def hang(command, **kwargs):
+            raise subprocess.TimeoutExpired(command, kwargs['timeout'])
+
+        output = io.StringIO()
+        with patch.object(verification.subprocess, 'run', hang), contextlib.redirect_stdout(output):
+            try:
+                try:
+                    raise RuntimeError('simulator-boot: the real reason')
+                finally:
+                    verification.shut_down_without_hiding_the_error('UDID-1')
+            except RuntimeError as error:
+                self.assertEqual(str(error), 'simulator-boot: the real reason')
+            else:
+                self.fail('the original error should still be raised')
+        self.assertIn('did not finish in 60s', output.getvalue())
+
+    def test_simctl_timeouts_scale_on_a_hosted_runner_only(self):
+        # #2602: the class behind three proof runs that died on three fixed short simctl timeouts.
+        hosted, ours = {'RUNNER_ENVIRONMENT': 'github-hosted'}, {'RUNNER_ENVIRONMENT': 'self-hosted'}
+        self.assertEqual(verification.simctl_timeout(60, hosted), 60 * verification.HOSTED_SIMCTL_FACTOR)
+        self.assertEqual(verification.simctl_timeout(60, ours), 60)
+        self.assertEqual(verification.simctl_timeout(60, {}), 60)
+
+    def test_a_hung_or_missing_simctl_housekeeping_call_is_noted_and_never_raised(self):
+        # #2602: `simctl uninstall` timed out after 60 s and the run ended with 0 passed, 0 failed.
+        for failure in (subprocess.TimeoutExpired(['simctl'], 60), OSError('no xcrun')):
+            def fail(command, **kwargs):
+                raise failure
+            with self.subTest(failure=type(failure).__name__), patch.dict(os.environ, {'RUNNER_ENVIRONMENT': 'github-hosted'}), \
+                    patch.object(verification.subprocess, 'run', fail), contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertFalse(verification.simctl_quietly(['uninstall', 'UDID-1', 'com.example.app']))
+            self.assertIn('simctl uninstall UDID-1 com.example.app', output.getvalue())
+
+    def test_a_hung_uninstall_on_a_reused_device_stops_the_run_but_not_installed_is_fine(self):
+        def hang(command, **kwargs):
+            raise subprocess.TimeoutExpired(command, kwargs['timeout'])
+        with patch.object(verification.subprocess, 'run', hang):
+            with self.assertRaisesRegex(RuntimeError, 'simulator-clean.*did not finish'):
+                verification.uninstall_from_reused_device('UDID-1', 'com.example.app')
+        not_installed = subprocess.CompletedProcess([], 1)
+        with patch.object(verification.subprocess, 'run', lambda *a, **k: not_installed):
+            verification.uninstall_from_reused_device('UDID-1', 'com.example.app')
+
+    def test_housekeeping_gets_the_scaled_budget_on_a_hosted_runner(self):
+        seen = {}
+
+        def record(command, **kwargs):
+            seen['timeout'] = kwargs['timeout']
+        for runner, expected in (('github-hosted', 60 * verification.HOSTED_SIMCTL_FACTOR), ('self-hosted', 60)):
+            with self.subTest(runner=runner), patch.dict(os.environ, {'RUNNER_ENVIRONMENT': runner}), \
+                    patch.object(verification.subprocess, 'run', record):
+                self.assertTrue(verification.simctl_quietly(['shutdown', 'UDID-1']))
+            self.assertEqual(seen['timeout'], expected)
+
     def test_a_flood_on_a_desk_pool_device_marks_it_unsafe_before_the_shutdown(self):
         # #688: the pool erases and reuses its devices, so a device that flooded must be retired, not reused.
         import json
@@ -1783,6 +1909,7 @@ class VerificationTests(unittest.TestCase):
             # What the second attempt followed is on record for the ledger.
             self.assertIn('TimeoutExpired', step['startup_stalls'][0]['relaunch']['error'])
 
+    @patch.dict(os.environ, {'RUNNER_ENVIRONMENT': 'self-hosted'})  # a hosted runner scales the budget (#2602)
     def test_hung_terminate_is_noted_and_the_stalled_result_bundle_is_still_moved_aside(self):
         # The same hang, through the real relaunch hook with a fake `xcrun` that never returns: the retry
         # needs the result-bundle path free, so the rename must not be skipped with the terminate.

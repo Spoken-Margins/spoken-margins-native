@@ -37,7 +37,7 @@ public struct BoundedAnchorContext: Equatable, Sendable {
         )
     }
 
-    private static func normalizedWhitespace(_ value: String) -> String {
+    static func normalizedWhitespace(_ value: String) -> String {
         value
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }

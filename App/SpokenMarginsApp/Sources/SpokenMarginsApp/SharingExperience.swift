@@ -668,7 +668,7 @@ struct InterjectionSharingView: View {
                             get: { model.sharingState.drafts.first(where: { $0.id == draft.id })?.anchorAfter ?? "" },
                             set: { model.setShareDraftAnchorAfter(draft.id, value: $0) }
                         ), axis: .vertical)
-                        Text("Each side is capped at 500 characters. Full item text is sent only when the item disclosure above says it is included.")
+                        Text("The quote after the Margin is capped at \(ExcerptCapRule.afterMaximum) characters, and the quote before it at up to \(ExcerptCapRule.beforeMaximum), depending on the length of your comment. Full item text is sent only when the item disclosure above says it is included.")
                             .font(.caption2)
                             .foregroundStyle(AppColors.secondaryText)
                     }

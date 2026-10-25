@@ -26,9 +26,9 @@ GB = 10**9
 REPORTED_AT = 1791514182.0  # 2026-10-09T02:49:42Z, the time FakeOps gives its reports
 
 
-def manifest(tests: dict, interrupted=False, probation=None):
+def manifest(tests: dict, interrupted=False, probation=None, retried=()):
     step = {'name': 'xcode-tests', 'tests': {t: {'status': s} for t, s in tests.items()},
-            'probation': probation or {}, 'errors': [], 'exit_code': 0}
+            'probation': probation or {}, 'errors': [], 'exit_code': 0, 'passed_on_retry': list(retried)}
     if interrupted:
         step.update(interrupted=True, exit_code=124, simulator_crash_report='SpringBoard.ips')
     failed = any(s == 'failed' and t not in (probation or {}) for t, s in tests.items())
@@ -168,14 +168,16 @@ class VerdictTests(unittest.TestCase):
                 patch.dict(os.environ, {'GITHUB_STEP_SUMMARY': os.devnull}):
             self.assertEqual(run.main(['--hosted', '--sha', SHA]), 0)
 
-    def test_a_test_that_passes_both_reruns_is_flaky_not_failing(self):
+    def test_fail_then_pass_on_retry_is_green_and_fail_then_fail_is_red(self):
+        # Owner, 2026-10-24: a green run overrides a red one; the flake is reported, not hidden.
         first = run.summarize(manifest({TEST: 'failed', OTHER: 'failed'}))
-        reruns = [run.summarize(manifest({TEST: 'passed', OTHER: 'failed'})),
-                  run.summarize(manifest({TEST: 'passed', OTHER: 'failed'}))]
+        reruns = [run.summarize(manifest({TEST: 'passed', OTHER: 'failed'}))] * 2
         settled = run.settle(first, reruns)
         self.assertEqual((settled['verdict'], settled['failed'], settled['flaky']), ('FAIL', [OTHER], [TEST]))
         clean = run.settle(first, [run.summarize(manifest({TEST: 'passed', OTHER: 'passed'}))] * 2)
         self.assertEqual((clean['verdict'], clean['failed'], clean['flaky']), ('PASS', [], sorted([TEST, OTHER])))
+        red = run.settle(first, [run.summarize(manifest({TEST: 'failed', OTHER: 'failed'}))] * 2)
+        self.assertEqual((red['verdict'], red['flaky']), ('FAIL', []))
 
     def test_a_rerun_cannot_clear_a_test_it_did_not_pass(self):
         first = run.summarize(manifest({TEST: 'failed'}))
@@ -187,7 +189,6 @@ class VerdictTests(unittest.TestCase):
                 self.assertEqual(run.settle(first, reruns)['verdict'], 'FAIL')
 
     def test_a_pass_in_any_completed_rerun_clears_the_test_even_when_the_other_rerun_stopped(self):
-        # #1417: re-run 1 passed both tests; re-run 2 never ran a test (the simulator would not boot).
         first = run.summarize(manifest({TEST: 'failed', OTHER: 'failed'}))
         passed = run.summarize(manifest({TEST: 'passed', OTHER: 'passed'}))
         stopped = run.summarize({'status': 'failed_or_incomplete', 'steps': []})
@@ -197,16 +198,55 @@ class VerdictTests(unittest.TestCase):
                 self.assertEqual((settled['verdict'], settled['failed'], settled['flaky']),
                                  ('PASS', [], sorted([TEST, OTHER])))
 
-    def test_a_test_that_passes_once_and_fails_once_is_flaky_but_the_report_says_so(self):
-        first = run.summarize(manifest({TEST: 'failed', OTHER: 'failed'}))
-        reruns = [run.summarize(manifest({TEST: 'passed', OTHER: 'passed'})),
-                  run.summarize(manifest({TEST: 'failed', OTHER: 'passed'}))]
-        settled = run.settle(first, reruns)
-        self.assertEqual((settled['verdict'], settled['flaky']), ('PASS', sorted([TEST, OTHER])))
-        self.assertEqual(list(settled['flaky_notes']), [TEST])
-        text = run.report_text('a' * 40, dict(settled, reruns=2, crashes=[], counts={'passed': 0, 'failed': 0, 'skipped': 0}),
+    def test_a_test_xcodebuild_retried_is_named_in_the_report_and_tallied_once(self):
+        # verify-tests.py runs xcodebuild with -retry-tests-on-failure: fail-then-pass is status passed with
+        # passed_on_retry in the step. The manifest is the source of retry-passes; the script's own re-runs add to it.
+        counts = {'passed': 0, 'failed': 0, 'skipped': 0}
+        first = run.summarize(manifest({TEST: 'passed', OTHER: 'passed'}, retried=[TEST]))
+        settled = run.settle(first, [])
+        self.assertEqual((settled['verdict'], settled['flaky']), ('PASS', [TEST]))
+        text = run.report_text('a' * 40, dict(settled, reruns=0, crashes=[], counts=counts),
                                started=0, finished=1, previous=None, suspects=[], evidence=Path('/e'))
+        self.assertIn(f'passed on retry: {TEST}', text)
+        ops = types.SimpleNamespace(posted=[], post_tally=lambda body: ops.posted.append(body),
+                                    tally_comments=lambda: [], open_flake_markers=lambda: [], log=print)
+        run.record_flakes(ops, settled['flaky'], SHA, '1')
+        self.assertEqual(len(ops.posted), 1)
+        self.assertIn(TEST, ops.posted[0])
+        # and a retry inside xcodebuild plus a script re-run of another test are both named, each once
+        failing = run.summarize(manifest({TEST: 'passed', OTHER: 'failed'}, retried=[TEST]))
+        both = run.settle(failing, [run.summarize(manifest({TEST: 'passed', OTHER: 'passed'}, retried=[TEST]))] * 2)
+        self.assertEqual((both['verdict'], both['flaky']), ('PASS', sorted([TEST, OTHER])))
+
+    def test_a_run_with_no_retries_says_none(self):
+        counts = {'passed': 0, 'failed': 0, 'skipped': 0}
+        settled = run.settle(run.summarize(manifest({TEST: 'passed'})), [])
+        self.assertEqual((settled['verdict'], settled['flaky']), ('PASS', []))
+        text = run.report_text('a' * 40, dict(settled, reruns=0, crashes=[], counts=counts),
+                               started=0, finished=1, previous=None, suspects=[], evidence=Path('/e'))
+        self.assertIn('passed on retry: none', text)
+
+    def test_a_test_that_fails_both_attempts_is_still_a_fail_and_never_a_retry_pass(self):
+        # Even if a manifest wrongly lists it, a test that ended failed is not a retry-pass.
+        first = run.summarize(manifest({TEST: 'failed'}, retried=[TEST]))
+        self.assertEqual((first['verdict'], first['failed'], first['retried']), ('FAIL', [TEST], []))
+        settled = run.settle(first, [run.summarize(manifest({TEST: 'failed'}))] * 2)
+        self.assertEqual((settled['verdict'], settled['failed'], settled['flaky']), ('FAIL', [TEST], []))
+
+    def test_every_report_has_a_passed_on_retry_line(self):
+        first = run.summarize(manifest({TEST: 'failed', OTHER: 'failed'}))
+        mixed = run.settle(first, [run.summarize(manifest({TEST: 'passed', OTHER: 'passed'})),
+                                   run.summarize(manifest({TEST: 'failed', OTHER: 'passed'}))])
+        counts = {'passed': 0, 'failed': 0, 'skipped': 0}
+        text = run.report_text('a' * 40, dict(mixed, reruns=2, crashes=[], counts=counts),
+                               started=0, finished=1, previous=None, suspects=[], evidence=Path('/e'))
+        self.assertIn('passed on retry: ', text)
         self.assertIn(f'{TEST} (passed in 1 of 2 re-runs, failed in the rest)', text)
+        red = run.settle(first, [run.summarize(manifest({TEST: 'failed', OTHER: 'failed'}))] * 2)
+        text = run.report_text('a' * 40, dict(red, reruns=2, crashes=[], counts=counts),
+                               started=0, finished=1, previous=None, suspects=[], evidence=Path('/e'))
+        self.assertIn('— FAIL', text)
+        self.assertIn('passed on retry: none', text)
 
     def test_settle_leaves_pass_and_inconclusive_alone(self):
         for m in (manifest({TEST: 'passed'}), manifest({TEST: 'failed'}, interrupted=True)):
@@ -226,7 +266,7 @@ class ReportTextTests(unittest.TestCase):
         self.assertEqual(phone.latest_verdict(SHA, [body]), f'Lane report integration-{SHA[:7]} — PASS')
         self.assertEqual(run.reported([body]), [(SHA[:7], 'PASS')])
         for words in (f'run by: {run.RUN_BY}', f'{run.BASE_BRANCH} moved from {OLD[:7]}', '1 passed, 0 failed',
-                      'flaky: none this run', run.NOT_RUN, run.NOT_VERIFIED, '/mac/evidence',
+                      'passed on retry: none', run.NOT_RUN, run.NOT_VERIFIED, '/mac/evidence',
                       f'{SHA[:7]} is the current phone candidate: app tests passed; scripted journeys not run; '
                       'attended journeys not run.'):
             self.assertIn(words, body)
@@ -269,7 +309,7 @@ class ReportTextTests(unittest.TestCase):
         result = dict(run.settle(first, reruns), reruns=2)
         body = self.text(result, ['#1170 Add a thing', '#1169 Fix a thing'])
         self.assertTrue(body.startswith(f'```text\nLane report integration-{SHA[:7]} — FAIL\n'))
-        for words in ('re-run 2 times', f'failing: {OTHER}', f'flaky: {TEST}',
+        for words in ('re-run 2 times', f'failing: {OTHER}', f'passed on retry: {TEST}',
                       'merges since the last PASS: #1170 Add a thing, #1169 Fix a thing'):
             self.assertIn(words, body)
         self.assertNotIn('phone candidate', body)
@@ -279,6 +319,134 @@ class ReportTextTests(unittest.TestCase):
         body = self.text(result)
         self.assertIn('— INCONCLUSIVE', body)
         self.assertIn('why inconclusive: git worktree add failed: disk full', body)
+
+
+class OutcomeWordingTests(unittest.TestCase):
+    """Every sentence the report says about how a run ended comes from describe(outcome(...)), so these tables run
+    every combination of the record's parts through it (#2590, third audit round: the earlier rounds each fixed
+    one branch and the next audit found another)."""
+    A, B, R, G, P = 'App/a', 'App/b', 'App/r', 'Journey/g', 'Journey/p'
+    VERDICT_SENTENCES = ('outcome', 'failing', 'culprit_why', 'candidate')
+
+    def rows(self):
+        def subsets(items):
+            return [tuple(x for i, x in enumerate(items) if mask >> i & 1) for mask in range(1 << len(items))]
+        for verdict in ('PASS', 'FAIL', 'INCONCLUSIVE'):
+            for first in subsets((self.A, self.B)):
+                for confirmed in subsets((self.A, self.B)):
+                    for retried in subsets((self.A, self.R)):
+                        for gating in subsets((self.G,)):
+                            for probation in subsets((self.P,)):
+                                for trunk in (True, False):
+                                    yield dict(verdict=verdict, first_failures=first, confirmed=confirmed,
+                                               retry_passes=retried, gating_failed=gating, probation_failed=probation,
+                                               trunk=trunk, reruns=2 if first else 0)
+
+    def check(self, row):
+        """The problems with the words for one input row; [] when they never contradict the verdict."""
+        o = run.outcome(**row)
+        w = run.describe(o, sha7='abcdef0', scripted='scripted journeys passed (1 of 1)')
+        said = ' '.join(w[k] for k in self.VERDICT_SENTENCES).lower()
+        problems = []
+        unresolved = set(o.failing)
+        # Cole's 2026-10-24 retry rule: fail then pass is green; fail then fail, or fail and never passed, is red.
+        should_fail = row['verdict'] != 'INCONCLUSIVE' and bool(
+            set(row['confirmed']) | (set(row['first_failures']) - set(row['retry_passes'])) | set(row['gating_failed']))
+        if row['verdict'] != 'INCONCLUSIVE' and (o.verdict == 'FAIL') != should_fail:
+            problems.append(f'verdict {o.verdict} but should_fail={should_fail}')
+        if row['verdict'] == 'INCONCLUSIVE' and o.verdict != 'INCONCLUSIVE':
+            problems.append('an inconclusive run became ' + o.verdict)
+        if o.verdict == 'FAIL':
+            if 'passed' in said:
+                problems.append('a FAIL says passed: ' + said)
+            if not w['outcome'].startswith('FAIL'):
+                problems.append('FAIL outcome sentence: ' + w['outcome'])
+            for name in unresolved:
+                if name not in w['failing'] or name not in w['outcome']:
+                    problems.append(f'{name} failed but is not named as failing')
+            if not unresolved:
+                problems.append('a FAIL with nothing failing')
+        if o.verdict == 'PASS':
+            if w['failing'] or 'FAIL' in w['outcome'] or w['culprit_why'] or unresolved:
+                problems.append('a PASS names an unresolved failure: ' + str(w))
+            for name in row['first_failures']:  # a cleared failure is named only as a retry-pass
+                if name in said:
+                    problems.append(f'a PASS names {name} outside the retry line')
+                if name not in w['retry']:
+                    problems.append(f'{name} failed first and passed later but is not named as passed on retry')
+        if o.verdict == 'INCONCLUSIVE' and ('PASS' in w['outcome'] or w['candidate']):
+            problems.append('an INCONCLUSIVE run claims a pass: ' + str(w))
+        failed_for_good = set(o.confirmed) | set(o.gating_failed)
+        listed = {n for n in row['retry_passes'] if n not in failed_for_good}
+        for name in listed:
+            if name not in w['retry']:
+                problems.append(f'retry-pass {name} is not named')
+        for name in {self.A, self.B, self.R} - listed:
+            if name in w['retry']:
+                problems.append(f'{name} is listed as passed on retry but is not a retry-pass')
+        if not listed and w['retry'] != 'passed on retry: none':
+            problems.append('no retry-pass but the line says: ' + w['retry'])
+        for name in row['probation_failed']:
+            if name in said or 'not verdict input' not in w['probation'] or name not in w['probation']:
+                problems.append(f'probation failure {name} is not named as not verdict input')
+        if not row['probation_failed'] and w['probation']:
+            problems.append('a probation line with no probation failure')
+        if run.outcome(**dict(row, probation_failed=())).verdict != o.verdict:
+            problems.append('a probation failure changed the verdict')
+        if o.verdict == 'PASS':
+            if row['trunk'] and 'is the current phone candidate' not in w['candidate']:
+                problems.append('a trunk PASS does not name the candidate')
+            if not row['trunk'] and ('no phone candidate' not in w['candidate']
+                                     or 'is the current phone candidate' in w['candidate']):
+                problems.append('a branch PASS calls itself a candidate')
+        elif w['candidate']:
+            problems.append('a candidate line on ' + o.verdict)
+        if o.verdict == 'FAIL' and not o.confirmed and 'gating scripted journey failed' not in w['culprit_why']:
+            problems.append('a journey-only FAIL has no culprit reason')
+        if (o.verdict != 'FAIL' or o.confirmed) and w['culprit_why']:
+            problems.append('a culprit reason when the app tests are searchable')
+        return problems
+
+    def test_the_words_never_contradict_the_verdict_in_any_combination(self):
+        bad, count = {}, 0
+        for row in self.rows():
+            count += 1
+            problems = self.check(row)
+            if problems:
+                bad[str(row)] = problems
+        self.assertEqual(count, 3 * 4 * 4 * 4 * 2 * 2 * 2)
+        self.assertEqual(len(bad), 0, '\n'.join(f'{k}: {v}' for k, v in list(bad.items())[:5]))
+
+    def test_the_audits_case_a_gating_journey_fails_while_the_app_plan_passes(self):
+        # 327a481: confirmed=[], verdict FAIL, failed=[journey] was reported as "passed on a re-run".
+        row = dict(verdict='FAIL', first_failures=(), confirmed=(), retry_passes=(), gating_failed=(self.G,),
+                   probation_failed=(), trunk=True, reruns=0)
+        self.assertEqual(self.check(row), [])
+        words = run.describe(run.outcome(**row))
+        self.assertEqual(words['failing'], f'failing: {self.G}')
+        self.assertIn('gating scripted journey failed', words['culprit_why'])
+        self.assertNotIn('passed', words['culprit_why'])
+
+    def test_the_check_itself_catches_the_old_wording(self):
+        row = dict(verdict='FAIL', first_failures=(), confirmed=(), retry_passes=(), gating_failed=(self.G,),
+                   probation_failed=(), trunk=True, reruns=0)
+        real = run.describe
+        old = 'each failing test passed on a re-run, so there is no stable failure to bisect'
+        with patch.object(run, 'describe', lambda o, **kw: dict(real(o, **kw), culprit_why=old)):
+            self.assertTrue(any('passed' in p for p in self.check(row)))
+
+    def test_a_first_failure_nothing_passed_is_red_and_a_retry_pass_is_named(self):
+        red = run.outcome('PASS', first_failures=(self.A,), reruns=2)   # failed, and no re-run cleared it
+        self.assertEqual((red.verdict, red.confirmed), ('FAIL', (self.A,)))
+        green = run.outcome('FAIL', first_failures=(self.A,), retry_passes=(self.A,), reruns=2)
+        self.assertEqual((green.verdict, green.retry_passes), ('PASS', (self.A,)))
+        self.assertIn(self.A, run.describe(green)['retry'])
+        self.assertEqual(run.describe(green)['failing'], '')
+
+    def test_a_proof_run_of_another_branch_is_never_a_phone_candidate(self):
+        words = run.describe(run.outcome('PASS', trunk=False), sha7='abcdef0')
+        self.assertIn('no phone candidate', words['candidate'])
+        self.assertNotIn('is the current phone candidate', words['candidate'])
 
 
 class DiagnosisTests(unittest.TestCase):
@@ -458,9 +626,10 @@ class FakeOps(run.Ops):
         self.posted.append(body)
         return 'https://github.com/report/1'
 
-    def diagnose(self, wt, evidence, sha, failed, suspects):
+    def diagnose(self, wt, evidence, sha, failed, suspects, journeys=()):
         self.diagnosed.append((failed, suspects))
-        return run.fallback_groups(failed), None
+        self.diagnosed_journeys = tuple(journeys)
+        return run.fallback_groups(failed, journeys), None
 
     def file_failures(self, groups, sha, report, evidence, cost):
         self.filed.append([g['tests'] for g in groups])
@@ -576,7 +745,7 @@ class TickTests(unittest.TestCase):
             self.assertEqual(run.tick(ops), 'PASS')
         self.assertIn(['test_plan', 'rerun-1', TEST], ops.calls)
         self.assertIn(['test_plan', 'rerun-2', TEST], ops.calls)
-        self.assertIn(f'flaky: {TEST}', ops.posted[0])
+        self.assertIn(f'passed on retry: {TEST}', ops.posted[0])
         self.assertEqual((ops.diagnosed, ops.filed), ([], []))
 
     def test_confirmed_failure_reports_then_diagnoses_and_files(self):
@@ -744,25 +913,142 @@ class CulpritTests(unittest.TestCase):
         self.assertFalse(any(e[0] in ('commits_since', 'check') for e in ops.events))
         self.assertIn('no earlier integration PASS', ops.comments[0][1])
 
-    def test_a_flaky_pass_never_searches_or_reverts(self):
-        plans = [manifest({TEST: 'failed'}), manifest({TEST: 'passed'}), manifest({TEST: 'passed'})]
-        with tempfile.TemporaryDirectory() as tmp:
-            ops = CulpritOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')])
-            with recording_slot(ops.events):
-                self.assertEqual(run.tick(ops), 'PASS')
-        self.assertEqual((ops.reverts, ops.comments), ([], []))
-        self.assertFalse(any(e[0] == 'check' for e in ops.events))
+    def test_a_retry_pass_never_searches_or_reverts(self):
+        for plans in ([manifest({TEST: 'failed'}), manifest({TEST: 'passed'}), manifest({TEST: 'passed'})],
+                      [manifest({TEST: 'failed'}), manifest({TEST: 'passed'}), {'status': 'failed_or_incomplete', 'steps': []}]):
+            with tempfile.TemporaryDirectory() as tmp:
+                ops = CulpritOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')])
+                with recording_slot(ops.events):
+                    self.assertEqual(run.tick(ops), 'PASS')
+            self.assertEqual((ops.reverts, ops.comments), ([], []))
+            self.assertFalse(any(e[0] in ('commits_since', 'check') for e in ops.events))
 
-    def test_a_pass_in_one_rerun_with_the_other_unable_to_boot_never_searches_or_reverts(self):
-        # #1417: re-run 1 passed, re-run 2 never ran a test.
-        plans = [manifest({TEST: 'failed'}), manifest({TEST: 'passed'}), {'status': 'failed_or_incomplete', 'steps': []}]
-        with tempfile.TemporaryDirectory() as tmp:
-            ops = CulpritOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')])
-            with recording_slot(ops.events):
-                self.assertEqual(run.tick(ops), 'PASS')
-        self.assertEqual((ops.reverts, ops.comments), ([], []))
-        self.assertFalse(any(e[0] == 'check' for e in ops.events))
 
+class ScriptedJourneyOutcomeTests(unittest.TestCase):
+    """The Mac tick, end to end, when the app plan passes but a scripted journey does not (#2590, audit on 327a481)."""
+    GATING = JOURNEY + '/testOpen'
+    LISTING = {'gating': [{'test': JOURNEY, 'journey': 'J1'}], 'probation': [{'test': JOURNEY + '2', 'journey': 'J2'}]}
+
+    def journeys(self, gating, probation):
+        step = {'name': 'xcode-tests', 'errors': [], 'exit_code': 0, 'passed_on_retry': [],
+                'tests': {self.GATING: {'status': gating}, JOURNEY + '2/testOpen': {'status': probation}},
+                'gating': {self.GATING: gating}, 'probation': {JOURNEY + '2/testOpen': probation}}
+        return {'status': 'verified', 'steps': [step]}
+
+    def tick(self, plans):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = CulpritOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')], listing=self.LISTING)
+            with recording_slot(ops.events), patch.object(run.revert, 'load_test_scope', return_value=real_scope()):
+                verdict = run.tick(ops)
+        return ops, verdict
+
+    def test_a_gating_journey_that_fails_is_a_fail_and_never_passed_on_a_rerun(self):
+        ops, verdict = self.tick([manifest({TEST: 'passed'}), self.journeys('failed', 'passed')])
+        self.assertEqual(verdict, 'FAIL')
+        self.assertFalse(any(e[0] in ('commits_since', 'check') for e in ops.events))   # nothing searchable
+        note = ops.comments[0][1]
+        self.assertIn('no single culprit merge: a gating scripted journey failed', note)
+        self.assertNotIn('passed on a re-run', note)
+        report = ops.posted[0]
+        self.assertIn('— FAIL', report)
+        self.assertIn(f'failing: {JOURNEY}', report)
+        self.assertIn('passed on retry: none', report)
+        self.assertNotIn('phone candidate', report)
+        self.assertEqual(ops.diagnosed_journeys, (JOURNEY,))
+
+    def test_a_probation_journey_that_fails_is_named_and_not_verdict_input(self):
+        ops, verdict = self.tick([manifest({TEST: 'passed'}), self.journeys('passed', 'failed')])
+        self.assertEqual(verdict, 'PASS')
+        self.assertIn(f'probation scripted journeys that failed (not verdict input): {JOURNEY}2', ops.posted[0])
+        self.assertNotIn('failing:', ops.posted[0])
+        self.assertEqual((ops.comments, ops.diagnosed), ([], []))
+
+    def test_an_app_failure_and_a_gating_failure_search_only_the_app_test(self):
+        plans = [manifest({TEST: 'failed'}), manifest({TEST: 'failed'}), manifest({TEST: 'failed'}),
+                 self.journeys('failed', 'passed')]
+        ops, verdict = self.tick(plans)
+        self.assertEqual(verdict, 'FAIL')
+        self.assertTrue(any(e[0] == 'check' for e in ops.events))
+        self.assertIn('failing: ' + ', '.join(sorted([JOURNEY, TEST])), ops.posted[0])
+        self.assertEqual(ops.diagnosed[0][0], sorted([JOURNEY, TEST]))
+
+
+class FlakeTallyTests(unittest.TestCase):
+    NOW = run.dt.datetime(2026, 10, 24, 12, 0, tzinfo=run.dt.timezone.utc)
+
+    def comment(self, test, run_id, days_ago=1, login='github-actions[bot]'):
+        when = self.NOW - run.dt.timedelta(days=days_ago)
+        return {'body': run.tally_line(test, SHA, run_id, when) + '\n\nnote', 'user': {'login': login}}
+
+    def test_counts_keep_the_last_7_days_bot_comments_and_one_per_run(self):
+        comments = [self.comment(TEST, '1'), self.comment(TEST, '2'), self.comment(TEST, '2'),
+                    self.comment(TEST, '3', days_ago=8), self.comment(OTHER, '4'),
+                    self.comment(TEST, '5', login='mallory'), self.comment(TEST, '6', login='github-actions'),
+                    {'body': 'flake-tally: nonsense', 'user': {'login': 'github-actions[bot]'}}]
+        self.assertEqual(run.tally_counts(comments, self.NOW), {TEST: ['1', '2'], OTHER: ['4']})
+
+    def test_an_issue_is_due_at_three_and_not_when_one_is_open(self):
+        counts = {TEST: ['1', '2', '3'], OTHER: ['4', '5']}
+        self.assertEqual(run.tests_due_an_issue(counts, set()), [TEST])
+        self.assertEqual(run.tests_due_an_issue(counts, {TEST}), [])
+
+    def issue_for(self, test, login='github-actions[bot]', association='NONE'):
+        title, body = run.flake_issue_text(test, ['1', '2', '3'])
+        return {'title': title, 'body': body, 'author_association': association, 'user': {'login': login}}
+
+    def test_a_long_test_name_does_not_open_a_duplicate(self):
+        long_test = 'SpokenMarginsAppTests/Gate1AppModelPlaybackTests/' + 'testResumeAfterTheRouteChangesWhileTheSourceIsBuffering' * 3
+        title, _ = run.flake_issue_text(long_test, ['1', '2', '3'])
+        self.assertLessEqual(len(title), run.FLAKE_TITLE_MAX)
+        self.assertTrue(title.endswith('…'))  # cut to fit, so a match on the title could never succeed
+        markers = run.flake_markers([self.issue_for(long_test)])
+        self.assertEqual(run.tests_due_an_issue({long_test: ['1', '2', '3']}, markers), [])
+
+    def test_a_name_that_is_a_prefix_of_an_open_issues_name_is_still_due(self):
+        longer = TEST + 'AfterARouteChange'
+        markers = run.flake_markers([self.issue_for(longer)])
+        self.assertEqual(run.tests_due_an_issue({TEST: ['1', '2', '3']}, markers), [TEST])
+        self.assertEqual(run.tests_due_an_issue({longer: ['1', '2', '3']}, markers), [])
+
+    def test_a_short_name_still_dedupes_through_its_marker(self):
+        markers = run.flake_markers([self.issue_for(TEST)])
+        self.assertEqual(markers, {TEST})
+        self.assertEqual(run.tests_due_an_issue({TEST: ['1', '2', '3']}, markers), [])
+
+    def test_a_strangers_marker_does_not_hide_a_flake(self):
+        stranger = self.issue_for(TEST, login='mallory')
+        self.assertEqual(run.flake_markers([stranger]), set())
+        self.assertEqual(run.flake_markers([self.issue_for(TEST, login='mallory', association='COLLABORATOR')]), {TEST})
+
+    def test_a_hosted_trunk_run_tallies_and_opens_the_issue_once(self):
+        class Tally(run.Ops):
+            def __init__(self):
+                self.posted, self.opened, self.issues = [], [], []
+                self.old = [self_comment.comment(TEST, '1'), self_comment.comment(TEST, '2')]
+                self.logs = []
+            def log(self, text): self.logs.append(text)
+            def post_tally(self, body): self.posted.append(body); self.old.append({'body': body, 'user': {'login': 'github-actions[bot]'}})
+            def tally_comments(self): return self.old
+            def open_flake_markers(self): return run.flake_markers(self.issues)
+            def open_flake_issue(self, title, body): self.opened.append((title, body)); return 'url'
+        self_comment = self
+        ops = Tally()
+        with patch.object(run.dt, 'datetime', wraps=run.dt.datetime) as clock:
+            clock.now.return_value = self.NOW
+            opened = run.record_flakes(ops, [TEST], SHA, '9')
+        self.assertTrue(ops.posted[0].startswith(f'flake-tally: {TEST} {SHA[:7]} 9 '))
+        self.assertEqual((opened, len(ops.opened)), (['url'], 1))
+        self.assertIn(TEST.rsplit('/', 1)[-1], ops.opened[0][0])
+        ops.issues = [{'body': ops.opened[0][1], 'user': {'login': 'github-actions[bot]'}}]
+        self.assertEqual(run.record_flakes(ops, [TEST], SHA, '10'), [])
+
+    def test_a_branch_proof_run_tallies_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = HostedOps(tmp, [manifest({TEST: 'failed'}), manifest({TEST: 'passed'}), manifest({TEST: 'passed'})],
+                            bodies=[report_comment(SHA[:7], 'PASS')])
+            with recording_slot(ops.events), patch.object(run, 'record_flakes', side_effect=AssertionError('no tally')), \
+                    patch.dict(os.environ, {'GITHUB_RUN_ID': '42'}):
+                self.assertEqual(run.hosted_run(ops, SHA, post=False), 'PASS')
 
 
 class StrangerTests(unittest.TestCase):
@@ -1013,6 +1299,45 @@ class HostedRunTests(unittest.TestCase):
                 self.assertEqual(run.hosted_run(ops, SHA), 'INCONCLUSIVE')
         self.assertIn('why inconclusive: simulator slot decision is busy', ops.posted[0])
 
+    def test_a_run_that_executed_no_tests_is_inconclusive_not_a_pass(self):
+        """#2590: the hosted run lacked xcodegen, ran nothing and still looked green."""
+        empty = manifest({})
+        self.assertEqual(empty['status'], 'verified')
+        result = run.summarize(empty)
+        self.assertEqual(result['verdict'], 'INCONCLUSIVE')
+        self.assertIn('ran 0 tests', ' '.join(result['errors']))
+        skipped_only = run.summarize(manifest({TEST: 'skipped'}))
+        self.assertEqual(skipped_only['verdict'], 'INCONCLUSIVE')
+        self.assertEqual(run.summarize(manifest({TEST: 'passed'}))['verdict'], 'PASS')
+
+    def test_the_hosted_job_is_red_unless_the_tip_passed(self):
+        self.assertEqual({v: run.hosted_exit_code(v) for v in ('PASS', 'held', 'FAIL', 'INCONCLUSIVE')},
+                         {'PASS': 0, 'held': 0, 'FAIL': 1, 'INCONCLUSIVE': 1})
+
+    def test_main_exits_nonzero_for_a_hosted_run_that_tested_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = HostedOps(tmp, [manifest({})], bodies=[report_comment(OLD[:7], 'PASS')])
+            with recording_slot(ops.events), patch.object(run, 'Ops', return_value=ops), \
+                    patch.dict(os.environ, {'GITHUB_RUN_ID': '42'}):
+                self.assertEqual(run.main(['--hosted', '--sha', SHA]), 1)
+        self.assertEqual(run.reported(ops.posted), [(SHA[:7], 'INCONCLUSIVE')])
+        self.assertIn('ran 0 tests', ops.posted[0])
+
+    def test_a_proof_run_from_a_branch_posts_no_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = HostedOps(tmp, [manifest({TEST: 'passed'})], bodies=[report_comment(SHA[:7], 'PASS')])
+            with recording_slot(ops.events), patch.object(run, 'pack_sim_build', side_effect=AssertionError(
+                    'a branch run must leave no sim-app for desks')), \
+                    patch.dict(os.environ, {'GITHUB_RUN_ID': '42', 'GITHUB_REF_NAME': 'ws/2590-x'}):
+                verdict = run.hosted_run(ops, SHA, post=False)  # even a tip that has a report is tested
+            written = list(ops.repo_root.rglob('report.md'))
+            text = written[0].read_text() if written else ''
+        self.assertEqual((verdict, ops.posted), ('PASS', []))
+        self.assertEqual(len(written), 1)
+        self.assertIn("branch ws/2590-x, not main's tip", text)
+        self.assertNotIn("(main's tip)", text)
+        self.assertNotIn('current phone candidate', text)
+
     def test_main_needs_a_full_sha(self):
         with open(os.devnull, 'w') as quiet, self.assertRaises(SystemExit), contextlib.redirect_stderr(quiet):
             run.main(['--hosted', '--sha', SHA[:7]])
@@ -1140,6 +1465,41 @@ class MacDefersToHostedTests(unittest.TestCase):
         self.assertEqual([n for n, _ in ops.comments], [run.REPORT_ISSUE])
         self.assertIn('not confirmed on the Mac', ops.comments[0][1])
         self.assertEqual(state['hosted_handled'][SHA[:7]]['confirm'], 'pass')
+
+    def test_a_hosted_fail_with_an_app_test_and_a_journey_confirms_the_app_test_only(self):
+        # #2667: the Mac re-runs app tests only, so a journey in the list would end every FAIL as "not reproduced".
+        bodies = [report_comment(OLD[:7], 'PASS'), hosted_report(SHA[:7], 'FAIL', [JOURNEY, TEST])]
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, verdict, state = self.tick(tmp, [manifest({TEST: 'failed'})], bodies)
+        self.assertEqual(verdict, 'handled')
+        self.assertIn(['test_plan', 'confirm', TEST], ops.calls)
+        self.assertFalse(any(JOURNEY in str(c) for c in ops.calls))
+        self.assertEqual(ops.reverts[0][0], 13)
+        self.assertEqual(ops.diagnosed, [([TEST], ['#1170'])])
+        self.assertEqual(state['hosted_handled'][SHA[:7]]['confirm'], 'fail')
+
+    def test_an_app_test_that_passes_here_still_names_the_journey_it_did_not_rerun(self):
+        bodies = [hosted_report(SHA[:7], 'FAIL', [JOURNEY, TEST])]
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, verdict, _ = self.tick(tmp, [manifest({TEST: 'passed'})], bodies)
+        self.assertEqual((verdict, ops.reverts, ops.filed), ('handled', [], []))
+        self.assertIn('not confirmed on the Mac', ops.comments[0][1])
+        self.assertIn(f'`{JOURNEY}`', ops.comments[0][1])
+        self.assertIn('did not re-run it', ops.comments[0][1])
+
+    def test_a_hosted_fail_naming_only_journeys_runs_nothing_and_says_so(self):
+        bodies = [hosted_report(SHA[:7], 'FAIL', [JOURNEY])]
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, verdict, state = self.tick(tmp, [], bodies)
+            again = self.tick(tmp, [], bodies, ops=ops)[1]
+        self.assertEqual((verdict, again), ('handled', 'deferred'))
+        self.assertFalse(any(c[:1] == ['test_plan'] for c in ops.calls))
+        self.assertFalse(any(c[:3] == ['git', 'worktree', 'add'] for c in ops.calls))
+        self.assertEqual((ops.reverts, ops.filed, ops.diagnosed), ([], [], []))
+        self.assertEqual([n for n, _ in ops.comments], [run.REPORT_ISSUE])
+        self.assertIn('only scripted journeys failed', ops.comments[0][1])
+        self.assertNotIn('not confirmed on the Mac', ops.comments[0][1])
+        self.assertEqual(state['hosted_handled'][SHA[:7]]['confirm'], 'journeys only')
 
     def test_only_the_newest_hosted_report_counts(self):
         cases = [
