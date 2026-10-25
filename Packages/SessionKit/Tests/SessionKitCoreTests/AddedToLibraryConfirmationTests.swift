@@ -42,3 +42,5 @@ final class AddedToLibraryConfirmationTests: XCTestCase {
         XCTAssertNil(FeedbackBannerPolicy.autoDismissSeconds(for: .error, offersAction: true))
     }
 }
+
+// proof
