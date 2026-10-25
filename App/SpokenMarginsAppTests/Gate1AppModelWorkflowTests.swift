@@ -825,6 +825,44 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(audio.isPlaying, "the timer said it paused playback, so the player must have stopped")
     }
 
+    /// #1979: the timer fades what is playing over its last ten seconds, and the next play is not silent.
+    func testSleepTimerFadesTheVolumeAndBringsItBackAfterThePauseOrAnExtension() throws {
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        XCTAssertTrue(model.snapshot.status.isPlaybackActive)
+        model.armSleepTimer(.minutes15)
+        defer { model.cancelSleepTimer() }
+        guard case .armed(_, let deadline?, _) = model.sleepTimerState else {
+            return XCTFail("Expected armed sleep timer")
+        }
+        let before = audio.playbackVolumes.count
+
+        model.reconcileSleepTimer(now: deadline.addingTimeInterval(-30))
+        XCTAssertEqual(audio.playbackVolumes.count, before, "the warning minute changes no volume")
+
+        model.reconcileSleepTimer(now: deadline.addingTimeInterval(-5))
+        XCTAssertEqual(audio.playbackVolumes.last, 0.5)
+        model.reconcileSleepTimer(now: deadline.addingTimeInterval(-2))
+        XCTAssertEqual(audio.playbackVolumes.last ?? 1, 0.2, accuracy: 0.001)
+
+        model.extendSleepTimerBy15Minutes()
+        XCTAssertEqual(audio.playbackVolumes.last, 1, "extending mid-fade brings the volume back")
+        XCTAssertTrue(audio.isPlaying)
+
+        guard case .armed(_, let extended?, _) = model.sleepTimerState else {
+            return XCTFail("Expected armed sleep timer")
+        }
+        model.reconcileSleepTimer(now: extended.addingTimeInterval(-1))
+        XCTAssertEqual(audio.playbackVolumes.last ?? 1, 0.1, accuracy: 0.001)
+        model.reconcileSleepTimer(now: extended.addingTimeInterval(1))
+        XCTAssertFalse(audio.isPlaying)
+        XCTAssertEqual(audio.playbackVolumes.last, 1, "the next time the listener plays it is at full volume")
+    }
+
     func testSleepTimerExpiryDefersThroughInterjectionRecording() throws {
         let restoreTerms = acceptTerms()
         defer { restoreTerms() }
@@ -6308,12 +6346,17 @@ private actor PreparedTextAudioPrewarmProbe {
 
 private final class WorkflowRecordingAudioClient: AudioPlaybackClient {
     var playedOffsets: [Int] = []
+    var playbackVolumes: [Float] = []
     var configuredSpeechRates: [Float] = []
     var configuredSpeechVoices: [String?] = []
     var currentOffset: Int?
     /// Whether the player was last told to play or to stop. `stop()` falls back to `pause()`, so both clear it.
     private(set) var isPlaying = false
     private var activeTargetId: String?
+
+    func setPlaybackVolume(_ volume: Float) throws {
+        playbackVolumes.append(volume)
+    }
 
     func prepareSpeechText(_ text: String) throws -> String {
         SpeechTextNormalizer.normalize(text)
