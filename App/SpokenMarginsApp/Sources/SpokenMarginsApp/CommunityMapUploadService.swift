@@ -9,7 +9,7 @@ import SessionKitPersistence
 /// after a transcript is attached and puts the outcome in Diagnostics. Failures are silent.
 @MainActor
 final class CommunityMapUploadService {
-    /// Settings > Support & Privacy > "Help make listening maps". Off unless the listener turns it on.
+    /// Settings > Help & Privacy > "Help make listening maps". Off unless the listener turns it on.
     static let optInKey = "communityMapUploadOptIn"
     static let shared = CommunityMapUploadService()
 
