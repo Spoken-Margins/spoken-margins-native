@@ -357,7 +357,7 @@ jobs:
         if: always() && runner.environment == 'github-hosted' && steps.run.outputs.verdict == 'PASS'
         run: CAS="$RUNNER_TEMP/lane-state/compilation-cache" PACK="$RUNNER_TEMP/cas-pack" bash scripts/ci-cas-cache.sh pack
       - name: Hosted Mac - save the Xcode compilation cache
-        if: always() && steps.cas-pack.outputs.ok == 'true'
+        if: always() && runner.environment == 'github-hosted' && steps.cas-pack.outputs.ok == 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ runner.temp }}/cas-pack
