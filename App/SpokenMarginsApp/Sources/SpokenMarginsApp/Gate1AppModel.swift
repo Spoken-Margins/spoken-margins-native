@@ -2178,9 +2178,7 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         guard snapshot.phase == .finished else { return }
-        if let store {
-            try? refreshLibraryRows(store: store)
-        }
+        refreshLibraryRowsInBackground()
         refreshMarginRows()
         diagnostics["completedSessionPresentation"] = "retained_finished_session"
         reportConfirmation("Session complete and saved.")
