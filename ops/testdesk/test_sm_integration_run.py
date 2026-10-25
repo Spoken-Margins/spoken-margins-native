@@ -1466,6 +1466,41 @@ class MacDefersToHostedTests(unittest.TestCase):
         self.assertIn('not confirmed on the Mac', ops.comments[0][1])
         self.assertEqual(state['hosted_handled'][SHA[:7]]['confirm'], 'pass')
 
+    def test_a_hosted_fail_with_an_app_test_and_a_journey_confirms_the_app_test_only(self):
+        # #2667: the Mac re-runs app tests only, so a journey in the list would end every FAIL as "not reproduced".
+        bodies = [report_comment(OLD[:7], 'PASS'), hosted_report(SHA[:7], 'FAIL', [JOURNEY, TEST])]
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, verdict, state = self.tick(tmp, [manifest({TEST: 'failed'})], bodies)
+        self.assertEqual(verdict, 'handled')
+        self.assertIn(['test_plan', 'confirm', TEST], ops.calls)
+        self.assertFalse(any(JOURNEY in str(c) for c in ops.calls))
+        self.assertEqual(ops.reverts[0][0], 13)
+        self.assertEqual(ops.diagnosed, [([TEST], ['#1170'])])
+        self.assertEqual(state['hosted_handled'][SHA[:7]]['confirm'], 'fail')
+
+    def test_an_app_test_that_passes_here_still_names_the_journey_it_did_not_rerun(self):
+        bodies = [hosted_report(SHA[:7], 'FAIL', [JOURNEY, TEST])]
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, verdict, _ = self.tick(tmp, [manifest({TEST: 'passed'})], bodies)
+        self.assertEqual((verdict, ops.reverts, ops.filed), ('handled', [], []))
+        self.assertIn('not confirmed on the Mac', ops.comments[0][1])
+        self.assertIn(f'`{JOURNEY}`', ops.comments[0][1])
+        self.assertIn('did not re-run it', ops.comments[0][1])
+
+    def test_a_hosted_fail_naming_only_journeys_runs_nothing_and_says_so(self):
+        bodies = [hosted_report(SHA[:7], 'FAIL', [JOURNEY])]
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, verdict, state = self.tick(tmp, [], bodies)
+            again = self.tick(tmp, [], bodies, ops=ops)[1]
+        self.assertEqual((verdict, again), ('handled', 'deferred'))
+        self.assertFalse(any(c[:1] == ['test_plan'] for c in ops.calls))
+        self.assertFalse(any(c[:3] == ['git', 'worktree', 'add'] for c in ops.calls))
+        self.assertEqual((ops.reverts, ops.filed, ops.diagnosed), ([], [], []))
+        self.assertEqual([n for n, _ in ops.comments], [run.REPORT_ISSUE])
+        self.assertIn('only scripted journeys failed', ops.comments[0][1])
+        self.assertNotIn('not confirmed on the Mac', ops.comments[0][1])
+        self.assertEqual(state['hosted_handled'][SHA[:7]]['confirm'], 'journeys only')
+
     def test_only_the_newest_hosted_report_counts(self):
         cases = [
             ('a newer hosted PASS', [hosted_report(SHA[:7], 'FAIL', [TEST]), hosted_report('c' * 7, 'PASS')]),
