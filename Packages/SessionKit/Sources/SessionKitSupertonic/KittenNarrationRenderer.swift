@@ -137,13 +137,12 @@ public final class KittenNarrationRenderer: @unchecked Sendable {
                             // The rest the last inference earned, waited out here under this render's own pacing and
                             // cancellation: in the background Kitten stays under iOS's CPU limit, which it ran
                             // straight past before (#1679), and a chunk is never held back once it is made.
-                            if let notBefore = nextInferenceNotBefore {
-                                try governor.waitForNextInference(notBefore: notBefore, pacing: pacing) {
-                                    guard !cancellation.isCancelled else { throw CancellationError() }
-                                    return true
-                                }
-                                nextInferenceNotBefore = nil
+                            // The shared background budget can hold even the first inference (#2695).
+                            try governor.waitForNextInference(notBefore: nextInferenceNotBefore, pacing: pacing) {
+                                guard !cancellation.isCancelled else { throw CancellationError() }
+                                return true
                             }
+                            nextInferenceNotBefore = nil
                             guard !cancellation.isCancelled else { throw CancellationError() }
                             let startedAt = Date()
                             // Loading the session is paid once and isn't counted as inference.

@@ -2151,6 +2151,8 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertGreaterThan(harness.playingChunkStart, chunk[1], "narration moved on past B")
         XCTAssertEqual(harness.renderer.startedCount, 2, "Supertonic renders nothing after the gap")
         XCTAssertTrue(harness.systemVoice.playedOffsets.isEmpty)
+        // #2695: Kitten renders beside Supertonic's queue, so that queue being idle frees nothing for the Library.
+        XCTAssertFalse(harness.client.canYieldRendererToLibrary, "no Library Supertonic render beside the stand-in")
     }
 
     // The same failed hand-over on a phone that may not render with Supertonic (hot, or Low Power Mode): the bundled
@@ -3173,6 +3175,76 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(renders, 2, "at critical heat the window is 60 s: the playing chunk and one ahead")
         XCTAssertLessThanOrEqual(renders, 6, "the playing chunk and about 300 s of listening ahead, not the whole item")
         XCTAssertTrue(last.isRestingAhead, "the rest is reported, so the app doesn't call it a slow render")
+    }
+
+    /// #2695 review: the client told the governor "live needs audio" only when a chunk finished, so after a background
+    /// seek to an unrendered spot the governor still held the last chunk's "plenty ahead", and the seek's first render
+    /// waited on a full CPU budget: silence, then a hand-over at the seam. The governor now reads the client's buffer
+    /// at each check. The seek's render is held in flight here, so no chunk end can refresh anything.
+    func testABackgroundSeekToAnUnrenderedSpotSkipsAFullCPUBudget() async throws {
+        final class Clock: @unchecked Sendable { var now: TimeInterval = 0; var cpu: TimeInterval = 0 }
+        let clock = Clock()
+        let governor = OnDeviceVoiceGovernor(
+            conditions: { SpeechEngineConditions(thermal: .fair) },
+            now: { clock.now }, cpuTime: { clock.cpu }, sleep: { clock.now += $0 })
+        governor.setAppBackgrounded(true)
+        _ = governor.measureInference { clock.cpu += OnDeviceCPUBudget.backgroundLimit } // a full budget
+
+        let template = FileManager.default.temporaryDirectory
+            .appending(path: "budget-seek-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: template) }
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1))
+        let frames = AVAudioFrameCount(8_000 * 100)
+        let silence = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
+        silence.frameLength = frames
+        do {
+            let file = try AVAudioFile(forWriting: template, settings: format.settings)
+            try file.write(from: silence)
+        }
+
+        let renderer = HoldableAudioSupertonicRenderer(templateURL: template)
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false,
+            onDeviceRenderingAllowed: { true },
+            renderAheadWindow: { 300 },
+            governor: governor
+        )
+        let text = (1...30).map { "Sentence \($0) carries enough words to make a chunk of its own for the planner here." }
+            .joined(separator: " ")
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "budget-seek")
+
+        // Wait for the chain to rest with listening rendered ahead.
+        let deadline = ContinuousClock.now + .seconds(10)
+        var lastCount = -1
+        var steadySince = ContinuousClock.now
+        while ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+            let count = await renderer.renderCount
+            if count != lastCount {
+                lastCount = count
+                steadySince = ContinuousClock.now
+            } else if ContinuousClock.now - steadySince > .seconds(1) {
+                break
+            }
+        }
+        XCTAssertGreaterThanOrEqual(client.liveNarrationBuffer().listeningAhead, OnDeviceCPUBudget.liveReserve,
+                                    "precondition: render-ahead rests with plenty waiting")
+        XCTAssertNotNil(governor.budgetStart(for: .whenAppBackgrounded), "precondition: the full budget holds render-ahead")
+
+        await renderer.holdFromNow()
+        let seekOffset = try XCTUnwrap(text.range(of: "Sentence 25 ")).lowerBound.utf16Offset(in: text)
+        try client.play(targetId: "budget-seek", seekingTo: seekOffset)
+
+        XCTAssertTrue(client.liveNarrationBuffer().needsAudio, "nothing is rendered at the new spot")
+        XCTAssertTrue(governor.liveNarrationNeedsAudio, "the governor sees the seek with no chunk having finished")
+        XCTAssertNil(governor.budgetStart(for: .whenAppBackgrounded), "the seek's render starts without a budget wait")
+        XCTAssertNotNil(governor.budgetStart(for: .always), "Library work still waits on the full budget")
+        try client.stop()
+        await renderer.release()
     }
 
     private func renderAhead(
@@ -5542,6 +5614,55 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
     /// also discards prepared chunks it played; deleting those raced the assembly after a stop.
     func discardGeneratedAudio(at url: URL) async {
         discardCount += 1
+        if generatedURLs.remove(url) != nil {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+}
+
+/// Renders a copy of a template file, until `holdFromNow()`: from then each render waits until `release()` or its
+/// task is cancelled, so a test can look at the client while a render is in flight and no chunk has finished.
+private actor HoldableAudioSupertonicRenderer: SupertonicRendering {
+    let templateURL: URL
+    private(set) var renderCount = 0
+    private var holding = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var generatedURLs: Set<URL> = []
+
+    init(templateURL: URL) {
+        self.templateURL = templateURL
+    }
+
+    func holdFromNow() { holding = true }
+
+    func release() {
+        holding = false
+        waiters.forEach { $0.resume() }
+        waiters.removeAll()
+    }
+
+    func render(
+        text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int
+    ) async throws -> SupertonicNarrationResult {
+        renderCount += 1
+        if holding {
+            await withCheckedContinuation { waiters.append($0) }
+            throw CancellationError()
+        }
+        let url = FileManager.default.temporaryDirectory.appending(path: "holdable-render-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: templateURL, to: url)
+        generatedURLs.insert(url)
+        let audio = try AVAudioFile(forReading: url)
+        return SupertonicNarrationResult(
+            audioURL: url,
+            duration: Double(audio.length) / audio.processingFormat.sampleRate,
+            sampleRate: Int(audio.processingFormat.sampleRate.rounded()),
+            renderDuration: 0.01,
+            sessionLoadCount: 1
+        )
+    }
+
+    func discardGeneratedAudio(at url: URL) async {
         if generatedURLs.remove(url) != nil {
             try? FileManager.default.removeItem(at: url)
         }

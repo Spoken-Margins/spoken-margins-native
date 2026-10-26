@@ -382,6 +382,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let onBackgroundSeams: BackgroundSeamHandler?
     /// The listening live narration may render ahead now; nil for no limit (#1681).
     private let renderAheadWindow: @Sendable () -> TimeInterval?
+    /// The governor whose shared CPU budget this client's live narration answers to; it reads `liveNarrationBuffer()`
+    /// at every budget check once this client plays (#2695).
+    private let governor: OnDeviceVoiceGovernor
     private var lifecycleObservers: [NSObjectProtocol] = []
     /// Background time over the moment between one chunk ending and the next playing (#540).
     private let handOverHold: HandOverBackgroundHold?
@@ -451,20 +454,18 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var shouldResumeAfterInterruption = false
     private var activeRenderControl: RenderTaskControl?
 
-    /// Speculative Library work can share the serial renderer only while the
-    /// listener has two contiguous committed chunks beyond the audible chunk.
+    /// Whether speculative Library work may share the serial renderer: two committed chunks wait past the audible one,
+    /// and no stand-in holds the item, since Kitten renders beside Supertonic, not in turn (#2695).
     var canYieldRendererToLibrary: Bool {
         lock.withLock {
-            guard transportIntent == .playing else { return true }
-            guard !fallbackIsActive, pendingAutoplayOffset == nil, startedTargetId != nil else { return false }
-            if generationState == .ready { return true }
-            var offset = currentStartOffset + currentChunkLength
-            for _ in 0..<2 {
-                if offset >= preparedSpeechProjection.text.count { return true }
-                guard let chunk = renderedCache[offset] else { return false }
-                offset += chunk.request.sourceLength
-            }
-            return true
+            var offset = currentStartOffset + currentChunkLength, ahead = 0
+            while ahead < OnDeviceRenderAdmission.chunksAheadForLibrary, offset < preparedSpeechProjection.text.count,
+                  let chunk = renderedCache[offset] { ahead += 1; offset += chunk.request.sourceLength }
+            return OnDeviceRenderAdmission.libraryMayShareRenderer(.init(
+                isPlaying: transportIntent == .playing,
+                standInHolds: fallbackIsActive || bundledVoiceGeneration == generation || startedTargetId.map(voiceHold.holds) == true,
+                isWaiting: pendingAutoplayOffset != nil || startedTargetId == nil, isFullyRendered: generationState == .ready,
+                chunksAhead: offset >= preparedSpeechProjection.text.count ? Int.max : ahead))
         }
     }
 
@@ -519,7 +520,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         renderAheadWindow: @escaping @Sendable () -> TimeInterval? = {
             RenderAheadPolicy.window(appBackgrounded: OnDeviceVoiceGovernor.app.isAppBackgrounded,
                                      conditions: OnDeviceVoiceGovernor.app.conditions())
-        }
+        },
+        governor: OnDeviceVoiceGovernor = .app
     ) {
         self.renderer = renderer
         self.voice = voice
@@ -580,6 +582,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.applicationIsInBackground = applicationIsInBackground
         self.onBackgroundSeams = onBackgroundSeams
         self.renderAheadWindow = renderAheadWindow
+        self.governor = governor
         super.init()
         installAudioSessionObservers()
         installLifecycleObservers()
@@ -640,6 +643,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     private func play(targetId: String, from charOffset: Int, isSeek: Bool) throws {
+        governor.readLiveNarrationBuffer { [weak self] in self?.liveNarrationBuffer() }
         applyQueuedAdvance(finished: nil)
         settleHandOverBeforePlay()
         interruptionWaitEnded(.listenerActed)
@@ -1754,7 +1758,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     // Supertonic is not allowed now, or the bundled voice holds this generation: the bundled Kitten
                     // voice renders the chunk when there is one, otherwise the iOS voice takes the passage (#849).
                     let allowedNow = self?.onDeviceRenderingAllowed() != false
-                    let usesPressureRenderer = pressureRenderer != nil && (!allowedNow || holdsBundledVoice)
+                    let usesPressureRenderer = OnDeviceRenderAdmission.liveRenderer(
+                        chosenAllowed: allowedNow, standInHolds: holdsBundledVoice, standInAvailable: pressureRenderer != nil) == .standIn
                     guard allowedNow || usesPressureRenderer else {
                         await MainActor.run {
                             self?.renderFailed(request: request, shouldPlayWhenReady: shouldPlayWhenReady,
@@ -3467,6 +3472,19 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         if let awake { onGenerationProgress?(awake) }
         if let next = woke.next { enqueueRender(next, shouldPlayWhenReady: false) }
+    }
+
+    /// #2695: what live narration has waiting now, read by the governor at every budget check. Below
+    /// `OnDeviceCPUBudget.liveReserve` ahead, or with the play head waiting on a chunk (a start, a seek or skip, a
+    /// render gap), live narration skips the shared background CPU budget, so the budget slows render-ahead but never
+    /// lets playback run dry. Pulled, not pushed: a path that moves the play head can't leave a stale answer.
+    func liveNarrationBuffer() -> LiveNarrationBuffer {
+        lock.withLock {
+            LiveNarrationBuffer(
+                listeningAhead: listeningAhead(),
+                playheadWaitsForAudio: pendingAutoplayOffset != nil
+                    || (transportIntent == .playing && startedTargetId == nil))
+        }
     }
 
     /// The listening rendered and waiting past the playing chunk, at the listener's speed: the rendered chunks one

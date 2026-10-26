@@ -33,6 +33,11 @@ public final class OnDeviceVoiceGovernor: @unchecked Sendable {
 
     private let lock = NSLock()
     private var appBackgrounded = false
+    /// Every renderer's inference CPU in the last minute, shared across voices while the app is away (#2695).
+    private var budget = OnDeviceCPUBudget()
+    /// Asks the playing client what live narration has waiting (#2695). Read at every budget check, never cached, so
+    /// a seek, a skip or a start on an unrendered chunk is seen at once; nil when no client plays.
+    private var liveBuffer: (@Sendable () -> LiveNarrationBuffer?)?
     private let conditionsProvider: @Sendable () -> SpeechEngineConditions
     private let now: @Sendable () -> TimeInterval
     private let cpuTime: @Sendable () -> TimeInterval
@@ -77,6 +82,54 @@ public final class OnDeviceVoiceGovernor: @unchecked Sendable {
         lock.withLock { appBackgrounded }
     }
 
+    /// The playing client registers how to read live narration's buffer (#2695). The governor pulls it at each budget
+    /// check instead of being told, so no path that moves the play head can leave a stale answer behind. A later
+    /// registration replaces an earlier one; the client that plays last is the live one. `buffer` is called without
+    /// the governor's lock held, so it may take the client's own lock.
+    public func readLiveNarrationBuffer(with buffer: @escaping @Sendable () -> LiveNarrationBuffer?) {
+        lock.withLock { liveBuffer = buffer }
+    }
+
+    /// Whether live narration may not wait on the shared budget now: its play head waits on audio, or less than
+    /// `OnDeviceCPUBudget.liveReserve` of listening waits ahead. While it is, live narration keeps only its own duty
+    /// cycle, and its CPU still counts against every other render, so the budget slows render-ahead but never
+    /// starves the playing buffer.
+    public var liveNarrationNeedsAudio: Bool {
+        let buffer = lock.withLock { liveBuffer }
+        return buffer?()?.needsAudio ?? false
+    }
+
+    /// When a render with `pacing` may start its next inference under the shared background budget; nil when the
+    /// budget doesn't hold it: the app is in front, or this is live narration and the play head waits on audio or is
+    /// running low (`liveNarrationNeedsAudio`), so a render the listener is waiting for never waits on the budget.
+    public func budgetStart(for pacing: OnDeviceRenderPacing) -> TimeInterval? {
+        guard isAppBackgrounded else { return nil }
+        // Read outside the lock: the client's answer takes the client's lock, which is always taken before this one.
+        if pacing == .whenAppBackgrounded, liveNarrationNeedsAudio { return nil }
+        let time = now()
+        return lock.withLock { () -> TimeInterval? in
+            guard appBackgrounded else { return nil }
+            let start = budget.earliestStart(now: time)
+            return start > time ? start : nil
+        }
+    }
+
+    /// The inference CPU every renderer charged in the last `OnDeviceCPUBudget.window`.
+    public func budgetSpent() -> TimeInterval {
+        let time = now()
+        return lock.withLock { budget.spent(now: time) }
+    }
+
+    func reserveInference() -> TimeInterval {
+        let time = now()
+        return lock.withLock { budget.reserve(now: time) }
+    }
+
+    func settleInference(reserved: TimeInterval, cpu: TimeInterval) {
+        let time = now()
+        lock.withLock { budget.settle(reserved: reserved, cpu: cpu, now: time) }
+    }
+
     /// What the device reports now.
     public func conditions() -> SpeechEngineConditions {
         conditionsProvider()
@@ -103,13 +156,28 @@ public final class OnDeviceVoiceGovernor: @unchecked Sendable {
         OnDeviceInferencePacingPolicy.delay(after: cost, backgrounded: isPaced(pacing))
     }
 
-    /// Runs one inference and says what it cost, for `rest(after:pacing:shouldContinue:)`.
+    /// Runs one inference and says what it cost, for `rest(after:pacing:shouldContinue:)`. The cost is charged to the
+    /// shared budget, CPU time where the clock gives it and wall time otherwise (#2695).
     public func measureInference<T>(_ inference: () throws -> T) rethrows -> (value: T, cost: InferenceCost) {
+        let reserved = reserveInference()
         let wallStart = now()
         let cpuStart = cpuTime()
+        var settled = false
+        defer { if !settled { settleInference(reserved: reserved, cpu: max(0, cpuTime() - cpuStart)) } }
         let value = try inference()
         let cpu = cpuTime() - cpuStart
-        return (value, InferenceCost(wall: max(0, now() - wallStart), cpu: cpu > 0 ? cpu : nil))
+        let cost = InferenceCost(wall: max(0, now() - wallStart), cpu: cpu > 0 ? cpu : nil)
+        settleInference(reserved: reserved, cpu: cost.cpu ?? cost.wall)
+        settled = true
+        return (value, cost)
+    }
+
+    /// Waits while the shared budget holds a render with `pacing` (#2695). Re-read after every wake, since another
+    /// renderer may have charged it meanwhile or the app may have come to the front.
+    private func waitForBudget(pacing: OnDeviceRenderPacing, shouldContinue: () throws -> Bool) rethrows {
+        while try shouldContinue(), let start = budgetStart(for: pacing) {
+            sleep(min(0.1, max(0.001, start - now())))
+        }
     }
 
     /// Rests after `inference` seconds of inference. See `rest(after:pacing:shouldContinue:)`.
@@ -130,15 +198,19 @@ public final class OnDeviceVoiceGovernor: @unchecked Sendable {
         return delay > 0 ? now() + delay : nil
     }
 
-    /// Waits until `notBefore` (from `nextInference(after:pacing:)`) before the next inference. Time spent idle since
-    /// counts. Ends early once a render with `pacing` is no longer paced (the app came to the front) or
-    /// `shouldContinue` says to stop; it throws what `shouldContinue` throws, such as a cancellation.
+    /// Waits until `notBefore` (from `nextInference(after:pacing:)`, nil for none) and then while the shared budget
+    /// holds the render, before the next inference. Time spent idle since counts. Ends early once a render with
+    /// `pacing` is no longer paced (the app came to the front) or `shouldContinue` says to stop; it throws what
+    /// `shouldContinue` throws, such as a cancellation.
     public func waitForNextInference(
-        notBefore: TimeInterval, pacing: OnDeviceRenderPacing, shouldContinue: () throws -> Bool
+        notBefore: TimeInterval?, pacing: OnDeviceRenderPacing, shouldContinue: () throws -> Bool
     ) rethrows {
-        try OnDeviceInferencePacingPolicy.wait(for: notBefore - now(), now: now, sleep: sleep) {
-            try shouldContinue() && isPaced(pacing)
+        if let notBefore {
+            try OnDeviceInferencePacingPolicy.wait(for: notBefore - now(), now: now, sleep: sleep) {
+                try shouldContinue() && isPaced(pacing)
+            }
         }
+        try waitForBudget(pacing: pacing, shouldContinue: shouldContinue)
     }
 
     /// Rests after an inference that cost `cost`, on the caller's thread, so the voice's next inference waits.
@@ -156,6 +228,7 @@ public final class OnDeviceVoiceGovernor: @unchecked Sendable {
         try OnDeviceInferencePacingPolicy.wait(for: delay, now: now, sleep: sleep) {
             try shouldContinue() && isPaced(pacing)
         }
+        try waitForBudget(pacing: pacing, shouldContinue: shouldContinue)
     }
 }
 
@@ -194,5 +267,23 @@ public enum OnDeviceInferencePacingPolicy {
             guard remaining > 0 else { return }
             sleep(min(0.1, remaining))
         }
+    }
+}
+
+/// What live narration has waiting, as the playing client reads it from its own state at the moment of asking (#2695).
+public struct LiveNarrationBuffer: Equatable, Sendable {
+    /// Listening rendered and waiting past the playing chunk, at the listener's speed.
+    public var listeningAhead: TimeInterval
+    /// The play head is waiting for a chunk that isn't rendered yet: a start, a seek or skip, or a render gap.
+    public var playheadWaitsForAudio: Bool
+
+    public init(listeningAhead: TimeInterval, playheadWaitsForAudio: Bool) {
+        self.listeningAhead = listeningAhead
+        self.playheadWaitsForAudio = playheadWaitsForAudio
+    }
+
+    /// Live narration must not wait on the shared budget.
+    public var needsAudio: Bool {
+        playheadWaitsForAudio || listeningAhead < OnDeviceCPUBudget.liveReserve
     }
 }

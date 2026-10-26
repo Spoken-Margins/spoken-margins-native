@@ -88,13 +88,12 @@ public final class PocketNarrationRenderer: @unchecked Sendable {
                     autoreleasepool {
                         do {
                             // The rest the last inference earned, as for Kitten (#1679).
-                            if let notBefore = nextInferenceNotBefore {
-                                try governor.waitForNextInference(notBefore: notBefore, pacing: .whenAppBackgrounded) {
-                                    guard !cancellation.isCancelled else { throw CancellationError() }
-                                    return true
-                                }
-                                nextInferenceNotBefore = nil
+                            // The shared background budget can hold even the first inference (#2695).
+                            try governor.waitForNextInference(notBefore: nextInferenceNotBefore, pacing: .whenAppBackgrounded) {
+                                guard !cancellation.isCancelled else { throw CancellationError() }
+                                return true
                             }
+                            nextInferenceNotBefore = nil
                             guard !cancellation.isCancelled else { throw CancellationError() }
                             let runtime = try loadRuntimeIfNeeded()
                             // Load time is paid once and reported apart from the render.

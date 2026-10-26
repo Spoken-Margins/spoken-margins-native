@@ -555,13 +555,18 @@ struct Style {
     let dp: ORTValue
 }
 
-private func runPacedInference<T>(
-    _ paceAfterInference: ((TimeInterval) throws -> Void)?,
+/// Runs one inference step through the renderer's pacing, which measures it and rests after it. A step used to be
+/// timed here by wall clock alone, so Supertonic was never charged the CPU its ONNX threads used (#2695).
+typealias SupertonicInferenceStep = (() throws -> Void) throws -> Void
+
+func runPacedInference<T>(
+    _ runInference: SupertonicInferenceStep?,
     operation: () throws -> T
-) rethrows -> T {
-    let startedAt = ProcessInfo.processInfo.systemUptime
-    let result = try operation()
-    try paceAfterInference?(max(0, ProcessInfo.processInfo.systemUptime - startedAt))
+) throws -> T {
+    guard let runInference else { return try operation() }
+    var result: T?
+    try runInference { result = try operation() }
+    guard let result else { throw CancellationError() }
     return result
 }
 
@@ -592,7 +597,7 @@ class TextToSpeech {
         _ style: Style,
         _ requestedStep: Int,
         speed: Float = 1.05,
-        paceAfterInference: ((TimeInterval) throws -> Void)? = nil
+        runInference: SupertonicInferenceStep? = nil
     ) throws -> (wav: [Float], duration: [Float]) {
         let totalStep = SupertonicTuning.currentSynthesisSteps(requested: requestedStep)
         let bsz = textList.count
@@ -615,7 +620,7 @@ class TextToSpeech {
                                          shape: textMaskShape)
 
         // Predict duration
-        let dpOutputs = try runPacedInference(paceAfterInference) {
+        let dpOutputs = try runPacedInference(runInference) {
             try dpOrt.run(withInputs: ["text_ids": textIdsValue, "style_dp": style.dp, "text_mask": textMaskValue],
                           outputNames: ["duration"],
                           runOptions: nil)
@@ -632,7 +637,7 @@ class TextToSpeech {
         }
 
         // Encode text
-        let textEncOutputs = try runPacedInference(paceAfterInference) {
+        let textEncOutputs = try runPacedInference(runInference) {
             try textEncOrt.run(withInputs: ["text_ids": textIdsValue, "style_ttl": style.ttl, "text_mask": textMaskValue],
                                outputNames: ["text_emb"],
                                runOptions: nil)
@@ -673,7 +678,7 @@ class TextToSpeech {
                                                elementType: .float,
                                                shape: latentMaskShape)
 
-            let vectorEstOutputs = try runPacedInference(paceAfterInference) {
+            let vectorEstOutputs = try runPacedInference(runInference) {
                 try vectorEstOrt.run(withInputs: [
                     "noisy_latent": xtValue,
                     "text_emb": textEmbValue,
@@ -716,7 +721,7 @@ class TextToSpeech {
                                         elementType: .float,
                                         shape: finalXtShape)
 
-        let vocoderOutputs = try runPacedInference(paceAfterInference) {
+        let vocoderOutputs = try runPacedInference(runInference) {
             try vocoderOrt.run(withInputs: ["latent": finalXtValue],
                                outputNames: ["wav_tts"],
                                runOptions: nil)
@@ -737,7 +742,7 @@ class TextToSpeech {
         _ totalStep: Int,
         speed: Float = 1.05,
         silenceDuration: Float = 0.3,
-        paceAfterInference: ((TimeInterval) throws -> Void)? = nil
+        runInference: SupertonicInferenceStep? = nil
     ) throws -> (wav: [Float], duration: Float) {
         let maxLen = (lang == "ko" || lang == "ja") ? 120 : 300
         let chunks = chunkText(text, maxLen: maxLen)
@@ -753,7 +758,7 @@ class TextToSpeech {
                 style,
                 totalStep,
                 speed: speed,
-                paceAfterInference: paceAfterInference
+                runInference: runInference
             )
 
             let dur = result.duration[0]
