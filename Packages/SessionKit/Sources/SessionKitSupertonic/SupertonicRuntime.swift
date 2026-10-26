@@ -590,10 +590,11 @@ class TextToSpeech {
         _ textList: [String],
         _ langList: [String],
         _ style: Style,
-        _ totalStep: Int,
+        _ requestedStep: Int,
         speed: Float = 1.05,
         paceAfterInference: ((TimeInterval) throws -> Void)? = nil
     ) throws -> (wav: [Float], duration: [Float]) {
+        let totalStep = SupertonicTuning.currentSynthesisSteps(requested: requestedStep)
         let bsz = textList.count
 
         // Process text
@@ -859,6 +860,9 @@ func loadTextToSpeech(_ onnxDir: String, _ useGpu: Bool, _ env: ORTEnv) throws -
     let cfgs = try loadCfgs(onnxDir)
 
     let sessionOptions = try ORTSessionOptions()
+    try sessionOptions.setIntraOpNumThreads(SupertonicTuning.currentIntraOpThreads)
+    try sessionOptions.setGraphOptimizationLevel(.all)
+    try sessionOptions.addConfigEntry(withKey: SupertonicTuning.allowSpinningKey, value: SupertonicTuning.allowSpinningValue)
 
     let dpPath = "\(onnxDir)/duration_predictor.onnx"
     let textEncPath = "\(onnxDir)/text_encoder.onnx"
