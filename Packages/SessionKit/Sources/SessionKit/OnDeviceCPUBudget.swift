@@ -4,12 +4,19 @@ import Foundation
 ///
 /// Each renderer used to pace itself to a 65% duty cycle on its own, charging only the CPU used during its own
 /// inference. After the Kitten stand-in took over, a Library Supertonic render ran in Kitten's rests, nobody was charged
-/// for it, and iOS stopped the app for using too much CPU in the background. The budget is a ledger of the inference CPU
-/// every renderer spent in the last `window`; a paced inference starts only when the ledger, plus what is already in
-/// flight, plus one more inference, fits under `limit`. Renderers then split the budget instead of each taking 65%.
+/// for it, and iOS stopped the app for using too much CPU in the background. The budget is a ledger of CPU charged over
+/// the last `window`; a paced inference starts only when the ledger, plus what is already in flight, plus one more
+/// inference, fits under `limit`. Renderers then split the budget instead of each taking 65%.
 ///
-/// The live chain is never starved for it: while the listening waiting ahead is below `liveReserve`, live narration
-/// skips the budget (it keeps its own duty cycle), and what it spends still counts against every other render.
+/// What is charged is the whole process's CPU clock across each inference, not the inference alone. That catches the
+/// ONNX Runtime pool threads a multi-threaded voice runs on (a calling-thread clock would miss them), but it also charges
+/// whatever else the process did meanwhile: the player's decoding, main-thread work, SQLite saves. When two inferences
+/// overlap, each is charged the other's CPU too. Every one of those errors overcounts, so the budget errs toward resting,
+/// which is intended: iOS's limit counts the whole process, and admission (#2695) makes overlap rare.
+///
+/// The live chain is never starved for it: while the play head waits on audio, or the listening waiting ahead is below
+/// `liveReserve`, live narration skips the budget (it keeps its own duty cycle), and what it spends still counts against
+/// every other render. The governor reads that from the playing client at each check (`LiveNarrationBuffer`).
 public struct OnDeviceCPUBudget: Equatable, Sendable {
     /// Share of one core that all on-device inference together may use in the background, averaged over `window`.
     ///

@@ -229,14 +229,8 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
                                 synthesisSteps,
                                 speed: max(0.7, min(2.0, speed)),
                                 silenceDuration: 0.3,
-                                runInference: { [weak self] inference in
-                                    guard !cancellation.isCancelled else { throw CancellationError() }
-                                    guard let self else { return try inference() }
-                                    // Charged in CPU time, which its ONNX threads can push past wall time (#2695).
-                                    let (_, cost) = try governor.measureInference(inference)
-                                    try paceBackgroundInference(after: cost, pacing: pacing, cancellation: cancellation)
-                                    guard !cancellation.isCancelled else { throw CancellationError() }
-                                }
+                                runInference: Self.pacedInferenceStep(
+                                    governor: governor, pacing: pacing, isCancelled: { cancellation.isCancelled })
                             )
                             guard !cancellation.isCancelled else { throw CancellationError() }
                             let sampleCount = min(
@@ -323,12 +317,20 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
         return loaded
     }
 
-    private func paceBackgroundInference(
-        after cost: OnDeviceVoiceGovernor.InferenceCost, pacing: SupertonicRenderPacing, cancellation: RenderCancellationToken
-    ) throws {
-        try governor.rest(after: cost, pacing: pacing) {
-            guard !cancellation.isCancelled else { throw CancellationError() }
-            return true
+    /// What every model step of a render runs through: it is charged to the governor's shared budget in process CPU
+    /// time, which Supertonic's ONNX threads push past wall time (#2695), then rests by the governor's pacing. A static
+    /// function of the governor alone, so host tests drive it with a stub step, without the downloaded model.
+    static func pacedInferenceStep(
+        governor: OnDeviceVoiceGovernor, pacing: SupertonicRenderPacing, isCancelled: @escaping () -> Bool
+    ) -> SupertonicInferenceStep {
+        { inference in
+            guard !isCancelled() else { throw CancellationError() }
+            let (_, cost) = try governor.measureInference(inference)
+            try governor.rest(after: cost, pacing: pacing) {
+                guard !isCancelled() else { throw CancellationError() }
+                return true
+            }
+            guard !isCancelled() else { throw CancellationError() }
         }
     }
 
