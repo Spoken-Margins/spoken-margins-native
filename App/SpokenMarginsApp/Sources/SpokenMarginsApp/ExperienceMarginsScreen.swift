@@ -7,6 +7,8 @@ struct ExperienceMarginsScreen: View {
         let itemID: String
         let itemTitle: String
         let rows: [MarginRow]
+        /// The group holding the listener's newest Margin (#1866).
+        var isNewest = false
 
         var id: String { itemID }
 
@@ -20,6 +22,7 @@ struct ExperienceMarginsScreen: View {
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
     @State private var markdownFileURL: URL?
+    @State private var isPreparingExportAll = false
     @State private var collections: [ItemCollection] = []
 
     var body: some View {
@@ -45,6 +48,28 @@ struct ExperienceMarginsScreen: View {
             .navigationTitle("Margins")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    // Export all Margins is one toolbar tap to the share sheet; the tab makes it two (#1866).
+                    Button {
+                        guard !isPreparingExportAll else { return }
+                        isPreparingExportAll = true
+                        Task {
+                            markdownFileURL = await model.prepareAllMarginsMarkdownFileURL()
+                            isPreparingExportAll = false
+                        }
+                    } label: {
+                        if isPreparingExportAll {
+                            ProgressView().frame(minWidth: 44, minHeight: 44)
+                        } else {
+                            Label("Export all Margins", systemImage: "square.and.arrow.up")
+                                .labelStyle(.iconOnly)
+                                .frame(minWidth: 44, minHeight: 44)
+                        }
+                    }
+                    .disabled(isPreparingExportAll)
+                    .accessibilityLabel(isPreparingExportAll ? "Preparing Margins" : "Export all Margins")
+                    .accessibilityIdentifier("margins.exportAll.button")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Export Sessions", systemImage: "square.and.arrow.up.on.square", action: openBatchExport)
                         .accessibilityIdentifier("margins.export.button")
@@ -152,7 +177,7 @@ struct ExperienceMarginsScreen: View {
                     .foregroundStyle(AppColors.text)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("\(group.rows.count) Margins")
+                Text(group.isNewest ? "Newest · \(group.rows.count) Margins" : "\(group.rows.count) Margins")
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)
             }
@@ -161,7 +186,7 @@ struct ExperienceMarginsScreen: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(group.itemTitle), \(group.rows.count) Margins")
+        .accessibilityLabel("\(group.isNewest ? "Newest. " : "")\(group.itemTitle), \(group.rows.count) Margins")
         .accessibilityHint("Opens the item.")
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("margins.openItem.\(group.itemID)")
@@ -211,7 +236,9 @@ struct ExperienceMarginsScreen: View {
                     .padding(.bottom, 6)
 
                     ForEach(group.rows) { row in
-                        Button { selectedMargin = row } label: {
+                      HStack(alignment: .center, spacing: 0) {
+                        // The row plays the Margin's moment; the chevron beside it opens details (#1866).
+                        Button { _ = model.playMarginMoment(row) } label: {
                             HStack(alignment: .top, spacing: 12) {
                                 Image(systemName: row.interjection.isStarredForSharing == true ? "star.fill" : (row.needsAttention ? "exclamationmark.bubble.fill" : (row.isWritten ? "square.and.pencil" : "quote.bubble")))
                                     .foregroundStyle(row.needsAttention ? AppColors.coral : AppColors.evergreen)
@@ -248,10 +275,6 @@ struct ExperienceMarginsScreen: View {
                                     }
                                 }
                                 Spacer(minLength: 8)
-                                Image(systemName: "chevron.right")
-                                    .font(.caption.weight(.bold))
-                                    .foregroundStyle(AppColors.secondaryText)
-                                    .accessibilityHidden(true)
                             }
                             .padding(.vertical, 12)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -265,9 +288,21 @@ struct ExperienceMarginsScreen: View {
                         .contextMenu { ownMarginActions(row) }
                         // The same actions for VoiceOver and Switch Control, which can't long-press (#1917).
                         .accessibilityActions { ownMarginActions(row) }
-                        .overlay(alignment: .bottom) {
-                            Rectangle().fill(AppColors.border.opacity(0.75)).frame(height: 1)
+                        Button { selectedMargin = row } label: {
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(AppColors.secondaryText)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Details")
+                        .accessibilityHint("Opens this Margin's details, where you can share it.")
+                        .accessibilityIdentifier("margins.rowDetails.\(row.id)")
+                      }
+                      .overlay(alignment: .bottom) {
+                          Rectangle().fill(AppColors.border.opacity(0.75)).frame(height: 1)
+                      }
                     }
                 }
             }
@@ -420,15 +455,14 @@ struct ExperienceMarginsScreen: View {
     private var filteredRows: [MarginRow] { model.visiblePrivateMarginRows }
 
     private var groupedRows: [MarginGroup] {
-        let orderedItemIDs = filteredRows.reduce(into: [String]()) { result, row in
-            if !result.contains(row.interjection.itemId) { result.append(row.interjection.itemId) }
-        }
+        // Groups run by their newest Margin, and the first is marked Newest (#1866).
         let rowsByItem = Dictionary(grouping: filteredRows, by: \.interjection.itemId)
-        return orderedItemIDs.compactMap { itemID in
-            guard let rows = rowsByItem[itemID], let first = rows.first else { return nil }
+        let entries = filteredRows.map { MarginGroupOrdering.Entry(itemID: $0.interjection.itemId, createdAt: $0.interjection.createdAt) }
+        return MarginGroupOrdering.groups(from: entries).compactMap { ordered in
+            guard let rows = rowsByItem[ordered.itemID], let first = rows.first else { return nil }
             // Within an item, Margins read in the order they were heard (#777).
             let heardInOrder = rows.sorted { MarginSourceOrder.isOrderedBefore($0.interjection, $1.interjection) }
-            return MarginGroup(itemID: itemID, itemTitle: first.itemTitle, rows: heardInOrder)
+            return MarginGroup(itemID: ordered.itemID, itemTitle: first.itemTitle, rows: heardInOrder, isNewest: ordered.isNewest)
         }
     }
 

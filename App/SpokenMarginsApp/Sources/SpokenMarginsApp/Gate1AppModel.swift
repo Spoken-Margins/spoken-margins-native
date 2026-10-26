@@ -351,6 +351,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var followedSourceEntries: [FeedEntry] = [] { didSet { quickAccess.invalidateCandidates() } }
     @Published var feedSubscriptions: [FeedSubscription] = [] { didSet { quickAccess.invalidateCandidates(); listeningSignals.endListening() } }
     @Published var isRefreshingFollowedSources = false
+    @Published var followingShows = FollowingShowsState() // Following's rows, entries and looked times (#1865)
     @Published var importingFollowedSourceEntryIds: Set<String> = []
     /// The latest Play now or Add and open from Following; any later open or start makes it stale (#2124).
     var followedPlayIntent = CurrentRequest()
@@ -505,8 +506,7 @@ final class Gate1AppModel: ObservableObject {
     var libraryWasEmptyAtLaunch = false
     var readablePageExtractor: any ReadablePageExtracting = AppOwnedReadablePageExtractor() // tests replace it (#223)
     let sharedLinkVoiceover = SharedLinkVoiceover() // tests replace its page fetch (#810)
-    var sourceSuggestionChecks: Set<String> = []
-    var followDiscoveries: [String: Task<[SourceCandidateEvidence], Error>] = [:]
+    var followDiscovery = FollowDiscoveryState() // suggestion checks, shared discoveries and their cooldown (#2653)
     @Published var followOffers: [String: FollowOffer] = [:]
     var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
     private let recordingClientOverride: RecordingClient?
@@ -556,8 +556,7 @@ final class Gate1AppModel: ObservableObject {
     var suppressedAutomaticAudioPreparationItemIds = Set(
         UserDefaults.standard.stringArray(forKey: Gate1AppModel.suppressedAudioPreparationItemIdsKey) ?? []
     )
-    var pendingStartupAudioPreparationItemIds: Set<String> = []
-    var failedStartupAudioPreparationItemIds: Set<String> = []
+    var startupAudioPreparation = StartupAudioPreparationState() // pending, failed and cooling-down items (#2653)
     var isImportingPendingSourceLinkHandoffs = false
     /// Browser-text payloads one path is importing now; the link open and the drain both suspend, so each skips what the other holds (#2510).
     var browserTextPayloadsInFlight = Set<String>()

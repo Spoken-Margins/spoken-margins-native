@@ -143,6 +143,19 @@ final class LibraryAudioPreparationLoopWiringTests: XCTestCase {
 
     /// No replacement this time: the invalidated run is the only thing waiting behind the held pass. If it were not
     /// cancelled it would take the next chunk the moment the holder let go, so nothing but the holder's chunk may render.
+    /// #2690 audit: a not-ready startup job for one voice held back the next voice's job for the same item, because
+    /// the cooldown was keyed by item alone. It is keyed by item and voice; clearing an item clears every voice.
+    func testTheStartupAudioCooldownForOneVoiceDoesNotHoldBackAnother() {
+        var cooldown = RetryCooldown(base: 30, ceiling: 600)
+        let first = Gate1AppModel.startupAudioCooldownKey("item", .f1)
+        cooldown.recordFailure(first)
+        XCTAssertFalse(cooldown.canAttempt(first))
+        XCTAssertTrue(cooldown.canAttempt(Gate1AppModel.startupAudioCooldownKey("item", .m1)), "another voice")
+        XCTAssertTrue(cooldown.canAttempt(Gate1AppModel.startupAudioCooldownKey("other", .f1)), "another item")
+        cooldown.clear(Gate1AppModel.startupAudioCooldownKeys(["item"]))
+        XCTAssertTrue(cooldown.canAttempt(first), "clearing the item clears every voice")
+    }
+
     func testAnInvalidatedRunQueuedBehindAHeldPassRendersNothing() async throws {
         let fixture = try await makeFixture()
         let model = fixture.model
