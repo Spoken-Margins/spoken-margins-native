@@ -73,6 +73,22 @@ final class SupertonicNarrationTests: XCTestCase {
         XCTAssertTrue(live.allSatisfy { $0.delay > 0 }, "live narration stays paced in the background: \(Array(background))")
     }
 
+    // #2695: Supertonic's steps were timed by wall clock only, so the CPU its ONNX threads used was never charged.
+    // Every step now goes through the governor's measure, which charges the shared background budget.
+    func testARealRenderChargesItsCPUToTheSharedBudget() async throws {
+        let model = try SupertonicTestModel.assets()
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "supertonic-budget-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let governor = OnDeviceVoiceGovernor()
+        let renderer = try SupertonicNarrationRenderer(assets: model, outputDirectory: root, governor: governor)
+        XCTAssertEqual(governor.budgetSpent(), 0)
+        let result = try await renderer.render(
+            text: "Background preparation renders this chunk.", voice: .m2, language: "en", speed: 1, synthesisSteps: 5, pacing: .always)
+        await renderer.discardGeneratedAudio(at: result.audioURL)
+        XCTAssertGreaterThan(governor.budgetSpent(), 0, "every inference step is charged")
+    }
+
     // #586: the model leaves about 0.6 s of silence before the speech and 0.8 s after it, so every
     // chunk seam was a stall of more than a second. A real render has to come back trimmed to its
     // speech and a short pad, and say how much it cut so the output check still judges the model's

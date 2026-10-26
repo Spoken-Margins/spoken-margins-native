@@ -229,9 +229,12 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
                                 synthesisSteps,
                                 speed: max(0.7, min(2.0, speed)),
                                 silenceDuration: 0.3,
-                                paceAfterInference: { [weak self] inferenceDuration in
+                                runInference: { [weak self] inference in
                                     guard !cancellation.isCancelled else { throw CancellationError() }
-                                    try self?.paceBackgroundInference(after: inferenceDuration, pacing: pacing, cancellation: cancellation)
+                                    guard let self else { return try inference() }
+                                    // Charged in CPU time, which its ONNX threads can push past wall time (#2695).
+                                    let (_, cost) = try governor.measureInference(inference)
+                                    try paceBackgroundInference(after: cost, pacing: pacing, cancellation: cancellation)
                                     guard !cancellation.isCancelled else { throw CancellationError() }
                                 }
                             )
@@ -321,9 +324,9 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
     }
 
     private func paceBackgroundInference(
-        after inferenceDuration: TimeInterval, pacing: SupertonicRenderPacing, cancellation: RenderCancellationToken
+        after cost: OnDeviceVoiceGovernor.InferenceCost, pacing: SupertonicRenderPacing, cancellation: RenderCancellationToken
     ) throws {
-        try governor.rest(afterInference: inferenceDuration, pacing: pacing) {
+        try governor.rest(after: cost, pacing: pacing) {
             guard !cancellation.isCancelled else { throw CancellationError() }
             return true
         }

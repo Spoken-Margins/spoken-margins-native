@@ -33,6 +33,10 @@ public final class OnDeviceVoiceGovernor: @unchecked Sendable {
 
     private let lock = NSLock()
     private var appBackgrounded = false
+    /// Every renderer's inference CPU in the last minute, shared across voices while the app is away (#2695).
+    private var budget = OnDeviceCPUBudget()
+    /// Live narration has less than `OnDeviceCPUBudget.liveReserve` of listening waiting ahead (#2695).
+    private var liveNeedsAudio = false
     private let conditionsProvider: @Sendable () -> SpeechEngineConditions
     private let now: @Sendable () -> TimeInterval
     private let cpuTime: @Sendable () -> TimeInterval
@@ -77,6 +81,46 @@ public final class OnDeviceVoiceGovernor: @unchecked Sendable {
         lock.withLock { appBackgrounded }
     }
 
+    /// Live narration says whether the listening waiting ahead has fallen below `OnDeviceCPUBudget.liveReserve`, or
+    /// playback waits for a chunk. While it has, live narration skips the shared budget (it keeps its own duty cycle),
+    /// while its CPU still counts against every other render, so the budget can slow render-ahead but never starves
+    /// the playing buffer (#2695).
+    public func setLiveNarrationNeedsAudio(_ needs: Bool) {
+        lock.withLock { liveNeedsAudio = needs }
+    }
+
+    public var liveNarrationNeedsAudio: Bool {
+        lock.withLock { liveNeedsAudio }
+    }
+
+    /// When a render with `pacing` may start its next inference under the shared background budget; nil when the
+    /// budget doesn't hold it (the app is in front, or live narration is running low and this is live narration).
+    public func budgetStart(for pacing: OnDeviceRenderPacing) -> TimeInterval? {
+        let time = now()
+        return lock.withLock { () -> TimeInterval? in
+            guard appBackgrounded else { return nil }
+            if liveNeedsAudio, pacing == .whenAppBackgrounded { return nil }
+            let start = budget.earliestStart(now: time)
+            return start > time ? start : nil
+        }
+    }
+
+    /// The inference CPU every renderer charged in the last `OnDeviceCPUBudget.window`.
+    public func budgetSpent() -> TimeInterval {
+        let time = now()
+        return lock.withLock { budget.spent(now: time) }
+    }
+
+    func reserveInference() -> TimeInterval {
+        let time = now()
+        return lock.withLock { budget.reserve(now: time) }
+    }
+
+    func settleInference(reserved: TimeInterval, cpu: TimeInterval) {
+        let time = now()
+        lock.withLock { budget.settle(reserved: reserved, cpu: cpu, now: time) }
+    }
+
     /// What the device reports now.
     public func conditions() -> SpeechEngineConditions {
         conditionsProvider()
@@ -103,13 +147,28 @@ public final class OnDeviceVoiceGovernor: @unchecked Sendable {
         OnDeviceInferencePacingPolicy.delay(after: cost, backgrounded: isPaced(pacing))
     }
 
-    /// Runs one inference and says what it cost, for `rest(after:pacing:shouldContinue:)`.
+    /// Runs one inference and says what it cost, for `rest(after:pacing:shouldContinue:)`. The cost is charged to the
+    /// shared budget, CPU time where the clock gives it and wall time otherwise (#2695).
     public func measureInference<T>(_ inference: () throws -> T) rethrows -> (value: T, cost: InferenceCost) {
+        let reserved = reserveInference()
         let wallStart = now()
         let cpuStart = cpuTime()
+        var settled = false
+        defer { if !settled { settleInference(reserved: reserved, cpu: max(0, cpuTime() - cpuStart)) } }
         let value = try inference()
         let cpu = cpuTime() - cpuStart
-        return (value, InferenceCost(wall: max(0, now() - wallStart), cpu: cpu > 0 ? cpu : nil))
+        let cost = InferenceCost(wall: max(0, now() - wallStart), cpu: cpu > 0 ? cpu : nil)
+        settleInference(reserved: reserved, cpu: cost.cpu ?? cost.wall)
+        settled = true
+        return (value, cost)
+    }
+
+    /// Waits while the shared budget holds a render with `pacing` (#2695). Re-read after every wake, since another
+    /// renderer may have charged it meanwhile or the app may have come to the front.
+    private func waitForBudget(pacing: OnDeviceRenderPacing, shouldContinue: () throws -> Bool) rethrows {
+        while try shouldContinue(), let start = budgetStart(for: pacing) {
+            sleep(min(0.1, max(0.001, start - now())))
+        }
     }
 
     /// Rests after `inference` seconds of inference. See `rest(after:pacing:shouldContinue:)`.
@@ -130,15 +189,19 @@ public final class OnDeviceVoiceGovernor: @unchecked Sendable {
         return delay > 0 ? now() + delay : nil
     }
 
-    /// Waits until `notBefore` (from `nextInference(after:pacing:)`) before the next inference. Time spent idle since
-    /// counts. Ends early once a render with `pacing` is no longer paced (the app came to the front) or
-    /// `shouldContinue` says to stop; it throws what `shouldContinue` throws, such as a cancellation.
+    /// Waits until `notBefore` (from `nextInference(after:pacing:)`, nil for none) and then while the shared budget
+    /// holds the render, before the next inference. Time spent idle since counts. Ends early once a render with
+    /// `pacing` is no longer paced (the app came to the front) or `shouldContinue` says to stop; it throws what
+    /// `shouldContinue` throws, such as a cancellation.
     public func waitForNextInference(
-        notBefore: TimeInterval, pacing: OnDeviceRenderPacing, shouldContinue: () throws -> Bool
+        notBefore: TimeInterval?, pacing: OnDeviceRenderPacing, shouldContinue: () throws -> Bool
     ) rethrows {
-        try OnDeviceInferencePacingPolicy.wait(for: notBefore - now(), now: now, sleep: sleep) {
-            try shouldContinue() && isPaced(pacing)
+        if let notBefore {
+            try OnDeviceInferencePacingPolicy.wait(for: notBefore - now(), now: now, sleep: sleep) {
+                try shouldContinue() && isPaced(pacing)
+            }
         }
+        try waitForBudget(pacing: pacing, shouldContinue: shouldContinue)
     }
 
     /// Rests after an inference that cost `cost`, on the caller's thread, so the voice's next inference waits.
@@ -156,6 +219,7 @@ public final class OnDeviceVoiceGovernor: @unchecked Sendable {
         try OnDeviceInferencePacingPolicy.wait(for: delay, now: now, sleep: sleep) {
             try shouldContinue() && isPaced(pacing)
         }
+        try waitForBudget(pacing: pacing, shouldContinue: shouldContinue)
     }
 }
 

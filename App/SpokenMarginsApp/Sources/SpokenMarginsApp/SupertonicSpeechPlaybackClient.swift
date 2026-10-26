@@ -448,20 +448,18 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var shouldResumeAfterInterruption = false
     private var activeRenderControl: RenderTaskControl?
 
-    /// Speculative Library work can share the serial renderer only while the
-    /// listener has two contiguous committed chunks beyond the audible chunk.
+    /// Whether speculative Library work may share the serial renderer: two committed chunks wait past the audible one,
+    /// and no stand-in holds the item, since Kitten renders beside Supertonic, not in turn (#2695).
     var canYieldRendererToLibrary: Bool {
         lock.withLock {
-            guard transportIntent == .playing else { return true }
-            guard !fallbackIsActive, pendingAutoplayOffset == nil, startedTargetId != nil else { return false }
-            if generationState == .ready { return true }
-            var offset = currentStartOffset + currentChunkLength
-            for _ in 0..<2 {
-                if offset >= preparedSpeechProjection.text.count { return true }
-                guard let chunk = renderedCache[offset] else { return false }
-                offset += chunk.request.sourceLength
-            }
-            return true
+            var offset = currentStartOffset + currentChunkLength, ahead = 0
+            while ahead < OnDeviceRenderAdmission.chunksAheadForLibrary, offset < preparedSpeechProjection.text.count,
+                  let chunk = renderedCache[offset] { ahead += 1; offset += chunk.request.sourceLength }
+            return OnDeviceRenderAdmission.libraryMayShareRenderer(.init(
+                isPlaying: transportIntent == .playing,
+                standInHolds: fallbackIsActive || bundledVoiceGeneration == generation || startedTargetId.map(voiceHold.holds) == true,
+                isWaiting: pendingAutoplayOffset != nil || startedTargetId == nil, isFullyRendered: generationState == .ready,
+                chunksAhead: offset >= preparedSpeechProjection.text.count ? Int.max : ahead))
         }
     }
 
@@ -1741,7 +1739,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     // Supertonic is not allowed now, or the bundled voice holds this generation: the bundled Kitten
                     // voice renders the chunk when there is one, otherwise the iOS voice takes the passage (#849).
                     let allowedNow = self?.onDeviceRenderingAllowed() != false
-                    let usesPressureRenderer = pressureRenderer != nil && (!allowedNow || holdsBundledVoice)
+                    let usesPressureRenderer = OnDeviceRenderAdmission.liveRenderer(
+                        chosenAllowed: allowedNow, standInHolds: holdsBundledVoice, standInAvailable: pressureRenderer != nil) == .standIn
                     guard allowedNow || usesPressureRenderer else {
                         await MainActor.run {
                             self?.renderFailed(request: request, shouldPlayWhenReady: shouldPlayWhenReady,
@@ -3385,6 +3384,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         let window = renderAheadWindow()
         return lock.withLock {
             guard generation == next.generation else { return true }
+            noteLiveBufferLocked()
             if pendingAutoplayOffset != nil
                 || RenderAheadPolicy.rendersNext(listeningAhead: listeningAhead(), window: window, resting: false) {
                 // Another chain (a seek's, a gap's) may run beside the resting one: only this chunk wakes it.
@@ -3408,6 +3408,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 return nil
             }
             let waiting = pendingAutoplayOffset != nil
+            noteLiveBufferLocked()
             guard waiting
                 || RenderAheadPolicy.rendersNext(listeningAhead: listeningAhead(), window: window, resting: true) else {
                 return nil
@@ -3433,6 +3434,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         if let awake { onGenerationProgress?(awake) }
         if let next = woke.next { enqueueRender(next, shouldPlayWhenReady: false) }
+    }
+
+    /// #2695: below `OnDeviceCPUBudget.liveReserve` ahead, or waiting for a chunk, live narration skips the shared
+    /// background CPU budget, so the budget slows render-ahead but never lets playback run dry. Call with `lock` held.
+    private func noteLiveBufferLocked() {
+        OnDeviceVoiceGovernor.app.setLiveNarrationNeedsAudio(
+            pendingAutoplayOffset != nil || listeningAhead() < OnDeviceCPUBudget.liveReserve)
     }
 
     /// The listening rendered and waiting past the playing chunk, at the listener's speed: the rendered chunks one

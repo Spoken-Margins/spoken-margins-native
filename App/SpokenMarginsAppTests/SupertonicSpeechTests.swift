@@ -2151,6 +2151,8 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertGreaterThan(harness.playingChunkStart, chunk[1], "narration moved on past B")
         XCTAssertEqual(harness.renderer.startedCount, 2, "Supertonic renders nothing after the gap")
         XCTAssertTrue(harness.systemVoice.playedOffsets.isEmpty)
+        // #2695: Kitten renders beside Supertonic's queue, so that queue being idle frees nothing for the Library.
+        XCTAssertFalse(harness.client.canYieldRendererToLibrary, "no Library Supertonic render beside the stand-in")
     }
 
     // The same failed hand-over on a phone that may not render with Supertonic (hot, or Low Power Mode): the bundled
