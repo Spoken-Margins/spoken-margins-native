@@ -2657,7 +2657,7 @@ final class SupertonicSpeechTests: XCTestCase {
     }
 
     func testSelectableCatalogExposesJamesLilyKittenAndSystem() {
-        XCTAssertEqual(AppTTSVoiceSelection.allCases, [.james, .lily, .kitten, .system])
+        XCTAssertEqual(AppTTSVoiceSelection.allCases, [.james, .lily, .kitten, .system, .phonon, .kokoro])
         XCTAssertEqual(AppTTSVoiceSelection.kitten.rawValue, "kitten:jasper")
         XCTAssertNil(AppTTSVoiceSelection.kitten.supertonicVoice)
         XCTAssertEqual(AppTTSVoiceSelection.james.rawValue, "supertonic:M2")
