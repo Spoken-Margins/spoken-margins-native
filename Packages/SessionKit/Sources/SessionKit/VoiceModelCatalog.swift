@@ -179,6 +179,11 @@ public struct VoiceModelEntry: Codable, Equatable, Sendable {
     public var minimumIOSVersion: String
     /// The device's physical memory, in megabytes, below which the voice is not offered.
     public var minimumMemoryMegabytes: Int
+    /// The oldest Apple chip the voice is offered on, as `A14` (#2700): a Neural Engine voice that is too
+    /// slow or too hot on an older phone. Apple silicon counts as the A chip it grew from (M1 as A14).
+    /// Nil: no floor. An older build ignores the field, so a floor is only ever paired with a runtime
+    /// (`coreml`, `phonon-ptts`) that such a build already leaves out.
+    public var minimumChip: String?
     public var status: VoiceModelStatus
     /// The id of the voice that replaces this one. Required when `status` is `superseded`.
     public var supersededBy: String?
@@ -197,6 +202,7 @@ public struct VoiceModelEntry: Codable, Equatable, Sendable {
         runtime: VoiceModelRuntime,
         minimumIOSVersion: String,
         minimumMemoryMegabytes: Int,
+        minimumChip: String? = nil,
         status: VoiceModelStatus = .available,
         supersededBy: String? = nil,
         bundled: Bool = false,
@@ -211,6 +217,7 @@ public struct VoiceModelEntry: Codable, Equatable, Sendable {
         self.runtime = runtime
         self.minimumIOSVersion = minimumIOSVersion
         self.minimumMemoryMegabytes = minimumMemoryMegabytes
+        self.minimumChip = minimumChip
         self.status = status
         self.supersededBy = supersededBy
         self.bundled = bundled
@@ -220,7 +227,7 @@ public struct VoiceModelEntry: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, displayName, publisher, version, runtime, minimumIOSVersion, minimumMemoryMegabytes, status, supersededBy, bundled, files, archives, licenses
+        case id, displayName, publisher, version, runtime, minimumIOSVersion, minimumMemoryMegabytes, minimumChip, status, supersededBy, bundled, files, archives, licenses
     }
 
     public init(from decoder: Decoder) throws {
@@ -232,6 +239,7 @@ public struct VoiceModelEntry: Codable, Equatable, Sendable {
         runtime = try container.decode(VoiceModelRuntime.self, forKey: .runtime)
         minimumIOSVersion = try container.decode(String.self, forKey: .minimumIOSVersion)
         minimumMemoryMegabytes = try container.decode(Int.self, forKey: .minimumMemoryMegabytes)
+        minimumChip = try container.decodeIfPresent(String.self, forKey: .minimumChip)
         status = try container.decode(VoiceModelStatus.self, forKey: .status)
         supersededBy = try container.decodeIfPresent(String.self, forKey: .supersededBy)
         bundled = try container.decode(Bool.self, forKey: .bundled)
@@ -249,6 +257,7 @@ public struct VoiceModelEntry: Codable, Equatable, Sendable {
         try container.encode(runtime, forKey: .runtime)
         try container.encode(minimumIOSVersion, forKey: .minimumIOSVersion)
         try container.encode(minimumMemoryMegabytes, forKey: .minimumMemoryMegabytes)
+        try container.encodeIfPresent(minimumChip, forKey: .minimumChip)
         try container.encode(status, forKey: .status)
         try container.encodeIfPresent(supersededBy, forKey: .supersededBy)
         try container.encode(bundled, forKey: .bundled)

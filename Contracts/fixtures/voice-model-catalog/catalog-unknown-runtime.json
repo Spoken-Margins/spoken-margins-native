@@ -80,7 +80,7 @@
       "publisher": "Example Publisher",
       "version": "1.0",
       "runtime": {
-        "name": "coreml",
+        "name": "tflite",
         "version": "9.0"
       },
       "minimumIOSVersion": "26.0",

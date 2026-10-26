@@ -172,6 +172,7 @@ def validate_voice_catalogs() -> list[str]:
         "id": catalog_schema["$defs"]["id"],
         "spdxId": catalog_schema["$defs"]["license"]["properties"]["spdxId"],
         "runtimeName": catalog_schema["$defs"]["voice"]["properties"]["runtime"]["properties"]["name"],
+        "minimumChip": catalog_schema["$defs"]["voice"]["properties"]["minimumChip"],
     }
     for rule, rule_schema in rule_schemas.items():
         validator = Draft202012Validator(rule_schema)

@@ -517,6 +517,11 @@
    "why": "another"
   },
   {
+   "value": "phonon-ptts",
+   "valid": true,
+   "why": "with a dash (#2700)"
+  },
+  {
    "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
    "valid": true,
    "why": "32 characters"
@@ -540,6 +545,63 @@
    "value": "onnx\n",
    "valid": false,
    "why": "trailing newline"
+  }
+ ],
+ "minimumChip": [
+  {
+   "value": "A14",
+   "valid": true,
+   "why": "typical (#2700)"
+  },
+  {
+   "value": "A9",
+   "valid": true,
+   "why": "one digit"
+  },
+  {
+   "value": "A100",
+   "valid": true,
+   "why": "three digits"
+  },
+  {
+   "value": "A1000",
+   "valid": false,
+   "why": "four digits"
+  },
+  {
+   "value": "A014",
+   "valid": false,
+   "why": "leading zero"
+  },
+  {
+   "value": "A",
+   "valid": false,
+   "why": "no number"
+  },
+  {
+   "value": "a14",
+   "valid": false,
+   "why": "lowercase"
+  },
+  {
+   "value": "M1",
+   "valid": false,
+   "why": "Apple silicon is named by its A chip"
+  },
+  {
+   "value": " A14",
+   "valid": false,
+   "why": "leading space"
+  },
+  {
+   "value": "A14\n",
+   "valid": false,
+   "why": "trailing newline"
+  },
+  {
+   "value": "",
+   "valid": false,
+   "why": "empty"
   }
  ]
 }
