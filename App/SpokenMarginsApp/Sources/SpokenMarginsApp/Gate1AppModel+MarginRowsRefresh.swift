@@ -34,10 +34,11 @@ extension Gate1AppModel {
     }
 
     func refreshMarginRowsAsync() async {
+        guard let store else { return diagnostics["marginRefresh"] = "failed:no_store" }
         do {
             let scope = "\(ObjectIdentifier(self)).all"
             let ticket = MarginRowsTickets.take(scope)
-            let entries = try await StoreReader(try requireStore()).read { try MarginRowsReading.all(store: $0) }
+            let entries = try await StoreReader(store).read { try MarginRowsReading.all(store: $0) }
             guard MarginRowsTickets.isCurrent(ticket, scope) else { return }
             sharedMarginRows = entries.sharedRows.map(sharedRow)
             marginRows = entries.privateRows.map(privateRow)
@@ -48,10 +49,11 @@ extension Gate1AppModel {
     }
 
     func refreshMarginRowsAsync(forItem itemId: String) async {
+        guard let store else { return diagnostics["marginRefresh"] = "failed:no_store" }
         do {
             let scope = "\(ObjectIdentifier(self)).item.\(itemId)"
             let ticket = MarginRowsTickets.take(scope)
-            let fresh = try await StoreReader(try requireStore()).read { try MarginRowsReading.item(itemId, store: $0) }
+            let fresh = try await StoreReader(store).read { try MarginRowsReading.item(itemId, store: $0) }
             guard MarginRowsTickets.isCurrent(ticket, scope) else { return }
             applyMarginEntries(fresh, forItem: itemId)
         } catch {
