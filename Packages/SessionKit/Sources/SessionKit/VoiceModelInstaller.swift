@@ -220,7 +220,7 @@ public actor VoiceModelInstaller {
         progress: (@Sendable (VoiceModelInstallProgress) -> Void)? = nil,
         prepare: (@Sendable (URL) async throws -> Void)? = nil
     ) async throws -> URL {
-        try Self.validate(voiceId: voiceId, version: version, files: files, archives: archives, formats: configuration.decompressor.formats)
+        try Self.validate(voiceId: voiceId, version: version, files: files, archives: archives, formats: configuration.decompressor.formats.union(ZipArchiveReader.formats))
         guard busyVoices.insert(voiceId).inserted else { throw VoiceModelInstallError.busy(voiceId: voiceId) }
         defer { busyVoices.remove(voiceId) }
 
@@ -560,11 +560,27 @@ public actor VoiceModelInstaller {
             onMemberEnd: { try extraction.end($0) }
         )
         do {
-            try configuration.decompressor.tarBytes(of: archiveURL, format: archive.format) { chunk in
-                if Task.isCancelled { throw CancellationError() }
-                try reader.feed(chunk)
+            if archive.format == "zip" {
+                // A zip is read from its own index, not as a stream (#2704).
+                try ZipArchiveReader.read(
+                    archiveURL,
+                    onMember: { member in
+                        if Task.isCancelled { throw CancellationError() }
+                        return try extraction.begin(member)
+                    },
+                    onData: { chunk in
+                        if Task.isCancelled { throw CancellationError() }
+                        try extraction.write(chunk)
+                    },
+                    onMemberEnd: { try extraction.end($0) }
+                )
+            } else {
+                try configuration.decompressor.tarBytes(of: archiveURL, format: archive.format) { chunk in
+                    if Task.isCancelled { throw CancellationError() }
+                    try reader.feed(chunk)
+                }
+                try reader.finish()
             }
-            try reader.finish()
         } catch is CancellationError {
             extraction.abandon()
             throw CancellationError()
