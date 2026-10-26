@@ -66,6 +66,23 @@ final class LibraryAudioPreparationLoopTests: XCTestCase {
         XCTAssertEqual(host.runsStarted, 1, "playback allows preparation, yet a stopped loop stays stopped")
     }
 
+    /// #2694: the card is requested only for a run that can render.
+    func testAStartRefusedByPlaybackRequestsNoContinuedCardAndStartsNoRun() async {
+        let host = ScriptedHost()
+        host.playbackAllows = false
+        let loop = LibraryAudioPreparationLoop()
+        loop.start(host: host)
+        await pause()
+        XCTAssertEqual(host.continuedRequests, 0)
+        XCTAssertEqual(host.runsStarted, 0)
+        XCTAssertFalse(loop.isRunning)
+
+        host.playbackAllows = true // the listener tapped Make available offline
+        loop.start(host: host)
+        await settle { host.runsStarted == 1 }
+        XCTAssertEqual(host.continuedRequests, 1)
+    }
+
     func testACancelOnlyRunEndsAndRestartsWhenPlaybackAllowsIt() async {
         let host = ScriptedHost()
         let loop = LibraryAudioPreparationLoop()
