@@ -13,11 +13,13 @@ mentions by default, and tapping the push opens the PR. A PR is ready when all o
 1. it is not a draft, and its head is in this repository (no forks);
 2. GitHub says it merges cleanly (`mergeable` true; an unknown answer waits for the next run);
 3. no check run or commit status on the head failed or is still running (this workflow's own job is ignored);
-4. the `workflow files parse` check (workflow-files.yml, #2596) is present on the head and green, and the head
-   contains the base's current tip (#2714). That check runs on every PR, but on #2641 it went green at 02:50 and
-   the PR merged at 21:52 after the base had moved, so nothing had re-checked it against the current base. A head
-   that is behind the base, or a base comparison GitHub could not answer, is not ready; the alert names what is
-   missing, and pushing the base into the branch re-runs the checks;
+4. the `workflow files parse` check (workflow-files.yml, #2596) is present on the head and green (#2714). The
+   label and this rule never look at how far the head is behind the base, so the label does not flap when the base
+   moves. Freshness is said in the alert instead: on #2641 that check went green at 02:50 and the PR merged at
+   21:52 after main had moved. A head behind the base, or a compare GitHub could not answer, still gets its one
+   alert, worded \"N commits behind, tap Update branch\" instead of \"ready\". Update branch makes a new head, its
+   checks re-run, and the owner-tap-alert job at the end of hosted-portable / shipped-build-compat posts again,
+   saying ready;
 5. if a Claude (or legacy Codex) audit names the head, the newest one opens "No blocking findings". With no audit
    of the head the PR is still ready, and the alert says so: on 2026-10-18 none of the four PRs above had a lane
    report or an audit, because nothing arms a PR the runner can't merge, so waiting for one would never alert;
@@ -167,9 +169,8 @@ def qualifies(ready: bool, why: str) -> bool:
 
 
 def readiness(pr: dict, files: list[dict], check_runs: list[dict], statuses: list[dict],
-              comments: list[dict], repo: str, behind_by: int | None = None) -> tuple[bool, str]:
-    """(ready, why) for one open PR. `pr` is the REST pulls/N shape. `behind_by` is how many commits of the base the
-    head lacks (compare API); None means unknown, which is not ready (#2714)."""
+              comments: list[dict], repo: str) -> tuple[bool, str]:
+    """(ready, why) for one open PR. `pr` is the REST pulls/N shape."""
     head = pr['head']['sha']
     tap = owner_tap_paths(files)
     if not tap:
@@ -188,11 +189,6 @@ def readiness(pr: dict, files: list[dict], check_runs: list[dict], statuses: lis
     gap = workflow_check_gap(check_runs)
     if gap:
         return False, gap
-    if behind_by is None:
-        return False, 'GitHub did not say whether the head contains the current base'
-    if behind_by:
-        return False, (f'the head is {behind_by} commit(s) behind {(pr.get("base") or {}).get("ref", "the base")}, '
-                       'so its checks ran against an older base; update the branch to re-run them')
     verdict = head_audit_verdict(comments, head)
     if verdict is not None and not CLEAN_AUDIT.match(verdict):
         return False, f'the audit of {head[:7]} has blocking findings'
@@ -201,10 +197,18 @@ def readiness(pr: dict, files: list[dict], check_runs: list[dict], statuses: lis
     return True, 'ready: ' + ', '.join(tap)
 
 
-def alert_body(pr: dict, tap: list[str], mention: str, audited: bool) -> str:
+def alert_body(pr: dict, tap: list[str], mention: str, audited: bool, behind: int | None = 0) -> str:
     head = pr['head']['sha']
     shown = ', '.join(f'`{p}`' for p in tap[:5]) + (f' and {len(tap) - 5} more' if len(tap) > 5 else '')
     audit = ('the Claude audit of this head found no blocking findings' if audited else NO_AUDIT_TEXT)
+    if behind != 0:  # behind the base, or the compare could not say (#2714): checks may have run on old code
+        how = (f'{behind} commit{"s" if behind != 1 else ""} behind {(pr.get("base") or {}).get("ref", "main")}'
+               if behind else 'possibly behind the base')
+        return (f'@{mention} not ready to merge yet. This PR touches {shown}, which only you merge. '
+                f'This branch is {how}, so its checks ran on old code. Tap **Update branch** on the PR. '
+                'The checks re-run and this alert comes back saying ready.\n\n'
+                '_Posted by the owner-tap alert (scripts/owner_tap_alert.py, #2714): one alert per head._\n'
+                + MARKER.format(sha=head))
     return (f'@{mention} ready for your merge tap. This PR touches {shown}, which only you merge. '
             f'On head `{head[:7]}` it merges cleanly, its checks passed, and {audit}. '
             'Tap **Merge pull request** below.\n\n'
@@ -335,7 +339,7 @@ def check_pr(api: GitHubApi, number: int, mention: str, dry_run: bool, via_label
     comments = api.get_all(f'issues/{number}/comments?per_page=100')
     behind = behind_by(api, pr)
     if pr.get('mergeable') is not None:  # GitHub still working it out: leave the label as it is until the next run
-        sync_tap_label(api, number, pr, qualifies(*readiness(pr, files, runs, statuses, comments, api.repo, behind)),
+        sync_tap_label(api, number, pr, qualifies(*readiness(pr, files, runs, statuses, comments, api.repo)),
                        dry_run)
     verdict = followup_verdict(pr, comments, api.repo)
     if verdict is not None:  # alerted before the audit, which has landed since (#2052)
@@ -350,13 +354,13 @@ def check_pr(api: GitHubApi, number: int, mention: str, dry_run: bool, via_label
             return f'already followed up on {head[:7]}'
         api.comment(number, followup_body(head, mention, verdict))
         return 'audit follow-up posted'
-    ready, why = readiness(pr, files, runs, statuses, comments, api.repo, behind)
+    ready, why = readiness(pr, files, runs, statuses, comments, api.repo)
     if not ready:
         return why
     if api.get(f'pulls/{number}')['head']['sha'] != head:
         return 'head moved during the check'
     tap = owner_tap_paths(files)
-    body = alert_body(pr, tap, mention, head_audit_verdict(comments, head) is not None)
+    body = alert_body(pr, tap, mention, head_audit_verdict(comments, head) is not None, behind)
     if dry_run:
         return why + ' (dry run, nothing posted)'
     if via_label:  # the owner's own comment would notify nobody: ask the labeled Actions run to post it

@@ -46,8 +46,8 @@ GREEN = [run('lane'), run('check', conclusion='skipped'), run(alert.WORKFLOW_CHE
 CLEAN = [audit(HEAD, 'No blocking findings.')]
 
 
-def ready(p=None, files=WORKFLOW, runs=GREEN, statuses=(), comments=CLEAN, behind=0):
-    return alert.readiness(p or pr(), files, list(runs), list(statuses), list(comments), REPO, behind)
+def ready(p=None, files=WORKFLOW, runs=GREEN, statuses=(), comments=CLEAN):
+    return alert.readiness(p or pr(), files, list(runs), list(statuses), list(comments), REPO)
 
 
 class ReadinessTable(unittest.TestCase):
@@ -73,8 +73,6 @@ class ReadinessTable(unittest.TestCase):
              False, 'checks failed'),
             ('workflow check skipped', {'runs': [run('lane'), run(alert.WORKFLOW_CHECK, conclusion='skipped')]},
              False, 'not green'),
-            ('head behind the base: the #2641 case', {'behind': 3}, False, '3 commit(s) behind'),
-            ('behind unknown', {'behind': None}, False, 'did not say'),
             ('failing check', {'runs': GREEN + [run('host', conclusion='failure')]}, False, 'checks failed: host'),
             ('cancelled check', {'runs': [run('lane', conclusion='cancelled')]}, False, 'checks failed'),
             ('pending check', {'runs': GREEN + [run('lane-conflicts', status='queued', conclusion=None)]},
@@ -188,12 +186,36 @@ class FakeApi:
 
 
 class CheckPr(unittest.TestCase):
-    def test_a_head_behind_the_base_posts_nothing(self):
-        api = FakeApi()
+    def test_a_head_behind_the_base_posts_update_branch_wording_and_keeps_the_label(self):
+        api = FakeApi(labels=[])
         api.behind = 2
-        self.assertIn('behind main', alert.check_pr(api, 7, 'uncomposed', False))
-        self.assertEqual(api.posted, [])
+        out = alert.check_pr(api, 7, 'uncomposed', False)
+        self.assertIn('alert posted', out)
+        body = api.posted[0][1]
+        self.assertIn('2 commits behind main', body)
+        self.assertIn('Update branch', body)
+        self.assertNotIn('ready for your merge tap', body)
+        self.assertEqual(alert.MARKER_RE.findall(body), [HEAD])
+        self.assertEqual(api.tap_ops, [('add', 7)])  # behind does not drop or withhold the label
 
+    def test_behind_does_not_flap_the_label(self):
+        api = FakeApi(labels=[alert.TAP_LABEL])
+        api.behind = 5
+        alert.check_pr(api, 7, 'uncomposed', False)
+        self.assertEqual(api.labels, [])
+        self.assertEqual(api.tap_ops, [])
+
+    def test_an_unknown_compare_gets_the_update_branch_alert(self):
+        api = FakeApi()
+        api.behind = None
+        alert.check_pr(api, 7, 'uncomposed', False)
+        self.assertIn('Update branch', api.posted[0][1])
+
+    def test_an_up_to_date_head_posts_ready(self):
+        api = FakeApi()
+        alert.check_pr(api, 7, 'uncomposed', False)
+        self.assertIn('ready for your merge tap', api.posted[0][1])
+        self.assertNotIn('Update branch', api.posted[0][1])
 
     def test_posts_once_when_ready(self):
         api = FakeApi()
