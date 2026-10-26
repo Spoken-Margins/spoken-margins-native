@@ -218,6 +218,7 @@ final class Gate1AppModel: ObservableObject {
     }
     var activePlaybackDetail: ItemDetailState?
     let backgroundRefresh = BackgroundRefreshGate() // #2102
+    let summaryRecordsCache = SummaryRecordsCache() // #2508
     @Published var libraryItems: [LibraryItemRow] = [] {
         didSet { quickAccess.invalidateCandidates(); libraryPresentationRevision += 1 }
     }
@@ -2363,9 +2364,7 @@ final class Gate1AppModel: ObservableObject {
         aiSummaryExperienceAvailable && hasActiveSession && !unsummarizedInterjectionsForCurrentTarget().isEmpty
     }
 
-    var isSummarizingInterjections: Bool {
-        latestPendingJob(kind: "interjection_summary") != nil
-    }
+    var isSummarizingInterjections: Bool { latestPendingJob(kind: "interjection_summary") != nil }
 
     var summaryActionTitle: String {
         if isSummarizingInterjections { return "Summarizing" }
