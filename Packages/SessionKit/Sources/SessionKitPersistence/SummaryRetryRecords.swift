@@ -37,7 +37,7 @@ public struct SummaryRetryRecords: Sendable, Equatable {
 @MainActor
 public final class SummaryRecordsCache {
     private var loadedKey: String?
-    private var loadingKey: String?
+    private var loading: (key: String, task: Task<SummaryRetryRecords?, Never>)?
     private var records: SummaryRetryRecords?
     public private(set) var loads = 0
 
@@ -48,24 +48,50 @@ public final class SummaryRecordsCache {
         load: @escaping @Sendable () async -> SummaryRetryRecords?,
         onLoaded: @escaping @MainActor () -> Void
     ) -> SummaryRetryRecords? {
-        guard key != loadedKey, key != loadingKey else { return records }
-        loadingKey = key
-        Task { @MainActor [weak self] in
+        guard key != loadedKey, key != loading?.key else { return records }
+        start(key: key, load: load, onLoaded: onLoaded)
+        return records
+    }
+
+    /// True when the answer `current` gives was read for `key`, not kept from an older state.
+    public func isSettled(key: String) -> Bool { key == loadedKey }
+
+    /// The answer for `key` itself, read now (or joining the read already running for it). A decision such as a
+    /// Summarize tap uses this, so it never acts on the previous state's answer (#2747).
+    public func settle(
+        key: String,
+        load: @escaping @Sendable () async -> SummaryRetryRecords?,
+        onLoaded: @escaping @MainActor () -> Void
+    ) async -> SummaryRetryRecords? {
+        if key == loadedKey { return records }
+        if let loading, loading.key == key { return await loading.task.value }
+        return await start(key: key, load: load, onLoaded: onLoaded).value
+    }
+
+    @discardableResult
+    private func start(
+        key: String,
+        load: @escaping @Sendable () async -> SummaryRetryRecords?,
+        onLoaded: @escaping @MainActor () -> Void
+    ) -> Task<SummaryRetryRecords?, Never> {
+        let task = Task { @MainActor [weak self] () -> SummaryRetryRecords? in
             let loaded = await load()
-            // A newer key started while this one was reading: its answer wins.
-            guard let self, self.loadingKey == key else { return }
-            self.loadingKey = nil
+            // A newer key started while this one was reading: its answer wins on screen.
+            guard let self, self.loading?.key == key else { return loaded }
+            self.loading = nil
             self.loadedKey = key
             self.records = loaded
             self.loads += 1
             onLoaded()
+            return loaded
         }
-        return records
+        loading = (key, task)
+        return task
     }
 
     /// Forces the next `current` to read again, keeping the old answer on screen meanwhile.
     public func invalidate() {
         loadedKey = nil
-        loadingKey = nil
+        loading = nil
     }
 }

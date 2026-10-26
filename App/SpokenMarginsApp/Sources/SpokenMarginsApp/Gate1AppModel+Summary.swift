@@ -9,17 +9,39 @@ extension Gate1AppModel {
     /// thread, and answers from the last read meanwhile (#2508). The key is the session's own snapshot fields, which
     /// the engine updates whenever a job or Margin changes.
     private var summaryRecords: SummaryRetryRecords? {
+        summaryRecordsRequest.flatMap { summaryRecordsCache.current(key: $0.key, load: $0.load, onLoaded: $0.onLoaded) }
+    }
+
+    private var summaryRecordsRequest: (key: String, load: @Sendable () async -> SummaryRetryRecords?, onLoaded: @MainActor () -> Void)? {
         guard let sessionId = snapshot.sessionId, let itemId = snapshot.itemId, let store else { return nil }
         let s = snapshot
         let key = [s.sessionId, s.itemId, s.targetType, s.targetId, s.pendingAiJobKind, s.pendingAiJobStatus, s.turnStatus, s.lastFailure]
             .map { $0 ?? "" }.joined(separator: "|") + "|\(s.activeInterjectionCount)|\(s.pendingAiJobCount)"
-        return summaryRecordsCache.current(
-            key: key,
-            load: { try? await StoreReader(store).read { try SummaryRetryRecords.load(store: $0, sessionId: sessionId, itemId: itemId) } },
-            onLoaded: { [weak self] in self?.objectWillChange.send() })
+        return (key, { try? await StoreReader(store).read { try SummaryRetryRecords.load(store: $0, sessionId: sessionId, itemId: itemId) } },
+                { [weak self] in self?.objectWillChange.send() })
+    }
+
+    /// Returns once the Summarize controls answer for the session's current state, not the previous one (#2747).
+    /// A tap waits on this before deciding; tests use it as their seam instead of sleeping.
+    func settleSummaryRecords() async {
+        while let request = summaryRecordsRequest, !summaryRecordsCache.isSettled(key: request.key) {
+            _ = await summaryRecordsCache.settle(key: request.key, load: request.load, onLoaded: request.onLoaded)
+        }
     }
 
     func summarize() {
+        // Retry vs a new summary is decided from the jobs as they are now: the cache may still hold the answer from
+        // before the last summary finished or failed, and acting on it would start the wrong one (#2747). With no
+        // on-device model both ways end in the same message, so that answer stays immediate.
+        if !remoteProviderExperienceEnabled, localFoundationModelAvailable,
+           let key = summaryRecordsRequest?.key, !summaryRecordsCache.isSettled(key: key) {
+            Task { [weak self] in
+                guard let self else { return }
+                await settleSummaryRecords()
+                hangTelemetry.labels.scoped("summarizeAfterSettle") { summarize() }
+            }
+            return
+        }
         if !remoteProviderExperienceEnabled {
             do {
                 if let original = try recoverableLocalSummaryRetryContext() {

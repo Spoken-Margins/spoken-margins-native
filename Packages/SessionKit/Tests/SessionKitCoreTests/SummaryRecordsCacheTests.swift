@@ -39,6 +39,40 @@ final class SummaryRecordsCacheTests: XCTestCase {
         XCTAssertEqual(cache.loads, 2)
     }
 
+    /// #2747: a Summarize tap right after a summary failed must see the failure, not the "pending" answer
+    /// the cache is still showing from before.
+    func testSettleAnswersForTheNewKeyNotTheOldAnswer() async throws {
+        let cache = SummaryRecordsCache()
+        let counter = Counter()
+        let pending = SummaryRetryRecords(jobs: [Self.job("1", "pending")], turns: [], interjections: [])
+        let failed = SummaryRetryRecords(jobs: [Self.job("1", "retryable")], turns: [], interjections: [])
+        _ = cache.current(key: "pending", load: { pending }, onLoaded: {})
+        await waitForLoads(cache, 1)
+
+        XCTAssertEqual(cache.current(key: "failed", load: { counter.bump(); return failed }, onLoaded: {}), pending)
+        XCTAssertFalse(cache.isSettled(key: "failed"))
+        let settled = await cache.settle(key: "failed", load: { counter.bump(); return failed }, onLoaded: {})
+        XCTAssertEqual(settled, failed)
+        XCTAssertTrue(cache.isSettled(key: "failed"))
+        XCTAssertEqual(cache.current(key: "failed", load: { nil }, onLoaded: {}), failed)
+        XCTAssertEqual(counter.value, 1, "settle joins the read the render already started")
+    }
+
+    func testSettleOnASettledKeyDoesNotRead() async throws {
+        let cache = SummaryRecordsCache()
+        let counter = Counter()
+        let records = SummaryRetryRecords(jobs: [], turns: [], interjections: [])
+        let first = await cache.settle(key: "a", load: { counter.bump(); return records }, onLoaded: {})
+        let second = await cache.settle(key: "a", load: { counter.bump(); return nil }, onLoaded: {})
+        XCTAssertEqual(first, records)
+        XCTAssertEqual(second, records)
+        XCTAssertEqual(counter.value, 1)
+    }
+
+    private static func job(_ id: String, _ status: String) -> AIJob {
+        AIJob(id: id, kind: "interjection_summary", itemId: "i", sessionId: "s", turnId: "t-\(id)", providerType: "p", model: "m", status: status, attempts: 0, lastError: nil, messages: [], playbackMode: nil)
+    }
+
     func testLatestPendingPicksTheNewestWaitingJobOfThatKind() {
         func job(_ id: String, _ kind: String, _ status: String) -> AIJob {
             AIJob(id: id, kind: kind, itemId: "i", sessionId: "s", turnId: "t-\(id)", providerType: "p", model: "m", status: status, attempts: 0, lastError: nil, messages: [], playbackMode: nil)
