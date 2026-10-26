@@ -92,9 +92,16 @@ extension VoiceModelEntry {
 }
 
 public struct VoiceModelInstallProgress: Equatable, Sendable {
+    public enum Phase: Equatable, Sendable {
+        case downloading
+        /// Every file is in and checked; the runtime's one-time preparation is running (#2700).
+        case preparing
+    }
+
     /// Bytes of the voice in place so far, counting what an earlier attempt already downloaded.
     public var bytesDownloaded: Int64
     public var totalBytes: Int64
+    public var phase: Phase = .downloading
 }
 
 public enum VoiceModelInstallError: Error, Equatable, LocalizedError {
@@ -109,6 +116,8 @@ public enum VoiceModelInstallError: Error, Equatable, LocalizedError {
     /// This voice is already being installed or removed.
     case busy(voiceId: String)
     case storageFailed(String)
+    /// Every file arrived and checked, but the runtime's preparation failed. The files stay staged.
+    case preparationFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -119,6 +128,7 @@ public enum VoiceModelInstallError: Error, Equatable, LocalizedError {
         case .checksumMismatch(let path): "\(path) downloaded but didn't match what was expected, so it was thrown away."
         case .busy: "This voice is already being installed or removed."
         case .storageFailed(let reason): "Couldn't save the voice: \(reason)."
+        case .preparationFailed(let reason): "The voice downloaded but couldn't be prepared: \(reason)."
         }
     }
 
@@ -197,13 +207,18 @@ public actor VoiceModelInstaller {
     /// same voice are deleted. Throws `CancellationError` when the task is cancelled; a partial download
     /// stays staged so a later call resumes it. Progress counts downloaded bytes: each downloaded file and
     /// each archive, which is what `VoiceModelEntry.downloadByteCount` shows the listener.
+    ///
+    /// `prepare`, when given, runs once every file is checked, on the staged folder, before it moves into
+    /// place (#2700); progress reports `.preparing` while it runs. A preparation error leaves the voice
+    /// uninstalled with its files still staged, so the next call prepares again without downloading.
     @discardableResult
     public func install(
         voiceId: String,
         version: String,
         files: [VoiceModelInstallFile],
         archives: [VoiceModelInstallArchive] = [],
-        progress: (@Sendable (VoiceModelInstallProgress) -> Void)? = nil
+        progress: (@Sendable (VoiceModelInstallProgress) -> Void)? = nil,
+        prepare: (@Sendable (URL) async throws -> Void)? = nil
     ) async throws -> URL {
         try Self.validate(voiceId: voiceId, version: version, files: files, archives: archives, formats: configuration.decompressor.formats)
         guard busyVoices.insert(voiceId).inserted else { throw VoiceModelInstallError.busy(voiceId: voiceId) }
@@ -232,6 +247,21 @@ public actor VoiceModelInstaller {
             try await unpack(archive, members: files.filter { $0.archiveMember?.archive == archive.id }, in: staging, tracker: tracker)
         }
         try removeIfPresent(staging.appendingPathComponent(Self.archiveFolder, isDirectory: true))
+
+        if let prepare {
+            try Task.checkCancellation()
+            progress?(VoiceModelInstallProgress(bytesDownloaded: total, totalBytes: total, phase: .preparing))
+            configuration.log?.record("prepare.started", ["voice": voiceId, "version": version])
+            do {
+                try await prepare(staging)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                configuration.log?.record("prepare.failed", ["voice": voiceId, "reason": String(describing: error)])
+                throw VoiceModelInstallError.preparationFailed(String(describing: error))
+            }
+            configuration.log?.record("prepare.finished", ["voice": voiceId, "version": version])
+        }
 
         return try finalize(staging: staging, voiceId: voiceId, version: version)
     }

@@ -107,6 +107,11 @@ public actor VoiceCatalogCoordinator {
         /// The device's memory as iOS reports it, for each voice's `minimumMemoryMegabytes`. Compared after
         /// rounding to the size on the box (`nominalMemoryMegabytes`).
         public var physicalMemoryMegabytes: Int
+        /// The device's chip as an A-series generation (`VoiceDeviceFloor.generation(ofMachine:)`), for each
+        /// voice's `minimumChip`. Nil when unknown: voices with a floor are then not offered.
+        public var deviceChipGeneration: Int?
+        /// The one-time preparation each runtime needs after download (#2700).
+        public var preparers: VoiceModelPreparers
         /// The catalog document (unsigned payload) bundled with the app, used until a signed one verifies.
         public var bundledSnapshot: Data?
 
@@ -115,12 +120,16 @@ public actor VoiceCatalogCoordinator {
             trustedKeys: [VoiceCatalogTrustedKey] = VoiceCatalogTrust.production,
             playableVoiceIds: Set<String>,
             physicalMemoryMegabytes: Int = Int(ProcessInfo.processInfo.physicalMemory / 1_048_576),
+            deviceChipGeneration: Int? = nil,
+            preparers: VoiceModelPreparers = .standard,
             bundledSnapshot: Data? = nil
         ) {
             self.catalogURL = catalogURL
             self.trustedKeys = trustedKeys
             self.playableVoiceIds = playableVoiceIds
             self.physicalMemoryMegabytes = physicalMemoryMegabytes
+            self.deviceChipGeneration = deviceChipGeneration
+            self.preparers = preparers
             self.bundledSnapshot = bundledSnapshot
         }
     }
@@ -217,6 +226,7 @@ public actor VoiceCatalogCoordinator {
             let state = state(of: entry)
             let offered = entry.status == .available
                 && entry.minimumMemoryMegabytes <= Self.nominalMemoryMegabytes(reported: configuration.physicalMemoryMegabytes)
+                && VoiceDeviceFloor.allows(entry, deviceGeneration: configuration.deviceChipGeneration)
             // A voice that isn't offered and isn't here has nothing to show.
             if !offered, state == .notInstalled { return nil }
             return VoiceCatalogRow(
@@ -398,6 +408,11 @@ public actor VoiceCatalogCoordinator {
         // The entry's own mapping carries every way a file arrives: downloaded, written from text the
         // catalog carries, or taken from an archive. Rebuilding it here from `sources` alone dropped the
         // last two, and Supertonic's notices have no source, so every install failed (#2055 audit).
+        let preparer = configuration.preparers.preparer(forRuntime: row.entry.runtime.name)
+        let entry = row.entry
+        let prepare: (@Sendable (URL) async throws -> Void)? = preparer.needsPreparation
+            ? { @Sendable folder in try await preparer.prepare(stagedFolder: folder, entry: entry) }
+            : nil
         let folder: URL
         do {
             folder = try await installer.install(
@@ -405,7 +420,8 @@ public actor VoiceCatalogCoordinator {
                 version: Self.folderName(forVersion: row.entry.version),
                 files: row.entry.installFiles,
                 archives: row.entry.installArchives,
-                progress: progress
+                progress: progress,
+                prepare: prepare
             )
         } catch is CancellationError {
             log.record("install.cancelled", ["voice": voiceId])
@@ -479,6 +495,7 @@ public actor VoiceCatalogCoordinator {
         case .checksumMismatch(let path): ["kind": "checksum mismatch", "file": path]
         case .busy: ["kind": "already running"]
         case .storageFailed(let reason): ["kind": "storage failed", "reason": reason]
+        case .preparationFailed(let reason): ["kind": "preparation failed", "reason": reason]
         }
     }
 
@@ -493,6 +510,8 @@ public actor VoiceCatalogCoordinator {
             "A file arrived damaged and was thrown away. Try again."
         case .busy:
             "This voice is already downloading."
+        case .preparationFailed:
+            "The voice downloaded but couldn't be prepared. Try again; it won't download again."
         case .invalidRequest, .storageFailed:
             error.errorDescription ?? "The voice couldn't be saved."
         }

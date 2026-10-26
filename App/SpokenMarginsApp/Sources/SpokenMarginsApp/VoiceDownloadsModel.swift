@@ -9,6 +9,8 @@ final class VoiceDownloadsModel: ObservableObject {
     enum Activity: Equatable {
         case idle
         case downloading(bytes: Int64, total: Int64)
+        /// Every file is in; the voice's one-time preparation runs (Core ML compile, #2700).
+        case preparing
         case removing
         case failed(String)
     }
@@ -19,6 +21,9 @@ final class VoiceDownloadsModel: ObservableObject {
     /// owner's server is never asked (owner, 2026-10-19; #2055 audit 2). The snapshot bundled with the app is the
     /// catalog until the signed one has a home off that server.
     static let catalogURL: URL? = nil
+    /// The one-time preparation each runtime needs after download (#2700). ONNX Runtime needs none; the
+    /// Kokoro (#2705) and Phonon (#2704) slices register theirs here.
+    static let preparers: VoiceModelPreparers = .standard
 
     @Published private(set) var rows: [VoiceCatalogRow] = []
     @Published private(set) var activity: [String: Activity] = [:]
@@ -64,7 +69,13 @@ final class VoiceDownloadsModel: ObservableObject {
             .flatMap { try? Data(contentsOf: $0) }
         let coordinator = VoiceCatalogCoordinator(
             supportDirectory: supportDirectory,
-            configuration: .init(catalogURL: catalogURL, playableVoiceIds: playableVoiceIds, bundledSnapshot: snapshot),
+            configuration: .init(
+                catalogURL: catalogURL,
+                playableVoiceIds: playableVoiceIds,
+                deviceChipGeneration: VoiceDeviceProbe.chipGeneration(),
+                preparers: preparers,
+                bundledSnapshot: snapshot
+            ),
             transport: BackgroundVoiceModelTransport.shared,
             repository: repository
         )
@@ -161,6 +172,10 @@ final class VoiceDownloadsModel: ObservableObject {
     /// Whole files the installer has in place. The file in flight is added by `fileProgress`.
     private func installerProgress(voiceId: String, _ progress: VoiceModelInstallProgress) {
         guard case .downloading = activity[voiceId] else { return }
+        if progress.phase == .preparing {
+            activity[voiceId] = .preparing
+            return
+        }
         progressBase[voiceId] = progress.bytesDownloaded
         activity[voiceId] = .downloading(bytes: progress.bytesDownloaded, total: progress.totalBytes)
     }

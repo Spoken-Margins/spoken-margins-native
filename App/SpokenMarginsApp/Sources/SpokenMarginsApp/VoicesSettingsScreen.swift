@@ -125,6 +125,16 @@ private struct VoiceRow: View {
                         .accessibilityIdentifier("settings.voices.stop.\(row.id)")
                 }
             }
+        case .preparing:
+            // Indeterminate: a compile has no byte count, and a full bar that sits still looks stuck (#2700).
+            HStack(spacing: 8) {
+                ProgressView()
+                Text("Preparing voice…")
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("settings.voices.preparing.\(row.id)")
         case .removing:
             Label("Removing…", systemImage: "trash").font(.caption).foregroundStyle(AppColors.secondaryText)
         case .failed(let message):
