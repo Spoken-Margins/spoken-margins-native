@@ -135,7 +135,7 @@ final class Gate1AppModel: ObservableObject {
         developerRecording.record(kind, fields)
         // High-frequency samples and rendering events must not erase transport history.
         if kind != "sample", !kind.hasPrefix("preparation."),
-           !kind.hasPrefix("scrub."), kind != "main.delayed" {
+           !kind.hasPrefix("scrub."), !kind.hasPrefix("voicepace."), kind != "main.delayed" {
             playbackEventRecording.record(kind, fields)
         }
     }
