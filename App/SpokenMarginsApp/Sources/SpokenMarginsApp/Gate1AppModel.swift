@@ -1808,7 +1808,7 @@ final class Gate1AppModel: ObservableObject {
         selectedItem = try loadItemDetail(id: item.id, store: store)
         diagnostics["lastGeneratedMapItem"] = item.id
         diagnostics["lastListeningMapMode"] = "provider"
-        scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
+        schedulePrewarmAfterPreparedTextChange(itemId: item.id)
     }
 
     private func generateLocalListeningMap(confirmation: String) {
@@ -1820,7 +1820,7 @@ final class Gate1AppModel: ObservableObject {
             refreshSelectedItem()
             diagnostics["lastGeneratedMapItem"] = activeItemId
             diagnostics["lastListeningMapMode"] = "local_deterministic"
-            scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
+            schedulePrewarmAfterPreparedTextChange(itemId: activeItemId)
             reportConfirmation(confirmation)
         }
     }
@@ -1856,7 +1856,7 @@ final class Gate1AppModel: ObservableObject {
             selectedItem = try loadItemDetail(id: activeItemId, store: store)
             diagnostics["lastAppliedMap"] = map.id
             diagnostics["lastAppliedMapChapters"] = "\(map.chapters.count)"
-            scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
+            schedulePrewarmAfterPreparedTextChange(itemId: activeItemId)
             reportSuccess("Applied Listening Map.")
         } catch {
             reportFailure(error, context: "Listening Map validation failed")
