@@ -68,8 +68,9 @@ enum DownloadedVoiceRegistry {
 }
 
 /// The catalog entries the app ships with (the bundled snapshot, which is the catalog until a signed one is fetched,
-/// `VoiceDownloadsModel.catalogURL`). Decoded once, on first use, by whichever thread asks first; callers are the
-/// player's detached signature task and its render checks, never the main thread's first frame.
+/// `VoiceDownloadsModel.catalogURL`). Decoded once, on first use, by whichever thread asks first. `warm()` starts
+/// that decode off the main thread when a downloaded voice's engine is built, so the render checks `play()` makes on
+/// the main thread find it ready (#2744 review); a play that beats the warm-up waits on it, once.
 enum BundledVoiceCatalog {
     private static let entries: [String: VoiceModelEntry] = {
         guard let url = Bundle.main.url(forResource: "catalog-snapshot", withExtension: "json", subdirectory: "VoiceCatalog"),
@@ -79,6 +80,10 @@ enum BundledVoiceCatalog {
     }()
 
     static func entry(voiceId: String) -> VoiceModelEntry? { entries[voiceId] }
+
+    static func warm() {
+        Task.detached(priority: .utility) { _ = entries.count }
+    }
 }
 
 /// Where a voice's saved-audio identity comes from. A value, not a closure, so building the engine on the main thread
@@ -161,9 +166,11 @@ enum OnDeviceVoiceEngines {
         supportDirectory: URL,
         entry: @escaping @Sendable () -> VoiceModelEntry? = { nil },
         deviceChipGeneration: @escaping @Sendable () -> Int? = { VoiceDeviceProbe.chipGeneration() },
+        physicalMemoryMegabytes: @escaping @Sendable () -> Int = { Int(ProcessInfo.processInfo.physicalMemory / 1_048_576) },
         governorAllows: @escaping @Sendable () -> Bool = SupertonicModelNotDownloaded.governorAllowsRendering
     ) -> OnDeviceVoiceEngine {
         let voiceId = descriptor.voiceId
+        BundledVoiceCatalog.warm()
         let catalogEntry: @Sendable () -> VoiceModelEntry? = { entry() ?? BundledVoiceCatalog.entry(voiceId: voiceId) }
         let installedFolder: @Sendable () -> URL? = {
             VoiceCatalogCoordinator.installedFolder(voiceId: voiceId, supportDirectory: supportDirectory)
@@ -173,7 +180,9 @@ enum OnDeviceVoiceEngines {
             signature: .downloaded(descriptor, entry: catalogEntry),
             renderingAllowed: {
                 guard let entry = catalogEntry(),
-                      VoiceDeviceFloor.allows(entry, deviceGeneration: deviceChipGeneration()),
+                      VoiceDeviceFit.canRender(
+                          entry, deviceGeneration: deviceChipGeneration(), physicalMemoryMegabytes: physicalMemoryMegabytes()
+                      ),
                       installedFolder() != nil else { return false }
                 return governorAllows()
             },

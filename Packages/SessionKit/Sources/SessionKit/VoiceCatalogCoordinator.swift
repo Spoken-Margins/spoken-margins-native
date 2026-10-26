@@ -262,13 +262,10 @@ public actor VoiceCatalogCoordinator {
         let entries = (catalog?.voices ?? []).filter { configuration.playableVoiceIds.contains($0.id) || $0.bundled }
         return entries.compactMap { entry in
             let state = state(of: entry)
-            let unusable: VoiceUnusableReason? = if !VoiceDeviceFloor.allows(entry, deviceGeneration: configuration.deviceChipGeneration) {
-                .chipBelowFloor
-            } else if entry.minimumMemoryMegabytes > Self.nominalMemoryMegabytes(reported: configuration.physicalMemoryMegabytes) {
-                .notEnoughMemory
-            } else {
-                nil
-            }
+            let unusable = VoiceDeviceFit.floorFailure(
+                entry, deviceGeneration: configuration.deviceChipGeneration,
+                physicalMemoryMegabytes: configuration.physicalMemoryMegabytes
+            )
             let offered = entry.status == .available && unusable == nil
             // A voice that isn't offered and isn't here has nothing to show.
             if !offered, state == .notInstalled { return nil }
@@ -279,7 +276,10 @@ public actor VoiceCatalogCoordinator {
                     !agreements.contains { $0.licenseId == license.id && $0.textSHA256 == license.textSHA256 }
                 },
                 isOffered: offered,
-                unusableHere: entry.bundled ? nil : unusable
+                unusableHere: VoiceDeviceFit.renderBlocker(
+                    entry, deviceGeneration: configuration.deviceChipGeneration,
+                    physicalMemoryMegabytes: configuration.physicalMemoryMegabytes
+                )
             )
         }
     }

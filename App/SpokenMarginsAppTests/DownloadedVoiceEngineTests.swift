@@ -46,6 +46,33 @@ final class DownloadedVoiceEngineTests: XCTestCase {
         try client.stop()
     }
 
+    /// #2744 review: audio saved earlier by a downloaded voice and replayed (the prepared-chunk path) was stamped as
+    /// Supertonic's, so against the voice's own engine it counted as a stand-in and blocked assembly. Nothing renders
+    /// here: every chunk is a replay.
+    func testReplayedSavedAudioOfADownloadedVoiceIsNotTreatedAsAStandIn() async throws {
+        let template = try makeTestWAV(duration: 2)
+        let renderer = StampedVoiceRenderer(engine: "kokoro", templateURL: template)
+        let assemblies = Counter()
+        let ready = expectation(description: "generation ready")
+        ready.assertForOverFulfill = false
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            preparedAudioDirectory: root.appending(path: "replayed", directoryHint: .isDirectory),
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            onGenerationStateChange: { state, _ in if state == .ready { ready.fulfill() } },
+            preparedChunkLookup: { _, _, _ in .init(audioURL: template, duration: 2) },
+            onPreparedAudio: { _, _ in assemblies.add() }
+        )
+        _ = try client.prepareSpeechText("A short sentence that the downloaded voice saved earlier and now replays.")
+        try client.play(targetId: "replayed-item", from: 0)
+        await fulfillment(of: [ready], timeout: 60)
+        let renders = await renderer.renderCount
+        XCTAssertEqual(renders, 0, "every chunk came from saved audio")
+        XCTAssertEqual(assemblies.value, 1, "saved audio of the voice's own engine is assembled, not held back as a stand-in")
+        try client.stop()
+    }
+
     /// Supertonic's babble check (#240) is tuned to Supertonic's pacing; a slower voice must not be swapped for the iOS
     /// voice by it, and the guard must keep reporting the inner renderer's engine.
     func testTheSupertonicOutputGuardPassesAnotherEnginesAudioThroughUnchecked() async throws {
@@ -143,7 +170,7 @@ final class DownloadedVoiceEngineTests: XCTestCase {
     private let entry = VoiceModelEntry(
         id: ReadingVoiceChoice.kokoroVoiceId, displayName: "Kokoro", publisher: "hexgrad", version: "1.0",
         runtime: VoiceModelRuntime(name: "coreml", version: "1"), minimumIOSVersion: "26.0",
-        minimumMemoryMegabytes: 1, minimumChip: "A14",
+        minimumMemoryMegabytes: 4_096, minimumChip: "A14",
         files: [VoiceModelFile(path: "model.bin", byteCount: 1, sha256: String(repeating: "a", count: 64),
                                sources: ["https://voices.example/model.bin"], licenseId: "m")],
         licenses: [VoiceModelLicense(id: "m", name: "Apache 2.0", textURL: "https://voices.example/l",
@@ -157,11 +184,11 @@ final class DownloadedVoiceEngineTests: XCTestCase {
         )
     }
 
-    private func engine(chip: Int?, governor: Bool) -> OnDeviceVoiceEngine {
+    private func engine(chip: Int?, governor: Bool, memory: Int = 8_192) -> OnDeviceVoiceEngine {
         let entry = entry
         return OnDeviceVoiceEngines.downloaded(
             descriptor(), registration: registration, supportDirectory: root,
-            entry: { entry }, deviceChipGeneration: { chip }, governorAllows: { governor }
+            entry: { entry }, deviceChipGeneration: { chip }, physicalMemoryMegabytes: { memory }, governorAllows: { governor }
         )
     }
 
@@ -172,6 +199,7 @@ final class DownloadedVoiceEngineTests: XCTestCase {
         XCTAssertFalse(engine(chip: 13, governor: true).renderingAllowed(), "below the A14 floor: Kitten reads")
         XCTAssertFalse(engine(chip: nil, governor: true).renderingAllowed(), "an unknown chip never gets a floored voice")
         XCTAssertFalse(engine(chip: 14, governor: false).renderingAllowed(), "a hot phone: Kitten reads")
+        XCTAssertFalse(engine(chip: 14, governor: true, memory: 2_000).renderingAllowed(), "a 2 GB phone is below the 4 GB need: Kitten reads")
     }
 
     func testTheSavedAudioIdentityCarriesTheRenderersEngineNotSupertonics() throws {
