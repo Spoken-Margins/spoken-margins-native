@@ -218,7 +218,8 @@ public actor VoiceModelInstaller {
         files: [VoiceModelInstallFile],
         archives: [VoiceModelInstallArchive] = [],
         progress: (@Sendable (VoiceModelInstallProgress) -> Void)? = nil,
-        prepare: (@Sendable (URL) async throws -> Void)? = nil
+        prepare: (@Sendable (URL) async throws -> Void)? = nil,
+        preparationBytes: Int64 = 0
     ) async throws -> URL {
         try Self.validate(voiceId: voiceId, version: version, files: files, archives: archives, formats: configuration.decompressor.formats)
         guard busyVoices.insert(voiceId).inserted else { throw VoiceModelInstallError.busy(voiceId: voiceId) }
@@ -228,7 +229,7 @@ public actor VoiceModelInstaller {
         let total = files.filter(\.isDownloaded).reduce(Int64(0)) { $0 + Int64($1.byteCount) }
             + archives.reduce(Int64(0)) { $0 + Int64($1.byteCount) }
 
-        try refuseIfNoRoom(files: files, archives: archives, staging: staging)
+        try refuseIfNoRoom(files: files, archives: archives, staging: staging, preparationBytes: prepare == nil ? 0 : preparationBytes)
 
         try createFolder(root)
         try createFolder(root.appendingPathComponent(Self.stagingFolder, isDirectory: true))
@@ -257,6 +258,10 @@ public actor VoiceModelInstaller {
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
+                // Whatever the preparation half wrote (a compiled folder, say) goes now, folders included, so the
+                // retry starts from the checked downloads alone and a preparer's move into place can't hit
+                // "file exists" (#2735 review).
+                try? pruneStaging(staging, keeping: files, archives: archives)
                 configuration.log?.record("prepare.failed", ["voice": voiceId, "reason": String(describing: error)])
                 throw VoiceModelInstallError.preparationFailed(String(describing: error))
             }
@@ -300,7 +305,13 @@ public actor VoiceModelInstaller {
     /// Counts what is still to be written: the rest of each download, each archive member and carried file
     /// not yet in place, and the rest of each archive whose members aren't all out of it yet. An archive is
     /// on disk at the same time as its members, so both count.
-    private func refuseIfNoRoom(files: [VoiceModelInstallFile], archives: [VoiceModelInstallArchive], staging: URL) throws {
+    /// `preparationBytes` is what the runtime's preparation writes beside the files (a compiled Core ML copy).
+    private func refuseIfNoRoom(
+        files: [VoiceModelInstallFile],
+        archives: [VoiceModelInstallArchive],
+        staging: URL,
+        preparationBytes: Int64
+    ) throws {
         func stillToWrite(_ path: String, _ byteCount: Int) -> Int64 {
             let have = Self.sizeOfFile(at: staging.appendingPathComponent(path))
                 ?? Self.sizeOfFile(at: staging.appendingPathComponent(path + Self.partialSuffix))
@@ -316,7 +327,7 @@ public actor VoiceModelInstaller {
             let done = members.allSatisfy { Self.sizeOfFile(at: staging.appendingPathComponent($0.path)) == Int64($0.byteCount) }
             if !done { stillToDownload += stillToWrite(archive.stagingPath, archive.byteCount) }
         }
-        let needed = stillToDownload + configuration.marginBytes
+        let needed = stillToDownload + max(0, preparationBytes) + configuration.marginBytes
         if let available = configuration.availableCapacity(root), available < needed {
             throw VoiceModelInstallError.insufficientSpace(neededBytes: needed, availableBytes: available)
         }
@@ -671,17 +682,37 @@ public actor VoiceModelInstaller {
     }
 
     /// Deletes anything staged that the file list doesn't name, so the folder that gets installed holds
-    /// exactly the listed files. An archive still to be unpacked is kept.
+    /// exactly the listed files. An archive still to be unpacked is kept. Folders that hold no listed file go
+    /// too, so a half-written preparation output (`compiled/x.mlmodelc/`) can't survive as empty folders that
+    /// make the next preparation's move fail (#2735 review). A link is removed as a link, never followed.
     private func pruneStaging(_ staging: URL, keeping files: [VoiceModelInstallFile], archives: [VoiceModelInstallArchive]) throws {
         let wanted = Set(files.map(\.path).flatMap { [$0, $0 + Self.partialSuffix] }
             + archives.map(\.stagingPath).flatMap { [$0, $0 + Self.partialSuffix] })
-        guard let enumerator = FileManager.default.enumerator(at: staging, includingPropertiesForKeys: [.isRegularFileKey]) else { return }
+        var wantedFolders: Set<String> = []
+        for path in wanted {
+            var components = Array(path.split(separator: "/").dropLast())
+            while !components.isEmpty {
+                wantedFolders.insert(components.joined(separator: "/"))
+                components.removeLast()
+            }
+        }
+        let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey]
+        guard let enumerator = FileManager.default.enumerator(at: staging, includingPropertiesForKeys: keys) else { return }
         let base = staging.standardizedFileURL.path + "/"
         var unwanted: [URL] = []
         for case let url as URL in enumerator {
             let path = url.standardizedFileURL.path
-            guard path.hasPrefix(base), (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
-            if !wanted.contains(String(path.dropFirst(base.count))) { unwanted.append(url) }
+            guard path.hasPrefix(base) else { continue }
+            let relative = String(path.dropFirst(base.count))
+            let values = try? url.resourceValues(forKeys: Set(keys))
+            let isFolder = values?.isDirectory == true && values?.isSymbolicLink != true
+            if isFolder {
+                if wantedFolders.contains(relative) { continue }
+                enumerator.skipDescendants()
+                unwanted.append(url)
+            } else if !wanted.contains(relative) {
+                unwanted.append(url)
+            }
         }
         for url in unwanted { try removeIfPresent(url) }
     }

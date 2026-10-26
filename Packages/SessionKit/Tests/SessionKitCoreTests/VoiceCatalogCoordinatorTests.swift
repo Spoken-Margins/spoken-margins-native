@@ -541,6 +541,10 @@ final class VoiceCatalogCoordinatorTests: XCTestCase {
         let rows = await lower.rows()
         XCTAssertEqual(rows.map(\.id), ["neural-1"])
         XCTAssertEqual(rows.first?.isOffered, false)
+        XCTAssertEqual(rows.first?.unusableHere, .chipBelowFloor, "#2735 review: it won't read here, so it isn't told it keeps working")
+        XCTAssertFalse(rows.first?.installedButNotOfferedNote?.contains("keeps working") ?? true)
+        let firstRows = await first.rows()
+        XCTAssertNil(firstRows.first?.unusableHere)
         try await lower.remove(voiceId: "neural-1")
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appending(path: "Voices/neural-1").path))
     }
@@ -608,6 +612,54 @@ final class VoiceCatalogCoordinatorTests: XCTestCase {
         XCTAssertFalse(VoiceModelPreparers.standard.preparer(forRuntime: "onnxruntime").needsPreparation)
     }
 
+    /// #2735 review: Core ML's compiled copy roughly doubles the voice on disk. A phone with room for the download
+    /// alone must be told before any byte moves, not fail at "couldn't be prepared" on every retry.
+    func testTheSpaceCheckCountsWhatPreparationWritesBesideTheDownload() async throws {
+        let download = Int64(files.values.reduce(0) { $0 + $1.count })
+        let roomForTheDownloadOnly = download + 1_000
+        let transport = RecordingTransport(files: Dictionary(uniqueKeysWithValues: files.map { ("https://voices.example/neural-1/\($0.key)", $0.value) }))
+        let compiled = try coordinator(
+            snapshot: [entry(restricted: false, runtime: "coreml")],
+            transport: transport,
+            preparers: VoiceModelPreparers.standard.registering(CompilingPreparer(), forRuntime: "coreml"),
+            availableBytes: roomForTheDownloadOnly
+        )
+        do {
+            try await compiled.install(voiceId: "neural-1")
+            XCTFail("a voice that needs a compiled copy passed the space check with room for the download only")
+        } catch let error as VoiceCatalogCoordinatorError {
+            guard case .install(.insufficientSpace(let needed, _)) = error else { return XCTFail("\(error)") }
+            XCTAssertEqual(needed, download * 2, "the download plus a full compiled copy (the margin is 0 here)")
+        }
+        XCTAssertTrue(transport.requested.isEmpty, "refused before any byte downloaded")
+
+        let plain = try coordinator(snapshot: [entry(restricted: false)], availableBytes: roomForTheDownloadOnly)
+        try await plain.install(voiceId: "neural-1")
+    }
+
+    /// #2735 review: a preparer that moves its output into place must not find the folder a failed attempt left.
+    func testAFailedPreparationLeavesNoFoldersThatBreakTheRetry() async throws {
+        let preparer = MovingPreparer(failuresBeforeSuccess: 1)
+        let voices = try coordinator(
+            snapshot: [entry(restricted: false, runtime: "coreml")],
+            preparers: VoiceModelPreparers.standard.registering(preparer, forRuntime: "coreml")
+        )
+        do {
+            try await voices.install(voiceId: "neural-1")
+            XCTFail("installed although preparation failed")
+        } catch let error as VoiceCatalogCoordinatorError {
+            guard case .install(.preparationFailed) = error else { return XCTFail("\(error)") }
+        }
+        let staging = root.appending(path: "Voices/.staging")
+        let leftovers = (FileManager.default.enumerator(atPath: staging.path)?.allObjects as? [String] ?? [])
+            .filter { $0.contains("compiled") }
+        XCTAssertEqual(leftovers, [], "the failed attempt's output folders are gone")
+
+        let folder = try await voices.install(voiceId: "neural-1")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appending(path: "compiled/model.mlmodelc/weights.bin").path))
+        XCTAssertEqual(preparer.calls, 2)
+    }
+
     private static func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
@@ -641,6 +693,39 @@ private final class CompilingPreparer: VoiceModelPreparing, @unchecked Sendable 
         try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Self.output.write(to: target)
         if fail { throw CompileFailed() }
+    }
+}
+
+/// Compiles into a scratch folder and moves the result into place, as `MLModel.compileModel` callers do. A failed
+/// attempt leaves the target folder created and empty, the way an interrupted compile can.
+private final class MovingPreparer: VoiceModelPreparing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var failuresLeft: Int
+    private var count = 0
+
+    init(failuresBeforeSuccess: Int) { failuresLeft = failuresBeforeSuccess }
+
+    var calls: Int { lock.withLock { count } }
+    var needsPreparation: Bool { true }
+
+    struct CompileFailed: Error {}
+
+    func prepare(stagedFolder: URL, entry: VoiceModelEntry) async throws {
+        let fail: Bool = lock.withLock {
+            count += 1
+            if failuresLeft > 0 { failuresLeft -= 1; return true }
+            return false
+        }
+        let target = stagedFolder.appending(path: "compiled/model.mlmodelc", directoryHint: .isDirectory)
+        if fail {
+            try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+            throw CompileFailed()
+        }
+        let scratch = FileManager.default.temporaryDirectory.appending(path: "compile-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        try Data("compiled".utf8).write(to: scratch.appending(path: "weights.bin"))
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: scratch, to: target)
     }
 }
 
