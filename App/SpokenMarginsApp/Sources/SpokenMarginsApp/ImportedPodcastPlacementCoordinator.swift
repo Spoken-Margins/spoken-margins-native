@@ -155,6 +155,8 @@ final class ImportedPodcastPlacementCoordinator {
 
     /// Asks for placement and returns at once. The item, its layers and Margins are read on a background thread
     /// (#2507), so the work starts a moment later; requests for one coordinator still run in the order they came.
+    /// Nothing the request decides (the #914 deferral, `requestedURL`, `passes`, its diagnostics) is set when this
+    /// returns: a caller that needs one of them awaits `resolveAndWait`, or asks the question itself.
     func resolve(
         itemId: String,
         localURL: URL,
