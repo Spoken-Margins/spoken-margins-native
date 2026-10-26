@@ -42,7 +42,7 @@ def run(name, status='completed', conclusion='success'):
     return {'name': name, 'status': status, 'conclusion': conclusion}
 
 
-GREEN = [run('lane'), run('check', conclusion='skipped')]
+GREEN = [run('lane'), run('check', conclusion='skipped'), run(alert.WORKFLOW_CHECK)]
 CLEAN = [audit(HEAD, 'No blocking findings.')]
 
 
@@ -68,6 +68,11 @@ class ReadinessTable(unittest.TestCase):
             ('fork deleted', {'p': pr(head={'sha': HEAD, 'repo': None})}, False, 'not in this'),
             ('mergeability unknown', {'p': pr(mergeable=None)}, False, 'not worked out'),
             ('conflict', {'p': pr(mergeable=False, mergeable_state='dirty')}, False, 'conflicts'),
+            ('workflow check missing (#2714)', {'runs': [run('lane')]}, False, 'check is missing'),
+            ('workflow check red', {'runs': [run('lane'), run(alert.WORKFLOW_CHECK, conclusion='failure')]},
+             False, 'checks failed'),
+            ('workflow check skipped', {'runs': [run('lane'), run(alert.WORKFLOW_CHECK, conclusion='skipped')]},
+             False, 'not green'),
             ('failing check', {'runs': GREEN + [run('host', conclusion='failure')]}, False, 'checks failed: host'),
             ('cancelled check', {'runs': [run('lane', conclusion='cancelled')]}, False, 'checks failed'),
             ('pending check', {'runs': GREEN + [run('lane-conflicts', status='queued', conclusion=None)]},
@@ -114,6 +119,12 @@ class ReadinessTable(unittest.TestCase):
                 self.assertIn(why, reason)
 
 
+class WorkflowCheckName(unittest.TestCase):
+    def test_required_check_name_is_the_workflow_files_job(self):
+        text = (SCRIPTS.parent / '.github/workflows/workflow-files.yml').read_text()
+        self.assertIn(f"name: '{alert.WORKFLOW_CHECK}'", text)
+
+
 class AlertBody(unittest.TestCase):
     def test_mentions_owner_and_carries_marker_for_the_full_head(self):
         body = alert.alert_body(pr(), ['.github/workflows/lane.yml'], 'uncomposed', audited=True)
@@ -141,8 +152,12 @@ class FakeApi:
         self.repo, self.heads, self.comments, self.posted, self.labels = REPO, list(heads), list(comments), [], []
         self.tap_ops, self.pr_labels, self.files, self.runs, self.closed = [], list(labels), files, runs, list(closed)
 
+    behind = 0
+
     def get(self, path):
-        return pr(head={'sha': self.heads.pop(0), 'repo': {'full_name': REPO}},
+        if path.startswith('compare/'):
+            return {'behind_by': self.behind}
+        return pr(base={'ref': 'main'}, head={'sha': self.heads.pop(0), 'repo': {'full_name': REPO}},
                   labels=[{'name': n} for n in self.pr_labels])
 
     def get_all(self, path):
@@ -171,6 +186,37 @@ class FakeApi:
 
 
 class CheckPr(unittest.TestCase):
+    def test_a_head_behind_the_base_posts_update_branch_wording_and_keeps_the_label(self):
+        api = FakeApi(labels=[])
+        api.behind = 2
+        out = alert.check_pr(api, 7, 'uncomposed', False)
+        self.assertIn('alert posted', out)
+        body = api.posted[0][1]
+        self.assertIn('2 commits behind main', body)
+        self.assertIn('Update branch', body)
+        self.assertNotIn('ready for your merge tap', body)
+        self.assertEqual(alert.MARKER_RE.findall(body), [HEAD])
+        self.assertEqual(api.tap_ops, [('add', 7)])  # behind does not drop or withhold the label
+
+    def test_behind_does_not_flap_the_label(self):
+        api = FakeApi(labels=[alert.TAP_LABEL])
+        api.behind = 5
+        alert.check_pr(api, 7, 'uncomposed', False)
+        self.assertEqual(api.labels, [])
+        self.assertEqual(api.tap_ops, [])
+
+    def test_an_unknown_compare_gets_the_update_branch_alert(self):
+        api = FakeApi()
+        api.behind = None
+        alert.check_pr(api, 7, 'uncomposed', False)
+        self.assertIn('Update branch', api.posted[0][1])
+
+    def test_an_up_to_date_head_posts_ready(self):
+        api = FakeApi()
+        alert.check_pr(api, 7, 'uncomposed', False)
+        self.assertIn('ready for your merge tap', api.posted[0][1])
+        self.assertNotIn('Update branch', api.posted[0][1])
+
     def test_posts_once_when_ready(self):
         api = FakeApi()
         self.assertIn('alert posted', alert.check_pr(api, 7, 'uncomposed', dry_run=False))
