@@ -66,6 +66,14 @@ class CatchTests(unittest.TestCase):
         classes = {r['run']: r['class'] for r in h.mac_rest_catches(runs)}
         self.assertEqual(classes, {1: 'flake', 3: 'fixed', 5: 'unresolved'})
 
+    def test_a_failure_that_passed_on_attempt_two_of_the_same_run_is_a_flake(self):
+        def attempt(job_, n):
+            return dict(job_, run_attempt=n)
+        runs = [run(1, 'a', [attempt(j, 1) for j in self.pair()]
+                    + [attempt(mac_job(10, conclusion='failure'), 1), attempt(mac_job(10), 2)])]
+        self.assertEqual([(r['attempt'], r['class']) for r in h.mac_rest_catches(runs)], [(1, 'flake')])
+        self.assertEqual(h._job(runs[0], h.MAC_REST)['run_attempt'], 2)
+
     def test_a_failure_the_pair_also_saw_is_not_mac_rests_catch(self):
         runs = [run(1, 'a', self.pair('failure') + [mac_job(10, conclusion='failure')])]
         self.assertEqual(h.mac_rest_catches(runs), [])

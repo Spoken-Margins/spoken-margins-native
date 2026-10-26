@@ -88,29 +88,49 @@ def job_totals(runs: list) -> dict:
     return totals
 
 
+def _attempts(run: dict, name: str) -> list:
+    """Every attempt of a job that ran, oldest first. filter=all puts the jobs of every re-run attempt under one run id."""
+    return sorted((j for j in run.get('jobs', []) if j['name'] == name and ran(j)), key=lambda j: j.get('run_attempt') or 1)
+
+
 def _job(run: dict, name: str):
-    return next((j for j in run.get('jobs', []) if j['name'] == name and ran(j)), None)
+    """The latest attempt of the job."""
+    attempts = _attempts(run, name)
+    return attempts[-1] if attempts else None
+
+
+def _job_at(run: dict, name: str, attempt: int):
+    """The job as it stood in `attempt`: a re-run of failed jobs leaves passed jobs on their earlier attempt."""
+    earlier = [j for j in _attempts(run, name) if (j.get('run_attempt') or 1) <= attempt]
+    return earlier[-1] if earlier else None
 
 
 def mac_rest_catches(runs: list) -> list:
-    """Mac rest failures where the hosted pair did not fail in the same run, each with what happened next."""
+    """Mac rest failures (any attempt) where the hosted pair did not fail in that attempt, each with what happened next.
+
+    flake: a later attempt of the same run, or a later run on the same head, passed Mac rest.
+    fixed: a later head on the same branch passed it. unresolved: neither."""
     rows = []
     ordered = sorted(runs, key=lambda r: r.get('created_at', ''))
     for i, run in enumerate(ordered):
-        job = _job(run, MAC_REST)
-        if not job or job.get('conclusion') != 'failure':
-            continue
-        if any((_job(run, p) or {}).get('conclusion') == 'failure' for p in PAIR):
-            continue
-        later = [r for r in ordered[i + 1:] if r.get('head_branch') == run.get('head_branch')
-                 and (_job(r, MAC_REST) or {}).get('conclusion') == 'success']
-        if any(r['head_sha'] == run['head_sha'] for r in later):
-            outcome = 'flake'
-        elif later:
-            outcome = 'fixed'
-        else:
-            outcome = 'unresolved'
-        rows.append({'run': run['id'], 'branch': run.get('head_branch'), 'head': run['head_sha'][:7], 'class': outcome})
+        attempts = _attempts(run, MAC_REST)
+        for k, job in enumerate(attempts):
+            if job.get('conclusion') != 'failure':
+                continue
+            attempt = job.get('run_attempt') or 1
+            if any((_job_at(run, p, attempt) or {}).get('conclusion') == 'failure' for p in PAIR):
+                continue
+            later_attempt = any(j.get('conclusion') == 'success' for j in attempts[k + 1:])
+            later = [r for r in ordered[i + 1:] if r.get('head_branch') == run.get('head_branch')
+                     and (_job(r, MAC_REST) or {}).get('conclusion') == 'success']
+            if later_attempt or any(r['head_sha'] == run['head_sha'] for r in later):
+                outcome = 'flake'
+            elif later:
+                outcome = 'fixed'
+            else:
+                outcome = 'unresolved'
+            rows.append({'run': run['id'], 'attempt': attempt, 'branch': run.get('head_branch'),
+                         'head': run['head_sha'][:7], 'class': outcome})
     return rows
 
 
@@ -130,7 +150,7 @@ def report(runs: list) -> str:
                f'{rest["minutes"]:.1f} min; failed with the hosted pair not failing: {len(catches)} '
                f'(flake {classes["flake"]}, fixed by a later head {classes["fixed"]}, unresolved {classes["unresolved"]}).')
     for r in catches:
-        out.append(f'  run {r["run"]} {r["branch"]} @{r["head"]}: {r["class"]}')
+        out.append(f'  run {r["run"]} attempt {r["attempt"]} {r["branch"]} @{r["head"]}: {r["class"]}')
     waits = queue_waits(runs)
     if waits:
         p90 = percentile(waits, 90) / 60
@@ -153,8 +173,13 @@ def _api(*args) -> dict:
 
 
 def _run_jobs(run: dict) -> dict:
-    jobs = _api(f'repos/{REPO}/actions/runs/{run["id"]}/jobs?per_page=100&filter=all')
-    keep = ('name', 'labels', 'created_at', 'started_at', 'completed_at', 'conclusion', 'runner_name')
+    jobs = {'jobs': []}
+    for page in range(1, 30):
+        data = _api(f'repos/{REPO}/actions/runs/{run["id"]}/jobs?per_page=100&filter=all&page={page}')
+        jobs['jobs'].extend(data.get('jobs', []))
+        if len(data.get('jobs', [])) < 100:
+            break
+    keep = ('name', 'run_attempt', 'labels', 'created_at', 'started_at', 'completed_at', 'conclusion', 'runner_name')
     return {'id': run['id'], 'workflow': run['path'].rsplit('/', 1)[-1], 'event': run['event'],
             'head_branch': run['head_branch'], 'head_sha': run['head_sha'], 'run_attempt': run['run_attempt'],
             'created_at': run['created_at'], 'jobs': [{k: j.get(k) for k in keep} for j in jobs.get('jobs', [])]}
