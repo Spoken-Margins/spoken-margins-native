@@ -920,6 +920,26 @@ def counts(rows):
     return c
 
 
+PLACEHOLDER_MARKS = ('not triaged', 'first-run inventory (#2257): not')
+
+
+def is_placeholder(reason):
+    """An empty reason, or the first-run "not triaged yet" text, says nothing about why the read is on the main thread."""
+    r = (reason or '').strip().lower()
+    return not r or 'not triaged' in r or r in ('todo', 'tbd', 'n/a', 'reason', 'one-line reason')
+
+
+def placeholder_count(entries):
+    return sum(1 for e in entries if is_placeholder(e.get('reason')))
+
+
+def load_ceiling(path: Path):
+    """The placeholder-reason count the baseline allows; it only ever goes down."""
+    if not path.exists():
+        return 0
+    return json.loads(path.read_text()).get('placeholder_ceiling', 0)
+
+
 def load_baseline(path: Path):
     if not path.exists():
         return {}
@@ -927,8 +947,10 @@ def load_baseline(path: Path):
     return {(e['function'], e['api'], e['class']): e for e in data['entries']}
 
 
-def write_baseline(path: Path, entries):
-    head = {'version': 1, 'note': 'Main-thread store/file/audio reads that existed when the scanner arrived (#2257). '
+def write_baseline(path: Path, entries, ceiling=None):
+    now = placeholder_count(entries)
+    ceiling = now if ceiling is None else min(ceiling, now)
+    head = {'version': 1, 'placeholder_ceiling': ceiling, 'note': 'Main-thread store/file/audio reads that existed when the scanner arrived (#2257). '
             'Keyed by function, API and class (the file is informational, so moving code between files keeps its rows). A fix deletes rows (scripts/main_thread_reads.py --update); a new row '
             'needs --accept "reason". Do not add rows to make a check pass: move the read off the main thread.'}
     lines = [json.dumps(e, sort_keys=True) for e in sorted(entries, key=lambda e: (e['function'], e['api'], e['class'], e['file']))]
@@ -1001,6 +1023,11 @@ def main(argv=None, root: Path = ROOT):
         return 0
     baseline_path = root / args.baseline
     baseline = load_baseline(baseline_path)
+    ceiling = load_ceiling(baseline_path)
+    if args.accept is not None and is_placeholder(args.accept):
+        print('main-thread-reads: --accept needs a real one-line reason (why the read is cheap or must stay on main), '
+              'not an empty or "not triaged" placeholder.')
+        return 2
     new, stale = compare(rows, baseline)
     if args.update or args.accept:
         current = counts(rows)
@@ -1022,9 +1049,14 @@ def main(argv=None, root: Path = ROOT):
             k = (e['function'], e['api'], e['class'])
             if k in files_of:
                 e['file'] = files_of[k]
-        write_baseline(baseline_path, entries)
+        write_baseline(baseline_path, entries, ceiling)
         print(f'baseline: {len(entries)} entries ({len(stale)} tightened, {len(new) if args.accept else 0} accepted)')
         return 0
+    placeholders = placeholder_count(baseline.values())
+    if placeholders > ceiling:
+        print(f'main-thread-reads: {placeholders} baseline rows have an empty or "not triaged" reason, above the '
+              f'ceiling of {ceiling}. Write a one-line reason (or TODO(#slice): ...) instead of a placeholder.')
+        return 1
     if stale:
         print(f'main-thread-reads: {len(stale)} baseline row(s) are fixed or gone; run scripts/main_thread_reads.py --update '
               f'to tighten the ratchet.')
