@@ -15,16 +15,23 @@ public struct KokoroModelPreparer: VoiceModelPreparing {
     /// Compiles one `.mlpackage` and returns where the compiled bundle was written (a temporary folder).
     public typealias Compile = @Sendable (URL) throws -> URL
 
-    private let compile: Compile
+    /// Merges misaki's gold and silver dictionaries (their JSON) into the one file the front end reads
+    /// (`MisakiLexicon.tsv`). It's a closure so this module needn't depend on the front end.
+    public typealias BuildLexicon = @Sendable (_ gold: Data, _ silver: Data) throws -> Data
 
-    public init(compile: @escaping Compile) {
+    private let compile: Compile
+    private let buildLexicon: BuildLexicon?
+
+    /// `buildLexicon` nil skips the dictionary step (a voice entry that doesn't list the two dictionaries).
+    public init(buildLexicon: BuildLexicon? = nil, compile: @escaping Compile) {
         self.compile = compile
+        self.buildLexicon = buildLexicon
     }
 
     #if canImport(CoreML)
     /// Core ML's own compiler.
-    public init() {
-        self.init(compile: { try MLModel.compileModel(at: $0) })
+    public init(buildLexicon: BuildLexicon? = nil) {
+        self.init(buildLexicon: buildLexicon, compile: { try MLModel.compileModel(at: $0) })
     }
     #endif
 
@@ -41,6 +48,18 @@ public struct KokoroModelPreparer: VoiceModelPreparing {
         return Array(Set(names)).sorted()
     }
 
+    /// Writes `lexicon/misaki-us.tsv` from the two downloaded dictionaries, or nothing when the entry lists neither.
+    private func prepareLexicon(in stagedFolder: URL, entry: VoiceModelEntry, fileManager: FileManager) throws {
+        guard let buildLexicon else { return }
+        let listed = Set(entry.files.map(\.path))
+        guard listed.contains(KokoroVoice.lexiconGoldPath), listed.contains(KokoroVoice.lexiconSilverPath) else { return }
+        let gold = try Data(contentsOf: stagedFolder.appendingPathComponent(KokoroVoice.lexiconGoldPath))
+        let silver = try Data(contentsOf: stagedFolder.appendingPathComponent(KokoroVoice.lexiconSilverPath))
+        let output = stagedFolder.appendingPathComponent(KokoroVoice.preparedLexiconPath)
+        try? fileManager.removeItem(at: output)
+        try buildLexicon(gold, silver).write(to: output, options: .atomic)
+    }
+
     public func prepare(stagedFolder: URL, entry: VoiceModelEntry) async throws {
         let fileManager = FileManager.default
         let compiledFolder = stagedFolder.appendingPathComponent(KokoroVoice.compiledFolderName, isDirectory: true)
@@ -48,6 +67,7 @@ public struct KokoroModelPreparer: VoiceModelPreparing {
             try fileManager.removeItem(at: compiledFolder)
         }
         try fileManager.createDirectory(at: compiledFolder, withIntermediateDirectories: true)
+        try prepareLexicon(in: stagedFolder, entry: entry, fileManager: fileManager)
         let models = stagedFolder.appendingPathComponent(KokoroVoice.modelsFolderName, isDirectory: true)
         for name in Self.packageNames(in: entry) {
             try Task.checkCancellation()

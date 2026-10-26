@@ -110,7 +110,7 @@ SupertonicRuntime.swift is adapted from Supertone's Swift example; its header sa
 - Where: `App/SpokenMarginsApp/Resources/Kokoro`
 - Licence text: [Kokoro-NOTICES.txt](App/SpokenMarginsApp/Resources/Kokoro/Kokoro-NOTICES.txt), [apache-2-0.txt](Contracts/voice-models/licenses/apache-2-0.txt)
 
-Runs the downloadable Kokoro voice's Core ML stages on the Neural Engine and CPU (#2705). Only the KokoroPipeline product is linked; the text front end is the bundled Kitten voice's, respelled with misaki's espeak table (hexgrad, Apache-2.0).
+Runs the downloadable Kokoro voice's Core ML stages on the Neural Engine and CPU (#2705). Only the KokoroPipeline product is linked; the text front end reads misaki's gold and silver dictionaries first (hexgrad, Apache-2.0, downloaded with the voice) and falls back to the bundled Kitten voice's, respelled with misaki's espeak table.
 
 ## Downloaded, not distributed here
 
@@ -143,7 +143,7 @@ Downloaded, not distributed here. No Pocket TTS model or voice file is in this r
 - Source: <https://huggingface.co/mattmireles/kokoro-coreml>
 - Licence text: [NOTICE.txt](Contracts/voice-models/content/kokoro-82m/licenses/NOTICE.txt), [apache-2-0.txt](Contracts/voice-models/licenses/apache-2-0.txt)
 
-Downloaded from Settings › Voices, each file pinned by SHA-256 (about 402 MB). The NOTICE carries the Kokoro card's CC BY training-data credit (Koniwa tnc, CC BY 3.0; SIWIS, CC BY 4.0).
+Downloaded from Settings › Voices, each file pinned by SHA-256 (about 402 MB). It includes misaki's us_gold.json and us_silver.json (hexgrad, Apache-2.0, github.com/hexgrad/misaki commit e820629b), pinned by hash. The NOTICE carries the Kokoro card's CC BY training-data credit (Koniwa tnc, CC BY 3.0; SIWIS, CC BY 4.0).
 
 ## Build, test and research tools
 

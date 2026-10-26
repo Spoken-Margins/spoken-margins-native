@@ -358,7 +358,7 @@
       "id": "kokoro-82m",
       "displayName": "Kokoro",
       "publisher": "hexgrad (Core ML build by Matt Mireles)",
-      "version": "e8bf3d4+0c1d78b-ane7s",
+      "version": "e8bf3d4+0c1d78b-ane7s-lex1",
       "runtime": {
         "name": "coreml",
         "version": "9.0"
@@ -832,6 +832,20 @@
           "licenseId": "kokoro-coreml-apache-2-0"
         },
         {
+          "path": "lexicon/us_silver.json",
+          "byteCount": 3099517,
+          "sha256": "de8f67be911bb6c659187b4a65fd966b6a30e56350e0f790d763210b053ac475",
+          "upstream": "https://raw.githubusercontent.com/hexgrad/misaki/e820629b96334db28227df37f280e4836d46fadb/misaki/data/us_silver.json",
+          "licenseId": "kokoro-coreml-apache-2-0"
+        },
+        {
+          "path": "lexicon/us_gold.json",
+          "byteCount": 3000469,
+          "sha256": "dc414872a49a28ae6c141463d502fd945f3b2fde040484fdc47d00cc4612686f",
+          "upstream": "https://raw.githubusercontent.com/hexgrad/misaki/e820629b96334db28227df37f280e4836d46fadb/misaki/data/us_gold.json",
+          "licenseId": "kokoro-coreml-apache-2-0"
+        },
+        {
           "path": "licenses/APACHE-2.0.txt",
           "byteCount": 11358,
           "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
@@ -840,8 +854,8 @@
         },
         {
           "path": "licenses/NOTICE.txt",
-          "byteCount": 1108,
-          "sha256": "fda1086ac60ca28182b7f9ad19acf0f648ba7fdba943d1a1f6f108860a846011",
+          "byteCount": 1651,
+          "sha256": "2d09fecc2d28ac7d00d4d168939e5bbfd38af7f324e34c0e075fc7f327c8d063",
           "contentFile": "content/kokoro-82m/licenses/NOTICE.txt"
         }
       ],

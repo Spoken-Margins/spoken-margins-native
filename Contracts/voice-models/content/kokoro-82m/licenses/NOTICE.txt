@@ -21,4 +21,11 @@ Kokoro-82M published by Matt Mireles as mattmireles/kokoro-coreml
 License 2.0. Spoken Margins downloads them unchanged; the compiled/ folder
 is made on this device from them by Core ML.
 
+Pronunciation dictionaries
+The files in lexicon/ are misaki's American English dictionaries, us_gold.json and us_silver.json, by hexgrad
+(https://github.com/hexgrad/misaki, commit e820629b96334db28227df37f280e4836d46fadb), licensed under the Apache
+License 2.0 (the complete license is included as APACHE-2.0.txt). Spoken Margins downloads them unchanged and
+makes a sorted copy on this device (lexicon/misaki-us.tsv) for looking words up. Kokoro was trained on text
+phonemized with these dictionaries, so the app reads text with them first.
+
 No endorsement by hexgrad, Matt Mireles or the dataset authors is implied.

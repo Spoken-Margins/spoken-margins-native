@@ -1,7 +1,7 @@
 {
   "schemaVersion": "voice-model-catalog.v1",
   "catalogVersion": 1,
-  "issuedAt": "2026-10-19T22:04:49Z",
+  "issuedAt": "2026-10-26T17:31:17Z",
   "voices": [
     {
       "id": "supertonic-3-int8",
@@ -389,7 +389,7 @@
       "id": "kokoro-82m",
       "displayName": "Kokoro",
       "publisher": "hexgrad (Core ML build by Matt Mireles)",
-      "version": "e8bf3d4+0c1d78b-ane7s",
+      "version": "e8bf3d4+0c1d78b-ane7s-lex1",
       "runtime": {
         "name": "coreml",
         "version": "9.0"
@@ -995,6 +995,24 @@
           "licenseId": "kokoro-coreml-apache-2-0"
         },
         {
+          "path": "lexicon/us_silver.json",
+          "byteCount": 3099517,
+          "sha256": "de8f67be911bb6c659187b4a65fd966b6a30e56350e0f790d763210b053ac475",
+          "sources": [
+            "https://raw.githubusercontent.com/hexgrad/misaki/e820629b96334db28227df37f280e4836d46fadb/misaki/data/us_silver.json"
+          ],
+          "licenseId": "kokoro-coreml-apache-2-0"
+        },
+        {
+          "path": "lexicon/us_gold.json",
+          "byteCount": 3000469,
+          "sha256": "dc414872a49a28ae6c141463d502fd945f3b2fde040484fdc47d00cc4612686f",
+          "sources": [
+            "https://raw.githubusercontent.com/hexgrad/misaki/e820629b96334db28227df37f280e4836d46fadb/misaki/data/us_gold.json"
+          ],
+          "licenseId": "kokoro-coreml-apache-2-0"
+        },
+        {
           "path": "licenses/APACHE-2.0.txt",
           "byteCount": 11358,
           "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
@@ -1005,9 +1023,9 @@
         },
         {
           "path": "licenses/NOTICE.txt",
-          "byteCount": 1108,
-          "sha256": "fda1086ac60ca28182b7f9ad19acf0f648ba7fdba943d1a1f6f108860a846011",
-          "content": "Spoken Margins on-device voice notices: Kokoro-82M (Core ML)\n\nKokoro-82M model and voices\nBy hexgrad. Licensed under the Apache License 2.0\n(https://huggingface.co/hexgrad/Kokoro-82M). The complete license is\nincluded as APACHE-2.0.txt.\n\nTraining data, as the Kokoro-82M model card credits it: Kokoro was trained\non permissive and non-copyrighted audio, including these CC BY datasets:\n- Koniwa `tnc` (under 1 hour), CC BY 3.0,\n  https://github.com/koniwa/koniwa\n- SIWIS French Speech Synthesis Database (under 11 hours), CC BY 4.0,\n  https://datashare.ed.ac.uk/handle/10283/2353\nNeither dataset is included in these files.\n\nCore ML conversion\nThe files in coreml/, voices/ and runtime/ are the Core ML conversion of\nKokoro-82M published by Matt Mireles as mattmireles/kokoro-coreml\n(https://huggingface.co/mattmireles/kokoro-coreml, revision\n0c1d78b47d19f39be6bc0cf0d07316822ae879d4), licensed under the Apache\nLicense 2.0. Spoken Margins downloads them unchanged; the compiled/ folder\nis made on this device from them by Core ML.\n\nNo endorsement by hexgrad, Matt Mireles or the dataset authors is implied.\n"
+          "byteCount": 1651,
+          "sha256": "2d09fecc2d28ac7d00d4d168939e5bbfd38af7f324e34c0e075fc7f327c8d063",
+          "content": "Spoken Margins on-device voice notices: Kokoro-82M (Core ML)\n\nKokoro-82M model and voices\nBy hexgrad. Licensed under the Apache License 2.0\n(https://huggingface.co/hexgrad/Kokoro-82M). The complete license is\nincluded as APACHE-2.0.txt.\n\nTraining data, as the Kokoro-82M model card credits it: Kokoro was trained\non permissive and non-copyrighted audio, including these CC BY datasets:\n- Koniwa `tnc` (under 1 hour), CC BY 3.0,\n  https://github.com/koniwa/koniwa\n- SIWIS French Speech Synthesis Database (under 11 hours), CC BY 4.0,\n  https://datashare.ed.ac.uk/handle/10283/2353\nNeither dataset is included in these files.\n\nCore ML conversion\nThe files in coreml/, voices/ and runtime/ are the Core ML conversion of\nKokoro-82M published by Matt Mireles as mattmireles/kokoro-coreml\n(https://huggingface.co/mattmireles/kokoro-coreml, revision\n0c1d78b47d19f39be6bc0cf0d07316822ae879d4), licensed under the Apache\nLicense 2.0. Spoken Margins downloads them unchanged; the compiled/ folder\nis made on this device from them by Core ML.\n\nPronunciation dictionaries\nThe files in lexicon/ are misaki's American English dictionaries, us_gold.json and us_silver.json, by hexgrad\n(https://github.com/hexgrad/misaki, commit e820629b96334db28227df37f280e4836d46fadb), licensed under the Apache\nLicense 2.0 (the complete license is included as APACHE-2.0.txt). Spoken Margins downloads them unchanged and\nmakes a sorted copy on this device (lexicon/misaki-us.tsv) for looking words up. Kokoro was trained on text\nphonemized with these dictionaries, so the app reads text with them first.\n\nNo endorsement by hexgrad, Matt Mireles or the dataset authors is implied.\n"
         }
       ],
       "licenses": [

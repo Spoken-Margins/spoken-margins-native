@@ -75,7 +75,10 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
             )
             let kitten = try KittenFrontEnd(lexiconURL: kittenAssets.lexiconURL, g2pWeightsURL: kittenAssets.g2pWeightsURL,
                                             g2pManifestURL: kittenAssets.g2pManifestURL)
-            frontEnd = try KokoroFrontEnd(vocabJSON: Data(contentsOf: required(KokoroVoice.vocabPath))) { kitten.phonemize($0) }
+            // misaki's gold and silver dictionaries first (prepared from the download), Kitten's front end only
+            // for a word in neither (#2705).
+            let lexicon = try MisakiLexicon(contentsOf: required(KokoroVoice.preparedLexiconPath))
+            frontEnd = try KokoroFrontEnd(vocabJSON: Data(contentsOf: required(KokoroVoice.vocabPath)), lexicon: lexicon, fallback: kitten)
             let voiceData = try Data(contentsOf: required(KokoroVoice.voicePath(voice)))
             let width = PipelineConstants.voiceEmbeddingDim
             guard !voiceData.isEmpty, voiceData.count % (width * MemoryLayout<Float>.size) == 0 else {

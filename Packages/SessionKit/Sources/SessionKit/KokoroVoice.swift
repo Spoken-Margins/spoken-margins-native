@@ -62,6 +62,13 @@ public enum KokoroVoice {
     public static let packageFiles = ["Data/com.apple.CoreML/model.mlmodel", "Data/com.apple.CoreML/weights/weight.bin", "Manifest.json"]
     public static let vocabPath = "runtime/kokoro-vocab.json"
     public static let hnsfWeightsPath = "runtime/hnsf_weights.json"
+    /// misaki's American English dictionaries, byte for byte from github.com/hexgrad/misaki (Apache-2.0), so the
+    /// listener's phone reads text the way Kokoro was trained to hear it. Pinned in the catalog by hash.
+    public static let lexiconGoldPath = "lexicon/us_gold.json"
+    public static let lexiconSilverPath = "lexicon/us_silver.json"
+    /// What `KokoroModelPreparer` writes from the two above: one sorted `word<TAB>phonemes` file read in place.
+    /// Not a catalog file; it is made after the download and removed with the folder.
+    public static let preparedLexiconPath = "lexicon/misaki-us.tsv"
 
     public static func voicePath(_ voice: String) -> String { "voices/\(voice).bin" }
 
@@ -71,7 +78,7 @@ public enum KokoroVoice {
     public static func problems(withFiles paths: [String]) -> [String] {
         var problems: [String] = []
         let listed = Set(paths)
-        var expected: Set<String> = [vocabPath, hnsfWeightsPath]
+        var expected: Set<String> = [vocabPath, hnsfWeightsPath, lexiconGoldPath, lexiconSilverPath]
         for package in modelPackages {
             for file in packageFiles { expected.insert("\(modelsFolderName)/\(package)/\(file)") }
         }

@@ -2,7 +2,7 @@ Kokoro voice runtime: sources and licenses
 
 Spoken Margins runs the downloadable Kokoro voice with the KokoroPipeline Swift library from kokoro-coreml by Matt Mireles (https://github.com/mattmireles/kokoro-coreml, commit e8bf3d4e80d7dd30ed58e343c1527fad09cc9d1f), licensed under the Apache License 2.0. It runs the voice's Core ML stages on this iPhone's Neural Engine and CPU.
 
-Its text front end is the bundled fallback voice's (see "Fallback voice" in this list), respelled into Kokoro's phoneme set with the espeak-to-misaki table from misaki by hexgrad (https://github.com/hexgrad/misaki), Apache-2.0. No GPL code or data is included; espeak-ng is not used.
+Its text front end reads each word in the gold and silver American English pronunciation dictionaries from misaki by hexgrad (https://github.com/hexgrad/misaki), Apache-2.0, which are downloaded with the voice and which Kokoro was trained on. A word in neither goes to the bundled fallback voice's front end (see "Fallback voice" in this list), respelled into Kokoro's phoneme set with misaki's espeak-to-misaki table. No GPL code or data is included; espeak-ng is not used.
 
 The Kokoro-82M model, its voices and their licenses are downloaded with the voice from Settings › Voices, and listed there.
 

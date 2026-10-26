@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitSpeechFrontEnd
 
 /// What Settings › Voices shows and does (#1819). The rules (catalog, agreement, install, Storage row) are in
 /// SessionKit's VoiceCatalogCoordinator; this keeps the screen's state and outlives the screen, so a
@@ -22,8 +23,11 @@ final class VoiceDownloadsModel: ObservableObject {
     /// catalog until the signed one has a home off that server.
     static let catalogURL: URL? = nil
     /// The one-time preparation each runtime needs after download (#2700). ONNX Runtime needs none; the
-    /// Kokoro (#2705) and Phonon (#2704) slices register theirs here.
-    static let preparers: VoiceModelPreparers = .standard
+    /// Kokoro (#2705) compiles its Core ML packages and builds its pronunciation file from misaki's two downloaded
+    /// dictionaries; Phonon (#2704) registers its own here.
+    static let preparers: VoiceModelPreparers = VoiceModelPreparers.standard.registering(
+        KokoroModelPreparer(buildLexicon: { gold, silver in try MisakiLexicon.tsv(goldJSON: gold, silverJSON: silver) }),
+        forRuntime: VoiceModelCatalogVerifier.coreMLRuntime)
 
     @Published private(set) var rows: [VoiceCatalogRow] = []
     @Published private(set) var activity: [String: Activity] = [:]
