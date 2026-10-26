@@ -42,7 +42,11 @@ struct PasteAndGoBar: View {
                         .frame(minWidth: 44, minHeight: 44)
                 } else {
                     PasteButton(supportedContentTypes: PastedClipboardContent.supportedTypes) { providers in
-                        Task { @MainActor in paste(await PastedClipboardContent.text(from: providers)) }
+                        Task { @MainActor in
+                            let content = await PastedClipboardContent.text(from: providers)
+                            // The add itself runs on the main actor; the label lets the hang probe name it.
+                            model.hangTelemetry.labels.scoped("pasteAndGo") { paste(content) }
+                        }
                     }
                     .labelStyle(.titleAndIcon)
                     .buttonBorderShape(.capsule)

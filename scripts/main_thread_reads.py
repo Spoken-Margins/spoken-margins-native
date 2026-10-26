@@ -375,7 +375,7 @@ def classify(header: str, after: str) -> Scope:
             scope.queue = queue.group(1)
     if re.match(r'\s*(?:\[[^\]]*\]\s*)?@MainActor\b', after):
         scope.iso = 'main'
-    if re.search(r'\blabels\s*\.\s*scoped\s*\(|\bhangLabel\b', h):
+    if re.search(r'\b(?:\w*Labels|labels)\s*\.\s*(?:shared\s*\.\s*)?scoped\s*\(|\bhangLabel\b', h):
         scope.labelled = True
     if LOOP_CALLS.search(h):
         scope.loop = True
