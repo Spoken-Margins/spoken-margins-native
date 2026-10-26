@@ -35,6 +35,11 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     private var lastProgressPublishDateByItemId: [String: Date] = [:]
     /// Byte-progress ticks reach the screen at once but the database at most every few seconds (#2509).
     private var progressWriteGate = ProgressWriteGate()
+    /// Podcast-download rows are saved here, one at a time in the order they were asked for, so a state change
+    /// or a progress tick never puts a SQLite write on the main actor (#2509). `recordsByItemId` is the truth
+    /// while the app runs; the row only has to catch up before the next launch. Deletes go through the same
+    /// queue so a queued save can't bring back a row that was just removed.
+    private let rowWriter = DispatchQueue(label: "spoken-margins.podcast-download-rows", qos: .utility)
     private var session: URLSession!
 
     init(
@@ -192,6 +197,9 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         // and paused playback, and transfer it only when the active item changes.
         let activePath = itemId.flatMap { recordsByItemId[$0]?.localRelativePath }
             .map { "PodcastAudio/\($0)" }
+        // Stays on the main actor on purpose: the protection must be in the ledger before any eviction that
+        // follows this call (#287, #530; testAnEpisodeThatStartsPlayingDuringEvictionIsNotDeleted). A queued
+        // write could land after the ledger had already chosen this episode to delete.
         for asset in (try? store.loadOwnedOfflineAssets()) ?? [] where asset.category == .podcast {
             let isActive = itemId != nil && (asset.itemId == itemId
                 || (activePath != nil && asset.relativePath == activePath))
@@ -303,9 +311,16 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         try? store.deleteAudioAsset(id: "podcast-local-\(itemId)")
         try? store.deleteAudioAsset(id: "podcast-remote-\(itemId)")
         try? store.deleteOwnedOfflineAsset(id: "podcast-offline-\(itemId)")
-        if let id = try? store.loadPodcastDownload(itemId: itemId)?.id {
-            try? store.deletePodcastDownload(id: id)
+        rowWriter.async { [store] in
+            if let id = try? store.loadPodcastDownload(itemId: itemId)?.id {
+                try? store.deletePodcastDownload(id: id)
+            }
         }
+    }
+
+    /// Waits for queued row writes. Tests read the store right after an action; the app never needs this.
+    func flushPendingRowWritesForTesting() {
+        rowWriter.sync {}
     }
 
     func setNetworkTransportForTesting(_ transport: PodcastNetworkTransport) {
@@ -484,7 +499,8 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         var updated = record
         updated.updatedAt = Date()
         recordsByItemId[updated.itemId] = updated
-        try? store.savePodcastDownload(updated)
+        let row = updated
+        rowWriter.async { [store] in try? store.savePodcastDownload(row) }
         progressWriteGate.didWrite(key: updated.itemId, at: updated.updatedAt)
         onRecordChanged?(updated)
     }
@@ -498,7 +514,8 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         updated.updatedAt = Date()
         recordsByItemId[updated.itemId] = updated
         if finishing || progressWriteGate.shouldWrite(key: updated.itemId, at: updated.updatedAt) {
-            try? store.savePodcastDownload(updated)
+            let row = updated
+            rowWriter.async { [store] in try? store.savePodcastDownload(row) }
             progressWriteGate.didWrite(key: updated.itemId, at: updated.updatedAt)
         }
         onRecordChanged?(updated)
@@ -593,7 +610,9 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
                 record.expectedBytes = Int64(size)
                 record.failureReason = nil
                 record.updatedAt = Date()
-                try store.savePodcastDownload(record)
+                // Same queue as `persist`, so an older queued progress row can't land after this one.
+                let finished = record
+                rowWriter.async { [store] in try? store.savePodcastDownload(finished) }
                 recordsByItemId[record.itemId] = record
                 onRecordChanged?(record)
                 invalidateAttempt(itemId: attempt.itemId)
@@ -644,26 +663,29 @@ extension PodcastDownloadCoordinator: URLSessionDownloadDelegate {
                                totalBytesExpectedToWrite: Int64) {
         guard let attempt = PodcastDownloadAttempt.decode(downloadTask.taskDescription) else { return }
         Task { @MainActor [weak self] in
-            guard let self, self.owns(attempt) || self.restoreAttempt(attempt),
-                  var record = self.recordsByItemId[attempt.itemId] else { return }
-            if PodcastDownloadSizeProbe.exceedsUnannouncedLimit(
-                totalBytesWritten: totalBytesWritten,
-                recordedExpectedBytes: record.expectedBytes,
-                totalBytesExpectedToWrite: totalBytesExpectedToWrite
-            ) {
-                // The host never said how large this is and it has passed the bound: stop writing (#912).
-                self.unannouncedLimitExceeded.insert(attempt.generation)
-                downloadTask.cancel()
-                return
+            // Named for the hang probe: a restored attempt reads one small reservation row (#2509).
+            MainThreadOperationLabels.shared.scoped("podcastDownload.progress") {
+                guard let self, self.owns(attempt) || self.restoreAttempt(attempt),
+                      var record = self.recordsByItemId[attempt.itemId] else { return }
+                if PodcastDownloadSizeProbe.exceedsUnannouncedLimit(
+                    totalBytesWritten: totalBytesWritten,
+                    recordedExpectedBytes: record.expectedBytes,
+                    totalBytesExpectedToWrite: totalBytesExpectedToWrite
+                ) {
+                    // The host never said how large this is and it has passed the bound: stop writing (#912).
+                    self.unannouncedLimitExceeded.insert(attempt.generation)
+                    downloadTask.cancel()
+                    return
+                }
+                let now = Date()
+                let complete = totalBytesExpectedToWrite > 0 && totalBytesWritten >= totalBytesExpectedToWrite
+                if !complete, let last = self.lastProgressPublishDateByItemId[attempt.itemId], now.timeIntervalSince(last) < 0.5 { return }
+                self.lastProgressPublishDateByItemId[attempt.itemId] = now
+                record.bytesWritten = totalBytesWritten
+                // A chunked download keeps the size the preflight recorded, so it is still known to be announced (#912).
+                record.expectedBytes = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : record.expectedBytes
+                self.persistProgress(record, finishing: complete)
             }
-            let now = Date()
-            let complete = totalBytesExpectedToWrite > 0 && totalBytesWritten >= totalBytesExpectedToWrite
-            if !complete, let last = self.lastProgressPublishDateByItemId[attempt.itemId], now.timeIntervalSince(last) < 0.5 { return }
-            self.lastProgressPublishDateByItemId[attempt.itemId] = now
-            record.bytesWritten = totalBytesWritten
-            // A chunked download keeps the size the preflight recorded, so it is still known to be announced (#912).
-            record.expectedBytes = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : record.expectedBytes
-            self.persistProgress(record, finishing: complete)
         }
     }
 
@@ -717,8 +739,10 @@ extension PodcastDownloadCoordinator: URLSessionTaskDelegate {
     ) {
         guard let attempt = PodcastDownloadAttempt.decode(task.taskDescription) else { return }
         Task { @MainActor [weak self] in
-            self?.userInitiatedTaskIds.remove(task.taskIdentifier)
-            self?.completeDownload(attempt, error: error)
+            MainThreadOperationLabels.shared.scoped("podcastDownload.complete") {
+                self?.userInitiatedTaskIds.remove(task.taskIdentifier)
+                self?.completeDownload(attempt, error: error)
+            }
         }
     }
 }
