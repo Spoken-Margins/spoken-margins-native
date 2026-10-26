@@ -35,18 +35,38 @@ public struct ClipboardLinkOffer: Equatable, Sendable {
         public var hasURLs: Bool
         public var hasStrings: Bool
         public var itemCount: Int
+        /// The clipboard carries a URL type (`public.url`), as an address bar or a share sheet's Copy puts there.
+        public var hasURLType: Bool
+        /// The clipboard carries rich text (HTML, RTF, web archive, Notes types), as a passage selected on a page or in Notes does.
+        public var hasRichText: Bool
 
-        public init(probableWebURL: Bool, hasURLs: Bool, hasStrings: Bool, itemCount: Int) {
+        public init(probableWebURL: Bool, hasURLs: Bool, hasStrings: Bool, itemCount: Int,
+                    hasURLType: Bool = false, hasRichText: Bool = false) {
+            self.hasURLType = hasURLType
+            self.hasRichText = hasRichText
             self.probableWebURL = probableWebURL
             self.hasURLs = hasURLs
             self.hasStrings = hasStrings
             self.itemCount = itemCount
         }
 
+        /// Pasteboard type identifiers that mean "formatted text", not a link. Reading type names is metadata only.
+        public static let richTextTypes: Set<String> = [
+            "public.html", "public.rtf", "public.rtfd", "com.apple.flat-rtfd", "com.apple.webarchive",
+            "com.apple.notes.richtext", "com.apple.uikit.attributedstring",
+        ]
+
+        public init(probableWebURL: Bool, hasURLs: Bool, hasStrings: Bool, itemCount: Int, types: [String]) {
+            self.init(probableWebURL: probableWebURL, hasURLs: hasURLs, hasStrings: hasStrings, itemCount: itemCount,
+                      hasURLType: types.contains("public.url"),
+                      hasRichText: types.contains { Self.richTextTypes.contains($0) })
+        }
+
         /// A likely link is one single clipboard item that iOS matches to a web link and that is a URL or a string.
-        /// Several items (a copied selection, a file list) are never offered.
+        /// Several items are never offered. Formatted text with no URL type (a passage selected on a page) is not a
+        /// link, however long or short; a URL type always is one, even beside HTML.
         public var looksLikeLink: Bool {
-            probableWebURL && itemCount == 1 && (hasURLs || hasStrings)
+            probableWebURL && itemCount == 1 && (hasURLs || hasStrings) && (hasURLType || !hasRichText)
         }
     }
 

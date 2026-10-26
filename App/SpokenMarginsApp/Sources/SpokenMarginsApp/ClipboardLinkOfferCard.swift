@@ -44,7 +44,8 @@ final class ClipboardLinkOfferModel: ObservableObject {
         let found = (try? await pasteboard.detectedPatterns(for: [probableLink])) ?? []
         let signals = ClipboardLinkOffer.Signals(
             probableWebURL: found.contains(probableLink), hasURLs: pasteboard.hasURLs,
-            hasStrings: pasteboard.hasStrings, itemCount: pasteboard.numberOfItems)
+            hasStrings: pasteboard.hasStrings, itemCount: pasteboard.numberOfItems,
+            types: pasteboard.types)
         return (changeCount, signals)
         #else
         return (0, .init(probableWebURL: false, hasURLs: false, hasStrings: false, itemCount: 0))

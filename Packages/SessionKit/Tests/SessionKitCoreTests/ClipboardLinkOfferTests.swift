@@ -82,6 +82,21 @@ final class ClipboardLinkOfferTests: XCTestCase {
         XCTAssertFalse(signals(hasURLs: false, strings: false).looksLikeLink, "an image or file")
     }
 
+    func testTypeSignalTable() {
+        func link(_ types: [String], strings: Bool = true) -> Bool {
+            ClipboardLinkOffer.Signals(probableWebURL: true, hasURLs: types.contains("public.url"), hasStrings: strings,
+                                       itemCount: 1, types: types).looksLikeLink
+        }
+        XCTAssertFalse(link(["public.utf8-plain-text", "public.html"]), "a long web selection")
+        XCTAssertFalse(link(["public.utf8-plain-text", "public.rtf"]), "a Notes or Pages selection")
+        XCTAssertFalse(link(["public.utf8-plain-text", "com.apple.webarchive"]))
+        XCTAssertFalse(link(["public.utf8-plain-text", "com.apple.flat-rtfd"]))
+        XCTAssertTrue(link(["public.url", "public.utf8-plain-text"]), "an address-bar copy")
+        XCTAssertTrue(link(["public.url", "public.html", "public.utf8-plain-text"]), "a copied link that also carries HTML")
+        XCTAssertTrue(link(["public.utf8-plain-text"]), "a plain 'Title https://...' string")
+        XCTAssertTrue(link(["public.url"], strings: false))
+    }
+
     func testObserveUsesTheSignals() {
         var offer = ClipboardLinkOffer()
         offer.observe(changeCount: 3, signals: signals(items: 2))
