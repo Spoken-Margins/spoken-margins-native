@@ -4,15 +4,18 @@ import XCTest
 
 @MainActor
 final class SummaryRecordsCacheTests: XCTestCase {
+    /// Polls instead of using XCTestExpectation, whose non-Sendable value cannot cross into the cache's callbacks.
+    private func waitForLoads(_ cache: SummaryRecordsCache, _ count: Int) async {
+        for _ in 0..<500 where cache.loads < count { try? await Task.sleep(for: .milliseconds(10)) }
+    }
+
     func testManyRendersWithOneKeyReadOnce() async throws {
         let cache = SummaryRecordsCache()
         let counter = Counter()
-        let loaded = expectation(description: "loaded")
         for _ in 0..<50 {
-            _ = cache.current(key: "s1", load: { counter.bump(); return SummaryRetryRecords(jobs: [], turns: [], interjections: []) },
-                              onLoaded: { loaded.fulfill() })
+            _ = cache.current(key: "s1", load: { counter.bump(); return SummaryRetryRecords(jobs: [], turns: [], interjections: []) }, onLoaded: {})
         }
-        await fulfillment(of: [loaded], timeout: 5)
+        await waitForLoads(cache, 1)
         for _ in 0..<50 {
             _ = cache.current(key: "s1", load: { counter.bump(); return nil }, onLoaded: {})
         }
@@ -23,16 +26,16 @@ final class SummaryRecordsCacheTests: XCTestCase {
 
     func testANewKeyReadsAgainAndKeepsTheOldAnswerMeanwhile() async throws {
         let cache = SummaryRecordsCache()
-        let first = expectation(description: "first")
+        let counter = Counter()
         let firstRecords = SummaryRetryRecords(jobs: [], turns: [], interjections: [])
-        _ = cache.current(key: "a", load: { firstRecords }, onLoaded: { first.fulfill() })
-        await fulfillment(of: [first], timeout: 5)
+        _ = cache.current(key: "a", load: { firstRecords }, onLoaded: {})
+        await waitForLoads(cache, 1)
 
-        let second = expectation(description: "second")
-        let during = cache.current(key: "b", load: { nil }, onLoaded: { second.fulfill() })
+        let during = cache.current(key: "b", load: { nil }, onLoaded: {})
         XCTAssertEqual(during, firstRecords, "the previous answer stays on screen while the new one loads")
-        await fulfillment(of: [second], timeout: 5)
-        XCTAssertNil(cache.current(key: "b", load: { XCTFail("already loaded"); return nil }, onLoaded: {}))
+        await waitForLoads(cache, 2)
+        XCTAssertNil(cache.current(key: "b", load: { counter.bump(); return nil }, onLoaded: {}))
+        XCTAssertEqual(counter.value, 0, "an already-loaded key is not read again")
         XCTAssertEqual(cache.loads, 2)
     }
 
