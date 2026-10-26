@@ -42,12 +42,12 @@ def run(name, status='completed', conclusion='success'):
     return {'name': name, 'status': status, 'conclusion': conclusion}
 
 
-GREEN = [run('lane'), run('check', conclusion='skipped')]
+GREEN = [run('lane'), run('check', conclusion='skipped'), run(alert.WORKFLOW_CHECK)]
 CLEAN = [audit(HEAD, 'No blocking findings.')]
 
 
-def ready(p=None, files=WORKFLOW, runs=GREEN, statuses=(), comments=CLEAN):
-    return alert.readiness(p or pr(), files, list(runs), list(statuses), list(comments), REPO)
+def ready(p=None, files=WORKFLOW, runs=GREEN, statuses=(), comments=CLEAN, behind=0):
+    return alert.readiness(p or pr(), files, list(runs), list(statuses), list(comments), REPO, behind)
 
 
 class ReadinessTable(unittest.TestCase):
@@ -68,6 +68,13 @@ class ReadinessTable(unittest.TestCase):
             ('fork deleted', {'p': pr(head={'sha': HEAD, 'repo': None})}, False, 'not in this'),
             ('mergeability unknown', {'p': pr(mergeable=None)}, False, 'not worked out'),
             ('conflict', {'p': pr(mergeable=False, mergeable_state='dirty')}, False, 'conflicts'),
+            ('workflow check missing (#2714)', {'runs': [run('lane')]}, False, 'check is missing'),
+            ('workflow check red', {'runs': [run('lane'), run(alert.WORKFLOW_CHECK, conclusion='failure')]},
+             False, 'checks failed'),
+            ('workflow check skipped', {'runs': [run('lane'), run(alert.WORKFLOW_CHECK, conclusion='skipped')]},
+             False, 'not green'),
+            ('head behind the base: the #2641 case', {'behind': 3}, False, '3 commit(s) behind'),
+            ('behind unknown', {'behind': None}, False, 'did not say'),
             ('failing check', {'runs': GREEN + [run('host', conclusion='failure')]}, False, 'checks failed: host'),
             ('cancelled check', {'runs': [run('lane', conclusion='cancelled')]}, False, 'checks failed'),
             ('pending check', {'runs': GREEN + [run('lane-conflicts', status='queued', conclusion=None)]},
@@ -114,6 +121,12 @@ class ReadinessTable(unittest.TestCase):
                 self.assertIn(why, reason)
 
 
+class WorkflowCheckName(unittest.TestCase):
+    def test_required_check_name_is_the_workflow_files_job(self):
+        text = (SCRIPTS.parent / '.github/workflows/workflow-files.yml').read_text()
+        self.assertIn(f"name: '{alert.WORKFLOW_CHECK}'", text)
+
+
 class AlertBody(unittest.TestCase):
     def test_mentions_owner_and_carries_marker_for_the_full_head(self):
         body = alert.alert_body(pr(), ['.github/workflows/lane.yml'], 'uncomposed', audited=True)
@@ -141,8 +154,12 @@ class FakeApi:
         self.repo, self.heads, self.comments, self.posted, self.labels = REPO, list(heads), list(comments), [], []
         self.tap_ops, self.pr_labels, self.files, self.runs, self.closed = [], list(labels), files, runs, list(closed)
 
+    behind = 0
+
     def get(self, path):
-        return pr(head={'sha': self.heads.pop(0), 'repo': {'full_name': REPO}},
+        if path.startswith('compare/'):
+            return {'behind_by': self.behind}
+        return pr(base={'ref': 'main'}, head={'sha': self.heads.pop(0), 'repo': {'full_name': REPO}},
                   labels=[{'name': n} for n in self.pr_labels])
 
     def get_all(self, path):
@@ -171,6 +188,13 @@ class FakeApi:
 
 
 class CheckPr(unittest.TestCase):
+    def test_a_head_behind_the_base_posts_nothing(self):
+        api = FakeApi()
+        api.behind = 2
+        self.assertIn('behind main', alert.check_pr(api, 7, 'uncomposed', False))
+        self.assertEqual(api.posted, [])
+
+
     def test_posts_once_when_ready(self):
         api = FakeApi()
         self.assertIn('alert posted', alert.check_pr(api, 7, 'uncomposed', dry_run=False))
