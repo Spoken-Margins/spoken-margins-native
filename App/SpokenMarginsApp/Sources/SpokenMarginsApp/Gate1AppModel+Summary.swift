@@ -29,17 +29,25 @@ extension Gate1AppModel {
         }
     }
 
+    /// Every tap that decides from `summaryRecords` (Summarize, and Playback's Retry Summary) goes through here first:
+    /// the cache may still hold the previous state's answer, and acting on it starts the wrong summary or refuses a
+    /// retry that is there (#2747). Returns true when the tap was deferred until the read for the current state lands;
+    /// `tap` then runs again on the settled answer.
+    private func deferUntilSummaryRecordsSettle(_ label: String, _ tap: @escaping @MainActor (Gate1AppModel) -> Void) -> Bool {
+        guard let key = summaryRecordsRequest?.key, !summaryRecordsCache.isSettled(key: key) else { return false }
+        Task { [weak self] in
+            guard let self else { return }
+            await settleSummaryRecords()
+            hangTelemetry.labels.scoped(label) { tap(self) }
+        }
+        return true
+    }
+
     func summarize() {
-        // Retry vs a new summary is decided from the jobs as they are now: the cache may still hold the answer from
-        // before the last summary finished or failed, and acting on it would start the wrong one (#2747). With no
-        // on-device model both ways end in the same message, so that answer stays immediate.
+        // Retry vs a new summary is decided from the jobs as they are now. With no on-device model both ways end in
+        // the same message, so that answer stays immediate.
         if !remoteProviderExperienceEnabled, localFoundationModelAvailable,
-           let key = summaryRecordsRequest?.key, !summaryRecordsCache.isSettled(key: key) {
-            Task { [weak self] in
-                guard let self else { return }
-                await settleSummaryRecords()
-                hangTelemetry.labels.scoped("summarizeAfterSettle") { summarize() }
-            }
+           deferUntilSummaryRecordsSettle("summarizeAfterSettle", { $0.summarize() }) {
             return
         }
         if !remoteProviderExperienceEnabled {
@@ -199,6 +207,8 @@ extension Gate1AppModel {
     }
 
     private func retryPendingLocalSummary() {
+        // A Retry tap right after a save, a relaunch or a session switch must see the failed job, not the last state's.
+        if deferUntilSummaryRecordsSettle("retrySummaryAfterSettle", { $0.retryPendingLocalSummary() }) { return }
         do {
             guard let original = try recoverableLocalSummaryRetryContext() else {
                 reportFailure("The original summary is unavailable for this target. Return to its target, or use Summarize to start a new summary.", itemId: snapshot.itemId)
