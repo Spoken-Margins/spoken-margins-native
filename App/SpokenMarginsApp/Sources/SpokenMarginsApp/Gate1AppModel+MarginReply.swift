@@ -136,7 +136,7 @@ extension Gate1AppModel {
                 if !found { throw SessionKitError.persistenceFailed("margin_reply_missing") }
                 self?.hangTelemetry.labels.scoped("savedMarginReply.refresh") {
                     self?.refreshSelectedItem()
-                    self?.refreshMarginRows()
+                    self?.refreshMarginRowsInBackground(forItem: interjection.itemId)
                 }
             } catch {
                 self?.reportFailure(error, context: "Couldn't change this Margin's reply")

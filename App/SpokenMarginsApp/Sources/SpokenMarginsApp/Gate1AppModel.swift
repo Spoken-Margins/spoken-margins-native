@@ -2176,7 +2176,7 @@ final class Gate1AppModel: ObservableObject {
         }
         guard snapshot.phase == .finished else { return }
         refreshLibraryRowsInBackground()
-        refreshMarginRows()
+        refreshMarginRowsInBackground(forItem: snapshot.itemId)
         diagnostics["completedSessionPresentation"] = "retained_finished_session"
         reportConfirmation("Session complete and saved.")
     }
@@ -2556,7 +2556,7 @@ final class Gate1AppModel: ObservableObject {
                 streamingSpeechQueue.resumeAfterInterjection()
                 if !snapshot.isRecording {
                     marginCapture.clearPresentationContext()
-                    refreshMarginRows()
+                    refreshMarginRowsInBackground(forItem: snapshot.itemId)
                 }
             }
             if canonicalTransportCommands.contains(command) {

@@ -308,7 +308,7 @@ extension Gate1AppModel {
         }
         if !snapshot.isRecording {
             marginCapture.clearPresentationContext()
-            refreshMarginRows()
+            refreshMarginRowsInBackground(forItem: snapshot.itemId)
             resumeHeldMarginVoice(held)
         }
         streamingSpeechQueue.resumeAfterInterjection()
@@ -433,7 +433,7 @@ extension Gate1AppModel {
             clearWrittenMarginJournal(captureId: draft.capture.id)
             if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
             refreshSelectedItem()
-            refreshMarginRows()
+            refreshMarginRowsInBackground(forItem: draft.capture.itemId)
             if draft.priorWasPlaying && snapshot.status == .paused {
                 AppHaptics.play(.warning)
                 reportWarning("Margin saved. Playback is paused; tap Play to continue.")
