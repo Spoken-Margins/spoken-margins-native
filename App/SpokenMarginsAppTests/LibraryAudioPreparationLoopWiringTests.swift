@@ -227,7 +227,8 @@ private actor LoopHeldRenderer: SupertonicRendering {
         try FileManager.default.copyItem(at: templateURL, to: url)
         generated.insert(url)
         return SupertonicNarrationResult(audioURL: url, duration: Double(text.count) / 15, sampleRate: 44_100,
-                                         renderDuration: 0.01, sessionLoadCount: 1)
+                                         renderDuration: 0.01, sessionLoadCount: 1,
+                                         engine: SupertonicNarrationResult.supertonicEngine)
     }
 
     func discardGeneratedAudio(at url: URL) async {

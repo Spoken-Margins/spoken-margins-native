@@ -78,3 +78,37 @@ public enum VoiceDeviceFloor {
         return Int(parts[0])
     }
 }
+
+/// Whether this device can use a catalog voice at all: chip floor, then memory. The one decision behind both the
+/// speech player's "may the chosen voice render?" gate and Settings > Voices' "Kitten reads instead" note, so the two
+/// can't disagree (#2744 review).
+public enum VoiceDeviceFit {
+    /// The catalog id of Supertonic, whose own gate (`SupertonicModelNotDownloaded`) checks only that the model is
+    /// installed and that the phone's heat, memory pressure and power allow it. It has always rendered on a phone below
+    /// its catalog memory figure, so it is not held to the downloaded-voice floors; its note stays "keeps working".
+    public static let supertonicVoiceId = "supertonic-3-int8"
+
+    /// The chip or memory floor `entry` fails on this device, whatever voice it is. Decides what is offered for download.
+    public static func floorFailure(
+        _ entry: VoiceModelEntry, deviceGeneration: Int?, physicalMemoryMegabytes: Int
+    ) -> VoiceUnusableReason? {
+        if !VoiceDeviceFloor.allows(entry, deviceGeneration: deviceGeneration) { return .chipBelowFloor }
+        if entry.minimumMemoryMegabytes > VoiceCatalogCoordinator.nominalMemoryMegabytes(reported: physicalMemoryMegabytes) {
+            return .notEnoughMemory
+        }
+        return nil
+    }
+
+    /// Why an installed copy of `entry` will not render here, or nil when it will. The bundled voice and Supertonic
+    /// keep the behaviour they had before downloaded voices: no floor stops them.
+    public static func renderBlocker(
+        _ entry: VoiceModelEntry, deviceGeneration: Int?, physicalMemoryMegabytes: Int
+    ) -> VoiceUnusableReason? {
+        if entry.bundled || entry.id == supertonicVoiceId { return nil }
+        return floorFailure(entry, deviceGeneration: deviceGeneration, physicalMemoryMegabytes: physicalMemoryMegabytes)
+    }
+
+    public static func canRender(_ entry: VoiceModelEntry, deviceGeneration: Int?, physicalMemoryMegabytes: Int) -> Bool {
+        renderBlocker(entry, deviceGeneration: deviceGeneration, physicalMemoryMegabytes: physicalMemoryMegabytes) == nil
+    }
+}

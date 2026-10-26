@@ -9,7 +9,7 @@ import XCTest
 final class Gate1ValueTypeContractTests: XCTestCase {
     func testPersistedRawValuesDoNotChange() {
         // Kitten (#2226) joined after the three Build 29 wrote; their spelling and the picker order are unchanged.
-        XCTAssertEqual(AppTTSVoiceSelection.allCases.map(\.rawValue), ["supertonic:M2", "supertonic:F2", "kitten:jasper", "system"])
+        XCTAssertEqual(AppTTSVoiceSelection.allCases.map(\.rawValue), ["supertonic:M2", "supertonic:F2", "kitten:jasper", "system", "phonon:en", "kokoro:af_heart"])
         XCTAssertEqual(AppTTSVoiceSelection.allCases.map(\.rawValue), ReadingVoiceChoice.allCases.map(\.rawValue),
                        "the app's list and SessionKit's host-tested one are the same list")
         XCTAssertEqual(AIDataSharingConsent(rawValue: "unknown"), .unknown)

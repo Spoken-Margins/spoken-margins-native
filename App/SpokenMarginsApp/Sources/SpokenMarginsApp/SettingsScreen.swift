@@ -75,12 +75,7 @@ struct SettingsScreen: View {
                         Label("Voices", systemImage: "waveform")
                     }
                     .accessibilityIdentifier("settings.voices.link")
-                    Picker("App Voice", selection: $model.ttsVoiceSelection) {
-                        ForEach(AppTTSVoiceSelection.allCases) { voice in
-                            Text(voice.displayName).tag(voice)
-                        }
-                    }
-                    .accessibilityIdentifier("settings.ttsVoice.picker")
+                    AppVoicePicker(selection: $model.ttsVoiceSelection, voices: model.requireVoiceDownloads())
                     .onCompatibleChange(of: model.ttsVoiceSelection) { _ in
                         model.ttsVoiceSelectionChanged()
                     }

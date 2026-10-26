@@ -47,6 +47,9 @@ final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
         self.now = now
     }
 
+    /// The wrapped renderer's engine, so a downloaded voice's own chunks still count as its own (#2700).
+    var engine: String { inner.engine }
+
     func render(
         text: String,
         voice: SupertonicVoiceID,
@@ -57,6 +60,8 @@ final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
         let rendered = try await inner.render(
             text: text, voice: voice, language: language, speed: speed, synthesisSteps: synthesisSteps
         )
+        // The check's limits are Supertonic's (#240); another engine's pacing would trip them falsely.
+        guard rendered.engine == SupertonicNarrationResult.supertonicEngine else { return rendered }
         guard let problem = SupertonicOutputCheck.problem(
             text: text, durationSeconds: rendered.modelDuration, speed: Double(speed)
         ) else { return rendered }

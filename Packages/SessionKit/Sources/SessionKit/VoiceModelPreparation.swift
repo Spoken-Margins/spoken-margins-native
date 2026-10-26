@@ -19,6 +19,18 @@ public protocol VoiceModelPreparing: Sendable {
     /// the catalog's SHA-256. Writes only inside `stagedFolder`. Throws to leave the voice uninstalled;
     /// honours task cancellation where it can.
     func prepare(stagedFolder: URL, entry: VoiceModelEntry) async throws
+
+    /// Bytes the preparation writes next to the downloaded files, counted in the installer's free-space check
+    /// before any byte downloads (#2735 review). Core ML keeps the compiled `.mlmodelc` beside the `.mlpackage`,
+    /// roughly doubling the voice on disk; a phone with room for the download alone would pass the check, then fail
+    /// to prepare on every retry. Defaults to a full copy of the download when there is preparation to do.
+    func extraBytes(for entry: VoiceModelEntry) -> Int64
+}
+
+extension VoiceModelPreparing {
+    public func extraBytes(for entry: VoiceModelEntry) -> Int64 {
+        needsPreparation ? Int64(entry.downloadByteCount) : 0
+    }
 }
 
 /// ONNX Runtime voices (Supertonic) load their files as they are.
