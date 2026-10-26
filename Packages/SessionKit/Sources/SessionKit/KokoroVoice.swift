@@ -211,7 +211,12 @@ public struct KokoroBucketPlanner: Equatable, Sendable {
         guard words.count > 1 else { return nil }
         let clauseEnds = words.indices.dropLast().filter { Self.endsClause(words[$0]) }
         let middle = words.count / 2
-        let cut = clauseEnds.min { abs($0 + 1 - middle) < abs($1 + 1 - middle) }.map { $0 + 1 } ?? middle
+        let nearest: Int? = clauseEnds.min { (a: Int, b: Int) -> Bool in
+            let distanceA: Int = abs(a + 1 - middle)
+            let distanceB: Int = abs(b + 1 - middle)
+            return distanceA < distanceB
+        }
+        let cut: Int = nearest.map { $0 + 1 } ?? middle
         let seam: Seam = clauseEnds.contains(cut - 1) ? .clause : .word
         return [Piece(text: words[..<cut].joined(separator: " "), seamAfter: seam),
                 Piece(text: words[cut...].joined(separator: " "), seamAfter: piece.seamAfter)]
@@ -321,7 +326,9 @@ public enum KokoroSeamJoiner {
                 let start = output.count - overlap
                 for i in 0..<overlap {
                     let t = Double(i + 1) / Double(overlap + 1)
-                    output[start + i] = output[start + i] * Float(cos(t * .pi / 2)) + next[i] * Float(sin(t * .pi / 2))
+                    let fadeOut: Float = Float(cos(t * .pi / 2))
+                    let fadeIn: Float = Float(sin(t * .pi / 2))
+                    output[start + i] = output[start + i] * fadeOut + next[i] * fadeIn
                 }
                 output += next.dropFirst(overlap)
             }

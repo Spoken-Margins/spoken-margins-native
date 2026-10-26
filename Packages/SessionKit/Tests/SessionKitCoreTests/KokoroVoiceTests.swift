@@ -33,8 +33,17 @@ final class KokoroVoiceTests: XCTestCase {
     }
 
     func testTheEntryRuleRejectsHybridLongBucketsAndMissingPieces() {
-        var paths = KokoroVoice.modelPackages.flatMap { package in KokoroVoice.packageFiles.map { "coreml/\(package)/\($0)" } }
-        paths += KokoroVoice.voices.map(KokoroVoice.voicePath) + [KokoroVoice.vocabPath, KokoroVoice.hnsfWeightsPath]
+        var paths: [String] = []
+        for package in KokoroVoice.modelPackages {
+            for file in KokoroVoice.packageFiles {
+                paths.append("coreml/\(package)/\(file)")
+            }
+        }
+        for voice in KokoroVoice.voices {
+            paths.append(KokoroVoice.voicePath(voice))
+        }
+        paths.append(KokoroVoice.vocabPath)
+        paths.append(KokoroVoice.hnsfWeightsPath)
         XCTAssertEqual(KokoroVoice.problems(withFiles: paths), [])
         XCTAssertEqual(KokoroVoice.problems(withFiles: paths + ["coreml/hybrid/plan.json"]),
                        ["lists the hybrid GPU generator: coreml/hybrid/plan.json"])
@@ -108,9 +117,14 @@ final class KokoroVoiceTests: XCTestCase {
     // MARK: Seams
 
     private func tone(_ count: Int, quietBefore: Int = 0, quietAfter: Int = 0) -> [Float] {
-        [Float](repeating: 0, count: quietBefore)
-            + (0..<count).map { Float(sin(Double($0) * 0.1)) * 0.4 + 0.5 }
-            + [Float](repeating: 0.0005, count: quietAfter)
+        let before: [Float] = [Float](repeating: 0, count: quietBefore)
+        let body: [Float] = (0..<count).map { (index: Int) -> Float in
+            let phase: Double = Double(index) * 0.1
+            let wave: Float = Float(sin(phase))
+            return wave * 0.4 + 0.5
+        }
+        let after: [Float] = [Float](repeating: 0.0005, count: quietAfter)
+        return before + body + after
     }
 
     /// The longest run of quiet samples inside `samples`.
@@ -129,8 +143,11 @@ final class KokoroVoiceTests: XCTestCase {
         let b = tone(2_400, quietBefore: 6_000, quietAfter: 300)
         let sentence = KokoroSeamJoiner.join(segments: [a, b], seams: [.sentence, .sentence], sampleRate: rate)
         // Edges stay; the seam is exactly the sentence pause, however much quiet each piece carried.
-        XCTAssertEqual(sentence.count, 500 + 2_400 + Int(0.22 * Double(rate)) + 2_400 + 300)
-        XCTAssertEqual(longestQuietRun(Array(sentence[600..<(sentence.count - 400)])), Int(0.22 * Double(rate)))
+        let pauseSamples: Int = Int(0.22 * Double(rate))
+        let expectedCount: Int = 500 + 2_400 + pauseSamples + 2_400 + 300
+        XCTAssertEqual(sentence.count, expectedCount)
+        let inner: [Float] = Array(sentence[600..<(sentence.count - 400)])
+        XCTAssertEqual(longestQuietRun(inner), pauseSamples)
         let clause = KokoroSeamJoiner.join(segments: [a, b], seams: [.clause, .sentence], sampleRate: rate)
         XCTAssertEqual(longestQuietRun(Array(clause[600..<(clause.count - 400)])), Int(0.10 * Double(rate)))
     }
@@ -229,7 +246,10 @@ final class KokoroVoiceTests: XCTestCase {
         try await preparer.prepare(stagedFolder: folder, entry: entry)
         XCTAssertEqual(compiledNames.names.sorted(), KokoroVoice.modelPackages.sorted())
         let compiled = try FileManager.default.contentsOfDirectory(atPath: folder.appending(path: "compiled").path).sorted()
-        XCTAssertEqual(compiled, KokoroVoice.modelPackages.map { $0.replacingOccurrences(of: ".mlpackage", with: ".mlmodelc") }.sorted())
+        let expectedCompiled: [String] = KokoroVoice.modelPackages
+            .map { (name: String) -> String in name.replacingOccurrences(of: ".mlpackage", with: ".mlmodelc") }
+            .sorted()
+        XCTAssertEqual(compiled, expectedCompiled)
         XCTAssertFalse(FileManager.default.fileExists(atPath: stale.path), "a failed attempt's leftovers are cleared first")
     }
 }
