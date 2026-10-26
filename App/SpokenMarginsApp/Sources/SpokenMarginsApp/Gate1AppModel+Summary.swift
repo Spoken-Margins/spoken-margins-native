@@ -1,8 +1,24 @@
 import Foundation
 import SessionKit
+import SessionKitPersistence
 
 /// Summary, discussion and pasted response entry points. Moved out of `Gate1AppModel.swift` unchanged (#960).
 extension Gate1AppModel {
+    /// The AI jobs (and, for a failed summary, its notes) behind the Summarize / Retry controls. Those controls ask on
+    /// every render of the playback screen, so this reads the store once per state of the session, off the main
+    /// thread, and answers from the last read meanwhile (#2508). The key is the session's own snapshot fields, which
+    /// the engine updates whenever a job or Margin changes.
+    private var summaryRecords: SummaryRetryRecords? {
+        guard let sessionId = snapshot.sessionId, let itemId = snapshot.itemId, let store else { return nil }
+        let s = snapshot
+        let key = [s.sessionId, s.itemId, s.targetType, s.targetId, s.pendingAiJobKind, s.pendingAiJobStatus, s.turnStatus, s.lastFailure]
+            .map { $0 ?? "" }.joined(separator: "|") + "|\(s.activeInterjectionCount)|\(s.pendingAiJobCount)"
+        return summaryRecordsCache.current(
+            key: key,
+            load: { try? await StoreReader(store).read { try SummaryRetryRecords.load(store: $0, sessionId: sessionId, itemId: itemId) } },
+            onLoaded: { [weak self] in self?.objectWillChange.send() })
+    }
+
     func summarize() {
         if !remoteProviderExperienceEnabled {
             do {
@@ -132,15 +148,12 @@ extension Gate1AppModel {
     /// After relaunch only source identity is durable: use the current contents of
     /// those original notes, not newly added notes or another target's notes.
     private func recoverableLocalSummaryRetryContext() throws -> LocalSummaryRetryContext? {
-        guard let sessionId = snapshot.sessionId, let itemId = snapshot.itemId, let store else { return nil }
-        let jobs = try store.loadAIJobs(sessionId: sessionId).filter {
-            $0.kind == "interjection_summary" && $0.status == "retryable" && $0.itemId == itemId
-        }
-        // This property is read during ordinary playback renders. Most sessions
-        // have no failed summary, so retain the old single-job-query fast path.
+        guard let sessionId = snapshot.sessionId, let itemId = snapshot.itemId, let records = summaryRecords else { return nil }
+        let jobs = SummaryRetryRecords.retryableSummaryJobs(in: records.jobs, itemId: itemId)
+        // This property is read during ordinary playback renders. Most sessions have no failed summary.
         guard !jobs.isEmpty else { return nil }
-        let turns = try store.loadTurns(sessionId: sessionId)
-        let interjections = try store.loadInterjections(sessionId: sessionId)
+        let turns = records.turns
+        let interjections = records.interjections
         let byId = Dictionary(uniqueKeysWithValues: interjections.map { ($0.id, $0) })
         var candidates: [LocalSummaryRetryContext] = []
         for job in jobs {
@@ -191,13 +204,7 @@ extension Gate1AppModel {
     }
 
     func latestPendingJob(kind: String) -> AIJob? {
-        guard let sessionId = snapshot.sessionId,
-              let jobs = try? store?.loadAIJobs(sessionId: sessionId) else {
-            return nil
-        }
-        return jobs.last {
-            $0.kind == kind && ($0.status == "pending" || $0.status == "deferred")
-        }
+        summaryRecords.flatMap { SummaryRetryRecords.latestPending(in: $0.jobs, kind: kind) }
     }
 
     func followUp(_ text: String) {
@@ -209,9 +216,11 @@ extension Gate1AppModel {
     }
 
     private func submitDiscussionFollowUp(_ text: String, explicitFollowUp: String, primaryInterjections: [Interjection]) {
-        run { engine in
-            snapshot = try engine.submitFollowup(text: text)
-            let turnId = latestPendingJob(kind: "assistant_response")?.turnId ?? "turn-response-001"
+        guard run({ engine in snapshot = try engine.submitFollowup(text: text) }), let store, let sessionId = snapshot.sessionId else { return }
+        Task {
+            // The job the engine just saved is read off the main thread (#2508).
+            let jobs = (try? await StoreReader(store).read { try $0.loadAIJobs(sessionId: sessionId) }) ?? []
+            let turnId = SummaryRetryRecords.latestPending(in: jobs, kind: "assistant_response")?.turnId ?? "turn-response-001"
             submitProviderJobIfNeeded(
                 kind: "assistant_response",
                 itemId: snapshot.itemId ?? "",
