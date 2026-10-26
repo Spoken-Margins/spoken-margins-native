@@ -571,7 +571,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
 
     // MARK: Launch sweep (#2154)
 
-    func testKillAndRelaunchTwiceLeavesOneStagedCopyOfThePacket() throws {
+    func testKillAndRelaunchTwiceLeavesOneStagedCopyOfThePacket() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
         assertStaged(h.coordinator.stage(from: packet.url))
@@ -581,14 +581,16 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         for _ in 1...2 {
             let relaunched = SpokenMarginsPackageImportCoordinator(environment: h.makeEnvironment())
             relaunched.sweepOrphanedFoldersOnce()
+            // Staged while the sweep is still running: the sweep must not take the new folder.
             assertStaged(relaunched.stage(from: packet.url))
+            await relaunched.sweepTask?.value
             XCTAssertEqual(h.incomingFolderNames(), [try XCTUnwrap(relaunched.review).extractionDirectory.lastPathComponent],
                            "only the folder of the review that is showing is left")
         }
         XCTAssertTrue(h.diagnostics["lastIncomingPackageSweep"]?.hasPrefix("removed:1") == true)
     }
 
-    func testTheSweepLeavesTheFoldersOfReviewsThisRunOwns() throws {
+    func testTheSweepLeavesTheFoldersOfReviewsThisRunOwns() async throws {
         let h = try makeHarness()
         let first = try h.writePacket(named: "alpha", text: Self.alphaText)
         let second = try h.writePacket(named: "beta", text: Self.betaText)
@@ -597,23 +599,26 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(h.incomingFolderNames().count, 2, "one showing, one waiting")
 
         h.coordinator.sweepOrphanedFoldersOnce()
+        await h.coordinator.sweepTask?.value
 
         XCTAssertEqual(h.incomingFolderNames().count, 2)
     }
 
-    func testTheSweepLeavesAFolderAnImportedMarginPlaysFromAndRunsOnce() throws {
+    func testTheSweepLeavesAFolderAnImportedMarginPlaysFromAndRunsOnce() async throws {
         let h = try makeHarness()
         let used = try h.makeFolder(files: ["assets/voice.m4a"])
         let orphan = try h.makeFolder(files: ["package.spokenmargins"])
         try h.saveImportedMargin(playingFrom: h.incomingDirectory.appending(path: "\(used)/assets/voice.m4a").path)
 
         h.coordinator.sweepOrphanedFoldersOnce()
+        await h.coordinator.sweepTask?.value
 
         XCTAssertEqual(h.incomingFolderNames(), [used])
         XCTAssertFalse(FileManager.default.fileExists(atPath: h.incomingDirectory.appending(path: orphan).path))
         // A folder made after the sweep is not swept by a second call: it belongs to this run.
         let later = try h.makeFolder(files: ["package.spokenmargins"])
         h.coordinator.sweepOrphanedFoldersOnce()
+        await h.coordinator.sweepTask?.value
         XCTAssertEqual(h.incomingFolderNames(), [used, later].sorted())
     }
 

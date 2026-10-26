@@ -150,27 +150,86 @@ final class ImportedPodcastPlacementCoordinator {
 
     // MARK: Placement
 
-    @discardableResult
+    /// The last `resolve` call still running. Requests run one after the other, in the order they were made.
+    private var lastResolve: Task<ResolveOutcome, Never>?
+
+    /// Asks for placement and returns at once. The item, its layers and Margins are read on a background thread
+    /// (#2507), so the work starts a moment later; requests for one coordinator still run in the order they came.
     func resolve(
         itemId: String,
         localURL: URL,
         recipientTranscriptOverride: TranscriptTimeline? = nil
-    ) -> ResolveOutcome {
+    ) {
+        _ = enqueueResolve(itemId: itemId, localURL: localURL, recipientTranscriptOverride: recipientTranscriptOverride)
+    }
+
+    /// `resolve`, waiting for what it did. The tests and any caller that needs the outcome use this one.
+    @discardableResult
+    func resolveAndWait(
+        itemId: String,
+        localURL: URL,
+        recipientTranscriptOverride: TranscriptTimeline? = nil
+    ) async -> ResolveOutcome {
+        await enqueueResolve(itemId: itemId, localURL: localURL, recipientTranscriptOverride: recipientTranscriptOverride).value
+    }
+
+    private func enqueueResolve(
+        itemId: String,
+        localURL: URL,
+        recipientTranscriptOverride: TranscriptTimeline?
+    ) -> Task<ResolveOutcome, Never> {
+        let previous = lastResolve
+        let task = Task { [weak self] () -> ResolveOutcome in
+            _ = await previous?.value
+            guard let self else { return .rejected }
+            return await self.performResolve(
+                itemId: itemId, localURL: localURL, recipientTranscriptOverride: recipientTranscriptOverride)
+        }
+        lastResolve = task
+        return task
+    }
+
+    private func performResolve(
+        itemId: String,
+        localURL: URL,
+        recipientTranscriptOverride: TranscriptTimeline?
+    ) async -> ResolveOutcome {
         guard let store = deps.store(),
-              let file = try? PodcastPlacementFile(url: localURL),
-              let item = try? store.loadItem(id: itemId),
-              let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
-              !layers.isEmpty else { deps.clearDeferredPlacement(itemId); return .rejected }
-        guard !deps.deferPlacement(item, localURL) else { return .deferred }
+              let file = try? PodcastPlacementFile(url: localURL) else { deps.clearDeferredPlacement(itemId); return .rejected }
+        let reader = StoreReader(store)
+        // Recorded before the awaits so a transient transcript that finishes meanwhile compares against this
+        // request; a request the preflight turns away puts the old value back.
+        let previousRequestedURL = requestedURL[itemId]
         requestedURL[itemId] = localURL
-        let localItem = SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: deps.localAudiobookDigest(item))
+        func restoreRequestedURL() { requestedURL[itemId] = previousRequestedURL }
+        // The item and its layers: a few rows, but the item row carries the whole text.
+        let loaded = (try? await reader.read { store -> (Item, [ImportedCommentaryLayer])? in
+            let item = try store.loadItem(id: itemId)
+            let layers = try store.loadImportedCommentaryLayers(itemId: itemId)
+            return layers.isEmpty ? nil : (item, layers)
+        }) ?? nil
+        guard let (item, layers) = loaded else { restoreRequestedURL(); deps.clearDeferredPlacement(itemId); return .rejected }
+        guard !deps.deferPlacement(item, localURL) else { restoreRequestedURL(); return .deferred }
+        let ownedDigest = deps.localAudiobookDigest(item)
+        let needsTranscriptCheck = recipientTranscriptOverride == nil
         // Persisted transcripts have no byte-edition binding. Only this pass's
         // transient transcript is evidence for the supplied recipient file.
-        let work = ImportedPodcastPlacement.podcastLayerRecords(layers: layers) { layer in
-            try? store.loadImportedCommentaryInterjections(layerId: layer.id)
+        let prepared = try? await reader.read { store -> (SharedItemIdentity, [(ImportedCommentaryLayer, [ImportedCommentaryInterjection])], Bool) in
+            let localItem = SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: ownedDigest)
+            let work = ImportedPodcastPlacement.podcastLayerRecords(layers: layers) { layer in
+                try? store.loadImportedCommentaryInterjections(layerId: layer.id)
+            }
+            // The same question `commentaryNeedsTranscript` answers, asked of the layers just read.
+            let needsTranscript = !work.isEmpty && needsTranscriptCheck
+                && ImportedPodcastPlacementPolicy.commentaryNeedsTranscript(
+                    layers: layers,
+                    loadRecords: { try? store.loadImportedCommentaryInterjections(layerId: $0.id) },
+                    recordNeedsTranscript: ImportedPodcastPlacement.recordNeedsTranscript)
+            return (localItem, work, needsTranscript)
         }
+        guard let (localItem, work, needsTranscript) = prepared else { restoreRequestedURL(); return .rejected }
         guard !work.isEmpty else { matching.cancel(itemId: itemId); passes.end(.matching, itemId: itemId); return .noPodcastWork }
-        if recipientTranscriptOverride == nil, commentaryNeedsTranscript(itemId: itemId, store: store) {
+        if needsTranscript {
             scheduleTransientTranscript(for: item, localSourceURL: localURL)
         }
         let applicationSupportDirectory = deps.applicationSupportDirectory()
@@ -303,7 +362,7 @@ final class ImportedPodcastPlacementCoordinator {
         if !submission.joined {
             deps.recordDiagnostic("importedPodcastAnchorResolution:\(itemId)", "scheduled:\(work.count)")
             // Only a request that starts a pass records "placing"; a joined one could set it after its pass ended it.
-            passes.begin(.matching, itemId: itemId, previous: Dictionary(work.flatMap(\.1).map { ($0.id, $0.resolution) }, uniquingKeysWith: { first, _ in first }))
+            passes.begin(.matching, itemId: itemId, previous: Dictionary(work.flatMap { $0.1 }.map { ($0.id, $0.resolution) }, uniquingKeysWith: { first, _ in first }))
         }
         return .scheduled(joined: submission.joined)
     }
