@@ -45,7 +45,7 @@ final class DownloadedVoiceRenderIdentityTests: XCTestCase {
             ("version", make(entry(version: "1.1"))),
             ("file bytes", make(entry(files: [("model.bin", "d"), ("voices/af.bin", "b")]))),
             ("file path", make(entry(files: [("model2.bin", "a"), ("voices/af.bin", "b")]))),
-            ("extra file", make(entry(files: [("model.bin", "a"), ("voices/af.bin", "b"), ("NOTICE", "e")]))),
+            ("extra file", make(entry(files: [("model.bin", "a"), ("voices/af.bin", "b"), ("licences/model-notice.txt", "e")]))),
             ("speaker", make(entry(), speaker: "am_adam")),
             ("parameters", make(entry(), parameters: ["speed": "1.1"])),
             ("normalization", make(entry(), normalization: "misaki.v2")),
