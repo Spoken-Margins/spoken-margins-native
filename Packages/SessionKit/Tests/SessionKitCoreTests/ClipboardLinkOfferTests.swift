@@ -125,4 +125,19 @@ final class ClipboardLinkOfferTests: XCTestCase {
             XCTAssertEqual(ClipboardLinkOffer.pasteOutcome(for: content), expected, "\(String(describing: content?.prefix(40)))")
         }
     }
+
+    // MARK: Auto-dismiss (#2696)
+
+    func testTimeoutsArePinned() {
+        XCTAssertEqual(ClipboardLinkOffer.autoDismissDelay, 6)
+        XCTAssertEqual(ClipboardLinkOffer.autoDismissDelay(voiceOverRunning: false), 6)
+        XCTAssertEqual(ClipboardLinkOffer.autoDismissDelay(voiceOverRunning: true), 15)
+    }
+
+    func testNeverAutoDismissesWhileBusyOrShowingAnError() {
+        XCTAssertTrue(ClipboardLinkOffer.mayAutoDismiss(isAdding: false, isResolvingSourceLink: false, showsError: false))
+        XCTAssertFalse(ClipboardLinkOffer.mayAutoDismiss(isAdding: true, isResolvingSourceLink: false, showsError: false))
+        XCTAssertFalse(ClipboardLinkOffer.mayAutoDismiss(isAdding: false, isResolvingSourceLink: true, showsError: false))
+        XCTAssertFalse(ClipboardLinkOffer.mayAutoDismiss(isAdding: false, isResolvingSourceLink: false, showsError: true))
+    }
 }

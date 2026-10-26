@@ -69,6 +69,8 @@ struct ClipboardLinkOfferCard: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ObservedObject var clipboard: ClipboardLinkOfferModel
     @State private var message: String?
+    @State private var interactions = 0
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
 
     var body: some View {
         ExperienceSurface(tint: AppColors.evergreen.opacity(0.5)) {
@@ -110,6 +112,27 @@ struct ClipboardLinkOfferCard: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("library.clipboardLink.card")
         .onCompatibleChange(of: clipboard.offer.changeCount) { _ in message = nil }
+        // Any touch on the card restarts the wait (#2696).
+        .simultaneousGesture(TapGesture().onEnded { interactions += 1 })
+        .task(id: AutoDismissKey(changeCount: clipboard.offer.changeCount, interactions: interactions, busy: isBusy)) {
+            guard !isBusy else { return }
+            let delay = ClipboardLinkOffer.autoDismissDelay(voiceOverRunning: voiceOverEnabled)
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled, !isBusy else { return }
+            clipboard.markHandled()
+        }
+    }
+
+    private struct AutoDismissKey: Equatable {
+        let changeCount: Int?
+        let interactions: Int
+        let busy: Bool
+    }
+
+    /// An import is running or an error shows, so the card must stay (#2696).
+    private var isBusy: Bool {
+        !ClipboardLinkOffer.mayAutoDismiss(
+            isAdding: clipboard.isAdding, isResolvingSourceLink: model.isResolvingSourceLink, showsError: message != nil)
     }
 
     private func action(_ title: String, play: Bool) -> some View {
