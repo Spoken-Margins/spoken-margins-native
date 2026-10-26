@@ -49,13 +49,15 @@ extension Gate1AppModel {
             let selection = ttsVoiceSelection
             let voice = selection.supertonicVoice ?? .m2
             try verifyCurrentTermsForOnDeviceVoice()
-            let renderer = SupertonicDownloadedModelRenderer(model: self)
             let supportDirectory = try applicationSupportDirectory()
+            let engine = OnDeviceVoiceEngines.make(for: selection, model: self, supportDirectory: supportDirectory) // #2700
+            let renderer = engine.renderer
+            let signature = engine.signature
             guard let store else { throw SessionKitError.persistenceFailed("prepared_audio_store_unavailable") }
             // Saved audio's identity needs no model files, so saved Supertonic chunks and Kitten's stand-ins play before
             // the download too.
             let signatureTask = Task.detached(priority: .userInitiated) { () throws -> TTSRenderSignature in
-                try SupertonicRenderIdentity.current(voice: voice)
+                try signature()
             }
             let coordinator = PreparedAudioCoordinator(
                 repository: store,
@@ -91,7 +93,7 @@ extension Gate1AppModel {
             let supertonicModel = supertonicModel
             let kittenIsChosen = selection.choice.bundledVoiceIsChosen
             var savedSupertonicLookup: SupertonicSpeechPlaybackClient.PreparedChunkLookup?
-            if selection.choice.playsSavedSupertonicAudio {
+            if selection.choice.playsSavedChosenVoiceAudio {
                 savedSupertonicLookup = { await hooks.lookup(itemId: $0, articleIdentity: $1, plan: $2) }
             }
             let renderingAllowed: @Sendable () -> Bool
@@ -99,8 +101,8 @@ extension Gate1AppModel {
                 renderingAllowed = { return false }
                 diagnostics["sessionTTS"] = "Kitten (chosen)"
             } else {
-                renderingAllowed = supertonicModel.renderingAllowed(when: SupertonicModelNotDownloaded.governorAllowsRendering)
-                refreshSupertonicSessionDiagnostics(voice: voice)
+                renderingAllowed = engine.renderingAllowed
+                if let description = engine.sessionDescription { diagnostics["sessionTTS"] = description } else { refreshSupertonicSessionDiagnostics(voice: voice) }
             }
             diagnostics["renderedSpeechCacheLimitMB"] = "\(renderedSpeechCacheLimitMB)"
             return SupertonicSpeechPlaybackClient(
