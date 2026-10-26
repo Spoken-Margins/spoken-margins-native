@@ -884,7 +884,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                index: index, startOffset: planned.startOffset - article.start,
                sourceLength: planned.sourceLength, text: planned.text)) {
             return SupertonicNarrationResult(audioURL: recovered.audioURL, duration: recovered.duration, sampleRate: 0,
-                                             renderDuration: 0, sessionLoadCount: 0)
+                                             renderDuration: 0, sessionLoadCount: 0, engine: renderer.engine)
         }
         return diskCache?.cachedAudio(text: planned.text, voice: voice, language: "en", speed: 1.0, synthesisSteps: 8)
     }
@@ -1728,7 +1728,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         duration: recovered.duration,
                         sampleRate: 0,
                         renderDuration: 0,
-                        sessionLoadCount: 0
+                        sessionLoadCount: 0,
+                        engine: self?.renderer.engine ?? SupertonicNarrationResult.supertonicEngine
                     )
                 } else if playsSavedSupertonic, let cached = self?.diskCache?.cachedAudio(
                     text: request.text,
