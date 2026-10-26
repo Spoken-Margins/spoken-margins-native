@@ -379,6 +379,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let onBackgroundSeams: BackgroundSeamHandler?
     /// The listening live narration may render ahead now; nil for no limit (#1681).
     private let renderAheadWindow: @Sendable () -> TimeInterval?
+    /// The governor whose shared CPU budget this client's live narration answers to; it reads `liveNarrationBuffer()`
+    /// at every budget check once this client plays (#2695).
+    private let governor: OnDeviceVoiceGovernor
     private var lifecycleObservers: [NSObjectProtocol] = []
     /// Background time over the moment between one chunk ending and the next playing (#540).
     private let handOverHold: HandOverBackgroundHold?
@@ -513,7 +516,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         renderAheadWindow: @escaping @Sendable () -> TimeInterval? = {
             RenderAheadPolicy.window(appBackgrounded: OnDeviceVoiceGovernor.app.isAppBackgrounded,
                                      conditions: OnDeviceVoiceGovernor.app.conditions())
-        }
+        },
+        governor: OnDeviceVoiceGovernor = .app
     ) {
         self.renderer = renderer
         self.voice = voice
@@ -573,6 +577,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.applicationIsInBackground = applicationIsInBackground
         self.onBackgroundSeams = onBackgroundSeams
         self.renderAheadWindow = renderAheadWindow
+        self.governor = governor
         super.init()
         installAudioSessionObservers()
         installLifecycleObservers()
@@ -633,6 +638,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     private func play(targetId: String, from charOffset: Int, isSeek: Bool) throws {
+        governor.readLiveNarrationBuffer { [weak self] in self?.liveNarrationBuffer() }
         applyQueuedAdvance(finished: nil)
         settleHandOverBeforePlay()
         interruptionWaitEnded(.listenerActed)
@@ -3384,7 +3390,6 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         let window = renderAheadWindow()
         return lock.withLock {
             guard generation == next.generation else { return true }
-            noteLiveBufferLocked()
             if pendingAutoplayOffset != nil
                 || RenderAheadPolicy.rendersNext(listeningAhead: listeningAhead(), window: window, resting: false) {
                 // Another chain (a seek's, a gap's) may run beside the resting one: only this chunk wakes it.
@@ -3408,7 +3413,6 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 return nil
             }
             let waiting = pendingAutoplayOffset != nil
-            noteLiveBufferLocked()
             guard waiting
                 || RenderAheadPolicy.rendersNext(listeningAhead: listeningAhead(), window: window, resting: true) else {
                 return nil
@@ -3436,11 +3440,17 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         if let next = woke.next { enqueueRender(next, shouldPlayWhenReady: false) }
     }
 
-    /// #2695: below `OnDeviceCPUBudget.liveReserve` ahead, or waiting for a chunk, live narration skips the shared
-    /// background CPU budget, so the budget slows render-ahead but never lets playback run dry. Call with `lock` held.
-    private func noteLiveBufferLocked() {
-        OnDeviceVoiceGovernor.app.setLiveNarrationNeedsAudio(
-            pendingAutoplayOffset != nil || listeningAhead() < OnDeviceCPUBudget.liveReserve)
+    /// #2695: what live narration has waiting now, read by the governor at every budget check. Below
+    /// `OnDeviceCPUBudget.liveReserve` ahead, or with the play head waiting on a chunk (a start, a seek or skip, a
+    /// render gap), live narration skips the shared background CPU budget, so the budget slows render-ahead but never
+    /// lets playback run dry. Pulled, not pushed: a path that moves the play head can't leave a stale answer.
+    func liveNarrationBuffer() -> LiveNarrationBuffer {
+        lock.withLock {
+            LiveNarrationBuffer(
+                listeningAhead: listeningAhead(),
+                playheadWaitsForAudio: pendingAutoplayOffset != nil
+                    || (transportIntent == .playing && startedTargetId == nil))
+        }
     }
 
     /// The listening rendered and waiting past the playing chunk, at the listener's speed: the rendered chunks one

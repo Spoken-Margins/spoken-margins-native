@@ -9,6 +9,12 @@ final class OnDeviceCPUBudgetTests: XCTestCase {
         var cpu: TimeInterval = 0
     }
 
+    /// The playing client's state, which a seek or skip changes without telling the governor.
+    private final class LiveState: @unchecked Sendable {
+        var buffer: LiveNarrationBuffer?
+        init(_ buffer: LiveNarrationBuffer?) { self.buffer = buffer }
+    }
+
     private func governor(_ clock: Clock) -> OnDeviceVoiceGovernor {
         let governor = OnDeviceVoiceGovernor(
             conditions: { SpeechEngineConditions(thermal: .fair) },
@@ -107,11 +113,13 @@ final class OnDeviceCPUBudgetTests: XCTestCase {
         XCTAssertNotNil(governor.budgetStart(for: .whenAppBackgrounded), "a full budget holds live render-ahead")
         XCTAssertNotNil(governor.budgetStart(for: .always))
 
-        governor.setLiveNarrationNeedsAudio(true)
+        let live = LiveState(LiveNarrationBuffer(listeningAhead: 30, playheadWaitsForAudio: false))
+        governor.readLiveNarrationBuffer { live.buffer }
         XCTAssertNil(governor.budgetStart(for: .whenAppBackgrounded), "the playing buffer wins")
         XCTAssertNotNil(governor.budgetStart(for: .always), "Library work still waits")
 
-        governor.setLiveNarrationNeedsAudio(false)
+        live.buffer = LiveNarrationBuffer(listeningAhead: 200, playheadWaitsForAudio: false)
+        XCTAssertNotNil(governor.budgetStart(for: .whenAppBackgrounded), "plenty ahead: render-ahead waits")
         clock.now = 30 + OnDeviceCPUBudget.window + 0.01
         XCTAssertNil(governor.budgetStart(for: .always), "the spend has left the window")
     }
@@ -133,6 +141,55 @@ final class OnDeviceCPUBudgetTests: XCTestCase {
         let (_, cost) = governor.measureInference { clock.now += 1; clock.cpu += 2 }
         XCTAssertEqual(cost.cpu, 2)
         XCTAssertEqual(governor.budgetSpent(), 2, accuracy: 1e-9)
+    }
+
+    /// Review of #2739: the client used to push "live needs audio" only when a chunk finished, so after a background
+    /// seek or skip, or a start on an unrendered chunk, the governor still held the last chunk's answer (plenty ahead)
+    /// and the new chain's first render waited on a full budget: seconds of silence, then a hand-over at the seam. The
+    /// governor now reads the client's state at each check, so the seek is seen with no setter to forget.
+    func testAfterABackgroundSeekTheNewRenderStartsWithoutABudgetWait() {
+        let clock = Clock()
+        let governor = governor(clock)
+        let reserved = governor.reserveInference()
+        governor.settleInference(reserved: reserved, cpu: OnDeviceCPUBudget.backgroundLimit)
+        // A chunk just finished with five minutes waiting ahead: render-ahead rests on the full budget.
+        let live = LiveState(LiveNarrationBuffer(listeningAhead: 300, playheadWaitsForAudio: false))
+        governor.readLiveNarrationBuffer { live.buffer }
+        XCTAssertNotNil(governor.budgetStart(for: .whenAppBackgrounded), "precondition: the budget holds render-ahead")
+
+        // The listener seeks to an unrendered spot: nothing waits past the play head, and it waits on audio.
+        live.buffer = LiveNarrationBuffer(listeningAhead: 0, playheadWaitsForAudio: true)
+        let before = clock.now
+        governor.waitForNextInference(notBefore: nil, pacing: .whenAppBackgrounded) { true }
+        XCTAssertEqual(clock.now, before, "the render the play head waits on starts at once")
+        XCTAssertNotNil(governor.budgetStart(for: .always), "Library work still waits on the full budget")
+    }
+
+    /// A render the play head is waiting on never waits on the budget, however much is rendered elsewhere ahead
+    /// (Supertonic's last step rests through `rest(after:)`, which waited on the budget and held a finished chunk).
+    func testARenderThePlayheadWaitsOnNeverWaitsOnTheBudget() {
+        let clock = Clock()
+        let governor = governor(clock)
+        let reserved = governor.reserveInference()
+        governor.settleInference(reserved: reserved, cpu: OnDeviceCPUBudget.backgroundLimit)
+        let live = LiveState(LiveNarrationBuffer(listeningAhead: 600, playheadWaitsForAudio: true))
+        governor.readLiveNarrationBuffer { live.buffer }
+        XCTAssertNil(governor.budgetStart(for: .whenAppBackgrounded))
+        let cost = OnDeviceVoiceGovernor.InferenceCost(wall: 1, cpu: 1)
+        governor.rest(after: cost, pacing: .whenAppBackgrounded) { true }
+        let dutyCycleRest = OnDeviceInferencePacingPolicy.delay(after: cost, backgrounded: true)
+        XCTAssertEqual(clock.now, dutyCycleRest, accuracy: 0.11, "only the voice's own duty cycle, not the budget")
+    }
+
+    /// With no client playing, nothing is live: every render waits on the budget as before.
+    func testWithNoPlayingClientLiveRenderAheadWaitsOnTheBudget() {
+        let clock = Clock()
+        let governor = governor(clock)
+        let reserved = governor.reserveInference()
+        governor.settleInference(reserved: reserved, cpu: OnDeviceCPUBudget.backgroundLimit)
+        governor.readLiveNarrationBuffer { nil }
+        XCTAssertFalse(governor.liveNarrationNeedsAudio)
+        XCTAssertNotNil(governor.budgetStart(for: .whenAppBackgrounded))
     }
 
     /// A render waiting on a full budget wakes once the spend leaves the window, and not before.

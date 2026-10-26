@@ -559,7 +559,7 @@ struct Style {
 /// timed here by wall clock alone, so Supertonic was never charged the CPU its ONNX threads used (#2695).
 typealias SupertonicInferenceStep = (() throws -> Void) throws -> Void
 
-private func runPacedInference<T>(
+func runPacedInference<T>(
     _ runInference: SupertonicInferenceStep?,
     operation: () throws -> T
 ) throws -> T {

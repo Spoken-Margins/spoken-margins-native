@@ -89,6 +89,33 @@ final class SupertonicNarrationTests: XCTestCase {
         XCTAssertGreaterThan(governor.budgetSpent(), 0, "every inference step is charged")
     }
 
+    // #2695 review: the real-model test above skips without the downloaded model, so in CI nothing proved Supertonic's
+    // steps are charged. This drives the same step the renderer hands the model (`pacedInferenceStep`, through
+    // `runPacedInference`) with stub steps whose CPU is twice their wall time, as two ONNX threads make it.
+    func testEveryStubStepIsChargedItsCPUTimeToTheSharedBudget() throws {
+        final class Clock: @unchecked Sendable { var now: TimeInterval = 0; var cpu: TimeInterval = 0 }
+        let clock = Clock()
+        let governor = OnDeviceVoiceGovernor(
+            conditions: { SpeechEngineConditions(thermal: .fair) },
+            now: { clock.now }, cpuTime: { clock.cpu }, sleep: { clock.now += $0 })
+        let step = SupertonicNarrationRenderer.pacedInferenceStep(
+            governor: governor, pacing: .whenAppBackgrounded, isCancelled: { false })
+        // Duration, text encoder, five flow steps and the vocoder: eight model steps.
+        var outputs: [Int] = []
+        for index in 0..<8 {
+            outputs.append(try runPacedInference(step) {
+                clock.now += 0.25
+                clock.cpu += 0.5
+                return index
+            })
+        }
+        XCTAssertEqual(outputs, Array(0..<8), "each step's result comes back through the pacing")
+        XCTAssertEqual(governor.budgetSpent(), 8 * 0.5, accuracy: 1e-9, "charged CPU time, not wall time (2.0)")
+        #if DEBUG
+        XCTAssertEqual(governor.debugPacingRecords.count, 8, "every step is paced")
+        #endif
+    }
+
     // #586: the model leaves about 0.6 s of silence before the speech and 0.8 s after it, so every
     // chunk seam was a stall of more than a second. A real render has to come back trimmed to its
     // speech and a short pad, and say how much it cut so the output check still judges the model's

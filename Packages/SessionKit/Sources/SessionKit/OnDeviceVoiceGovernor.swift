@@ -35,8 +35,9 @@ public final class OnDeviceVoiceGovernor: @unchecked Sendable {
     private var appBackgrounded = false
     /// Every renderer's inference CPU in the last minute, shared across voices while the app is away (#2695).
     private var budget = OnDeviceCPUBudget()
-    /// Live narration has less than `OnDeviceCPUBudget.liveReserve` of listening waiting ahead (#2695).
-    private var liveNeedsAudio = false
+    /// Asks the playing client what live narration has waiting (#2695). Read at every budget check, never cached, so
+    /// a seek, a skip or a start on an unrendered chunk is seen at once; nil when no client plays.
+    private var liveBuffer: (@Sendable () -> LiveNarrationBuffer?)?
     private let conditionsProvider: @Sendable () -> SpeechEngineConditions
     private let now: @Sendable () -> TimeInterval
     private let cpuTime: @Sendable () -> TimeInterval
@@ -81,25 +82,33 @@ public final class OnDeviceVoiceGovernor: @unchecked Sendable {
         lock.withLock { appBackgrounded }
     }
 
-    /// Live narration says whether the listening waiting ahead has fallen below `OnDeviceCPUBudget.liveReserve`, or
-    /// playback waits for a chunk. While it has, live narration skips the shared budget (it keeps its own duty cycle),
-    /// while its CPU still counts against every other render, so the budget can slow render-ahead but never starves
-    /// the playing buffer (#2695).
-    public func setLiveNarrationNeedsAudio(_ needs: Bool) {
-        lock.withLock { liveNeedsAudio = needs }
+    /// The playing client registers how to read live narration's buffer (#2695). The governor pulls it at each budget
+    /// check instead of being told, so no path that moves the play head can leave a stale answer behind. A later
+    /// registration replaces an earlier one; the client that plays last is the live one. `buffer` is called without
+    /// the governor's lock held, so it may take the client's own lock.
+    public func readLiveNarrationBuffer(with buffer: @escaping @Sendable () -> LiveNarrationBuffer?) {
+        lock.withLock { liveBuffer = buffer }
     }
 
+    /// Whether live narration may not wait on the shared budget now: its play head waits on audio, or less than
+    /// `OnDeviceCPUBudget.liveReserve` of listening waits ahead. While it is, live narration keeps only its own duty
+    /// cycle, and its CPU still counts against every other render, so the budget slows render-ahead but never
+    /// starves the playing buffer.
     public var liveNarrationNeedsAudio: Bool {
-        lock.withLock { liveNeedsAudio }
+        let buffer = lock.withLock { liveBuffer }
+        return buffer?()?.needsAudio ?? false
     }
 
     /// When a render with `pacing` may start its next inference under the shared background budget; nil when the
-    /// budget doesn't hold it (the app is in front, or live narration is running low and this is live narration).
+    /// budget doesn't hold it: the app is in front, or this is live narration and the play head waits on audio or is
+    /// running low (`liveNarrationNeedsAudio`), so a render the listener is waiting for never waits on the budget.
     public func budgetStart(for pacing: OnDeviceRenderPacing) -> TimeInterval? {
+        guard isAppBackgrounded else { return nil }
+        // Read outside the lock: the client's answer takes the client's lock, which is always taken before this one.
+        if pacing == .whenAppBackgrounded, liveNarrationNeedsAudio { return nil }
         let time = now()
         return lock.withLock { () -> TimeInterval? in
             guard appBackgrounded else { return nil }
-            if liveNeedsAudio, pacing == .whenAppBackgrounded { return nil }
             let start = budget.earliestStart(now: time)
             return start > time ? start : nil
         }
@@ -258,5 +267,23 @@ public enum OnDeviceInferencePacingPolicy {
             guard remaining > 0 else { return }
             sleep(min(0.1, remaining))
         }
+    }
+}
+
+/// What live narration has waiting, as the playing client reads it from its own state at the moment of asking (#2695).
+public struct LiveNarrationBuffer: Equatable, Sendable {
+    /// Listening rendered and waiting past the playing chunk, at the listener's speed.
+    public var listeningAhead: TimeInterval
+    /// The play head is waiting for a chunk that isn't rendered yet: a start, a seek or skip, or a render gap.
+    public var playheadWaitsForAudio: Bool
+
+    public init(listeningAhead: TimeInterval, playheadWaitsForAudio: Bool) {
+        self.listeningAhead = listeningAhead
+        self.playheadWaitsForAudio = playheadWaitsForAudio
+    }
+
+    /// Live narration must not wait on the shared budget.
+    public var needsAudio: Bool {
+        playheadWaitsForAudio || listeningAhead < OnDeviceCPUBudget.liveReserve
     }
 }
