@@ -239,6 +239,13 @@ class ValidatingSources(unittest.TestCase):
         self.assertEqual(carried["content"], "Notice of modification\n")
         self.assertNotIn("sources", carried)
 
+    def test_a_chip_floor_comes_out_in_the_entry_and_its_absence_adds_nothing(self):
+        # #2700: Kokoro and Phonon are offered on A14 and newer; other voices carry no floor.
+        sources = copy.deepcopy(self.good)
+        self.assertNotIn("minimumChip", vc.voice_entry(sources, sources["voices"][0], self.base))
+        sources["voices"][0]["minimumChip"] = "A14"
+        self.assertEqual(vc.voice_entry(sources, sources["voices"][0], self.base)["minimumChip"], "A14")
+
     def test_neighbouring_mistakes_are_each_caught(self):
         alpha = lambda s: s["voices"][0]  # noqa: E731
         cases = {

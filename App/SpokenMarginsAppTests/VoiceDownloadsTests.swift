@@ -66,6 +66,45 @@ final class VoiceDownloadsTests: XCTestCase {
         XCTAssertEqual(changes, 2)
     }
 
+    func testTheRowSaysPreparingVoiceWhileTheRuntimePreparesAndThenInstalls() async throws {
+        // #2700: a Core ML voice compiles after download; the row shows that, not a full bar that sits still.
+        let bytes = Data(repeating: 5, count: 10_000)
+        let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+        let entry = VoiceModelEntry(
+            id: "supertonic-3-int8", displayName: "Fixture", publisher: "Fixture", version: "1",
+            runtime: VoiceModelRuntime(name: "coreml", version: "9"), minimumIOSVersion: "26.0", minimumMemoryMegabytes: 1,
+            files: [VoiceModelFile(path: "model.bin", byteCount: bytes.count, sha256: digest, sources: ["https://fixture.invalid/model.bin"])],
+            licenses: [VoiceModelLicense(id: "model", name: "Fixture licence", textURL: "https://fixture.invalid/licence",
+                                         textSHA256: digest, requiresAcceptance: false)]
+        )
+        let snapshot = try JSONEncoder().encode(VoiceModelCatalog(catalogVersion: 1, issuedAt: "2026-10-18T00:00:00Z", voices: [entry]))
+        let preparer = GatedPreparer()
+        let coordinator = VoiceCatalogCoordinator(
+            supportDirectory: root,
+            configuration: .init(catalogURL: nil, trustedKeys: [], playableVoiceIds: [entry.id],
+                                 preparers: VoiceModelPreparers.standard.registering(preparer, forRuntime: "coreml"),
+                                 bundledSnapshot: snapshot),
+            transport: FixtureTransport(files: ["https://fixture.invalid/model.bin": bytes]),
+            installerConfiguration: .init(marginBytes: 0, attemptsPerSource: 1, retryDelay: .zero, availableCapacity: { _ in nil }),
+            repository: nil
+        )
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "voice-downloads-\(UUID().uuidString)"))
+        let voices = VoiceDownloadsModel(coordinator: coordinator, defaults: defaults)
+        await voices.reload()
+
+        voices.download(entry.id)
+        try await waitUntil { voices.activity[entry.id] == .preparing }
+        XCTAssertTrue(preparer.started)
+        XCTAssertEqual(voices.rows.first?.state, .notInstalled, "not installed until preparation finishes")
+        preparer.release()
+        try await waitUntil { voices.activity[entry.id] == .idle && voices.rows.first?.state != .notInstalled }
+    }
+
+    func testTheDeviceProbeReadsAModelTheChipTableKnows() {
+        // The simulator reports the simulated iPhone; every one iOS 26 runs on is in the table.
+        XCTAssertNotNil(VoiceDeviceProbe.chipGeneration(), VoiceDeviceProbe.machineIdentifier())
+    }
+
     func testTheBundledSnapshotOffersSupertonicWithItsLicenceAndKittenAsIncluded() async throws {
         let voices = VoiceDownloadsModel.make(supportDirectory: root, repository: nil)
         await voices.reload()
@@ -103,5 +142,23 @@ private struct FixtureTransport: VoiceModelTransport {
         }
         guard try onHead(offset > 0 ? VoiceModelResponseHead(statusCode: 206, contentRangeStart: offset) : VoiceModelResponseHead(statusCode: 200)) else { return }
         try onChunk(data.subdata(in: offset..<data.count))
+    }
+}
+
+/// Holds the preparation open until the test lets it finish.
+private final class GatedPreparer: VoiceModelPreparing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var isStarted = false
+    private var isReleased = false
+
+    var needsPreparation: Bool { true }
+    var started: Bool { lock.withLock { isStarted } }
+    func release() { lock.withLock { isReleased = true } }
+
+    func prepare(stagedFolder: URL, entry: VoiceModelEntry) async throws {
+        lock.withLock { isStarted = true }
+        while !lock.withLock({ isReleased }) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
 }

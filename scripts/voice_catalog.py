@@ -232,6 +232,8 @@ def file_source_urls(sources: dict, voice: dict, file: dict) -> list[str]:
 
 def voice_entry(sources: dict, voice: dict, base_dir: Path = SOURCES_PATH.parent) -> dict:
     entry = {key: voice[key] for key in ("id", "displayName", "publisher", "version", "runtime", "minimumIOSVersion", "minimumMemoryMegabytes", "status")}
+    if "minimumChip" in voice:
+        entry["minimumChip"] = voice["minimumChip"]
     if "supersededBy" in voice:
         entry["supersededBy"] = voice["supersededBy"]
     entry["bundled"] = voice["bundled"]

@@ -1,0 +1,172 @@
+{
+  "schemaVersion": "voice-model-catalog.v1",
+  "catalogVersion": 6,
+  "issuedAt": "2026-10-17T00:00:00Z",
+  "voices": [
+    {
+      "id": "fixture-bundled",
+      "displayName": "Fixture Bundled Voice",
+      "publisher": "Example Publisher",
+      "version": "0.8",
+      "runtime": {
+        "name": "onnxruntime",
+        "version": "1.24.2"
+      },
+      "minimumIOSVersion": "26",
+      "minimumMemoryMegabytes": 2048,
+      "status": "available",
+      "bundled": true,
+      "files": [],
+      "licenses": [
+        {
+          "id": "fixture-apache",
+          "name": "Apache License 2.0",
+          "spdxId": "Apache-2.0",
+          "textURL": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "textSHA256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "requiresAcceptance": false
+        }
+      ]
+    },
+    {
+      "id": "fixture-voice",
+      "displayName": "Fixture Voice",
+      "publisher": "Example Publisher",
+      "version": "1.0",
+      "runtime": {
+        "name": "onnxruntime",
+        "version": "1.24.2"
+      },
+      "minimumIOSVersion": "26.0",
+      "minimumMemoryMegabytes": 4096,
+      "status": "available",
+      "bundled": false,
+      "files": [
+        {
+          "path": "model.onnx",
+          "byteCount": 20,
+          "sha256": "63bb29f6552e7e3a2f62f667770e63139631344452809edc5b3236bde5c3260f",
+          "sources": [
+            "https://models.example.org/fixture-voice/1.0/model.onnx",
+            "https://mirror.example.net/fixture-voice/1.0/model.onnx"
+          ],
+          "licenseId": "fixture-rail"
+        },
+        {
+          "path": "styles/a.json",
+          "byteCount": 14,
+          "sha256": "9a578eee6c1f7a691e6af79981807ba997d534b48fa7387b17defa8414189381",
+          "sources": [
+            "https://models.example.org/fixture-voice/1.0/styles/a.json",
+            "https://mirror.example.net/fixture-voice/1.0/styles/a.json"
+          ],
+          "licenseId": "fixture-rail"
+        }
+      ],
+      "licenses": [
+        {
+          "id": "fixture-rail",
+          "name": "Example Open RAIL License",
+          "textURL": "https://models.example.org/fixture-voice/LICENSE",
+          "textSHA256": "b2b85c5b289a1f0ab0b3b381297e1e4c52a6beb0be0b89ba1f3b63fbc42b19e5",
+          "requiresAcceptance": true,
+          "restrictionsSummary": "Do not use the voice to impersonate someone without consent."
+        }
+      ]
+    },
+    {
+      "id": "fixture-coreml",
+      "displayName": "Fixture Voice",
+      "publisher": "Example Publisher",
+      "version": "1.0",
+      "runtime": {
+        "name": "coreml",
+        "version": "9.0"
+      },
+      "minimumIOSVersion": "26.0",
+      "minimumMemoryMegabytes": 4096,
+      "status": "available",
+      "bundled": false,
+      "files": [
+        {
+          "path": "model.onnx",
+          "byteCount": 20,
+          "sha256": "63bb29f6552e7e3a2f62f667770e63139631344452809edc5b3236bde5c3260f",
+          "sources": [
+            "https://models.example.org/fixture-voice/1.0/model.onnx",
+            "https://mirror.example.net/fixture-voice/1.0/model.onnx"
+          ],
+          "licenseId": "fixture-rail"
+        },
+        {
+          "path": "styles/a.json",
+          "byteCount": 14,
+          "sha256": "9a578eee6c1f7a691e6af79981807ba997d534b48fa7387b17defa8414189381",
+          "sources": [
+            "https://models.example.org/fixture-voice/1.0/styles/a.json",
+            "https://mirror.example.net/fixture-voice/1.0/styles/a.json"
+          ],
+          "licenseId": "fixture-rail"
+        }
+      ],
+      "licenses": [
+        {
+          "id": "fixture-rail",
+          "name": "Example Open RAIL License",
+          "textURL": "https://models.example.org/fixture-voice/LICENSE",
+          "textSHA256": "b2b85c5b289a1f0ab0b3b381297e1e4c52a6beb0be0b89ba1f3b63fbc42b19e5",
+          "requiresAcceptance": true,
+          "restrictionsSummary": "Do not use the voice to impersonate someone without consent."
+        }
+      ],
+      "minimumChip": "A14"
+    },
+    {
+      "id": "fixture-phonon",
+      "displayName": "Fixture Voice",
+      "publisher": "Example Publisher",
+      "version": "1.0",
+      "runtime": {
+        "name": "phonon-ptts",
+        "version": "0.1.0"
+      },
+      "minimumIOSVersion": "26.0",
+      "minimumMemoryMegabytes": 4096,
+      "status": "available",
+      "bundled": false,
+      "files": [
+        {
+          "path": "model.onnx",
+          "byteCount": 20,
+          "sha256": "63bb29f6552e7e3a2f62f667770e63139631344452809edc5b3236bde5c3260f",
+          "sources": [
+            "https://models.example.org/fixture-voice/1.0/model.onnx",
+            "https://mirror.example.net/fixture-voice/1.0/model.onnx"
+          ],
+          "licenseId": "fixture-rail"
+        },
+        {
+          "path": "styles/a.json",
+          "byteCount": 14,
+          "sha256": "9a578eee6c1f7a691e6af79981807ba997d534b48fa7387b17defa8414189381",
+          "sources": [
+            "https://models.example.org/fixture-voice/1.0/styles/a.json",
+            "https://mirror.example.net/fixture-voice/1.0/styles/a.json"
+          ],
+          "licenseId": "fixture-rail"
+        }
+      ],
+      "licenses": [
+        {
+          "id": "fixture-rail",
+          "name": "Example Open RAIL License",
+          "textURL": "https://models.example.org/fixture-voice/LICENSE",
+          "textSHA256": "b2b85c5b289a1f0ab0b3b381297e1e4c52a6beb0be0b89ba1f3b63fbc42b19e5",
+          "requiresAcceptance": true,
+          "restrictionsSummary": "Do not use the voice to impersonate someone without consent."
+        }
+      ],
+      "minimumChip": "A14"
+    }
+  ]
+}
