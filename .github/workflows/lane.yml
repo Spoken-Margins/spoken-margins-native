@@ -298,8 +298,13 @@ jobs:
           restore-keys: xcode-cas-sparse-27.0-
       - name: Hosted Mac - unpack the Xcode compilation cache
         if: runner.environment == 'github-hosted'
-        continue-on-error: true
-        run: CAS="$RUNNER_TEMP/lane-state/compilation-cache" PACK="$RUNNER_TEMP/cas-pack" bash "$RUNNER_TEMP/ci-cas-cache.sh" unpack
+        # No continue-on-error (#2711): the script always exits 0, and a base branch without it costs a cold build.
+        run: |
+          if [ -f "$RUNNER_TEMP/ci-cas-cache.sh" ]; then
+            CAS="$RUNNER_TEMP/lane-state/compilation-cache" PACK="$RUNNER_TEMP/cas-pack" bash "$RUNNER_TEMP/ci-cas-cache.sh" unpack
+          else
+            echo "::warning::No ci-cas-cache.sh on the base branch; skipping the compilation cache unpack."
+          fi
       # The image's /usr/bin/python3 is 3.9, and requirements-dev.txt pins jsonschema 4.26.0, which needs 3.10 or newer:
       # every hosted T3 run died here with "No matching distribution" (#2545). The hosted workflows all use 3.12.
       - name: Hosted Mac - Python 3.12
@@ -360,8 +365,13 @@ jobs:
       - name: Hosted Mac - pack the Xcode compilation cache
         id: cas-pack
         if: always() && runner.environment == 'github-hosted' && steps.run.outputs.verdict == 'PASS'
-        continue-on-error: true
-        run: CAS="$RUNNER_TEMP/lane-state/compilation-cache" PACK="$RUNNER_TEMP/cas-pack" bash "$RUNNER_TEMP/ci-cas-cache.sh" pack
+        # No continue-on-error (#2711): the script always exits 0, and a base branch without it costs a cold build.
+        run: |
+          if [ -f "$RUNNER_TEMP/ci-cas-cache.sh" ]; then
+            CAS="$RUNNER_TEMP/lane-state/compilation-cache" PACK="$RUNNER_TEMP/cas-pack" bash "$RUNNER_TEMP/ci-cas-cache.sh" pack
+          else
+            echo "::warning::No ci-cas-cache.sh on the base branch; skipping the compilation cache pack."
+          fi
       - name: Hosted Mac - save the Xcode compilation cache
         if: always() && runner.environment == 'github-hosted' && steps.cas-pack.outputs.ok == 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
