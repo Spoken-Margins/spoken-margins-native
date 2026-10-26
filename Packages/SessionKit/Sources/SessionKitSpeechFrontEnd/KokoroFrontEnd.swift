@@ -1,23 +1,46 @@
 import Foundation
 
-/// Text to Kokoro-82M input ids (#2705) with no GPL code and no MLX: the bundled Kitten front end's
-/// pronunciations (misaki gold lexicon, CMUdict, the small letter-to-sound net), respelled from espeak's
-/// conventions into misaki's, which is the phoneme set Kokoro was trained on. The respelling is misaki's own
-/// espeak fallback table (`misaki/espeak.py`, `EspeakFallback.E2M`, Apache-2.0) for American English.
+/// Text to Kokoro-82M input ids (#2705) with no GPL code and no MLX.
 ///
-/// The port's own front end (MisakiSwift) runs a BART fallback on MLX, which needs the Metal toolchain to build
-/// and the GPU to run, and iOS refuses GPU work in the background; this keeps the voice on the Neural Engine
-/// and CPU only.
+/// Kokoro was trained on text that misaki's English G2P had phonemized. This front end follows misaki as closely
+/// as it can without MLX (whose BART fallback and POS tagger are what need the Metal toolchain and the GPU, which
+/// iOS refuses in the background, so the voice stays on the Neural Engine and CPU):
+///
+/// 1. Numbers, years, money and times are read the way misaki reads them: plain words, no commas
+///    (`SpeechNormalizer.NumberReading.misaki`). Kitten's comma and hand-spelled 'hundred' are Kitten's own fixes.
+/// 2. A word is looked up in misaki's gold dictionary, then its silver one (`MisakiLexicon`), in misaki's own
+///    spelling, with misaki's stemming for plurals, `ed` and `ing`.
+/// 3. Only a word in neither goes to the Kitten front end (CMUdict, a split into two words, the small
+///    letter-to-sound net), respelled from espeak's conventions into misaki's with misaki's own espeak fallback
+///    table (`misaki/espeak.py`, `EspeakFallback.E2M`, Apache-2.0) for American English.
+/// 4. 'the' and 'to' take their vowel-sensitive forms from the next word, as in `Lexicon.get_special_case`.
+///
+/// What stays different from misaki: no part-of-speech, so a heteronym ('read', 'lead') reads as its default.
 public struct KokoroFrontEnd: Sendable {
     /// Kokoro's padding and boundary token.
     public static let boundaryTokenID: Int32 = 0
 
     private let vocab: [Character: Int32]
     private let phonemizer: @Sendable (String) -> String
+    /// Whether `phonemizer` speaks espeak (and needs respelling) or already speaks misaki.
+    private let respells: Bool
 
     /// `vocabJSON` is the port's `runtime/kokoro-vocab.json` (`{"vocab": {"a": 43, …}}`). `phonemizer` gives
     /// espeak-spelled phonemes for text; the app passes `KittenFrontEnd.phonemize`.
     public init(vocabJSON: Data, phonemizer: @escaping @Sendable (String) -> String) throws {
+        vocab = try Self.vocabulary(vocabJSON)
+        self.phonemizer = phonemizer
+        respells = true
+    }
+
+    /// The reading the app uses: misaki's dictionaries first, `kitten` only for a word they don't have.
+    public init(vocabJSON: Data, lexicon: MisakiLexicon, fallback kitten: KittenFrontEnd) throws {
+        vocab = try Self.vocabulary(vocabJSON)
+        phonemizer = { Self.misakiPhonemes(for: $0, lexicon: lexicon, fallback: kitten) }
+        respells = false
+    }
+
+    private static func vocabulary(_ vocabJSON: Data) throws -> [Character: Int32] {
         struct File: Decodable { let vocab: [String: Int32] }
         let decoded = try JSONDecoder().decode(File.self, from: vocabJSON)
         var table: [Character: Int32] = [:]
@@ -25,8 +48,7 @@ public struct KokoroFrontEnd: Sendable {
             table[Character(key)] = value
         }
         guard !table.isEmpty else { throw KokoroFrontEndError.emptyVocabulary }
-        vocab = table
-        self.phonemizer = phonemizer
+        return table
     }
 
     public struct Input: Equatable, Sendable {
@@ -44,7 +66,75 @@ public struct KokoroFrontEnd: Sendable {
 
     /// Misaki-spelled phonemes for `text`.
     public func phonemes(for text: String) -> String {
-        Self.misaki(fromEspeak: phonemizer(text))
+        respells ? Self.misaki(fromEspeak: phonemizer(text)) : phonemizer(text)
+    }
+
+    // MARK: Misaki reading
+
+    private static let kokoroStyle = KittenFrontEnd.TextStyle(
+        numbers: .misaki, joinTens: false, keepDashes: true, openQuote: "“", closeQuote: "”")
+    private static let vowelPhonemes = Set("AIOQWYaiuæɑɒɔəɐɛɜɪʊʌᵻ")
+    private static let consonantPhonemes = Set("bdfhjklmnpstvwzðŋɡɹɾʃʒʤʧθ")
+    private static let framing = Set("“\"")
+    private static let trailingMarks = Set(";:,.!?—…”\")(")
+
+    /// `Lexicon.get_special_case` for the words it settles by their neighbours or by being function words, and the
+    /// dictionaries for the rest, with the Kitten front end for a word in neither.
+    static func misakiWord(_ word: String, lexicon: MisakiLexicon, fallback kitten: KittenFrontEnd) -> String {
+        switch word {
+        case "a", "A": return "ɐ"
+        case "an", "An": return "ɐn"
+        case "I": return "ˌI"
+        case "in", "In": return "ɪn"
+        case "the", "The": return "ði"          // 'ðə' before a consonant, settled once the next word is known
+        case "to", "To": return "tu"            // 'tə' or 'tʊ' likewise
+        default: break
+        }
+        let spelledOut = SpeechNormalizer.alwaysSpell.contains(word)
+            || (word.count >= 2 && !KittenFrontEnd.vowelLetters.isMatch(word))
+            || (word.count == 1 && KittenFrontEnd.isUppercase(word))
+        if spelledOut { return misaki(fromEspeak: kitten.word(word)) }
+        let known = lexicon.pronunciation(of: word)
+        let acronym = (KittenFrontEnd.acronym.fullMatches(word) || KittenFrontEnd.shortAcronym.fullMatches(word))
+        if known == nil, acronym { return misaki(fromEspeak: kitten.word(word)) }
+        if let known { return known }
+        return misaki(fromEspeak: kitten.word(word))
+    }
+
+    /// Whether the word after `index` starts with a vowel sound (true), a consonant (false), or can't be told (nil).
+    private static func vowelFollows(_ pieces: [String], after index: Int) -> Bool? {
+        guard index + 1 < pieces.count else { return nil }
+        for character in pieces[index + 1] {
+            if vowelPhonemes.contains(character) { return true }
+            if consonantPhonemes.contains(character) { return false }
+            if !framing.contains(character), character != "ˈ", character != "ˌ" { return nil }
+        }
+        return nil
+    }
+
+    /// Misaki-spelled phonemes for the text.
+    static func misakiPhonemes(for text: String, lexicon: MisakiLexicon, fallback kitten: KittenFrontEnd) -> String {
+        var (pieces, sources) = kitten.phonemizeWords(text, style: kokoroStyle) {
+            misakiWord($0, lexicon: lexicon, fallback: kitten)
+        }
+        for index in pieces.indices where ["the", "The", "to", "To"].contains(sources[index]) {
+            let piece = pieces[index]
+            let lead = String(piece.prefix { framing.contains($0) })
+            let trail = String(piece.reversed().prefix { trailingMarks.contains($0) }.reversed())
+            let core = String(piece.dropFirst(lead.count).dropLast(trail.count))
+            let vowel = trail.isEmpty ? vowelFollows(pieces, after: index) : nil
+            let isThe = sources[index].lowercased() == "the"
+            let spoken: String
+            switch (isThe, vowel) {
+            case (true, true?): spoken = core                      // ði
+            case (true, _): spoken = "ðə"
+            case (false, true?): spoken = "tʊ"
+            case (false, false?): spoken = "tə"
+            default: spoken = core                                 // 'to' at the end of a phrase keeps its full form
+            }
+            pieces[index] = lead + spoken + trail
+        }
+        return pieces.joined(separator: " ")
     }
 
     /// Model input for `text`, or nil when it holds no sound or more than `paddedLength` tokens framed.
