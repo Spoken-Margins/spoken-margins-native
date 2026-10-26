@@ -23,6 +23,7 @@ final class AddMarginShortcutIntentTests: XCTestCase {
         intent.text = text
         intent.item = item
         _ = try await intent.perform()
+        await model?.settleMarginRows()
     }
 
     /// #126: without an App Shortcut Siri can't run "Add Margin" until the listener builds a shortcut around it.

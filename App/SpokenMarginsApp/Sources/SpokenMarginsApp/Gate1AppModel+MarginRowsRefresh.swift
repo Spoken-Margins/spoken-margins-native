@@ -15,6 +15,23 @@ private enum MarginRowsTickets {
     }
 
     static func isCurrent(_ ticket: Int, _ scope: String) -> Bool { latest[scope] == ticket }
+
+    /// Background refreshes still running, so a test can wait for them instead of sleeping.
+    private static var pending: [Int: Task<Void, Never>] = [:]
+    private static var nextTask = 0
+
+    static func track(_ work: @escaping @MainActor () async -> Void) {
+        nextTask += 1
+        let id = nextTask
+        pending[id] = Task { @MainActor in
+            await work()
+            pending[id] = nil
+        }
+    }
+
+    static func settle() async {
+        while let task = pending.values.first { await task.value }
+    }
 }
 
 /// The Margins list (`marginRows`, `sharedMarginRows`) is read off the main thread and published here (#2505).
@@ -23,15 +40,18 @@ private enum MarginRowsTickets {
 extension Gate1AppModel {
     /// A full refresh, not awaited. Callers that need the rows afterwards use `refreshMarginRowsAsync`.
     func refreshMarginRowsInBackground() {
-        Task { @MainActor [weak self] in await self?.refreshMarginRowsAsync() }
+        MarginRowsTickets.track { [weak self] in await self?.refreshMarginRowsAsync() }
     }
 
     /// One item's Margins changed (saved, undone, restored with its item): refresh just those rows.
     /// With no item to name (a snapshot with no session), the whole list is refreshed.
     func refreshMarginRowsInBackground(forItem itemId: String?) {
         guard let itemId else { return refreshMarginRowsInBackground() }
-        Task { @MainActor [weak self] in await self?.refreshMarginRowsAsync(forItem: itemId) }
+        MarginRowsTickets.track { [weak self] in await self?.refreshMarginRowsAsync(forItem: itemId) }
     }
+
+    /// Test seam: returns once every background Margins refresh started so far has published.
+    func settleMarginRows() async { await MarginRowsTickets.settle() }
 
     func refreshMarginRowsAsync() async {
         guard let store else { return diagnostics["marginRefresh"] = "failed:no_store" }
