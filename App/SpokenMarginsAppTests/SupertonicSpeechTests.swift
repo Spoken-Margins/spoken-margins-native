@@ -2828,7 +2828,10 @@ final class SupertonicSpeechTests: XCTestCase {
             fallbackClient: fallback,
             onGenerationProgress: { log.record($0) },
             onFallback: { reason, _, _ in log.recordFallback(reason) },
-            onBundledVoice: { _, _, _ in log.recordNotice("bundled_voice") }
+            onBundledVoice: { _, _, _ in log.recordNotice("bundled_voice") },
+            // #2731: the claim is which voice renders, not that the player's clock advances. A volume-0 AVPlayer on a loaded
+            // hosted Mac can sit still for 5 s and trip the stall monitor, which hands the item to the iOS voice.
+            stallThreshold: .seconds(3600)
         )
         let text = (0..<4).map { _ in
             "The committee met on Tuesday to discuss the proposal, which had been circulating among members for several weeks and had attracted a surprising amount of criticism from both sides. Most of the objections concerned cost."
@@ -2891,7 +2894,10 @@ final class SupertonicSpeechTests: XCTestCase {
             },
             onFallback: { reason, _, _ in log.recordFallback(reason) },
             onRestore: { _ in log.recordRestore() },
-            onBundledVoice: { _, _, _ in log.recordNotice("bundled_voice") }
+            onBundledVoice: { _, _, _ in log.recordNotice("bundled_voice") },
+            // #2731: the claim is which voice renders, not that the player's clock advances. A volume-0 AVPlayer on a loaded
+            // hosted Mac can sit still for 5 s and trip the stall monitor, which hands the item to the iOS voice.
+            stallThreshold: .seconds(3600)
         )
         let text = (0..<4).map { _ in
             "The committee met on Tuesday to discuss the proposal, which had been circulating among members for several weeks and had attracted a surprising amount of criticism from both sides. Most of the objections concerned cost."
