@@ -161,19 +161,23 @@ class FakeApi:
                  base_changes=(), workflow_run=None):
         self.repo, self.heads, self.comments, self.posted, self.labels = REPO, list(heads), list(comments), [], []
         self.tap_ops, self.pr_labels, self.files, self.runs, self.closed = [], list(labels), files, runs, list(closed)
-        self.base_changes, self.api_calls = list(base_changes), []  # files the base changed since TESTED_BASE
+        self.base_changes, self.api_calls = list(base_changes), []  # paths the base changed since TESTED_BASE
         self.workflow_run = workflow_run if workflow_run is not None else {
             'event': 'pull_request', 'head_sha': HEAD, 'pull_requests': [{'number': 7, 'base': {'sha': TESTED_BASE}}]}
 
     def get(self, path):
-        if path.startswith(('actions/runs/', 'compare/')):  # the guard run's recorded base, then the base's changes
+        if path.startswith('actions/runs/'):  # the guard run's recorded base
             self.api_calls.append(path)
-            if path.startswith('actions/runs/'):
-                return self.workflow_run
-            page = int(path.rsplit('page=', 1)[1])
-            return {'files': [{'filename': name} for name in self.base_changes[(page - 1) * 100:page * 100]]}
+            return self.workflow_run
         return pr(head={'sha': self.heads.pop(0), 'repo': {'full_name': REPO}},
                   labels=[{'name': n} for n in self.pr_labels])
+
+    def contents(self, path, ref):
+        """A file's object or a directory's entries; they differ between TESTED_BASE and main for a changed path."""
+        self.api_calls.append(f'contents/{path}@{ref}')
+        changed = ref == 'main' and any(c == path or c.startswith(path + '/') for c in self.base_changes)
+        sha = 'new' if changed else 'old'
+        return [{'name': 'lane.yml', 'sha': sha}] if path.endswith('workflows') else {'sha': sha}
 
     def get_all(self, path):
         if path.startswith('pulls/7/files'):
@@ -347,7 +351,10 @@ class GuardFreshness(unittest.TestCase):
     def test_compares_the_base_now_with_the_commit_the_guard_run_merged_with(self):
         api, result = self.check()
         self.assertIn('alert posted', result)
-        self.assertEqual(api.api_calls, ['actions/runs/900', f'compare/{TESTED_BASE}...main?per_page=100&page=1'])
+        self.assertEqual(api.api_calls, [
+            'actions/runs/900', f'contents/.github/workflows@{TESTED_BASE}', 'contents/.github/workflows@main',
+            f'contents/scripts/tests/test_workflow_files.py@{TESTED_BASE}',
+            'contents/scripts/tests/test_workflow_files.py@main'])
 
     def test_the_2641_sequence_is_not_ready_and_posts_nothing(self):
         # Green check, clean audit, then the base gained the honesty guard (#2603, #2596) before the owner's tap.
@@ -367,10 +374,31 @@ class GuardFreshness(unittest.TestCase):
         api, result = self.check(base_changes=self.TEST_CHANGED)
         self.assertIn('is not current', result)
 
-    def test_a_long_base_history_is_read_page_by_page(self):
-        api, result = self.check(base_changes=['f%d' % i for i in range(150)] + self.TEST_CHANGED)
-        self.assertIn('is not current', result)
-        self.assertEqual(len([c for c in api.api_calls if c.startswith('compare/')]), 2)
+    def test_how_much_else_the_base_changed_does_not_matter(self):
+        # A compare listing is capped at 300 files and the guard test sorts late in it; the contents read has no cap.
+        api, result = self.check(base_changes=['f%d' % i for i in range(1000)] + self.TEST_CHANGED)
+        self.assertIn('is not current: the base changed scripts/tests/test_workflow_files.py', result)
+        api, result = self.check(base_changes=['f%d' % i for i in range(1000)])
+        self.assertIn('alert posted', result)
+
+    def test_a_guard_path_missing_on_one_side_counts_as_changed(self):
+        api = FakeApi(heads=(HEAD,) * 4)
+        api.contents = lambda path, ref: None if ref == 'main' else {'sha': 'old'}
+        self.assertIn('is not current', alert.check_pr(api, 7, 'uncomposed', dry_run=False))
+        api.contents = lambda path, ref: None
+        self.assertIn('alert posted', alert.check_pr(api, 7, 'uncomposed', dry_run=False))
+
+    def test_the_contents_read_treats_a_404_as_absent_and_raises_anything_else(self):
+        api = alert.GitHubApi(REPO)
+        err = lambda text: subprocess.CalledProcessError(1, 'gh', stderr=text)
+        with mock.patch.object(alert.GitHubApi, 'get', side_effect=err('gh: Not Found (HTTP 404)')):
+            self.assertIsNone(api.contents('x', 'main'))
+        with mock.patch.object(alert.GitHubApi, 'get', side_effect=err('gh: Bad gateway (HTTP 502)')):
+            with self.assertRaises(subprocess.CalledProcessError):
+                api.contents('x', 'main')
+        self.assertEqual(alert.guard_content(mock.Mock(contents=lambda p, r: [{'name': 'b', 'sha': '2'},
+                                                                         {'name': 'a', 'sha': '1'}]), 'd', 'r'),
+                         [('a', '1'), ('b', '2')])
 
     def test_a_run_that_did_not_test_this_heads_merge_is_not_trusted(self):
         for name, run_ in [
@@ -385,7 +413,7 @@ class GuardFreshness(unittest.TestCase):
                 api, result = self.check(workflow_run=run_)
                 self.assertIn('did not test the merge', result)
                 self.assertEqual(api.posted, [])
-                self.assertEqual([c for c in api.api_calls if c.startswith('compare/')], [])
+                self.assertEqual([c for c in api.api_calls if c.startswith('contents/')], [])
 
     def test_a_red_or_missing_guard_asks_nothing(self):
         for runs in ([run('lane')], [run('lane'), run(alert.GUARD_CHECK, conclusion='failure')]):

@@ -15,10 +15,11 @@ mentions by default, and tapping the push opens the PR. A PR is ready when all o
 3. no check run or commit status on the head failed or is still running (this workflow's own job is ignored), the
    `workflow files parse` check (workflow-files.yml, the guard tests) has passed on the head as a `pull_request` run,
    and the base has not changed `.github/workflows/` or the guard test since the base commit that run merged with
-   (compared by commit through the run's recorded base, not by date). That check tests the merge of the head with
-   the base as it was at the PR's last push, so a base that gained a rule afterwards leaves a green check that never
-   ran the rule: #2641 merged that way and broke `main` (#2711, #2714). A stale PR is not ready, and one that was
-   already alerted gets a single "hold your tap, update the branch" comment, with no clean audit follow-up under it;
+   (compared by what the paths hold at that commit and now, not by date or a file list). That check tests the merge
+   of the head with the base as it was at the PR's last push, so a base that gained a rule afterwards leaves a green
+   check that never ran the rule: #2641 merged that way and broke `main` (#2711, #2714). A stale PR is not ready, and
+   one that was already alerted gets a single "hold your tap, update the branch" comment, with no clean audit
+   follow-up under it;
 4. if a Claude (or legacy Codex) audit names the head, the newest one opens "No blocking findings". With no audit
    of the head the PR is still ready, and the alert says so: on 2026-10-18 none of the four PRs above had a lane
    report or an audit, because nothing arms a PR the runner can't merge, so waiting for one would never alert;
@@ -286,6 +287,16 @@ class GitHubApi:
     def comment(self, number: int, body: str) -> None:
         self._run(['-X', 'POST', f'repos/{self.repo}/issues/{number}/comments', '-f', f'body={body}'])
 
+    def contents(self, path: str, ref: str):
+        """The contents API answer for a path at a ref (a file's object or a directory's entries), None when the path
+        does not exist there."""
+        try:
+            return self.get(f'contents/{path}?ref={ref}')
+        except subprocess.CalledProcessError as exc:
+            if 'HTTP 404' not in (exc.stderr or ''):
+                raise
+            return None
+
     def remove_label(self, number: int, label: str) -> None:
         """Remove a label from the PR; one it doesn't carry is not an error."""
         try:
@@ -318,7 +329,7 @@ class GitHubApi:
 def guard_staleness(api: 'GitHubApi', number: int, pr: dict, check_runs: list[dict]) -> str:
     """Why the head's green workflow-files check does not vouch for the merge with the base now, or '' when it does
     (or when there is no green check, which readiness reports itself). The check must be a `pull_request` run on this
-    head with the base commit it merged recorded; the base's changes since that commit must not touch GUARD_PATHS.
+    head with the base commit it merged recorded; GUARD_PATHS must hold the same at that commit as on the base now.
     An API error propagates: any doubt posts nothing."""
     run = guard_run(check_runs)
     if run is None or run.get('conclusion') != 'success':
@@ -330,16 +341,19 @@ def guard_staleness(api: 'GitHubApi', number: int, pr: dict, check_runs: list[di
     tested = next((p for p in workflow_run.get('pull_requests') or [] if p.get('number') == number), None)
     if workflow_run.get('event') != 'pull_request' or workflow_run.get('head_sha') != pr['head']['sha'] or not tested:
         return 'it did not test the merge of this head with the base'  # a dispatch run tests the head alone
-    changed, page = set(), 1
-    while True:  # the compare API lists up to 100 files a page
-        files = api.get(f'compare/{tested["base"]["sha"]}...{pr["base"]["ref"]}?per_page=100&page={page}').get('files') or []
-        for f in files:
-            changed.update(name for name in (f.get('filename'), f.get('previous_filename')) if name)
-        if len(files) < 100 or page >= 30:
-            break
-        page += 1
-    paths = sorted(p for p in GUARD_PATHS if any(name == p or name.startswith(p + '/') for name in changed))
-    return f'the base changed {", ".join(paths)} since the commit it tested' if paths else ''
+    changed = sorted(path for path in GUARD_PATHS
+                     if guard_content(api, path, tested['base']['sha']) != guard_content(api, path, pr['base']['ref']))
+    return f'the base changed {", ".join(changed)} since the commit it tested' if changed else ''
+
+
+def guard_content(api: 'GitHubApi', path: str, ref: str):
+    """What a guard path holds at a ref: the blob sha of a file, or the (name, sha) of each entry of a directory
+    (a changed subtree changes its entry's sha), None when it is absent. Exact, with no cap on how much else the base
+    changed (the compare API lists at most 300 files, and the guard test sorts late in that list)."""
+    found = api.contents(path, ref)
+    if isinstance(found, list):
+        return sorted((entry['name'], entry['sha']) for entry in found)
+    return found['sha'] if found else None
 
 
 def sync_tap_label(api: GitHubApi, number: int, pr: dict, waits: bool, dry_run: bool) -> None:
