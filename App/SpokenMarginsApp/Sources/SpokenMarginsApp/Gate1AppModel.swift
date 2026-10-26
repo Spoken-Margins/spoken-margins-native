@@ -85,7 +85,7 @@ final class Gate1AppModel: ObservableObject {
                 || oldValue.targetId != snapshot.targetId || snapshot.status.isPlaybackActive {
                 stopImportedCommentaryPlayback(resumeSource: false)
             }
-            if snapshot.status.isPlaybackActive { releaseOwnMarginReturn() }
+            if snapshot.status.isPlaybackActive { releaseOwnMarginReturn(); libraryAudioLoop.renderPolicy.noteListenerEngaged() }
             if let status = snapshot.preparedTextAudioStatus, status != preparedTextAudioStatus { preparedTextAudioStatus = status } // an equal write still publishes
             if let snapshotSourceTranscriptStatus = snapshot.sourceTranscriptStatus, snapshotSourceTranscriptStatus != sourceTranscriptStatus,
                !(sourceTranscriptStatus == "transcribing" && snapshotSourceTranscriptStatus == "not_started") {

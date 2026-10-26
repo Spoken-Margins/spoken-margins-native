@@ -13,12 +13,12 @@ extension Gate1AppModel {
         libraryAudioLoop.stopAndInvalidate()
     }
 
-    /// Live playback leaves the renderer free. Apart from the memory backoff so a loop that a
-    /// memory warning cancelled restarts and waits the backoff out (#1107).
+    /// Speech never shares the CPU with the Library, and a restored session waits for the listener (#2694).
+    /// Apart from the memory backoff so a loop that a memory warning cancelled restarts and waits it out (#1107).
     var playbackAllowsLibraryAudioPreparation: Bool {
-        !snapshot.status.isPlaybackActive || isMediaPlaybackSnapshot
-            || snapshot.preparedTextAudioStatus == "ready"
-            || (speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.canYieldRendererToLibrary == true
+        libraryAudioLoop.renderPolicy.allowsRendering(.init(
+            isPlaybackActive: snapshot.status.isPlaybackActive, isMedia: isMediaPlaybackSnapshot, hasSession: snapshot.itemId != nil
+        ))
     }
 
     func idleForegroundPreparationTurn() { libraryAudioLoop.turns.stopped(.foreground) }

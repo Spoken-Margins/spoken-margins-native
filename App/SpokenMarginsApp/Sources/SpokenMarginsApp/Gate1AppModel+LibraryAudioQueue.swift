@@ -337,6 +337,7 @@ extension Gate1AppModel {
             // Pin only the selected job. Assigning ranks to the whole queue
             // would demote every future import behind all existing work.
             selected.userPriority = AudioPreparationQueueProjection.nextUserPriority(among: jobs)
+            libraryAudioLoop.renderPolicy.noteListenerEngaged()
             try store.saveAudioPreparationJob(selected)
             try refreshAudioPreparationPresentation(store: store)
             startForegroundAudioPreparationIfNeeded()
@@ -367,6 +368,7 @@ extension Gate1AppModel {
               let voice = ttsVoiceSelection.supertonicVoice else { return }
         do {
             allowAudioPreparation(itemId: item.id)
+            libraryAudioLoop.renderPolicy.noteListenerEngaged() // an explicit request ends the post-relaunch hold (#2694)
             failedStartupAudioPreparationItemIds.remove(item.id)
             startupAudioPreparationCooldown.clear(Self.startupAudioCooldownKeys([item.id]))
             let store = try requireStore()
