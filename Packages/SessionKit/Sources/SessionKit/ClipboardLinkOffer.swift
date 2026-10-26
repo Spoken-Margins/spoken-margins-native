@@ -18,6 +18,20 @@ public struct ClipboardLinkOffer: Equatable, Sendable {
     /// The change count of the copy the listener last dealt with.
     public private(set) var handledChangeCount: Int?
 
+    /// How long the card stays untouched before it hides itself and settles that copy (#2696).
+    public static let autoDismissDelay: TimeInterval = 6
+    /// The longer wait with VoiceOver on, so the card stays reachable while it is read and navigated.
+    public static let voiceOverAutoDismissDelay: TimeInterval = 15
+
+    public static func autoDismissDelay(voiceOverRunning: Bool) -> TimeInterval {
+        voiceOverRunning ? voiceOverAutoDismissDelay : autoDismissDelay
+    }
+
+    /// Whether the timer may hide the card. It never does while an import runs or an error shows.
+    public static func mayAutoDismiss(isAdding: Bool, isResolvingSourceLink: Bool, showsError: Bool) -> Bool {
+        !(isAdding || isResolvingSourceLink || showsError)
+    }
+
     public init(handledChangeCount: Int? = nil) {
         self.handledChangeCount = handledChangeCount
     }
