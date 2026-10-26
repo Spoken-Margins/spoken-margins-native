@@ -189,11 +189,16 @@ def fetch(days: int = 7) -> list:
     since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ')
     runs = []
     for wf in WORKFLOWS:
+        found, total = [], 0
         for page in range(1, 30):
             data = _api(f'repos/{REPO}/actions/workflows/{wf}/runs?per_page=100&page={page}&created=%3E%3D{since}')
-            runs.extend(data.get('workflow_runs', []))
+            found.extend(data.get('workflow_runs', []))
+            total = max(total, data.get('total_count', 0))
             if len(data.get('workflow_runs', [])) < 100:
                 break
+        if len(found) < total:  # GitHub stops a filtered run query at 1,000 results
+            raise RuntimeError(f'{wf}: got {len(found)} of {total} runs; use a shorter --days')
+        runs.extend(found)
     with ThreadPoolExecutor(max_workers=8) as pool:
         return list(pool.map(_run_jobs, runs))
 

@@ -2,6 +2,7 @@
 from pathlib import Path
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import hosted_ci_ledger as h  # noqa: E402
@@ -20,6 +21,24 @@ def run(rid, sha, jobs, branch='ws/x', created='2026-10-20T10:00:00Z'):
 def mac_job(wait_seconds, name=h.MAC_REST, conclusion='success', label='xcode-27'):
     start = f'2026-10-20T10:{wait_seconds // 60:02d}:{wait_seconds % 60:02d}Z'
     return job(name, conclusion, label, queued='2026-10-20T10:00:00Z', started=start, done='2026-10-20T10:59:00Z')
+
+
+class FetchTests(unittest.TestCase):
+    def test_a_window_past_githubs_1000_run_cap_fails_loudly(self):
+        # Audit on 4ef3196: filtered run queries stop at 1,000 results, so a busy week would be cut short silently.
+        def api(path):
+            page = int(path.split('&page=')[1].split('&')[0])
+            return {'total_count': 1200, 'workflow_runs': [{'id': page * 1000 + i} for i in range(100 if page <= 10 else 0)]}
+        with mock.patch.object(h, '_api', side_effect=api), mock.patch.object(h, '_run_jobs', side_effect=lambda r: r):
+            with self.assertRaisesRegex(RuntimeError, '1000 of 1200'):
+                h.fetch(7)
+
+    def test_a_window_under_the_cap_fetches_every_run(self):
+        def api(path):
+            page = int(path.split('&page=')[1].split('&')[0])
+            return {'total_count': 150, 'workflow_runs': [{'id': i} for i in range(100 if page == 1 else 50)]}
+        with mock.patch.object(h, '_api', side_effect=api), mock.patch.object(h, '_run_jobs', side_effect=lambda r: r):
+            self.assertEqual(len(h.fetch(7)), 150 * len(h.WORKFLOWS))
 
 
 class QueueTests(unittest.TestCase):

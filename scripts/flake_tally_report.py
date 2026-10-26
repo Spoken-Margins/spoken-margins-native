@@ -3,7 +3,8 @@
 
 The hosted integration run and the lane runner each tally a retry-pass as a comment on #2176 and open an issue when
 the test they just tallied crosses 3 in 7 days. A test whose retry-passes come from both, or whose issue was closed
-and then flaked again, is only seen by a reader of the whole tally. This is that reader.
+and then flaked again, is only seen by a reader of the whole tally. This is that reader. After a test's flake issue
+is closed, only its retry-passes from after the close count, so a fixed test doesn't get a second issue.
 
     scripts/flake_tally_report.py                 dry run: counts per test and the tests due an issue
     scripts/flake_tally_report.py --file-issues   open one `ready` Showcase issue per due test
@@ -40,6 +41,13 @@ def fetch_open_issues(repo: str) -> list[dict]:
     return [i for i in gh_json_lines([f'repos/{repo}/issues?state=open&per_page=100']) if not i.get('pull_request')]
 
 
+def fetch_closed_issues(repo: str, since: dt.datetime) -> list[dict]:
+    """Issues closed since `since`: GitHub's `since` filters on the last update, and a close is an update."""
+    stamp = since.strftime(flake_tally.TIME_FORMAT)
+    return [i for i in gh_json_lines([f'repos/{repo}/issues?state=closed&since={stamp}&per_page=100'])
+            if not i.get('pull_request')]
+
+
 def open_issue(repo: str, title: str, body: str) -> str:
     done = subprocess.run(['gh', 'issue', 'create', '-R', repo, '--title', title, '--body', body,
                            '--label', 'ready', '--milestone', 'Showcase'], capture_output=True, text=True)
@@ -48,9 +56,10 @@ def open_issue(repo: str, title: str, body: str) -> str:
     return done.stdout.strip()
 
 
-def build_report(comments: list[dict], issues: list[dict], now: dt.datetime) -> tuple[dict[str, list[str]], list[str]]:
-    """(retry-pass run ids per test in the window, tests due an issue)."""
-    counts = flake_tally.tally_counts(comments, now)
+def build_report(comments: list[dict], issues: list[dict], now: dt.datetime,
+                 closed_issues: list[dict] = ()) -> tuple[dict[str, list[str]], list[str]]:
+    """(retry-pass run ids per test in the window and after any close of its flake issue, tests due an issue)."""
+    counts = flake_tally.tally_counts(comments, now, closed=flake_tally.closed_flake_markers(list(closed_issues)))
     return counts, flake_tally.tests_due_an_issue(counts, flake_tally.flake_markers(issues))
 
 
@@ -70,7 +79,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--repo', default=REPO)
     args = parser.parse_args(argv)
     now = dt.datetime.now(dt.timezone.utc)
-    counts, due = build_report(fetch_comments(args.repo), fetch_open_issues(args.repo), now)
+    counts, due = build_report(fetch_comments(args.repo), fetch_open_issues(args.repo), now,
+                               fetch_closed_issues(args.repo, now - flake_tally.TALLY_WINDOW))
     print(render(counts, due))
     if args.file_issues:
         for test in due:

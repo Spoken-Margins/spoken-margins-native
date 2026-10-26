@@ -803,6 +803,13 @@ class Ops:
                          '--jq', '.[] | {body, author_association, user: {login: .user.login}} | @json']).stdout or ''
         return flake_markers([json.loads(line) for line in out.splitlines() if line.strip()])
 
+    def closed_flake_markers(self) -> dict:
+        """When each test's flake issue was last closed, from trusted issues closed inside the tally window."""
+        since = (dt.datetime.now(dt.timezone.utc) - TALLY_WINDOW).strftime('%Y-%m-%dT%H:%M:%SZ')
+        out = self.must(['gh', 'api', '--paginate', f'repos/{REPO}/issues?state=closed&since={since}&per_page=100',
+                         '--jq', '.[] | {body, state, closed_at, author_association, user: {login: .user.login}} | @json']).stdout or ''
+        return flake_tally.closed_flake_markers([json.loads(line) for line in out.splitlines() if line.strip()])
+
     def open_flake_issue(self, title: str, body: str) -> str:
         res = self.must(['gh', 'issue', 'create', '-R', REPO, '--title', title, '--body', body,
                          '--label', 'ready', '--milestone', 'Showcase'])
@@ -984,9 +991,10 @@ flake_markers = flake_tally.flake_markers
 tests_due_an_issue = flake_tally.tests_due_an_issue
 
 
-def tally_counts(comments: list[dict], now: dt.datetime) -> dict[str, list[str]]:
-    """Retry-passes per test in the last 7 days. Only comments by the workflow's own bot count here (#1822)."""
-    return flake_tally.tally_counts(comments, now, trust=flake_tally.bot_only)
+def tally_counts(comments: list[dict], now: dt.datetime, closed: Optional[dict] = None) -> dict[str, list[str]]:
+    """Retry-passes per test in the last 7 days, after any close of its flake issue. Only comments by the workflow's
+    own bot count here (#1822)."""
+    return flake_tally.tally_counts(comments, now, trust=flake_tally.bot_only, closed=closed)
 
 
 def flake_issue_text(test: str, runs: list[str]) -> tuple[str, str]:
@@ -1001,7 +1009,7 @@ def record_flakes(ops, flaky: list[str], sha: str, run_id: str) -> list[str]:
         now = dt.datetime.now(dt.timezone.utc)
         for test in flaky:
             ops.post_tally(tally_line(test, sha, run_id, now) + f'\n\n`{test}` passed on retry in run {run_id}.')
-        counts = tally_counts(ops.tally_comments(), now)
+        counts = tally_counts(ops.tally_comments(), now, ops.closed_flake_markers())
         for test in tests_due_an_issue(counts, ops.open_flake_markers()):
             if test in flaky:
                 title, body = flake_issue_text(test, counts[test])

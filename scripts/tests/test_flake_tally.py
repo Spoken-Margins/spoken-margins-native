@@ -22,8 +22,11 @@ def comment(test, run, days_ago=1.0, login=BOT, association='NONE', delta=dt.tim
             'author_association': association}
 
 
-def issue(test, login=BOT, association='NONE'):
-    return {'body': ft.flake_marker(test), 'user': {'login': login}, 'author_association': association}
+def issue(test, login=BOT, association='NONE', closed_days_ago=None):
+    found = {'body': ft.flake_marker(test), 'user': {'login': login}, 'author_association': association}
+    if closed_days_ago is not None:
+        found.update(state='closed', closed_at=(NOW - dt.timedelta(days=closed_days_ago)).strftime(ft.TIME_FORMAT))
+    return found
 
 
 class Format(unittest.TestCase):
@@ -72,10 +75,31 @@ class Report(unittest.TestCase):
         self.assertEqual(report.build_report(self.comments(3), [issue(TEST, login='mallory')], NOW)[1], [TEST])
         self.assertEqual(report.build_report(self.comments(3), [issue(TEST + 'X')], NOW)[1], [TEST])
 
+    def test_passes_from_before_a_closed_flake_issue_do_not_count_again(self):
+        # Audit on 4ef3196: 3 passes, the issue opens and a fix closes it, no new pass -> nothing is due.
+        before = [comment(TEST, str(i), days_ago=5 - i * 0.5) for i in range(3)]
+        closed = [issue(TEST, closed_days_ago=3)]
+        self.assertEqual(report.build_report(before, [], NOW, closed)[1], [])
+        self.assertEqual(report.build_report(before, [], NOW, closed)[0], {})
+        # Three new passes after the close are a new flake; one is not.
+        after = [comment(TEST, f'n{i}', days_ago=2 - i * 0.5) for i in range(3)]
+        self.assertEqual(report.build_report(before + after[:1], [], NOW, closed)[1], [])
+        self.assertEqual(report.build_report(before + after, [], NOW, closed), ({TEST: ['n0', 'n1', 'n2']}, [TEST]))
+        # The latest close wins, and a stranger's closed look-alike changes nothing.
+        self.assertEqual(report.build_report(before + after, [], NOW, closed + [issue(TEST, closed_days_ago=0.5)])[1], [])
+        self.assertEqual(report.build_report(before, [], NOW, [issue(TEST, login='mallory', closed_days_ago=3)])[1],
+                         [TEST])
+
+    def test_closed_markers_skip_open_and_untrusted_issues(self):
+        self.assertEqual(ft.closed_flake_markers([issue(TEST), issue(OTHER, login='mallory', closed_days_ago=1),
+                                                  issue(TEST, closed_days_ago=4), issue(TEST, closed_days_ago=2)]),
+                         {TEST: NOW - dt.timedelta(days=2)})
+
     def test_dry_run_files_nothing_and_file_issues_files_one_per_test(self):
         comments = self.comments(3) + self.comments(4, OTHER)
         with mock.patch.object(report, 'fetch_comments', return_value=comments), \
                 mock.patch.object(report, 'fetch_open_issues', return_value=[issue(OTHER)]), \
+                mock.patch.object(report, 'fetch_closed_issues', return_value=[]), \
                 mock.patch.object(report, 'open_issue', return_value='url') as opener, \
                 mock.patch('builtins.print'):
             self.assertEqual(report.main([]), 0)

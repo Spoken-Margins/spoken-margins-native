@@ -49,16 +49,21 @@ def bot_only(comment: dict) -> bool:
 
 
 def tally_counts(comments: list[dict], now: dt.datetime,
-                 trust: Callable[[dict], bool] = comment_trust.trusted) -> dict[str, list[str]]:
+                 trust: Callable[[dict], bool] = comment_trust.trusted,
+                 closed: dict[str, dt.datetime] | None = None) -> dict[str, list[str]]:
     """Retry-passes per test in the last 7 days -> their run ids. Only comments `trust` accepts count (#1822), by
     default the owner, collaborators and the workflow's bot, so a stranger's look-alike line can't open an issue.
-    The same run counts once per test."""
+    The same run counts once per test. `closed` (from `closed_flake_markers`) drops a test's retry-passes from before
+    its flake issue was closed: they were that issue's evidence, and a fix merged since, so only later ones count."""
     seen: dict[str, dict[str, None]] = {}
     for comment in comments:
         if not trust(comment):
             continue
         parsed = parse_line(comment.get('body'))
-        if parsed and now - TALLY_WINDOW <= parsed[2] <= now:
+        if not parsed or not now - TALLY_WINDOW <= parsed[2] <= now:
+            continue
+        fixed = (closed or {}).get(parsed[0].replace('-->', ''))
+        if fixed is None or parsed[2] > fixed:
             seen.setdefault(parsed[0], {})[parsed[1]] = None
     return {test: list(runs) for test, runs in seen.items()}
 
@@ -72,6 +77,22 @@ def flake_markers(issues: list[dict]) -> set[str]:
     """Test ids named by a marker in the body of a trusted open issue (#1822: a stranger's marker can't hide a flake)."""
     return {match.group(1) for issue in comment_trust.trusted_only(issues)
             for match in FLAKE_MARKER.finditer(issue.get('body') or '')}
+
+
+def closed_flake_markers(issues: list[dict]) -> dict[str, dt.datetime]:
+    """Test id -> when the latest trusted closed issue carrying its marker was closed. An issue still open is left
+    out (`flake_markers` covers it), and so is a stranger's (#1822)."""
+    closed: dict[str, dt.datetime] = {}
+    for issue in comment_trust.trusted_only(issues):
+        if issue.get('state') != 'closed' or not issue.get('closed_at'):
+            continue
+        try:
+            when = dt.datetime.strptime(issue['closed_at'], TIME_FORMAT).replace(tzinfo=dt.timezone.utc)
+        except ValueError:
+            continue
+        for match in FLAKE_MARKER.finditer(issue.get('body') or ''):
+            closed[match.group(1)] = max(when, closed.get(match.group(1), when))
+    return closed
 
 
 def tests_due_an_issue(counts: dict[str, list[str]], open_markers: set[str]) -> list[str]:
