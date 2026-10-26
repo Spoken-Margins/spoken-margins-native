@@ -12,7 +12,14 @@ mentions by default, and tapping the push opens the PR. A PR is ready when all o
 
 1. it is not a draft, and its head is in this repository (no forks);
 2. GitHub says it merges cleanly (`mergeable` true; an unknown answer waits for the next run);
-3. no check run or commit status on the head failed or is still running (this workflow's own job is ignored);
+3. no check run or commit status on the head failed or is still running (this workflow's own job is ignored), the
+   `workflow files parse` check (workflow-files.yml, the guard tests) has passed on the head as a `pull_request` run,
+   and the base has not changed `.github/workflows/` or the guard test since the base commit that run merged with
+   (compared by what the paths hold at that commit and now, not by date or a file list). That check tests the merge
+   of the head with the base as it was at the PR's last push, so a base that gained a rule afterwards leaves a green
+   check that never ran the rule: #2641 merged that way and broke `main` (#2711, #2714). A stale PR is not ready, and
+   one that was already alerted gets a single "hold your tap, update the branch" comment, with no clean audit
+   follow-up under it;
 4. if a Claude (or legacy Codex) audit names the head, the newest one opens "No blocking findings". With no audit
    of the head the PR is still ready, and the alert says so: on 2026-10-18 none of the four PRs above had a lane
    report or an audit, because nothing arms a PR the runner can't merge, so waiting for one would never alert;
@@ -83,6 +90,18 @@ TAP_LABEL = 'needs-owner-tap'  # persistent: this PR waits only for the owner's 
 TAP_LABEL_DESCRIPTION = "Waits only for the owner's merge tap (.github or lane-runner change)"
 TAP_LABEL_COLOR = '0075ca'  # blue
 ALREADY_ALERTED = 'already alerted on'
+# The check that runs scripts/tests/test_workflow_files.py on every PR (workflow-files.yml, #2596) and what that test
+# reads. A PR that touches .github/ is ready only when this check is green on its head, was a `pull_request` run
+# (which tests the merge of the head with the base), and the base has not changed any of these paths since the base
+# commit it tested: GitHub tests the merge with the base as it was at the PR's last push, so #2641 passed it on
+# 2026-10-25, the base then gained the continue-on-error rule, and the tap merged a red result (#2711, #2714). The
+# comparison is by commit (the run's recorded base against the base now), not by date: a re-run of the job keeps
+# the original merge commit but starts later, and a merged PR's own commits keep their old dates.
+GUARD_CHECK = 'workflow files parse'
+GUARD_PATHS = ('.github/workflows', 'scripts/tests/test_workflow_files.py')
+RUN_ID = re.compile(r'/actions/runs/(\d+)/')
+STALE_MARKER = '<!-- owner-tap-stale: {sha} -->'
+STALE_RE = re.compile(r'<!-- owner-tap-stale: ([0-9a-f]{40}) -->')
 FAILED = {'failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure', 'stale'}
 
 
@@ -150,9 +169,15 @@ def qualifies(ready: bool, why: str) -> bool:
     return ready or why.startswith(ALREADY_ALERTED)
 
 
+def guard_run(check_runs: list[dict]) -> dict | None:
+    """The head's run of the workflow-files check, or None when it has not run (or its workflow would not parse)."""
+    return next((run for run in check_runs if run.get('name') == GUARD_CHECK), None)
+
+
 def readiness(pr: dict, files: list[dict], check_runs: list[dict], statuses: list[dict],
-              comments: list[dict], repo: str) -> tuple[bool, str]:
-    """(ready, why) for one open PR. `pr` is the REST pulls/N shape."""
+              comments: list[dict], repo: str, guard_stale: str = '') -> tuple[bool, str]:
+    """(ready, why) for one open PR. `pr` is the REST pulls/N shape. `guard_stale` is why the head's
+    workflow-files check no longer vouches for the merge with the base ('' when it does; `guard_staleness`)."""
     head = pr['head']['sha']
     tap = owner_tap_paths(files)
     if not tap:
@@ -168,6 +193,13 @@ def readiness(pr: dict, files: list[dict], check_runs: list[dict], statuses: lis
     state, names = checks_state(check_runs, statuses)
     if state != 'ok':
         return False, f'checks {state}: {", ".join(sorted(set(names)))}'
+    guard = guard_run(check_runs)
+    if guard is None:
+        return False, f'`{GUARD_CHECK}` has not run on this head'
+    if guard.get('conclusion') != 'success':
+        return False, f'`{GUARD_CHECK}` did not pass ({guard.get("conclusion")})'
+    if guard_stale:
+        return False, f'`{GUARD_CHECK}` is not current: {guard_stale}; update the branch from the base'
     verdict = head_audit_verdict(comments, head)
     if verdict is not None and not CLEAN_AUDIT.match(verdict):
         return False, f'the audit of {head[:7]} has blocking findings'
@@ -185,6 +217,18 @@ def alert_body(pr: dict, tap: list[str], mention: str, audited: bool) -> str:
             'Tap **Merge pull request** below.\n\n'
             '_Posted by the owner-tap alert (scripts/owner_tap_alert.py, #2047): one alert per head._\n'
             + MARKER.format(sha=head))
+
+
+def stale_warned(comments: list[dict], head: str) -> bool:
+    return any(head in STALE_RE.findall(c.get('body') or '') for c in comment_trust.trusted_only(comments))
+
+
+def stale_body(head: str, mention: str, stale: str) -> str:
+    return (f'@{mention} hold your tap on head `{head[:7]}`: this PR\'s `{GUARD_CHECK}` check no longer vouches for '
+            f'the merged result ({stale}). '
+            'Update the branch from the base; the new push runs the check again and alerts again once it is ready.\n\n'
+            '_Posted by the owner-tap alert (scripts/owner_tap_alert.py, #2714): one warning per head._\n'
+            + STALE_MARKER.format(sha=head))
 
 
 def followed_up(comments: list[dict], head: str) -> bool:
@@ -243,6 +287,16 @@ class GitHubApi:
     def comment(self, number: int, body: str) -> None:
         self._run(['-X', 'POST', f'repos/{self.repo}/issues/{number}/comments', '-f', f'body={body}'])
 
+    def contents(self, path: str, ref: str):
+        """The contents API answer for a path at a ref (a file's object or a directory's entries), None when the path
+        does not exist there."""
+        try:
+            return self.get(f'contents/{path}?ref={ref}')
+        except subprocess.CalledProcessError as exc:
+            if 'HTTP 404' not in (exc.stderr or ''):
+                raise
+            return None
+
     def remove_label(self, number: int, label: str) -> None:
         """Remove a label from the PR; one it doesn't carry is not an error."""
         try:
@@ -272,6 +326,36 @@ class GitHubApi:
         self._run(['-X', 'POST', f'repos/{self.repo}/issues/{number}/labels', '-f', f'labels[]={label}'])
 
 
+def guard_staleness(api: 'GitHubApi', number: int, pr: dict, check_runs: list[dict]) -> str:
+    """Why the head's green workflow-files check does not vouch for the merge with the base now, or '' when it does
+    (or when there is no green check, which readiness reports itself). The check must be a `pull_request` run on this
+    head with the base commit it merged recorded; GUARD_PATHS must hold the same at that commit as on the base now.
+    An API error propagates: any doubt posts nothing."""
+    run = guard_run(check_runs)
+    if run is None or run.get('conclusion') != 'success':
+        return ''
+    found = RUN_ID.search(run.get('details_url') or '')
+    if not found:
+        return 'its workflow run is unknown'
+    workflow_run = api.get(f'actions/runs/{found.group(1)}')
+    tested = next((p for p in workflow_run.get('pull_requests') or [] if p.get('number') == number), None)
+    if workflow_run.get('event') != 'pull_request' or workflow_run.get('head_sha') != pr['head']['sha'] or not tested:
+        return 'it did not test the merge of this head with the base'  # a dispatch run tests the head alone
+    changed = sorted(path for path in GUARD_PATHS
+                     if guard_content(api, path, tested['base']['sha']) != guard_content(api, path, pr['base']['ref']))
+    return f'the base changed {", ".join(changed)} since the commit it tested' if changed else ''
+
+
+def guard_content(api: 'GitHubApi', path: str, ref: str):
+    """What a guard path holds at a ref: the blob sha of a file, or the (name, sha) of each entry of a directory
+    (a changed subtree changes its entry's sha), None when it is absent. Exact, with no cap on how much else the base
+    changed (the compare API lists at most 300 files, and the guard test sorts late in that list)."""
+    found = api.contents(path, ref)
+    if isinstance(found, list):
+        return sorted((entry['name'], entry['sha']) for entry in found)
+    return found['sha'] if found else None
+
+
 def sync_tap_label(api: GitHubApi, number: int, pr: dict, waits: bool, dry_run: bool) -> None:
     """Make the PR carry `needs-owner-tap` exactly while it waits for the owner's tap; no write when it already does."""
     has = any(label.get('name') == TAP_LABEL for label in pr.get('labels') or [])
@@ -296,10 +380,25 @@ def check_pr(api: GitHubApi, number: int, mention: str, dry_run: bool, via_label
     runs = api.get_all(f'commits/{head}/check-runs?filter=latest&per_page=100')
     statuses = api.get_all(f'commits/{head}/statuses?per_page=100')
     comments = api.get_all(f'issues/{number}/comments?per_page=100')
+    stale = guard_staleness(api, number, pr, runs)
     if pr.get('mergeable') is not None:  # GitHub still working it out: leave the label as it is until the next run
-        sync_tap_label(api, number, pr, qualifies(*readiness(pr, files, runs, statuses, comments, api.repo)), dry_run)
+        sync_tap_label(api, number, pr, qualifies(*readiness(pr, files, runs, statuses, comments, api.repo, stale)),
+                       dry_run)
+    if stale and alerted(comments, head) and not stale_warned(comments, head):  # alerted, then the base moved on
+        if dry_run:
+            return 'stale warning due (dry run, nothing posted)'
+        if via_label:
+            api.readd_label(number, via_label)
+            return f'stale warning due, `{via_label}` re-added for Actions to post it'
+        if api.get(f'pulls/{number}')['head']['sha'] != head:
+            return 'head moved during the check'
+        if stale_warned(api.get_all(f'issues/{number}/comments?per_page=100'), head):
+            return f'already warned on {head[:7]}'
+        api.comment(number, stale_body(head, mention, stale))
+        return 'stale warning posted'
     verdict = followup_verdict(pr, comments, api.repo)
-    if verdict is not None:  # alerted before the audit, which has landed since (#2052)
+    if verdict is not None and not stale:  # alerted before the audit, which has landed since (#2052). A stale head
+        # already carries the hold warning; a clean follow-up under it would read as a go-ahead (#2714).
         if dry_run:
             return 'audit follow-up due (dry run, nothing posted)'
         if via_label:
@@ -311,7 +410,7 @@ def check_pr(api: GitHubApi, number: int, mention: str, dry_run: bool, via_label
             return f'already followed up on {head[:7]}'
         api.comment(number, followup_body(head, mention, verdict))
         return 'audit follow-up posted'
-    ready, why = readiness(pr, files, runs, statuses, comments, api.repo)
+    ready, why = readiness(pr, files, runs, statuses, comments, api.repo, stale)
     if not ready:
         return why
     if api.get(f'pulls/{number}')['head']['sha'] != head:

@@ -28,7 +28,7 @@ TEMPLATE_ONLY = [{'filename': '.github/ISSUE_TEMPLATE/bug.yml'}]
 
 def pr(**over):
     base = {'number': 7, 'draft': False, 'mergeable': True, 'mergeable_state': 'clean',
-            'head': {'sha': HEAD, 'repo': {'full_name': REPO}}}
+            'head': {'sha': HEAD, 'repo': {'full_name': REPO}}, 'base': {'ref': 'main'}}
     base.update(over)
     return base
 
@@ -38,16 +38,21 @@ def audit(sha, verdict, at='2026-10-18T10:00:00Z', association='OWNER', login='u
             'body': f'**Claude audit on `{sha[:7]}`**\n\n{verdict}\n\nmore text'}
 
 
-def run(name, status='completed', conclusion='success'):
-    return {'name': name, 'status': status, 'conclusion': conclusion}
+TESTED_BASE = 'd' * 40  # the base commit the guard check's pull_request run merged with
 
 
-GREEN = [run('lane'), run('check', conclusion='skipped')]
+def run(name, status='completed', conclusion='success', run_id=900):
+    return {'name': name, 'status': status, 'conclusion': conclusion,
+            'details_url': f'https://github.com/{REPO}/actions/runs/{run_id}/job/5'}
+
+
+GUARD = run(alert.GUARD_CHECK)
+GREEN = [run('lane'), run('check', conclusion='skipped'), GUARD]
 CLEAN = [audit(HEAD, 'No blocking findings.')]
 
 
-def ready(p=None, files=WORKFLOW, runs=GREEN, statuses=(), comments=CLEAN):
-    return alert.readiness(p or pr(), files, list(runs), list(statuses), list(comments), REPO)
+def ready(p=None, files=WORKFLOW, runs=GREEN, statuses=(), comments=CLEAN, stale=''):
+    return alert.readiness(p or pr(), files, list(runs), list(statuses), list(comments), REPO, stale)
 
 
 class ReadinessTable(unittest.TestCase):
@@ -82,6 +87,21 @@ class ReadinessTable(unittest.TestCase):
             ('status fixed later (newest first)', {'statuses': [{'context': 'ci', 'state': 'success'},
                                                                 {'context': 'ci', 'state': 'failure'}]},
              True, 'ready'),
+            ('guard check never ran on the head', {'runs': [run('lane')]}, False, 'has not run on this head'),
+            ('guard check red', {'runs': [run('lane'), run(alert.GUARD_CHECK, conclusion='failure')]},
+             False, 'checks failed: workflow files parse'),
+            ('guard check skipped', {'runs': [run('lane'), run(alert.GUARD_CHECK, conclusion='skipped')]},
+             False, 'did not pass (skipped)'),
+            ('guard check still running', {'runs': [run('lane'), run(alert.GUARD_CHECK, 'in_progress', None)]},
+             False, 'checks pending: workflow files parse'),
+            ('base changed the workflows since the guard ran', {'stale': 'the base changed .github/workflows since x'},
+             False, '`workflow files parse` is not current: the base changed .github/workflows'),
+            ('base changed the guard test since it ran', {'stale': 'the base changed the test'}, False,
+             'update the branch from the base'),
+            ('stale and alerted: no longer waits for the tap',
+             {'comments': CLEAN + [{'user': BOT, 'author_association': 'NONE',
+                                    'body': alert.MARKER.format(sha=HEAD)}], 'stale': 'the base changed it'},
+             False, 'is not current'),
             ('findings audit', {'comments': [audit(HEAD, '1. **P1** the runner merges itself.')]},
              False, 'blocking findings'),
             ('clean audit on an old head', {'comments': [audit(OLD, 'No blocking findings.')]}, True, 'ready'),
@@ -137,13 +157,27 @@ class SameRulesAsTheRunner(unittest.TestCase):
 
 
 class FakeApi:
-    def __init__(self, heads=(HEAD, HEAD), comments=CLEAN, labels=(), files=None, runs=None, closed=()):
+    def __init__(self, heads=(HEAD, HEAD), comments=CLEAN, labels=(), files=None, runs=None, closed=(),
+                 base_changes=(), workflow_run=None):
         self.repo, self.heads, self.comments, self.posted, self.labels = REPO, list(heads), list(comments), [], []
         self.tap_ops, self.pr_labels, self.files, self.runs, self.closed = [], list(labels), files, runs, list(closed)
+        self.base_changes, self.api_calls = list(base_changes), []  # paths the base changed since TESTED_BASE
+        self.workflow_run = workflow_run if workflow_run is not None else {
+            'event': 'pull_request', 'head_sha': HEAD, 'pull_requests': [{'number': 7, 'base': {'sha': TESTED_BASE}}]}
 
     def get(self, path):
+        if path.startswith('actions/runs/'):  # the guard run's recorded base
+            self.api_calls.append(path)
+            return self.workflow_run
         return pr(head={'sha': self.heads.pop(0), 'repo': {'full_name': REPO}},
                   labels=[{'name': n} for n in self.pr_labels])
+
+    def contents(self, path, ref):
+        """A file's object or a directory's entries; they differ between TESTED_BASE and main for a changed path."""
+        self.api_calls.append(f'contents/{path}@{ref}')
+        changed = ref == 'main' and any(c == path or c.startswith(path + '/') for c in self.base_changes)
+        sha = 'new' if changed else 'old'
+        return [{'name': 'lane.yml', 'sha': sha}] if path.endswith('workflows') else {'sha': sha}
 
     def get_all(self, path):
         if path.startswith('pulls/7/files'):
@@ -303,6 +337,134 @@ class PersistentLabel(unittest.TestCase):
         self.assertIn('merge tap', alert.TAP_LABEL_DESCRIPTION)
 
 
+class GuardFreshness(unittest.TestCase):
+    """The workflow-files check must have tested the merge the owner will tap (#2714)."""
+    ALERTED = [{'user': BOT, 'author_association': 'NONE', 'created_at': '2026-10-18T09:00:00Z',
+                'body': alert.alert_body(pr(), ['.github/workflows/lane.yml'], 'uncomposed', audited=True)}] + CLEAN
+    WORKFLOW_CHANGED = ['App/x.swift', '.github/workflows/lane.yml']
+    TEST_CHANGED = ['scripts/tests/test_workflow_files.py']
+
+    def check(self, comments=CLEAN, **kw):
+        api = FakeApi(comments=comments, heads=(HEAD,) * 4, **kw)
+        return api, alert.check_pr(api, 7, 'uncomposed', dry_run=False)
+
+    def test_compares_the_base_now_with_the_commit_the_guard_run_merged_with(self):
+        api, result = self.check()
+        self.assertIn('alert posted', result)
+        self.assertEqual(api.api_calls, [
+            'actions/runs/900', f'contents/.github/workflows@{TESTED_BASE}', 'contents/.github/workflows@main',
+            f'contents/scripts/tests/test_workflow_files.py@{TESTED_BASE}',
+            'contents/scripts/tests/test_workflow_files.py@main'])
+
+    def test_the_2641_sequence_is_not_ready_and_posts_nothing(self):
+        # Green check, clean audit, then the base gained the honesty guard (#2603, #2596) before the owner's tap.
+        for name, changed in (('workflows', self.WORKFLOW_CHANGED), ('guard test', self.TEST_CHANGED)):
+            with self.subTest(name):
+                api, result = self.check(base_changes=changed)
+                self.assertIn('is not current: the base changed', result)
+                self.assertEqual((api.posted, api.tap_ops), ([], []))
+
+    def test_other_base_changes_leave_it_ready(self):
+        # `.github/workflows-x` and `.github/ISSUE_TEMPLATE` are not under `.github/workflows/`.
+        api, result = self.check(base_changes=['App/x.swift', '.github/ISSUE_TEMPLATE/bug.yml', '.github/workflows-x/a'])
+        self.assertIn('alert posted', result)
+
+    def test_a_late_rerun_of_the_job_is_judged_by_the_base_it_merged_with_not_by_when_it_started(self):
+        # The re-run starts after the base changed, but its run still records the old base commit.
+        api, result = self.check(base_changes=self.TEST_CHANGED)
+        self.assertIn('is not current', result)
+
+    def test_how_much_else_the_base_changed_does_not_matter(self):
+        # A compare listing is capped at 300 files and the guard test sorts late in it; the contents read has no cap.
+        api, result = self.check(base_changes=['f%d' % i for i in range(1000)] + self.TEST_CHANGED)
+        self.assertIn('is not current: the base changed scripts/tests/test_workflow_files.py', result)
+        api, result = self.check(base_changes=['f%d' % i for i in range(1000)])
+        self.assertIn('alert posted', result)
+
+    def test_a_guard_path_missing_on_one_side_counts_as_changed(self):
+        api = FakeApi(heads=(HEAD,) * 4)
+        api.contents = lambda path, ref: None if ref == 'main' else {'sha': 'old'}
+        self.assertIn('is not current', alert.check_pr(api, 7, 'uncomposed', dry_run=False))
+        api.contents = lambda path, ref: None
+        self.assertIn('alert posted', alert.check_pr(api, 7, 'uncomposed', dry_run=False))
+
+    def test_the_contents_read_treats_a_404_as_absent_and_raises_anything_else(self):
+        api = alert.GitHubApi(REPO)
+        err = lambda text: subprocess.CalledProcessError(1, 'gh', stderr=text)
+        with mock.patch.object(alert.GitHubApi, 'get', side_effect=err('gh: Not Found (HTTP 404)')):
+            self.assertIsNone(api.contents('x', 'main'))
+        with mock.patch.object(alert.GitHubApi, 'get', side_effect=err('gh: Bad gateway (HTTP 502)')):
+            with self.assertRaises(subprocess.CalledProcessError):
+                api.contents('x', 'main')
+        self.assertEqual(alert.guard_content(mock.Mock(contents=lambda p, r: [{'name': 'b', 'sha': '2'},
+                                                                         {'name': 'a', 'sha': '1'}]), 'd', 'r'),
+                         [('a', '1'), ('b', '2')])
+
+    def test_a_run_that_did_not_test_this_heads_merge_is_not_trusted(self):
+        for name, run_ in [
+                ('a workflow_dispatch run tests the head alone', {'event': 'workflow_dispatch', 'head_sha': HEAD,
+                                                                  'pull_requests': []}),
+                ('another head', {'event': 'pull_request', 'head_sha': OLD,
+                                  'pull_requests': [{'number': 7, 'base': {'sha': TESTED_BASE}}]}),
+                ('another PR', {'event': 'pull_request', 'head_sha': HEAD,
+                                'pull_requests': [{'number': 8, 'base': {'sha': TESTED_BASE}}]}),
+                ('no PR recorded', {'event': 'pull_request', 'head_sha': HEAD, 'pull_requests': []})]:
+            with self.subTest(name):
+                api, result = self.check(workflow_run=run_)
+                self.assertIn('did not test the merge', result)
+                self.assertEqual(api.posted, [])
+                self.assertEqual([c for c in api.api_calls if c.startswith('contents/')], [])
+
+    def test_a_red_or_missing_guard_asks_nothing(self):
+        for runs in ([run('lane')], [run('lane'), run(alert.GUARD_CHECK, conclusion='failure')]):
+            api, result = self.check(runs=runs, base_changes=self.WORKFLOW_CHANGED)
+            self.assertEqual(api.api_calls, [])
+            self.assertEqual(api.posted, [])
+
+    def test_an_alerted_head_that_goes_stale_is_warned_once_and_loses_the_label(self):
+        api, result = self.check(comments=self.ALERTED, labels=[alert.TAP_LABEL], base_changes=self.WORKFLOW_CHANGED)
+        self.assertEqual(result, 'stale warning posted')
+        self.assertEqual(api.labels, [('remove', 7, alert.TAP_LABEL)])
+        self.assertEqual(len(api.posted), 1)
+        body = api.posted[0][1]
+        self.assertTrue(body.startswith('@uncomposed hold your tap'))
+        self.assertIn('the base changed .github/workflows', body)
+        self.assertEqual(alert.STALE_RE.findall(body), [HEAD])
+        # The warning silences the next run on the same head.
+        warned = {'user': BOT, 'author_association': 'NONE', 'body': body}
+        api, result = self.check(comments=self.ALERTED + [warned], base_changes=self.WORKFLOW_CHANGED)
+        self.assertEqual((api.posted, 'is not current' in result), ([], True))
+
+    def test_a_clean_audit_follow_up_is_not_posted_under_a_stale_warning(self):
+        # Alerted before its audit, the base moved (hold warning posted), then the audit lands clean.
+        unaudited = [{'user': BOT, 'author_association': 'NONE', 'created_at': '2026-10-18T09:00:00Z',
+                      'body': alert.alert_body(pr(), ['.github/workflows/lane.yml'], 'uncomposed', audited=False)}]
+        warned = {'user': BOT, 'author_association': 'NONE', 'body': alert.stale_body(HEAD, 'uncomposed', 'x')}
+        comments = unaudited + [warned] + CLEAN
+        api, result = self.check(comments=comments, base_changes=self.WORKFLOW_CHANGED)
+        self.assertEqual(api.posted, [])
+        # Without the base change the same comments do get the follow-up.
+        api, result = self.check(comments=comments)
+        self.assertEqual(result, 'audit follow-up posted')
+
+    def test_stale_warning_via_label_and_dry_run_post_nothing(self):
+        api = FakeApi(comments=self.ALERTED, heads=(HEAD,) * 4, base_changes=self.WORKFLOW_CHANGED)
+        self.assertIn('re-added', alert.check_pr(api, 7, 'uncomposed', dry_run=False, via_label='owner-tap-check'))
+        self.assertEqual((api.posted, api.labels), ([], [('readd', 7, 'owner-tap-check')]))
+        api = FakeApi(comments=self.ALERTED, heads=(HEAD,) * 4, base_changes=self.WORKFLOW_CHANGED)
+        self.assertIn('dry run', alert.check_pr(api, 7, 'uncomposed', dry_run=True))
+        self.assertEqual(api.posted, [])
+
+    def test_an_unalerted_stale_head_gets_no_warning(self):
+        api, result = self.check(base_changes=self.WORKFLOW_CHANGED)
+        self.assertEqual(api.posted, [])
+
+    def test_a_stranger_cannot_silence_the_warning(self):
+        fake = {'user': {'login': 'mallory'}, 'author_association': 'NONE', 'body': alert.STALE_MARKER.format(sha=HEAD)}
+        api, result = self.check(comments=self.ALERTED + [fake], base_changes=self.WORKFLOW_CHANGED)
+        self.assertEqual(result, 'stale warning posted')
+
+
 class AuditFollowUp(unittest.TestCase):
     """An alert posted before the audit says so; the audit that lands later gets one follow-up (#2052)."""
     FIRST = {'user': BOT, 'author_association': 'NONE', 'created_at': '2026-10-18T09:00:00Z',
@@ -359,6 +521,10 @@ class Workflow(unittest.TestCase):
         self.assertIn('persist-credentials: false', self.text)
         self.assertIn('github.event.pull_request.head.repo.full_name == github.repository', self.text)
 
+    def test_the_token_may_read_workflow_runs_for_the_guard_check(self):
+        self.assertIn('\n  actions: read\n', self.text)
+        self.assertNotIn('actions: write', self.text)
+
     def test_job_names_are_the_ones_the_script_ignores(self):
         self.assertRegex(self.text, r'(?m)^\s+name: owner-tap-alert$')
         self.assertEqual(alert.OWN_CHECKS, {'owner-tap-alert'})
@@ -385,6 +551,7 @@ class Workflow(unittest.TestCase):
                 self.assertIn('    runs-on: ubuntu-latest\n', job)
                 self.assertIn('      issues: write\n', job)
                 self.assertNotIn('actions: write', job)
+                self.assertIn('      actions: read\n', job)  # the guard run's recorded base (#2714)
                 self.assertIn('ref: ${{ github.event.pull_request.base.sha }}', job)
                 self.assertIn('persist-credentials: false', job)
                 self.assertIn('python3 scripts/owner_tap_alert.py --pr "$PR"', job)

@@ -166,6 +166,24 @@ def is_cache_restore_only(step):
     return str(step.get('uses', '')).startswith('actions/cache/') and 'run' not in step
 
 
+def continue_on_error_violations(documents):
+    """Messages for each job or step in `documents` ({workflow file name: parsed workflow}) that carries
+    `continue-on-error: true` where it could turn a failed test into a green check."""
+    found = []
+    for name, document in documents.items():
+        for job_id, job in document['jobs'].items():
+            where = (name, job_id)
+            steps = job.get('steps', [])
+            flagged = job.get('continue-on-error') is True or any(
+                step.get('continue-on-error') is True and not is_cache_restore_only(step) for step in steps)
+            if flagged and where not in CONTINUE_ON_ERROR_ALLOWED:
+                found.append(f'{where}: continue-on-error: true can turn a failed test into a green check')
+            if flagged:
+                found.extend(f'{where}: a test or build step must not continue on error' for step in steps
+                             if TEST_RUNNING.search(step.get('run', '')) and step.get('continue-on-error') is True)
+    return found
+
+
 def logical_lines(script):
     """A script's lines with backslash continuations joined, so a pipeline over several lines is one line."""
     return re.sub(r'\\\n\s*', ' ', script).splitlines()
@@ -197,18 +215,30 @@ class WorkflowHonesty(unittest.TestCase):
         self.assertGreaterEqual(gating, 3, 'lane, automerge and automerge-mac Verdict steps gate on INCONCLUSIVE')
 
     def test_continue_on_error_is_only_on_the_listed_ping_and_report_jobs(self):
-        for path in WORKFLOWS:
-            for job_id, job in parse(path)['jobs'].items():
-                where = (path.name, job_id)
-                flagged = job.get('continue-on-error') is True or any(
-                    step.get('continue-on-error') is True and not is_cache_restore_only(step)
-                    for step in job.get('steps', []))
-                if flagged:
-                    self.assertIn(where, CONTINUE_ON_ERROR_ALLOWED,
-                                  f'{where}: continue-on-error: true can turn a failed test into a green check')
-                    for step in job.get('steps', []):
-                        self.assertFalse(TEST_RUNNING.search(step.get('run', '')) and step.get('continue-on-error') is True,
-                                         f'{where}: a test or build step must not continue on error')
+        documents = {path.name: parse(path) for path in WORKFLOWS}
+        self.assertEqual(continue_on_error_violations(documents), [])
+
+    def test_a_pr_adding_a_forbidden_continue_on_error_is_red(self):
+        # #2641 added it to the lane's cache steps, its checks were green, and `main` went red (#2711, #2714). The rule
+        # above, applied to the workflows as that PR would have left them, must fail for it.
+        lane = parse(ROOT / '.github/workflows/lane.yml')
+        step = next(step for step in lane['jobs']['lane']['steps'] if step.get('run'))
+        step['continue-on-error'] = True
+        found = continue_on_error_violations({'lane.yml': lane})
+        self.assertTrue(any("('lane.yml', 'lane')" in message for message in found), found)
+        # Job level, on a job that is not listed.
+        lane = parse(ROOT / '.github/workflows/lane.yml')
+        lane['jobs']['lane']['continue-on-error'] = True
+        self.assertTrue(continue_on_error_violations({'lane.yml': lane}))
+
+    def test_the_listed_jobs_and_cache_only_steps_are_allowed_but_a_test_step_on_a_listed_job_is_not(self):
+        listed = {'lane.yml': {'jobs': {'lane-lost': {'continue-on-error': True, 'steps': [{'run': 'echo ping'}]}}}}
+        self.assertEqual(continue_on_error_violations(listed), [])
+        cache = {'x.yml': {'jobs': {'job': {'steps': [{'uses': 'actions/cache/restore@v4', 'continue-on-error': True}]}}}}
+        self.assertEqual(continue_on_error_violations(cache), [])
+        tests = {'lane.yml': {'jobs': {'lane-lost': {'steps': [
+            {'run': 'python3 scripts/verify-tests.py --plan fast', 'continue-on-error': True}]}}}}
+        self.assertTrue(continue_on_error_violations(tests))
 
     def test_a_build_or_test_command_that_ignores_its_exit_status_is_checked_after_it(self):
         # `xcodebuild ... | tee | grep ... || true` keeps a build from dying in the pipe, but the step must then
