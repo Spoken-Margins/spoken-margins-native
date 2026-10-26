@@ -40,6 +40,19 @@ final class SharedMarginReplyMemoryTests: XCTestCase {
         XCTAssertEqual(memory.reply(forItem: "item", at: t0.addingTimeInterval(30 + SharedMarginReplyMemory.window)), ana, "the last second counts")
     }
 
+    /// The window's edges, in one table: seconds after the friend's Margin ended, and whether a new Margin answers it.
+    func testTheWindowTable() {
+        let ana = draft("a1", from: layer("a", label: "Ana"))
+        let rows: [(after: TimeInterval, answers: Bool)] = [(0, true), (19.9, true), (20, true), (20.01, false), (21, false), (600, false)]
+        memory.began(ana, itemId: "item")
+        memory.ended(at: t0)
+        for row in rows {
+            XCTAssertEqual(memory.reply(forItem: "item", at: t0.addingTimeInterval(row.after)) == ana, row.answers, "\(row.after) s after it ended")
+        }
+        XCTAssertEqual(SharedMarginReplyMemory.window, 20, "the owner's 2026-10-25 default; change it on #473, not here")
+        XCTAssertNil(SharedMarginReplyMemory().reply(forItem: "item", at: t0), "no friend's Margin heard: an ordinary Margin")
+    }
+
     func testRecordingAfterTheWindowIsIndependent() {
         let ana = draft("a1", from: layer("a", label: "Ana"))
         memory.began(ana, itemId: "item")
