@@ -57,7 +57,7 @@ extension Gate1AppModel {
             // Saved audio's identity needs no model files, so saved Supertonic chunks and Kitten's stand-ins play before
             // the download too.
             let signatureTask = Task.detached(priority: .userInitiated) { () throws -> TTSRenderSignature in
-                try signature()
+                try signature.make()
             }
             let coordinator = PreparedAudioCoordinator(
                 repository: store,

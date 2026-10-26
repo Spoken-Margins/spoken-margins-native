@@ -81,11 +81,33 @@ enum BundledVoiceCatalog {
     static func entry(voiceId: String) -> VoiceModelEntry? { entries[voiceId] }
 }
 
+/// Where a voice's saved-audio identity comes from. A value, not a closure, so building the engine on the main thread
+/// reads nothing: `make()` hashes Supertonic's files or decodes the catalog, and runs only in the player's detached
+/// signature task.
+enum VoiceSignatureSource: Sendable {
+    case supertonic(SupertonicVoiceID)
+    case downloaded(DownloadedVoiceDescriptor, entry: @Sendable () -> VoiceModelEntry?)
+    /// A stored downloaded-voice choice this build has no player for: no saved audio is claimed for it.
+    case unregistered(voiceId: String)
+
+    func make() throws -> TTSRenderSignature {
+        switch self {
+        case .supertonic(let voice):
+            return try SupertonicRenderIdentity.current(voice: voice)
+        case .downloaded(let descriptor, let entry):
+            guard let entry = entry() else { throw OnDeviceVoiceEngines.Failure.notInCatalog(descriptor.voiceId) }
+            return descriptor.signature(entry: entry)
+        case .unregistered(let voiceId):
+            throw OnDeviceVoiceEngines.Failure.notRegistered(voiceId)
+        }
+    }
+}
+
 /// What the speech player is built over for one reading-voice choice.
 struct OnDeviceVoiceEngine {
     let renderer: any SupertonicRendering
-    /// The saved-audio identity. Runs off the main thread (the player's detached signature task).
-    let signature: @Sendable () throws -> TTSRenderSignature
+    /// The saved-audio identity; `make()` runs off the main thread (the player's detached signature task).
+    let signature: VoiceSignatureSource
     /// "May the chosen voice render now?", asked before each passage. False hands the passage to Kitten.
     let renderingAllowed: @Sendable () -> Bool
     /// What diagnostics show as the session's voice, or nil for Supertonic, whose line the model keeps itself.
@@ -114,7 +136,7 @@ enum OnDeviceVoiceEngines {
         let voice = selection.supertonicVoice ?? .m2
         return OnDeviceVoiceEngine(
             renderer: SupertonicDownloadedModelRenderer(model: model),
-            signature: { try SupertonicRenderIdentity.current(voice: voice) },
+            signature: .supertonic(voice),
             renderingAllowed: model.supertonicModel.renderingAllowed(when: SupertonicModelNotDownloaded.governorAllowsRendering),
             sessionDescription: nil
         )
@@ -126,7 +148,7 @@ enum OnDeviceVoiceEngines {
     static func unregistered(voiceId: String, model: Gate1AppModel) -> OnDeviceVoiceEngine {
         OnDeviceVoiceEngine(
             renderer: SupertonicDownloadedModelRenderer(model: model),
-            signature: { throw Failure.notRegistered(voiceId) },
+            signature: .unregistered(voiceId: voiceId),
             renderingAllowed: { false },
             sessionDescription: "Kitten (\(voiceId) has no player in this build)"
         )
@@ -148,10 +170,7 @@ enum OnDeviceVoiceEngines {
         }
         return OnDeviceVoiceEngine(
             renderer: registration.makeRenderer(installedFolder),
-            signature: {
-                guard let entry = catalogEntry() else { throw Failure.notInCatalog(voiceId) }
-                return descriptor.signature(entry: entry)
-            },
+            signature: .downloaded(descriptor, entry: catalogEntry),
             renderingAllowed: {
                 guard let entry = catalogEntry(),
                       VoiceDeviceFloor.allows(entry, deviceGeneration: deviceChipGeneration()),

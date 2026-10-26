@@ -176,7 +176,7 @@ final class DownloadedVoiceEngineTests: XCTestCase {
 
     func testTheSavedAudioIdentityCarriesTheRenderersEngineNotSupertonics() throws {
         let made = engine(chip: 14, governor: true)
-        let signature = try made.signature()
+        let signature = try made.signature.make()
         XCTAssertEqual(signature.engine, made.renderer.engine, "otherwise its chunks are filed as stand-ins")
         XCTAssertEqual(signature, DownloadedVoiceRenderIdentity.make(engine: "kokoro", entry: entry, speaker: "af_heart", normalizationVersion: "test.v1"))
         XCTAssertNotEqual(signature.engine, SupertonicNarrationResult.supertonicEngine)
