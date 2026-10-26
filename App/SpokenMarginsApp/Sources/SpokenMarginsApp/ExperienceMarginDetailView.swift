@@ -11,6 +11,7 @@ struct ExperienceMarginDetailView: View {
     @State private var showsManagement = false
     @State private var actionFeedback: UserFeedbackEvent?
     @State private var markdownFileURL: URL?
+    @State private var isPreparingMarkdown = false
     let row: MarginRow
 
     private enum NavigationIntent { case moment, item }
@@ -59,8 +60,13 @@ struct ExperienceMarginDetailView: View {
             .accessibilityIdentifier("marginDetail.copyWithContext.button")
             if MarginMarkdownShare.hasNote(current.interjection) {
                 Button("Share this Margin", systemImage: "square.and.arrow.up") { // its note as Markdown (#1866 Done when 4)
+                    guard !isPreparingMarkdown else { return }
+                    isPreparingMarkdown = true
                     let margin = current.interjection
-                    Task { markdownFileURL = await model.prepareMarginMarkdownFileURL(for: [margin], asItem: false) }
+                    Task {
+                        markdownFileURL = await model.prepareMarginMarkdownFileURL(for: [margin], asItem: false)
+                        isPreparingMarkdown = false
+                    }
                 }
                 .buttonStyle(.automatic)
                 .accessibilityIdentifier("marginDetail.shareMarkdown.button")

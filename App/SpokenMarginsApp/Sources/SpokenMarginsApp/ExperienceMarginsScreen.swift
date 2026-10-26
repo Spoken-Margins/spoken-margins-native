@@ -52,7 +52,7 @@ struct ExperienceMarginsScreen: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     // Export all Margins is one toolbar tap to the share sheet; the tab makes it two (#1866).
                     Button {
-                        guard !isPreparingExportAll else { return }
+                        guard !isPreparingExportAll, preparingMarkdownItemID == nil else { return }
                         isPreparingExportAll = true
                         Task {
                             markdownFileURL = await model.prepareAllMarginsMarkdownFileURL()
@@ -67,7 +67,7 @@ struct ExperienceMarginsScreen: View {
                                 .frame(minWidth: 44, minHeight: 44)
                         }
                     }
-                    .disabled(isPreparingExportAll)
+                    .disabled(isPreparingExportAll || preparingMarkdownItemID != nil)
                     .accessibilityLabel(isPreparingExportAll ? "Preparing Margins" : "Export all Margins")
                     .accessibilityIdentifier("margins.exportAll.button")
                 }
@@ -204,7 +204,7 @@ struct ExperienceMarginsScreen: View {
         .accessibilityIdentifier("margins.shareItem.\(group.itemID)")
         // Every active Margin of the item, not only those the search shows (#493).
         Button {
-            guard preparingMarkdownItemID == nil else { return }
+            guard preparingMarkdownItemID == nil, !isPreparingExportAll else { return }
             preparingMarkdownItemID = group.itemID
             let margins = model.marginRows.filter { $0.interjection.itemId == group.itemID }.map(\.interjection)
             Task {
@@ -218,7 +218,7 @@ struct ExperienceMarginsScreen: View {
                 Image(systemName: "doc.text").frame(minWidth: 44, minHeight: 44)
             }
         }
-        .disabled(preparingMarkdownItemID != nil)
+        .disabled(preparingMarkdownItemID != nil || isPreparingExportAll)
         .buttonStyle(.borderless)
         .accessibilityLabel("Share Margins from \(group.itemTitle) as Markdown")
         .accessibilityIdentifier("margins.shareItemMarkdown.\(group.itemID)")
