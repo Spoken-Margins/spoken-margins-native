@@ -203,6 +203,16 @@ class UnlabelledTasks(unittest.TestCase):
         self.assertEqual([r['class'] for r in rows], ['store-whole-table-read'])
         self.assertTrue(rows[0]['labelled'])
 
+    def test_the_shared_labels_instance_counts_as_a_label_too(self):
+        body = '    func f() { Task { MainThreadOperationLabels.shared.scoped("reload") { _ = try? store?.listItems() } } }'
+        rows = scan(Model=MODEL % body)
+        self.assertEqual([r['class'] for r in rows], ['store-whole-table-read'])
+
+    def test_a_look_alike_name_is_not_a_label(self):
+        body = '    func f() { Task { notlabels.scoped("reload") { _ = try? store?.listItems() } } }'
+        rows = scan(Model=MODEL % body)
+        self.assertEqual(sorted(r['class'] for r in rows), ['store-whole-table-read', 'unlabelled-main-task'])
+
     def test_reads_reached_through_a_main_actor_call_count_for_the_task(self):
         body = '    func f() { Task { reload() } }\n    func reload() { _ = try? store?.listItems() }'
         rows = scan(Model=MODEL % body)
