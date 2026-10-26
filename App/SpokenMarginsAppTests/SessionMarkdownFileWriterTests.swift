@@ -58,7 +58,7 @@ final class SessionMarkdownFileWriterTests: XCTestCase {
 
 @MainActor
 final class BatchSessionExportWorkflowTests: XCTestCase {
-    func testBatchExportDefaultsToSessionsWithInterjectionsAndSharesSelectedMarkdown() throws {
+    func testBatchExportDefaultsToSessionsWithInterjectionsAndSharesSelectedMarkdown() async throws {
         let defaults = UserDefaults.standard
         let bookmarkKey = "batchExportFolderBookmark"
         let nameKey = "batchExportFolderName"
@@ -104,7 +104,7 @@ final class BatchSessionExportWorkflowTests: XCTestCase {
         model.saveWrittenMargin(text: marginText)
         XCTAssertEqual(model.selectedItem.interjections.count, 1)
 
-        model.openBatchExport()
+        await model.openBatchExport().value
 
         XCTAssertEqual(model.batchExportFilter, .withInterjections)
         XCTAssertEqual(model.visibleBatchExportRows.map(\.id), [sessionId], "the default shows exactly the sessions with Margins")
