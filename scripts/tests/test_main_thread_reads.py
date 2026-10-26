@@ -550,6 +550,30 @@ class TheRatchet(unittest.TestCase):
         reasons = {e['function']: e['reason'] for e in json.loads(self.baseline.read_text())['entries']}
         self.assertEqual(reasons, {'Model.reload': 'first reason', 'Model.more': 'second reason'})
 
+    def test_accept_refuses_an_empty_or_placeholder_reason(self):
+        for reason in ('', '  ', 'first-run inventory (#2257): not triaged yet', 'inventory, not accepted as correct', 'Moved unchanged from X'):
+            code, out = self.run_main('--accept', reason)
+            self.assertEqual(code, 2, out)
+            self.assertFalse(self.baseline.exists())
+
+    def test_more_placeholder_rows_than_the_ceiling_fails(self):
+        self.run_main('--accept', 'existing')
+        data = json.loads(self.baseline.read_text())
+        self.assertEqual(data['placeholder_ceiling'], 0)
+        data['entries'][0]['reason'] = 'first-run inventory (#2257): not triaged yet'
+        self.baseline.write_text(json.dumps(data))
+        code, out = self.run_main()
+        self.assertEqual(code, 1, out)
+        self.assertIn('not triaged', out)
+        data['placeholder_ceiling'] = 1
+        self.baseline.write_text(json.dumps(data))
+        self.assertEqual(self.run_main()[0], 0)
+        self.run_main('--update')   # the ceiling follows the count down, never up
+        data['entries'][0]['reason'] = 'a real reason'
+        self.baseline.write_text(json.dumps(data))
+        self.run_main('--update')
+        self.assertEqual(json.loads(self.baseline.read_text())['placeholder_ceiling'], 0)
+
 
 class TheRepository(unittest.TestCase):
     def test_the_committed_baseline_matches_the_code(self):
