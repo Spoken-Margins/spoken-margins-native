@@ -13,6 +13,8 @@ struct ExperienceItemDetailScreen: View {
     /// Set while Continue waits on the "hear new Margins first?" question (#474).
     @State private var newMarginsOfferItemId: String?
     @State private var episodeLinkStatus = ImportedFileEpisodeLinker.Status()
+    /// True while a link or unlink saves, so a second tap cannot race it.
+    @State private var isChangingEpisodeLink = false
     @State private var asksForEpisodeLink = false
     @State private var episodeLinkText = ""
     @State private var showsReactions = false
@@ -91,9 +93,11 @@ struct ExperienceItemDetailScreen: View {
                                 episodeLinkText = ""
                                 asksForEpisodeLink = true
                             }
+                            .disabled(isChangingEpisodeLink)
                             .accessibilityIdentifier("item.linkEpisode.button")
                             if episodeLinkStatus.episodeTitle != nil {
                                 Button("Unlink episode", systemImage: "minus.circle") { unlinkEpisode() }
+                                    .disabled(isChangingEpisodeLink)
                             }
                         }
                         if !model.selectedItem.id.isEmpty {
@@ -172,17 +176,19 @@ struct ExperienceItemDetailScreen: View {
             episodeLinkStatus = ImportedFileEpisodeLinker.Status()
             return
         }
-        let status = await episodeLinker.status(itemId: itemId, store: store)
+        let read = await episodeLinker.status(itemId: itemId, store: store)
         // The listener may have moved to another item while the read ran; that item's own refresh sets its status.
-        guard !Task.isCancelled, model.selectedItem.id == itemId else { return }
+        guard let status = read, !Task.isCancelled, model.selectedItem.id == itemId else { return }
         episodeLinkStatus = status
     }
 
     private func linkEpisode() {
-        guard let store = model.store else { return }
+        guard let store = model.store, !isChangingEpisodeLink else { return }
         let itemId = model.selectedItem.id
         let pasted = episodeLinkText
+        isChangingEpisodeLink = true
         Task { @MainActor in
+            defer { isChangingEpisodeLink = false }
             do {
                 let title = try await episodeLinker.link(itemId: itemId, to: pasted, store: store)
                 await refreshEpisodeLinkStatus()
@@ -197,9 +203,11 @@ struct ExperienceItemDetailScreen: View {
     }
 
     private func unlinkEpisode() {
-        guard let store = model.store else { return }
+        guard let store = model.store, !isChangingEpisodeLink else { return }
         let itemId = model.selectedItem.id
+        isChangingEpisodeLink = true
         Task { @MainActor in
+            defer { isChangingEpisodeLink = false }
             do {
                 try await episodeLinker.unlink(itemId: itemId, store: store)
                 await refreshEpisodeLinkStatus()

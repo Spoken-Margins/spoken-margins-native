@@ -22,8 +22,9 @@ struct ImportedFileEpisodeLinker {
 
     /// Reads on a background thread (#2507): the item, its layers and the owned-audio table are one read, and a
     /// listener with a long Library no longer waits on them with the item screen open.
-    func status(itemId: String, store: SQLiteSessionStore) async -> Status {
-        let status = try? await StoreReader(store).read { store in
+    /// Nil when a newer status read started meanwhile (its answer is the one to show) or the read failed.
+    func status(itemId: String, store: SQLiteSessionStore) async -> Status? {
+        let status = try? await StoreReader(store).readLatest("episodeLinkStatus:" + itemId) { store in
             guard let item = try? store.loadItem(id: itemId),
                   item.mediaType == "audiobook", item.media?.sourceType == .nativeMediaFile else { return Status() }
             return Status(
@@ -32,7 +33,7 @@ struct ImportedFileEpisodeLinker {
                 canChange: !Self.hasLinkedMargins(item: item, store: store)
             )
         }
-        return status ?? Status()
+        return status ?? nil
     }
 
     /// Layers that stay on the file only through its episode link. Margins from a packet that names the exact

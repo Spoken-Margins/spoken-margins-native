@@ -197,15 +197,19 @@ final class ImportedPodcastPlacementCoordinator {
         guard let store = deps.store(),
               let file = try? PodcastPlacementFile(url: localURL) else { deps.clearDeferredPlacement(itemId); return .rejected }
         let reader = StoreReader(store)
+        // Recorded before the awaits so a transient transcript that finishes meanwhile compares against this
+        // request; a request the preflight turns away puts the old value back.
+        let previousRequestedURL = requestedURL[itemId]
+        requestedURL[itemId] = localURL
+        func restoreRequestedURL() { requestedURL[itemId] = previousRequestedURL }
         // The item and its layers: a few rows, but the item row carries the whole text.
         let loaded = (try? await reader.read { store -> (Item, [ImportedCommentaryLayer])? in
             let item = try store.loadItem(id: itemId)
             let layers = try store.loadImportedCommentaryLayers(itemId: itemId)
             return layers.isEmpty ? nil : (item, layers)
         }) ?? nil
-        guard let (item, layers) = loaded else { deps.clearDeferredPlacement(itemId); return .rejected }
-        guard !deps.deferPlacement(item, localURL) else { return .deferred }
-        requestedURL[itemId] = localURL
+        guard let (item, layers) = loaded else { restoreRequestedURL(); deps.clearDeferredPlacement(itemId); return .rejected }
+        guard !deps.deferPlacement(item, localURL) else { restoreRequestedURL(); return .deferred }
         let ownedDigest = deps.localAudiobookDigest(item)
         let needsTranscriptCheck = recipientTranscriptOverride == nil
         // Persisted transcripts have no byte-edition binding. Only this pass's
@@ -223,7 +227,7 @@ final class ImportedPodcastPlacementCoordinator {
                     recordNeedsTranscript: ImportedPodcastPlacement.recordNeedsTranscript)
             return (localItem, work, needsTranscript)
         }
-        guard let (localItem, work, needsTranscript) = prepared else { return .rejected }
+        guard let (localItem, work, needsTranscript) = prepared else { restoreRequestedURL(); return .rejected }
         guard !work.isEmpty else { matching.cancel(itemId: itemId); passes.end(.matching, itemId: itemId); return .noPodcastWork }
         if needsTranscript {
             scheduleTransientTranscript(for: item, localSourceURL: localURL)

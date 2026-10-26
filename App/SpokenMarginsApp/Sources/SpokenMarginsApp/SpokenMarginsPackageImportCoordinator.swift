@@ -81,6 +81,10 @@ final class SpokenMarginsPackageImportCoordinator {
     private var didSweepOrphanedFolders = false
     /// Folders handed to a restore-audio task that has not finished with them; the sweep leaves them alone.
     private var restoringFolders: Set<String> = []
+    /// Folders `stage` has created and not yet handed to the queue, a restore or the bin. The sweep leaves them
+    /// alone, so a stage that ever suspends between creating its folder and offering it cannot lose the folder
+    /// to a sweep that listed it meanwhile.
+    private var stagingFolders: Set<String> = []
 
     /// Told to the listener when a packet waits behind the one already showing (#2122).
     static let waitingMessage = "Another shared packet is waiting. It opens after you finish this one."
@@ -145,6 +149,8 @@ final class SpokenMarginsPackageImportCoordinator {
             let root = try environment.applicationSupportDirectory()
                 .appending(path: "SpokenMargins/IncomingPackages/\(UUID().uuidString)", directoryHint: .isDirectory)
             workingDirectory = root
+            stagingFolders.insert(root.lastPathComponent)
+            defer { stagingFolders.remove(root.lastPathComponent) } // by then queue, restoringFolders or the bin owns it
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             let copiedPackage = root.appending(path: "package.spokenmargins")
             try FileManager.default.copyItem(at: sourceURL, to: copiedPackage)
@@ -224,6 +230,9 @@ final class SpokenMarginsPackageImportCoordinator {
     /// once and a staged packet may be opened while it works. The sweep lists the folders first, and only those it
     /// listed are candidates; the folders a review or restore owns are read on the main actor after the listing,
     /// so a packet staged in the meantime is either in the listing and owned, or not in it and never touched.
+    /// That is safe only because `stage` registers its folder in `stagingFolders` from the moment it creates it
+    /// until the queue, a restore or the bin owns it, and the sweep keeps those too. Do not drop that set when
+    /// `stage` becomes async (#2510).
     func sweepOrphanedFoldersOnce() {
         guard !didSweepOrphanedFolders, sweepTask == nil,
               let support = try? environment.applicationSupportDirectory() else { return }
@@ -248,7 +257,7 @@ final class SpokenMarginsPackageImportCoordinator {
         guard let store = try? environment.requireStore() else { return }
         didSweepOrphanedFolders = true
         let owned = Set(([queue.showing].compactMap { $0 } + queue.waiting).map { $0.extractionDirectory.lastPathComponent })
-        let keeping = owned.union(restoringFolders)
+        let keeping = owned.union(restoringFolders).union(stagingFolders)
         let candidates = Set(listed)
         let outcome = try? await Gate1AppModel.offMain {
             IncomingPackageSweep.sweep(directory: incoming, keeping: keeping, only: candidates, store: store)
