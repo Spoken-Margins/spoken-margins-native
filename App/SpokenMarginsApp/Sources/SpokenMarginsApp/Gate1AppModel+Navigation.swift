@@ -98,7 +98,9 @@ extension Gate1AppModel {
                         try? await Task.sleep(for: .milliseconds(350))
                         guard !Task.isCancelled, let self, self.screen == .playback,
                               self.snapshot.itemId == itemId,
-                              let detail = try? self.loadItemDetail(id: itemId, store: store) else { return }
+                              let detail = try? await self.loadItemDetailOffMain(id: itemId, store: store) else { return }
+                        // The read took time: drop it if the listener moved on while it ran.
+                        guard !Task.isCancelled, self.screen == .playback, self.snapshot.itemId == itemId else { return }
                         self.selectedItem = detail
                     }
                 }

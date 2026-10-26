@@ -96,11 +96,11 @@ extension Gate1AppModel {
                 let importer = try self.requireLocalSourceImporter()
                 let item = try await importer.importEPUB(from: url)
                 guard let store = self.store else { return }
-                self.libraryItems = try self.loadLibraryRows(store: store)
+                try await self.reloadLibraryRowsOffMain(store: store)
                 self.markOnboardingSteps([.addedOwnSource, .addedFromFiles])
                 self.scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
                 if openWhenFinished {
-                    self.selectedItem = try self.loadItemDetail(id: item.id, store: store)
+                    self.selectedItem = try await self.loadItemDetailOffMain(id: item.id, store: store)
                     self.activeItemId = item.id
                     self.screen = .item
                     self.reportConfirmation("Imported \(item.title).")
@@ -120,11 +120,11 @@ extension Gate1AppModel {
                 let importer = try self.requireLocalSourceImporter()
                 let item = try await importer.importAudiobook(from: url)
                 guard let store = self.store else { return }
-                self.libraryItems = try self.loadLibraryRows(store: store)
+                try await self.reloadLibraryRowsOffMain(store: store)
                 self.markOnboardingSteps([.addedOwnSource, .addedFromFiles])
                 self.refreshSpokenMarginsPackageImportAfterAddingSource()
                 if openWhenFinished {
-                    self.selectedItem = try self.loadItemDetail(id: item.id, store: store)
+                    self.selectedItem = try await self.loadItemDetailOffMain(id: item.id, store: store)
                     self.activeItemId = item.id
                     self.screen = .item
                     self.reportConfirmation("Imported \(item.title).")
