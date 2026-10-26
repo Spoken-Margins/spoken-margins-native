@@ -32,19 +32,22 @@ final class ClipboardLinkOfferModel: ObservableObject {
         #if canImport(UIKit)
         guard UIPasteboard.general.changeCount == check.changeCount else { return }
         #endif
-        offer.observe(changeCount: check.changeCount, holdsProbableLink: check.holdsProbableLink)
+        offer.observe(changeCount: check.changeCount, signals: check.signals)
     }
 
-    /// Reads the change count and asks iOS whether the clipboard looks like a web link. Neither reads the copied text.
-    private nonisolated static func checkClipboard() async -> (changeCount: Int, holdsProbableLink: Bool) {
+    /// Reads the change count and asks iOS content-free questions about the clipboard. None reads the copied text.
+    private nonisolated static func checkClipboard() async -> (changeCount: Int, signals: ClipboardLinkOffer.Signals) {
         #if canImport(UIKit)
         let pasteboard = UIPasteboard.general
         let changeCount = pasteboard.changeCount
         let probableLink: PartialKeyPath<UIPasteboard.DetectedValues> = \.probableWebURL
         let found = (try? await pasteboard.detectedPatterns(for: [probableLink])) ?? []
-        return (changeCount, found.contains(probableLink))
+        let signals = ClipboardLinkOffer.Signals(
+            probableWebURL: found.contains(probableLink), hasURLs: pasteboard.hasURLs,
+            hasStrings: pasteboard.hasStrings, itemCount: pasteboard.numberOfItems)
+        return (changeCount, signals)
         #else
-        return (0, false)
+        return (0, .init(probableWebURL: false, hasURLs: false, hasStrings: false, itemCount: 0))
         #endif
     }
 
@@ -133,8 +136,10 @@ struct ClipboardLinkOfferCard: View {
 
     /// Only a link is added from this card. If the clipboard changed to text since the check, nothing is created.
     private func paste(_ content: String?, play: Bool) {
-        guard case .link = ClipboardIntakeClassifier.classify(content) else {
-            message = "The clipboard no longer holds a link. Copy the link again."
+        let outcome = ClipboardLinkOffer.pasteOutcome(for: content)
+        guard outcome == .addLink else {
+            // The text is never shown or added from here. The card stays with this note until the X or a new copy.
+            message = outcome.message
             return
         }
         switch model.pasteAndGo(content, startSession: play) {
