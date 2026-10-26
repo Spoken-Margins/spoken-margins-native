@@ -219,20 +219,41 @@ final class SpokenMarginsPackageImportCoordinator {
     /// before the first stage of the run, and leaves any folder a review or restore here owns and any folder an
     /// imported layer or Margin names (those play from it). It opens the Library only when a folder is there to
     /// check, and tries again if the Library won't open.
+    ///
+    /// The directory listing and the removals run on a background thread (#2507, #2510), so the call returns at
+    /// once and a staged packet may be opened while it works. The sweep lists the folders first, and only those it
+    /// listed are candidates; the folders a review or restore owns are read on the main actor after the listing,
+    /// so a packet staged in the meantime is either in the listing and owned, or not in it and never touched.
     func sweepOrphanedFoldersOnce() {
-        guard !didSweepOrphanedFolders, let support = try? environment.applicationSupportDirectory() else { return }
+        guard !didSweepOrphanedFolders, sweepTask == nil,
+              let support = try? environment.applicationSupportDirectory() else { return }
         let incoming = support.appending(path: "SpokenMargins/IncomingPackages", directoryHint: .isDirectory)
-        let hasFolders = ((try? FileManager.default.contentsOfDirectory(atPath: incoming.path)) ?? [])
-            .contains { UUID(uuidString: $0) != nil }
+        sweepTask = Task { [weak self] in
+            await self?.sweepOrphanedFolders(in: incoming)
+            self?.sweepTask = nil
+        }
+    }
+
+    /// The running sweep, so a test (or a caller that must not stage until it ends) can wait for it.
+    private(set) var sweepTask: Task<Void, Never>?
+
+    private func sweepOrphanedFolders(in incoming: URL) async {
+        let listed = (try? await Gate1AppModel.offMain {
+            ((try? FileManager.default.contentsOfDirectory(atPath: incoming.path)) ?? []).filter { UUID(uuidString: $0) != nil }
+        }) ?? []
         // Nothing staged before: leave the Library closed, as it is on most launches.
-        guard hasFolders else { didSweepOrphanedFolders = true; return }
+        guard !listed.isEmpty else { didSweepOrphanedFolders = true; return }
         // Opening the store first would skip the root view's bootstrap, as in `stage`.
         environment.bootstrapLibrary()
         guard let store = try? environment.requireStore() else { return }
         didSweepOrphanedFolders = true
         let owned = Set(([queue.showing].compactMap { $0 } + queue.waiting).map { $0.extractionDirectory.lastPathComponent })
-        let outcome = IncomingPackageSweep.sweep(directory: incoming, keeping: owned.union(restoringFolders), store: store)
-        if !outcome.removed.isEmpty {
+        let keeping = owned.union(restoringFolders)
+        let candidates = Set(listed)
+        let outcome = try? await Gate1AppModel.offMain {
+            IncomingPackageSweep.sweep(directory: incoming, keeping: keeping, only: candidates, store: store)
+        }
+        if let outcome, !outcome.removed.isEmpty {
             environment.recordDiagnostic("lastIncomingPackageSweep", "removed:\(outcome.removed.count):kept:\(outcome.kept.count)")
         }
     }
@@ -314,36 +335,44 @@ final class SpokenMarginsPackageImportCoordinator {
             case .acquireArticle:
                 itemId = try await environment.acquireArticle(review.contents.manifest.item)
             }
-            let item = try itemId.map { try store.loadItem(id: $0) }
-            let localItem = item.map {
-                SharedPacketItemMatcher.localIdentity(for: $0, ownedAudiobookDigest: environment.localAudiobookDigest($0))
-            }
+            // The item, the duplicate check and the import commit run on a background thread (#2509). `isImporting`
+            // already keeps a second confirm, a cancel and a re-match out until this ends, so nothing else writes
+            // meanwhile; the writes keep their order inside one step.
+            let reader = StoreReader(store)
+            let item: Item? = if let itemId { try await reader.read { try $0.loadItem(id: itemId) } } else { nil }
+            let ownedAudiobookDigest = item.flatMap { environment.localAudiobookDigest($0) }
             var localAudioAdmission: LocalAudioPacketAdmission?
             if let item, item.mediaType == "audiobook" {
                 localAudioAdmission = try await verifyLocalAudioForImport(item, contents: review.contents)
             }
             let itemText = item?.text
-            let disposition: ImportedCommentaryImportDisposition = try MainThreadOperationLabels.shared.scoped("packageImportCommit") {
-                if let digest = review.contents.manifest.contentDigest,
+            let contents = review.contents
+            let (disposition, repairedLayerId) = try await reader.read { store -> (ImportedCommentaryImportDisposition, String?) in
+                let localItem = item.map {
+                    SharedPacketItemMatcher.localIdentity(for: $0, ownedAudiobookDigest: ownedAudiobookDigest)
+                }
+                if let digest = contents.manifest.contentDigest,
                    let existing = try store.loadImportedCommentaryLayer(packageDigest: digest) {
                     try SpokenMarginsPackageImporter.repairAssociation(
                         existing: existing,
-                        contents: review.contents,
+                        contents: contents,
                         itemId: itemId,
                         localItem: localItem,
                         itemText: itemText,
                         repository: store
                     )
-                    if let itemId { environment.recordDiagnostic("lastSpokenMarginsPackageRepair", "reassociated:\(existing.id):\(itemId)") }
-                    return .duplicate(existingLayerId: existing.id)
+                    return (.duplicate(existingLayerId: existing.id), existing.id)
                 }
-                return try SpokenMarginsPackageImporter.importPackage(
-                    review.contents,
+                return (try SpokenMarginsPackageImporter.importPackage(
+                    contents,
                     itemId: itemId,
                     localItem: localItem,
                     itemText: itemText,
                     repository: store
-                )
+                ), nil)
+            }
+            if let repairedLayerId, let itemId {
+                environment.recordDiagnostic("lastSpokenMarginsPackageRepair", "reassociated:\(repairedLayerId):\(itemId)")
             }
             switch disposition {
             case .duplicate(let existingLayerId):
@@ -538,7 +567,7 @@ final class SpokenMarginsPackageImportCoordinator {
                 throw error
             }
         }
-        let item = try store.loadItem(id: itemId)
+        let item = try await StoreReader(store).read { try $0.loadItem(id: itemId) }
         let contents = review.contents
         // Searching a long text for every chapter is slow, so it runs off the main actor; saving does not.
         let plan = try await Task.detached(priority: .userInitiated) {

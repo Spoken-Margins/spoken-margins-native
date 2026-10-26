@@ -34,6 +34,16 @@ final class IncomingPackageSweepTests: XCTestCase {
         XCTAssertEqual(try folderNames(), [])
     }
 
+    func testAFolderOutsideTheListedSetIsNeverACandidate() throws {
+        let listed = try stagedFolder(files: ["package.spokenmargins"])
+        let stagedMeanwhile = try stagedFolder(files: ["package.spokenmargins"])
+
+        let outcome = IncomingPackageSweep.sweep(directory: incoming, keeping: [], only: [listed], store: store)
+
+        XCTAssertEqual(outcome.removed, [listed])
+        XCTAssertEqual(try folderNames(), [stagedMeanwhile], "a folder staged after the listing is left alone")
+    }
+
     func testAFolderAnImportedMarginPlaysFromStays() throws {
         let used = try stagedFolder(files: ["package.spokenmargins", "assets/voice.m4a"])
         let orphan = try stagedFolder(files: ["package.spokenmargins"])

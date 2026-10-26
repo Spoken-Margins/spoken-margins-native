@@ -109,7 +109,7 @@ struct ExperienceItemDetailScreen: View {
                     .accessibilityLabel("Item options")
                 }
             }
-            .task(id: model.selectedItem.id) { refreshEpisodeLinkStatus() }
+            .task(id: model.selectedItem.id) { await refreshEpisodeLinkStatus() }
             .sheet(item: $collectionItem) { item in
                 ItemCollectionSheet(item: item).environmentObject(model)
             }
@@ -166,12 +166,16 @@ struct ExperienceItemDetailScreen: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func refreshEpisodeLinkStatus() {
-        guard let store = model.store, !model.selectedItem.id.isEmpty else {
+    private func refreshEpisodeLinkStatus() async {
+        let itemId = model.selectedItem.id
+        guard let store = model.store, !itemId.isEmpty else {
             episodeLinkStatus = ImportedFileEpisodeLinker.Status()
             return
         }
-        episodeLinkStatus = episodeLinker.status(itemId: model.selectedItem.id, store: store)
+        let status = await episodeLinker.status(itemId: itemId, store: store)
+        // The listener may have moved to another item while the read ran; that item's own refresh sets its status.
+        guard !Task.isCancelled, model.selectedItem.id == itemId else { return }
+        episodeLinkStatus = status
     }
 
     private func linkEpisode() {
@@ -181,8 +185,8 @@ struct ExperienceItemDetailScreen: View {
         Task { @MainActor in
             do {
                 let title = try await episodeLinker.link(itemId: itemId, to: pasted, store: store)
+                await refreshEpisodeLinkStatus()
                 model.hangTelemetry.labels.scoped("episodeLinked") {
-                    refreshEpisodeLinkStatus()
                     model.refreshSpokenMarginsPackageImportAfterAddingSource()
                     model.reportConfirmation("Linked to \u{201C}\(title)\u{201D}. Margins a friend shares by link for it will land on this file.")
                 }
@@ -194,12 +198,15 @@ struct ExperienceItemDetailScreen: View {
 
     private func unlinkEpisode() {
         guard let store = model.store else { return }
-        do {
-            try episodeLinker.unlink(itemId: model.selectedItem.id, store: store)
-            refreshEpisodeLinkStatus()
-            model.reportConfirmation("Episode unlinked. The file and its Margins are unchanged.")
-        } catch {
-            model.reportFailure(error.localizedDescription, itemId: model.selectedItem.id)
+        let itemId = model.selectedItem.id
+        Task { @MainActor in
+            do {
+                try await episodeLinker.unlink(itemId: itemId, store: store)
+                await refreshEpisodeLinkStatus()
+                model.reportConfirmation("Episode unlinked. The file and its Margins are unchanged.")
+            } catch {
+                model.reportFailure(error.localizedDescription, itemId: itemId)
+            }
         }
     }
 
