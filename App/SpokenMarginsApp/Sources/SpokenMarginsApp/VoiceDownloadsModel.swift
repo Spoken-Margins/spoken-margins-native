@@ -16,18 +16,17 @@ final class VoiceDownloadsModel: ObservableObject {
         case failed(String)
     }
 
-    /// Voices this build can play once downloaded. Pocket TTS is in the catalog but has no player here yet.
-    static let playableVoiceIds: Set<String> = [SupertonicAssetResolver.catalogVoiceId]
+    /// Voices this build can play once downloaded: Supertonic, plus each downloaded voice whose slice registered a
+    /// renderer (`DownloadedVoiceRegistry`, #2700). Pocket TTS is in the catalog but has no player here yet.
+    static let playableVoiceIds: Set<String> = Set([SupertonicAssetResolver.catalogVoiceId])
+        .union(DownloadedVoiceRegistry.playableVoiceIds)
     /// No signed catalog is fetched yet: downloads come straight from the publishers on Hugging Face, and the
     /// owner's server is never asked (owner, 2026-10-19; #2055 audit 2). The snapshot bundled with the app is the
     /// catalog until the signed one has a home off that server.
     static let catalogURL: URL? = nil
     /// The one-time preparation each runtime needs after download (#2700). ONNX Runtime needs none; the
-    /// Kokoro (#2705) compiles its Core ML packages and builds its pronunciation file from misaki's two downloaded
-    /// dictionaries; Phonon (#2704) registers its own here.
-    static let preparers: VoiceModelPreparers = VoiceModelPreparers.standard.registering(
-        KokoroModelPreparer(buildLexicon: { gold, silver in try MisakiLexicon.tsv(goldJSON: gold, silverJSON: silver) }),
-        forRuntime: VoiceModelCatalogVerifier.coreMLRuntime)
+    /// Kokoro (#2705) and Phonon (#2704) slices register theirs in their own `…VoiceEngine.swift`.
+    static let preparers: VoiceModelPreparers = DownloadedVoiceRegistry.preparers(adding: .standard)
 
     @Published private(set) var rows: [VoiceCatalogRow] = []
     @Published private(set) var activity: [String: Activity] = [:]

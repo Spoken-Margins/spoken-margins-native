@@ -53,7 +53,8 @@ public final class RenderedSpeechDiskCache: @unchecked Sendable {
                 duration: Double(audio.length) / audio.processingFormat.sampleRate,
                 sampleRate: Int(audio.processingFormat.sampleRate.rounded()),
                 renderDuration: 0,
-                sessionLoadCount: 0
+                sessionLoadCount: 0,
+                engine: SupertonicNarrationResult.supertonicEngine
             )
         }
     }
@@ -85,6 +86,7 @@ public final class RenderedSpeechDiskCache: @unchecked Sendable {
                 sampleRate: result.sampleRate,
                 renderDuration: result.renderDuration,
                 sessionLoadCount: result.sessionLoadCount,
+                engine: result.engine,
                 trimmedSilence: result.trimmedSilence
             )
         }

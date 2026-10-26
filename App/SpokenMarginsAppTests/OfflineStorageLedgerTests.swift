@@ -93,7 +93,8 @@ final class OfflineStorageLedgerAppTests: XCTestCase {
         let rendered = fixture.root.appending(path: "rendered.wav")
         try Data(repeating: 2, count: 100).write(to: rendered)
         let result = SupertonicNarrationResult(
-            audioURL: rendered, duration: 1, sampleRate: 44_100, renderDuration: 0, sessionLoadCount: 0
+            audioURL: rendered, duration: 1, sampleRate: 44_100, renderDuration: 0, sessionLoadCount: 0,
+            engine: SupertonicNarrationResult.supertonicEngine
         )
         let cache = try RenderedSpeechDiskCache(
             directory: fixture.root.appending(path: "RenderedSpeechCache", directoryHint: .isDirectory),
@@ -149,7 +150,7 @@ final class OfflineStorageLedgerAppTests: XCTestCase {
         try Data(repeating: 2, count: 100).write(to: rendered)
         let cache = try RenderedSpeechDiskCache(directory: directory, limitBytes: 1_000)
         let stored = try cache.store(
-            SupertonicNarrationResult(audioURL: rendered, duration: 1, sampleRate: 44_100, renderDuration: 0, sessionLoadCount: 0),
+            SupertonicNarrationResult(audioURL: rendered, duration: 1, sampleRate: 44_100, renderDuration: 0, sessionLoadCount: 0, engine: SupertonicNarrationResult.supertonicEngine),
             text: "one", voice: .m2, language: "en", speed: 1, synthesisSteps: 8
         )
 

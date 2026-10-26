@@ -255,6 +255,9 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
 /// The chosen-voice seam the playback client renders through. Kokoro has one voice per renderer, so the
 /// Supertonic voice and step count are ignored; `speed` is passed to the model.
 extension KokoroNarrationRenderer: SupertonicRendering {
+    /// Kokoro's own name, not the protocol's Supertonic default, so used directly its chunks are not filed as stand-ins (#2700).
+    var engine: String { Self.engine }
+
     func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
         try await render(text: text, speed: speed, pacing: .whenAppBackgrounded)
     }
