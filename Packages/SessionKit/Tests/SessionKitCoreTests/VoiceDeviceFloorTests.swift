@@ -69,6 +69,41 @@ final class VoiceDeviceFloorTests: XCTestCase {
         XCTAssertFalse(VoiceDeviceFloor.allows(entry(minimumChip: "M1"), deviceGeneration: 19))
     }
 
+    /// #2744 review: the player's gate and Settings' note come from one decision. Voice x chip x memory.
+    func testOneDecisionSaysWhetherAnInstalledVoiceRendersAndWhyNot() {
+        func voice(_ id: String, bundled: Bool = false, chip: String?, memory: Int) -> VoiceModelEntry {
+            VoiceModelEntry(
+                id: id, displayName: id, publisher: "Example", version: "1",
+                runtime: VoiceModelRuntime(name: "coreml", version: "9"), minimumIOSVersion: "26.0",
+                minimumMemoryMegabytes: memory, minimumChip: chip, bundled: bundled, files: [], licenses: []
+            )
+        }
+        let downloaded = voice("phonon", chip: "A14", memory: 4_096)
+        let supertonic = voice(VoiceDeviceFit.supertonicVoiceId, chip: nil, memory: 4_096)
+        let kitten = voice("kitten", bundled: true, chip: nil, memory: 2_048)
+        // (voice, chip, reported memory MB, blocker)
+        let table: [(VoiceModelEntry, Int?, Int, VoiceUnusableReason?)] = [
+            (downloaded, 14, 3_700, nil),
+            (downloaded, 14, 8_000, nil),
+            (downloaded, 13, 8_000, .chipBelowFloor),
+            (downloaded, nil, 8_000, .chipBelowFloor),
+            (downloaded, 14, 2_900, .notEnoughMemory),
+            (downloaded, 13, 2_900, .chipBelowFloor),
+            (supertonic, 13, 2_900, nil),
+            (supertonic, nil, 1_000, nil),
+            (supertonic, 14, 8_000, nil),
+            (kitten, 13, 1_000, nil),
+            (kitten, nil, 0, nil),
+        ]
+        for (entry, chip, memory, blocker) in table {
+            let label = "\(entry.id) chip \(String(describing: chip)) memory \(memory)"
+            XCTAssertEqual(VoiceDeviceFit.renderBlocker(entry, deviceGeneration: chip, physicalMemoryMegabytes: memory), blocker, label)
+            XCTAssertEqual(VoiceDeviceFit.canRender(entry, deviceGeneration: chip, physicalMemoryMegabytes: memory), blocker == nil, label)
+        }
+        XCTAssertEqual(VoiceDeviceFit.floorFailure(supertonic, deviceGeneration: 14, physicalMemoryMegabytes: 2_900), .notEnoughMemory,
+                       "what is offered for download still counts Supertonic's memory need")
+    }
+
     private func entry(minimumChip: String?) -> VoiceModelEntry {
         VoiceModelEntry(
             id: "neural", displayName: "Neural", publisher: "Example", version: "1",

@@ -18,6 +18,15 @@ protocol SupertonicRendering: Sendable {
     ) async throws -> SupertonicNarrationResult
 
     func discardGeneratedAudio(at url: URL) async
+
+    /// The engine name this renderer's own audio carries (#2700). The player counts a chunk as the chosen voice's
+    /// own audio, not a stand-in, only when its result says this engine. Supertonic by default; a downloaded voice's
+    /// renderer returns its descriptor's engine.
+    var engine: String { get }
+}
+
+extension SupertonicRendering {
+    var engine: String { SupertonicNarrationResult.supertonicEngine }
 }
 
 extension SupertonicNarrationRenderer: SupertonicRendering {}
@@ -875,7 +884,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                index: index, startOffset: planned.startOffset - article.start,
                sourceLength: planned.sourceLength, text: planned.text)) {
             return SupertonicNarrationResult(audioURL: recovered.audioURL, duration: recovered.duration, sampleRate: 0,
-                                             renderDuration: 0, sessionLoadCount: 0)
+                                             renderDuration: 0, sessionLoadCount: 0, engine: renderer.engine)
         }
         return diskCache?.cachedAudio(text: planned.text, voice: voice, language: "en", speed: 1.0, synthesisSteps: 8)
     }
@@ -1564,7 +1573,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 sampleRate: 0,
                 renderDuration: 0,
                 sessionLoadCount: 0,
-                engine: bundledVoice ? KittenNarrationRenderer.engine : SupertonicNarrationResult.supertonicEngine
+                engine: bundledVoice ? KittenNarrationRenderer.engine : renderer.engine
             )
         } else if !bundledVoice, let cached = diskCache?.cachedAudio(
             text: original.text, voice: voice, language: "en", speed: 1.0, synthesisSteps: 8
@@ -1719,7 +1728,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         duration: recovered.duration,
                         sampleRate: 0,
                         renderDuration: 0,
-                        sessionLoadCount: 0
+                        sessionLoadCount: 0,
+                        engine: self?.renderer.engine ?? SupertonicNarrationResult.supertonicEngine
                     )
                 } else if playsSavedSupertonic, let cached = self?.diskCache?.cachedAudio(
                     text: request.text,
@@ -1765,9 +1775,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         )
                     }
                     renderWall = ContinuousClock.now - renderStartedAt
-                    // Only Supertonic's own audio is cached under its key. An iOS-voice stand-in
-                    // isn't, so the next play renders Supertonic again and re-checks it (#311).
-                    if rendered.engine == SupertonicNarrationResult.supertonicEngine,
+                    // Only the chosen voice's own audio is cached under its key. An iOS-voice stand-in
+                    // isn't, so the next play renders the voice again and re-checks it (#311). The cache is
+                    // Supertonic's (keyed by its voice), so the player gets one only for James and Lily.
+                    if rendered.engine == renderer.engine,
                        let cache = self?.diskCache,
                        let retained = try? cache.store(
                             rendered,
@@ -1874,7 +1885,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             guard generation == request.generation else { return (false, nil, nil, 0, 0, false) }
             inFlightOffsets.remove(request.startOffset)
             let cached = CachedAudio(url: result.audioURL, duration: result.duration, request: request)
-            if result.engine == SupertonicNarrationResult.supertonicEngine {
+            if result.engine == renderer.engine {
                 standInOffsets.remove(request.startOffset)
                 bundledVoiceOffsets.remove(request.startOffset)
             } else {

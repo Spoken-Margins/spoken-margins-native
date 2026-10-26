@@ -14,7 +14,7 @@ final class ReadingVoiceChoiceTests: XCTestCase {
     func testKittenHasItsOwnStoredCodeAndTheListKeepsTheOlderVoicesInOrder() {
         XCTAssertEqual(ReadingVoiceChoice(rawValue: "kitten:jasper"), .kitten)
         XCTAssertEqual(ReadingVoiceChoice.allCases.map(\.rawValue),
-                       ["supertonic:M2", "supertonic:F2", "kitten:jasper", "system"])
+                       ["supertonic:M2", "supertonic:F2", "kitten:jasper", "system", "phonon:en", "kokoro:af_heart"])
     }
 
     func testAnUnknownStoredCodeIsNoChoice() {
@@ -43,5 +43,29 @@ final class ReadingVoiceChoiceTests: XCTestCase {
         XCTAssertFalse(ReadingVoiceChoice.system.readsOnDevice)
         XCTAssertFalse(ReadingVoiceChoice.system.rendersWithSupertonic)
         XCTAssertFalse(ReadingVoiceChoice.system.bundledVoiceIsChosen)
+    }
+
+    /// #2700: Phonon and Kokoro read on device, never with Supertonic or its saved audio, and their own saved audio
+    /// may play, which is what lets a saved run of the chosen voice follow the #1680 seam rule.
+    func testDownloadedVoicesPlayTheirOwnSavedAudioAndNeverSupertonics() {
+        XCTAssertEqual(ReadingVoiceChoice.phonon.downloadedVoiceId, "phonon-31m-en")
+        XCTAssertEqual(ReadingVoiceChoice.kokoro.downloadedVoiceId, "kokoro-82m")
+        for choice in [ReadingVoiceChoice.phonon, .kokoro] {
+            XCTAssertTrue(choice.readsOnDevice, choice.rawValue)
+            XCTAssertFalse(choice.rendersWithSupertonic, choice.rawValue)
+            XCTAssertFalse(choice.playsSavedSupertonicAudio, choice.rawValue)
+            XCTAssertTrue(choice.playsSavedChosenVoiceAudio, choice.rawValue)
+            XCTAssertFalse(choice.bundledVoiceIsChosen, choice.rawValue)
+        }
+    }
+
+    func testOnlySupertonicAndDownloadedVoicesHaveChosenVoiceSavedAudio() {
+        XCTAssertTrue(ReadingVoiceChoice.james.playsSavedChosenVoiceAudio)
+        XCTAssertTrue(ReadingVoiceChoice.lily.playsSavedChosenVoiceAudio)
+        XCTAssertFalse(ReadingVoiceChoice.kitten.playsSavedChosenVoiceAudio)
+        XCTAssertFalse(ReadingVoiceChoice.system.playsSavedChosenVoiceAudio)
+        for choice in [ReadingVoiceChoice.james, .lily, .kitten, .system] {
+            XCTAssertNil(choice.downloadedVoiceId, choice.rawValue)
+        }
     }
 }

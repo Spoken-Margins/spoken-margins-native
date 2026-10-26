@@ -155,8 +155,8 @@ private struct VoiceRow: View {
             EmptyView()
         case .installed:
             HStack {
-                if !row.isOffered {
-                    Text("No longer offered. This copy keeps working.").font(.caption).foregroundStyle(AppColors.secondaryText)
+                if let note = row.installedButNotOfferedNote {
+                    Text(note).font(.caption).foregroundStyle(AppColors.secondaryText)
                 }
                 Spacer()
                 Button("Remove", action: remove)
