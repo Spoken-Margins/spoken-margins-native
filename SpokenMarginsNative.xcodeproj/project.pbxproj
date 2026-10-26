@@ -37,6 +37,7 @@
 		78065128412B4F94A3B7B6FD /* LiveSessionMarkInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */; };
 		7F0A333F40F542B3E4C42E1A /* Defuddle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 8C1BFB86196C5C1BE2E52BEF /* Defuddle-LICENSE.txt */; };
 		81B60CCA76A6F0E91712933E /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = EE29274792FFFC88EA74C157 /* PrivacyInfo.xcprivacy */; };
+		8307E9C688A9F07FD4DD86F9 /* ptts in Frameworks */ = {isa = PBXBuildFile; productRef = 893FEBD7410AEC3A77FCF5FA /* ptts */; };
 		87FAE6509C5B1511C6555EA9 /* SpokenMarginsWatchApp.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = F4D18E57D6973BBFE094E993 /* SpokenMarginsWatchApp.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		8B40FCEFB4AFABF3E3B52486 /* SessionKitEPUB in Frameworks */ = {isa = PBXBuildFile; productRef = DAEA68EE26E46DA752778D6D /* SessionKitEPUB */; };
 		8D06E1D632D0ED8160FED0A4 /* icon-128.png in Resources */ = {isa = PBXBuildFile; fileRef = 56AD3FBAE5A4EBD7B16F6BFC /* icon-128.png */; };
@@ -334,6 +335,7 @@
 				3EB7A4EE3350ECA1902F69A8 /* SessionKitSupertonic in Frameworks */,
 				CC0AD39630C14AEC9A9A8573 /* SessionKitEPUB in Frameworks */,
 				C2A4BB4A4E23CFE6CE076AC6 /* SessionKitFeeds in Frameworks */,
+				8307E9C688A9F07FD4DD86F9 /* ptts in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -683,6 +685,7 @@
 				BE679FFC0BC2A00A74297525 /* SessionKitSupertonic */,
 				62C6DAFDEEEE7BC12B1CDE55 /* SessionKitEPUB */,
 				BE649F52B4257A8BB5ED3717 /* SessionKitFeeds */,
+				893FEBD7410AEC3A77FCF5FA /* ptts */,
 			);
 			productName = SpokenMarginsApp;
 			productReference = 9FEFBCF337DFC7DB102DAD5B /* SpokenMarginsApp.app */;
@@ -727,6 +730,7 @@
 			mainGroup = 2C09E31BE15AEAD39C04886B;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				C398667E2AF50A1A4B602557 /* XCRemoteSwiftPackageReference "xn-ptts" */,
 				E96BED6A20680AB92886EEA6 /* XCLocalSwiftPackageReference "Packages/SessionKit" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -1427,6 +1431,17 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		C398667E2AF50A1A4B602557 /* XCRemoteSwiftPackageReference "xn-ptts" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/gradium-ai/xn-ptts";
+			requirement = {
+				kind = exactVersion;
+				version = 0.4.2;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		03B12E07A60683D31E17A8FC /* SessionKitSharing */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -1455,6 +1470,11 @@
 		857D6087011D0775305B56B7 /* SessionKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SessionKit;
+		};
+		893FEBD7410AEC3A77FCF5FA /* ptts */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C398667E2AF50A1A4B602557 /* XCRemoteSwiftPackageReference "xn-ptts" */;
+			productName = ptts;
 		};
 		9547A66336D57411F645B986 /* SessionKitAudio */ = {
 			isa = XCSwiftPackageProductDependency;
