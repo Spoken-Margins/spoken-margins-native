@@ -392,6 +392,98 @@
           "research/B4/server/go.mod"
         ]
       }
+    },
+    {
+      "id": "kokoro-coreml",
+      "name": "kokoro-coreml (its KokoroPipeline Swift library)",
+      "version": "e8bf3d4e80d7dd30ed58e343c1527fad09cc9d1f",
+      "license": "Apache-2.0",
+      "distribution": "bundled",
+      "by": "Matt Mireles",
+      "source": "https://github.com/mattmireles/kokoro-coreml",
+      "paths": [
+        "App/SpokenMarginsApp/Resources/Kokoro"
+      ],
+      "licenseFiles": [
+        "App/SpokenMarginsApp/Resources/Kokoro/Kokoro-NOTICES.txt",
+        "Contracts/voice-models/licenses/apache-2-0.txt"
+      ],
+      "note": "Runs the downloadable Kokoro voice's Core ML stages on the Neural Engine and CPU (#2705). Only the KokoroPipeline product is linked; the text front end is the bundled Kitten voice's, respelled with misaki's espeak table (hexgrad, Apache-2.0).",
+      "tracks": {
+        "swiftPackage": "kokoro-coreml"
+      }
+    },
+    {
+      "id": "kokoro-82m",
+      "name": "Kokoro-82M voice (Core ML build) and its 28 English voices",
+      "version": "HF mattmireles/kokoro-coreml@0c1d78b47d19f39be6bc0cf0d07316822ae879d4",
+      "license": "Apache-2.0",
+      "distribution": "downloaded",
+      "by": "hexgrad (Core ML build by Matt Mireles)",
+      "source": "https://huggingface.co/mattmireles/kokoro-coreml",
+      "paths": [],
+      "licenseFiles": [
+        "Contracts/voice-models/content/kokoro-82m/licenses/NOTICE.txt",
+        "Contracts/voice-models/licenses/apache-2-0.txt"
+      ],
+      "note": "Downloaded from Settings › Voices, each file pinned by SHA-256 (about 402 MB). The NOTICE carries the Kokoro card's CC BY training-data credit (Koniwa tnc, CC BY 3.0; SIWIS, CC BY 4.0).",
+      "tracks": {}
+    },
+    {
+      "id": "misakiswift",
+      "name": "MisakiSwift",
+      "license": "Apache-2.0",
+      "distribution": "tool",
+      "by": "Matt Mireles",
+      "source": "https://github.com/mattmireles/MisakiSwift",
+      "paths": [],
+      "licenseUrl": "https://github.com/mattmireles/MisakiSwift",
+      "note": "Resolved by SwiftPM only because kokoro-coreml's manifest names it for its KokoroTTS product, which Spoken Margins does not link. Never built into or shipped with the app (#2705).",
+      "tracks": {
+        "swiftPackage": "misakiswift"
+      }
+    },
+    {
+      "id": "mlx-swift",
+      "name": "MLX Swift",
+      "license": "MIT",
+      "distribution": "tool",
+      "by": "Apple Inc.",
+      "source": "https://github.com/ml-explore/mlx-swift",
+      "paths": [],
+      "licenseUrl": "https://github.com/ml-explore/mlx-swift",
+      "note": "Resolved by SwiftPM only because kokoro-coreml's manifest names it for its KokoroTTS product, which Spoken Margins does not link. Never built into or shipped with the app (#2705).",
+      "tracks": {
+        "swiftPackage": "mlx-swift"
+      }
+    },
+    {
+      "id": "mlxutilslibrary",
+      "name": "MLXUtilsLibrary",
+      "license": "Apache-2.0",
+      "distribution": "tool",
+      "by": "mlalma",
+      "source": "https://github.com/mlalma/MLXUtilsLibrary",
+      "paths": [],
+      "licenseUrl": "https://github.com/mlalma/MLXUtilsLibrary",
+      "note": "Resolved by SwiftPM only because kokoro-coreml's manifest names it for its KokoroTTS product, which Spoken Margins does not link. Never built into or shipped with the app (#2705).",
+      "tracks": {
+        "swiftPackage": "mlxutilslibrary"
+      }
+    },
+    {
+      "id": "swift-numerics",
+      "name": "Swift Numerics",
+      "license": "Apache-2.0",
+      "distribution": "tool",
+      "by": "Apple Inc.",
+      "source": "https://github.com/apple/swift-numerics",
+      "paths": [],
+      "licenseUrl": "https://github.com/apple/swift-numerics",
+      "note": "Resolved by SwiftPM only because kokoro-coreml's manifest names it for its KokoroTTS product, which Spoken Margins does not link. Never built into or shipped with the app (#2705).",
+      "tracks": {
+        "swiftPackage": "swift-numerics"
+      }
     }
   ]
 }

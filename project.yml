@@ -11,6 +11,12 @@ configFiles:
 packages:
   SessionKit:
     path: Packages/SessionKit
+  # Kokoro-82M on Core ML (#2705): the Apache-2.0 kokoro-coreml port, pinned by commit to the release its Hugging
+  # Face model files were built for. The app links only its KokoroPipeline product (Core ML stages, no MLX, no Metal
+  # toolchain, no GPU); the text front end is ours. Never move the pin without re-checking the model files and licences.
+  KokoroCoreML:
+    url: https://github.com/mattmireles/kokoro-coreml
+    revision: e8bf3d4e80d7dd30ed58e343c1527fad09cc9d1f
 targets:
   SpokenMarginsApp:
     type: application
@@ -32,6 +38,10 @@ targets:
         type: folder
         buildPhase: resources
       - path: App/SpokenMarginsApp/Resources/Kitten
+        type: folder
+        buildPhase: resources
+      # The Kokoro runtime's code notices only; the model is a download from Settings › Voices (#2705).
+      - path: App/SpokenMarginsApp/Resources/Kokoro
         type: folder
         buildPhase: resources
       - path: App/SpokenMarginsApp/Resources/Legal
@@ -77,6 +87,10 @@ targets:
         product: SessionKitEPUB
       - package: SessionKit
         product: SessionKitFeeds
+      - package: KokoroCoreML
+        product: KokoroPipeline
+      - package: SessionKit
+        product: SessionKitSpeechFrontEnd
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native

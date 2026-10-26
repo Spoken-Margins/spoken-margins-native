@@ -102,6 +102,16 @@ Part of the Kitten voice's pronunciations.
 
 SupertonicRuntime.swift is adapted from Supertone's Swift example; its header says so.
 
+### kokoro-coreml (its KokoroPipeline Swift library) e8bf3d4e80d7dd30ed58e343c1527fad09cc9d1f
+
+- Licence: Apache-2.0
+- From: Matt Mireles
+- Source: <https://github.com/mattmireles/kokoro-coreml>
+- Where: `App/SpokenMarginsApp/Resources/Kokoro`
+- Licence text: [Kokoro-NOTICES.txt](App/SpokenMarginsApp/Resources/Kokoro/Kokoro-NOTICES.txt), [apache-2-0.txt](Contracts/voice-models/licenses/apache-2-0.txt)
+
+Runs the downloadable Kokoro voice's Core ML stages on the Neural Engine and CPU (#2705). Only the KokoroPipeline product is linked; the text front end is the bundled Kitten voice's, respelled with misaki's espeak table (hexgrad, Apache-2.0).
+
 ## Downloaded, not distributed here
 
 Fetched on request. They are not in this repository or in the app. Where the voice catalog (#1818) publishes the current address and licence text, it is the reference.
@@ -125,6 +135,15 @@ Downloaded, not in the app or this repository since #1820: Settings › Voices f
 - Licence text: [cc-by-4.0-pocket-tts.txt](Contracts/voice-models/licenses/cc-by-4.0-pocket-tts.txt), <https://huggingface.co/kyutai/pocket-tts>
 
 Downloaded, not distributed here. No Pocket TTS model or voice file is in this repository or the app, and the app doesn't link its runtime yet. The repository holds only our own runtime code and a tokenizer test fixture. The research harness fetches the int8 ONNX export (KevinAHM/pocket-tts-onnx) and alba's voice state (kyutai/pocket-tts-without-voice-cloning), both CC BY 4.0, so the voice needs an attribution line where it is offered. The voice catalog (#1818) will carry the current download address and licence text. The MIT code licence is recorded in research/C2/README.md; the licence texts are on the model page. Details: research/C2/pocket/README.md.
+
+### Kokoro-82M voice (Core ML build) and its 28 English voices HF mattmireles/kokoro-coreml@0c1d78b47d19f39be6bc0cf0d07316822ae879d4
+
+- Licence: Apache-2.0
+- From: hexgrad (Core ML build by Matt Mireles)
+- Source: <https://huggingface.co/mattmireles/kokoro-coreml>
+- Licence text: [NOTICE.txt](Contracts/voice-models/content/kokoro-82m/licenses/NOTICE.txt), [apache-2-0.txt](Contracts/voice-models/licenses/apache-2-0.txt)
+
+Downloaded from Settings › Voices, each file pinned by SHA-256 (about 402 MB). The NOTICE carries the Kokoro card's CC BY training-data credit (Koniwa tnc, CC BY 3.0; SIWIS, CC BY 4.0).
 
 ## Build, test and research tools
 
@@ -204,6 +223,42 @@ Design/UXProposal20260909 is a web prototype. Its packages are listed in its pac
 - Where: `research`
 
 The voice and PDF experiments under research/ install packages such as onnxruntime, pocket-tts, kokoro-onnx, piper-tts, pymupdf and pdfminer.six from public registries when run. Nothing is copied here and nothing ships in the app. The Go bridge server in research/B4/server has no outside module. If one is added, this entry must name it.
+
+### MisakiSwift
+
+- Licence: Apache-2.0
+- From: Matt Mireles
+- Source: <https://github.com/mattmireles/MisakiSwift>
+- Licence text: <https://github.com/mattmireles/MisakiSwift>
+
+Resolved by SwiftPM only because kokoro-coreml's manifest names it for its KokoroTTS product, which Spoken Margins does not link. Never built into or shipped with the app (#2705).
+
+### MLX Swift
+
+- Licence: MIT
+- From: Apple Inc.
+- Source: <https://github.com/ml-explore/mlx-swift>
+- Licence text: <https://github.com/ml-explore/mlx-swift>
+
+Resolved by SwiftPM only because kokoro-coreml's manifest names it for its KokoroTTS product, which Spoken Margins does not link. Never built into or shipped with the app (#2705).
+
+### MLXUtilsLibrary
+
+- Licence: Apache-2.0
+- From: mlalma
+- Source: <https://github.com/mlalma/MLXUtilsLibrary>
+- Licence text: <https://github.com/mlalma/MLXUtilsLibrary>
+
+Resolved by SwiftPM only because kokoro-coreml's manifest names it for its KokoroTTS product, which Spoken Margins does not link. Never built into or shipped with the app (#2705).
+
+### Swift Numerics
+
+- Licence: Apache-2.0
+- From: Apple Inc.
+- Source: <https://github.com/apple/swift-numerics>
+- Licence text: <https://github.com/apple/swift-numerics>
+
+Resolved by SwiftPM only because kokoro-coreml's manifest names it for its KokoroTTS product, which Spoken Margins does not link. Never built into or shipped with the app (#2705).
 
 ## Third-party content in the repository
 
