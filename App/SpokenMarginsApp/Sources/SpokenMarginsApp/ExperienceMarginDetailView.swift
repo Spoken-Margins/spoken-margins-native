@@ -173,7 +173,7 @@ struct ExperienceMarginDetailView: View {
             .onDisappear {
                 // Having been opened is what clears the mark (#1976); it stays while the note is on screen.
                 guard CutShortMargins.shared.clear(sessionId: row.interjection.sessionId, interjectionId: row.interjection.id) else { return }
-                model.refreshMarginRows()
+                model.refreshMarginRowsInBackground(forItem: row.interjection.itemId)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 Button("Go to this moment in the source", systemImage: "arrow.turn.down.right") {

@@ -30,6 +30,6 @@ extension Gate1AppModel {
         }
         // A podcast Margin deleted while its context was pending would otherwise stay pending.
         retrySourceWindowContexts(itemId: interjection.itemId)
-        refreshMarginRows()
+        refreshMarginRowsInBackground(forItem: interjection.itemId)
     }
 }

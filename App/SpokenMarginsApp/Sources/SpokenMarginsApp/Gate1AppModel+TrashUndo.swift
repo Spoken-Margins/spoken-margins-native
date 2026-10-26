@@ -19,6 +19,7 @@ extension Gate1AppModel {
                 snapshot = try endEngineSession(engine, reason: .itemTrashed)
             }
             try store.moveItemToTrash(id: id)
+            removeMarginRows(forItem: id) // its Margins leave the list with it
             showAsRecentlyDeleted(itemId: id, title: item.title)
             // An import-only item can be selected without a session. Clearing that idle selection must not
             // discard another item's live session just because its detail page was open when Delete was tapped.
@@ -95,6 +96,7 @@ extension Gate1AppModel {
             let store = try requireStore()
             let item = try store.loadItem(id: id)
             try store.restoreItem(id: id)
+            refreshMarginRowsInBackground(forItem: id) // and come back with it
             refreshLibraryRowsInBackground(mustPublish: true)
             dismissTrashUndo()
             reportSuccess("Restored \(item.title).")

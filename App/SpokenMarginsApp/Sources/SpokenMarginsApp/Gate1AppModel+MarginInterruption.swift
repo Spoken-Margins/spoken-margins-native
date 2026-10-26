@@ -79,7 +79,7 @@ extension Gate1AppModel {
         holder.policy.sourceSettled(at: .paused(in: snapshot))
         if !snapshot.isRecording {
             marginCapture.clearPresentationContext()
-            refreshMarginRows()
+            refreshMarginRowsInBackground(forItem: snapshot.itemId)
         }
     }
 }

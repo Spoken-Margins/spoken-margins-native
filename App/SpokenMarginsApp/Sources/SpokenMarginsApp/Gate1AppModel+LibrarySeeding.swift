@@ -190,7 +190,7 @@ extension Gate1AppModel {
                 "database": databaseURL.lastPathComponent
             ]
             exportPreview = ""
-            refreshMarginRows()
+            refreshMarginRowsInBackground()
             tryRefreshOfflineStorageUsage()
             reportSuccess("Listening queue ready.")
         } catch {
