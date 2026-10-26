@@ -551,7 +551,7 @@ class TheRatchet(unittest.TestCase):
         self.assertEqual(reasons, {'Model.reload': 'first reason', 'Model.more': 'second reason'})
 
     def test_accept_refuses_an_empty_or_placeholder_reason(self):
-        for reason in ('', '  ', 'first-run inventory (#2257): not triaged yet'):
+        for reason in ('', '  ', 'first-run inventory (#2257): not triaged yet', 'inventory, not accepted as correct', 'Moved unchanged from X'):
             code, out = self.run_main('--accept', reason)
             self.assertEqual(code, 2, out)
             self.assertFalse(self.baseline.exists())

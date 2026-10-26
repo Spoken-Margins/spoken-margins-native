@@ -920,13 +920,13 @@ def counts(rows):
     return c
 
 
-PLACEHOLDER_MARKS = ('not triaged', 'first-run inventory (#2257): not')
+PLACEHOLDER_MARKS = ('not triaged', 'not accepted as correct', 'moved unchanged')
 
 
 def is_placeholder(reason):
     """An empty reason, or the first-run "not triaged yet" text, says nothing about why the read is on the main thread."""
     r = (reason or '').strip().lower()
-    return not r or 'not triaged' in r or r in ('todo', 'tbd', 'n/a', 'reason', 'one-line reason')
+    return not r or any(m in r for m in PLACEHOLDER_MARKS) or r in ('todo', 'tbd', 'n/a', 'reason', 'one-line reason')
 
 
 def placeholder_count(entries):
