@@ -72,7 +72,6 @@ enum PublisherAudioTextMapper {
                 }
                 updated = audio.recordingTextMapFailure("failed: \(String(describing: error))")
             }
-            running.remove(audio.itemId)
             do {
                 // The item may have been deleted meanwhile; its record went with it. A reimport may have replaced
                 // the recording meanwhile, so this map (for the old one) is dropped and the new one mapped instead.
@@ -80,12 +79,15 @@ enum PublisherAudioTextMapper {
                 let mapped = updated
                 enum Saved: Sendable { case removed, replaced(PublisherAudio), saved(String) }
                 let outcome = try await reader.read { store -> Saved in
-                    guard let current = try store.loadPublisherAudio(itemId: audio.itemId) else { return .removed }
-                    guard current.isSameRecording(as: audio) else { return .replaced(current) }
-                    let saved = current.keepingTextMap(of: mapped)
-                    try store.savePublisherAudio(saved)
-                    return .saved(saved.textMapStatus ?? "unknown")
+                    try store.withSessionTransaction {
+                        guard let current = try store.loadPublisherAudio(itemId: audio.itemId) else { return .removed }
+                        guard current.isSameRecording(as: audio) else { return .replaced(current) }
+                        let saved = current.keepingTextMap(of: mapped)
+                        try store.savePublisherAudio(saved)
+                        return .saved(saved.textMapStatus ?? "unknown")
+                    }
                 }
+                running.remove(audio.itemId)
                 switch outcome {
                 case .removed: report("item removed")
                 case .replaced(let current):
@@ -94,6 +96,7 @@ enum PublisherAudioTextMapper {
                 case .saved(let status): report(status)
                 }
             } catch {
+                running.remove(audio.itemId)
                 report("save failed: \(String(describing: error))")
             }
         }

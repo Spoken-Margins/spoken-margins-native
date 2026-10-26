@@ -126,6 +126,8 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         connectivityObserver = nil
         session.invalidateAndCancel()
         for itemId in Array(generations.keys) { invalidateAttempt(itemId: itemId) }
+        // A coordinator made next restores from the store, so queued row writes land first.
+        rowWriter.sync {}
     }
 
     private func invalidateAttempt(itemId: String) {
@@ -500,7 +502,13 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         updated.updatedAt = Date()
         recordsByItemId[updated.itemId] = updated
         let row = updated
-        rowWriter.async { [store] in try? store.savePodcastDownload(row) }
+        rowWriter.async { [store] in
+            try? store.savePodcastDownload(row)
+            // A Library reload that ran before the row landed read the old state: say it again once saved.
+            Task { @MainActor [weak self] in
+                if let self, let current = self.recordsByItemId[row.itemId] { self.onRecordChanged?(current) }
+            }
+        }
         progressWriteGate.didWrite(key: updated.itemId, at: updated.updatedAt)
         onRecordChanged?(updated)
     }
@@ -610,12 +618,14 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
                 record.expectedBytes = Int64(size)
                 record.failureReason = nil
                 record.updatedAt = Date()
-                // Same queue as `persist`, so an older queued progress row can't land after this one.
-                let finished = record
-                rowWriter.async { [store] in try? store.savePodcastDownload(finished) }
+                // Synchronous and throwing, as before: a failed save rolls the new file back instead of leaving
+                // memory and the row disagreeing. Queued older rows are drained first so none lands after this one.
+                rowWriter.sync {}
+                try store.savePodcastDownload(record)
                 recordsByItemId[record.itemId] = record
                 onRecordChanged?(record)
                 invalidateAttempt(itemId: attempt.itemId)
+                // The old file goes only after the new row is saved.
                 if let previousFile, previousFile != destination { try? FileManager.default.removeItem(at: previousFile) }
                 onLocalAssetReady?(attempt.itemId, destination)
             } catch {
