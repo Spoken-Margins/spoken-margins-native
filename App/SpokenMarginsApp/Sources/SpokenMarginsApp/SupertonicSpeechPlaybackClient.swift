@@ -430,6 +430,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     var debugStallMonitorWillExit: (@Sendable () -> Void)?
     /// Runs between a stall sample and its handling, so a test can switch items exactly then.
     var debugStallWillBeHandled: (@Sendable () -> Void)?
+    /// Runs once that handling has finished on the main actor, so a test can check its effect without a fixed wait (#2747).
+    var debugStallWasHandled: (@Sendable () -> Void)?
     /// How often the client asked to stop lowering other apps' audio.
     private(set) var debugBackgroundAudioReleaseCount = 0
     var debugHasStallMonitor: Bool { lock.withLock { stallMonitor != nil } }
@@ -2539,11 +2541,17 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         self.debugStallWillBeHandled?()
                         #endif
                         await MainActor.run { self.handleStallEvent(event, sampled: sample.watched) }
+                        #if DEBUG
+                        self.debugStallWasHandled?()
+                        #endif
                     } else if stallOngoing, sample.intends {
                         #if DEBUG
                         self.debugStallWillBeHandled?()
                         #endif
                         await MainActor.run { self.pauseIfReseatDidNotHelp(sampled: sample.watched) }
+                        #if DEBUG
+                        self.debugStallWasHandled?()
+                        #endif
                     }
                     if self.lock.withLock({ self.handOverAwaitingStart != nil }) {
                         await self.confirmHandOverStart()
