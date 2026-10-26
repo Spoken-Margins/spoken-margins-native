@@ -68,26 +68,6 @@ extension Gate1AppModel {
         reportConfirmation("Saved \(title) with \(placed.count) Margin\(placed.count == 1 ? "" : "s").")
     }
 
-    /// The live session's Markdown for the share sheet, when `itemId` came from one, following the item's
-    /// `margins` as they are now (#2485 audit). Nil sends the caller to the ordinary export.
-    func liveSessionMarkdownFileURL(itemId: String, margins: [Interjection]) -> URL? {
-        guard let directory = Self.liveSessionDirectory,
-              let saved = LiveSessionRecord.load(itemId: itemId, from: directory),
-              let record = saved.current(margins.filter { $0.itemId == itemId }.compactMap(LiveSessionRecord.CurrentMargin.init))
-        else { return nil }
-        let folder = MarginMarkdownShare.shareDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let name = record.session.title.components(separatedBy: CharacterSet(charactersIn: "/:\\?%*|\"<>")).joined(separator: "-")
-        let url = folder.appendingPathComponent((name.isEmpty ? "Live session" : name) + ".md")
-        do {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try LiveSessionMarkdown.render(record).write(to: url, atomically: true, encoding: .utf8)
-            return url
-        } catch {
-            reportFailure(error, context: "Live session export failed", itemId: itemId)
-            return nil
-        }
-    }
-
     /// Removes a purged item's session record, which holds the meeting's transcript.
     func removeLiveSessionRecord(itemId: String) {
         guard let directory = Self.liveSessionDirectory else { return }

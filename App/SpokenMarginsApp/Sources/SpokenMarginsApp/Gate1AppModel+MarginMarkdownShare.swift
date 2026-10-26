@@ -1,21 +1,39 @@
 import Foundation
 import SessionKit
+import SessionKitPersistence
 
 // Kept out of Gate1AppModel.swift, which may not grow (hot-file ratchet).
 extension Gate1AppModel {
     /// "Share as Markdown" (#493): the notes-folder note of one Margin, or of an item's Margins, as a
-    /// named `.md` file in a temporary folder, for the share sheet.
-    func marginMarkdownFileURL(for margins: [Interjection], asItem: Bool) -> URL? {
-        // An item made from a live session shares the session's own Markdown, with its position evidence (#2481).
-        if asItem, let itemId = margins.first?.itemId, let url = liveSessionMarkdownFileURL(itemId: itemId, margins: margins) { return url }
-        var url: URL?
-        run { engine in
-            let file = asItem ? try MarginMarkdownShare.file(forItemMargins: margins, engine: engine)
-                : try margins.first.flatMap { try MarginMarkdownShare.file(for: $0, engine: engine) }
-            guard let file else { return reportFailure("There's no written or transcribed Margin to share yet.") }
-            url = try MarginMarkdownShare.write(file, under: MarginMarkdownShare.shareDirectory)
+    /// named `.md` file in a temporary folder, for the share sheet. The store reads and the file write run
+    /// off the main actor (#2256), as in Export all Margins; the caller shows progress meanwhile. Nil when
+    /// there is nothing to share, after saying why.
+    func prepareMarginMarkdownFileURL(for margins: [Interjection], asItem: Bool) async -> URL? {
+        // Make sure the engine exists, then borrow only its profile; the export builds its own engine below.
+        _ = run { _ in }
+        guard let store, let profile = engine?.profile else {
+            reportFailure("Margins can't be shared right now.")
+            return nil
         }
-        return url
+        let liveSessionDirectory = Self.liveSessionDirectory
+        let outcome = await Task.detached(priority: .userInitiated) { () -> Result<URL?, Error> in
+            Result {
+                try MarginMarkdownShare.prepare(
+                    margins: margins, asItem: asItem, engine: SessionEngine(profile: profile, repository: store),
+                    liveSessionDirectory: liveSessionDirectory, under: MarginMarkdownShare.shareDirectory)
+            }
+        }.value
+        switch outcome {
+        case .success(let url):
+            if url == nil { reportFailure("There's no written or transcribed Margin to share yet.") }
+            return url
+        case .failure(let error as MarginMarkdownShare.LiveSessionExportFailure):
+            reportFailure(error.underlying, context: "Live session export failed", itemId: margins.first?.itemId)
+            return nil
+        case .failure(let error):
+            reportFailure(error)
+            return nil
+        }
     }
 }
 
