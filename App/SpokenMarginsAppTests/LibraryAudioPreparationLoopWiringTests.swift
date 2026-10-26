@@ -156,6 +156,21 @@ final class LibraryAudioPreparationLoopWiringTests: XCTestCase {
         XCTAssertTrue(cooldown.canAttempt(first), "clearing the item clears every voice")
     }
 
+    /// #2692: a Listening Map or edition changes the prepared text inside a not-ready job's cooldown. The new text's
+    /// startup job must not wait it out; a plain prewarm (opening the item) still honours the cooldown.
+    func testAPreparedTextChangeEndsTheStartupCooldownButAPlainPrewarmKeepsIt() async throws {
+        let model = try await makeFixture().model
+        let voice = try XCTUnwrap(model.ttsVoiceSelection.supertonicVoice)
+        let key = Gate1AppModel.startupAudioCooldownKey("cooldown-item", voice)
+
+        model.startupAudioPreparationCooldown.recordFailure(key)
+        model.scheduleTextAudioPrewarmIfNeeded(itemId: "cooldown-item")
+        XCTAssertFalse(model.startupAudioPreparationCooldown.canAttempt(key), "opening the item does not clear the cooldown")
+
+        model.schedulePrewarmAfterPreparedTextChange(itemId: "cooldown-item")
+        XCTAssertTrue(model.startupAudioPreparationCooldown.canAttempt(key), "a source change inside the window may queue a new job")
+    }
+
     func testAnInvalidatedRunQueuedBehindAHeldPassRendersNothing() async throws {
         let fixture = try await makeFixture()
         let model = fixture.model
