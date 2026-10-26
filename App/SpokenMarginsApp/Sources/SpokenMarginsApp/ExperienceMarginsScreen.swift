@@ -23,6 +23,7 @@ struct ExperienceMarginsScreen: View {
     @State private var selectedSharedMargin: SharedMarginRow?
     @State private var markdownFileURL: URL?
     @State private var isPreparingExportAll = false
+    @State private var preparingMarkdownItemID: String?
     @State private var collections: [ItemCollection] = []
 
     var body: some View {
@@ -51,7 +52,7 @@ struct ExperienceMarginsScreen: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     // Export all Margins is one toolbar tap to the share sheet; the tab makes it two (#1866).
                     Button {
-                        guard !isPreparingExportAll else { return }
+                        guard !isPreparingExportAll, preparingMarkdownItemID == nil else { return }
                         isPreparingExportAll = true
                         Task {
                             markdownFileURL = await model.prepareAllMarginsMarkdownFileURL()
@@ -66,7 +67,7 @@ struct ExperienceMarginsScreen: View {
                                 .frame(minWidth: 44, minHeight: 44)
                         }
                     }
-                    .disabled(isPreparingExportAll)
+                    .disabled(isPreparingExportAll || preparingMarkdownItemID != nil)
                     .accessibilityLabel(isPreparingExportAll ? "Preparing Margins" : "Export all Margins")
                     .accessibilityIdentifier("margins.exportAll.button")
                 }
@@ -203,13 +204,21 @@ struct ExperienceMarginsScreen: View {
         .accessibilityIdentifier("margins.shareItem.\(group.itemID)")
         // Every active Margin of the item, not only those the search shows (#493).
         Button {
-            markdownFileURL = model.marginMarkdownFileURL(
-                for: model.marginRows.filter { $0.interjection.itemId == group.itemID }.map(\.interjection),
-                asItem: true
-            )
+            guard preparingMarkdownItemID == nil, !isPreparingExportAll else { return }
+            preparingMarkdownItemID = group.itemID
+            let margins = model.marginRows.filter { $0.interjection.itemId == group.itemID }.map(\.interjection)
+            Task {
+                markdownFileURL = await model.prepareMarginMarkdownFileURL(for: margins, asItem: true)
+                preparingMarkdownItemID = nil
+            }
         } label: {
-            Image(systemName: "doc.text").frame(minWidth: 44, minHeight: 44)
+            if preparingMarkdownItemID == group.itemID {
+                ProgressView().frame(minWidth: 44, minHeight: 44)
+            } else {
+                Image(systemName: "doc.text").frame(minWidth: 44, minHeight: 44)
+            }
         }
+        .disabled(preparingMarkdownItemID != nil || isPreparingExportAll)
         .buttonStyle(.borderless)
         .accessibilityLabel("Share Margins from \(group.itemTitle) as Markdown")
         .accessibilityIdentifier("margins.shareItemMarkdown.\(group.itemID)")
