@@ -60,7 +60,7 @@ final class ShippedReplyPacketTests: XCTestCase {
             selections: [selection("b-1", "I disagree.", replyTo: link), selection("b-2", "Unrelated note.", replyTo: nil)],
             senderDisplayLabel: "B", suggestedRevealMode: .companion
         )
-        _ = try SpokenMarginsPackageArchive.write(prepared, to: url)
+        try exportPacket(prepared, to: url) // Build 29 reads it too, as two ordinary Margins
     }
 
     func testThisBuildWritesTheReplyPacketBuilds32And34Write() throws {
