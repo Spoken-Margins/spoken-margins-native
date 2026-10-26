@@ -24,8 +24,14 @@ final class KokoroVoiceTests: XCTestCase {
         // About 400 MB: the size Settings shows and the off-Wi-Fi ask is about.
         XCTAssertGreaterThan(entry.downloadByteCount, 390_000_000)
         XCTAssertLessThan(entry.downloadByteCount, 410_000_000)
-        for file in entry.files where !file.path.hasPrefix("licenses/") {
+        let lexiconPaths = [KokoroVoice.lexiconGoldPath, KokoroVoice.lexiconSilverPath]
+        for file in entry.files where !file.path.hasPrefix("licenses/") && !lexiconPaths.contains(file.path) {
             XCTAssertEqual(file.sources, ["https://huggingface.co/mattmireles/kokoro-coreml/resolve/\(KokoroVoice.artifactRevision)/\(file.path)"], file.path)
+        }
+        // misaki's two dictionaries are required pieces, pinned to hexgrad/misaki commit e820629b by hash.
+        for path in lexiconPaths {
+            let file = try XCTUnwrap(entry.files.first { $0.path == path }, path)
+            XCTAssertEqual(file.sources, ["https://raw.githubusercontent.com/hexgrad/misaki/e820629b96334db28227df37f280e4836d46fadb/misaki/data/\((path as NSString).lastPathComponent)"], path)
         }
         let notice = try XCTUnwrap(entry.files.first { $0.path == "licenses/NOTICE.txt" })
         XCTAssertTrue(notice.content?.contains("CC BY 4.0") == true, "the Kokoro card's CC BY training-data credit travels with the files")
@@ -44,7 +50,10 @@ final class KokoroVoiceTests: XCTestCase {
         }
         paths.append(KokoroVoice.vocabPath)
         paths.append(KokoroVoice.hnsfWeightsPath)
+        paths.append(KokoroVoice.lexiconGoldPath)
+        paths.append(KokoroVoice.lexiconSilverPath)
         XCTAssertEqual(KokoroVoice.problems(withFiles: paths), [])
+        XCTAssertEqual(KokoroVoice.problems(withFiles: paths.filter { $0 != KokoroVoice.lexiconSilverPath }), ["missing lexicon/us_silver.json"])
         XCTAssertEqual(KokoroVoice.problems(withFiles: paths + ["coreml/hybrid/plan.json"]),
                        ["lists the hybrid GPU generator: coreml/hybrid/plan.json"])
         XCTAssertEqual(KokoroVoice.problems(withFiles: paths + ["coreml/kokoro_decoder_pre_15s.mlpackage/Manifest.json"]),
