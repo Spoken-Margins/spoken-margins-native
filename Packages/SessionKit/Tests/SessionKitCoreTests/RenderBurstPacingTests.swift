@@ -38,6 +38,28 @@ final class RenderBurstPacingTests: XCTestCase {
         XCTAssertEqual(RenderAheadPolicy.restFloor, OnDeviceCPUBudget.liveReserve, "the marks and the budget meet at one reserve")
     }
 
+    /// #2740 review: the client kept the last chunk's headroom from any voice and app state and never cleared it, so a
+    /// fast foreground Supertonic chunk lowered the background resume mark (90 s at serious instead of 150 s), and the
+    /// slower paced rate could then refill too late. A reading counts only under what it was measured in.
+    func testAStaleHeadroomNeverLowersTheResumeMark() {
+        let item = UUID()
+        let foreground = RenderHeadroomMemory.Context(isStandIn: false, isInBackground: false, generation: item)
+        let background = RenderHeadroomMemory.Context(isStandIn: false, isInBackground: true, generation: item)
+        var memory = RenderHeadroomMemory()
+        memory.record(healthy, in: foreground)
+        func mark(_ context: RenderHeadroomMemory.Context) -> TimeInterval {
+            RenderAheadPolicy.resumeMark(window: RenderAheadPolicy.window, thermal: .serious, headroom: memory.headroom(in: context))
+        }
+        XCTAssertEqual(mark(foreground), 90, "precondition: a healthy reading lowers the mark where it was measured")
+        XCTAssertEqual(mark(background), 150, "after backgrounding: the long lead, not the foreground's mark")
+        XCTAssertEqual(mark(.init(isStandIn: true, isInBackground: false, generation: item)), 150, "another voice")
+        XCTAssertEqual(mark(.init(isStandIn: false, isInBackground: false, generation: UUID())), 150, "another item or a seek")
+
+        memory.record(healthy, in: background)
+        XCTAssertEqual(mark(background), 90, "a background reading counts in the background")
+        XCTAssertEqual(mark(foreground), 150, "and the foreground's is gone")
+    }
+
     func testHeatDefersTheVoiceSwitchUntilTheBufferWouldRunDry() {
         XCTAssertTrue(RenderAheadPolicy.defersHeatSwitch(block: .deviceTooWarm, listeningAhead: 200))
         XCTAssertTrue(RenderAheadPolicy.defersHeatSwitch(block: .deviceTooWarm, listeningAhead: RenderAheadPolicy.restFloor + 1))
