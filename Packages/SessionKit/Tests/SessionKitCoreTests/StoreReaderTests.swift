@@ -8,26 +8,29 @@ final class StoreReaderTests: XCTestCase {
         return try SQLiteSessionStore(path: path)
     }
 
-    /// The point of the type (#2507): a read that takes 300 ms must not hold the main actor.
+    /// The point of the type (#2507): a read that is still running must not hold the main actor.
+    /// The read waits on a gate, not a clock, so the check doesn't depend on how fast the machine is (#2764):
+    /// the main actor gets past "the read has started" only if the read is off it, and the read is let go after.
+    /// A read that held the main actor never lets this test see it start, so it ends after the gate's 10 s limit
+    /// with the gate reported as timed out.
     @MainActor
-    func testASlowReadDoesNotBlockTheMainActor() async throws {
+    func testARunningReadDoesNotBlockTheMainActor() async throws {
         let reader = StoreReader(try makeStore())
-        var ticks = 0
-        let ticker = Task { @MainActor in
-            while !Task.isCancelled {
-                ticks += 1
-                try? await Task.sleep(nanoseconds: 10_000_000)
+        let gate = Gate()
+        let readTask = Task {
+            try await reader.read { _ -> Int in
+                gate.markStarted()
+                return gate.waitForRelease(timeout: 10) ? 42 : -1
             }
         }
-        let started = Date()
-        let value = try await reader.read { _ in
-            Thread.sleep(forTimeInterval: 0.3)
-            return 42
+        let deadline = Date().addingTimeInterval(30)
+        while !gate.started && Date() < deadline {
+            try await Task.sleep(nanoseconds: 1_000_000)
         }
-        ticker.cancel()
-        XCTAssertEqual(value, 42)
-        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(started), 0.3)
-        XCTAssertGreaterThan(ticks, 5, "the main actor kept running while the read was slow (a blocked read gives 1)")
+        XCTAssertTrue(gate.started, "the read never started while the main actor was free")
+        gate.release()
+        let value = try await readTask.value
+        XCTAssertEqual(value, 42, "the read was still waiting for its gate: the main actor was blocked")
     }
 
     func testAReadSeesAWriteMadeEarlierInTheSameClosure() async throws {
@@ -103,4 +106,17 @@ private final class Ran: @unchecked Sendable {
     private var flag = false
     var value: Bool { lock.lock(); defer { lock.unlock() }; return flag }
     func mark() { lock.lock(); flag = true; lock.unlock() }
+}
+
+/// Holds a read open until the test lets it go, so no test needs a wall-clock budget.
+private final class Gate: @unchecked Sendable {
+    private let lock = NSLock()
+    private let semaphore = DispatchSemaphore(value: 0)
+    private var startedFlag = false
+    var started: Bool { lock.lock(); defer { lock.unlock() }; return startedFlag }
+    func markStarted() { lock.lock(); startedFlag = true; lock.unlock() }
+    func release() { semaphore.signal() }
+    func waitForRelease(timeout seconds: Double) -> Bool {
+        semaphore.wait(timeout: .now() + seconds) == .success
+    }
 }
