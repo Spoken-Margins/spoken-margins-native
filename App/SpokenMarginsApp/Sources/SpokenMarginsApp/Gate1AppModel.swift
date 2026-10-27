@@ -1139,9 +1139,8 @@ final class Gate1AppModel: ObservableObject {
         syncPlaybackProgressForLifecycle()
         gate2CompactControls.reconcileLiveActivities()
         importPendingSourceLinkHandoffs()
-        backgroundRefresh.requestAnnouncement() // the reload that publishes also announces audio that finished while away and checks episode maps (they walk the fresh rows)
+        backgroundRefresh.requestAnnouncement() // the reload that publishes also announces audio that finished while away and schedules audio and episode-map preparation (they walk the fresh rows)
         refreshLibraryRowsInBackground(mustPublish: true)
-        scheduleAutomaticAudioPreparationIfNeeded()
         if canPrepareLibraryAudio { startForegroundAudioPreparationIfNeeded() } // a background task may have ended while the app was away (#534)
         refreshQuickAddFeed(force: false)
     }
