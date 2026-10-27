@@ -14,12 +14,23 @@
 # If installed.txt already names the newest build, it says so and changes nothing, unless the
 # owner types R to reinstall (#500). It also says whether a newer build is being made right now
 # (a scratch folder in ~/SpokenMargins-phone/.work) or the newest attempt failed (last-attempt.json).
+# It names how far the build is behind main, and why, from trunk.json, which scripts/phone-build writes (#2782).
+# Any copy of this file (the Desktop's) runs ~/SpokenMargins-phone/install-phone-build.command when that differs:
+# scripts/phone-build keeps it equal to main's, so the Desktop copy never goes stale.
 #
 # Tests: SM_PHONE_DIR replaces ~/SpokenMargins-phone, SM_PHONE_ICLOUD the iCloud Drive folder,
 # SM_PHONE_NOW the clock; scripts/tests put a fake xcrun on PATH.
 set -u
 
 phone_dir="${SM_PHONE_DIR:-$HOME/SpokenMargins-phone}"
+# scripts/phone-build keeps main's installer in the phone folder. A copy that differs, like the one on the
+# Desktop, runs that one instead: an old Desktop copy kept installing a 4-day-old daily pin (#2782).
+current="$phone_dir/install-phone-build.command"
+if [[ -z "${SM_PHONE_INSTALLER_CURRENT:-}" && -f "$current" && "${0:A}" != "${current:A}" ]] \
+    && ! /usr/bin/cmp -s "${0:A}" "$current"; then
+  export SM_PHONE_INSTALLER_CURRENT=1
+  exec /bin/zsh "$current" "$@"
+fi
 latest="$phone_dir/latest"
 pinned=""
 if [[ -L "$phone_dir/daily-ready" && -f "$phone_dir/daily-ready/build.json" ]]; then
@@ -120,11 +131,11 @@ sha=$(/usr/bin/plutil -extract sha raw -o - "$latest/build.json" 2>/dev/null)
 built=$(/usr/bin/plutil -extract built_at raw -o - "$latest/build.json" 2>/dev/null)
 [[ "$sha" == [0-9a-f]* && ${#sha} -eq 40 ]] || stop "The newest build's build.json has no commit. Make a fresh build with scripts/phone-build."
 # First line: "same" when installed.txt names this build, else "new". Then the lines to show.
-build_status=$(/usr/bin/python3 - "$phone_dir" "$sha" "$built" <<'PY'
+build_status=$(/usr/bin/python3 - "$phone_dir" "$sha" "$built" "$pinned" <<'PY'
 import datetime, json, os, re, sys
 from pathlib import Path
 
-phone, sha, built = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+phone, sha, built, pinned = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
 # Tests pin the clock with SM_PHONE_NOW (an ISO local time), so "today" and "yesterday" don't depend on when they run.
 now = datetime.datetime.fromisoformat(os.environ['SM_PHONE_NOW']) if os.environ.get('SM_PHONE_NOW') else datetime.datetime.now()
 
@@ -160,21 +171,52 @@ if progress is None:
     if attempt.get('sha') and attempt['sha'] != sha and result.startswith('failed'):
         at = parse(attempt.get('at'))
         progress = (f'The newest attempt, commit {attempt["sha"][:7]}, failed{" " + when(at) if at else ""}: '
-                    f'{result[len("failed"):].lstrip(": ")}. The next change on next gets a fresh try.')
+                    f'{result[len("failed"):].lstrip(": ")}. The next change on main gets a fresh try.')
+
+# How far this build is behind main, and why (#2782): "newest" used to mean only "newest in this folder", so a
+# stale folder looked current. scripts/phone-build writes trunk.json every time it looks at main.
+at = parse(built)
+try:
+    trunk = json.loads((phone / 'trunk.json').read_text())
+except (OSError, ValueError):
+    trunk = None
+behind = note = None
+if not isinstance(trunk, dict) or not re.fullmatch(r'[0-9a-f]{40}', str(trunk.get('sha', ''))):
+    note = ("This Mac has no record of main's newest commit yet, so I can't tell how far behind main this build "
+            'is. scripts/phone-build writes one each time it runs.')
+else:
+    checked = parse(trunk.get('checked_at'))
+    if trunk['sha'] != sha:
+        merged = parse(trunk.get('committed_at'))
+        days = int((merged - at).total_seconds() // 86400) if merged and at and merged > at else 0
+        gap = (f'This build is {days} day{"" if days == 1 else "s"} behind main' if days else
+               "This build is not main's newest commit")
+        why = (trunk.get('problem') or
+               ('it is the daily pass, which stays until it is a day old so its test plan matches the app'
+                if pinned == 'yes' else
+                'the next phone build will pick main up (hosted builds come twice a day)'))
+        behind = (f'{gap}: main is at commit {trunk["sha"][:7]}'
+                  f'{", merged " + when(merged) if merged else ""}. Why: {why}.')
+    if checked and now - checked > datetime.timedelta(hours=3):
+        note = (f'The phone-build job last looked at main {when(checked)}, so it may have stopped. '
+                'Its log is ~/SpokenMargins-phone/launchd.log.')
 
 try:
     words = (phone / 'installed.txt').read_text().split()
 except OSError:
     words = []
-at = parse(built)
 print('same' if words and words[0] == sha else 'new')
 print(f'Newest build: commit {sha[:7]}, built {when(at) if at else "at an unknown time"}.')
+for line in (behind, note):
+    if line:
+        print(line)
 if words and words[0] == sha:
     at = parse(words[1] if len(words) > 1 else None)
     name = ' '.join(words[2:]) or 'Your iPhone'
     print(f'{name} already has this build: commit {sha[:7]}, installed {when(at) if at else "earlier"}.')
-    print(progress or 'No newer build yet. One starts within about 10 minutes of a change landing on next, '
-          'and a Mac notification says when it is ready.')
+    if progress or not behind:
+        print(progress or 'No newer build yet. A hosted one comes twice a day once a change lands on main, '
+              'and a Mac notification says when it is ready.')
 else:
     if words and re.fullmatch(r'[0-9a-f]{7,40}', words[0]):
         at = parse(words[1] if len(words) > 1 else None)
@@ -252,7 +294,8 @@ fi
 
 print -r -- "$sha $(date '+%Y-%m-%dT%H:%M:%S') $name" > "$phone_dir/installed.txt"
 print -r -- ""
-print -r -- "Done: $name now runs commit ${sha[1,7]}. Opening the test plan."
+print -r -- "Done: $name now runs commit ${sha[1,7]}. In the app, Settings shows the version ending in · ${sha[1,7]}."
+print -r -- "Opening the test plan."
 
 # The phone reads the plan from iCloud Drive (Files app > iCloud Drive > Spoken Margins test plans).
 # Only "Test plan <commit>.md" files are ours; anything else in the folder is left alone.
