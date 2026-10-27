@@ -1526,7 +1526,7 @@ final class Gate1AppModel: ObservableObject {
             }
             if let store {
                 selectedItem = try loadItemDetail(id: activeItemId, store: store)
-                try refreshLibraryRows(store: store)
+                refreshLibraryRowsInBackground(mustPublish: true) // #2505
             }
             reflectTextAudioPrewarmStatusIfActive(itemId: activeItemId)
             screen = .playback
@@ -1947,7 +1947,7 @@ final class Gate1AppModel: ObservableObject {
             try prepareSourceMediaPlayback(itemId: session.itemId)
             snapshot = try applyPreferredPlaybackRate(to: inspected, engine: engine)
             selectedItem = try loadItemDetail(id: session.itemId, store: store)
-            try refreshLibraryRows(store: store)
+            refreshLibraryRowsInBackground(mustPublish: true) // #2505
             screen = .playback
             reportSuccess("Opened session at \(session.completionPercent)% complete.")
         } catch {
@@ -1991,7 +1991,7 @@ final class Gate1AppModel: ObservableObject {
                 snapshot = try engine.playSourceFromBeginning()
             }
             selectedItem = try loadItemDetail(id: session.itemId, store: store)
-            try refreshLibraryRows(store: store)
+            refreshLibraryRowsInBackground(mustPublish: true) // #2505
             screen = .playback
             reportSuccess(completion >= 100
                 ? "Opened completed session. Use Play from Beginning to restart."

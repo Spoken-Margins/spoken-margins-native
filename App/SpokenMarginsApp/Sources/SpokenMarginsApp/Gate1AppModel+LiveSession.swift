@@ -60,9 +60,10 @@ extension Gate1AppModel {
         }
         // The session stays in the session store as saved, so a late copy of one of its Margins is still known (#2487).
         await LiveSessionFileWorker.shared.markSaved(sessionId: session.id, itemId: itemId)
-        libraryItems = try loadLibraryRows(store: store)
+        // Nothing below reads the rows back, so the Library and the item are read off the main thread (#2505).
+        try await reloadLibraryRowsOffMain(store: store)
         refreshMarginRowsInBackground(forItem: itemId)
-        selectedItem = try loadItemDetail(id: itemId, store: store)
+        selectedItem = try await loadItemDetailOffMain(id: itemId, store: store)
         activeItemId = itemId
         screen = .item
         reportConfirmation("Saved \(title) with \(placed.count) Margin\(placed.count == 1 ? "" : "s").")
