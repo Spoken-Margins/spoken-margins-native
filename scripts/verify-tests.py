@@ -791,6 +791,7 @@ SUPERTONIC_MODEL_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
     'SupertonicChunkingTests/testNumberHeavyTableSpanRendersNoChunkNearTheBabbleLength',
     'SupertonicChunkingTests/testSystemVoiceReadsAFlaggedChunkInSupertonicsFormat',
     'SupertonicDownloadedModelTests/testThePinnedTreeHashIsTheDownloadedModels',
+    'SupertonicNarrationTests/testARealRenderChargesItsCPUToTheSharedBudget',
     'SupertonicNarrationTests/testDiscardDeletesOnlyAudioTheRendererGenerated',
     'SupertonicNarrationTests/testRealRenderComesBackTrimmedToItsSpeech',
     'SupertonicNarrationTests/testRealRendersArePacedByWhoAskedNotBySharedState',

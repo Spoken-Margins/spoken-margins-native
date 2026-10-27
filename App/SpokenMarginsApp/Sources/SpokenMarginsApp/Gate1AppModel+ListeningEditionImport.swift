@@ -43,7 +43,7 @@ extension Gate1AppModel {
             return (try? requireStore().loadItem(id: edition.itemID)) == nil ? .none : .identical
         }, importOne: { edition in
             try saveListeningEdition(edition, replaceMap: false)
-            scheduleTextAudioPrewarmIfNeeded(itemId: edition.itemID)
+            schedulePrewarmAfterPreparedTextChange(itemId: edition.itemID)
         })
     }
 
@@ -124,7 +124,7 @@ extension Gate1AppModel {
         libraryItems = try loadLibraryRows(store: store)
         refreshSelectedItem()
         screen = .item
-        scheduleTextAudioPrewarmIfNeeded(itemId: edition.itemID)
+        schedulePrewarmAfterPreparedTextChange(itemId: edition.itemID)
         reportConfirmation("Imported item and Listening Map. Audio prepares separately; playback has not started.")
     }
 

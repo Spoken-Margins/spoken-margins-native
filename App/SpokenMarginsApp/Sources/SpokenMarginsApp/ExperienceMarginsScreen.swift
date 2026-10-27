@@ -77,10 +77,10 @@ struct ExperienceMarginsScreen: View {
                 }
             }
             .task {
-                model.refreshMarginRows()
+                await model.refreshMarginRowsAsync() // off the main thread (#2505)
                 loadCollections()
             }
-            .refreshable { model.refreshMarginRows() }
+            .refreshable { await model.refreshMarginRowsAsync() }
             .scrollDismissesKeyboard(.interactively)
             .sheet(item: $selectedMargin) { row in
                 ExperienceMarginDetailView(row: row).environmentObject(model)

@@ -23,6 +23,7 @@ final class SpokenMarginsAppDelegate: NSObject, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = ListeningReadyNotifications.shared
+        DevicePowerSource.app.startMonitoring() // charging lengthens the render-ahead window (#2703)
         #if canImport(BackgroundTasks)
         AudioPreparationBackgroundController.shared.register()
         FollowedSourceBackgroundRefreshController.shared.register()

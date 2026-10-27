@@ -649,7 +649,10 @@ final class SupertonicSpeechTests: XCTestCase {
         let fallback = RecordingFallbackAudioClient()
         fallback.playError = NSError(domain: "test", code: 1)
         let renderer = CountingAudioSupertonicRenderer(templateURL: template)
-        let client = stallClient(log, template: template, plays: false, playsFromStart: 3, fallback: fallback, renderer: renderer)
+        let players = StartedPlayers()
+        let client = stallClient(
+            log, template: template, plays: false, playsFromStart: 3, onStart: { players.record($0) },
+            fallback: fallback, renderer: renderer)
         _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
         try client.play(targetId: "tap", from: 0)
         for _ in 0..<150 where !log.values.contains("supertonic.stall_paused") { try await Task.sleep(for: .milliseconds(20)) }
@@ -672,7 +675,10 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(rendersAfterTap, rendersBeforeTap, "the failed hand-over kept the chunk: the tap replays it, not renders it again")
         XCTAssertFalse(client.isSystemVoiceActive, "the tap goes back to the chosen voice, not to the voice that just failed")
         let before = client.currentCharOffset() ?? 0
-        try await Task.sleep(for: .milliseconds(900))
+        // #2747: wait for the new player's own clock to pass 0.2 s, not a fixed 900 ms: a volume-0 player on a loaded
+        // hosted Mac can be slow to begin (#2731). The claim stays: the client's place follows that clock forward.
+        let tapPlayer = try XCTUnwrap(players.started(3), "the tap started a player")
+        await waitUntilClockPasses(tapPlayer, seconds: 0.2)
         XCTAssertEqual(client.playbackTransportState(targetId: "tap"), .playing)
         XCTAssertGreaterThan(client.currentCharOffset() ?? 0, before, "and its clock advances")
         XCTAssertEqual(log.values.filter { $0.hasPrefix("supertonic.stall") }.count, 4, "no new stall: \(log.values)")
@@ -1116,17 +1122,31 @@ final class SupertonicSpeechTests: XCTestCase {
         let template = try makeTestWAV(duration: 3)
         defer { try? FileManager.default.removeItem(at: template) }
         let log = StallEventLog()
-        let client = stallClient(log, template: template, plays: false, playsFromStart: 2)
+        let players = StartedPlayers()
+        let client = stallClient(log, template: template, plays: false, playsFromStart: 2, onStart: { players.record($0) })
         let switcher = ItemSwitch()
         switcher.client = client
+        // #2747: the test waits on the client's own signals, not a fixed 300 ms: the stale stall's handling has
+        // finished, and the new item's player has been asked to play. Whether AVFoundation then begins output in time
+        // on a loaded hosted Mac is not this test's claim (#2731); that the stale stall left the player alone is.
+        let staleStallHandled = expectation(description: "the stall sampled before the switch was handled")
+        staleStallHandled.assertForOverFulfill = false
         client.debugStallWillBeHandled = { switcher.run() }
+        client.debugStallWasHandled = { if switcher.didRun { staleStallHandled.fulfill() } }
+        let secondStart = players.expectation(forStart: 2)
         _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
         try client.play(targetId: "first", from: 0)
-        for _ in 0..<150 where log.startCount < 2 { try await Task.sleep(for: .milliseconds(20)) }
-        try await Task.sleep(for: .milliseconds(300))
+        await fulfillment(of: [staleStallHandled, secondStart], timeout: 5)
+        let second = try XCTUnwrap(players.started(2), "the new item started a player")
+        await waitUntilAskedToPlay(second)
         XCTAssertEqual(log.startCount, 2, "the new item started once and was never re-seated: \(log.values)")
         XCTAssertFalse(log.values.contains { $0.hasPrefix("supertonic.stall") }, "\(log.values)")
-        XCTAssertEqual(client.playbackTransportState(targetId: "second"), .playing)
+        XCTAssertEqual(client.debugActiveAudioState().targetId, "second", "the new item's player is the one playing")
+        XCTAssertFalse(client.isSystemVoiceActive, "the new item was not handed to the iOS voice")
+        let state = client.playbackTransportState(targetId: "second")
+        XCTAssertTrue(state == .playing || state == .waiting, "the control still shows Pause: \(String(describing: state))")
+        XCTAssertGreaterThan(second.rate, 0, "the new item's player is still asked to play")
+        XCTAssertNotEqual(second.timeControlStatus, .paused, "and nothing paused it")
         try client.stop()
     }
 
@@ -2151,6 +2171,8 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertGreaterThan(harness.playingChunkStart, chunk[1], "narration moved on past B")
         XCTAssertEqual(harness.renderer.startedCount, 2, "Supertonic renders nothing after the gap")
         XCTAssertTrue(harness.systemVoice.playedOffsets.isEmpty)
+        // #2695: Kitten renders beside Supertonic's queue, so that queue being idle frees nothing for the Library.
+        XCTAssertFalse(harness.client.canYieldRendererToLibrary, "no Library Supertonic render beside the stand-in")
     }
 
     // The same failed hand-over on a phone that may not render with Supertonic (hot, or Low Power Mode): the bundled
@@ -3179,6 +3201,76 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(renders, 2, "at critical heat the window is 60 s: the playing chunk and one ahead")
         XCTAssertLessThanOrEqual(renders, 6, "the playing chunk and about 300 s of listening ahead, not the whole item")
         XCTAssertTrue(last.isRestingAhead, "the rest is reported, so the app doesn't call it a slow render")
+    }
+
+    /// #2695 review: the client told the governor "live needs audio" only when a chunk finished, so after a background
+    /// seek to an unrendered spot the governor still held the last chunk's "plenty ahead", and the seek's first render
+    /// waited on a full CPU budget: silence, then a hand-over at the seam. The governor now reads the client's buffer
+    /// at each check. The seek's render is held in flight here, so no chunk end can refresh anything.
+    func testABackgroundSeekToAnUnrenderedSpotSkipsAFullCPUBudget() async throws {
+        final class Clock: @unchecked Sendable { var now: TimeInterval = 0; var cpu: TimeInterval = 0 }
+        let clock = Clock()
+        let governor = OnDeviceVoiceGovernor(
+            conditions: { SpeechEngineConditions(thermal: .fair) },
+            now: { clock.now }, cpuTime: { clock.cpu }, sleep: { clock.now += $0 })
+        governor.setAppBackgrounded(true)
+        _ = governor.measureInference { clock.cpu += OnDeviceCPUBudget.backgroundLimit } // a full budget
+
+        let template = FileManager.default.temporaryDirectory
+            .appending(path: "budget-seek-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: template) }
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1))
+        let frames = AVAudioFrameCount(8_000 * 100)
+        let silence = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
+        silence.frameLength = frames
+        do {
+            let file = try AVAudioFile(forWriting: template, settings: format.settings)
+            try file.write(from: silence)
+        }
+
+        let renderer = HoldableAudioSupertonicRenderer(templateURL: template)
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false,
+            onDeviceRenderingAllowed: { true },
+            renderAheadWindow: { 300 },
+            governor: governor
+        )
+        let text = (1...30).map { "Sentence \($0) carries enough words to make a chunk of its own for the planner here." }
+            .joined(separator: " ")
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "budget-seek")
+
+        // Wait for the chain to rest with listening rendered ahead.
+        let deadline = ContinuousClock.now + .seconds(10)
+        var lastCount = -1
+        var steadySince = ContinuousClock.now
+        while ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+            let count = await renderer.renderCount
+            if count != lastCount {
+                lastCount = count
+                steadySince = ContinuousClock.now
+            } else if ContinuousClock.now - steadySince > .seconds(1) {
+                break
+            }
+        }
+        XCTAssertGreaterThanOrEqual(client.liveNarrationBuffer().listeningAhead, OnDeviceCPUBudget.liveReserve,
+                                    "precondition: render-ahead rests with plenty waiting")
+        XCTAssertNotNil(governor.budgetStart(for: .whenAppBackgrounded), "precondition: the full budget holds render-ahead")
+
+        await renderer.holdFromNow()
+        let seekOffset = try XCTUnwrap(text.range(of: "Sentence 25 ")).lowerBound.utf16Offset(in: text)
+        try client.play(targetId: "budget-seek", seekingTo: seekOffset)
+
+        XCTAssertTrue(client.liveNarrationBuffer().needsAudio, "nothing is rendered at the new spot")
+        XCTAssertTrue(governor.liveNarrationNeedsAudio, "the governor sees the seek with no chunk having finished")
+        XCTAssertNil(governor.budgetStart(for: .whenAppBackgrounded), "the seek's render starts without a budget wait")
+        XCTAssertNotNil(governor.budgetStart(for: .always), "Library work still waits on the full budget")
+        try client.stop()
+        await renderer.release()
     }
 
     private func renderAhead(
@@ -5554,6 +5646,55 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
     }
 }
 
+/// Renders a copy of a template file, until `holdFromNow()`: from then each render waits until `release()` or its
+/// task is cancelled, so a test can look at the client while a render is in flight and no chunk has finished.
+private actor HoldableAudioSupertonicRenderer: SupertonicRendering {
+    let templateURL: URL
+    private(set) var renderCount = 0
+    private var holding = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var generatedURLs: Set<URL> = []
+
+    init(templateURL: URL) {
+        self.templateURL = templateURL
+    }
+
+    func holdFromNow() { holding = true }
+
+    func release() {
+        holding = false
+        waiters.forEach { $0.resume() }
+        waiters.removeAll()
+    }
+
+    func render(
+        text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int
+    ) async throws -> SupertonicNarrationResult {
+        renderCount += 1
+        if holding {
+            await withCheckedContinuation { waiters.append($0) }
+            throw CancellationError()
+        }
+        let url = FileManager.default.temporaryDirectory.appending(path: "holdable-render-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: templateURL, to: url)
+        generatedURLs.insert(url)
+        let audio = try AVAudioFile(forReading: url)
+        return SupertonicNarrationResult(
+            audioURL: url,
+            duration: Double(audio.length) / audio.processingFormat.sampleRate,
+            sampleRate: Int(audio.processingFormat.sampleRate.rounded()),
+            renderDuration: 0.01,
+            sessionLoadCount: 1
+        )
+    }
+
+    func discardGeneratedAudio(at url: URL) async {
+        if generatedURLs.remove(url) != nil {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+}
+
 /// A bundled-voice stand-in: each render copies a template file and reports it as the bundled voice's. One render
 /// waits on a gate the test controls, so a chunk can be in flight at the moment a play releases the voice (#849 audit).
 private actor GatedBundledVoiceRenderer: BundledVoiceRendering {
@@ -5864,6 +6005,7 @@ private final class ItemSwitch: @unchecked Sendable {
     weak var client: SupertonicSpeechPlaybackClient?
     private let lock = NSLock()
     private var done = false
+    var didRun: Bool { lock.withLock { done } }
 
     func run() {
         let first = lock.withLock { () -> Bool in defer { done = true }; return !done }
@@ -5871,6 +6013,86 @@ private final class ItemSwitch: @unchecked Sendable {
         try? client.stop()
         _ = try? client.prepareSpeechText("A different article starts playing here instead.")
         try? client.play(targetId: "second", from: 0)
+    }
+}
+
+/// Hands the test each player the client starts, so it can wait on that player's own notices instead of a fixed
+/// sleep (#2747). A start is recorded before the starter asks the player to play.
+private final class StartedPlayers: @unchecked Sendable {
+    private let lock = NSLock()
+    private var players: [AVPlayer] = []
+    private var waiters: [Int: XCTestExpectation] = [:]
+
+    func record(_ player: AVPlayer) {
+        let due = lock.withLock { () -> XCTestExpectation? in
+            players.append(player)
+            return waiters.removeValue(forKey: players.count)
+        }
+        due?.fulfill()
+    }
+
+    /// The `n`th player started, counting from 1.
+    func started(_ n: Int) -> AVPlayer? { lock.withLock { players.count >= n ? players[n - 1] : nil } }
+
+    /// Fulfilled once the `n`th player has started.
+    func expectation(forStart n: Int) -> XCTestExpectation {
+        let started = XCTestExpectation(description: "player \(n) started")
+        let already = lock.withLock { () -> Bool in
+            if players.count >= n { return true }
+            waiters[n] = started
+            return false
+        }
+        if already { started.fulfill() }
+        return started
+    }
+}
+
+/// Watches one player for a test. Not main-actor isolated, so AVFoundation may call its handlers from any thread.
+private final class PlayerObservation: @unchecked Sendable {
+    private var observation: NSKeyValueObservation?
+    private var token: Any?
+    private weak var player: AVPlayer?
+
+    /// Fulfils `asked` once the player's rate is above zero: the starter's `playImmediately` sets it at once.
+    init(rateOf player: AVPlayer, fulfilling asked: XCTestExpectation) {
+        self.player = player
+        observation = player.observe(\.rate, options: [.initial, .new]) { player, _ in
+            if player.rate > 0 { asked.fulfill() }
+        }
+    }
+
+    /// Fulfils `passed` once the player's own clock passes `seconds`.
+    init(clockOf player: AVPlayer, passing seconds: TimeInterval, fulfilling passed: XCTestExpectation) {
+        self.player = player
+        token = player.addBoundaryTimeObserver(
+            forTimes: [NSValue(time: CMTime(seconds: seconds, preferredTimescale: 600))], queue: .main
+        ) { passed.fulfill() }
+        if player.currentTime().seconds >= seconds { passed.fulfill() }
+    }
+
+    func end() {
+        observation?.invalidate()
+        if let token { player?.removeTimeObserver(token) }
+    }
+}
+
+extension SupertonicSpeechTests {
+    /// Waits for the starter's `playImmediately`, which sets the player's rate at once, whatever AVFoundation's load.
+    fileprivate func waitUntilAskedToPlay(_ player: AVPlayer) async {
+        let asked = expectation(description: "the player was asked to play")
+        asked.assertForOverFulfill = false
+        let watch = PlayerObservation(rateOf: player, fulfilling: asked)
+        await fulfillment(of: [asked], timeout: 5)
+        watch.end()
+    }
+
+    /// Waits for the player's own clock to pass `seconds`, as AVFoundation's boundary observer reports it.
+    fileprivate func waitUntilClockPasses(_ player: AVPlayer, seconds: TimeInterval) async {
+        let passed = expectation(description: "the player's clock passed \(seconds) s")
+        passed.assertForOverFulfill = false
+        let watch = PlayerObservation(clockOf: player, passing: seconds, fulfilling: passed)
+        await fulfillment(of: [passed], timeout: 5)
+        watch.end()
     }
 }
 

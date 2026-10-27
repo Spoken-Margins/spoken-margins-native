@@ -19,6 +19,14 @@ extension Gate1AppModel {
         diagnostics["followedPublisherAudio"] = "\(itemId ?? "not_imported"): \(outcome ?? "no_lookup"); record=\(saved ? "saved" : "none")"
     }
 
+    /// For callers that just changed the item's prepared text (a Listening Map applied, an edition imported). A
+    /// not-ready startup job queued for the old text left its retry cooldown running (#2653); the new text's job is
+    /// not that job, so the cooldown must not hold it back (#2692).
+    func schedulePrewarmAfterPreparedTextChange(itemId: String) {
+        startupAudioPreparationCooldown.clear(Self.startupAudioCooldownKeys([itemId]))
+        scheduleTextAudioPrewarmIfNeeded(itemId: itemId)
+    }
+
     func scheduleTextAudioPrewarmIfNeeded(itemId: String) {
         guard !playsPublisherAudio(itemId: itemId) else { return }
         prewarmTextAudioForOnDeviceVoice(itemId: itemId)

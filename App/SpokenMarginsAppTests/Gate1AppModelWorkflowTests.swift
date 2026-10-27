@@ -1894,6 +1894,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             model.finishInterjection()
         }
         XCTAssertFalse(model.snapshot.isRecording)
+        // The Margins list refreshes the playing item's rows off the main thread (#2505).
+        await model.settleMarginRows()
         let saved = try XCTUnwrap(store.loadInterjections(sessionId: aSessionID).first)
         XCTAssertEqual(saved.itemId, "item-pill")
         XCTAssertEqual(saved.sessionId, aSessionID)
@@ -3747,6 +3749,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         try await waitFor("local summary failure") {
             model.diagnostics["lastSummaryMode"] == "apple_foundation_failed"
         }
+        // The controls read the job table off the main thread, once per session state (#2508).
+        await model.settleSummaryRecords()
         XCTAssertFalse(model.isSummarizingInterjections)
         XCTAssertTrue(model.canSummarizeInterjections)
         XCTAssertTrue(model.canRetryLocalSummary)
@@ -3790,12 +3794,15 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         try await waitFor("first local summary completion") {
             model.selectedItem.turns.filter { $0.turnType == "interjection_summary" && $0.status == "complete" }.count == 1
         }
+        // The controls read the job table off the main thread, once per session state (#2508).
+        await model.settleSummaryRecords()
 
         XCTAssertFalse(model.isSummarizingInterjections)
         XCTAssertFalse(model.canSummarizeInterjections)
 
         model.dispatchGate2CompactCommand(.beginInterjection)
         model.dispatchGate2CompactCommand(.finishInterjection)
+        await model.settleSummaryRecords()
 
         XCTAssertTrue(model.canSummarizeInterjections)
         XCTAssertFalse(model.isSummarizingInterjections)
@@ -3808,9 +3815,11 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
                     && $0.sourceInterjectionIds.count == 2
             }
         }
+        await model.settleSummaryRecords()
         XCTAssertFalse(model.isSummarizingInterjections)
 
         model.snapshot.targetType = TargetType.summaryTurnTTS.rawValue
+        await model.settleSummaryRecords()
         XCTAssertFalse(model.isSummarizingInterjections)
     }
 

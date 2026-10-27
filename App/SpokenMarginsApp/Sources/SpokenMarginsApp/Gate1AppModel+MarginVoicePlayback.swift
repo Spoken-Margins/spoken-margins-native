@@ -169,6 +169,7 @@ extension Gate1AppModel {
     func markSharedMarginHeard(_ margin: ImportedCommentaryInterjection) {
         guard margin.isNewToListener, let heard = try? store?.markImportedCommentaryInterjectionHeard(id: margin.id, at: Date()) else { return }
         selectedItem.importedCommentaryInterjections = SharedMarginHearing.replacing(heard, in: selectedItem.importedCommentaryInterjections)
+        noteMarginRowsChanged(forItem: sharedMarginRows.first { $0.interjection.id == heard.id }?.layer.itemId)
         sharedMarginRows = sharedMarginRows.map { $0.interjection.id == heard.id ? SharedMarginRow(interjection: heard, layer: $0.layer, itemTitle: $0.itemTitle, placement: $0.placement) : $0 }
     }
 
