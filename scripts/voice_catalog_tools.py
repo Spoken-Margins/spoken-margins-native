@@ -311,8 +311,14 @@ def fixture_catalogs() -> dict[str, dict]:
     older = _fixture_voice()
     older.update({"id": "fixture-voice-older", "version": "0.5", "status": "superseded", "supersededBy": "fixture-voice"})
     future = _fixture_voice()
-    future.update({"id": "fixture-future-runtime", "runtime": {"name": "coreml", "version": "9.0"}})
+    future.update({"id": "fixture-future-runtime", "runtime": {"name": "tflite", "version": "9.0"}})
+    # The Neural Engine runtimes (#2700), each with the A14 floor. A build from before them leaves both out.
+    coreml = _fixture_voice()
+    coreml.update({"id": "fixture-coreml", "runtime": {"name": "coreml", "version": "9.0"}, "minimumChip": "A14"})
+    phonon = _fixture_voice()
+    phonon.update({"id": "fixture-phonon", "runtime": {"name": "phonon-ptts", "version": "0.1.0"}, "minimumChip": "A14"})
     return {
+        "new-runtimes": _catalog(6, valid_voices + [coreml, phonon]),
         "valid": _catalog(3, valid_voices),
         "withdrawn": _catalog(4, valid_voices + [old, older]),
         "unknown-runtime": _catalog(3, valid_voices + [future]),

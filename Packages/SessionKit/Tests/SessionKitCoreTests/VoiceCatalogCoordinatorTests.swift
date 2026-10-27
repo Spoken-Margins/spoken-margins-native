@@ -34,11 +34,12 @@ final class VoiceCatalogCoordinatorTests: XCTestCase {
     // MARK: Fixtures
 
     private func entry(id: String = "neural-1", version: String = "3cadd1e+int8-2026-05-11", status: VoiceModelStatus = .available,
-                       memory: Int = 1_024, restricted: Bool = true, licenseText: String = "a") -> VoiceModelEntry {
+                       memory: Int = 1_024, restricted: Bool = true, licenseText: String = "a",
+                       runtime: String = "onnxruntime", minimumChip: String? = nil) -> VoiceModelEntry {
         VoiceModelEntry(
             id: id, displayName: "Neural One", publisher: "Example Voices", version: version,
-            runtime: VoiceModelRuntime(name: "onnxruntime", version: "1.24.2"), minimumIOSVersion: "26.0",
-            minimumMemoryMegabytes: memory, status: status, supersededBy: status == .superseded ? "neural-2" : nil,
+            runtime: VoiceModelRuntime(name: runtime, version: "1.24.2"), minimumIOSVersion: "26.0",
+            minimumMemoryMegabytes: memory, minimumChip: minimumChip, status: status, supersededBy: status == .superseded ? "neural-2" : nil,
             files: files.keys.sorted().map { path in
                 VoiceModelFile(path: path, byteCount: files[path]!.count, sha256: Self.sha256(files[path]!),
                                sources: ["https://voices.example/\(id)/\(path)"], licenseId: "model")
@@ -79,6 +80,8 @@ final class VoiceCatalogCoordinatorTests: XCTestCase {
         transport: VoiceModelTransport? = nil,
         decompressor: any VoiceModelArchiveDecompressor = BZip2ArchiveDecompressor(),
         memory: Int = 8_192,
+        deviceChip: Int? = nil,
+        preparers: VoiceModelPreparers = .standard,
         availableBytes: Int64? = nil
     ) throws -> VoiceCatalogCoordinator {
         let served = served ?? Dictionary(uniqueKeysWithValues: files.map { ("https://voices.example/neural-1/\($0.key)", $0.value) })
@@ -89,6 +92,8 @@ final class VoiceCatalogCoordinatorTests: XCTestCase {
                 trustedKeys: [VoiceCatalogTrustedKey(keyId: "test", publicKey: key.publicKey.rawRepresentation)],
                 playableVoiceIds: playable,
                 physicalMemoryMegabytes: memory,
+                deviceChipGeneration: deviceChip,
+                preparers: preparers,
                 bundledSnapshot: try snapshotData ?? snapshot.map { try catalogData(voices: $0) }
             ),
             fetcher: fetcher,
@@ -509,9 +514,247 @@ final class VoiceCatalogCoordinatorTests: XCTestCase {
         return out + Data(count: 1_024)
     }
 
+
+    // MARK: Neural Engine voices (#2700)
+
+    func testAVoiceWithAChipFloorIsOfferedOnlyOnDevicesAtOrAboveIt() async throws {
+        let floored = entry(restricted: false, runtime: "coreml", minimumChip: "A14")
+        for (chip, offered) in [(13, false), (14, true), (19, true)] {
+            let voices = try coordinator(snapshot: [floored, kitten], deviceChip: chip)
+            let rows = await voices.rows()
+            XCTAssertEqual(rows.map(\.id), offered ? ["neural-1", "kitten"] : ["kitten"], "A\(chip)")
+        }
+        let unknown = try coordinator(snapshot: [floored, kitten], deviceChip: nil)
+        let unknownRows = await unknown.rows()
+        XCTAssertEqual(unknownRows.map(\.id), ["kitten"], "an unknown device is never offered a floored voice")
+        let plain = try coordinator(snapshot: [entry(restricted: false), kitten], deviceChip: nil)
+        let plainRows = await plain.rows()
+        XCTAssertEqual(plainRows.map(\.id), ["neural-1", "kitten"], "no floor: offered as before")
+    }
+
+    func testAnInstalledVoiceBelowItsFloorStaysListedSoItCanBeRemoved() async throws {
+        let floored = entry(restricted: false, runtime: "coreml", minimumChip: "A14")
+        let first = try coordinator(snapshot: [floored], deviceChip: 14)
+        try await first.install(voiceId: "neural-1")
+        // The same files on a device the floor turns away (a restored backup, say).
+        let lower = try coordinator(snapshot: [floored], deviceChip: 13)
+        let rows = await lower.rows()
+        XCTAssertEqual(rows.map(\.id), ["neural-1"])
+        XCTAssertEqual(rows.first?.isOffered, false)
+        XCTAssertEqual(rows.first?.unusableHere, .chipBelowFloor, "#2735 review: it won't read here, so it isn't told it keeps working")
+        XCTAssertFalse(rows.first?.installedButNotOfferedNote?.contains("keeps working") ?? true)
+        let firstRows = await first.rows()
+        XCTAssertNil(firstRows.first?.unusableHere)
+        try await lower.remove(voiceId: "neural-1")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appending(path: "Voices/neural-1").path))
+    }
+
+    func testPreparationRunsOnceOnTheCheckedFilesAndItsOutputIsInstalledAndRemoved() async throws {
+        let preparer = CompilingPreparer()
+        let voices = try coordinator(
+            snapshot: [entry(restricted: false, runtime: "coreml")],
+            preparers: VoiceModelPreparers.standard.registering(preparer, forRuntime: "coreml")
+        )
+        let phases = PhaseLog()
+        let folder = try await voices.install(voiceId: "neural-1", progress: { phases.append($0.phase) })
+
+        XCTAssertEqual(preparer.calls, 1)
+        XCTAssertEqual(preparer.sawFiles, ["onnx/model.onnx", "voice_styles/F1.json"], "prepared after every file was in place")
+        XCTAssertEqual(try Data(contentsOf: folder.appending(path: "compiled/model.mlmodelc/weights.bin")), CompilingPreparer.output)
+        XCTAssertEqual(phases.values.last, .preparing)
+        XCTAssertEqual(phases.values.filter { $0 == .preparing }.count, 1)
+        XCTAssertFalse(phases.values.dropLast().contains(.preparing), "preparing comes after the download, never in the middle")
+
+        let rows = await voices.rows()
+        let expectedBytes = Int64(files.values.reduce(0) { $0 + $1.count } + CompilingPreparer.output.count)
+        XCTAssertEqual(rows.first?.state, .installed(version: "3cadd1e_int8-2026-05-11", byteCount: expectedBytes),
+                       "Settings counts the prepared files too")
+        let ledger = try store.loadOwnedOfflineAssets().first { $0.id == "voice-model-neural-1" }
+        XCTAssertEqual(ledger?.byteCount, expectedBytes)
+
+        try await voices.remove(voiceId: "neural-1")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appending(path: "Voices/neural-1").path),
+                       "Remove deletes the whole voice folder, prepared files included")
+    }
+
+    func testAFailedPreparationLeavesTheVoiceUninstalledAndTheRetryDoesNotDownloadAgain() async throws {
+        let preparer = CompilingPreparer(failuresBeforeSuccess: 1)
+        let served = Dictionary(uniqueKeysWithValues: files.map { ("https://voices.example/neural-1/\($0.key)", $0.value) })
+        let transport = RecordingTransport(files: served)
+        let voices = try coordinator(
+            snapshot: [entry(restricted: false, runtime: "coreml")],
+            transport: transport,
+            preparers: VoiceModelPreparers.standard.registering(preparer, forRuntime: "coreml")
+        )
+        do {
+            try await voices.install(voiceId: "neural-1")
+            XCTFail("installed although preparation failed")
+        } catch let error as VoiceCatalogCoordinatorError {
+            guard case .install(.preparationFailed) = error else { return XCTFail("\(error)") }
+            XCTAssertEqual(error.errorDescription, "The voice downloaded but couldn't be prepared. Try again; it won't download again.")
+        }
+        let afterFailure = await voices.rows()
+        XCTAssertEqual(afterFailure.first?.state, .notInstalled)
+        XCTAssertEqual(transport.requested.count, 2)
+
+        let folder = try await voices.install(voiceId: "neural-1")
+        XCTAssertEqual(transport.requested.count, 2, "the checked files stayed staged")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appending(path: "compiled/model.mlmodelc/weights.bin").path))
+        XCTAssertEqual(preparer.calls, 2)
+    }
+
+    func testAnONNXVoiceIsNotPreparedAndNeverReportsPreparing() async throws {
+        let voices = try coordinator(snapshot: [entry(restricted: false)])
+        let phases = PhaseLog()
+        try await voices.install(voiceId: "neural-1", progress: { phases.append($0.phase) })
+        XCTAssertFalse(phases.values.isEmpty)
+        XCTAssertFalse(phases.values.contains(.preparing))
+        XCTAssertFalse(VoiceModelPreparers.standard.preparer(forRuntime: "onnxruntime").needsPreparation)
+    }
+
+    /// #2704: the shipped snapshot's Phonon entry verifies, is offered on an A14 and not on an A13, and downloads
+    /// as one zip plus its licence texts.
+    func testTheShippedSnapshotsPhononEntryIsOfferedFromA14() async throws {
+        let snapshot = try TestInputs.data(.voiceCatalogSnapshot, "catalog-snapshot.json")
+        let catalog = try JSONDecoder().decode(VoiceModelCatalog.self, from: snapshot)
+        let phonon = try XCTUnwrap(catalog.voices.first { $0.id == PhononVoice.catalogId })
+        XCTAssertEqual(phonon.runtime.name, VoiceModelCatalogVerifier.phononRuntime)
+        XCTAssertEqual(phonon.archives.map(\.format), ["zip"])
+        XCTAssertEqual(phonon.files.filter { $0.archiveMember != nil }.count, 38)
+        XCTAssertTrue(PhononVoice.voiceNames.allSatisfy { name in phonon.files.contains { $0.path == "voices/\(name).safetensors" } })
+
+        for (chip, offered) in [(14, true), (13, false)] {
+            let voices = try coordinator(snapshotData: snapshot, playable: [PhononVoice.catalogId], memory: 4_096, deviceChip: chip)
+            let row = await voices.rows().first { $0.id == PhononVoice.catalogId }
+            XCTAssertEqual(row?.isOffered ?? false, offered, "A\(chip)")
+        }
+        let downloads = phonon.archives.reduce(0) { $0 + $1.byteCount }
+            + phonon.files.filter { !$0.sources.isEmpty }.reduce(0) { $0 + $1.byteCount }
+        XCTAssertEqual(phonon.downloadByteCount, downloads)
+    }
+
+    /// #2735 review: Core ML's compiled copy roughly doubles the voice on disk. A phone with room for the download
+    /// alone must be told before any byte moves, not fail at "couldn't be prepared" on every retry.
+    func testTheSpaceCheckCountsWhatPreparationWritesBesideTheDownload() async throws {
+        let download = Int64(files.values.reduce(0) { $0 + $1.count })
+        let roomForTheDownloadOnly = download + 1_000
+        let transport = RecordingTransport(files: Dictionary(uniqueKeysWithValues: files.map { ("https://voices.example/neural-1/\($0.key)", $0.value) }))
+        let compiled = try coordinator(
+            snapshot: [entry(restricted: false, runtime: "coreml")],
+            transport: transport,
+            preparers: VoiceModelPreparers.standard.registering(CompilingPreparer(), forRuntime: "coreml"),
+            availableBytes: roomForTheDownloadOnly
+        )
+        do {
+            try await compiled.install(voiceId: "neural-1")
+            XCTFail("a voice that needs a compiled copy passed the space check with room for the download only")
+        } catch let error as VoiceCatalogCoordinatorError {
+            guard case .install(.insufficientSpace(let needed, _)) = error else { return XCTFail("\(error)") }
+            XCTAssertEqual(needed, download * 2, "the download plus a full compiled copy (the margin is 0 here)")
+        }
+        XCTAssertTrue(transport.requested.isEmpty, "refused before any byte downloaded")
+
+        let plain = try coordinator(snapshot: [entry(restricted: false)], availableBytes: roomForTheDownloadOnly)
+        try await plain.install(voiceId: "neural-1")
+    }
+
+    /// #2735 review: a preparer that moves its output into place must not find the folder a failed attempt left.
+    func testAFailedPreparationLeavesNoFoldersThatBreakTheRetry() async throws {
+        let preparer = MovingPreparer(failuresBeforeSuccess: 1)
+        let voices = try coordinator(
+            snapshot: [entry(restricted: false, runtime: "coreml")],
+            preparers: VoiceModelPreparers.standard.registering(preparer, forRuntime: "coreml")
+        )
+        do {
+            try await voices.install(voiceId: "neural-1")
+            XCTFail("installed although preparation failed")
+        } catch let error as VoiceCatalogCoordinatorError {
+            guard case .install(.preparationFailed) = error else { return XCTFail("\(error)") }
+        }
+        let staging = root.appending(path: "Voices/.staging")
+        let leftovers = (FileManager.default.enumerator(atPath: staging.path)?.allObjects as? [String] ?? [])
+            .filter { $0.contains("compiled") }
+        XCTAssertEqual(leftovers, [], "the failed attempt's output folders are gone")
+
+        let folder = try await voices.install(voiceId: "neural-1")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appending(path: "compiled/model.mlmodelc/weights.bin").path))
+        XCTAssertEqual(preparer.calls, 2)
+    }
+
     private static func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
+}
+
+/// Stands in for Kokoro's `MLModel.compileModel`: writes a compiled folder next to the downloaded files.
+private final class CompilingPreparer: VoiceModelPreparing, @unchecked Sendable {
+    static let output = Data("compiled".utf8)
+    private let lock = NSLock()
+    private var failuresLeft: Int
+    private var count = 0
+    private var seen: [String] = []
+
+    init(failuresBeforeSuccess: Int = 0) { failuresLeft = failuresBeforeSuccess }
+
+    var calls: Int { lock.withLock { count } }
+    var sawFiles: [String] { lock.withLock { seen } }
+    var needsPreparation: Bool { true }
+
+    struct CompileFailed: Error {}
+
+    func prepare(stagedFolder: URL, entry: VoiceModelEntry) async throws {
+        let present = entry.files.map(\.path).filter { FileManager.default.fileExists(atPath: stagedFolder.appending(path: $0).path) }
+        let fail: Bool = lock.withLock {
+            count += 1
+            seen = present.sorted()
+            if failuresLeft > 0 { failuresLeft -= 1; return true }
+            return false
+        }
+        let target = stagedFolder.appending(path: "compiled/model.mlmodelc/weights.bin")
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Self.output.write(to: target)
+        if fail { throw CompileFailed() }
+    }
+}
+
+/// Compiles into a scratch folder and moves the result into place, as `MLModel.compileModel` callers do. A failed
+/// attempt leaves the target folder created and empty, the way an interrupted compile can.
+private final class MovingPreparer: VoiceModelPreparing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var failuresLeft: Int
+    private var count = 0
+
+    init(failuresBeforeSuccess: Int) { failuresLeft = failuresBeforeSuccess }
+
+    var calls: Int { lock.withLock { count } }
+    var needsPreparation: Bool { true }
+
+    struct CompileFailed: Error {}
+
+    func prepare(stagedFolder: URL, entry: VoiceModelEntry) async throws {
+        let fail: Bool = lock.withLock {
+            count += 1
+            if failuresLeft > 0 { failuresLeft -= 1; return true }
+            return false
+        }
+        let target = stagedFolder.appending(path: "compiled/model.mlmodelc", directoryHint: .isDirectory)
+        if fail {
+            try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+            throw CompileFailed()
+        }
+        let scratch = FileManager.default.temporaryDirectory.appending(path: "compile-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        try Data("compiled".utf8).write(to: scratch.appending(path: "weights.bin"))
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: scratch, to: target)
+    }
+}
+
+private final class PhaseLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var log: [VoiceModelInstallProgress.Phase] = []
+    func append(_ phase: VoiceModelInstallProgress.Phase) { lock.withLock { log.append(phase) } }
+    var values: [VoiceModelInstallProgress.Phase] { lock.withLock { log } }
 }
 
 private final class FixedFetcher: VoiceCatalogFetching, @unchecked Sendable {

@@ -26,6 +26,12 @@ struct OpenSourceLicensesView: View {
             subdirectory: "Kitten"
         ),
         Document(
+            title: "Kokoro voice runtime",
+            detail: "Apache-2.0 · runs the downloadable Kokoro voice",
+            resourceName: "Kokoro-NOTICES",
+            subdirectory: "Kokoro"
+        ),
+        Document(
             title: "CMU Pronouncing Dictionary",
             detail: "BSD-style · the backup voice's pronunciations",
             resourceName: "CMUdict-LICENSE",

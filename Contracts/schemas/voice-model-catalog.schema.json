@@ -53,12 +53,13 @@
           "required": ["name", "version"],
           "additionalProperties": false,
           "properties": {
-            "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}(?![\\s\\S])", "description": "Open on purpose. The app runs 'onnxruntime' today and skips voices for any other runtime."},
+            "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}(?![\\s\\S])", "description": "Open on purpose. The app runs 'onnxruntime', 'coreml' and 'phonon-ptts' (#2700) and skips voices for any other runtime; a build older than a runtime skips its voices."},
             "version": {"$ref": "#/$defs/text"}
           }
         },
         "minimumIOSVersion": {"$ref": "#/$defs/iosVersion"},
         "minimumMemoryMegabytes": {"type": "integer", "minimum": 1, "description": "The device's physical memory below which the voice is not offered."},
+        "minimumChip": {"type": "string", "pattern": "^A[1-9][0-9]{0,2}(?![\\s\\S])", "description": "The oldest Apple chip the voice is offered on, as 'A14' (#2700). Apple silicon counts as the A chip it grew from (M1 as A14). Absent: no floor. A build older than this field ignores it, so a floor is only used with a runtime such a build already skips."},
         "status": {"enum": ["available", "withdrawn", "superseded"]},
         "supersededBy": {"$ref": "#/$defs/id", "description": "Required when status is 'superseded', and never the voice itself."},
         "bundled": {"type": "boolean", "description": "True when the voice ships inside the app (Kitten), so its licence shows without a download. A bundled voice may list no files."},

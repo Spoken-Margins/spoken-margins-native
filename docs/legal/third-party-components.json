@@ -328,6 +328,44 @@
       "tracks": {}
     },
     {
+      "id": "xn-ptts",
+      "name": "Gradium ptts (PhononTTS Swift package and its compiled PhononCore)",
+      "version": "0.4.2",
+      "license": "MIT OR Apache-2.0 (used under Apache-2.0)",
+      "distribution": "bundled",
+      "by": "Gradium",
+      "source": "https://github.com/gradium-ai/xn-ptts",
+      "paths": [
+        "project.yml",
+        "scripts/phonon-core-source-check.sh"
+      ],
+      "licenseFiles": [
+        "Contracts/voice-models/licenses/xn-ptts-apache-2-0.txt"
+      ],
+      "note": "Runs the downloadable Phonon voice (#2704). Swift Package Manager fetches tag v0.4.2 (cc0c32bc), whose manifest pins Gradium's compiled PhononCore.xcframework.zip by SHA-256. The Rust core links about 150 crates on iOS, all MIT, Apache-2.0, BSD, ISC, Zlib, Unicode-3.0, Unlicense or BSL-1.0 (dual with Apache); none is GPL-family or MPL. scripts/phonon-core-source-check.sh builds the core from the tagged source and checks the release library links the same crates.",
+      "tracks": {
+        "swiftPackage": "xn-ptts"
+      }
+    },
+    {
+      "id": "phonon-31m-model",
+      "name": "Phonon 31M (English) Core ML bundle and voices",
+      "license": "Apache-2.0; Mimi codec credited under CC-BY-4.0",
+      "distribution": "downloaded",
+      "by": "Gradium; Mimi codec by Kyutai",
+      "source": "https://github.com/gradium-ai/xn-ptts/releases/tag/v0.4.2",
+      "paths": [
+        "Contracts/voice-models/content/phonon-31m-en"
+      ],
+      "licenseFiles": [
+        "Contracts/voice-models/licenses/xn-ptts-apache-2-0.txt",
+        "Contracts/voice-models/licenses/cc-by-4-0.txt",
+        "Contracts/voice-models/content/phonon-31m-en/licenses/NOTICE.txt"
+      ],
+      "note": "Downloaded, not in the app or this repository: Settings › Voices takes 38 files from Gradium's phonon-31m-en-coreml.zip release asset, pinned by sha256 in Contracts/voice-models/sources.json. Exported from gradium/phonon-31m-en and gradium/phonon-voices (Apache-2.0). No 40M (CC BY-NC) file is used.",
+      "tracks": {}
+    },
+    {
       "id": "starter-catalog",
       "name": "Starter podcast catalog and recorded feed heads",
       "license": "Not licensed by this project: each publisher's rights apply",
@@ -391,6 +429,98 @@
           "research/C1/mac/Package.swift",
           "research/B4/server/go.mod"
         ]
+      }
+    },
+    {
+      "id": "kokoro-coreml",
+      "name": "kokoro-coreml (its KokoroPipeline Swift library)",
+      "version": "e8bf3d4e80d7dd30ed58e343c1527fad09cc9d1f",
+      "license": "Apache-2.0",
+      "distribution": "bundled",
+      "by": "Matt Mireles",
+      "source": "https://github.com/mattmireles/kokoro-coreml",
+      "paths": [
+        "App/SpokenMarginsApp/Resources/Kokoro"
+      ],
+      "licenseFiles": [
+        "App/SpokenMarginsApp/Resources/Kokoro/Kokoro-NOTICES.txt",
+        "Contracts/voice-models/licenses/apache-2-0.txt"
+      ],
+      "note": "Runs the downloadable Kokoro voice's Core ML stages on the Neural Engine and CPU (#2705). Only the KokoroPipeline product is linked; the text front end reads misaki's gold and silver dictionaries first (hexgrad, Apache-2.0, downloaded with the voice) and falls back to the bundled Kitten voice's, respelled with misaki's espeak table.",
+      "tracks": {
+        "swiftPackage": "kokoro-coreml"
+      }
+    },
+    {
+      "id": "kokoro-82m",
+      "name": "Kokoro-82M voice (Core ML build) and its 28 English voices",
+      "version": "HF mattmireles/kokoro-coreml@0c1d78b47d19f39be6bc0cf0d07316822ae879d4",
+      "license": "Apache-2.0",
+      "distribution": "downloaded",
+      "by": "hexgrad (Core ML build by Matt Mireles)",
+      "source": "https://huggingface.co/mattmireles/kokoro-coreml",
+      "paths": [],
+      "licenseFiles": [
+        "Contracts/voice-models/content/kokoro-82m/licenses/NOTICE.txt",
+        "Contracts/voice-models/licenses/apache-2-0.txt"
+      ],
+      "note": "Downloaded from Settings › Voices, each file pinned by SHA-256 (about 402 MB). It includes misaki's us_gold.json and us_silver.json (hexgrad, Apache-2.0, github.com/hexgrad/misaki commit e820629b), pinned by hash. The NOTICE carries the Kokoro card's CC BY training-data credit (Koniwa tnc, CC BY 3.0; SIWIS, CC BY 4.0).",
+      "tracks": {}
+    },
+    {
+      "id": "misakiswift",
+      "name": "MisakiSwift",
+      "license": "Apache-2.0",
+      "distribution": "tool",
+      "by": "Matt Mireles",
+      "source": "https://github.com/mattmireles/MisakiSwift",
+      "paths": [],
+      "licenseUrl": "https://github.com/mattmireles/MisakiSwift",
+      "note": "Resolved by SwiftPM only because kokoro-coreml's manifest names it for its KokoroTTS product, which Spoken Margins does not link. Never built into or shipped with the app (#2705).",
+      "tracks": {
+        "swiftPackage": "misakiswift"
+      }
+    },
+    {
+      "id": "mlx-swift",
+      "name": "MLX Swift",
+      "license": "MIT",
+      "distribution": "tool",
+      "by": "Apple Inc.",
+      "source": "https://github.com/ml-explore/mlx-swift",
+      "paths": [],
+      "licenseUrl": "https://github.com/ml-explore/mlx-swift",
+      "note": "Resolved by SwiftPM only because kokoro-coreml's manifest names it for its KokoroTTS product, which Spoken Margins does not link. Never built into or shipped with the app (#2705).",
+      "tracks": {
+        "swiftPackage": "mlx-swift"
+      }
+    },
+    {
+      "id": "mlxutilslibrary",
+      "name": "MLXUtilsLibrary",
+      "license": "Apache-2.0",
+      "distribution": "tool",
+      "by": "mlalma",
+      "source": "https://github.com/mlalma/MLXUtilsLibrary",
+      "paths": [],
+      "licenseUrl": "https://github.com/mlalma/MLXUtilsLibrary",
+      "note": "Resolved by SwiftPM only because kokoro-coreml's manifest names it for its KokoroTTS product, which Spoken Margins does not link. Never built into or shipped with the app (#2705).",
+      "tracks": {
+        "swiftPackage": "mlxutilslibrary"
+      }
+    },
+    {
+      "id": "swift-numerics",
+      "name": "Swift Numerics",
+      "license": "Apache-2.0",
+      "distribution": "tool",
+      "by": "Apple Inc.",
+      "source": "https://github.com/apple/swift-numerics",
+      "paths": [],
+      "licenseUrl": "https://github.com/apple/swift-numerics",
+      "note": "Resolved by SwiftPM only because kokoro-coreml's manifest names it for its KokoroTTS product, which Spoken Margins does not link. Never built into or shipped with the app (#2705).",
+      "tracks": {
+        "swiftPackage": "swift-numerics"
       }
     }
   ]

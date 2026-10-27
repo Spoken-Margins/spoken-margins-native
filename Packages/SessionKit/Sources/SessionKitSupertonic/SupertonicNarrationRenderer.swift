@@ -80,7 +80,7 @@ public struct SupertonicNarrationResult: Equatable, Sendable {
         sampleRate: Int,
         renderDuration: TimeInterval,
         sessionLoadCount: Int,
-        engine: String = SupertonicNarrationResult.supertonicEngine,
+        engine: String,
         trimmedSilence: TimeInterval = 0
     ) {
         self.audioURL = audioURL
@@ -260,6 +260,7 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
                                 sampleRate: sampleRate,
                                 renderDuration: Date().timeIntervalSince(startedAt),
                                 sessionLoadCount: sessionLoadCount,
+                                engine: SupertonicNarrationResult.supertonicEngine,
                                 trimmedSilence: trimmedSilence
                             ))
                         } catch {

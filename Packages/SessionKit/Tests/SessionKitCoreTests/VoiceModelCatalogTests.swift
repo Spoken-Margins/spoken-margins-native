@@ -217,7 +217,51 @@ final class VoiceModelCatalogTests: XCTestCase {
     func testVoiceForARuntimeThisBuildCannotRunIsLeftOutAndTheRestStay() throws {
         let catalog = try verify("envelope-unknown-runtime.json")
         XCTAssertEqual(catalog.voices.map(\.id), ["fixture-bundled", "fixture-voice"])
-        XCTAssertEqual(catalog.rejected, [RejectedVoiceEntry(id: "fixture-future-runtime", reason: .unknownRuntime("coreml"))])
+        XCTAssertEqual(catalog.rejected, [RejectedVoiceEntry(id: "fixture-future-runtime", reason: .unknownRuntime("tflite"))])
+    }
+
+    func testCoreMLAndPhononVoicesAreAcceptedWithTheirChipFloor() throws {
+        // #2700: Kokoro runs on Core ML and Phonon through ptts; this build runs both.
+        let catalog = try verify("envelope-new-runtimes.json")
+        XCTAssertEqual(catalog.voices.map(\.id), ["fixture-bundled", "fixture-voice", "fixture-coreml", "fixture-phonon"])
+        XCTAssertEqual(catalog.rejected, [])
+        XCTAssertEqual(catalog.voice(id: "fixture-coreml")?.runtime.name, VoiceModelCatalogVerifier.coreMLRuntime)
+        XCTAssertEqual(catalog.voice(id: "fixture-phonon")?.runtime.name, VoiceModelCatalogVerifier.phononRuntime)
+        XCTAssertEqual(catalog.voice(id: "fixture-coreml")?.minimumChip, "A14")
+        XCTAssertNil(catalog.voice(id: "fixture-voice")?.minimumChip, "an entry without a floor keeps none")
+    }
+
+    func testABuildFromBeforeTheNewRuntimesLeavesThemOutAndKeepsTheRest() throws {
+        // What Build 34 does with this catalog: its supported runtimes are only ONNX Runtime, and its decoder
+        // reads fields by name, so `minimumChip` is ignored and the two new voices are left out by runtime.
+        let catalog = try VoiceModelCatalogVerifier.verify(
+            envelopeData: fixture("envelope-new-runtimes.json"), trustedKeys: trustedKeys(), supportedRuntimes: ["onnxruntime"]
+        )
+        XCTAssertEqual(catalog.voices.map(\.id), ["fixture-bundled", "fixture-voice"])
+        XCTAssertEqual(catalog.rejected, [
+            RejectedVoiceEntry(id: "fixture-coreml", reason: .unknownRuntime("coreml")),
+            RejectedVoiceEntry(id: "fixture-phonon", reason: .unknownRuntime("phonon-ptts")),
+        ])
+    }
+
+    func testAnEntryWithAFieldThisBuildDoesNotKnowStillDecodes() throws {
+        // The forward-compatibility the floor relies on: a later field never makes an older reader drop a voice.
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture("catalog-valid.json")) as? [String: Any])
+        var voices = try XCTUnwrap(object["voices"] as? [[String: Any]])
+        voices[1]["someLaterField"] = ["nested": true]
+        object["voices"] = voices
+        let catalog = try VoiceModelCatalog.decode(JSONSerialization.data(withJSONObject: object))
+        XCTAssertEqual(catalog.voices.map(\.id), ["fixture-bundled", "fixture-voice"])
+        XCTAssertEqual(catalog.rejected, [])
+    }
+
+    func testAChipFloorRoundTripsAndIsOmittedWhenAbsent() throws {
+        let valid = try VoiceModelCatalog.decode(fixture("catalog-valid.json"))
+        var entry = try XCTUnwrap(valid.voices.first { $0.id == "fixture-voice" })
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(entry), as: UTF8.self).contains("minimumChip"))
+        entry.minimumChip = "A14"
+        let decoded = try JSONDecoder().decode(VoiceModelEntry.self, from: JSONEncoder().encode(entry))
+        XCTAssertEqual(decoded.minimumChip, "A14")
     }
 
     func testEntryThatCannotBeReadIsLeftOutAndTheRestStay() throws {
@@ -284,6 +328,9 @@ final class VoiceModelCatalogTests: XCTestCase {
             ("bad iOS version", { $0.minimumIOSVersion = "26.x" }, .invalidField("minimumIOSVersion")),
             ("blank name", { $0.displayName = " " }, .invalidField("displayName")),
             ("other runtime", { $0.runtime.name = "tflite" }, .unknownRuntime("tflite")),
+            ("chip floor named as Apple silicon", { $0.minimumChip = "M1" }, .invalidField("minimumChip")),
+            ("chip floor in lowercase", { $0.minimumChip = "a14" }, .invalidField("minimumChip")),
+            ("empty chip floor", { $0.minimumChip = "" }, .invalidField("minimumChip")),
         ]
         for (label, edit, expected) in cases {
             var broken = downloadable
@@ -387,7 +434,7 @@ final class VoiceModelCatalogTests: XCTestCase {
 
     func testFieldRulesAgreeWithTheNeighbouringInputTable() throws {
         struct Row: Decodable { var value: String; var valid: Bool; var why: String }
-        struct Table: Decodable { var sha256: [Row]; var httpsURL: [Row]; var filePath: [Row]; var id: [Row]; var spdxId: [Row]; var runtimeName: [Row] }
+        struct Table: Decodable { var sha256: [Row]; var httpsURL: [Row]; var filePath: [Row]; var id: [Row]; var spdxId: [Row]; var runtimeName: [Row]; var minimumChip: [Row] }
         let table = try JSONDecoder().decode(Table.self, from: fixture("neighbour-inputs.json"))
         let rules: [(String, [Row], (String) -> Bool)] = [
             ("sha256", table.sha256, VoiceModelCatalogRules.isLowercaseSHA256),
@@ -396,6 +443,7 @@ final class VoiceModelCatalogTests: XCTestCase {
             ("id", table.id, VoiceModelCatalogRules.isVoiceID),
             ("spdxId", table.spdxId, VoiceModelCatalogRules.isSPDXId),
             ("runtimeName", table.runtimeName, VoiceModelCatalogRules.isRuntimeName),
+            ("minimumChip", table.minimumChip, { VoiceDeviceFloor.generation(ofCatalogChip: $0) != nil }),
         ]
         for (name, rows, rule) in rules {
             XCTAssertGreaterThanOrEqual(rows.count, 6, name)
