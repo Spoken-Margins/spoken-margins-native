@@ -11,15 +11,22 @@ import SessionKitSupertonic
 /// What a downloaded voice's own slice supplies. Until a slice registers one, its voice is not offered anywhere:
 /// not in Settings › Voices, not in the App Voice picker, and never built into the player.
 struct DownloadedVoiceRegistration: Sendable {
-    /// Builds the voice's renderer. `installedFolder` finds the voice's folder on the phone now (nil after a Remove),
+    /// Builds the voice's renderer to read with `speaker`, the descriptor's, so the voice it reads is the voice its
+    /// saved audio is filed under. `installedFolder` finds the voice's folder on the phone now (nil after a Remove),
     /// so the renderer follows the files as Supertonic's does. Every result it returns must carry
     /// `DownloadedVoiceDescriptor.engine`, or its chunks are filed as stand-ins.
-    let makeRenderer: @Sendable (_ installedFolder: @escaping @Sendable () -> URL?) -> any SupertonicRendering
+    let makeRenderer: @Sendable (_ speaker: String, _ installedFolder: @escaping @Sendable () -> URL?) -> any SupertonicRendering
     /// The one-time preparation after download (Core ML compile), or nil when the runtime needs none.
     let preparer: (any VoiceModelPreparing)?
 }
 
 /// One downloaded voice: its catalog id, its stored choice, and how its saved audio is identified.
+///
+/// A voice's identity is spelled out once, in its SessionKit signature (`PhononRenderSignature`,
+/// `KokoroRenderSignature`), which already names the engine, the model files, the speaker's own file, the synthesis
+/// settings, and the text and cutting versions its renderer uses. The descriptor only passes it the catalog entry and
+/// `speaker`, and the renderer is built with the same `speaker` (#2762 audit: a fixed "en" speaker here, beside a
+/// renderer reading Alfie, would have let a change of default voice reuse the old voice's chunks).
 struct DownloadedVoiceDescriptor: Sendable {
     let voiceId: String
     let choice: ReadingVoiceChoice
@@ -27,19 +34,24 @@ struct DownloadedVoiceDescriptor: Sendable {
     let runtime: String
     /// The engine name its renderer stamps on every result and its saved audio is filed under. Never "supertonic".
     let engine: String
-    /// The voice inside the model.
+    /// The voice inside the model that the renderer reads with and the identity names.
     let speaker: String
-    /// The text front end's version; bump it when the renderer's text handling changes the audio.
-    let normalizationVersion: String
+    /// The voice's own saved-audio identity for `entry` read by `speaker`; nil when the entry doesn't list that voice.
+    let identity: @Sendable (_ entry: VoiceModelEntry, _ speaker: String) -> TTSRenderSignature?
     let registration: DownloadedVoiceRegistration?
 
     var isAvailable: Bool { registration != nil }
 
-    /// The identity of this voice's saved audio, from its catalog entry (#64).
-    func signature(entry: VoiceModelEntry) -> TTSRenderSignature {
-        DownloadedVoiceRenderIdentity.make(
-            engine: engine, entry: entry, speaker: speaker, normalizationVersion: normalizationVersion
-        )
+    /// The identity of this voice's saved audio, from its catalog entry (#64). Throws rather than file audio under an
+    /// identity that doesn't name this voice's engine or speaker.
+    func signature(entry: VoiceModelEntry) throws -> TTSRenderSignature {
+        guard let signature = identity(entry, speaker) else {
+            throw OnDeviceVoiceEngines.Failure.noIdentity(voiceId: voiceId, speaker: speaker)
+        }
+        guard signature.engine == engine else {
+            throw OnDeviceVoiceEngines.Failure.engineMismatch(voiceId: voiceId, identity: signature.engine, renderer: engine)
+        }
+        return signature
     }
 }
 
@@ -101,7 +113,7 @@ enum VoiceSignatureSource: Sendable {
             return try SupertonicRenderIdentity.current(voice: voice)
         case .downloaded(let descriptor, let entry):
             guard let entry = entry() else { throw OnDeviceVoiceEngines.Failure.notInCatalog(descriptor.voiceId) }
-            return descriptor.signature(entry: entry)
+            return try descriptor.signature(entry: entry)
         case .unregistered(let voiceId):
             throw OnDeviceVoiceEngines.Failure.notRegistered(voiceId)
         }
@@ -125,6 +137,10 @@ enum OnDeviceVoiceEngines {
         case notInCatalog(String)
         /// The stored choice is a downloaded voice whose slice hasn't registered a renderer in this build.
         case notRegistered(String)
+        /// The catalog entry doesn't list the voice's speaker, so its audio has no identity.
+        case noIdentity(voiceId: String, speaker: String)
+        /// The identity names another engine than the renderer stamps, so its chunks would never match.
+        case engineMismatch(voiceId: String, identity: String, renderer: String)
     }
 
     /// The engine for `selection`. James, Lily and Kitten get exactly what the player had before #2700: Supertonic's
@@ -176,7 +192,7 @@ enum OnDeviceVoiceEngines {
             VoiceCatalogCoordinator.installedFolder(voiceId: voiceId, supportDirectory: supportDirectory)
         }
         return OnDeviceVoiceEngine(
-            renderer: registration.makeRenderer(installedFolder),
+            renderer: registration.makeRenderer(descriptor.speaker, installedFolder),
             signature: .downloaded(descriptor, entry: catalogEntry),
             renderingAllowed: {
                 guard let entry = catalogEntry(),

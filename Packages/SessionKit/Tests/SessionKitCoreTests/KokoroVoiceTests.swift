@@ -112,6 +112,27 @@ final class KokoroVoiceTests: XCTestCase {
         XCTAssertGreaterThan(KokoroBucketPlanner(speed: 2).characterBudget, KokoroBucketPlanner(speed: 1).characterBudget)
     }
 
+    /// #2762 audit: a piece too long for one inference that `halve` can't cut (one word, such as a 40-character hash
+    /// read letter by letter) was dropped without a word. `split` cuts it by characters, as the renderer does until
+    /// each piece fits, and every character is still spoken, in order.
+    func testOneWordTooLongForAnInferenceIsCutByCharactersNotDropped() throws {
+        let planner = KokoroBucketPlanner()
+        let hash = "067df7e02fae35c05b26bdeea63a2bc8d4e1f9a0"
+        var queue = [KokoroBucketPlanner.Piece(text: hash, seamAfter: .sentence)]
+        var spoken: [KokoroBucketPlanner.Piece] = []
+        while !queue.isEmpty {
+            let piece = queue.removeFirst()
+            if piece.text.count <= 6 { spoken.append(piece); continue } // stands in for "fits the duration model"
+            queue.insert(contentsOf: try XCTUnwrap(planner.split(piece), piece.text), at: 0)
+        }
+        XCTAssertEqual(spoken.map(\.text).joined(), hash, "nothing is dropped and the order is kept")
+        XCTAssertGreaterThan(spoken.count, 1)
+        XCTAssertEqual(spoken.last?.seamAfter, .sentence, "the last piece keeps the original seam")
+        XCTAssertEqual(planner.split(.init(text: "one two three, four", seamAfter: .sentence)),
+                       planner.halve(.init(text: "one two three, four", seamAfter: .sentence)), "words are cut as before")
+        XCTAssertNil(planner.split(.init(text: "x", seamAfter: .sentence)), "only one character can't be cut")
+    }
+
     func testAnOverflowedPieceHalvesAtTheNearestClause() throws {
         let planner = KokoroBucketPlanner()
         let halves = try XCTUnwrap(planner.halve(.init(text: "one two three, four five six seven", seamAfter: .sentence)))

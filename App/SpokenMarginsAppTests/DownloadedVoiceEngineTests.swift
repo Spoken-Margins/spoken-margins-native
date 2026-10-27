@@ -46,6 +46,29 @@ final class DownloadedVoiceEngineTests: XCTestCase {
         try client.stop()
     }
 
+    /// #2762 audit: the render-headroom memory filed every chunk whose engine wasn't Supertonic's as a stand-in, so a
+    /// downloaded voice's own headroom was never found for it (its resume mark always fell back to half the window),
+    /// and Kitten, after a heat hand-over, read the downloaded voice's headroom as its own.
+    func testADownloadedVoicesRenderHeadroomIsKeptAsItsOwnNotAStandIns() async throws {
+        let renderer = StampedVoiceRenderer(engine: "phonon", templateURL: try makeTestWAV(duration: 2))
+        let ready = expectation(description: "generation ready")
+        ready.assertForOverFulfill = false
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            onGenerationStateChange: { state, _ in if state == .ready { ready.fulfill() } }
+        )
+        _ = try client.prepareSpeechText("A short sentence that the downloaded voice reads in about two seconds.")
+        try client.play(targetId: "headroom-item", from: 0)
+        await fulfillment(of: [ready], timeout: 60)
+        let renders = await renderer.renderCount
+        XCTAssertGreaterThan(renders, 0)
+        XCTAssertNotNil(client.debugRenderHeadroom(isStandIn: false), "the chosen voice's headroom is kept as its own")
+        XCTAssertNil(client.debugRenderHeadroom(isStandIn: true), "and never as a stand-in's")
+        try client.stop()
+    }
+
     /// #2744 review: audio saved earlier by a downloaded voice and replayed (the prepared-chunk path) was stamped as
     /// Supertonic's, so against the voice's own engine it counted as a stand-in and blocked assembly. Nothing renders
     /// here: every chunk is a replay.
@@ -155,16 +178,17 @@ final class DownloadedVoiceEngineTests: XCTestCase {
 
     // MARK: The engine factory
 
-    private func descriptor(registered: Bool = true) -> DownloadedVoiceDescriptor {
+    private func descriptor(registered: Bool = true, engine: String = "kokoro") -> DownloadedVoiceDescriptor {
         DownloadedVoiceDescriptor(
             voiceId: ReadingVoiceChoice.kokoroVoiceId, choice: .kokoro, runtime: VoiceModelCatalogVerifier.coreMLRuntime,
-            engine: "kokoro", speaker: "af_heart", normalizationVersion: "test.v1",
+            engine: engine, speaker: "af_heart",
+            identity: { entry, speaker in KokoroRenderSignature.make(voice: speaker, entry: entry) },
             registration: registered ? registration : nil
         )
     }
 
     private var registration: DownloadedVoiceRegistration {
-        DownloadedVoiceRegistration(makeRenderer: { _ in StampedVoiceRenderer(engine: "kokoro", templateURL: URL(fileURLWithPath: "/dev/null")) }, preparer: nil)
+        DownloadedVoiceRegistration(makeRenderer: { _, _ in StampedVoiceRenderer(engine: "kokoro", templateURL: URL(fileURLWithPath: "/dev/null")) }, preparer: nil)
     }
 
     private let entry = VoiceModelEntry(
@@ -172,7 +196,9 @@ final class DownloadedVoiceEngineTests: XCTestCase {
         runtime: VoiceModelRuntime(name: "coreml", version: "1"), minimumIOSVersion: "26.0",
         minimumMemoryMegabytes: 4_096, minimumChip: "A14",
         files: [VoiceModelFile(path: "model.bin", byteCount: 1, sha256: String(repeating: "a", count: 64),
-                               sources: ["https://voices.example/model.bin"], licenseId: "m")],
+                               sources: ["https://voices.example/model.bin"], licenseId: "m"),
+                VoiceModelFile(path: "voices/af_heart.bin", byteCount: 1, sha256: String(repeating: "c", count: 64),
+                               sources: ["https://voices.example/af_heart.bin"], licenseId: "m")],
         licenses: [VoiceModelLicense(id: "m", name: "Apache 2.0", textURL: "https://voices.example/l",
                                      textSHA256: String(repeating: "b", count: 64), requiresAcceptance: false)]
     )
@@ -206,8 +232,51 @@ final class DownloadedVoiceEngineTests: XCTestCase {
         let made = engine(chip: 14, governor: true)
         let signature = try made.signature.make()
         XCTAssertEqual(signature.engine, made.renderer.engine, "otherwise its chunks are filed as stand-ins")
-        XCTAssertEqual(signature, DownloadedVoiceRenderIdentity.make(engine: "kokoro", entry: entry, speaker: "af_heart", normalizationVersion: "test.v1"))
+        XCTAssertEqual(signature, KokoroRenderSignature.make(voice: "af_heart", entry: entry))
         XCTAssertNotEqual(signature.engine, SupertonicNarrationResult.supertonicEngine)
+    }
+
+    /// An identity that names another engine than the descriptor's would never match its renderer's chunks: refused.
+    func testAnIdentityNamingAnotherEngineIsRefused() {
+        XCTAssertThrowsError(try descriptor(engine: "phonon").signature(entry: entry)) { error in
+            XCTAssertEqual(error as? OnDeviceVoiceEngines.Failure,
+                           .engineMismatch(voiceId: ReadingVoiceChoice.kokoroVoiceId, identity: "kokoro", renderer: "phonon"))
+        }
+    }
+
+    /// #2762 audit: Phonon's saved audio was filed under the speaker "en" while its renderer read Alfie, so a change
+    /// of default voice would have reused Alfie's chunks beside the new voice's in one item. Every registered voice's
+    /// renderer now reads the descriptor's speaker, its identity names that speaker's own file, and another speaker
+    /// gives another identity. Checked against the catalog the app ships, so a drift in any copy shows here.
+    func testEveryRegisteredVoiceIsFiledUnderTheSpeakerItsRendererReads() throws {
+        let registered = DownloadedVoiceRegistry.all.filter(\.isAvailable)
+        XCTAssertEqual(Set(registered.map(\.voiceId)), [ReadingVoiceChoice.phononVoiceId, ReadingVoiceChoice.kokoroVoiceId])
+        for descriptor in registered {
+            let entry = try XCTUnwrap(BundledVoiceCatalog.entry(voiceId: descriptor.voiceId), descriptor.voiceId)
+            let renderer = try XCTUnwrap(descriptor.registration).makeRenderer(descriptor.speaker, { nil })
+            XCTAssertEqual(renderer.engine, descriptor.engine, descriptor.voiceId)
+            let rendererSpeaker = (renderer as? PhononDownloadedVoiceRenderer)?.voiceName ?? (renderer as? KokoroDownloadedVoiceRenderer)?.voice
+            XCTAssertEqual(rendererSpeaker, descriptor.speaker, "the renderer reads the speaker the identity names: \(descriptor.voiceId)")
+
+            let signature = try descriptor.signature(entry: entry)
+            XCTAssertEqual(signature.engine, descriptor.engine, descriptor.voiceId)
+            let speakerFile = try XCTUnwrap(entry.files.first { $0.path.hasPrefix("voices/\(descriptor.speaker).") }, descriptor.voiceId)
+            XCTAssertEqual(signature.voiceStyleHash, speakerFile.sha256, "the identity names the speaker's own file: \(descriptor.voiceId)")
+
+            let other = try XCTUnwrap(entry.files.lazy.map(\.path).filter { $0.hasPrefix("voices/") }
+                .compactMap { $0.dropFirst("voices/".count).split(separator: ".").first.map(String.init) }
+                .first { $0 != descriptor.speaker }, descriptor.voiceId)
+            let otherSignature = try XCTUnwrap(descriptor.identity(entry, other), "\(descriptor.voiceId) \(other)")
+            XCTAssertNotEqual(otherSignature.digest, signature.digest, "another speaker is another identity: \(descriptor.voiceId)")
+        }
+    }
+
+    /// #2762 audit: Kokoro's cutting version (`KokoroBucketPlanner.version`) was not part of the identity the player
+    /// used, so a change to the cutting would have reused audio cut the old way.
+    func testKokorosSavedAudioIdentityCarriesItsCuttingVersion() throws {
+        let entry = try XCTUnwrap(BundledVoiceCatalog.entry(voiceId: ReadingVoiceChoice.kokoroVoiceId))
+        let signature = try KokoroVoiceEngine.descriptor.signature(entry: entry)
+        XCTAssertTrue(signature.chunkingVersion.contains(KokoroBucketPlanner.version), signature.chunkingVersion)
     }
 
     func testAVoiceWithNoRegisteredRendererIsNeitherDownloadableNorPickable() {

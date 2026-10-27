@@ -6,7 +6,7 @@ import SessionKitSupertonic
 enum PhononVoiceEngine {
     /// Phonon's player and its one-time Core ML compile, registered with the shared voice registry (#2744).
     static let registration: DownloadedVoiceRegistration? = DownloadedVoiceRegistration(
-        makeRenderer: { PhononDownloadedVoiceRenderer(installedFolder: $0) },
+        makeRenderer: { PhononDownloadedVoiceRenderer(voiceName: $0, installedFolder: $1) },
         preparer: PhononTTSEngine.preparation
     )
 
@@ -15,8 +15,8 @@ enum PhononVoiceEngine {
         choice: .phonon,
         runtime: VoiceModelCatalogVerifier.phononRuntime,
         engine: PhononVoice.engine,
-        speaker: "en",
-        normalizationVersion: "phonon-text.v1",
+        speaker: PhononVoice.defaultVoiceName,
+        identity: { entry, speaker in PhononRenderSignature.make(entry: entry, voice: speaker) },
         registration: registration
     )
 }
@@ -31,15 +31,18 @@ final class PhononDownloadedVoiceRenderer: SupertonicRendering, @unchecked Senda
         let renderer: PhononNarrationRenderer
     }
 
+    /// The voice it reads with: the descriptor's `speaker`, which its saved audio is filed under.
+    let voiceName: String
     private let installedFolder: @Sendable () -> URL?
     private let lock = NSLock()
     private var cached: Cached?
 
-    init(installedFolder: @escaping @Sendable () -> URL?) {
+    init(voiceName: String, installedFolder: @escaping @Sendable () -> URL?) {
+        self.voiceName = voiceName
         self.installedFolder = installedFolder
     }
 
-    var engine: String { PhononVoice.engine }
+    var engine: String { PhononNarrationRenderer.engine }
 
     func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
         let renderer = try currentRenderer()
@@ -59,6 +62,7 @@ final class PhononDownloadedVoiceRenderer: SupertonicRendering, @unchecked Senda
             if let previous { Task { await previous.unload() } }
             let renderer = try PhononNarrationRenderer(
                 location: PhononModelLocation(rootURL: folder),
+                voiceName: voiceName,
                 outputDirectory: FileManager.default.temporaryDirectory.appending(path: "PhononNarration", directoryHint: .isDirectory),
                 governor: .app,
                 load: PhononTTSEngine.load
