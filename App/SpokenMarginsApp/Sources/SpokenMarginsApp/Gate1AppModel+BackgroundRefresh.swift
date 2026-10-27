@@ -43,7 +43,7 @@ final class BackgroundRefreshGate {
 
     /// Whether a reload newer than this one has already published. It began after this one's caller wrote the
     /// database, so its rows include that write and this older read has nothing to add.
-    func newerLibraryPublished(than generation: Int) -> Bool { publishedLibraryGeneration > generation }
+    func newerLibraryPublished(than generation: Int) -> Bool { generation < publishedLibraryGeneration }
 
     /// The foreground return wants "your audio is ready" announced, and the episode-map check run, from whichever
     /// Library reload publishes next (`publishLibraryRead`), so a reload that overtakes the one that was asked hands
