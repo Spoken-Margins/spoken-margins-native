@@ -19,19 +19,20 @@ extension Gate1AppModel {
     }
 
     /// Reloads the Library rows off the main thread and publishes them, keeping the previous rows on screen until the
-    /// new ones arrive. A newer reload that started during the read wins and carries the publish obligation, so the
-    /// older answer is dropped. Returns whether this reload published. The read is `navigationLibraryRead`, so a test
-    /// can hold it open.
+    /// new ones arrive. A reload that started during the read (a tap's background reload or another import's) makes
+    /// this answer stale, so it is read again rather than dropped, and the third read publishes whatever moved
+    /// meanwhile, like a `mustPublish` tap (the database is the truth). Callers read the published rows after this
+    /// returns, so it never returns before they are on screen. The read is `navigationLibraryRead`, so a test can hold
+    /// it open. Returns whether this call published, which it always does unless the read throws.
     @discardableResult
     func reloadLibraryRowsOffMain(store: SQLiteSessionStore) async throws -> Bool {
-        let (generation, _) = backgroundRefresh.beginLibraryReload(mustPublish: true)
-        let data = try await navigationLibraryRead(store)
-        guard backgroundRefresh.isCurrentLibrary(generation) else {
-            await backgroundRefresh.settledLibrary() // the newer reload publishes; callers read the rows after this returns
-            return false
+        for attempt in 0..<3 {
+            let (generation, _) = backgroundRefresh.beginLibraryReload(mustPublish: true)
+            let data = try await navigationLibraryRead(store)
+            guard backgroundRefresh.isCurrentLibrary(generation) || attempt == 2 else { continue }
+            publishLibraryRead(data, store: store, publishLists: true)
+            return true
         }
-        publishLibrary(data)
-        backgroundRefresh.libraryWasPublished()
-        return true
+        return false
     }
 }

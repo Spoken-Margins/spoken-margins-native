@@ -36,8 +36,9 @@ final class BackgroundRefreshGate {
 
     func libraryWasPublished() { mustPublishPending = false }
 
-    /// The foreground return wants "your audio is ready" announced from whichever Library reload publishes next, so a
-    /// reload that overtakes the one that was asked hands the announcement on, like `mustPublish`.
+    /// The foreground return wants "your audio is ready" announced, and the episode-map check run, from whichever
+    /// Library reload publishes next (`publishLibraryRead`), so a reload that overtakes the one that was asked hands
+    /// both on, like `mustPublish`.
     func requestAnnouncement() { announcePending = true }
 
     /// True once per request, for the reload that just published.
@@ -135,13 +136,23 @@ extension Gate1AppModel {
                 let rowsMoved = self.libraryPresentationRevision != revision
                 let listsMoved = self.audioPreparationLists != listsBefore
                 if (rowsMoved || listsMoved) && !(publishRequired && attempt == 2) { continue }
-                self.publishLibrary(data)
-                self.backgroundRefresh.libraryWasPublished()
-                if !listsMoved { self.publishAudioPreparationPresentation(from: data, store: store) }
-                if self.backgroundRefresh.takeAnnouncement() { self.announcePreparedAudioIfNeeded() }
+                self.publishLibraryRead(data, store: store, publishLists: !listsMoved)
                 return
             }
         })
+    }
+
+    /// Publishes a Library read from either reload path (`refreshLibraryRowsInBackground`, `reloadLibraryRowsOffMain`),
+    /// with what the foreground return asked of the next publish: the Preparing Audio lists, the "audio is ready" notice
+    /// and the automatic episode-map check, which walks the rows just published.
+    func publishLibraryRead(_ data: LibraryReadSnapshot, store: SQLiteSessionStore, publishLists: Bool) {
+        publishLibrary(data)
+        backgroundRefresh.libraryWasPublished()
+        if publishLists { publishAudioPreparationPresentation(from: data, store: store) }
+        if backgroundRefresh.takeAnnouncement() {
+            announcePreparedAudioIfNeeded()
+            submitAutomaticEpisodeMapPreparationIfNeeded()
+        }
     }
 
     /// The Preparing Audio lists from the Library read just published, so the reload costs the main thread no second

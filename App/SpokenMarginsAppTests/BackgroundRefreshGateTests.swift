@@ -240,6 +240,43 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertFalse(gate.takeAnnouncement(), "and only once")
     }
 
+    /// A file or link import that reloads the Library off the main thread cancels the foreground return's reload; the
+    /// reload that publishes instead must carry what the foreground asked of it (#2774 audit).
+    func testAnImportReloadThatOvertakesTheForegroundReloadCarriesItsFollowUps() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let store = try XCTUnwrap(model.store)
+        model.backgroundRefresh.requestAnnouncement()
+
+        let published = try await model.reloadLibraryRowsOffMain(store: store)
+
+        XCTAssertTrue(published)
+        XCTAssertFalse(model.backgroundRefresh.takeAnnouncement(), "the publishing reload took the foreground's announcement and episode-map check")
+    }
+
+    /// Two imports reloading at once: the overtaken one reads again and publishes before it returns, so what it
+    /// reports ("Added <title>", read off the rows) finds its row. It never returns early with the rows unpublished.
+    func testAnOffMainReloadOvertakenByAnotherOneStillPublishesBeforeItReturns() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let store = try XCTUnwrap(model.store)
+        let held = HeldReads()
+        holdReads(held, on: model)
+        var started = held.started.stream.makeAsyncIterator()
+        model.libraryItems = sentinelRows()
+
+        let first = Task { @MainActor in try await model.reloadLibraryRowsOffMain(store: store) }
+        await started.next()
+        let second = Task { @MainActor in try await model.reloadLibraryRowsOffMain(store: store) }
+        await started.next()
+        held.releaseAll() // the first read is now older than the second reload, which has not published
+        let firstPublished = try await first.value
+        XCTAssertTrue(firstPublished, "the overtaken reload reads again and publishes before it returns")
+        XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"), "the rows are on screen when the first call returns")
+        _ = try await second.value
+        XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"))
+    }
+
     func testSavingALiveSessionReadsTheLibraryAndItemOffTheMainThread() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
