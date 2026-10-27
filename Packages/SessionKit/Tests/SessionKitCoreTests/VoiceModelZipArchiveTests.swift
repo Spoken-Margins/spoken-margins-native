@@ -183,31 +183,52 @@ final class VoiceModelZipArchiveTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("phonon-31m-en/0.4.2").path))
     }
 
-    /// Gradium's own zip, when a local copy is named by `SM_PHONON_BUNDLE_ZIP` (it is 137 MB, so it isn't
-    /// downloaded here): every member the bundle's `bundle.json` lists comes out with its listed SHA-256.
-    func testGradiumsPhononBundleUnpacksToItsListedHashes() throws {
-        guard let path = ProcessInfo.processInfo.environment["SM_PHONON_BUNDLE_ZIP"] else {
-            throw XCTSkip("set SM_PHONON_BUNDLE_ZIP to a copy of phonon-31m-en-coreml.zip to run this")
+    /// A zip laid out like Gradium's `phonon-31m-en-coreml.zip`: one top folder, a `bundle.json` that lists every
+    /// file's SHA-256 and size, nested `.mlpackage` members, and a voice whose name has a space. The reader's output
+    /// must hash to the bundle's own listing, and the installer, given catalog entries built the way
+    /// `Contracts/voice-models/sources.json` builds them, must put each member at its catalog path with those bytes.
+    /// The real 137 MB zip is checked by hand with `scripts/phonon-bundle-hash-check.py`.
+    func testAPhononShapedBundleUnpacksToItsListedHashesAndInstalls() async throws {
+        let top = "phonon-31m-en-coreml/"
+        let files: [String: Data] = [
+            "flow-c414-t1.mlpackage/Manifest.json": Data(#"{"fileFormatVersion":"1.0.0"}"#.utf8),
+            "flow-c414-t1.mlpackage/Data/com.apple.CoreML/model.mlmodel": payload(24_018, seed: 21),
+            "flow-c414-t1.mlpackage/Data/com.apple.CoreML/weights/weight.bin": payload(700_000, seed: 22),
+            "mimi.mlpackage/Data/com.apple.CoreML/weights/weight.bin": payload(300_001, seed: 23),
+            "voices/Grub the Ogre.safetensors": payload(65_536, seed: 24),
+        ]
+        struct Bundle: Codable { struct File: Codable { let path: String; let sha256: String; let size: Int }; let files: [File] }
+        let bundle = Bundle(files: files.keys.sorted().map { Bundle.File(path: $0, sha256: sha(files[$0]!), size: files[$0]!.count) })
+        let bundleJSON = try JSONEncoder().encode(bundle)
+        var members = Dictionary(uniqueKeysWithValues: files.map { (top + $0.key, $0.value) })
+        members[top + "bundle.json"] = bundleJSON
+        members[top + "README.md"] = Data("not in the catalog".utf8)
+        let archive = try zip(members)
+
+        // The reader, as the real bundle is checked: every listed member hashes to bundle.json's value.
+        let unpacked = try read(archive, wanting: Set(bundle.files.map { top + $0.path } + [top + "bundle.json"]))
+        let listed = try JSONDecoder().decode(Bundle.self, from: try XCTUnwrap(unpacked.got[top + "bundle.json"]))
+        XCTAssertEqual(listed.files.count, files.count)
+        for file in listed.files {
+            let data = try XCTUnwrap(unpacked.got[top + file.path], file.path)
+            XCTAssertEqual(sha(data), file.sha256, file.path)
+            XCTAssertEqual(data.count, file.size, file.path)
         }
-        let url = URL(fileURLWithPath: path)
-        var listing = Data()
-        try ZipArchiveReader.read(url, onMember: { $0.path == "phonon-31m-en-coreml/bundle.json" },
-                                  onData: { listing.append($0) }, onMemberEnd: { _ in })
-        struct Bundle: Decodable { struct File: Decodable { let path: String; let sha256: String; let size: Int }; let files: [File] }
-        let expected = Dictionary(uniqueKeysWithValues: try JSONDecoder().decode(Bundle.self, from: listing).files
-            .map { ("phonon-31m-en-coreml/" + $0.path, $0) })
-        var hashers: [String: SHA256] = [:]
-        var current = ""
-        var finished: [String: String] = [:]
-        try ZipArchiveReader.read(url, onMember: { member in
-            current = member.path
-            hashers[member.path] = SHA256()
-            return expected[member.path] != nil
-        }, onData: { hashers[current]!.update(data: $0) }, onMemberEnd: { member in
-            finished[member.path] = hashers[member.path]!.finalize().map { String(format: "%02x", $0) }.joined()
-        })
-        XCTAssertEqual(finished.count, expected.count)
-        for (path, file) in expected { XCTAssertEqual(finished[path], file.sha256, path) }
+        XCTAssertTrue(unpacked.seen.contains(top + "README.md"), "the reader walks members it doesn't take")
+        XCTAssertNil(unpacked.got[top + "README.md"])
+
+        // The installer, with catalog entries built from the bundle's listing as sources.json does.
+        let server = try fileServer(["/phonon-31m-en-coreml.zip": archive])
+        let catalogFiles = ([("bundle.json", bundleJSON)] + files.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }).map { path, data in
+            VoiceModelInstallFile(path: path, byteCount: data.count, sha256: sha(data),
+                                  archiveMember: VoiceModelArchiveMember(archive: "coreml-bundle", member: top + path))
+        }
+        let folder = try await installer().install(voiceId: "phonon-31m-en", version: "0.4.2", files: catalogFiles, archives: [
+            VoiceModelInstallArchive(id: "coreml-bundle", format: "zip", byteCount: archive.count, sha256: sha(archive),
+                                     sources: [server.url("/phonon-31m-en-coreml.zip")]),
+        ])
+        XCTAssertEqual(listing(folder), (["bundle.json"] + files.keys).sorted(), "the catalog's files only, with no README and no zip")
+        for (path, data) in files { XCTAssertEqual(sha(try Data(contentsOf: folder.appendingPathComponent(path))), sha(data), path) }
     }
 
     func testTheCatalogAcceptsZipArchives() {
