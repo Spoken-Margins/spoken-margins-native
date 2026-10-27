@@ -244,7 +244,9 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         XCTAssertEqual(newNote.targetId, "item-pill")
         XCTAssertEqual(newNote.status, "active")
         XCTAssertNotEqual(newNote.id, f.noteA)
-        f.model.retryPendingAI() // Playback's explicit Retry Summary button.
+        // Playback's explicit Retry Summary button, tapped while the records still hold an older state's answer (no jobs): the tap itself
+        // must wait for this state's read rather than refuse from the stale answer (#2747).
+        f.model.retryPendingAI()
         try await waitForRequests(2, f.provider)
         let requests = await f.provider.requests
         let retriedIDs = try summaryNoteIDs(in: XCTUnwrap(requests.last).context)
@@ -283,6 +285,8 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         f.model.beginWrittenMargin()
         f.model.saveWrittenMargin(text: "NEW_AFTER_DELETE: a fresh summary remains possible.")
         let newNote = try XCTUnwrap(store.loadInterjections(sessionId: f.a).last { $0.status == "active" }?.id)
+        // The controls answer from records read off the main thread (#2508); ask once they are read for this state.
+        await f.model.settleSummaryRecords()
         XCTAssertFalse(f.model.canRetryLocalSummary)
         XCTAssertEqual(f.model.summaryActionTitle, "Summarize Notes")
         f.model.summarize()
@@ -309,6 +313,8 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         f.model.playTurn(other)
         f.model.beginWrittenMargin()
         f.model.saveWrittenMargin(text: otherNote)
+        // The controls answer from records read off the main thread (#2508); ask once they are read for this state.
+        await f.model.settleSummaryRecords()
         XCTAssertFalse(f.model.canRetryLocalSummary, "Another target's failure must not label this action Retry")
         XCTAssertEqual(f.model.summaryActionTitle, "Summarize Notes")
         let beforeJobs = try store.loadAIJobs(sessionId: f.a)
@@ -321,6 +327,8 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
             XCTAssertEqual(try summaryNoteIDs(in: XCTUnwrap(requests.last).context), [otherID])
             XCTAssertEqual(try store.loadAIJobs(sessionId: f.a).first { $0.id == beforeJobs.first?.id }?.status, "retryable")
         } else {
+            // Settled, the tap decides at once, so the refusal and the unchanged jobs can be checked right after it.
+            await f.model.settleSummaryRecords()
             f.model.retryPendingAI() // A stale explicit Retry action still must refuse.
             XCTAssertEqual(try store.loadAIJobs(sessionId: f.a), beforeJobs)
             let requestCount = await f.provider.requests.count
@@ -348,6 +356,8 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.sessionId, f.a)
         model.beginWrittenMargin()
         model.saveWrittenMargin(text: "AFTER_RELOAD: this new note was not in the failed summary.")
+        // A reloaded model has read no summary records yet (#2508); the label is right once they are read.
+        await model.settleSummaryRecords()
         XCTAssertTrue(model.canRetryLocalSummary)
         model.retryPendingAI()
         try await waitForRequests(1, provider)

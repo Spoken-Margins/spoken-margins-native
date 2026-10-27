@@ -217,6 +217,7 @@ extension Gate1AppModel {
                 onSystemPause: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
                 onResumeDecision: { [weak self] fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) } },
                 onRenderPace: { [weak self] summary in Task { @MainActor [weak self] in self?.diagnostics["onDeviceRenderPace"] = summary } },
+                onVoiceTelemetry: voiceTelemetryHandler(chosenVoice: kittenIsChosen ? KittenNarrationRenderer.engine : VoiceRenderTelemetryRecorder.supertonicVoiceLabel(voice)),
                 handOverHold: handOverBackgroundHold,
                 interruptionHold: makeInterruptionBackgroundHold(),
                 applicationIsActive: SupertonicSpeechPlaybackClient.isApplicationActive,

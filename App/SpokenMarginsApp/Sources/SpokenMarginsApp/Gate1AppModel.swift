@@ -85,7 +85,7 @@ final class Gate1AppModel: ObservableObject {
                 || oldValue.targetId != snapshot.targetId || snapshot.status.isPlaybackActive {
                 stopImportedCommentaryPlayback(resumeSource: false)
             }
-            if snapshot.status.isPlaybackActive { releaseOwnMarginReturn() }
+            if snapshot.status.isPlaybackActive { releaseOwnMarginReturn(); libraryAudioLoop.renderPolicy.noteListenerEngaged() }
             if let status = snapshot.preparedTextAudioStatus, status != preparedTextAudioStatus { preparedTextAudioStatus = status } // an equal write still publishes
             if let snapshotSourceTranscriptStatus = snapshot.sourceTranscriptStatus, snapshotSourceTranscriptStatus != sourceTranscriptStatus,
                !(sourceTranscriptStatus == "transcribing" && snapshotSourceTranscriptStatus == "not_started") {
@@ -135,7 +135,7 @@ final class Gate1AppModel: ObservableObject {
         developerRecording.record(kind, fields)
         // High-frequency samples and rendering events must not erase transport history.
         if kind != "sample", !kind.hasPrefix("preparation."),
-           !kind.hasPrefix("scrub."), kind != "main.delayed" {
+           !kind.hasPrefix("scrub."), !kind.hasPrefix("voicepace."), kind != "main.delayed" {
             playbackEventRecording.record(kind, fields)
         }
     }
@@ -219,6 +219,7 @@ final class Gate1AppModel: ObservableObject {
     }
     var activePlaybackDetail: ItemDetailState?
     let backgroundRefresh = BackgroundRefreshGate() // #2102
+    let summaryRecordsCache = SummaryRecordsCache() // #2508
     @Published var libraryItems: [LibraryItemRow] = [] {
         didSet { quickAccess.invalidateCandidates(); libraryPresentationRevision += 1 }
     }
@@ -1185,30 +1186,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func refreshMarginRows() {
-        do {
-            let store = try requireStore()
-            // Library rows refresh asynchronously on navigation. Retrieval must
-            // use durable membership so freshly imported items are not omitted.
-            let entries = try MarginCollection.build(
-                items: store.listItems(), sessions: store.loadSessions(), loadMap: { try? store.loadListeningMap(itemId: $0) }, loadMediaChapters: { (try? store.loadTranscriptTimelineChapters(itemId: $0)) ?? [] },
-                loadInterjections: { try store.loadInterjections(sessionId: $0) },
-                loadImportedLayers: { try store.loadImportedCommentaryLayers() },
-                loadImportedInterjections: { try store.loadImportedCommentaryInterjections(layerId: $0) }
-            )
-            sharedMarginRows = entries.sharedRows.map {
-                SharedMarginRow(interjection: $0.interjection, layer: $0.layer, itemTitle: $0.itemTitle,
-                                placement: sharedMarginPlacementPasses.pass(itemId: $0.layer.itemId))
-            }
-            marginRows = entries.privateRows.map {
-                MarginRow(interjection: $0.interjection, itemTitle: $0.itemTitle, sessionDate: $0.sessionDate, place: $0.place)
-            }
-            marginOutput.deliverSoon() // A Margin or its transcript may be new (#171).
-        } catch {
-            diagnostics["marginRefresh"] = "failed:\(String(describing: type(of: error)))"
-        }
-    }
-
     var marginScopeItems: [LibraryItemRow] {
         let ids = Set(marginRows.map { $0.interjection.itemId } + sharedMarginRows.compactMap { $0.layer.itemId } + [selectedItem.id])
         return libraryItems.filter { ids.contains($0.id) }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
@@ -1809,7 +1786,7 @@ final class Gate1AppModel: ObservableObject {
         selectedItem = try loadItemDetail(id: item.id, store: store)
         diagnostics["lastGeneratedMapItem"] = item.id
         diagnostics["lastListeningMapMode"] = "provider"
-        scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
+        schedulePrewarmAfterPreparedTextChange(itemId: item.id)
     }
 
     private func generateLocalListeningMap(confirmation: String) {
@@ -1821,7 +1798,7 @@ final class Gate1AppModel: ObservableObject {
             refreshSelectedItem()
             diagnostics["lastGeneratedMapItem"] = activeItemId
             diagnostics["lastListeningMapMode"] = "local_deterministic"
-            scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
+            schedulePrewarmAfterPreparedTextChange(itemId: activeItemId)
             reportConfirmation(confirmation)
         }
     }
@@ -1857,7 +1834,7 @@ final class Gate1AppModel: ObservableObject {
             selectedItem = try loadItemDetail(id: activeItemId, store: store)
             diagnostics["lastAppliedMap"] = map.id
             diagnostics["lastAppliedMapChapters"] = "\(map.chapters.count)"
-            scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
+            schedulePrewarmAfterPreparedTextChange(itemId: activeItemId)
             reportSuccess("Applied Listening Map.")
         } catch {
             reportFailure(error, context: "Listening Map validation failed")
@@ -2177,7 +2154,7 @@ final class Gate1AppModel: ObservableObject {
         }
         guard snapshot.phase == .finished else { return }
         refreshLibraryRowsInBackground()
-        refreshMarginRows()
+        refreshMarginRowsInBackground(forItem: snapshot.itemId)
         diagnostics["completedSessionPresentation"] = "retained_finished_session"
         reportConfirmation("Session complete and saved.")
     }
@@ -2364,9 +2341,7 @@ final class Gate1AppModel: ObservableObject {
         aiSummaryExperienceAvailable && hasActiveSession && !unsummarizedInterjectionsForCurrentTarget().isEmpty
     }
 
-    var isSummarizingInterjections: Bool {
-        latestPendingJob(kind: "interjection_summary") != nil
-    }
+    var isSummarizingInterjections: Bool { latestPendingJob(kind: "interjection_summary") != nil }
 
     var summaryActionTitle: String {
         if isSummarizingInterjections { return "Summarizing" }
@@ -2557,7 +2532,7 @@ final class Gate1AppModel: ObservableObject {
                 streamingSpeechQueue.resumeAfterInterjection()
                 if !snapshot.isRecording {
                     marginCapture.clearPresentationContext()
-                    refreshMarginRows()
+                    refreshMarginRowsInBackground(forItem: snapshot.itemId)
                 }
             }
             if canonicalTransportCommands.contains(command) {

@@ -27,6 +27,8 @@ public protocol LibraryAudioPreparationHost: AnyObject {
 public final class LibraryAudioPreparationLoop {
     /// One Library item renders at a time; the foreground loop and the background task share it (#281).
     public let renderGate = SerialWorkGate()
+    /// Whether the Library may render next to the player, and the listener-engaged flag that goes with it (#2694).
+    public var renderPolicy = LibraryAudioRenderPolicy()
     /// Which item the two passes are on (#281, #534).
     public var turns = LibraryAudioPreparationTurns()
     /// Bumped by every start and every invalidation. A run that finds a different number on its way out is stale.
@@ -52,6 +54,8 @@ public final class LibraryAudioPreparationLoop {
     /// Starts a run unless one is going. The continued-processing request comes first on purpose:
     /// a run may already be going when the listener asks again (#905).
     public func start(host: any LibraryAudioPreparationHost) {
+        // Before the "Preparing audio for offline listening" card: a run that stops at once only ends as a failed card (#2694).
+        guard host.playbackAllowsLibraryAudioPreparation else { return }
         host.requestContinuedAudioPreparationIfNeeded()
         guard !holder.hasTask else { return }
         generation += 1

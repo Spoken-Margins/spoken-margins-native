@@ -145,15 +145,7 @@ public enum MarginCollection {
                 }
             }
             .sorted { $0.interjection.createdAt > $1.interjection.createdAt }
-        let privateRows = rows.sorted { lhs, rhs in
-            let leftSessionDate = lhs.sessionDate ?? .distantPast
-            let rightSessionDate = rhs.sessionDate ?? .distantPast
-            if leftSessionDate != rightSessionDate { return leftSessionDate > rightSessionDate }
-            if lhs.interjection.createdAt != rhs.interjection.createdAt {
-                return lhs.interjection.createdAt > rhs.interjection.createdAt
-            }
-            return lhs.id < rhs.id
-        }
+        let privateRows = ordered(rows)
         guard loadMap != nil || loadMediaChapters != nil else { return Entries(privateRows: privateRows, sharedRows: sharedRows) }
         let places = MarginPlaces.places(
             for: privateRows, items: items, loadMap: loadMap, loadMediaChapters: loadMediaChapters ?? { _ in [] })

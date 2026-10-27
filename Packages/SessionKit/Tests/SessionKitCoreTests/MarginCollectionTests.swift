@@ -152,18 +152,26 @@ final class MarginCollectionTests: XCTestCase {
     }
 
     func testAppRefreshKeepsDiagnosticAndPublishesOnlyAfterSuccessfulBuildInOrder() throws {
-        let model = try appSource("Gate1AppModel.swift")
+        // The main-thread rebuild moved next to the off-main reads it is sequenced with (#2505).
+        let model = try appSource("Gate1AppModel+MarginRowsRefresh.swift")
         let start = try XCTUnwrap(model.range(of: "    func refreshMarginRows() {"))
-        let end = try XCTUnwrap(model.range(of: "    var marginScopeItems:", range: start.upperBound..<model.endIndex))
+        let end = try XCTUnwrap(model.range(of: "    func refreshMarginRowsAsync() async {", range: start.upperBound..<model.endIndex))
         let refresh = String(model[start.lowerBound..<end.lowerBound])
         XCTAssertTrue(refresh.contains(#"diagnostics["marginRefresh"] = "failed:\(String(describing: type(of: error)))""#))
         var remainder = refresh[...]
-        for fragment in ["let entries = try MarginCollection.build(", "sharedMarginRows = entries.sharedRows.map", "marginRows = entries.privateRows.map", "marginOutput.deliverSoon()", "} catch {"] {
+        for fragment in ["let entries = try MarginRowsReading.all(", "noteRebuild()", "publishMarginEntries(entries)", "} catch {"] {
             let range = try XCTUnwrap(remainder.range(of: fragment), fragment)
             remainder = remainder[range.upperBound...]
         }
+        XCTAssertFalse(remainder.contains("publishMarginEntries"))
         XCTAssertFalse(remainder.contains("marginRows ="))
-        XCTAssertFalse(remainder.contains("sharedMarginRows ="))
+        let publishStart = try XCTUnwrap(model.range(of: "    private func publishMarginEntries("))
+        let publish = model[publishStart.upperBound...].prefix { $0 != "}" }
+        var published = publish[...]
+        for fragment in ["sharedMarginRows = entries.sharedRows.map", "marginRows = entries.privateRows.map", "marginOutput.deliverSoon()"] {
+            let range = try XCTUnwrap(published.range(of: fragment), fragment)
+            published = published[range.upperBound...]
+        }
     }
 
     private func build(notes: [Interjection] = [], layers: [ImportedCommentaryLayer] = [], shared: [ImportedCommentaryInterjection] = []) throws -> MarginCollection.Entries {

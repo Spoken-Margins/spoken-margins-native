@@ -13,12 +13,12 @@ extension Gate1AppModel {
         libraryAudioLoop.stopAndInvalidate()
     }
 
-    /// Live playback leaves the renderer free. Apart from the memory backoff so a loop that a
-    /// memory warning cancelled restarts and waits the backoff out (#1107).
+    /// Speech never shares the CPU with the Library, and a restored session waits for the listener (#2694).
+    /// Apart from the memory backoff so a loop that a memory warning cancelled restarts and waits it out (#1107).
     var playbackAllowsLibraryAudioPreparation: Bool {
-        !snapshot.status.isPlaybackActive || isMediaPlaybackSnapshot
-            || snapshot.preparedTextAudioStatus == "ready"
-            || (speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.canYieldRendererToLibrary == true
+        libraryAudioLoop.renderPolicy.allowsRendering(.init(
+            isPlaybackActive: snapshot.status.isPlaybackActive, isMedia: isMediaPlaybackSnapshot, hasSession: snapshot.itemId != nil
+        ))
     }
 
     func idleForegroundPreparationTurn() { libraryAudioLoop.turns.stopped(.foreground) }
@@ -95,29 +95,10 @@ extension Gate1AppModel {
         return !LibraryAudioPreparationTurns.eligible(jobs, for: .foreground).isEmpty
     }
 
-    func explicitPreparationJobs(including previous: [OfflinePreparationRun.Job] = []) -> [OfflinePreparationRun.Job] {
-        guard let store, let stored = try? store.loadAudioPreparationJobs() else { return previous }
-        let allJobs = stored.filter { !$0.isCancelled && $0.policy == .explicit }.map { job in
-            let manifest = try? store.loadPreparedAudioManifest(id: job.manifestId)
-            return OfflinePreparationRun.Job(
-                id: job.id, manifestId: job.manifestId,
-                requestedAt: job.requestedAt, policy: job.policy,
-                state: manifest?.state ?? .failed,
-                completedChunks: manifest?.committedChunkCount ?? job.nextChunkIndex,
-                plannedChunks: manifest?.plannedChunkCount ?? 0
-            )
-        }
-        // Old failures aren't part of a new run. A failure this banner saw happen stays in it.
-        let tracked = OfflinePreparationRun.openExplicitRequests(allJobs).union(previous.map {
-            OfflinePreparationRun.RequestKey(jobId: $0.id, requestedAt: $0.requestedAt)
-        })
-        let jobs = allJobs.filter { tracked.contains(.init(jobId: $0.id, requestedAt: $0.requestedAt)) }
-        let current = Set(jobs.map { OfflinePreparationRun.RequestKey(jobId: $0.id, requestedAt: $0.requestedAt) })
-        return jobs + previous.filter {
-            !current.contains(.init(jobId: $0.id, requestedAt: $0.requestedAt))
-        }.map { job in
-            OfflinePreparationRun.resolvingRemovedJob(job, manifest: try? store.loadPreparedAudioManifest(id: job.manifestId))
-        }
+    /// Read off the main thread: the continued task asks once a second (#2508).
+    func explicitPreparationJobs(including previous: [OfflinePreparationRun.Job] = []) async -> [OfflinePreparationRun.Job] {
+        guard let store else { return previous }
+        return (try? await StoreReader(store).read { OfflinePreparationRun.explicitJobs(store: $0, including: previous) }) ?? previous
     }
 
     /// Also covers expiry during a heat wait, when no renderer is there to record cancellation.
@@ -144,7 +125,7 @@ extension Gate1AppModel {
     private func installContinuedAudioPreparation() {
         ContinuedAudioPreparationController.shared.install(
             ContinuedAudioPreparationController.Hooks(
-                jobs: { [weak self] previous in self?.explicitPreparationJobs(including: previous) ?? [] },
+                jobs: { [weak self] previous in await self?.explicitPreparationJobs(including: previous) ?? [] },
                 isRunning: { [weak self] in self?.isForegroundAudioPreparationRunning ?? false },
                 isCoolingDown: { [weak self] in self?.isWaitingOutPreparationHeat ?? false },
                 stop: { [weak self] in self?.stopForegroundAudioPreparation() },
