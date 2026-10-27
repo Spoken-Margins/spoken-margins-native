@@ -89,34 +89,26 @@ enum SupertonicResourcePolicy {
         SpeechEnginePolicy.onDeviceRenderingBlock(currentConditions(processInfo: processInfo)) == nil
     }
 
-    /// `isOnExternalPower` is for logging only; rendering never depends on it.
+    /// What the phone reports now, from any thread. The engine choice ignores the power source (charging alone
+    /// never stops or starts a voice, #183), but the render-ahead window decides on it (#2703: a cool phone on
+    /// power renders further ahead), so it is read from `power`, never left out.
     static func currentConditions(
         processInfo: ProcessInfo = .processInfo,
-        isOnExternalPower: Bool? = nil
+        power: any ExternalPowerSource = DevicePowerSource.app
     ) -> SpeechEngineConditions {
         SpeechEngineConditions(
             thermal: thermalLevel(processInfo.thermalState),
             isLowPowerModeEnabled: processInfo.isLowPowerModeEnabled,
-            isOnExternalPower: isOnExternalPower,
+            isOnExternalPower: power.isOnExternalPower,
             isRecoveringFromMemoryWarning: memoryBackoff.isActive()
         )
     }
 
-    /// Whether the device is charging or full on power, for the fallback log. Nil off iOS.
+    /// Whether the device is charging or full on power. Nil when it can't tell (the simulator, off iOS).
     @MainActor
     static func isOnExternalPower() -> Bool? {
-        #if canImport(UIKit) && os(iOS)
-        let device = UIDevice.current
-        if !device.isBatteryMonitoringEnabled { device.isBatteryMonitoringEnabled = true }
-        switch device.batteryState {
-        case .charging, .full: return true
-        case .unplugged: return false
-        case .unknown: return nil
-        @unknown default: return nil
-        }
-        #else
-        return nil
-        #endif
+        DevicePowerSource.app.startMonitoring()
+        return DevicePowerSource.app.isOnExternalPower
     }
 
     static func thermalLevel(_ state: ProcessInfo.ThermalState) -> SpeechThermalLevel {
@@ -154,6 +146,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     typealias ChunkHandOverGapHandler = @Sendable (ChunkHandOverGapRecorder.Gap) -> Void
     /// One line on how fast chunks render against how fast they play, after each chunk the phone renders (#540).
     typealias RenderPaceHandler = @Sendable (_ summary: String) -> Void
+    /// Per-chunk render speed, voice switches and the session line, for Diagnostics (#2701).
+    typealias VoiceTelemetryHandler = @Sendable (_ event: VoiceTelemetryEvent) -> Void
     /// The count of seams that came while the app was away, by how each went, after every one (#538).
     typealias BackgroundSeamHandler = @Sendable (_ summary: String) -> Void
     typealias PreparedAudioHandler = @Sendable (_ itemId: String, _ prepared: PreparedTextAudio) -> Void
@@ -377,6 +371,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let onStall: StallHandler?
     private let onSystemPause: SystemPauseHandler?
     private let onRenderPace: RenderPaceHandler?
+    private let onVoiceTelemetry: VoiceTelemetryHandler?
     /// Whether the app is in front. With it the player is a queue, and while the app is away the next rendered
     /// chunk goes onto it before the playing one ends, so the seam needs no app code (#538). nil leaves every seam as
     /// it was: one player per chunk. Read on the main thread; anywhere else the app counts as in front.
@@ -388,6 +383,15 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let onBackgroundSeams: BackgroundSeamHandler?
     /// The listening live narration may render ahead now; nil for no limit (#1681).
     private let renderAheadWindow: @Sendable () -> TimeInterval?
+    /// The window the app's clients use: the app's background state and what the phone reports now, power included,
+    /// through `RenderAheadPolicy` (#1681, #2703).
+    static let defaultRenderAheadWindow: @Sendable () -> TimeInterval? = {
+        RenderAheadPolicy.window(appBackgrounded: OnDeviceVoiceGovernor.app.isAppBackgrounded,
+                                 conditions: OnDeviceVoiceGovernor.app.conditions())
+    }
+    /// The governor whose shared CPU budget this client's live narration answers to; it reads `liveNarrationBuffer()`
+    /// at every budget check once this client plays (#2695).
+    private let governor: OnDeviceVoiceGovernor
     private var lifecycleObservers: [NSObjectProtocol] = []
     /// Background time over the moment between one chunk ending and the next playing (#540).
     private let handOverHold: HandOverBackgroundHold?
@@ -433,6 +437,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     var debugStallMonitorWillExit: (@Sendable () -> Void)?
     /// Runs between a stall sample and its handling, so a test can switch items exactly then.
     var debugStallWillBeHandled: (@Sendable () -> Void)?
+    /// Runs once that handling has finished on the main actor, so a test can check its effect without a fixed wait (#2747).
+    var debugStallWasHandled: (@Sendable () -> Void)?
     /// How often the client asked to stop lowering other apps' audio.
     private(set) var debugBackgroundAudioReleaseCount = 0
     var debugHasStallMonitor: Bool { lock.withLock { stallMonitor != nil } }
@@ -456,21 +462,23 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var generationStopReason: String?
     private var shouldResumeAfterInterruption = false
     private var activeRenderControl: RenderTaskControl?
+    /// The last measured chunk's render speed over the listening speed, for `RenderAheadPolicy.resumeMark` (#2703). It
+    /// counts only under the voice, app state and generation it was measured in, so a foreground or other-voice value
+    /// can't lower the resume mark after backgrounding, a hand-over, a seek or a new item.
+    private var renderHeadroom = RenderHeadroomMemory()
 
-    /// Speculative Library work can share the serial renderer only while the
-    /// listener has two contiguous committed chunks beyond the audible chunk.
+    /// Whether speculative Library work may share the serial renderer: two committed chunks wait past the audible one,
+    /// and no stand-in holds the item, since Kitten renders beside Supertonic, not in turn (#2695).
     var canYieldRendererToLibrary: Bool {
         lock.withLock {
-            guard transportIntent == .playing else { return true }
-            guard !fallbackIsActive, pendingAutoplayOffset == nil, startedTargetId != nil else { return false }
-            if generationState == .ready { return true }
-            var offset = currentStartOffset + currentChunkLength
-            for _ in 0..<2 {
-                if offset >= preparedSpeechProjection.text.count { return true }
-                guard let chunk = renderedCache[offset] else { return false }
-                offset += chunk.request.sourceLength
-            }
-            return true
+            var offset = currentStartOffset + currentChunkLength, ahead = 0
+            while ahead < OnDeviceRenderAdmission.chunksAheadForLibrary, offset < preparedSpeechProjection.text.count,
+                  let chunk = renderedCache[offset] { ahead += 1; offset += chunk.request.sourceLength }
+            return OnDeviceRenderAdmission.libraryMayShareRenderer(.init(
+                isPlaying: transportIntent == .playing,
+                standInHolds: fallbackIsActive || bundledVoiceGeneration == generation || startedTargetId.map(voiceHold.holds) == true,
+                isWaiting: pendingAutoplayOffset != nil || startedTargetId == nil, isFullyRendered: generationState == .ready,
+                chunksAhead: offset >= preparedSpeechProjection.text.count ? Int.max : ahead))
         }
     }
 
@@ -516,15 +524,14 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         renderWaitLimit: Duration = .seconds(15),
         backgroundGapWaitLimit: Duration = .seconds(5),
         onRenderPace: RenderPaceHandler? = nil,
+        onVoiceTelemetry: VoiceTelemetryHandler? = nil,
         handOverHold: HandOverBackgroundHold? = nil,
         interruptionHold: InterruptionBackgroundHold? = nil,
         applicationIsActive: (@Sendable () -> Bool)? = nil,
         applicationIsInBackground: (@Sendable () -> Bool)? = nil,
         onBackgroundSeams: BackgroundSeamHandler? = nil,
-        renderAheadWindow: @escaping @Sendable () -> TimeInterval? = {
-            RenderAheadPolicy.window(appBackgrounded: OnDeviceVoiceGovernor.app.isAppBackgrounded,
-                                     conditions: OnDeviceVoiceGovernor.app.conditions())
-        }
+        renderAheadWindow: @escaping @Sendable () -> TimeInterval? = SupertonicSpeechPlaybackClient.defaultRenderAheadWindow,
+        governor: OnDeviceVoiceGovernor = .app
     ) {
         self.renderer = renderer
         self.voice = voice
@@ -578,12 +585,14 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.renderWaitLimit = renderWaitLimit
         self.backgroundGapWaitLimit = backgroundGapWaitLimit
         self.onRenderPace = onRenderPace
+        self.onVoiceTelemetry = onVoiceTelemetry
         self.handOverHold = handOverHold
         self.interruptionHold = interruptionHold
         self.applicationIsActive = applicationIsActive
         self.applicationIsInBackground = applicationIsInBackground
         self.onBackgroundSeams = onBackgroundSeams
         self.renderAheadWindow = renderAheadWindow
+        self.governor = governor
         super.init()
         installAudioSessionObservers()
         installLifecycleObservers()
@@ -644,6 +653,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     private func play(targetId: String, from charOffset: Int, isSeek: Bool) throws {
+        governor.readLiveNarrationBuffer { [weak self] in self?.liveNarrationBuffer() }
         applyQueuedAdvance(finished: nil)
         settleHandOverBeforePlay()
         interruptionWaitEnded(.listenerActed)
@@ -773,7 +783,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         let block = OnDeviceVoiceGovernor.app.supertonicRenderingBlock()
         lock.withLock {
             guard self.generation == request.generation else { return }
-            if bundledVoiceGeneration != request.generation { bundledVoiceBlock = block }
+            if bundledVoiceGeneration != request.generation {
+                bundledVoiceBlock = block
+                onVoiceTelemetry?(.switched(to: KittenNarrationRenderer.engine, reason: block?.rawValue ?? "bundled_voice_held"))
+            }
             bundledVoiceGeneration = request.generation
             savedRunGeneration = nil
             voiceHold.standInTookOver(.bundled, item: request.targetId)
@@ -793,6 +806,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         guard let released else { return nil }
         onVoiceRestored?(released)
+        onVoiceTelemetry?(.restored(reason: released["reason"] ?? "released"))
         return released["reason"].flatMap(NarrationVoiceHold.Release.init(rawValue:))
     }
 
@@ -908,7 +922,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             defer { if restoresVoice { heldRenderQueueGeneration = nil } }
             return heldRenderQueueGeneration == generation
         }
-        if restoresVoice { onRestore?(targetId) }
+        if restoresVoice { onRestore?(targetId); onVoiceTelemetry?(.restored(reason: "condition_cleared")) }
         // A hand-over that ended while a memory warning or heat held back the queue behind the kept chunk leaves it
         // held; the kept chunk plays from the cache now, so the chunk after it must start rendering with it, not
         // after it. Heat clears without a fallback marker, so this runs whether or not the voice was restored; the
@@ -1133,6 +1147,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     func stop() throws {
+        onVoiceTelemetry?(.sessionEnded)
         interruptionWaitEnded(.listenerActed)
         forgetActivatedSession()
         removePlaybackEndObserver()
@@ -1255,6 +1270,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         for url in stopped.urls { discardAudio(url) }
 
         try playFallbackVoice(targetId: targetId, from: offset)
+        onVoiceTelemetry?(.switched(to: "ios", reason: stopReason))
         if state.1 == .paused {
             try pauseFallbackVoice()
         }
@@ -1276,6 +1292,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         let offset = currentCharOffset() ?? 0
         let wasPaused = lock.withLock { transportIntent == .paused }
         try stopFallbackVoice()
+        onVoiceTelemetry?(.restored(reason: "listener_retry"))
         updateVoiceHold { $0.listenerChoseVoice() }
         lock.withLock {
             generationDisabledReasons.removeValue(forKey: target)
@@ -1447,7 +1464,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             pendingStartTargetId = targetId
             startedTargetId = nil
             playbackFailure = nil
-            if currentTargetId != targetId { renderPace = RenderPaceLog() }
+            if currentTargetId != targetId { renderPace = RenderPaceLog(); onVoiceTelemetry?(.sessionEnded) }
             // The bundled voice holding the item reads the new generation too, without announcing itself again (#1786).
             if voiceHold.voice(for: targetId) == .bundled {
                 if bundledVoiceNoticeGeneration != nil { bundledVoiceNoticeGeneration = nextGeneration }
@@ -1707,6 +1724,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 var result: SupertonicNarrationResult
                 var performedInference = false
                 var renderWall: Duration?
+                var renderStartConditions: SpeechEngineConditions?
                 var ownsResult = false
                 // A split head's whole chunk may have saved Supertonic audio; it plays in place of both halves.
                 var chunk = request
@@ -1751,7 +1769,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     // Supertonic is not allowed now, or the bundled voice holds this generation: the bundled Kitten
                     // voice renders the chunk when there is one, otherwise the iOS voice takes the passage (#849).
                     let allowedNow = self?.onDeviceRenderingAllowed() != false
-                    let usesPressureRenderer = pressureRenderer != nil && (!allowedNow || holdsBundledVoice)
+                    let usesPressureRenderer = OnDeviceRenderAdmission.liveRenderer(
+                        chosenAllowed: allowedNow, standInHolds: holdsBundledVoice, standInAvailable: pressureRenderer != nil) == .standIn
                     guard allowedNow || usesPressureRenderer else {
                         await MainActor.run {
                             self?.renderFailed(request: request, shouldPlayWhenReady: shouldPlayWhenReady,
@@ -1760,6 +1779,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         return
                     }
                     let renderStartedAt = ContinuousClock.now
+                    renderStartConditions = SupertonicResourcePolicy.currentConditions()
                     let rendered: SupertonicNarrationResult
                     if usesPressureRenderer, let pressureRenderer {
                         self?.holdBundledVoice(for: request)
@@ -1811,6 +1831,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     Task { await discard(letGo) }
                     self?.holdBundledVoice(for: request)
                     let renderStartedAt = ContinuousClock.now
+                    renderStartConditions = SupertonicResourcePolicy.currentConditions()
                     result = try await pressureRenderer.render(text: request.text)
                     renderWall = ContinuousClock.now - renderStartedAt
                     ownsResult = true
@@ -1834,7 +1855,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     return
                 }
                 if let renderWall {
-                    self?.recordRenderPace(request: chunk, audioSeconds: result.duration, wall: renderWall)
+                    self?.recordRenderPace(request: chunk, audioSeconds: result.duration, wall: renderWall, engine: result.engine, startConditions: renderStartConditions)
                 }
                 await self?.renderCompleted(
                     result: result,
@@ -2199,6 +2220,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             cancelledRenderQueue = true
             for url in stopped.urls { discardAudio(url) }
             if !voiceAlreadyStarted { try playFallbackVoice(targetId: targetId, from: sourceOffset) }
+            onVoiceTelemetry?(.switched(to: "ios", reason: stopReason))
             let startStatus = fallback.playbackStartStatus(targetId: targetId)
             if keepsChunk, case .failed = startStatus { throw HandOverStartFailed() }
             let spokenOffset = spokenOffset(forSourceOffset: sourceOffset)
@@ -2525,11 +2547,17 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         self.debugStallWillBeHandled?()
                         #endif
                         await MainActor.run { self.handleStallEvent(event, sampled: sample.watched) }
+                        #if DEBUG
+                        self.debugStallWasHandled?()
+                        #endif
                     } else if stallOngoing, sample.intends {
                         #if DEBUG
                         self.debugStallWillBeHandled?()
                         #endif
                         await MainActor.run { self.pauseIfReseatDidNotHelp(sampled: sample.watched) }
+                        #if DEBUG
+                        self.debugStallWasHandled?()
+                        #endif
                     }
                     if self.lock.withLock({ self.handOverAwaitingStart != nil }) {
                         await self.confirmHandOverStart()
@@ -2954,8 +2982,31 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     /// Keeps how fast a chunk rendered against how fast it plays, and reports the log's summary (#540).
-    private func recordRenderPace(request: RenderRequest, audioSeconds: TimeInterval, wall: Duration) {
+    private func recordRenderPace(
+        request: RenderRequest, audioSeconds: TimeInterval, wall: Duration, engine: String,
+        startConditions: SpeechEngineConditions?
+    ) {
         let conditions = SupertonicResourcePolicy.currentConditions()
+        let wallSeconds = Double(wall.components.seconds) + Double(wall.components.attoseconds) / 1e18
+        let rate = lock.withLock { Double(playbackRate) }
+        let chunk = VoiceRenderChunk(
+            engine: engine,
+            voiceId: engine == SupertonicNarrationResult.supertonicEngine ? "supertonic:\(voice.rawValue)" : engine,
+            audioSeconds: audioSeconds,
+            computeSeconds: wallSeconds,
+            listeningSpeed: rate,
+            thermalAtStart: (startConditions ?? conditions).thermal,
+            thermalAtEnd: conditions.thermal,
+            isInBackground: applicationIsInBackground?() ?? false,
+            isLowPowerModeEnabled: conditions.isLowPowerModeEnabled
+        )
+        onVoiceTelemetry?(.chunk(chunk))
+        if chunk.isMeasurable { // the resume mark's input (#2703), kept with what it was measured under
+            let context = RenderHeadroomMemory.Context(
+                isStandIn: engine != SupertonicNarrationResult.supertonicEngine,
+                isInBackground: governor.isAppBackgrounded, generation: request.generation)
+            lock.withLock { renderHeadroom.record(chunk.headroom, in: context) }
+        }
         let summary = lock.withLock { () -> String? in
             let sample = RenderPaceLog.Sample(
                 chunkStartOffset: request.startOffset,
@@ -3393,11 +3444,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// `next` held once `RenderAheadPolicy`'s window of listening waits ahead. Playback waiting for a chunk always
     /// renders.
     private func rendersAhead(_ next: RenderRequest) -> Bool {
-        let window = renderAheadWindow()
+        let window = renderAheadWindow(), heat = OnDeviceVoiceGovernor.app.supertonicRenderingBlock()
         return lock.withLock {
             guard generation == next.generation else { return true }
-            if pendingAutoplayOffset != nil
-                || RenderAheadPolicy.rendersNext(listeningAhead: listeningAhead(), window: window, resting: false) {
+            if pendingAutoplayOffset != nil || !defersHeatSwitchLocked(heat)
+                && RenderAheadPolicy.rendersNext(listeningAhead: listeningAhead(), window: window, resting: false) {
                 // Another chain (a seek's, a gap's) may run beside the resting one: only this chunk wakes it.
                 if restingRender?.startOffset == next.startOffset { restingRender = nil }
                 return true
@@ -3411,7 +3462,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// playback waits for a chunk (#1681).
     private func resumeRenderAheadIfWanted() {
         guard lock.withLock({ restingRender != nil }) else { return }
-        let window = renderAheadWindow()
+        let window = renderAheadWindow(), conditions = OnDeviceVoiceGovernor.app.conditions()
+        let heat = SpeechEnginePolicy.onDeviceRenderingBlock(conditions)
+        let chosenAllowed = onDeviceRenderingAllowed(), backgrounded = governor.isAppBackgrounded
         let woke = lock.withLock { () -> (next: RenderRequest?, progress: RenderedSpeechGenerationProgress)? in
             guard let resting = restingRender else { return nil }
             guard resting.generation == generation else {
@@ -3419,8 +3472,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 return nil
             }
             let waiting = pendingAutoplayOffset != nil
-            guard waiting
-                || RenderAheadPolicy.rendersNext(listeningAhead: listeningAhead(), window: window, resting: true) else {
+            let headroom = renderHeadroom.headroom(in: .init(
+                isStandIn: OnDeviceRenderAdmission.liveRenderer(chosenAllowed: chosenAllowed,
+                    standInHolds: bundledVoiceGeneration == generation, standInAvailable: pressureRenderer != nil) == .standIn,
+                isInBackground: backgrounded, generation: generation))
+            let resumeAt = window.map { RenderAheadPolicy.resumeMark(window: $0, thermal: conditions.thermal, headroom: headroom) }
+            guard waiting || !defersHeatSwitchLocked(heat) && RenderAheadPolicy.rendersNext(
+                listeningAhead: listeningAhead(), window: window, resting: true, resumeAt: resumeAt) else {
                 return nil
             }
             restingRender = nil
@@ -3444,6 +3502,25 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         if let awake { onGenerationProgress?(awake) }
         if let next = woke.next { enqueueRender(next, shouldPlayWhenReady: false) }
+    }
+
+    /// #2703: heat refuses Supertonic while it still reads the item and the buffer holds: rest rather than switch.
+    private func defersHeatSwitchLocked(_ block: SpeechFallbackReason?) -> Bool {
+        pressureRenderer != nil && bundledVoiceGeneration != generation && !fallbackIsActive
+            && RenderAheadPolicy.defersHeatSwitch(block: block, listeningAhead: listeningAhead())
+    }
+
+    /// #2695: what live narration has waiting now, read by the governor at every budget check. Below
+    /// `OnDeviceCPUBudget.liveReserve` ahead, or with the play head waiting on a chunk (a start, a seek or skip, a
+    /// render gap), live narration skips the shared background CPU budget, so the budget slows render-ahead but never
+    /// lets playback run dry. Pulled, not pushed: a path that moves the play head can't leave a stale answer.
+    func liveNarrationBuffer() -> LiveNarrationBuffer {
+        lock.withLock {
+            LiveNarrationBuffer(
+                listeningAhead: listeningAhead(),
+                playheadWaitsForAudio: pendingAutoplayOffset != nil
+                    || (transportIntent == .playing && startedTargetId == nil))
+        }
     }
 
     /// The listening rendered and waiting past the playing chunk, at the listener's speed: the rendered chunks one

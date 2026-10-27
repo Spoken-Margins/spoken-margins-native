@@ -12,7 +12,7 @@ extension Gate1AppModel {
         guard let store else { throw StoredSessionMargin.Failure.itemNotFound }
         let saved = try StoredSessionMargin.addWritten(text: text, itemId: itemId, repository: store)
         listeningSignals.writtenMargin(itemId: itemId, text: saved.interjection.displayText ?? text)
-        refreshMarginRows()
+        refreshMarginRowsInBackground(forItem: itemId)
         if activeItemId == itemId { refreshSelectedItem() }
         return saved.itemTitle
     }

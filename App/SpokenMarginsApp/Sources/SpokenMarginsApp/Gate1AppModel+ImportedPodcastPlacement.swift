@@ -29,7 +29,7 @@ extension Gate1AppModel {
             refreshAfterInvalidation: { [weak self] itemId in
                 guard let self else { return }
                 if self.selectedItem.id == itemId { self.refreshSelectedItem() }
-                self.refreshMarginRows()
+                self.refreshMarginRowsInBackground(forItem: itemId)
             },
             refreshSelectedItemIfShowing: { [weak self] itemId in
                 guard let self else { return }
@@ -39,7 +39,7 @@ extension Gate1AppModel {
             passesDidChange: { [weak self] old, new in
                 guard let self else { return }
                 if old.pass(itemId: self.activeItemId) != new.pass(itemId: self.activeItemId) { self.refreshSelectedItem() }
-                if old != new { self.refreshMarginRows() }
+                if old != new { self.refreshMarginRowsInBackground() }
             },
             retainHost: { [weak self] in self }
         ))
