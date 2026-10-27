@@ -51,9 +51,10 @@ extension Gate1AppModel {
         let alreadyLookedUp = !sharedLinkVoiceover.mayLookUp(itemId: itemId)
         Task { [weak self] in
             let read = try? await StoreReader(store).read { store -> (decision: VoiceoverLookupDecision, title: String) in
-                let item = try store.loadItem(id: itemId)
+                // The summary, so no article text is decoded on every open (#2508).
+                guard let item = try store.loadItemSummary(id: itemId) else { return (.skip(reason: "no_item"), "") }
                 let decision = VoiceoverLookupDecision.decide(
-                    text: item.text,
+                    textCharacterCount: item.textCharacterCount,
                     externalReference: item.externalReference,
                     hasPublisherAudioRecord: try store.loadPublisherAudio(itemId: itemId) != nil,
                     alreadyLookedUp: alreadyLookedUp
