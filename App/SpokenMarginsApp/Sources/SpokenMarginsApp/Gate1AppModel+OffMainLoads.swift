@@ -19,10 +19,10 @@ extension Gate1AppModel {
     }
 
     /// Reloads the Library rows off the main thread and publishes them, keeping the previous rows on screen until the
-    /// new ones arrive. A reload that started during the read (a tap's background reload or another import's) makes
-    /// this answer stale, so it is read again rather than dropped, and the third read publishes unless a newer reload
-    /// has already published (that one began after the caller's write, so its rows include it, and this older read
-    /// must not land over it). Callers read the published rows after this returns, so it never returns before they
+    /// new ones arrive. A reload that started during the read (a tap's background reload or another import's), or rows
+    /// set on the main thread meanwhile (a permanent delete, a saved map), make this answer stale, so it is read again
+    /// rather than dropped, and the third read publishes unless a newer reload has already published (that one began
+    /// after the caller's write, so its rows include it, and this older read must not land over it). Callers read the published rows after this returns, so it never returns before they
     /// are on screen. The Preparing Audio lists are left alone when their writer (a reorder) changed them during the
     /// read, like the background reload. The read is `navigationLibraryRead`, so a test can hold it open. Returns
     /// whether the rows are on screen, which they are unless the read throws.
@@ -31,12 +31,12 @@ extension Gate1AppModel {
         for attempt in 0..<3 {
             let (generation, _) = backgroundRefresh.beginLibraryReload(mustPublish: true)
             let listsBefore = audioPreparationLists
+            let revision = libraryPresentationRevision
             let data = try await navigationLibraryRead(store)
             let current = backgroundRefresh.isCurrentLibrary(generation)
-            if !current {
-                if backgroundRefresh.newerLibraryPublished(than: generation) { return true }
-                if attempt < 2 { continue }
-            }
+            if !current, backgroundRefresh.newerLibraryPublished(than: generation) { return true }
+            // Main-thread row writes start no reload, so only the revision sees them, as in the background reload.
+            if (!current || libraryPresentationRevision != revision) && attempt < 2 { continue }
             publishLibraryRead(data, store: store, generation: generation, publishLists: audioPreparationLists == listsBefore)
             return true
         }

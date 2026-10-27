@@ -309,6 +309,28 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertEqual(model.recentlyPreparedAudio, reordered, "the read began before the change and must not publish the old lists")
     }
 
+    /// A permanent delete reloads the rows on the main thread and starts no reload generation, so an import's read that
+    /// began before it is older than the rows on screen and is read again, not published over them (#2775 audit).
+    func testAnImportReloadOvertakenBySynchronousRowsReadsAgainInsteadOfRestoringOldRows() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let store = try XCTUnwrap(model.store)
+        let held = HeldReads()
+        holdReads(held, on: model)
+        var started = held.started.stream.makeAsyncIterator()
+
+        let reload = Task { @MainActor in try await model.reloadLibraryRowsOffMain(store: store) }
+        await started.next()
+        model.libraryItems = [LibraryItemRow(id: "newer-item", title: "Newer state", status: "Ready", canDelete: true)]
+        held.release(1)
+        await started.next()
+        held.release(2)
+        _ = try await reload.value
+
+        XCTAssertEqual(held.count, 2, "the older read must not publish over the newer rows; the reload reads again")
+        XCTAssertNotEqual(model.libraryItems.map(\.id), ["newer-item"], "the second read, which saw no change, publishes the stored Library")
+    }
+
     func testSavingALiveSessionReadsTheLibraryAndItemOffTheMainThread() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
