@@ -2952,10 +2952,8 @@ final class Gate1AppModel: ObservableObject {
                 replaceActivePlayback: replaceActivePlayback
             )
             if let store {
-                libraryItems = try loadLibraryRows(store: store)
-                if activeItemId == itemId || selectedItem.id == itemId {
-                    selectedItem = try loadItemDetail(id: itemId, store: store)
-                }
+                refreshLibraryRowsInBackground(mustPublish: true) // #2505: a finished prewarm is no reason to freeze the screen
+                if activeItemId == itemId { refreshSelectedItemInBackground() } else if selectedItem.id == itemId { selectedItem = try loadItemDetail(id: itemId, store: store) }
             }
             activateListeningEditionAudio(itemId: itemId, timeline: prepared.timeline)
             diagnostics["textAudioPrewarm:\(itemId)"] = diagnosticStatus
@@ -3159,13 +3157,13 @@ final class Gate1AppModel: ObservableObject {
         let shouldGeneratePendingMap = pendingMapGenerationItemId == itemId
         run { engine in
             snapshot = try engine.attachTranscriptTimeline(itemId: itemId, timeline: timeline)
-            if let store {
-                libraryItems = try loadLibraryRows(store: store)
+            if store != nil {
+                refreshLibraryRowsInBackground(mustPublish: true) // #2505
                 // Transcript imports can finish long after a shared podcast was
                 // added. They must never retarget the playback screen away from
                 // the item/session that is still active.
-                if activeItemId == itemId {
-                    selectedItem = try loadItemDetail(id: itemId, store: store)
+                if activeItemId == itemId { // a pending map generation reads selectedItem.chapters next, so it keeps the direct read
+                    if shouldGeneratePendingMap, let store { selectedItem = try loadItemDetail(id: itemId, store: store) } else { refreshSelectedItemInBackground() }
                 }
             }
             diagnostics["sourceTranscriptionStatus"] = "complete"
