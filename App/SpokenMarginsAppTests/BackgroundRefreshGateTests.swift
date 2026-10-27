@@ -89,10 +89,12 @@ final class BackgroundRefreshGateTests: XCTestCase {
         private let lock = NSLock()
         private var calls = 0
         let started = AsyncStream<Void>.makeStream()
-        let releases = (0..<4).map { _ in AsyncStream<Void>.makeStream() }
+        let releases = (0..<8).map { _ in AsyncStream<Void>.makeStream() }
         var count: Int { lock.withLock { calls } }
         func next() -> Int { lock.withLock { calls += 1; return calls } }
         func release(_ call: Int) { releases[call - 1].continuation.yield(()) }
+        /// Lets every read through, for a tap that may start more reloads than the test counts on.
+        func releaseAll() { for call in 1...releases.count { release(call) } }
     }
 
     private func holdReads(_ held: HeldReads, on model: Gate1AppModel) {
@@ -114,7 +116,7 @@ final class BackgroundRefreshGateTests: XCTestCase {
 
         model.refreshLibraryRowsInBackground(mustPublish: true)
         await started.next()
-        // A synchronous reload (permanent delete, Play) lands while the first read is out; that read is now older.
+        // A synchronous reload (permanent delete, foreground return) lands while the first read is out; that read is now older.
         model.libraryItems = [LibraryItemRow(id: "newer-item", title: "Newer state", status: "Ready", canDelete: true)]
         held.release(1)
         await started.next()
@@ -142,6 +144,64 @@ final class BackgroundRefreshGateTests: XCTestCase {
 
         XCTAssertEqual(held.count, 3, "three reads, then the tap's rows are published whatever moved")
         XCTAssertFalse(model.libraryItems.map(\.id).contains { $0.hasPrefix("churn-") }, "the tapped change must show under churn")
+    }
+
+    /// Play, Open session and Resume used to rebuild the whole Library (every article's text) on the main thread
+    /// before the playback screen could show (#2505). The sentinel row is replaced only by a reload: a synchronous one
+    /// replaces it before the tap returns, a background one only after the main actor next yields.
+    private func sentinelRows() -> [LibraryItemRow] {
+        [LibraryItemRow(id: "sentinel", title: "Not reloaded yet", status: "Ready", canDelete: true)]
+    }
+
+    func testPlayingAnItemReloadsTheLibraryInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.libraryItems = sentinelRows()
+
+        model.startItem(id: "item-pill")
+        XCTAssertEqual(model.screen, .playback)
+        XCTAssertEqual(model.libraryItems.map(\.id), ["sentinel"], "Play must not read the Library before it returns")
+
+        await model.settleLibraryReload()
+        XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"), "the background reload publishes the stored Library")
+    }
+
+    func testOpeningAndResumingASessionReloadTheLibraryInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.pause()
+        await model.settleLibraryReload()
+        let session = try XCTUnwrap(model.selectedItem.sessions.first)
+
+        model.libraryItems = sentinelRows()
+        model.openSession(session)
+        XCTAssertEqual(model.screen, .playback)
+        XCTAssertEqual(model.libraryItems.map(\.id), ["sentinel"], "Open session must not read the Library before it returns")
+        await model.settleLibraryReload()
+        XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"))
+
+        model.libraryItems = sentinelRows()
+        model.resumeSession(session)
+        XCTAssertEqual(model.libraryItems.map(\.id), ["sentinel"], "Resume must not read the Library before it returns")
+        await model.settleLibraryReload()
+        XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"))
+    }
+
+    func testSavingALiveSessionReadsTheLibraryAndItemOffTheMainThread() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let held = HeldReads()
+        holdReads(held, on: model)
+        held.releaseAll()
+        let session = LiveSession(id: "live-\(UUID().uuidString)", kind: .meeting, title: "Standup", startedAt: Date(), endedAt: Date())
+
+        try await model.saveLiveSession(session, transcript: nil, placed: [], recordingURL: nil)
+
+        XCTAssertGreaterThanOrEqual(held.count, 1, "the Library is read through the off-main read")
+        XCTAssertEqual(model.screen, .item)
+        XCTAssertEqual(model.selectedItem.title, "Standup")
+        XCTAssertTrue(model.libraryItems.contains { $0.id == model.selectedItem.id }, "the saved item is on the shelf")
     }
 
     func testASkipThatFinishesTheItemShowsTheFinishedSessionAtOnce() throws {

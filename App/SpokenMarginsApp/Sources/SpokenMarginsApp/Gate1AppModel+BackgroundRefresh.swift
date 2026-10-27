@@ -105,7 +105,7 @@ extension Gate1AppModel {
     /// `mustPublish` is for a tap that changed the database and expects the screen to show it (Mark complete, Undo,
     /// Restore). Playback ticks and prewarm progress can invalidate every read of a busy Library, and dropping the
     /// reload then would leave the row stale until something else reloads. A `mustPublish` reload reads again like any
-    /// other (a synchronous reload that landed meanwhile, such as a permanent delete or Play, is newer than this read
+    /// other (a synchronous reload that landed meanwhile, such as a permanent delete or the foreground return, is newer than this read
     /// and must not be undone by it), but its third read publishes the rows whatever moved meanwhile (the database is
     /// the truth; the next tick refreshes a moving row), and leaves the Preparing Audio lists alone when their writer
     /// changed them during that read.
