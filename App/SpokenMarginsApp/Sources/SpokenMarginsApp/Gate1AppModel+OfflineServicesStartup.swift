@@ -31,7 +31,10 @@ extension Gate1AppModel {
                 model.tryRefreshOfflineStorageUsage()
                 await model.performFollowedSourceRefresh(force: false)
             }
+            // A model built by a test must not ask the production server for the tour: on a runner with a network
+            // the answer landed mid-test and put a `guided-onboarding` row into a library the test had counted (#2772).
             guard !Task.isCancelled,
+                  !Gate1AppModel.isRunningUnitTests,
                   !UserDefaults.standard.bool(forKey: Gate1AppModel.guidedOnboardingTombstoneKey),
                   let coordinator = self?.guidedOnboardingCoordinator,
                   self?.store != nil else { return }

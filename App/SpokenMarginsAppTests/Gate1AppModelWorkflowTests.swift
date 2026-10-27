@@ -2901,6 +2901,30 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(startup.allSatisfy(\.isCancelled), "the model's deinit cancels its startup")
     }
 
+    /// #2772: the offline-services startup asked the production server for the guided tour, and on a runner with a
+    /// network the answer saved a `guided-onboarding` row into a library a test had already counted. A test model
+    /// makes no request for it. The coordinator is swapped for one on a counting session before the startup task
+    /// first runs, so the count is zero only because the startup never asked.
+    func testAModelUnderUnitTestsDoesNotAskTheServerForTheGuidedTour() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let ledger = try XCTUnwrap(model.offlineStorageLedger)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [GuidedTourRequestCountingURLProtocol.self]
+        GuidedTourRequestCountingURLProtocol.reset()
+        model.guidedOnboardingCoordinator = GuidedOnboardingCoordinator(
+            session: URLSession(configuration: configuration),
+            directory: FileManager.default.temporaryDirectory
+                .appending(path: "guided-tour-startup-\(UUID().uuidString)", directoryHint: .isDirectory),
+            ledger: ledger
+        )
+
+        for task in model.offlineServicesStartupTasks { await task.value }
+
+        XCTAssertEqual(GuidedTourRequestCountingURLProtocol.requested, [])
+        XCTAssertFalse(model.libraryItems.contains { $0.id == Gate1AppModel.guidedOnboardingItemId })
+    }
+
     /// #2195: every model a test built published Live Activity cards through the real ActivityKit. Those calls wait
     /// on a system daemon from the main thread, and on a loaded Mac they left 1 to 2.5 s of main-queue work behind
     /// tests that never touch a card. Under unit tests the default system shows no card and calls nothing.
@@ -6618,4 +6642,23 @@ private final class MarginPermissionTestGate {
         continuation = nil
         pending?.resume(returning: granted)
     }
+}
+
+/// Records every URL asked of its session and fails it, so a test can say a request was never made (#2772).
+private final class GuidedTourRequestCountingURLProtocol: URLProtocol, @unchecked Sendable {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var urls: [String] = []
+
+    static func reset() { lock.withLock { urls = [] } }
+    static var requested: [String] { lock.withLock { urls } }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        Self.lock.withLock { Self.urls.append(request.url?.absoluteString ?? "") }
+        client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+    }
+
+    override func stopLoading() {}
 }
