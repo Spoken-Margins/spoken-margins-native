@@ -923,6 +923,13 @@ class HostedPhoneBuildTests(unittest.TestCase):
         return subprocess.run(['/usr/bin/python3', str(SCRIPTS / 'phone-build'), *args], env=env,
                               capture_output=True, text=True, timeout=120)
 
+    def age_misses(self, hours=2):
+        """Move the first miss back in time: a streak notifies only once it has lasted an hour."""
+        path = self.phone / 'hosted-misses.json'
+        state = json.loads(path.read_text())
+        state['since'] = (datetime.datetime.now() - datetime.timedelta(hours=hours)).isoformat(timespec='seconds')
+        path.write_text(json.dumps(state))
+
     def needs_you(self):
         return [line for line in self.log.read_text().splitlines()
                 if line.startswith('notify ') and 'phone build needs you' in line]
@@ -934,6 +941,9 @@ class HostedPhoneBuildTests(unittest.TestCase):
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         self.assertIn('gh exited 4: Try authenticating with:  gh auth login', first.stdout)
         self.assertEqual(self.needs_you(), [])
+        self.run_trunk('--if-changed', FAKE_GH_DOWN='1')
+        self.assertEqual(self.needs_you(), [])  # two quick misses: a blip, not yet a fault
+        self.age_misses()
         for _ in range(2):
             self.run_trunk('--if-changed', FAKE_GH_DOWN='1')
         [notice] = self.needs_you()
@@ -953,6 +963,7 @@ class HostedPhoneBuildTests(unittest.TestCase):
         self.assertEqual(self.run_trunk('--if-changed').returncode, 0)
         for _ in range(3):
             self.run_trunk('--if-changed', FAKE_GH_DOWN='1')
+            self.age_misses()
         self.assertEqual(self.needs_you(), [])
 
     def test_hosted_builds_that_stopped_while_main_moved_on_are_named(self):
@@ -966,10 +977,24 @@ class HostedPhoneBuildTests(unittest.TestCase):
         for _ in range(2):
             done = self.run_trunk('--if-changed')
             self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.age_misses()
         self.assertIn('latest is already the hosted build', done.stdout)
         [notice] = self.needs_you()
         self.assertIn(f'main has had {newer[:7]} for 40 hours with no hosted build of it', notice)
         self.assertIn('has stopped succeeding', json.loads((self.phone / 'trunk.json').read_text())['problem'])
+
+    def test_a_tip_merged_under_36_hours_ago_is_not_stale(self):
+        self.git('update-ref', 'refs/remotes/origin/main', self.tip)
+        self.assertEqual(self.run_trunk('--if-changed').returncode, 0)
+        recent = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=30)).isoformat()
+        subprocess.run(['git', 'commit', '-q', '--allow-empty', '-m', 'Merge pull request #13: change 13'],
+                       cwd=str(self.repo), check=True, env={**os.environ, 'GIT_COMMITTER_DATE': recent})
+        self.git('update-ref', 'refs/remotes/origin/main', self.git('rev-parse', 'HEAD'))
+        for _ in range(3):
+            self.assertEqual(self.run_trunk('--if-changed').returncode, 0)
+        self.assertFalse((self.phone / 'hosted-misses.json').exists())
+        self.assertEqual(self.needs_you(), [])
+        self.assertIsNone(json.loads((self.phone / 'trunk.json').read_text())['problem'])
 
     def test_mains_installer_is_kept_in_the_phone_folder(self):
         installer = self.phone / 'install-phone-build.command'

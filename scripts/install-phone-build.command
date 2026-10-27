@@ -197,7 +197,7 @@ else:
                 'the next phone build will pick main up (hosted builds come twice a day)'))
         behind = (f'{gap}: main is at commit {trunk["sha"][:7]}'
                   f'{", merged " + when(merged) if merged else ""}. Why: {why}.')
-    if checked and now - checked > datetime.timedelta(hours=2):
+    if checked and now - checked > datetime.timedelta(hours=3):
         note = (f'The phone-build job last looked at main {when(checked)}, so it may have stopped. '
                 'Its log is ~/SpokenMargins-phone/launchd.log.')
 

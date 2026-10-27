@@ -131,6 +131,7 @@ HOSTED_EVENTS = ('schedule', 'workflow_dispatch')
 # Staleness is said out loud (#2782): the Desktop shortcut offered a 4-day-old build while nothing told the owner.
 HOSTED_STALE_HOURS = 36   # hosted builds come twice a day; a day and a half without a new one means they stopped
 MISSES_TO_NOTIFY = 2      # one missed check is GitHub having a moment; two in a row while main moved is a fault
+MISSES_FOR = datetime.timedelta(hours=1)  # ...and an hour of them, so a Wi-Fi blip after waking stays quiet
 INSTALLER = 'install-phone-build.command'  # the trunk's installer, kept in the phone folder for the Desktop launcher
 SIGNING_HINTS = [
     ('errSecInternalComponent', 'The keychain is locked or asked for permission. Unlock the Mac, run '
@@ -1736,8 +1737,14 @@ def hosted_build(commit: str | None = None) -> tuple[dict | None, str]:
         sha = run.get('head_sha') or ''
         if not re.fullmatch(r'[0-9a-f]{40}', sha) or (commit and sha != commit):
             continue
-        artifacts = gh_json('api', f'repos/{REPO}/actions/runs/{run["id"]}/artifacts')
-        for artifact in (artifacts or {}).get('artifacts', []):
+        raw, problem = gh_call('api', f'repos/{REPO}/actions/runs/{run["id"]}/artifacts')
+        if raw is None:
+            return None, f'GitHub could not be asked for the hosted build of {sha[:7]} ({problem})'
+        try:
+            artifacts = json.loads(raw)
+        except ValueError:
+            artifacts = None
+        for artifact in (artifacts if isinstance(artifacts, dict) else {}).get('artifacts', []):
             if artifact.get('name') == f'phone-build-{sha}' and not artifact.get('expired'):
                 return {'sha': sha, 'run_id': run['id'], 'artifact': artifact['name'],
                         'run_url': run.get('html_url'), 'built_at': artifact.get('created_at')}, ''
@@ -1779,8 +1786,8 @@ def misses_path() -> Path:
 
 def note_miss(reason: str, tip: str) -> None:
     """Count a check that found no new hosted build for a reason that isn't "nothing changed". The second in a row,
-    while latest is behind the trunk, posts the "phone build needs you" notification once (#2782): a broken gh
-    login in launchd used to be a silent no-op."""
+    an hour or more after the first, while latest is behind the trunk, posts the "phone build needs you"
+    notification once (#2782): a broken gh login in launchd used to be a silent no-op."""
     state = read_json(misses_path())
     try:
         count = int(state.get('count') or 0) + 1
@@ -1790,12 +1797,18 @@ def note_miss(reason: str, tip: str) -> None:
              'count': count, 'reason': reason, 'notified': bool(state.get('notified'))}
     say(f'no new hosted phone build ({count} check{"" if count == 1 else "s"} in a row): {reason}')
     latest = latest_build().get('sha') or ''
-    if count >= MISSES_TO_NOTIFY and latest != tip and not state['notified']:
+    try:
+        lasted = datetime.datetime.now() - datetime.datetime.fromisoformat(state['since'])
+    except (TypeError, ValueError):
+        lasted = MISSES_FOR
+    if count >= MISSES_TO_NOTIFY and lasted >= MISSES_FOR and latest != tip and not state['notified']:
         notify('Spoken Margins: phone build needs you',
                f'The phone build is stuck at {latest[:7] or "nothing yet"} while {BRANCH} is at {tip[:7] or "unknown"}: '
                f'{reason}.')
         state['notified'] = True
-    misses_path().write_text(json.dumps(state) + '\n')
+    temporary = phone_dir() / '.hosted-misses-new.json'
+    temporary.write_text(json.dumps(state) + '\n')
+    os.replace(temporary, misses_path())
 
 
 def clear_misses() -> None:
@@ -1804,20 +1817,23 @@ def clear_misses() -> None:
         misses_path().unlink()
 
 
-def note_trunk(tip: str) -> None:
+def note_trunk(tip: str, hosted: bool) -> None:
     """Write trunk.json for the installer: the trunk's tip, when it merged, when this job last looked, and any
     reason no new build is coming. The installer compares the build it offers with this (#2782)."""
     if not tip:
         return
     merged = commit_time(tip)
-    state = read_json(misses_path())
+    state = read_json(misses_path()) if hosted else {}  # a switch back to mac leaves no stale reason
     record = {'branch': BRANCH, 'sha': tip,
               'committed_at': merged.astimezone().replace(tzinfo=None).isoformat(timespec='seconds') if merged else None,
               'checked_at': datetime.datetime.now().isoformat(timespec='seconds'),
               'problem': state.get('reason') or None}
     temporary = phone_dir() / '.trunk-new.json'
-    temporary.write_text(json.dumps(record, indent=2) + '\n')
-    os.replace(temporary, phone_dir() / 'trunk.json')
+    try:
+        temporary.write_text(json.dumps(record, indent=2) + '\n')
+        os.replace(temporary, phone_dir() / 'trunk.json')
+    except OSError as failure:  # never hides the build's own result
+        say(f'could not write trunk.json: {failure}')
 
 
 def refresh_installer(tip: str) -> None:
@@ -2042,7 +2058,7 @@ def main(argv) -> int:
         try:
             return take_or_build(args, sha, tip)
         finally:
-            note_trunk(tip)
+            note_trunk(tip, (args.source or source()) == 'hosted')
 
 
 def take_or_build(args, sha: str, tip: str) -> int:
