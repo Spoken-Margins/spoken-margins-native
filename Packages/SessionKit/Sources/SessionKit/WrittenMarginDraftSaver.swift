@@ -2,6 +2,9 @@ import Foundation
 
 /// Writes a written Margin's text to its journal when typing pauses, and straight away when the app is about to
 /// leave the screen (#1970). Each keystroke would otherwise rewrite the file; this keeps one write per pause.
+///
+/// The file work runs on a serial utility queue, not the main actor (#2510): the call is queued at once and in order,
+/// so a write is never overtaken by a later discard, and typing never waits on the disk. Only `flush`, on the way out of the app, waits.
 @MainActor
 public final class WrittenMarginDraftSaver {
     private let journal: WrittenMarginDraftJournal?
@@ -9,6 +12,7 @@ public final class WrittenMarginDraftSaver {
     private let now: () -> Date
     private let onFailure: (String) -> Void
     private var pending: Task<Void, Never>?
+    private let writer = DispatchQueue(label: "SessionKit.WrittenMarginDraftSaver.writer", qos: .utility)
 
     /// - Parameter journal: nil when the app has no folder to keep drafts in; every call then does nothing.
     public init(
@@ -33,23 +37,39 @@ public final class WrittenMarginDraftSaver {
         }
     }
 
-    /// The app is going to the background or closing: write now.
+    /// The app is going to the background or closing: the file is on disk when this returns. The app can be suspended
+    /// or killed right after the notification, so this one waits for the queue (earlier writes are ahead of it, so
+    /// order holds). It is one small file per lifecycle event, not per keystroke.
     public func flush(_ text: String, capture: WrittenInterjectionCapture) {
         pending?.cancel()
         pending = nil
         write(text, capture: capture)
+        waitForWrites()
     }
 
     /// The Margin was saved or discarded: nothing is left to recover.
     public func discard(captureId: String) {
         pending?.cancel()
         pending = nil
-        do { try journal?.remove(id: captureId) } catch { onFailure("remove:\(error.localizedDescription)") }
+        guard let journal else { return }
+        writer.async { [weak self] in
+            do { try journal.remove(id: captureId) } catch { self?.failed("remove:\(error.localizedDescription)") }
+        }
     }
 
     private func write(_ text: String, capture: WrittenInterjectionCapture) {
-        do { try journal?.write(WrittenMarginDraftRecord(capture: capture, text: text, updatedAt: now())) } catch {
-            onFailure("write:\(error.localizedDescription)")
+        guard let journal else { return }
+        let record = WrittenMarginDraftRecord(capture: capture, text: text, updatedAt: now())
+        writer.async { [weak self] in
+            do { try journal.write(record) } catch { self?.failed("write:\(error.localizedDescription)") }
         }
     }
+
+    /// Reports a failed file call on the main actor, where `onFailure` lives.
+    private nonisolated func failed(_ detail: String) {
+        Task { @MainActor [weak self] in self?.onFailure(detail) }
+    }
+
+    /// Returns once every queued write and removal has landed.
+    func waitForWrites() { writer.sync {} }
 }
