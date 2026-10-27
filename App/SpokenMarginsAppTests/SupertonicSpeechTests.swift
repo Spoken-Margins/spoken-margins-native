@@ -5686,7 +5686,8 @@ private actor HoldableAudioSupertonicRenderer: SupertonicRendering {
             duration: Double(audio.length) / audio.processingFormat.sampleRate,
             sampleRate: Int(audio.processingFormat.sampleRate.rounded()),
             renderDuration: 0.01,
-            sessionLoadCount: 1
+            sessionLoadCount: 1,
+            engine: SupertonicNarrationResult.supertonicEngine
         )
     }
 
