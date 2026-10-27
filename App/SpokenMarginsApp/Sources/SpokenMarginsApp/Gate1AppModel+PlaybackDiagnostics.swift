@@ -53,7 +53,7 @@ extension Gate1AppModel {
 
     /// What the resource policy reads from the phone now: heat, Low Power Mode, power source, memory backoff.
     func currentResourceConditions() -> SpeechEngineConditions {
-        SupertonicResourcePolicy.currentConditions(isOnExternalPower: SupertonicResourcePolicy.isOnExternalPower())
+        SupertonicResourcePolicy.currentConditions()
     }
 
     /// Stops on-device rendering for the iOS voice, as the app and the listener's Stop do without a render
