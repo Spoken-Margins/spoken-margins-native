@@ -36,8 +36,10 @@ final class BackgroundRefreshGate {
     func beginLibrary() -> Int { beginLibraryReload(mustPublish: false).generation }
 
     /// The newest reload that has published is remembered, so an older read that finishes later never lands over it.
+    /// Only the newest reload settles the tap's publish duty: an older read that publishes on its last attempt leaves it
+    /// to the reload that overtook it, whose rows are the ones that include the tap's change.
     func libraryWasPublished(generation: Int) {
-        mustPublishPending = false
+        if generation == libraryGeneration { mustPublishPending = false }
         publishedLibraryGeneration = max(publishedLibraryGeneration, generation)
     }
 

@@ -331,6 +331,19 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertNotEqual(model.libraryItems.map(\.id), ["newer-item"], "the second read, which saw no change, publishes the stored Library")
     }
 
+    /// An import's third read publishes although a newer reload has started; the tap behind that newer reload still
+    /// needs a publish, so the duty passes on to the reload after it (#2775 audit).
+    func testAnOlderReloadThatPublishesLeavesTheNewerTapsDutyToPublish() {
+        let gate = BackgroundRefreshGate()
+        let older = gate.beginLibraryReload(mustPublish: true).generation
+        _ = gate.beginLibraryReload(mustPublish: true) // the tap's reload overtakes the older one
+        gate.libraryWasPublished(generation: older)
+        XCTAssertTrue(gate.beginLibraryReload(mustPublish: false).mustPublish, "the tap's change is still unpublished")
+        let newest = gate.beginLibraryReload(mustPublish: false).generation
+        gate.libraryWasPublished(generation: newest)
+        XCTAssertFalse(gate.beginLibraryReload(mustPublish: false).mustPublish, "the newest reload settles the duty")
+    }
+
     func testSavingALiveSessionReadsTheLibraryAndItemOffTheMainThread() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
