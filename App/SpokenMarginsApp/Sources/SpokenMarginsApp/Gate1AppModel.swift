@@ -3096,7 +3096,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private static func fetchTranscriptLink(_ link: SourceTranscriptLink) async throws -> Data {
+    nonisolated private static func fetchTranscriptLink(_ link: SourceTranscriptLink) async throws -> Data {
         guard let url = URL(string: link.url),
               ["http", "https", "file"].contains(url.scheme?.lowercased() ?? "") else {
             throw SessionKitError.persistenceFailed("source_transcript_url_unsupported")
