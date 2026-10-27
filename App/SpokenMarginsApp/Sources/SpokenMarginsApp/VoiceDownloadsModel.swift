@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitSpeechFrontEnd
 
 /// What Settings › Voices shows and does (#1819). The rules (catalog, agreement, install, Storage row) are in
 /// SessionKit's VoiceCatalogCoordinator; this keeps the screen's state and outlives the screen, so a

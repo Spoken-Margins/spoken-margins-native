@@ -1,4 +1,5 @@
 import CryptoKit
+import Network
 import SessionKit
 import SwiftUI
 
@@ -9,6 +10,9 @@ struct VoicesSettingsScreen: View {
     @ObservedObject var voices: VoiceDownloadsModel
     @State private var agreementRow: VoiceCatalogRow?
     @State private var pendingRemoval: VoiceCatalogRow?
+    /// A large voice waiting for the listener's OK to download off Wi-Fi (#2705).
+    @State private var pendingCellular: VoiceCatalogRow?
+    @StateObject private var network = VoiceDownloadNetworkWatcher()
 
     var body: some View {
         Form {
@@ -60,9 +64,32 @@ struct VoicesSettingsScreen: View {
         } message: {
             Text("Its files are deleted. You can download it again here.")
         }
+        .confirmationDialog(
+            pendingCellular.map { "Download \($0.entry.displayName) without Wi-Fi?" } ?? "",
+            isPresented: Binding(get: { pendingCellular != nil }, set: { if !$0 { pendingCellular = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Download") {
+                if let row = pendingCellular { proceed(row) }
+                pendingCellular = nil
+            }
+            .accessibilityIdentifier("settings.voices.cellular.download")
+            Button("Not now", role: .cancel) { pendingCellular = nil }
+        } message: {
+            Text(pendingCellular.map { "It is \(VoiceRow.size(Int64($0.entry.downloadByteCount))). On mobile data that can use a lot of your plan." } ?? "")
+        }
     }
 
     private func start(_ row: VoiceCatalogRow) {
+        if VoiceDownloadNetworkRule.asksFirst(byteCount: Int64(row.entry.downloadByteCount),
+                                              isExpensive: network.isExpensive, isConstrained: network.isConstrained) {
+            pendingCellular = row
+        } else {
+            proceed(row)
+        }
+    }
+
+    private func proceed(_ row: VoiceCatalogRow) {
         if row.licensesNeedingAgreement.isEmpty {
             voices.download(row.id)
         } else {
@@ -241,4 +268,26 @@ struct VoiceLicenseView: View {
         }
         return nil
     }
+}
+
+/// Whether the current path is mobile data, a hotspot or Low Data Mode, for the ask before a large download.
+/// Unknown until the first update, which counts as Wi-Fi so nothing is blocked on a guess.
+@MainActor
+final class VoiceDownloadNetworkWatcher: ObservableObject {
+    @Published private(set) var isExpensive = false
+    @Published private(set) var isConstrained = false
+    private let monitor = NWPathMonitor()
+
+    init() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            let expensive = path.isExpensive, constrained = path.isConstrained
+            Task { @MainActor [weak self] in
+                self?.isExpensive = expensive
+                self?.isConstrained = constrained
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "com.spokenmargins.voices.network"))
+    }
+
+    deinit { monitor.cancel() }
 }

@@ -25,17 +25,17 @@ public final class KittenFrontEnd: @unchecked Sendable {
 
     // MARK: Words
 
-    private static let vowelLetters = Rx("[aeiouyAEIOUY]")
-    private static let acronym = Rx("[A-Z]{2,5}s?")
-    private static let shortAcronym = Rx("[A-Z]{2,4}")
+    static let vowelLetters = Rx("[aeiouyAEIOUY]")
+    static let acronym = Rx("[A-Z]{2,5}s?")
+    static let shortAcronym = Rx("[A-Z]{2,4}")
     private static let nonLetters = Rx("[^a-z]")
     private static let vowelStart = Rx("^\"?[ˈˌ]?[\(Espeakify.vowels)]")
 
-    private func lookup(_ word: String) -> String? {
+    func lookup(_ word: String) -> String? {
         lexicon.pronunciation(of: word) ?? lexicon.pronunciation(of: word.lowercased())
     }
 
-    private static func isUppercase(_ word: String) -> Bool {
+    static func isUppercase(_ word: String) -> Bool {
         var cased = false
         for scalar in word.unicodeScalars where scalar.properties.isCased {
             if !scalar.properties.isUppercase { return false }
@@ -45,7 +45,7 @@ public final class KittenFrontEnd: @unchecked Sendable {
     }
 
     /// 'PBS' -> three letter names, stress on the last only.
-    private static func spelled(_ letters: [String]) -> String {
+    static func spelled(_ letters: [String]) -> String {
         let names = letters.compactMap { FrontEndTables.letterNames[$0.lowercased()] }
         return names.enumerated().map { index, name in
             index < names.count - 1 ? name.replacingLiteral("ˈ", with: "ˌ") : name
@@ -64,7 +64,7 @@ public final class KittenFrontEnd: @unchecked Sendable {
         return result
     }
 
-    private func computeWord(_ w: String) -> String {
+    func computeWord(_ w: String) -> String {
         let lower = w.lowercased()
         if let spoken = FrontEndTables.numberWords[lower] { return spoken }
         if let spoken = FrontEndTables.functionWords[lower], !(w.count > 1 && Self.isUppercase(w)) { return spoken }
@@ -105,38 +105,19 @@ public final class KittenFrontEnd: @unchecked Sendable {
     private static let tokenizer = Rx("[A-Za-z]+@?(?:['’][A-Za-z]+)?|[.,!?;:—…\"“”]")
     private static let joinedTens = Rx("^(\(FrontEndTables.tensWords.joined(separator: "|")))(.+)@")
 
+    /// How the shared tokenizer reads text for one voice. Kitten's is the default; Kokoro (#2705) reads numbers
+    /// the way misaki does, keeps the dash and the ellipsis, uses curly quotes, and says 'eighty four' as two words.
+    struct TextStyle {
+        var numbers: SpeechNormalizer.NumberReading = .kitten
+        var joinTens = true
+        var keepDashes = false
+        var openQuote = "\""
+        var closeQuote = "\""
+    }
+
     /// Text to a phoneme string in phonemizer's shape: words space-separated, punctuation kept.
     public func phonemize(_ text: String) -> String {
-        var t = SpeechNormalizer.normalize(text)
-        var out: [String] = []
-        var pending = ""
-        var openQuote = false
-        t = Self.tensJoin.sub(t, template: "$1$2@")
-        for match in Self.tokenizer.matches(in: t) {
-            let token = match.whole
-            if token.hasSuffix("@") {                              // 'eighty-four' said as one word
-                if let joined = Self.joinedTens.firstMatch(in: token) {
-                    out.append(pending + word(joined.group(1) ?? "") + word(joined.group(2) ?? ""))
-                }
-                pending = ""
-                continue
-            }
-            if let first = token.unicodeScalars.first, first.isASCII, first.properties.isAlphabetic {
-                out.append(pending + word(token.replacingLiteral("’", with: "'")))
-                pending = ""
-            } else if token == "\"" || token == "“" || token == "”" {
-                if openQuote || token == "”" {
-                    if !out.isEmpty { out[out.count - 1] += "\"" }
-                    openQuote = false
-                } else {
-                    pending = "\""
-                    openQuote = true
-                }
-            } else {
-                let mark = token == "—" ? "," : token == "…" ? "." : token
-                if !out.isEmpty { out[out.count - 1] += mark }
-            }
-        }
+        var (out, _) = phonemizeWords(text, style: TextStyle(), word: { self.word($0) })
         // 'the' before a vowel sound
         if out.count > 1 {
             for index in 0..<(out.count - 1) where out[index] == "ðə" || out[index] == "\"ðə" {
@@ -144,6 +125,46 @@ public final class KittenFrontEnd: @unchecked Sendable {
             }
         }
         return out.joined(separator: " ")
+    }
+
+    /// The tokenizer both voices share: normalize, then each word through `word`, punctuation attached to the word
+    /// before it. Returns the phonemes per word and, in step, the word each came from ("" for a joined pair).
+    func phonemizeWords(_ text: String, style: TextStyle, word wordPhonemes: (String) -> String) -> (phonemes: [String], sources: [String]) {
+        var t = SpeechNormalizer.normalize(text, numbers: style.numbers)
+        var out: [String] = []
+        var sources: [String] = []
+        var pending = ""
+        var openQuote = false
+        if style.joinTens { t = Self.tensJoin.sub(t, template: "$1$2@") }
+        for match in Self.tokenizer.matches(in: t) {
+            let token = match.whole
+            if token.hasSuffix("@") {                              // 'eighty-four' said as one word
+                if let joined = Self.joinedTens.firstMatch(in: token) {
+                    out.append(pending + wordPhonemes(joined.group(1) ?? "") + wordPhonemes(joined.group(2) ?? ""))
+                    sources.append("")
+                }
+                pending = ""
+                continue
+            }
+            if let first = token.unicodeScalars.first, first.isASCII, first.properties.isAlphabetic {
+                let source = token.replacingLiteral("’", with: "'")
+                out.append(pending + wordPhonemes(source))
+                sources.append(source)
+                pending = ""
+            } else if token == "\"" || token == "“" || token == "”" {
+                if openQuote || token == "”" {
+                    if !out.isEmpty { out[out.count - 1] += style.closeQuote }
+                    openQuote = false
+                } else {
+                    pending = style.openQuote
+                    openQuote = true
+                }
+            } else {
+                let mark = style.keepDashes ? token : token == "—" ? "," : token == "…" ? "." : token
+                if !out.isEmpty { out[out.count - 1] += mark }
+            }
+        }
+        return (out, sources)
     }
 
     // MARK: Ids
