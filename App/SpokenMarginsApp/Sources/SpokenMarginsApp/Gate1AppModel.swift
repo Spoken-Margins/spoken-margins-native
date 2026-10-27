@@ -1139,12 +1139,8 @@ final class Gate1AppModel: ObservableObject {
         syncPlaybackProgressForLifecycle()
         gate2CompactControls.reconcileLiveActivities()
         importPendingSourceLinkHandoffs()
-        if let store {
-            try? refreshLibraryRows(store: store)
-            try? refreshAudioPreparationPresentation(store: store, announceNewCompletions: true)
-        }
-        scheduleAutomaticAudioPreparationIfNeeded()
-        submitAutomaticEpisodeMapPreparationIfNeeded()
+        backgroundRefresh.requestAnnouncement() // the reload that publishes also announces audio that finished while away and schedules audio and episode-map preparation (they walk the fresh rows)
+        refreshLibraryRowsInBackground(mustPublish: true)
         if canPrepareLibraryAudio { startForegroundAudioPreparationIfNeeded() } // a background task may have ended while the app was away (#534)
         refreshQuickAddFeed(force: false)
     }
@@ -2820,7 +2816,7 @@ final class Gate1AppModel: ObservableObject {
             }
             let restoredSnapshot = try sessionId.map { try replacement.inspectSession(sessionId: $0) }
             installEngine(replacement)
-            try refreshLibraryRows(store: store)
+            refreshLibraryRowsInBackground(mustPublish: true) // nothing below reads the rows
             if let restoredSnapshot {
                 snapshot = restoredSnapshot
                 activeItemId = restoredSnapshot.itemId ?? activeItemId
