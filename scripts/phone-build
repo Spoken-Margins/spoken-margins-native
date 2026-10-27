@@ -74,6 +74,13 @@ Gates (hourly coalescing, #1329; bugs are fine, crashes the runners would catch 
 
 The owner gets a macOS notification when a new build is ready, and when signing needs him (#500).
 
+Staleness is loud (#2782). Every run writes trunk.json (the trunk's tip, when it merged, when this job last looked,
+and why no new build is coming), so the installer says how far behind main the build it offers is. A hosted check
+that finds nothing because gh failed, or because no hosted build has followed a tip for HOSTED_STALE_HOURS, is
+counted in hosted-misses.json; the second in a row while latest is behind the trunk posts "phone build needs you"
+once. Every run also copies the trunk's scripts/install-phone-build.command into the phone folder, and any other
+copy of the installer (the Desktop's) runs that one, so the Desktop copy can't go stale again.
+
 Environment (tests): SM_PHONE_DIR (default ~/SpokenMargins-phone), SM_PHONE_KEEP (3),
 SM_PHONE_NOTIFY (the notification command, default osascript; `off` skips it),
 SM_PHONE_DISK_FREE_GB (instead of measuring), SM_LANE_* (scripts/lane_slots.py, xcodebuild-lane),
@@ -121,6 +128,10 @@ BUILD_INTERVAL_SECONDS = 3600
 SOURCES = ('mac', 'hosted')  # --source: build here, or download the hosted build (#2357)
 HOSTED_WORKFLOW = 'phone-build.yml'
 HOSTED_EVENTS = ('schedule', 'workflow_dispatch')
+# Staleness is said out loud (#2782): the Desktop shortcut offered a 4-day-old build while nothing told the owner.
+HOSTED_STALE_HOURS = 36   # hosted builds come twice a day; a day and a half without a new one means they stopped
+MISSES_TO_NOTIFY = 2      # one missed check is GitHub having a moment; two in a row while main moved is a fault
+INSTALLER = 'install-phone-build.command'  # the trunk's installer, kept in the phone folder for the Desktop launcher
 SIGNING_HINTS = [
     ('errSecInternalComponent', 'The keychain is locked or asked for permission. Unlock the Mac, run '
      'scripts/phone-build once from Terminal, and click "Always Allow" when macOS asks for the keychain.'),
@@ -274,12 +285,20 @@ def git(*args, cwd=ROOT, check=True) -> str:
 
 def gh(*args) -> str | None:
     """A gh call's output, or None when gh is missing, offline or refused (the plan says so)."""
+    return gh_call(*args)[0]
+
+
+def gh_call(*args) -> tuple[str | None, str]:
+    """A gh call's output (None when it failed) and, when it failed, why: gh's last error line (#2782)."""
     command = os.environ.get('SM_PHONE_GH', 'gh').split()
     try:
         done = subprocess.run([*command, *args], capture_output=True, text=True, timeout=120)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    return done.stdout if done.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired) as failure:
+        return None, f'gh could not run ({failure})'
+    if done.returncode == 0:
+        return done.stdout, ''
+    lines = [line.strip() for line in (done.stderr or done.stdout or '').splitlines() if line.strip()]
+    return None, f'gh exited {done.returncode}' + (f': {lines[-1][:200]}' if lines else '')
 
 
 def free_disk_gb(path: Path) -> float:
@@ -1696,14 +1715,21 @@ def gh_json(*args):
         return None
 
 
-def hosted_build(commit: str | None = None) -> dict | None:
-    """The newest unexpired hosted phone build of the trunk (or of `commit`): {sha, run_id, artifact, built_at}.
+def hosted_build(commit: str | None = None) -> tuple[dict | None, str]:
+    """The newest unexpired hosted phone build of the trunk (or of `commit`): ({sha, run_id, artifact, built_at}, '').
 
     Only a successful run of the phone-build workflow file itself, started by its schedule or by hand on the
-    trunk, counts: those are the runs its main-only environment lets sign. None when there is none or GitHub
-    is unreachable."""
-    runs = gh_json('api', f'repos/{REPO}/actions/workflows/{HOSTED_WORKFLOW}/runs?branch={BRANCH}&status=success&per_page=20')
-    for run in (runs or {}).get('workflow_runs', []):
+    trunk, counts: those are the runs its main-only environment lets sign. (None, why) when there is none or
+    gh fails; the reason reaches the log, the installer and, when it lasts, a notification (#2782)."""
+    raw, problem = gh_call('api', f'repos/{REPO}/actions/workflows/{HOSTED_WORKFLOW}/runs?branch={BRANCH}'
+                                  '&status=success&per_page=20')
+    if raw is None:
+        return None, f'GitHub could not be asked for the hosted builds ({problem})'
+    try:
+        runs = json.loads(raw)
+    except ValueError:
+        return None, 'GitHub answered the hosted-build question with something that is not JSON'
+    for run in (runs if isinstance(runs, dict) else {}).get('workflow_runs', []):
         if (run.get('path') != f'.github/workflows/{HOSTED_WORKFLOW}' or run.get('event') not in HOSTED_EVENTS
                 or run.get('head_branch') != BRANCH or run.get('conclusion') != 'success'):
             continue
@@ -1714,8 +1740,108 @@ def hosted_build(commit: str | None = None) -> dict | None:
         for artifact in (artifacts or {}).get('artifacts', []):
             if artifact.get('name') == f'phone-build-{sha}' and not artifact.get('expired'):
                 return {'sha': sha, 'run_id': run['id'], 'artifact': artifact['name'],
-                        'run_url': run.get('html_url'), 'built_at': artifact.get('created_at')}
-    return None
+                        'run_url': run.get('html_url'), 'built_at': artifact.get('created_at')}, ''
+    return None, (f'no successful {HOSTED_WORKFLOW} run of {commit[:7] if commit else BRANCH} has an unexpired '
+                  'phone build')
+
+
+def commit_time(sha: str) -> datetime.datetime | None:
+    """When `sha` reached the trunk (its committer time: GitHub's merge time), timezone-aware."""
+    try:
+        stamp = git('log', '-1', '--format=%cI', sha, check=False)
+        return datetime.datetime.fromisoformat(stamp.replace('Z', '+00:00'))  # Python 3.9 reads no "Z"
+    except ValueError:
+        return None
+
+
+def stale_reason(hosted: dict, tip: str) -> str | None:
+    """Why the newest hosted build is stale, or None: the trunk's tip has waited HOSTED_STALE_HOURS for one."""
+    if not tip or hosted['sha'] == tip:
+        return None
+    merged = commit_time(tip)
+    try:
+        built = datetime.datetime.fromisoformat((hosted.get('built_at') or '').replace('Z', '+00:00'))
+    except ValueError:
+        built = None
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if not merged or not built or built.tzinfo is None or built > merged:
+        return None
+    if now - merged < datetime.timedelta(hours=HOSTED_STALE_HOURS):
+        return None
+    return (f'the newest hosted phone build is {hosted["sha"][:7]}, made {local_time(hosted.get("built_at"))}; '
+            f'{BRANCH} has had {tip[:7]} for {int((now - merged).total_seconds() // 3600)} hours with no hosted '
+            f'build of it, so {HOSTED_WORKFLOW} has stopped succeeding')
+
+
+def misses_path() -> Path:
+    return phone_dir() / 'hosted-misses.json'
+
+
+def note_miss(reason: str, tip: str) -> None:
+    """Count a check that found no new hosted build for a reason that isn't "nothing changed". The second in a row,
+    while latest is behind the trunk, posts the "phone build needs you" notification once (#2782): a broken gh
+    login in launchd used to be a silent no-op."""
+    state = read_json(misses_path())
+    try:
+        count = int(state.get('count') or 0) + 1
+    except (TypeError, ValueError):
+        count = 1
+    state = {'since': state.get('since') or datetime.datetime.now().isoformat(timespec='seconds'),
+             'count': count, 'reason': reason, 'notified': bool(state.get('notified'))}
+    say(f'no new hosted phone build ({count} check{"" if count == 1 else "s"} in a row): {reason}')
+    latest = latest_build().get('sha') or ''
+    if count >= MISSES_TO_NOTIFY and latest != tip and not state['notified']:
+        notify('Spoken Margins: phone build needs you',
+               f'The phone build is stuck at {latest[:7] or "nothing yet"} while {BRANCH} is at {tip[:7] or "unknown"}: '
+               f'{reason}.')
+        state['notified'] = True
+    misses_path().write_text(json.dumps(state) + '\n')
+
+
+def clear_misses() -> None:
+    if misses_path().exists():
+        say(f'hosted phone builds are reachable again (after: {read_json(misses_path()).get("reason")})')
+        misses_path().unlink()
+
+
+def note_trunk(tip: str) -> None:
+    """Write trunk.json for the installer: the trunk's tip, when it merged, when this job last looked, and any
+    reason no new build is coming. The installer compares the build it offers with this (#2782)."""
+    if not tip:
+        return
+    merged = commit_time(tip)
+    state = read_json(misses_path())
+    record = {'branch': BRANCH, 'sha': tip,
+              'committed_at': merged.astimezone().replace(tzinfo=None).isoformat(timespec='seconds') if merged else None,
+              'checked_at': datetime.datetime.now().isoformat(timespec='seconds'),
+              'problem': state.get('reason') or None}
+    temporary = phone_dir() / '.trunk-new.json'
+    temporary.write_text(json.dumps(record, indent=2) + '\n')
+    os.replace(temporary, phone_dir() / 'trunk.json')
+
+
+def refresh_installer(tip: str) -> None:
+    """Keep the trunk's installer in the phone folder; any older copy of it, like the Desktop's, runs that one.
+
+    The Desktop held a 2026-10-17 copy that nothing updated, so #2529's stale-pin rule never reached it and the
+    shortcut kept installing the 10-23 daily pin while four newer builds sat in latest (#2782)."""
+    if not tip:
+        return
+    done = subprocess.run(['git', 'show', f'{tip}:scripts/{INSTALLER}'], cwd=str(ROOT), capture_output=True)
+    target = phone_dir() / INSTALLER
+    if done.returncode != 0 or not done.stdout:
+        return
+    try:
+        if target.is_file() and target.read_bytes() == done.stdout:
+            return
+        temporary = phone_dir() / f'.{INSTALLER}.new'
+        temporary.write_bytes(done.stdout)
+        temporary.chmod(0o755)
+        os.replace(temporary, target)
+    except OSError as failure:
+        say(f'could not update {target}: {failure}')
+        return
+    say(f'the installer in {target} is now {BRANCH}\'s, from {tip[:7]}')
 
 
 def local_time(stamp: str | None) -> str | None:
@@ -1853,13 +1979,20 @@ class BuildFailed(Exception):
     pass
 
 
-def take_hosted(commit: str | None, if_changed: bool) -> int:
+def take_hosted(commit: str | None, if_changed: bool, tip: str = '') -> int:
     """--source hosted: no xcodebuild here. Take the newest hosted build (of `commit`, when one is named)."""
-    hosted = hosted_build(commit)
+    hosted, problem = hosted_build(commit)
     if not hosted:
-        say(f'no hosted phone build {"of " + commit[:7] if commit else "of " + BRANCH} yet (or GitHub is '
-            'unreachable); the phone-build workflow makes one')
+        say(f'no hosted phone build {"of " + commit[:7] if commit else "of " + BRANCH} yet: {problem}')
+        if not commit:
+            note_miss(problem, tip)
         return 0 if if_changed else 1
+    if not commit:
+        stale = stale_reason(hosted, tip)
+        if stale:
+            note_miss(stale, tip)
+        else:
+            clear_misses()
     sha = hosted['sha']
     if latest_build().get('sha') == sha and (if_changed or not commit):
         say(f'latest is already the hosted build of {sha[:7]}; nothing to do')
@@ -1904,28 +2037,38 @@ def main(argv) -> int:
         if not os.environ.get('SM_PHONE_NO_FETCH'):
             git('fetch', 'origin', BRANCH, '-q', check=False)
         sha = git('rev-parse', f'{args.commit or "origin/" + BRANCH}^{{commit}}')
-        if (args.source or source()) == 'hosted':
-            return take_hosted(sha if args.commit else None, args.if_changed)
-        if args.if_changed:
-            if latest_build().get('sha') == sha:
-                say(f'latest is already {sha[:7]}; nothing to do')
-                return 0
-            attempt = read_json(phone_dir() / 'last-attempt.json')
-            if attempt.get('sha') == sha and str(attempt.get('result', '')).startswith('failed'):
-                say(f'{sha[:7]} already failed ({attempt["result"]}); waiting for a newer next')
-                return 0
-            reason = coalesce_reason(sha)
-            if reason:
-                say(reason)
-                return 0
-        reason = guard_reason()
+        tip = git('rev-parse', '-q', '--verify', f'origin/{BRANCH}^{{commit}}', check=False)
+        refresh_installer(tip)
+        try:
+            return take_or_build(args, sha, tip)
+        finally:
+            note_trunk(tip)
+
+
+def take_or_build(args, sha: str, tip: str) -> int:
+    """Under the lock: take the hosted build, or build `sha` here."""
+    if (args.source or source()) == 'hosted':
+        return take_hosted(sha if args.commit else None, args.if_changed, tip)
+    if args.if_changed:
+        if latest_build().get('sha') == sha:
+            say(f'latest is already {sha[:7]}; nothing to do')
+            return 0
+        attempt = read_json(phone_dir() / 'last-attempt.json')
+        if attempt.get('sha') == sha and str(attempt.get('result', '')).startswith('failed'):
+            say(f'{sha[:7]} already failed ({attempt["result"]}); waiting for a newer next')
+            return 0
+        reason = coalesce_reason(sha)
         if reason:
-            say(f'skipped: {reason}')
-            return EXIT_SKIPPED
-        clear_work()
-        (phone_dir() / 'last-start.json').write_text(json.dumps({
-            'sha': sha, 'at': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')}) + '\n')
-        return build(sha)
+            say(reason)
+            return 0
+    reason = guard_reason()
+    if reason:
+        say(f'skipped: {reason}')
+        return EXIT_SKIPPED
+    clear_work()
+    (phone_dir() / 'last-start.json').write_text(json.dumps({
+        'sha': sha, 'at': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')}) + '\n')
+    return build(sha)
 
 
 if __name__ == '__main__':

@@ -166,6 +166,81 @@ class InstallerTests(unittest.TestCase):
                          [f'devicectl device install app --device PHONE-1 {pin.resolve()}/SpokenMarginsApp.app'])
         self.assertIn('install the daily phone pass', done.stdout)
 
+    def test_an_old_copy_of_the_installer_runs_the_current_one(self):
+        # Seen 2026-10-27 (#2782): the Desktop held a 10-17 copy without #2529's stale-pin rule and kept
+        # installing the 10-23 daily pin while four newer builds sat in latest.
+        self.make_build()
+        desktop = self.tmp / 'Desktop' / 'Install Spoken Margins on iPhone.command'
+        desktop.parent.mkdir()
+        shutil.copy(INSTALLER, desktop)
+        (self.phone / 'install-phone-build.command').write_text(
+            '#!/bin/zsh\nprint -r -- "current installer ran: $SM_PHONE_INSTALLER_CURRENT $*"\n')
+        env = {**os.environ, 'PATH': f'{self.bin}:/usr/bin:/bin', 'SM_PHONE_DIR': str(self.phone),
+               'FAKE_LOG': str(self.log), 'FAKE_DEVICES': json.dumps([iphone('PHONE-1')])}
+        env.pop('SM_PHONE_INSTALLER_CURRENT', None)
+        done = subprocess.run(['/bin/zsh', str(desktop)], env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(done.stdout, 'current installer ran: 1 \n')
+        self.assertFalse(self.log.exists())  # the old copy touched no phone
+
+    def test_the_current_installer_itself_installs_and_does_not_loop(self):
+        folder = self.make_build()
+        shutil.copy(INSTALLER, self.phone / 'install-phone-build.command')
+        done, calls = self.run_installer([iphone('PHONE-1')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual([call for call in calls if 'install app' in call],
+                         [f'devicectl device install app --device PHONE-1 {folder.resolve()}/SpokenMarginsApp.app'])
+
+    def write_trunk(self, sha, committed_at, checked_at, problem=None):
+        (self.phone / 'trunk.json').write_text(json.dumps({'branch': 'main', 'sha': sha, 'committed_at': committed_at,
+                                                           'checked_at': checked_at, 'problem': problem}))
+
+    def test_a_build_behind_main_says_by_how_many_days_and_why_before_installing(self):
+        self.make_build()  # built 2026-09-30T12:00
+        self.write_trunk('f' * 40, '2026-10-04T13:00:00', '2026-10-04T13:50:00',
+                         'GitHub could not be asked for the hosted builds (gh exited 1: HTTP 401: Bad credentials)')
+        done, calls = self.run_installer([iphone('PHONE-1')], SM_PHONE_NOW='2026-10-04T14:00:00')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('This build is 4 days behind main: main is at commit fffffff, merged today at 13:00. '
+                      'Why: GitHub could not be asked for the hosted builds (gh exited 1: HTTP 401: Bad credentials).',
+                      done.stdout)
+        self.assertLess(done.stdout.index('4 days behind main'), done.stdout.index('Installing on'))
+        self.assertNotIn('may have stopped', done.stdout)
+
+    def test_an_already_installed_daily_pass_behind_main_says_so_instead_of_no_newer_build(self):
+        folder = self.make_build()
+        self.pin_daily_at(folder, '2026-09-30T13:00:00')
+        (self.phone / 'installed.txt').write_text(self.sha + ' 2026-09-30T13:05:00 Cole iPhone\n')
+        self.write_trunk('f' * 40, '2026-09-30T15:00:00', '2026-09-30T15:30:00')
+        done, calls = self.run_installer([], SM_PHONE_NOW='2026-09-30T16:00:00')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("This build is not main's newest commit: main is at commit fffffff, merged today at 15:00. "
+                      'Why: it is the daily pass', done.stdout)
+        self.assertNotIn('No newer build yet', done.stdout)
+
+    def test_a_build_that_is_mains_tip_says_nothing_about_being_behind(self):
+        self.make_build()
+        self.write_trunk(self.sha, '2026-09-30T11:00:00', '2026-09-30T12:30:00')
+        done, _ = self.run_installer([iphone('PHONE-1')], SM_PHONE_NOW='2026-09-30T13:00:00')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertNotIn('behind main', done.stdout)
+        self.assertNotIn("main's newest commit", done.stdout)
+        self.assertNotIn('no record of main', done.stdout)
+
+    def test_a_phone_build_job_that_stopped_looking_at_main_is_named(self):
+        self.make_build()
+        self.write_trunk(self.sha, '2026-09-30T11:00:00', '2026-09-30T12:30:00')
+        done, _ = self.run_installer([iphone('PHONE-1')], SM_PHONE_NOW='2026-10-02T09:00:00')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('The phone-build job last looked at main Sep 30 at 12:30, so it may have stopped.', done.stdout)
+
+    def test_done_names_the_commit_the_phone_should_now_show(self):
+        self.make_build()
+        done, _ = self.run_installer([iphone('PHONE-1')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn(f'now runs commit {self.sha[:7]}. In the app, Settings shows the version ending in '
+                      f'· {self.sha[:7]}.', done.stdout)
+
     def test_already_installed_daily_binary_opens_plan_without_reinstall(self):
         folder = self.make_build()
         (self.phone / 'daily-ready').symlink_to(folder.name)
@@ -756,6 +831,9 @@ run = {"id": 77, "head_sha": tip, "head_branch": "main", "event": os.environ.get
        "conclusion": "success", "path": os.environ.get("FAKE_HOSTED_PATH", ".github/workflows/phone-build.yml"),
        "html_url": "https://github.com/x/y/actions/runs/77"}
 if args[:1] == ["api"] and "/actions/workflows/phone-build.yml/runs" in args[1]:
+    if os.environ.get("FAKE_GH_DOWN"):
+        sys.stderr.write("gh: Bad credentials (HTTP 401)\nTry authenticating with:  gh auth login\n")
+        sys.exit(4)
     print(json.dumps({"workflow_runs": [run]}))
 elif args[:2] == ["api", "repos/Spoken-Margins/spoken-margins-native/actions/runs/77/artifacts"]:
     print(json.dumps({"artifacts": [{"name": "phone-build-" + tip, "expired": bool(os.environ.get("FAKE_EXPIRED")),
@@ -838,6 +916,74 @@ class HostedPhoneBuildTests(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertIn('latest is already the hosted build', done.stdout)
         self.assertEqual(self.log.read_text().count('run download'), before)
+
+    def run_trunk(self, *args, **extra):
+        """As the launchd job runs it: no --commit, so it follows origin/main."""
+        env = {**os.environ, **self.env, 'SM_TRUNK': 'main', **extra}
+        return subprocess.run(['/usr/bin/python3', str(SCRIPTS / 'phone-build'), *args], env=env,
+                              capture_output=True, text=True, timeout=120)
+
+    def needs_you(self):
+        return [line for line in self.log.read_text().splitlines()
+                if line.startswith('notify ') and 'phone build needs you' in line]
+
+    def test_a_failing_gh_is_reported_and_its_second_miss_while_main_moved_notifies_once(self):
+        # #2782: a broken gh login in launchd was a silent "no hosted phone build yet" every ten minutes.
+        self.git('update-ref', 'refs/remotes/origin/main', self.tip)
+        first = self.run_trunk('--if-changed', FAKE_GH_DOWN='1')
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        self.assertIn('gh exited 4: Try authenticating with:  gh auth login', first.stdout)
+        self.assertEqual(self.needs_you(), [])
+        for _ in range(2):
+            self.run_trunk('--if-changed', FAKE_GH_DOWN='1')
+        [notice] = self.needs_you()
+        self.assertIn(f'stuck at nothing yet while main is at {self.tip[:7]}', notice)
+        self.assertIn('gh auth login', notice)
+        trunk = json.loads((self.phone / 'trunk.json').read_text())
+        self.assertEqual(trunk['sha'], self.tip)
+        self.assertIn('gh auth login', trunk['problem'])
+        healed = self.run_trunk('--if-changed')
+        self.assertEqual(healed.returncode, 0, healed.stdout + healed.stderr)
+        self.assertEqual(json.loads((self.phone / 'latest/build.json').read_text())['sha'], self.tip)
+        self.assertFalse((self.phone / 'hosted-misses.json').exists())
+        self.assertIsNone(json.loads((self.phone / 'trunk.json').read_text())['problem'])
+
+    def test_a_miss_while_latest_is_mains_tip_never_notifies(self):
+        self.git('update-ref', 'refs/remotes/origin/main', self.tip)
+        self.assertEqual(self.run_trunk('--if-changed').returncode, 0)
+        for _ in range(3):
+            self.run_trunk('--if-changed', FAKE_GH_DOWN='1')
+        self.assertEqual(self.needs_you(), [])
+
+    def test_hosted_builds_that_stopped_while_main_moved_on_are_named(self):
+        self.git('update-ref', 'refs/remotes/origin/main', self.tip)
+        self.assertEqual(self.run_trunk('--if-changed').returncode, 0)
+        old = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=40)).isoformat()
+        subprocess.run(['git', 'commit', '-q', '--allow-empty', '-m', 'Merge pull request #13: change 13'],
+                       cwd=str(self.repo), check=True, env={**os.environ, 'GIT_COMMITTER_DATE': old})
+        newer = self.git('rev-parse', 'HEAD')
+        self.git('update-ref', 'refs/remotes/origin/main', newer)
+        for _ in range(2):
+            done = self.run_trunk('--if-changed')
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('latest is already the hosted build', done.stdout)
+        [notice] = self.needs_you()
+        self.assertIn(f'main has had {newer[:7]} for 40 hours with no hosted build of it', notice)
+        self.assertIn('has stopped succeeding', json.loads((self.phone / 'trunk.json').read_text())['problem'])
+
+    def test_mains_installer_is_kept_in_the_phone_folder(self):
+        installer = self.phone / 'install-phone-build.command'
+        for version in ('one', 'two'):
+            (self.repo / 'scripts/install-phone-build.command').write_text(f'#!/bin/zsh\necho {version}\n')
+            self.git('add', '-A')
+            self.git('commit', '-q', '-m', f'installer {version}')
+            self.git('update-ref', 'refs/remotes/origin/main', self.git('rev-parse', 'HEAD'))
+            done = self.run_trunk('--if-changed')
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertEqual(installer.read_text(), f'#!/bin/zsh\necho {version}\n')
+            self.assertTrue(os.access(installer, os.X_OK))
+        again = self.run_trunk('--if-changed')
+        self.assertNotIn('the installer in', again.stdout)
 
     def test_an_app_from_another_commit_is_refused(self):
         self.env['FAKE_HOSTED_ZIP'] = str(self.make_zip('f' * 40))
