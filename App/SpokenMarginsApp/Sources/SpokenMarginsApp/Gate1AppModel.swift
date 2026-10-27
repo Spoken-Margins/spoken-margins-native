@@ -2953,11 +2953,7 @@ final class Gate1AppModel: ObservableObject {
             )
             if let store {
                 refreshLibraryRowsInBackground(mustPublish: true) // #2505: a finished prewarm is no reason to freeze the screen
-                if activeItemId == itemId {
-                    refreshSelectedItemInBackground()
-                } else if selectedItem.id == itemId {
-                    selectedItem = try loadItemDetail(id: itemId, store: store)
-                }
+                if activeItemId == itemId { refreshSelectedItemInBackground() } else if selectedItem.id == itemId { selectedItem = try loadItemDetail(id: itemId, store: store) }
             }
             activateListeningEditionAudio(itemId: itemId, timeline: prepared.timeline)
             diagnostics["textAudioPrewarm:\(itemId)"] = diagnosticStatus
@@ -3166,8 +3162,7 @@ final class Gate1AppModel: ObservableObject {
                 // Transcript imports can finish long after a shared podcast was
                 // added. They must never retarget the playback screen away from
                 // the item/session that is still active.
-                // A pending map generation reads `selectedItem.chapters` next, so that rare path keeps the direct read.
-                if activeItemId == itemId {
+                if activeItemId == itemId { // a pending map generation reads selectedItem.chapters next, so it keeps the direct read
                     if shouldGeneratePendingMap, let store { selectedItem = try loadItemDetail(id: itemId, store: store) } else { refreshSelectedItemInBackground() }
                 }
             }
