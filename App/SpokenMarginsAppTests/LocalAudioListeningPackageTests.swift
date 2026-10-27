@@ -63,7 +63,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         model.handleIncomingURL(url)
         XCTAssertEqual(model.spokenMarginsPackageImportReview?.matchingItemId, item.id)
         model.confirmSpokenMarginsPackageImport()
-        for _ in 0..<250 where model.isImportingSpokenMarginsPackage { try await Task.sleep(for: .milliseconds(20)) }
+        try await waitForPackageImport(model)
         XCTAssertNil(model.spokenMarginsPackageImportError)
         let layer = try XCTUnwrap(store.loadImportedCommentaryLayer(packageDigest: try XCTUnwrap(manifest.contentDigest)))
         XCTAssertEqual(layer.sourceResolutionStatus, .resolved)
@@ -191,7 +191,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         _ = try SpokenMarginsPackageArchive.write(tampered, to: anotherURL)
         model.handleIncomingURL(anotherURL)
         model.confirmSpokenMarginsPackageImport()
-        for _ in 0..<250 where model.isImportingSpokenMarginsPackage { try await Task.sleep(for: .milliseconds(20)) }
+        try await waitForPackageImport(model)
         XCTAssertEqual(model.spokenMarginsPackageImportError, SpokenMarginsPackageArchiveError.invalidManifest("").listenerMessage)
         XCTAssertEqual(try store.loadImportedCommentaryLayers(itemId: item.id).count, 1)
     }
@@ -295,6 +295,13 @@ final class LocalAudioListeningPackageTests: XCTestCase {
                        "The shared map has no audio to match near scene 1 (Opening).", "The reason survives a restart")
         XCTAssertNil(try fixture.store.loadResolvedListeningMapProjection(itemId: fixture.itemId)?.proposalId,
                      "A refused map is never activated")
+    }
+
+    /// The import runs until its flag clears. A fixed 5 s wait ended while the import was still going on a slow hosted
+    /// Mac and the asserts after it read a half-imported layer (#2792), so this waits far longer and says so if it still runs.
+    private func waitForPackageImport(_ model: Gate1AppModel, file: StaticString = #filePath, line: UInt = #line) async throws {
+        for _ in 0..<3_000 where model.isImportingSpokenMarginsPackage { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertFalse(model.isImportingSpokenMarginsPackage, "the package import was still running after 60 s", file: file, line: line)
     }
 
     /// Waits for the source to play on to `toMs` the way a listener waits: on the player, not on a fixed time (#835).
@@ -519,7 +526,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         model.handleIncomingURL(url)
         XCTAssertEqual(model.spokenMarginsPackageImportReview?.matchingItemId, item.id)
         model.confirmSpokenMarginsPackageImport()
-        for _ in 0..<250 where model.isImportingSpokenMarginsPackage { try await Task.sleep(for: .milliseconds(20)) }
+        try await waitForPackageImport(model)
         XCTAssertNil(model.spokenMarginsPackageImportError)
         let key = "importedPodcastAnchorResolution:\(item.id)"
         for _ in 0..<500 where model.diagnostics[key]?.hasPrefix("complete") != true {
