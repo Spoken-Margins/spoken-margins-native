@@ -13,6 +13,7 @@ final class BackgroundRefreshGate {
     private var itemTask: Task<Void, Never>?
     private var libraryTask: Task<Void, Never>?
     private var mustPublishPending = false
+    private var publishedLibraryGeneration = 0
     private var announcePending = false
     private var isPublishingItem = false
 
@@ -34,7 +35,17 @@ final class BackgroundRefreshGate {
 
     func beginLibrary() -> Int { beginLibraryReload(mustPublish: false).generation }
 
-    func libraryWasPublished() { mustPublishPending = false }
+    /// The newest reload that has published is remembered, so an older read that finishes later never lands over it.
+    /// Only the newest reload settles the tap's publish duty: an older read that publishes on its last attempt leaves it
+    /// to the reload that overtook it, whose rows are the ones that include the tap's change.
+    func libraryWasPublished(generation: Int) {
+        if generation == libraryGeneration { mustPublishPending = false }
+        publishedLibraryGeneration = max(publishedLibraryGeneration, generation)
+    }
+
+    /// Whether a reload newer than this one has already published. It began after this one's caller wrote the
+    /// database, so its rows include that write and this older read has nothing to add.
+    func newerLibraryPublished(than generation: Int) -> Bool { generation < publishedLibraryGeneration }
 
     /// The foreground return wants "your audio is ready" announced, and the episode-map check run, from whichever
     /// Library reload publishes next (`publishLibraryRead`), so a reload that overtakes the one that was asked hands
@@ -136,7 +147,7 @@ extension Gate1AppModel {
                 let rowsMoved = self.libraryPresentationRevision != revision
                 let listsMoved = self.audioPreparationLists != listsBefore
                 if (rowsMoved || listsMoved) && !(publishRequired && attempt == 2) { continue }
-                self.publishLibraryRead(data, store: store, publishLists: !listsMoved)
+                self.publishLibraryRead(data, store: store, generation: generation, publishLists: !listsMoved)
                 return
             }
         })
@@ -145,9 +156,9 @@ extension Gate1AppModel {
     /// Publishes a Library read from either reload path (`refreshLibraryRowsInBackground`, `reloadLibraryRowsOffMain`),
     /// with what the foreground return asked of the next publish: the Preparing Audio lists, the "audio is ready" notice
     /// and the automatic audio and episode-map preparation, which walk the rows just published.
-    func publishLibraryRead(_ data: LibraryReadSnapshot, store: SQLiteSessionStore, publishLists: Bool) {
+    func publishLibraryRead(_ data: LibraryReadSnapshot, store: SQLiteSessionStore, generation: Int, publishLists: Bool) {
         publishLibrary(data)
-        backgroundRefresh.libraryWasPublished()
+        backgroundRefresh.libraryWasPublished(generation: generation)
         if publishLists { publishAudioPreparationPresentation(from: data, store: store) }
         if backgroundRefresh.takeAnnouncement() {
             announcePreparedAudioIfNeeded()

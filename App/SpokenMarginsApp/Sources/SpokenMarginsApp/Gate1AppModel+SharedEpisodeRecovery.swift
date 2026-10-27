@@ -31,7 +31,9 @@ extension Gate1AppModel {
             }
             return sameEpisode && RecoveredEpisodeMatch.accepts(shared, entry: entry, showTitle: showTitle, existing: item)
         })?.id else { return nil }
-        try completeEpisodeIdentity(itemId: itemId, entry: entry, showTitle: showTitle)
+        if try completeEpisodeIdentity(itemId: itemId, entry: entry, showTitle: showTitle) {
+            libraryItems = try loadLibraryRows(store: try requireStore())
+        }
         return itemId
     }
 
@@ -47,20 +49,23 @@ extension Gate1AppModel {
         guard let itemId = try await importSourceLinkInBackground(handoff, feedEntry: entry, subscription: nil) else {
             throw SessionKitError.persistenceFailed("shared_episode_not_playable")
         }
-        try completeEpisodeIdentity(itemId: itemId, entry: entry, showTitle: showTitle)
+        if try completeEpisodeIdentity(itemId: itemId, entry: entry, showTitle: showTitle) {
+            try await reloadLibraryRowsOffMain(store: try requireStore()) // the rows are on screen when this returns, as before (#2505)
+        }
         diagnostics["lastSharedEpisodeRecovery"] = "added:\(itemId)"
         return itemId
     }
 
-    private func completeEpisodeIdentity(itemId: String, entry: FeedEntry, showTitle: String?) throws {
+    /// Saves the identity the item was added without. Returns whether the item changed, so the caller reloads the rows.
+    private func completeEpisodeIdentity(itemId: String, entry: FeedEntry, showTitle: String?) throws -> Bool {
         let store = try requireStore()
         var item = try store.loadItem(id: itemId)
         let before = item
         entry.fillEpisodeIdentity(of: &item, showTitle: showTitle)
         if item.sourceTitle == nil { item.sourceTitle = item.showTitle }
         if item.media?.durationMs == nil, let feedDuration = entry.audioDurationMs { item.media?.durationMs = feedDuration }
-        guard item != before else { return }
+        guard item != before else { return false }
         try store.saveItem(item)
-        libraryItems = try loadLibraryRows(store: store)
+        return true
     }
 }

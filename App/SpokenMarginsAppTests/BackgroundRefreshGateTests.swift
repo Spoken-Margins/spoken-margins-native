@@ -212,6 +212,24 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"))
     }
 
+    func testABackgroundBrowserTextImportReadsTheLibraryOffTheMainThread() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let held = HeldReads()
+        holdReads(held, on: model)
+        held.releaseAll()
+        let handoff = BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: "https://example.com/off-main-import", title: "Off main import"),
+            text: "A shared article that arrives while the app is in the foreground.",
+            contentFormat: .plainText)
+
+        let id = try await model.importBrowserTextInBackgroundOffMain(handoff, structuredDocument: nil)
+
+        XCTAssertGreaterThanOrEqual(held.count, 1, "the import reloads the Library through the off-main read (#2505)")
+        XCTAssertTrue(model.libraryItems.contains { $0.id == id }, "the imported item is on the shelf when the import returns")
+    }
+
     func testTheForegroundAnnouncementSurvivesAnOvertakingReloadAndFiresOnce() {
         let gate = BackgroundRefreshGate()
         XCTAssertFalse(gate.takeAnnouncement(), "nothing asked for one")
@@ -234,6 +252,96 @@ final class BackgroundRefreshGateTests: XCTestCase {
 
         XCTAssertTrue(published)
         XCTAssertFalse(model.backgroundRefresh.takeAnnouncement(), "the publishing reload took the foreground's announcement and episode-map check")
+    }
+
+    /// Two imports reloading at once: the overtaken one reads again and publishes before it returns, so what it
+    /// reports ("Added <title>", read off the rows) finds its row. It never returns early with the rows unpublished.
+    func testAnOffMainReloadOvertakenByAnotherOneStillPublishesBeforeItReturns() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let store = try XCTUnwrap(model.store)
+        let held = HeldReads()
+        holdReads(held, on: model)
+        var started = held.started.stream.makeAsyncIterator()
+        model.libraryItems = sentinelRows()
+
+        let first = Task { @MainActor in try await model.reloadLibraryRowsOffMain(store: store) }
+        await started.next()
+        let second = Task { @MainActor in try await model.reloadLibraryRowsOffMain(store: store) }
+        await started.next()
+        held.releaseAll() // the first read is now older than the second reload, which has not published
+        let firstPublished = try await first.value
+        XCTAssertTrue(firstPublished, "the overtaken reload reads again and publishes before it returns")
+        XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"), "the rows are on screen when the first call returns")
+        _ = try await second.value
+        XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"))
+    }
+
+    func testAnOlderReloadKnowsWhenANewerOneHasAlreadyPublished() {
+        let gate = BackgroundRefreshGate()
+        let older = gate.beginLibraryReload(mustPublish: true).generation
+        let newer = gate.beginLibraryReload(mustPublish: true).generation
+        XCTAssertFalse(gate.newerLibraryPublished(than: older), "nothing has published yet")
+        gate.libraryWasPublished(generation: newer)
+        XCTAssertTrue(gate.newerLibraryPublished(than: older), "the older read must not land over the newer rows")
+        XCTAssertFalse(gate.newerLibraryPublished(than: newer))
+        gate.libraryWasPublished(generation: older) // a late publish never lowers the mark
+        XCTAssertTrue(gate.newerLibraryPublished(than: older))
+    }
+
+    /// A reorder in Preparing Audio sets the lists directly and starts no reload, so an import's read that began before
+    /// it must not put the old order back (#2775 audit).
+    func testAnImportReloadLeavesAPreparingAudioListThatChangedDuringTheRead() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let store = try XCTUnwrap(model.store)
+        let held = HeldReads()
+        holdReads(held, on: model)
+        var started = held.started.stream.makeAsyncIterator()
+
+        let reload = Task { @MainActor in try await model.reloadLibraryRowsOffMain(store: store) }
+        await started.next()
+        let reordered = [RecentlyPreparedAudioRow(id: "job", itemId: "item", title: "Moved by the listener", completedAt: Date(), durationMs: 1)]
+        model.recentlyPreparedAudio = reordered
+        held.releaseAll()
+        _ = try await reload.value
+
+        XCTAssertEqual(model.recentlyPreparedAudio, reordered, "the read began before the change and must not publish the old lists")
+    }
+
+    /// A permanent delete reloads the rows on the main thread and starts no reload generation, so an import's read that
+    /// began before it is older than the rows on screen and is read again, not published over them (#2775 audit).
+    func testAnImportReloadOvertakenBySynchronousRowsReadsAgainInsteadOfRestoringOldRows() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let store = try XCTUnwrap(model.store)
+        let held = HeldReads()
+        holdReads(held, on: model)
+        var started = held.started.stream.makeAsyncIterator()
+
+        let reload = Task { @MainActor in try await model.reloadLibraryRowsOffMain(store: store) }
+        await started.next()
+        model.libraryItems = [LibraryItemRow(id: "newer-item", title: "Newer state", status: "Ready", canDelete: true)]
+        held.release(1)
+        await started.next()
+        held.release(2)
+        _ = try await reload.value
+
+        XCTAssertEqual(held.count, 2, "the older read must not publish over the newer rows; the reload reads again")
+        XCTAssertNotEqual(model.libraryItems.map(\.id), ["newer-item"], "the second read, which saw no change, publishes the stored Library")
+    }
+
+    /// An import's third read publishes although a newer reload has started; the tap behind that newer reload still
+    /// needs a publish, so the duty passes on to the reload after it (#2775 audit).
+    func testAnOlderReloadThatPublishesLeavesTheNewerTapsDutyToPublish() {
+        let gate = BackgroundRefreshGate()
+        let older = gate.beginLibraryReload(mustPublish: true).generation
+        _ = gate.beginLibraryReload(mustPublish: true) // the tap's reload overtakes the older one
+        gate.libraryWasPublished(generation: older)
+        XCTAssertTrue(gate.beginLibraryReload(mustPublish: false).mustPublish, "the tap's change is still unpublished")
+        let newest = gate.beginLibraryReload(mustPublish: false).generation
+        gate.libraryWasPublished(generation: newest)
+        XCTAssertFalse(gate.beginLibraryReload(mustPublish: false).mustPublish, "the newest reload settles the duty")
     }
 
     func testSavingALiveSessionReadsTheLibraryAndItemOffTheMainThread() async throws {
