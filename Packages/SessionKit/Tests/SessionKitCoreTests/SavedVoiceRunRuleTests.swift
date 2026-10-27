@@ -45,6 +45,43 @@ final class SavedVoiceRunRuleTests: XCTestCase {
                        .bundledVoice)
     }
 
+    /// #2131: the rule's edges, each of which survived a mutation of `SavedVoiceRunRule.swift` with every test above passing.
+    func testASlowSpeedMakesALessLongRunLongEnough() {
+        let run = Array(repeating: 20.0, count: 12) // 4 minutes of audio: 5 min 20 s of listening at 0.75x
+        XCTAssertEqual(SavedVoiceRunRule.choice(inSavedRun: false, atSeam: true, savedRun: run, reachesEnd: false, playbackRate: 0.75),
+                       .savedSupertonic, "a long-enough saved run at 0.75x must not stay on the bundled voice")
+        XCTAssertEqual(SavedVoiceRunRule.choice(inSavedRun: false, atSeam: true, savedRun: run, reachesEnd: false, playbackRate: 1),
+                       .bundledVoice, "the same run at 1x is 4 minutes of listening")
+    }
+
+    func testTheSpeedIsClampedAtAQuarter() {
+        let belowTheClamp = [74.0] // 296 s at the clamped 0.25x; 740 s if the rate were used as given
+        for rate in [0.25, 0.1, 0.0, -1.0, .nan] {
+            XCTAssertEqual(SavedVoiceRunRule.choice(inSavedRun: false, atSeam: true, savedRun: belowTheClamp, reachesEnd: false, playbackRate: rate),
+                           .bundledVoice, "rate \(rate) counts as 0.25x")
+            XCTAssertEqual(SavedVoiceRunRule.choice(inSavedRun: false, atSeam: true, savedRun: [75], reachesEnd: false, playbackRate: rate),
+                           .savedSupertonic, "75 s at 0.25x is exactly five minutes (rate \(rate))")
+        }
+    }
+
+    func testAZeroLengthFirstSavedChunkNeverStartsOrKeepsARun() {
+        let long = Array(repeating: 20.0, count: 30)
+        for inSavedRun in [false, true] {
+            XCTAssertEqual(SavedVoiceRunRule.choice(inSavedRun: inSavedRun, atSeam: true, savedRun: [0] + long, reachesEnd: true, playbackRate: 1),
+                           .bundledVoice, "a chunk with no audio ends the run (inSavedRun \(inSavedRun))")
+            XCTAssertEqual(SavedVoiceRunRule.choice(inSavedRun: inSavedRun, atSeam: true, savedRun: [0], reachesEnd: true, playbackRate: 1),
+                           .bundledVoice)
+            XCTAssertEqual(SavedVoiceRunRule.choice(inSavedRun: inSavedRun, atSeam: true, savedRun: [-1] + long, reachesEnd: true, playbackRate: 1),
+                           .bundledVoice, "a negative length is no audio")
+        }
+    }
+
+    func testARunExactlyFiveMinutesLongSwitches() {
+        XCTAssertTrue(SavedVoiceRunRule.isLongEnough([150, 150], reachesEnd: false, playbackRate: 1))
+        XCTAssertFalse(SavedVoiceRunRule.isLongEnough([150, 149.9], reachesEnd: false, playbackRate: 1))
+        XCTAssertFalse(SavedVoiceRunRule.isLongEnough([], reachesEnd: true, playbackRate: 1), "an empty run reaches nothing")
+    }
+
     func testParagraphSeams() {
         let text = "First paragraph ends here.\n\nSecond one starts. It goes on.\nThird."
         func offset(_ word: String) -> Int { text.distance(from: text.startIndex, to: text.range(of: word)!.lowerBound) }
