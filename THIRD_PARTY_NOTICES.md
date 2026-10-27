@@ -102,6 +102,16 @@ Part of the Kitten voice's pronunciations.
 
 SupertonicRuntime.swift is adapted from Supertone's Swift example; its header says so.
 
+### Gradium ptts (PhononTTS Swift package and its compiled PhononCore) 0.4.2
+
+- Licence: MIT OR Apache-2.0 (used under Apache-2.0)
+- From: Gradium
+- Source: <https://github.com/gradium-ai/xn-ptts>
+- Where: `project.yml`, `scripts/phonon-core-source-check.sh`
+- Licence text: [xn-ptts-apache-2-0.txt](Contracts/voice-models/licenses/xn-ptts-apache-2-0.txt)
+
+Runs the downloadable Phonon voice (#2704). Swift Package Manager fetches tag v0.4.2 (cc0c32bc), whose manifest pins Gradium's compiled PhononCore.xcframework.zip by SHA-256. The Rust core links about 150 crates on iOS, all MIT, Apache-2.0, BSD, ISC, Zlib, Unicode-3.0, Unlicense or BSL-1.0 (dual with Apache); none is GPL-family or MPL. scripts/phonon-core-source-check.sh builds the core from the tagged source and checks the release library links the same crates.
+
 ### kokoro-coreml (its KokoroPipeline Swift library) e8bf3d4e80d7dd30ed58e343c1527fad09cc9d1f
 
 - Licence: Apache-2.0
@@ -135,6 +145,16 @@ Downloaded, not in the app or this repository since #1820: Settings › Voices f
 - Licence text: [cc-by-4.0-pocket-tts.txt](Contracts/voice-models/licenses/cc-by-4.0-pocket-tts.txt), <https://huggingface.co/kyutai/pocket-tts>
 
 Downloaded, not distributed here. No Pocket TTS model or voice file is in this repository or the app, and the app doesn't link its runtime yet. The repository holds only our own runtime code and a tokenizer test fixture. The research harness fetches the int8 ONNX export (KevinAHM/pocket-tts-onnx) and alba's voice state (kyutai/pocket-tts-without-voice-cloning), both CC BY 4.0, so the voice needs an attribution line where it is offered. The voice catalog (#1818) will carry the current download address and licence text. The MIT code licence is recorded in research/C2/README.md; the licence texts are on the model page. Details: research/C2/pocket/README.md.
+
+### Phonon 31M (English) Core ML bundle and voices
+
+- Licence: Apache-2.0; Mimi codec credited under CC-BY-4.0
+- From: Gradium; Mimi codec by Kyutai
+- Source: <https://github.com/gradium-ai/xn-ptts/releases/tag/v0.4.2>
+- Where: `Contracts/voice-models/content/phonon-31m-en`
+- Licence text: [xn-ptts-apache-2-0.txt](Contracts/voice-models/licenses/xn-ptts-apache-2-0.txt), [cc-by-4-0.txt](Contracts/voice-models/licenses/cc-by-4-0.txt), [NOTICE.txt](Contracts/voice-models/content/phonon-31m-en/licenses/NOTICE.txt)
+
+Downloaded, not in the app or this repository: Settings › Voices takes 38 files from Gradium's phonon-31m-en-coreml.zip release asset, pinned by sha256 in Contracts/voice-models/sources.json. Exported from gradium/phonon-31m-en and gradium/phonon-voices (Apache-2.0). No 40M (CC BY-NC) file is used.
 
 ### Kokoro-82M voice (Core ML build) and its 28 English voices HF mattmireles/kokoro-coreml@0c1d78b47d19f39be6bc0cf0d07316822ae879d4
 

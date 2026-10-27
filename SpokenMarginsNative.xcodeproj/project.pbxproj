@@ -38,14 +38,14 @@
 		7F0A333F40F542B3E4C42E1A /* Defuddle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 8C1BFB86196C5C1BE2E52BEF /* Defuddle-LICENSE.txt */; };
 		813ECE74F243D82C1C573696 /* Kokoro in Resources */ = {isa = PBXBuildFile; fileRef = 8F3CB8553EF550E6A50DC56F /* Kokoro */; };
 		81B60CCA76A6F0E91712933E /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = EE29274792FFFC88EA74C157 /* PrivacyInfo.xcprivacy */; };
-		8307E9C688A9F07FD4DD86F9 /* KokoroPipeline in Frameworks */ = {isa = PBXBuildFile; productRef = 54900B4C14FBCE4EEBA05420 /* KokoroPipeline */; };
+		8307E9C688A9F07FD4DD86F9 /* ptts in Frameworks */ = {isa = PBXBuildFile; productRef = 893FEBD7410AEC3A77FCF5FA /* ptts */; };
 		87FAE6509C5B1511C6555EA9 /* SpokenMarginsWatchApp.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = F4D18E57D6973BBFE094E993 /* SpokenMarginsWatchApp.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		8B40FCEFB4AFABF3E3B52486 /* SessionKitEPUB in Frameworks */ = {isa = PBXBuildFile; productRef = DAEA68EE26E46DA752778D6D /* SessionKitEPUB */; };
 		8D06E1D632D0ED8160FED0A4 /* icon-128.png in Resources */ = {isa = PBXBuildFile; fileRef = 56AD3FBAE5A4EBD7B16F6BFC /* icon-128.png */; };
 		907083EA86D05BC58D2D3A79 /* SessionKitAI in Frameworks */ = {isa = PBXBuildFile; productRef = E7C7184F382A54BFB372015B /* SessionKitAI */; };
 		93BDBE3759E50512647FCCB2 /* Defuddle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 3D2052181FEAFB56EB0856FA /* Defuddle-LICENSE.txt */; };
 		A2D0366161FA302E7139746D /* SharedTextIntake.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45170E0354730F22BB2E258A /* SharedTextIntake.swift */; };
-		A391E3C44188F2FE5A49C93B /* SessionKitSpeechFrontEnd in Frameworks */ = {isa = PBXBuildFile; productRef = 958A66714D007E32A7B05F00 /* SessionKitSpeechFrontEnd */; };
+		A391E3C44188F2FE5A49C93B /* KokoroPipeline in Frameworks */ = {isa = PBXBuildFile; productRef = 54900B4C14FBCE4EEBA05420 /* KokoroPipeline */; };
 		A978B4713391C8A80029DD08 /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = 857D6087011D0775305B56B7 /* SessionKit */; };
 		AAB68653F4DD558C2D9EC643 /* traces in Resources */ = {isa = PBXBuildFile; fileRef = DA64F144F04CC7A9F436B28E /* traces */; };
 		AB149D16A2A0482B581B0847 /* SessionKitSharing in Frameworks */ = {isa = PBXBuildFile; productRef = 03B12E07A60683D31E17A8FC /* SessionKitSharing */; };
@@ -65,6 +65,7 @@
 		DCF2AB420A460F475B45C6AF /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D8F75089EB72A10C4E2E79E1 /* PrivacyInfo.xcprivacy */; };
 		E1A30C458CE0DA8DB0031D9C /* Legal in Resources */ = {isa = PBXBuildFile; fileRef = E253416A15B5108380F819E8 /* Legal */; };
 		E3274F151D1933E8743EA4CE /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 968283859946C995CD8FA20C /* popup.html */; };
+		E7CEE322949FF588F91ED916 /* SessionKitSpeechFrontEnd in Frameworks */ = {isa = PBXBuildFile; productRef = 958A66714D007E32A7B05F00 /* SessionKitSpeechFrontEnd */; };
 		EA3D13B4259566F793F4E0F9 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = BF9501739D9C1D8AAED60132 /* manifest.json */; };
 		EA749D1E3C580CCE4713612F /* pdf-outline-collected-stories.pdf in Resources */ = {isa = PBXBuildFile; fileRef = FB45D701E0D00156BD56A177 /* pdf-outline-collected-stories.pdf */; };
 		EEE29B9A790A870683EE19ED /* SpokenMarginsShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BE41691E3B902A5C377AC70D /* SpokenMarginsShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -338,8 +339,9 @@
 				3EB7A4EE3350ECA1902F69A8 /* SessionKitSupertonic in Frameworks */,
 				CC0AD39630C14AEC9A9A8573 /* SessionKitEPUB in Frameworks */,
 				C2A4BB4A4E23CFE6CE076AC6 /* SessionKitFeeds in Frameworks */,
-				8307E9C688A9F07FD4DD86F9 /* KokoroPipeline in Frameworks */,
-				A391E3C44188F2FE5A49C93B /* SessionKitSpeechFrontEnd in Frameworks */,
+				8307E9C688A9F07FD4DD86F9 /* ptts in Frameworks */,
+				A391E3C44188F2FE5A49C93B /* KokoroPipeline in Frameworks */,
+				E7CEE322949FF588F91ED916 /* SessionKitSpeechFrontEnd in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -690,6 +692,7 @@
 				BE679FFC0BC2A00A74297525 /* SessionKitSupertonic */,
 				62C6DAFDEEEE7BC12B1CDE55 /* SessionKitEPUB */,
 				BE649F52B4257A8BB5ED3717 /* SessionKitFeeds */,
+				893FEBD7410AEC3A77FCF5FA /* ptts */,
 				54900B4C14FBCE4EEBA05420 /* KokoroPipeline */,
 				958A66714D007E32A7B05F00 /* SessionKitSpeechFrontEnd */,
 			);
@@ -737,6 +740,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				FB266AE02D3E681A8BB41698 /* XCRemoteSwiftPackageReference "kokoro-coreml" */,
+				C398667E2AF50A1A4B602557 /* XCRemoteSwiftPackageReference "xn-ptts" */,
 				E96BED6A20680AB92886EEA6 /* XCLocalSwiftPackageReference "Packages/SessionKit" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -1439,6 +1443,14 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		C398667E2AF50A1A4B602557 /* XCRemoteSwiftPackageReference "xn-ptts" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/gradium-ai/xn-ptts";
+			requirement = {
+				kind = exactVersion;
+				version = 0.4.2;
+			};
+		};
 		FB266AE02D3E681A8BB41698 /* XCRemoteSwiftPackageReference "kokoro-coreml" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/mattmireles/kokoro-coreml";
@@ -1482,6 +1494,11 @@
 		857D6087011D0775305B56B7 /* SessionKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SessionKit;
+		};
+		893FEBD7410AEC3A77FCF5FA /* ptts */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C398667E2AF50A1A4B602557 /* XCRemoteSwiftPackageReference "xn-ptts" */;
+			productName = ptts;
 		};
 		9547A66336D57411F645B986 /* SessionKitAudio */ = {
 			isa = XCSwiftPackageProductDependency;

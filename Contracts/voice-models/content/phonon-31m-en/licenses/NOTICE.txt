@@ -1,0 +1,23 @@
+Phonon 31M (English), Core ML bundle
+Copyright Gradium. Licensed under the Apache License, Version 2.0
+(licenses/LICENSE-APACHE.txt in this folder).
+
+Where these files come from:
+- The Core ML bundle phonon-31m-en-coreml.zip, a release asset of
+  https://github.com/gradium-ai/xn-ptts at tag v0.4.2 (commit cc0c32bc),
+  exported by Gradium from the model gradium/phonon-31m-en at revision
+  8acf8881 and the voices gradium/phonon-voices at revision da6c9ec0, both
+  published on Hugging Face under the Apache License 2.0.
+- The runtime that reads them is Gradium's ptts package (xn-ptts v0.4.2),
+  dual-licensed MIT OR Apache-2.0; Spoken Margins uses it under Apache-2.0.
+
+The audio codec (mimi-c266.mlpackage) is Gradium's Core ML export of a Mimi
+decoder, published as gradium/phonon-mimi under the Apache License 2.0. Mimi
+was created by Kyutai (https://github.com/kyutai-labs/moshi), whose original
+Mimi weights are licensed under Creative Commons Attribution 4.0
+International (licenses/CC-BY-4.0.txt). Credit: Mimi codec by Kyutai.
+
+Changes made by Spoken Margins: none to any file's bytes. The download
+takes 25 of the bundle's 38 voices (the catalogue voices; the 12 character
+voices and the "default" copy are left out), and each file is checked
+against the SHA-256 Gradium lists in bundle.json.
