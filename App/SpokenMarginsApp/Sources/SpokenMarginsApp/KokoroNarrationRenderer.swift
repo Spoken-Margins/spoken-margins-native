@@ -12,7 +12,7 @@ import SessionKitSupertonic
 /// Text is cut by `KokoroBucketPlanner` so every inference fits the 3 s or 7 s bucket (the only ones downloaded,
 /// all on the Neural Engine and CPU, never the GPU), and the pieces are joined at their seams by
 /// `KokoroSeamJoiner`. A piece whose audio fills the 7 s bucket may have been cut off by the pipeline, so it is
-/// halved and rendered again. Pronunciations come from the bundled Kitten front end (`KokoroFrontEnd`).
+/// halved (by words, or by characters for one long word) and rendered again. Pronunciations come from the bundled Kitten front end (`KokoroFrontEnd`).
 ///
 /// Wiring (not done here): construct it with the voice's installed folder
 /// (`VoiceModelInstaller.installedFolder(voiceId: KokoroVoice.catalogId, version:)`), the bundled Kitten folder and
@@ -173,11 +173,14 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
                 nextInferenceNotBefore = nil
             }
             guard let input = runtime.frontEnd.input(for: piece.text, paddedLength: KokoroVoice.durationTokenLength) else {
-                // Too many phonemes for the duration model: cut it, or skip a piece that says nothing.
-                if runtime.frontEnd.phonemes(for: piece.text).contains(where: { !$0.isWhitespace && !$0.isPunctuation }),
-                   let halves = planner.halve(piece) {
-                    queue.insert(contentsOf: halves.map { ($0, resplits + 1) }, at: 0)
+                // Too many phonemes for the duration model: skip a piece that says nothing, else cut it, by words or,
+                // for one long word, by characters. Speech is never dropped without a word: a piece that can't be
+                // cut fails the render, and the player's stand-in reads the passage (#2762 audit).
+                guard runtime.frontEnd.phonemes(for: piece.text).contains(where: { !$0.isWhitespace && !$0.isPunctuation }) else {
+                    continue
                 }
+                guard let pieces = planner.split(piece) else { throw RenderError.unsafeAudio("unsplittable_piece") }
+                queue.insert(contentsOf: pieces.map { ($0, resplits + 1) }, at: 0)
                 continue
             }
             let (result, cost) = try governor.measureInference {
@@ -186,7 +189,7 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
             }
             nextInferenceNotBefore = governor.nextInference(after: cost, pacing: pacing)
             if KokoroBucketPlanner.mayHaveOverflowed(audioSeconds: result.audioDurationSeconds, bucketSeconds: result.bucketSeconds),
-               resplits < Self.maxResplits, let halves = planner.halve(piece) {
+               resplits < Self.maxResplits, let halves = planner.split(piece) {
                 queue.insert(contentsOf: halves.map { ($0, resplits + 1) }, at: 0)
                 continue
             }

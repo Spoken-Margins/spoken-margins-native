@@ -229,6 +229,17 @@ public struct KokoroBucketPlanner: Equatable, Sendable {
                 Piece(text: words[cut...].joined(separator: " "), seamAfter: piece.seamAfter)]
     }
 
+    /// `halve`, or, for one word too long for a single inference (a 40-character hash read letter by letter, say), its
+    /// two halves by character, so the renderer never has to drop a piece it can't fit. Nil only for one character.
+    public func split(_ piece: Piece) -> [Piece]? {
+        if let halves = halve(piece) { return halves }
+        let characters = Array(piece.text)
+        guard characters.count > 1 else { return nil }
+        let middle = characters.count / 2
+        return [Piece(text: String(characters[..<middle]), seamAfter: .word),
+                Piece(text: String(characters[middle...]), seamAfter: piece.seamAfter)]
+    }
+
     /// True when a render's audio reached the end of the largest bucket, the sign the pipeline cut it off.
     public static func mayHaveOverflowed(audioSeconds: Double, bucketSeconds: Int) -> Bool {
         bucketSeconds >= (KokoroVoice.bucketSeconds.last ?? 7) && audioSeconds >= Double(bucketSeconds) - 0.05

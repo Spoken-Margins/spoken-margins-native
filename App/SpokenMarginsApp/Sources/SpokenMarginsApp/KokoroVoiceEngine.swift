@@ -8,7 +8,7 @@ enum KokoroVoiceEngine {
     /// Kokoro's player and its one-time Core ML compile and lexicon build, registered with the shared voice
     /// registry (#2744).
     static let registration: DownloadedVoiceRegistration? = DownloadedVoiceRegistration(
-        makeRenderer: { KokoroDownloadedVoiceRenderer(installedFolder: $0) },
+        makeRenderer: { KokoroDownloadedVoiceRenderer(voice: $0, installedFolder: $1) },
         preparer: KokoroModelPreparer(buildLexicon: { gold, silver in try MisakiLexicon.tsv(goldJSON: gold, silverJSON: silver) })
     )
 
@@ -18,7 +18,8 @@ enum KokoroVoiceEngine {
         runtime: VoiceModelCatalogVerifier.coreMLRuntime,
         engine: KokoroRenderSignature.engine,
         speaker: KokoroVoice.defaultVoice,
-        normalizationVersion: "kokoro-text.v1",
+        // Speed 1: the player always renders at 1 and changes the listening speed at playback.
+        identity: { entry, speaker in KokoroRenderSignature.make(voice: speaker, entry: entry, speed: 1) },
         registration: registration
     )
 }
@@ -33,15 +34,18 @@ final class KokoroDownloadedVoiceRenderer: SupertonicRendering, @unchecked Senda
         let renderer: KokoroNarrationRenderer
     }
 
+    /// The voice it reads with: the descriptor's `speaker`, which its saved audio is filed under.
+    let voice: String
     private let installedFolder: @Sendable () -> URL?
     private let lock = NSLock()
     private var cached: Cached?
 
-    init(installedFolder: @escaping @Sendable () -> URL?) {
+    init(voice: String, installedFolder: @escaping @Sendable () -> URL?) {
+        self.voice = voice
         self.installedFolder = installedFolder
     }
 
-    var engine: String { KokoroRenderSignature.engine }
+    var engine: String { KokoroNarrationRenderer.engine }
 
     func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
         let renderer = try currentRenderer()
@@ -64,6 +68,7 @@ final class KokoroDownloadedVoiceRenderer: SupertonicRendering, @unchecked Senda
             let renderer = try KokoroNarrationRenderer(
                 voiceFolder: folder,
                 kittenAssets: KittenAssetLocation(rootURL: kitten),
+                voice: voice,
                 outputDirectory: FileManager.default.temporaryDirectory.appending(path: "KokoroNarration", directoryHint: .isDirectory),
                 governor: .app
             )
