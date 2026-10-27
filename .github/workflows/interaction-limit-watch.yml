@@ -1,0 +1,49 @@
+# Warns the owner before the repository's interaction limit lapses (#2371). The collaborators-only limit set at the
+# flip (#1393) expires 2027-04-21 and GitHub sends no warning. Daily, scripts/interaction_limit_watch.py reads the
+# limit and, inside the last 30 days, opens one issue (`priority`, `needs-owner`); it adds a comment at 7 days and
+# if the limit is already gone, one per stage, never one a day. It never closes the issue: renewing is the owner's tap
+# (Settings > Moderation options > Interaction limits).
+#
+# If the workflow token can't read the limit (it may need repository administration), the script falls back to the
+# known expiry in the script and says so in the issue; set the secret INTERACTION_LIMIT_TOKEN to a token that can.
+#
+# GitHub reads `schedule` and `workflow_dispatch` only from the default branch (main).
+#
+# Cost and catch: about 10 free hosted seconds a day, no tokens, no owner clicks until the window opens.
+# It catches the one failure nothing else would: a limit that lapses unnoticed (tracked today only in a comment on
+# #1393 and a line of AGENTS.md). Waste signal: the limit is replaced by a lasting rule, or the workflow runs
+# with no issue filed after 2027-04-22.
+name: interaction-limit-watch
+
+on:
+  schedule:
+    - cron: '23 11 * * *'  # a jittered minute, not :00
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: interaction-limit-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/interaction_limit_watch.py
+            scripts/comment_trust.py
+          sparse-checkout-cone-mode: false
+      - name: Check the limit
+        env:
+          # The issue is written with the workflow token; the limit is read with the optional admin-capable one.
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          LIMIT_READ_TOKEN: ${{ secrets.INTERACTION_LIMIT_TOKEN }}
+        run: python3 scripts/interaction_limit_watch.py
