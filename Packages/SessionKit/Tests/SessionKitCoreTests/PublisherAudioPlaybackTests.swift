@@ -560,6 +560,91 @@ final class PublisherAudioPlaybackTests: XCTestCase {
         XCTAssertTrue(audio.mediaPlays.isEmpty)
         XCTAssertEqual(audio.textPlays, ["item-post"])
     }
+
+    // MARK: The map arrives while the article is read aloud (#2789)
+
+    /// An article started before its recording's map was ready: on-device speech is reading, in the third sentence.
+    private func readingAloud(map: TranscriptTimeline?) throws -> (SessionEngine, InMemorySessionRepository, FakePublisherAudioClient, Session) {
+        let repository = repository(map: map, status: map == nil ? nil : "aligned(3 of 3 sentences)")
+        let saved = halfwayThroughThirdSentence()
+        try repository.saveSession(saved)
+        let audio = FakePublisherAudioClient()
+        let engine = SessionEngine(profile: profile(), repository: repository, audio: audio)
+        _ = try engine.inspectSession(sessionId: saved.id)
+        _ = try engine.resumePlayback()
+        return (engine, repository, audio, saved)
+    }
+
+    func testAMapThatArrivesWhileTheArticleIsReadAloudHandsOverToTheRecordingAtTheSamePlace() throws {
+        let (engine, repository, audio, saved) = try readingAloud(map: nil)
+        XCTAssertEqual(audio.textPlays, ["item-post"])
+        XCTAssertNil(try engine.adoptPublisherAudioIfReady(), "no map yet: nothing changes")
+        XCTAssertTrue(audio.mediaPlays.isEmpty)
+
+        repository.publisherAudio["item-post"] = record(map: map())
+        let switched = try XCTUnwrap(try engine.adoptPublisherAudioIfReady())
+
+        XCTAssertEqual(switched.status, .playing)
+        XCTAssertEqual(switched.targetType, TargetType.transcriptBackedMedia.rawValue)
+        XCTAssertEqual(audio.mediaPlays.map(\.targetId), [recordingURL])
+        assertClose(audio.mediaPlays.last?.timeMs, 9_000 + 3_000 * (saved.position.charOffset - (sentences[0].count + sentences[1].count + 2)) / sentences[2].count, within: 1_500,
+                    "the third sentence of the recording")
+        XCTAssertGreaterThanOrEqual(audio.mediaPlays.last?.timeMs ?? 0, 9_000)
+    }
+
+    func testAfterTheHandOverTheArticleIsStillAnArticleInTheLibrary() throws {
+        let (engine, repository, _, saved) = try readingAloud(map: nil)
+        repository.publisherAudio["item-post"] = record(map: map())
+        _ = try engine.adoptPublisherAudioIfReady()
+
+        let item = try repository.loadItem(id: "item-post")
+        XCTAssertNil(item.media, "the recording is never stored on the article")
+        let stored = try XCTUnwrap(try repository.loadSession(id: saved.id))
+        XCTAssertEqual(stored.currentTargetType, .itemTextTTS, "Build 29 resumes it as an article")
+        XCTAssertEqual(stored.currentTargetId, "item-post")
+        XCTAssertGreaterThanOrEqual(stored.position.charOffset, saved.position.charOffset - 2)
+    }
+
+    func testAnArticleAlreadyOnTheRecordingIsNotSwitchedAgain() throws {
+        let (engine, repository, audio, _) = try readingAloud(map: nil)
+        repository.publisherAudio["item-post"] = record(map: map())
+        XCTAssertNotNil(try engine.adoptPublisherAudioIfReady())
+        XCTAssertNil(try engine.adoptPublisherAudioIfReady())
+        XCTAssertEqual(audio.mediaPlays.count, 1)
+    }
+
+    func testAPausedArticleIsNotSwitchedItResumesOnTheRecordingInstead() throws {
+        let (engine, repository, audio, _) = try readingAloud(map: nil)
+        _ = try engine.pause()
+        repository.publisherAudio["item-post"] = record(map: map())
+
+        XCTAssertNil(try engine.adoptPublisherAudioIfReady())
+        XCTAssertTrue(audio.mediaPlays.isEmpty)
+    }
+
+    func testAMapThatDoesNotReachThePlaceKeepsOnDeviceSpeech() throws {
+        let (engine, repository, audio, _) = try readingAloud(map: nil)
+        let firstSentenceOnly = TranscriptTimeline(segments: Array(map().segments.prefix(1)), chapters: [], durationMs: 13_000)
+        repository.publisherAudio["item-post"] = record(map: firstSentenceOnly)
+
+        XCTAssertNil(try engine.adoptPublisherAudioIfReady())
+        XCTAssertTrue(audio.mediaPlays.isEmpty)
+        XCTAssertEqual(engine.snapshot.targetType, TargetType.itemTextTTS.rawValue)
+    }
+
+    func testARecordingThatCannotStartLeavesTheArticleReadingAloud() throws {
+        struct NoPlayer: Error {}
+        let (engine, repository, audio, saved) = try readingAloud(map: nil)
+        audio.mediaPlayError = NoPlayer()
+        repository.publisherAudio["item-post"] = record(map: map())
+
+        XCTAssertThrowsError(try engine.adoptPublisherAudioIfReady())
+
+        XCTAssertEqual(engine.snapshot.targetType, TargetType.itemTextTTS.rawValue)
+        XCTAssertEqual(engine.snapshot.status, .playing)
+        XCTAssertEqual(audio.textPlays.last, "item-post", "reading aloud went on")
+        assertClose(engine.currentSession?.position.charOffset, saved.position.charOffset, within: 2)
+    }
 }
 
 private func assertClose(_ value: Int?, _ expected: Int, within tolerance: Int, _ message: String = "", file: StaticString = #filePath, line: UInt = #line) {
@@ -573,11 +658,13 @@ private final class FakePublisherAudioClient: AudioPlaybackClient {
     var mediaPlays: [(targetId: String, timeMs: Int)] = []
     var textPlays: [String] = []
     var startStatusByTarget: [String: PlaybackStartStatus] = [:]
+    var mediaPlayError: Error?
     private var target: String?
 
     func prepareSpeechText(_ text: String) throws -> String { SpeechTextNormalizer.normalize(text) }
     func play(targetId: String) throws { target = targetId; textPlays.append(targetId) }
     func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
+        if let mediaPlayError { throw mediaPlayError }
         target = targetId
         self.mediaTimeMs = mediaTimeMs
         mediaPlays.append((targetId, mediaTimeMs))

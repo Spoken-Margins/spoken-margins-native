@@ -3740,6 +3740,41 @@ public final class SessionEngine {
         return isGeneratedTextMedia(item.media) || publisherPlayback[item.id] != nil
     }
 
+    /// A playing article whose publisher recording has just got its text map moves to the recording, from the place
+    /// the on-device voice has reached (#2789). The map takes minutes to make (download, on-device transcription,
+    /// alignment), so a post started at once begins in on-device speech; this is the hand-over. It returns nil and
+    /// changes nothing unless the current session is that article read aloud and playing, its recording has a usable
+    /// map, and the map reaches the place. A recording that then fails to play reads on with speech, as it always
+    /// has (`readText(instead:)`). If starting the recording throws, the article goes on in on-device speech.
+    @discardableResult
+    public func adoptPublisherAudioIfReady() throws -> SessionSnapshot? {
+        guard snapshot.status.isPlaybackActive, let session = currentSession,
+              session.currentTargetType == .itemTextTTS, session.phase == .itemPlayback,
+              let item = currentItem ?? (try? repository.loadItem(id: session.itemId)),
+              item.id == session.itemId, publisherPlayback[item.id] == nil,
+              let plan = publisherAudioPlan(for: item) else { return nil }
+        let synchronized = syncSessionPositionFromAudio(session, item: item)
+        guard let playing = plan.playingSession(from: synchronized) else { return nil }
+        publisherPlayback[item.id] = plan
+        currentItem = plan.playing(item)
+        currentSession = playing
+        do {
+            try audio.stop()
+            try persistSession(playing)
+            protectPlaybackPosition(for: playing)
+            try playCurrentTarget(playing)
+        } catch {
+            publisherPlayback[item.id] = nil
+            currentItem = item
+            currentSession = synchronized
+            try? persistSession(synchronized)
+            try? playCurrentTarget(synchronized)
+            throw error
+        }
+        publishPlaybackContinuation(for: playing)
+        return snapshot
+    }
+
     /// The publisher recording `item` plays instead of on-device speech, if it has one that can be used.
     private func publisherAudioPlan(for item: Item) -> PublisherAudioPlayback? {
         guard let store = repository as? any PublisherAudioRepository,
