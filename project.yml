@@ -8,6 +8,12 @@ options:
 configFiles:
   Debug: Config/Signing.xcconfig
   Release: Config/Signing.xcconfig
+# iOS Simulator builds are arm64 only. Phonon's PhononCore.xcframework (libptts_ffi.a, #2704) ships no x86_64
+# simulator slice, so a multi-arch simulator link (hosted CI, ONLY_ACTIVE_ARCH=NO) failed on x86_64. No Mac here, or
+# hosted runner, runs an Intel simulator (#1326). Project-wide, so test bundles and extensions match the host app.
+settings:
+  base:
+    EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
 packages:
   SessionKit:
     path: Packages/SessionKit
