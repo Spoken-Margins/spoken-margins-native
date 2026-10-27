@@ -26,7 +26,10 @@ extension Gate1AppModel {
     func reloadLibraryRowsOffMain(store: SQLiteSessionStore) async throws -> Bool {
         let (generation, _) = backgroundRefresh.beginLibraryReload(mustPublish: true)
         let data = try await navigationLibraryRead(store)
-        guard backgroundRefresh.isCurrentLibrary(generation) else { return false }
+        guard backgroundRefresh.isCurrentLibrary(generation) else {
+            await backgroundRefresh.settledLibrary() // the newer reload publishes; callers read the rows after this returns
+            return false
+        }
         publishLibrary(data)
         backgroundRefresh.libraryWasPublished()
         return true
