@@ -188,6 +188,54 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"))
     }
 
+    func testComingBackToTheForegroundReloadsTheLibraryInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.libraryItems = sentinelRows()
+
+        model.handleAppBecameActive()
+        XCTAssertEqual(model.libraryItems.map(\.id), ["sentinel"], "the foreground return must not read the Library before it returns (#2505)")
+
+        await model.settleLibraryReload()
+        XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"), "the background reload publishes the stored Library")
+    }
+
+    func testRebuildingTheEngineForNewSettingsReloadsTheLibraryInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.libraryItems = sentinelRows()
+
+        XCTAssertTrue(model.rebuildEngineForCurrentSettings())
+        XCTAssertEqual(model.libraryItems.map(\.id), ["sentinel"], "a settings change must not read the Library before it returns (#2505)")
+
+        await model.settleLibraryReload()
+        XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"))
+    }
+
+    func testTheForegroundAnnouncementSurvivesAnOvertakingReloadAndFiresOnce() {
+        let gate = BackgroundRefreshGate()
+        XCTAssertFalse(gate.takeAnnouncement(), "nothing asked for one")
+        gate.requestAnnouncement()
+        _ = gate.beginLibraryReload(mustPublish: false) // the asked reload is overtaken before it publishes
+        _ = gate.beginLibraryReload(mustPublish: false)
+        XCTAssertTrue(gate.takeAnnouncement(), "the reload that publishes carries the announcement")
+        XCTAssertFalse(gate.takeAnnouncement(), "and only once")
+    }
+
+    /// A file or link import that reloads the Library off the main thread cancels the foreground return's reload; the
+    /// reload that publishes instead must carry what the foreground asked of it (#2774 audit).
+    func testAnImportReloadThatOvertakesTheForegroundReloadCarriesItsFollowUps() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let store = try XCTUnwrap(model.store)
+        model.backgroundRefresh.requestAnnouncement()
+
+        let published = try await model.reloadLibraryRowsOffMain(store: store)
+
+        XCTAssertTrue(published)
+        XCTAssertFalse(model.backgroundRefresh.takeAnnouncement(), "the publishing reload took the foreground's announcement and episode-map check")
+    }
+
     func testSavingALiveSessionReadsTheLibraryAndItemOffTheMainThread() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -202,6 +250,50 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertEqual(model.screen, .item)
         XCTAssertEqual(model.selectedItem.title, "Standup")
         XCTAssertTrue(model.libraryItems.contains { $0.id == model.selectedItem.id }, "the saved item is on the shelf")
+    }
+
+    /// A transcript finishing for the playing item used to read the Library and the item on the main thread (#2505).
+    func testAttachingATranscriptReloadsTheLibraryAndItemInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        await model.settleLibraryReload()
+        model.libraryItems = sentinelRows()
+
+        model.attachSourceTranscriptTimeline(
+            TranscriptTimeline(
+                segments: [MediaTimelineSegment(id: "segment-1", startMs: 0, endMs: 2_000, text: "Transcript text")],
+                chapters: [],
+                durationMs: 2_000),
+            itemId: "item-pill")
+        XCTAssertEqual(model.libraryItems.map(\.id), ["sentinel"], "a finished transcript must not read the Library before it returns")
+
+        await model.settleLibraryReload()
+        XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"), "the background reload publishes the stored Library")
+        XCTAssertEqual(model.selectedItem.id, "item-pill")
+    }
+
+    func testATranscriptForAnotherItemNeverRetargetsThePlaybackScreen() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.importTitle = "Other Item" // the seed holds one item; the transcript arrives for a second
+        model.importText = "A second article, not the one playing."
+        model.importTextItem()
+        let other = try XCTUnwrap(model.libraryItems.first { $0.id != "item-pill" }?.id)
+        model.startItem(id: "item-pill")
+        await model.settleLibraryReload()
+        let sessionID = model.snapshot.sessionId
+
+        model.attachSourceTranscriptTimeline(
+            TranscriptTimeline(
+                segments: [MediaTimelineSegment(id: "segment-1", startMs: 0, endMs: 2_000, text: "Other text")],
+                chapters: [],
+                durationMs: 2_000),
+            itemId: other)
+        await model.settleLibraryReload()
+
+        XCTAssertEqual(model.selectedItem.id, "item-pill")
+        XCTAssertEqual(model.snapshot.sessionId, sessionID)
     }
 
     func testASkipThatFinishesTheItemShowsTheFinishedSessionAtOnce() throws {
