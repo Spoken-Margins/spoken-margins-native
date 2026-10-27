@@ -222,6 +222,20 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertFalse(gate.takeAnnouncement(), "and only once")
     }
 
+    /// A file or link import that reloads the Library off the main thread cancels the foreground return's reload; the
+    /// reload that publishes instead must carry what the foreground asked of it (#2774 audit).
+    func testAnImportReloadThatOvertakesTheForegroundReloadCarriesItsFollowUps() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let store = try XCTUnwrap(model.store)
+        model.backgroundRefresh.requestAnnouncement()
+
+        let published = try await model.reloadLibraryRowsOffMain(store: store)
+
+        XCTAssertTrue(published)
+        XCTAssertFalse(model.backgroundRefresh.takeAnnouncement(), "the publishing reload took the foreground's announcement and episode-map check")
+    }
+
     func testSavingALiveSessionReadsTheLibraryAndItemOffTheMainThread() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()

@@ -27,8 +27,7 @@ extension Gate1AppModel {
         let (generation, _) = backgroundRefresh.beginLibraryReload(mustPublish: true)
         let data = try await navigationLibraryRead(store)
         guard backgroundRefresh.isCurrentLibrary(generation) else { return false }
-        publishLibrary(data)
-        backgroundRefresh.libraryWasPublished()
+        publishLibraryRead(data, store: store, publishLists: true)
         return true
     }
 }
