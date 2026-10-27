@@ -60,6 +60,7 @@ final class MemoryFootprintRecorderTests: XCTestCase {
         ].joined(separator: " | "))
 
         // iOS ends the app. The next launch still has the samples taken before the kill.
+        recorder.waitForWrites() // the write is queued off the main thread (#2510)
         let relaunchDiagnostics = RuntimeDiagnostics()
         let relaunched = makeRecorder(diagnostics: relaunchDiagnostics)
         clock += 120
@@ -69,6 +70,18 @@ final class MemoryFootprintRecorderTests: XCTestCase {
         let line = try XCTUnwrap(relaunchDiagnostics.values["memoryFootprint"])
         XCTAssertTrue(line.hasPrefix("09-21 14:13:20Z launch none 200MB"), line)
         XCTAssertTrue(line.hasSuffix("item_switch text 900MB | 09-21 14:16:26Z launch none 150MB | 09-21 14:16:26Z item_start text 150MB"), line)
+    }
+
+    func testQueuedWritesLandInOrderSoTheFileHoldsTheNewestLog() throws {
+        let recorder = makeRecorder(diagnostics: RuntimeDiagnostics())
+        for mb: UInt64 in [210, 220, 230, 240] {
+            footprintMB = mb
+            clock += 1
+            recorder.record(.memoryWarning, mediaType: "text")
+        }
+        recorder.waitForWrites()
+        let saved = try JSONDecoder().decode(MemoryFootprintLog.self, from: Data(contentsOf: fileURL))
+        XCTAssertEqual(saved.diagnosticsLine, recorder.log.diagnosticsLine, "the last queued write is the newest log, never an older one")
     }
 
     func testAMemoryWarningIsSampledEvenWhenPaused() {
