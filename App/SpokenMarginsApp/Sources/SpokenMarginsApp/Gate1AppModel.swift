@@ -2952,8 +2952,10 @@ final class Gate1AppModel: ObservableObject {
                 replaceActivePlayback: replaceActivePlayback
             )
             if let store {
-                libraryItems = try loadLibraryRows(store: store)
-                if activeItemId == itemId || selectedItem.id == itemId {
+                refreshLibraryRowsInBackground(mustPublish: true) // #2505: a finished prewarm is no reason to freeze the screen
+                if activeItemId == itemId {
+                    refreshSelectedItemInBackground()
+                } else if selectedItem.id == itemId {
                     selectedItem = try loadItemDetail(id: itemId, store: store)
                 }
             }
@@ -3159,13 +3161,14 @@ final class Gate1AppModel: ObservableObject {
         let shouldGeneratePendingMap = pendingMapGenerationItemId == itemId
         run { engine in
             snapshot = try engine.attachTranscriptTimeline(itemId: itemId, timeline: timeline)
-            if let store {
-                libraryItems = try loadLibraryRows(store: store)
+            if store != nil {
+                refreshLibraryRowsInBackground(mustPublish: true) // #2505
                 // Transcript imports can finish long after a shared podcast was
                 // added. They must never retarget the playback screen away from
                 // the item/session that is still active.
+                // A pending map generation reads `selectedItem.chapters` next, so that rare path keeps the direct read.
                 if activeItemId == itemId {
-                    selectedItem = try loadItemDetail(id: itemId, store: store)
+                    if shouldGeneratePendingMap, let store { selectedItem = try loadItemDetail(id: itemId, store: store) } else { refreshSelectedItemInBackground() }
                 }
             }
             diagnostics["sourceTranscriptionStatus"] = "complete"
