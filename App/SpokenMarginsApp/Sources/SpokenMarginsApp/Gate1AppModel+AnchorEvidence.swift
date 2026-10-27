@@ -174,15 +174,19 @@ extension Gate1AppModel {
         }
     }
 
+    /// One writer per Library, so its saves run one at a time (#2781). Kept here, not on `Gate1AppModel`, which is at
+    /// its size ceiling (scripts/hot_file_ratchet.py).
+    private static var fingerprintLandmarkWriters: [ObjectIdentifier: EpisodeFingerprintLandmarkWriter] = [:]
+
     private func fingerprintLandmarkWriterForCurrentStore() throws -> EpisodeFingerprintLandmarkWriter {
         guard let store else { throw SessionKitError.persistenceFailed("store_unavailable") }
-        if let current = fingerprintLandmarkWriter, current.store === store { return current.writer }
+        if let writer = Self.fingerprintLandmarkWriters[ObjectIdentifier(store)] { return writer }
         let writer = EpisodeFingerprintLandmarkWriter(
             store: store,
             episodeMapsDirectory: try applicationSupportDirectory()
                 .appending(path: "SpokenMargins/EpisodeMaps", directoryHint: .isDirectory)
         )
-        fingerprintLandmarkWriter = (store, writer)
+        Self.fingerprintLandmarkWriters[ObjectIdentifier(store)] = writer
         return writer
     }
     #endif
