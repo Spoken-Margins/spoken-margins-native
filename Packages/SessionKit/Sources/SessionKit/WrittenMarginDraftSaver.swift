@@ -4,7 +4,7 @@ import Foundation
 /// leave the screen (#1970). Each keystroke would otherwise rewrite the file; this keeps one write per pause.
 ///
 /// The file work runs on a serial utility queue, not the main actor (#2510): the call is queued at once and in order,
-/// so a write is never overtaken by a later discard, and the screen never waits on the disk.
+/// so a write is never overtaken by a later discard, and typing never waits on the disk. Only `flush`, on the way out of the app, waits.
 @MainActor
 public final class WrittenMarginDraftSaver {
     private let journal: WrittenMarginDraftJournal?
@@ -37,11 +37,14 @@ public final class WrittenMarginDraftSaver {
         }
     }
 
-    /// The app is going to the background or closing: write now.
+    /// The app is going to the background or closing: the file is on disk when this returns. The app can be suspended
+    /// or killed right after the notification, so this one waits for the queue (earlier writes are ahead of it, so
+    /// order holds). It is one small file per lifecycle event, not per keystroke.
     public func flush(_ text: String, capture: WrittenInterjectionCapture) {
         pending?.cancel()
         pending = nil
         write(text, capture: capture)
+        waitForWrites()
     }
 
     /// The Margin was saved or discarded: nothing is left to recover.
@@ -67,6 +70,6 @@ public final class WrittenMarginDraftSaver {
         Task { @MainActor [weak self] in self?.onFailure(detail) }
     }
 
-    /// Returns once every queued write and removal has landed. For tests.
+    /// Returns once every queued write and removal has landed.
     func waitForWrites() { writer.sync {} }
 }

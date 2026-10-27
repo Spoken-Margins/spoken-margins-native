@@ -204,7 +204,6 @@ final class WrittenMarginDraftSaverTests: XCTestCase {
         let saver = WrittenMarginDraftSaver(journal: journal, pause: .seconds(60))
         saver.textChanged("pending", capture: capture())
         saver.flush("flushed", capture: capture())
-        saver.waitForWrites()
         XCTAssertEqual(try journal.load().drafts.map(\.text), ["flushed"])
         saver.discard(captureId: "capture-1")
         saver.waitForWrites()
