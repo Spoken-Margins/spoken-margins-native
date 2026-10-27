@@ -1886,7 +1886,7 @@ final class Gate1AppModel: ObservableObject {
 
     func startItem(id: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_item") else { return }
-        prepareImportedLocalAudioBridges(itemId: id); fetchCommunityMapIfNeeded(itemId: id)
+        prepareImportedLocalAudioBridges(itemId: id); fetchCommunityMapIfNeeded(itemId: id); listenerStartedItem(itemId: id)
         if [.waiting, .preparing].contains(libraryItems.first(where: { $0.id == id })?.startupAudioState) {
             scheduleStartupAudioPreparationIfNeeded(itemId: id)
             diagnostics["startupAudioPlayback:\(id)"] = "started_without_waiting_for_opening_buffer"
