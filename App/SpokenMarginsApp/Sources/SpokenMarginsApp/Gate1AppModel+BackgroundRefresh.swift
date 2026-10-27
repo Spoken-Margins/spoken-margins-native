@@ -144,13 +144,14 @@ extension Gate1AppModel {
 
     /// Publishes a Library read from either reload path (`refreshLibraryRowsInBackground`, `reloadLibraryRowsOffMain`),
     /// with what the foreground return asked of the next publish: the Preparing Audio lists, the "audio is ready" notice
-    /// and the automatic episode-map check, which walks the rows just published.
+    /// and the automatic audio and episode-map preparation, which walk the rows just published.
     func publishLibraryRead(_ data: LibraryReadSnapshot, store: SQLiteSessionStore, publishLists: Bool) {
         publishLibrary(data)
         backgroundRefresh.libraryWasPublished()
         if publishLists { publishAudioPreparationPresentation(from: data, store: store) }
         if backgroundRefresh.takeAnnouncement() {
             announcePreparedAudioIfNeeded()
+            scheduleAutomaticAudioPreparationIfNeeded()
             submitAutomaticEpisodeMapPreparationIfNeeded()
         }
     }
