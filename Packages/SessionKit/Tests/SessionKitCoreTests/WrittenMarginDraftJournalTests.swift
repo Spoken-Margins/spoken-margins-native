@@ -194,6 +194,7 @@ final class WrittenMarginDraftSaverTests: XCTestCase {
         saver.textChanged("Hello", capture: capture())
         XCTAssertTrue(try journal.load().drafts.isEmpty, "nothing is written mid-typing")
         try await Task.sleep(for: .milliseconds(300))
+        saver.waitForWrites()
         XCTAssertEqual(try journal.load().drafts.map(\.text), ["Hello"])
     }
 
@@ -203,9 +204,43 @@ final class WrittenMarginDraftSaverTests: XCTestCase {
         let saver = WrittenMarginDraftSaver(journal: journal, pause: .seconds(60))
         saver.textChanged("pending", capture: capture())
         saver.flush("flushed", capture: capture())
+        saver.waitForWrites()
         XCTAssertEqual(try journal.load().drafts.map(\.text), ["flushed"])
         saver.discard(captureId: "capture-1")
+        saver.waitForWrites()
         XCTAssertTrue(try journal.load().drafts.isEmpty)
+    }
+
+    /// The file calls run on a queue (#2510), so a discard right behind a flush must land after it, not before.
+    func testADiscardQueuedBehindAFlushLeavesNothing() throws {
+        let journal = journal()
+        defer { try? FileManager.default.removeItem(at: journal.directory) }
+        let saver = WrittenMarginDraftSaver(journal: journal, pause: .seconds(60))
+        for round in 0..<20 {
+            saver.flush("text \(round)", capture: capture())
+            saver.discard(captureId: "capture-1")
+        }
+        saver.waitForWrites()
+        XCTAssertTrue(try journal.load().drafts.isEmpty)
+        saver.flush("kept", capture: capture())
+        saver.waitForWrites()
+        XCTAssertEqual(try journal.load().drafts.map(\.text), ["kept"])
+    }
+
+    func testAFailedWriteIsReportedOnTheMainActor() async throws {
+        let blocker = FileManager.default.temporaryDirectory.appending(path: "written-saver-file-\(UUID().uuidString)")
+        try Data("not a folder".utf8).write(to: blocker)
+        defer { try? FileManager.default.removeItem(at: blocker) }
+        var reported: (detail: String, onMain: Bool)?
+        let saver = WrittenMarginDraftSaver(
+            journal: WrittenMarginDraftJournal(directory: blocker.appending(path: "drafts", directoryHint: .isDirectory)),
+            pause: .seconds(60),
+            onFailure: { detail in reported = (detail, Thread.isMainThread) }
+        )
+        saver.flush("will not land", capture: capture())
+        for _ in 0..<250 where reported == nil { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(reported?.detail.hasPrefix("write:") == true)
+        XCTAssertEqual(reported?.onMain, true)
     }
 
     func testADiscardStopsALaterWrite() async throws {
@@ -215,6 +250,7 @@ final class WrittenMarginDraftSaverTests: XCTestCase {
         saver.textChanged("about to be discarded", capture: capture())
         saver.discard(captureId: "capture-1")
         try await Task.sleep(for: .milliseconds(250))
+        saver.waitForWrites()
         XCTAssertTrue(try journal.load().drafts.isEmpty, "a discarded Margin is not written back")
     }
 }
