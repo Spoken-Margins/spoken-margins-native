@@ -77,6 +77,9 @@ final class AddMarginShortcutIntentTests: XCTestCase {
         let model = makeModel()
         model.startItem(id: "item-pill")
         model.refreshMarginRows()
+        // resetAndSeed and startItem leave background full reads running. Let them land first, so the read held
+        // below is the one this test starts and not a leftover that happens to land first (#2768).
+        await model.settleMarginRows()
         let text = "Saved while the Margins tab loads."
         let gate = FullReadGate()
         defer { MarginRowsTickets.fullReadLanded = nil }

@@ -112,4 +112,24 @@ final class MarginRowsSequenceTests: XCTestCase {
         XCTAssertEqual(sequence.finish(late), .drop)
         XCTAssertFalse(sequence.isWaitingOnNewerRead(late), "the rebuilt list is already on screen")
     }
+
+    // #2768, the order the hosted Mac hit: the Margins tab's full read is in flight, Siri saves a Margin, and the
+    // save's own background one-item read begins after the caller's awaited one. The awaited read lands first and is
+    // dropped; it must wait for the background read to publish, and the older full read must read again.
+    func testAnAwaitedSaveReadDroppedByTheSavesOwnBackgroundReadWaitsForItAndTheFullReadReadsAgain() {
+        var sequence = MarginRowsSequence()
+        let full = sequence.beginRead(.all)
+        let awaited = sequence.beginRead(.item("a"))
+        let background = sequence.beginRead(.item("a"))
+        XCTAssertEqual(sequence.finish(awaited), .drop)
+        XCTAssertTrue(sequence.isWaitingOnNewerRead(awaited), "returning now would show rows without the new Margin")
+        XCTAssertEqual(sequence.finish(background), .publish)
+        XCTAssertTrue(sequence.isWaitingOnNewerRead(awaited), "published, but its caller hasn't applied the rows")
+        sequence.end(background)
+        XCTAssertFalse(sequence.isWaitingOnNewerRead(awaited), "the new Margin is on the list")
+        sequence.end(awaited)
+        XCTAssertEqual(sequence.finish(full), .rerun, "its rows predate the save and would hide it")
+        let again = sequence.beginRead(.all)
+        XCTAssertEqual(sequence.finish(again), .publish)
+    }
 }
