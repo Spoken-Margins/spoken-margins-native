@@ -31,6 +31,23 @@ enum MarginRowsTickets {
     static func settle() async {
         while let task = pending.values.first { await task.value }
     }
+
+    /// Dropped reads waiting for the newer read that superseded them to finish (#2766).
+    private static var waiters: [ObjectIdentifier: [CheckedContinuation<Void, Never>]] = [:]
+
+    /// The caller is done with `read`: published, dropped or failed. Wakes the reads waiting on a newer one.
+    static func end(_ model: AnyObject, _ read: MarginRowsSequence.Read) {
+        with(model) { $0.end(read) }
+        for waiter in waiters.removeValue(forKey: ObjectIdentifier(model)) ?? [] { waiter.resume() }
+    }
+
+    /// A dropped read's caller returns only once the newer read of its scope has published, so an awaited refresh
+    /// never comes back having published nothing.
+    static func waitForNewerRead(_ model: AnyObject, _ read: MarginRowsSequence.Read) async {
+        while with(model, { $0.isWaitingOnNewerRead(read) }) {
+            await withCheckedContinuation { waiters[ObjectIdentifier(model), default: []].append($0) }
+        }
+    }
 }
 
 /// The Margins list (`marginRows`, `sharedMarginRows`) is read off the main thread and published here (#2505).
@@ -72,14 +89,17 @@ extension Gate1AppModel {
 
     func refreshMarginRowsAsync() async {
         guard let store else { return diagnostics["marginRefresh"] = "failed:no_store" }
+        var last: MarginRowsSequence.Read?
+        defer { if let last { MarginRowsTickets.end(self, last) } }
         do {
             while true {
                 let read = MarginRowsTickets.with(self) { $0.beginRead(.all) }
+                last = read
                 let entries = try await StoreReader(store).read { try MarginRowsReading.all(store: $0) }
                 if let landed = MarginRowsTickets.fullReadLanded { await landed() }
                 switch MarginRowsTickets.with(self, { $0.finish(read) }) {
                 case .publish: return publishMarginEntries(entries)
-                case .drop: return
+                case .drop: return await MarginRowsTickets.waitForNewerRead(self, read)
                 case .rerun: continue // A Margin changed while this read ran; its rows would undo that change.
                 }
             }
@@ -90,13 +110,16 @@ extension Gate1AppModel {
 
     func refreshMarginRowsAsync(forItem itemId: String) async {
         guard let store else { return diagnostics["marginRefresh"] = "failed:no_store" }
+        var last: MarginRowsSequence.Read?
+        defer { if let last { MarginRowsTickets.end(self, last) } }
         do {
             while true {
                 let read = MarginRowsTickets.with(self) { $0.beginRead(.item(itemId)) }
+                last = read
                 let fresh = try await StoreReader(store).read { try MarginRowsReading.item(itemId, store: $0) }
                 switch MarginRowsTickets.with(self, { $0.finish(read) }) {
                 case .publish: return applyMarginEntries(fresh, forItem: itemId)
-                case .drop: return
+                case .drop: return await MarginRowsTickets.waitForNewerRead(self, read)
                 case .rerun: continue
                 }
             }

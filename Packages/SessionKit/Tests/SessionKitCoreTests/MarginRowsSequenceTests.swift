@@ -77,4 +77,39 @@ final class MarginRowsSequenceTests: XCTestCase {
         let item = sequence.beginRead(.item("a"))
         XCTAssertEqual(sequence.finish(item), .publish)
     }
+
+    // #2766: an awaited refresh that was dropped must not return before the newer read that superseded it is done.
+    func testADroppedReadWaitsOnlyForANewerReadOfItsScopeThatHasNotEnded() {
+        var sequence = MarginRowsSequence()
+        let older = sequence.beginRead(.item("a"))
+        XCTAssertFalse(sequence.isWaitingOnNewerRead(older), "nothing newer began")
+        let newer = sequence.beginRead(.item("a"))
+        XCTAssertTrue(sequence.isWaitingOnNewerRead(older))
+        let otherItem = sequence.beginRead(.item("b"))
+        XCTAssertFalse(sequence.isWaitingOnNewerRead(otherItem), "a's read isn't b's newer read")
+        XCTAssertEqual(sequence.finish(newer), .publish)
+        XCTAssertEqual(sequence.finish(older), .drop)
+        XCTAssertTrue(sequence.isWaitingOnNewerRead(older), "the newer read published but its caller hasn't finished")
+        sequence.end(newer)
+        XCTAssertFalse(sequence.isWaitingOnNewerRead(older))
+    }
+
+    func testAFullReadDroppedByANewerFullReadWaitsForIt() {
+        var sequence = MarginRowsSequence()
+        let first = sequence.beginRead(.all)
+        let second = sequence.beginRead(.all)
+        XCTAssertTrue(sequence.isWaitingOnNewerRead(first))
+        XCTAssertFalse(sequence.isWaitingOnNewerRead(second))
+        XCTAssertEqual(sequence.finish(second), .publish)
+        sequence.end(second)
+        XCTAssertFalse(sequence.isWaitingOnNewerRead(first))
+    }
+
+    func testAReadDroppedByAPublishedFullListHasNothingToWaitFor() {
+        var sequence = MarginRowsSequence()
+        let late = sequence.beginRead(.item("a"))
+        sequence.noteRebuild()
+        XCTAssertEqual(sequence.finish(late), .drop)
+        XCTAssertFalse(sequence.isWaitingOnNewerRead(late), "the rebuilt list is already on screen")
+    }
 }
