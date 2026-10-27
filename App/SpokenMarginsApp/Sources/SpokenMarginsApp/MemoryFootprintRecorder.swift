@@ -25,6 +25,7 @@ final class MemoryFootprintRecorder {
     private let read: () -> Reading?
     private let now: () -> Date
     private var subscriptions: Set<AnyCancellable> = []
+    private let writer = DispatchQueue(label: "MemoryFootprintRecorder.writer", qos: .utility)
 
     init(
         diagnostics: PinnedDiagnostics,
@@ -89,12 +90,18 @@ final class MemoryFootprintRecorder {
         save()
     }
 
-    // A few kilobytes at most once a minute, written at once: a kill can follow a memory warning closely.
+    // A few kilobytes at most once a minute. The write is queued at once, in order, off the main thread (#2510): a kill
+    // can follow a memory warning closely, and a few milliseconds is all the queue adds.
     private func save() {
         guard let fileURL, let data = try? JSONEncoder().encode(log) else { return }
-        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: fileURL, options: .atomic)
+        writer.async {
+            try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: fileURL, options: .atomic)
+        }
     }
+
+    /// Returns once every queued write has landed. For tests.
+    func waitForWrites() { writer.sync {} }
 }
 
 /// Diagnostics lines that stay put when the dictionary is replaced: Refresh Diagnostics
