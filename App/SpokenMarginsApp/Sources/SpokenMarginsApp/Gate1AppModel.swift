@@ -887,7 +887,7 @@ final class Gate1AppModel: ObservableObject {
         guard selectedItem.chapters.isEmpty,
               selectedItem.mediaChapters.isEmpty,
               selectedItem.listeningMapScenes.isEmpty else { return false }
-        guard let item = try? store?.loadItem(id: activeItemId) else { return false }
+        guard let item = try? store?.loadItemSummary(id: activeItemId) else { return false } // a summary: SwiftUI asks this often, and only `media` is needed (#2508)
         return item.media?.sourceType == .nativeMediaFile
             || item.media?.sourceType == .remoteStream
             || remoteProviderExperienceEnabled
