@@ -15,6 +15,10 @@ import Foundation
 ///
 /// A published read counts as a change made when its read began, not when it landed, because that is how fresh its
 /// rows are: a one-item read that began before a full read is already inside the full read's rows.
+///
+/// A dropped read's caller may be awaited (pull to refresh, a test), and the newer read that superseded it may not
+/// have published yet. `end` and `isWaitingOnNewerRead` let the caller hold its return until that newer read is done,
+/// so an awaited refresh never comes back having published nothing (#2766).
 public struct MarginRowsSequence: Sendable {
     public enum Scope: Hashable, Sendable {
         case all
@@ -38,6 +42,9 @@ public struct MarginRowsSequence: Sendable {
     /// The freshness of the newest change of any scope.
     private var newestChange = 0
     private var newestChangeToItem: [String: Int] = [:]
+    /// The newest read of each scope whose caller has finished with it: it published, was dropped, or failed.
+    private var newestEndedAllRead = 0
+    private var newestEndedItemRead: [String: Int] = [:]
     /// The newest change whose item isn't known, so it may touch any item's rows.
     private var newestChangeToAnyItem = 0
 
@@ -68,6 +75,25 @@ public struct MarginRowsSequence: Sendable {
         }
         newestChange = max(newestChange, began)
         return .publish
+    }
+
+    /// The caller is done with `read`: its rows are published, it was dropped, or it failed. A read that must read
+    /// again isn't done until the last of its reads is.
+    public mutating func end(_ read: Read) {
+        switch read.scope {
+        case .all: newestEndedAllRead = max(newestEndedAllRead, read.began)
+        case .item(let id): newestEndedItemRead[id] = max(newestEndedItemRead[id, default: 0], read.began)
+        }
+    }
+
+    /// A newer read of `read`'s scope has begun and none has ended yet. A dropped read whose caller is awaited waits
+    /// for it, because the newer read holds everything the dropped one knew but may not have published it yet.
+    public func isWaitingOnNewerRead(_ read: Read) -> Bool {
+        switch read.scope {
+        case .all: return newestAllRead > read.began && newestEndedAllRead <= read.began
+        case .item(let id):
+            return newestItemRead[id, default: 0] > read.began && newestEndedItemRead[id, default: 0] <= read.began
+        }
     }
 
     /// Rows of `scope` changed on the main thread just now (a star, a note, an item's Margins removed).
