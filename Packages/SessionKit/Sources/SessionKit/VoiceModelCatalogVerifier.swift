@@ -101,8 +101,18 @@ public enum VoiceModelCatalogVerifier {
     /// A catalog is a few kilobytes; anything near this is not one.
     public static let maximumEnvelopeBytes = 1_048_576
 
-    /// The runtimes this build can run. A voice for any other runtime is left out.
-    public static let supportedRuntimes: Set<String> = ["onnxruntime"]
+    /// ONNX Runtime on the CPU (Supertonic).
+    public static let onnxRuntime = "onnxruntime"
+    /// Core ML models, compiled on the device after download (Kokoro, #2705).
+    public static let coreMLRuntime = "coreml"
+    /// Gradium's `ptts` Swift package, LM on the Neural Engine (Phonon, #2704).
+    public static let phononRuntime = "phonon-ptts"
+
+    /// The runtimes this build can run. A voice for any other runtime is left out, and an older build
+    /// leaves out a voice for a runtime added after it, so new runtimes never break an old reader.
+    /// Which voices the app actually offers is narrowed again by `VoiceCatalogCoordinator`'s
+    /// `playableVoiceIds`, so a runtime listed here offers nothing until a voice has an engine.
+    public static let supportedRuntimes: Set<String> = [onnxRuntime, coreMLRuntime, phononRuntime]
 
     /// Verifies a downloaded or cached envelope.
     ///
@@ -193,6 +203,9 @@ public enum VoiceModelCatalogVerifier {
         guard supportedRuntimes.contains(entry.runtime.name) else { return .unknownRuntime(entry.runtime.name) }
         guard VoiceModelCatalogRules.isIOSVersion(entry.minimumIOSVersion) else { return .invalidField("minimumIOSVersion") }
         guard entry.minimumMemoryMegabytes >= 1 else { return .invalidField("minimumMemoryMegabytes") }
+        if let chip = entry.minimumChip, VoiceDeviceFloor.generation(ofCatalogChip: chip) == nil {
+            return .invalidField("minimumChip")
+        }
         if let successor = entry.supersededBy, !VoiceModelCatalogRules.isVoiceID(successor) {
             return .invalidField("supersededBy")
         }

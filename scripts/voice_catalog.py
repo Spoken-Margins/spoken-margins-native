@@ -70,6 +70,10 @@ ISSUE_REPO = "Spoken-Margins/spoken-margins-native"
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 HTTPS_RE = re.compile(r"https://[^\s]+")
 STATUSES = ("available", "withdrawn", "superseded")
+# What the catalog schema allows for an archive id and a member path, and the formats the app unpacks (#2086, #2704).
+ID_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+FILE_PATH_RE = re.compile(r"(?!/)(?!.*(^|/)\.{1,2}(/|$))(?!.*//)(?!.*/$)[A-Za-z0-9._+/-]+")
+ARCHIVE_FORMATS = {"tar.bz2", "zip"}
 
 
 class CatalogToolError(Exception):
@@ -149,6 +153,11 @@ def validate_sources(sources: dict, base_dir: Path = SOURCES_PATH.parent, allow_
                 errors.append(f"{label}: byteCount must be a positive integer")
             if not SHA256_RE.fullmatch(str(archive.get("sha256", ""))):
                 errors.append(f"{label}: sha256 must be 64 lowercase hex characters")
+            if "id" in archive and not ID_RE.fullmatch(str(archive["id"])):
+                errors.append(f"{label}: id must be a lowercase catalog id")
+            if "id" in archive and archive.get("format") not in ARCHIVE_FORMATS:
+                errors.append(f"{label}: an archive the app unpacks needs a format, one of {sorted(ARCHIVE_FORMATS)}")
+        archive_ids = {archive["id"] for archive in voice.get("upstreamArchives", []) if "id" in archive}
         license_ids = [lic.get("id") for lic in voice.get("licenses", [])]
         if not license_ids:
             errors.append(f"{where}: at least one licence")
@@ -182,6 +191,15 @@ def validate_sources(sources: dict, base_dir: Path = SOURCES_PATH.parent, allow_
                         data.decode("utf-8")
                     except UnicodeDecodeError:
                         errors.append(f"{label}: contentFile is not UTF-8 text")
+            elif "archiveMember" in file:
+                # A member of an upstream archive the app downloads and unpacks itself (#2704).
+                member = file["archiveMember"]
+                if "upstream" in file or file.get("mirrored"):
+                    errors.append(f"{label}: archiveMember is the file's only source, so no upstream and not mirrored")
+                if not (isinstance(member, dict) and member.get("archive") in archive_ids):
+                    errors.append(f"{label}: archiveMember.archive must name one of the voice's upstreamArchives ids")
+                elif not FILE_PATH_RE.fullmatch(str(member.get("member", ""))):
+                    errors.append(f"{label}: archiveMember.member must be a plain relative path")
             elif "upstream" not in file and not file.get("mirrored"):
                 errors.append(f"{label}: no upstream and not mirrored, so nothing to download from")
             if "upstream" in file and not url_ok(file["upstream"]):
@@ -232,6 +250,8 @@ def file_source_urls(sources: dict, voice: dict, file: dict) -> list[str]:
 
 def voice_entry(sources: dict, voice: dict, base_dir: Path = SOURCES_PATH.parent) -> dict:
     entry = {key: voice[key] for key in ("id", "displayName", "publisher", "version", "runtime", "minimumIOSVersion", "minimumMemoryMegabytes", "status")}
+    if "minimumChip" in voice:
+        entry["minimumChip"] = voice["minimumChip"]
     if "supersededBy" in voice:
         entry["supersededBy"] = voice["supersededBy"]
     entry["bundled"] = voice["bundled"]
@@ -240,6 +260,8 @@ def voice_entry(sources: dict, voice: dict, base_dir: Path = SOURCES_PATH.parent
         item = {"path": file["path"], "byteCount": file["byteCount"], "sha256": file["sha256"]}
         if "contentFile" in file:
             item["content"] = (base_dir / file["contentFile"]).read_text(encoding="utf-8")
+        elif "archiveMember" in file:
+            item["archiveMember"] = {"archive": file["archiveMember"]["archive"], "member": file["archiveMember"]["member"]}
         else:
             item["sources"] = file_source_urls(sources, voice, file)
         for key in ("licenseId", "origin"):
@@ -247,6 +269,11 @@ def voice_entry(sources: dict, voice: dict, base_dir: Path = SOURCES_PATH.parent
                 item[key] = file[key]
         files.append(item)
     entry["files"] = files
+    used = {file["archiveMember"]["archive"] for file in voice["files"] if "archiveMember" in file}
+    archives = [{"id": a["id"], "format": a["format"], "byteCount": a["byteCount"], "sha256": a["sha256"], "sources": [a["url"]]}
+                for a in voice.get("upstreamArchives", []) if a.get("id") in used]
+    if archives:
+        entry["archives"] = archives
     entry["licenses"] = [{key: lic[key] for key in ("id", "name", "spdxId", "textURL", "textSHA256", "requiresAcceptance", "restrictionsSummary") if key in lic} for lic in voice["licenses"]]
     return entry
 
@@ -797,6 +824,7 @@ def fetch(sources: dict, state_dir: Path, *, http=None, voice_ids: list[str] | N
         from_archive: dict[str, list[dict]] = {}
         downloaded = 0
         archive_urls = {archive["url"] for archive in voice.get("upstreamArchives", [])}
+        archive_by_id = {archive["id"]: archive["url"] for archive in voice.get("upstreamArchives", []) if "id" in archive}
         for file in voice["files"]:
             target = folder / file["path"]
             if _wrong_bytes(target, file) is None:
@@ -814,6 +842,8 @@ def fetch(sources: dict, state_dir: Path, *, http=None, voice_ids: list[str] | N
                 else:
                     partial.unlink(missing_ok=True)
                     problems.append(f"{file['path']}: {file['upstream']} gave HTTP {status}, {size} bytes, sha256 {digest or 'none'}")
+            elif "archiveMember" in file and file["archiveMember"].get("archive") in archive_by_id:
+                from_archive.setdefault(archive_by_id[file["archiveMember"]["archive"]], []).append(file)
             elif file.get("origin", {}).get("url") in archive_urls:
                 from_archive.setdefault(file["origin"]["url"], []).append(file)
             else:
@@ -842,6 +872,8 @@ def _fetch_from_archive(http, archive: dict, wanted: list[dict], folder: Path, s
                             f"reviewed {archive['byteCount']} bytes, sha256 {archive['sha256']}")
             return 0
         by_hash = {file["sha256"]: file for file in wanted}
+        if archive.get("format") == "zip":
+            return _fetch_from_zip(download, by_hash, folder, archive, problems)
         found = 0
         with tarfile.open(download, "r:*") as tar:
             for member in tar:
@@ -872,6 +904,38 @@ def _fetch_from_archive(http, archive: dict, wanted: list[dict], folder: Path, s
         return 0
     finally:
         download.unlink(missing_ok=True)
+
+
+def _fetch_from_zip(download: Path, by_hash: dict, folder: Path, archive: dict, problems: list[str]) -> int:
+    """The zip case of `_fetch_from_archive` (#2704): the same rule, members found by hash and written to our paths."""
+    import zipfile
+
+    found = 0
+    try:
+        with zipfile.ZipFile(download) as bundle:
+            for info in bundle.infolist():
+                if not by_hash or info.is_dir() or info.file_size not in {f["byteCount"] for f in by_hash.values()}:
+                    continue
+                staged = folder / ".archive-member.part"
+                hasher = hashlib.sha256()
+                with bundle.open(info) as source, staged.open("wb") as handle:
+                    for chunk in iter(lambda: source.read(1 << 20), b""):
+                        hasher.update(chunk)
+                        handle.write(chunk)
+                file = by_hash.pop(hasher.hexdigest(), None)
+                if file is None:
+                    staged.unlink(missing_ok=True)
+                    continue
+                target = folder / file["path"]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(staged, target)
+                found += 1
+    except (OSError, zipfile.BadZipFile) as error:
+        problems.append(f"archive {archive['url']}: {error}")
+        return found
+    for file in by_hash.values():
+        problems.append(f"{file['path']}: no member of {archive['url']} hashes to the reviewed sha256")
+    return found
 
 
 def stage_mirror(sources: dict, state_dir: Path, *, http=None, out=print) -> tuple[Path, int, int]:

@@ -36,7 +36,7 @@ final class SupertonicOutputGuardTimingTests: XCTestCase {
             let url = FileManager.default.temporaryDirectory.appending(path: "timing-\(UUID().uuidString).wav")
             try FileManager.default.copyItem(at: template, to: url)
             generated.insert(url)
-            return SupertonicNarrationResult(audioURL: url, duration: seconds, sampleRate: 44_100, renderDuration: 0.01, sessionLoadCount: 1)
+            return SupertonicNarrationResult(audioURL: url, duration: seconds, sampleRate: 44_100, renderDuration: 0.01, sessionLoadCount: 1, engine: SupertonicNarrationResult.supertonicEngine)
         }
         func discardGeneratedAudio(at url: URL) async {
             if generated.remove(url) != nil { try? FileManager.default.removeItem(at: url) }

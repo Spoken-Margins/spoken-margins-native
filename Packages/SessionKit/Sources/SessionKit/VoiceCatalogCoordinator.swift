@@ -76,10 +76,48 @@ public struct VoiceCatalogRow: Equatable, Sendable, Identifiable {
     /// Licences with use restrictions the listener hasn't agreed to in their current wording.
     public var licensesNeedingAgreement: [VoiceModelLicense]
     /// False for a withdrawn or superseded voice: an installed copy keeps working and can be removed,
-    /// but it can't be downloaded again.
+    /// but it can't be downloaded again. Also false on a device below the voice's chip floor or memory need.
     public var isOffered: Bool
+    /// Why this device can't use the voice at all, whatever the catalog says: nil when it can. An installed copy
+    /// that this reason applies to never reads here (a backup restored to an older phone, say).
+    public var unusableHere: VoiceUnusableReason?
+
+    public init(
+        entry: VoiceModelEntry,
+        state: VoiceCatalogRowState,
+        licensesNeedingAgreement: [VoiceModelLicense],
+        isOffered: Bool,
+        unusableHere: VoiceUnusableReason? = nil
+    ) {
+        self.entry = entry
+        self.state = state
+        self.licensesNeedingAgreement = licensesNeedingAgreement
+        self.isOffered = isOffered
+        self.unusableHere = unusableHere
+    }
 
     public var id: String { entry.id }
+
+    /// What Settings › Voices says beside Remove for an installed voice that can't be downloaded now, or nil.
+    /// A copy below the device's floor is not told it "keeps working": it doesn't, Kitten reads (#2735 review).
+    public var installedButNotOfferedNote: String? {
+        guard case .installed = state, !isOffered else { return nil }
+        switch unusableHere {
+        case .chipBelowFloor:
+            return "This phone is older than this voice needs, so Kitten reads instead. Remove frees the space."
+        case .notEnoughMemory:
+            return "This phone has less memory than this voice needs, so Kitten reads instead. Remove frees the space."
+        case nil:
+            return "No longer offered. This copy keeps working."
+        }
+    }
+}
+
+/// Why a device can't use a catalog voice (#2700).
+public enum VoiceUnusableReason: Equatable, Sendable {
+    /// The device's chip is older than the entry's `minimumChip`, or can't be told.
+    case chipBelowFloor
+    case notEnoughMemory
 }
 
 public enum VoiceCatalogCoordinatorError: Error, Equatable, LocalizedError {
@@ -107,6 +145,11 @@ public actor VoiceCatalogCoordinator {
         /// The device's memory as iOS reports it, for each voice's `minimumMemoryMegabytes`. Compared after
         /// rounding to the size on the box (`nominalMemoryMegabytes`).
         public var physicalMemoryMegabytes: Int
+        /// The device's chip as an A-series generation (`VoiceDeviceFloor.generation(ofMachine:)`), for each
+        /// voice's `minimumChip`. Nil when unknown: voices with a floor are then not offered.
+        public var deviceChipGeneration: Int?
+        /// The one-time preparation each runtime needs after download (#2700).
+        public var preparers: VoiceModelPreparers
         /// The catalog document (unsigned payload) bundled with the app, used until a signed one verifies.
         public var bundledSnapshot: Data?
 
@@ -115,12 +158,16 @@ public actor VoiceCatalogCoordinator {
             trustedKeys: [VoiceCatalogTrustedKey] = VoiceCatalogTrust.production,
             playableVoiceIds: Set<String>,
             physicalMemoryMegabytes: Int = Int(ProcessInfo.processInfo.physicalMemory / 1_048_576),
+            deviceChipGeneration: Int? = nil,
+            preparers: VoiceModelPreparers = .standard,
             bundledSnapshot: Data? = nil
         ) {
             self.catalogURL = catalogURL
             self.trustedKeys = trustedKeys
             self.playableVoiceIds = playableVoiceIds
             self.physicalMemoryMegabytes = physicalMemoryMegabytes
+            self.deviceChipGeneration = deviceChipGeneration
+            self.preparers = preparers
             self.bundledSnapshot = bundledSnapshot
         }
     }
@@ -215,8 +262,11 @@ public actor VoiceCatalogCoordinator {
         let entries = (catalog?.voices ?? []).filter { configuration.playableVoiceIds.contains($0.id) || $0.bundled }
         return entries.compactMap { entry in
             let state = state(of: entry)
-            let offered = entry.status == .available
-                && entry.minimumMemoryMegabytes <= Self.nominalMemoryMegabytes(reported: configuration.physicalMemoryMegabytes)
+            let unusable = VoiceDeviceFit.floorFailure(
+                entry, deviceGeneration: configuration.deviceChipGeneration,
+                physicalMemoryMegabytes: configuration.physicalMemoryMegabytes
+            )
+            let offered = entry.status == .available && unusable == nil
             // A voice that isn't offered and isn't here has nothing to show.
             if !offered, state == .notInstalled { return nil }
             return VoiceCatalogRow(
@@ -225,7 +275,11 @@ public actor VoiceCatalogCoordinator {
                 licensesNeedingAgreement: entry.licensesRequiringAcceptance.filter { license in
                     !agreements.contains { $0.licenseId == license.id && $0.textSHA256 == license.textSHA256 }
                 },
-                isOffered: offered
+                isOffered: offered,
+                unusableHere: VoiceDeviceFit.renderBlocker(
+                    entry, deviceGeneration: configuration.deviceChipGeneration,
+                    physicalMemoryMegabytes: configuration.physicalMemoryMegabytes
+                )
             )
         }
     }
@@ -398,6 +452,11 @@ public actor VoiceCatalogCoordinator {
         // The entry's own mapping carries every way a file arrives: downloaded, written from text the
         // catalog carries, or taken from an archive. Rebuilding it here from `sources` alone dropped the
         // last two, and Supertonic's notices have no source, so every install failed (#2055 audit).
+        let preparer = configuration.preparers.preparer(forRuntime: row.entry.runtime.name)
+        let entry = row.entry
+        let prepare: (@Sendable (URL) async throws -> Void)? = preparer.needsPreparation
+            ? { @Sendable folder in try await preparer.prepare(stagedFolder: folder, entry: entry) }
+            : nil
         let folder: URL
         do {
             folder = try await installer.install(
@@ -405,7 +464,9 @@ public actor VoiceCatalogCoordinator {
                 version: Self.folderName(forVersion: row.entry.version),
                 files: row.entry.installFiles,
                 archives: row.entry.installArchives,
-                progress: progress
+                progress: progress,
+                prepare: prepare,
+                preparationBytes: preparer.needsPreparation ? preparer.extraBytes(for: entry) : 0
             )
         } catch is CancellationError {
             log.record("install.cancelled", ["voice": voiceId])
@@ -479,6 +540,7 @@ public actor VoiceCatalogCoordinator {
         case .checksumMismatch(let path): ["kind": "checksum mismatch", "file": path]
         case .busy: ["kind": "already running"]
         case .storageFailed(let reason): ["kind": "storage failed", "reason": reason]
+        case .preparationFailed(let reason): ["kind": "preparation failed", "reason": reason]
         }
     }
 
@@ -493,6 +555,8 @@ public actor VoiceCatalogCoordinator {
             "A file arrived damaged and was thrown away. Try again."
         case .busy:
             "This voice is already downloading."
+        case .preparationFailed:
+            "The voice downloaded but couldn't be prepared. Try again; it won't download again."
         case .invalidRequest, .storageFailed:
             error.errorDescription ?? "The voice couldn't be saved."
         }

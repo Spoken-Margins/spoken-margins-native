@@ -2679,7 +2679,7 @@ final class SupertonicSpeechTests: XCTestCase {
     }
 
     func testSelectableCatalogExposesJamesLilyKittenAndSystem() {
-        XCTAssertEqual(AppTTSVoiceSelection.allCases, [.james, .lily, .kitten, .system])
+        XCTAssertEqual(AppTTSVoiceSelection.allCases, [.james, .lily, .kitten, .system, .phonon, .kokoro])
         XCTAssertEqual(AppTTSVoiceSelection.kitten.rawValue, "kitten:jasper")
         XCTAssertNil(AppTTSVoiceSelection.kitten.supertonicVoice)
         XCTAssertEqual(AppTTSVoiceSelection.james.rawValue, "supertonic:M2")
@@ -5514,7 +5514,8 @@ private struct FixedAudioSupertonicRenderer: SupertonicRendering {
             duration: 1,
             sampleRate: 44_100,
             renderDuration: 0.01,
-            sessionLoadCount: 1
+            sessionLoadCount: 1,
+            engine: SupertonicNarrationResult.supertonicEngine
         )
     }
 
@@ -5632,7 +5633,8 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
             duration: Double(audio.length) / audio.processingFormat.sampleRate,
             sampleRate: Int(audio.processingFormat.sampleRate.rounded()),
             renderDuration: 0.01,
-            sessionLoadCount: 1
+            sessionLoadCount: 1,
+            engine: SupertonicNarrationResult.supertonicEngine
         )
     }
 
@@ -5684,7 +5686,8 @@ private actor HoldableAudioSupertonicRenderer: SupertonicRendering {
             duration: Double(audio.length) / audio.processingFormat.sampleRate,
             sampleRate: Int(audio.processingFormat.sampleRate.rounded()),
             renderDuration: 0.01,
-            sessionLoadCount: 1
+            sessionLoadCount: 1,
+            engine: SupertonicNarrationResult.supertonicEngine
         )
     }
 
@@ -5799,7 +5802,8 @@ private actor GatedDiscardSupertonicRenderer: SupertonicRendering {
         let audio = try AVAudioFile(forReading: url)
         return SupertonicNarrationResult(
             audioURL: url, duration: Double(audio.length) / audio.processingFormat.sampleRate,
-            sampleRate: Int(audio.processingFormat.sampleRate.rounded()), renderDuration: 0.01, sessionLoadCount: 1
+            sampleRate: Int(audio.processingFormat.sampleRate.rounded()), renderDuration: 0.01, sessionLoadCount: 1,
+            engine: SupertonicNarrationResult.supertonicEngine
         )
     }
 
@@ -5818,7 +5822,7 @@ private actor TextRecordingSupertonicRenderer: SupertonicRendering {
         renders.append(text)
         let url = FileManager.default.temporaryDirectory.appending(path: "count-\(UUID().uuidString).wav")
         try FileManager.default.copyItem(at: template, to: url)
-        return SupertonicNarrationResult(audioURL: url, duration: 1, sampleRate: 44_100, renderDuration: 0.01, sessionLoadCount: 1)
+        return SupertonicNarrationResult(audioURL: url, duration: 1, sampleRate: 44_100, renderDuration: 0.01, sessionLoadCount: 1, engine: SupertonicNarrationResult.supertonicEngine)
     }
     func discardGeneratedAudio(at url: URL) async { try? FileManager.default.removeItem(at: url) }
 }
@@ -5897,7 +5901,7 @@ private actor BabbleSupertonicRenderer: SupertonicRendering {
         let url = FileManager.default.temporaryDirectory.appending(path: "babble-\(UUID().uuidString).wav")
         try FileManager.default.copyItem(at: template, to: url)
         generated.insert(url)
-        return SupertonicNarrationResult(audioURL: url, duration: seconds, sampleRate: 44_100, renderDuration: 0.01, sessionLoadCount: 1)
+        return SupertonicNarrationResult(audioURL: url, duration: seconds, sampleRate: 44_100, renderDuration: 0.01, sessionLoadCount: 1, engine: SupertonicNarrationResult.supertonicEngine)
     }
     func discardGeneratedAudio(at url: URL) async {
         if generated.remove(url) != nil { try? FileManager.default.removeItem(at: url) }
@@ -6170,7 +6174,8 @@ private actor CancellationAwareSupertonicRenderer: SupertonicRendering {
             duration: Double(audio.length) / audio.processingFormat.sampleRate,
             sampleRate: Int(audio.processingFormat.sampleRate.rounded()),
             renderDuration: 0.01,
-            sessionLoadCount: 1
+            sessionLoadCount: 1,
+            engine: SupertonicNarrationResult.supertonicEngine
         )
     }
 

@@ -18,6 +18,15 @@ protocol SupertonicRendering: Sendable {
     ) async throws -> SupertonicNarrationResult
 
     func discardGeneratedAudio(at url: URL) async
+
+    /// The engine name this renderer's own audio carries (#2700). The player counts a chunk as the chosen voice's
+    /// own audio, not a stand-in, only when its result says this engine. Supertonic by default; a downloaded voice's
+    /// renderer returns its descriptor's engine.
+    var engine: String { get }
+}
+
+extension SupertonicRendering {
+    var engine: String { SupertonicNarrationResult.supertonicEngine }
 }
 
 extension SupertonicNarrationRenderer: SupertonicRendering {}
@@ -889,7 +898,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                index: index, startOffset: planned.startOffset - article.start,
                sourceLength: planned.sourceLength, text: planned.text)) {
             return SupertonicNarrationResult(audioURL: recovered.audioURL, duration: recovered.duration, sampleRate: 0,
-                                             renderDuration: 0, sessionLoadCount: 0)
+                                             renderDuration: 0, sessionLoadCount: 0, engine: renderer.engine)
         }
         return diskCache?.cachedAudio(text: planned.text, voice: voice, language: "en", speed: 1.0, synthesisSteps: 8)
     }
@@ -960,6 +969,14 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     #if DEBUG
+    /// The render headroom the resume mark would read for the current generation in the app's current state (#2703).
+    func debugRenderHeadroom(isStandIn: Bool) -> Double? {
+        let backgrounded = governor.isAppBackgrounded
+        return lock.withLock {
+            renderHeadroom.headroom(in: .init(isStandIn: isStandIn, isInBackground: backgrounded, generation: generation))
+        }
+    }
+
     func debugRenderedCacheOffsets() -> [Int] {
         lock.withLock { renderedCache.keys.sorted() }
     }
@@ -1581,7 +1598,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 sampleRate: 0,
                 renderDuration: 0,
                 sessionLoadCount: 0,
-                engine: bundledVoice ? KittenNarrationRenderer.engine : SupertonicNarrationResult.supertonicEngine
+                engine: bundledVoice ? KittenNarrationRenderer.engine : renderer.engine
             )
         } else if !bundledVoice, let cached = diskCache?.cachedAudio(
             text: original.text, voice: voice, language: "en", speed: 1.0, synthesisSteps: 8
@@ -1737,7 +1754,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         duration: recovered.duration,
                         sampleRate: 0,
                         renderDuration: 0,
-                        sessionLoadCount: 0
+                        sessionLoadCount: 0,
+                        engine: renderer.engine
                     )
                 } else if playsSavedSupertonic, let cached = self?.diskCache?.cachedAudio(
                     text: request.text,
@@ -1785,9 +1803,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         )
                     }
                     renderWall = ContinuousClock.now - renderStartedAt
-                    // Only Supertonic's own audio is cached under its key. An iOS-voice stand-in
-                    // isn't, so the next play renders Supertonic again and re-checks it (#311).
-                    if rendered.engine == SupertonicNarrationResult.supertonicEngine,
+                    // Only the chosen voice's own audio is cached under its key. An iOS-voice stand-in
+                    // isn't, so the next play renders the voice again and re-checks it (#311). The cache is
+                    // Supertonic's (keyed by its voice), so the player gets one only for James and Lily.
+                    if self?.isChosenVoiceAudio(rendered.engine) == true,
                        let cache = self?.diskCache,
                        let retained = try? cache.store(
                             rendered,
@@ -1895,7 +1914,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             guard generation == request.generation else { return (false, nil, nil, 0, 0, false) }
             inFlightOffsets.remove(request.startOffset)
             let cached = CachedAudio(url: result.audioURL, duration: result.duration, request: request)
-            if result.engine == SupertonicNarrationResult.supertonicEngine {
+            if isChosenVoiceAudio(result.engine) {
                 standInOffsets.remove(request.startOffset)
                 bundledVoiceOffsets.remove(request.startOffset)
             } else {
@@ -2940,7 +2959,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         func ms(_ duration: Duration) -> String { String(Self.milliseconds(duration)) }
         let snapshot = lock.withLock {
             (created: playerCreatedAt, started: playerStartedAt,
-             standIn: standInOffsets.contains(currentStartOffset), audioSeconds: activeAudioDuration)
+             standIn: standInOffsets.contains(currentStartOffset), bundled: bundledVoiceOffsets.contains(currentStartOffset),
+             audioSeconds: activeAudioDuration)
         }
         let lastChange = rateChangeLock.withLock { lastRateChange }
         let playerAge: String = snapshot.created.map { ms(now - $0) } ?? "none"
@@ -2949,7 +2969,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         var fields: [String: String] = [
             "appState": Self.applicationStateName(),
             "conditions": SupertonicResourcePolicy.currentConditions().logDescription,
-            "chunkEngine": snapshot.standIn ? "system_voice" : "supertonic",
+            "chunkEngine": snapshot.bundled ? KittenNarrationRenderer.engine
+                : snapshot.standIn ? SupertonicNarrationResult.systemVoiceEngine : renderer.engine,
             "chunkAudioMs": chunkAudio,
             "playerAgeMs": playerAge,
             "startRequestedAgoMs": startAgo
@@ -2968,6 +2989,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     private static func milliseconds(_ duration: Duration) -> Int {
         Int(duration.components.seconds * 1_000 + duration.components.attoseconds / 1_000_000_000_000_000)
+    }
+
+    /// Whether a result with `engine` is the chosen voice's own audio rather than a stand-in (Kitten or the iOS
+    /// voice). The one place the player decides it, for caching, stand-in marking and render headroom alike: three
+    /// spellings of it drifted before (#2700, #2762 audit), one still comparing with Supertonic's name.
+    private func isChosenVoiceAudio(_ engine: String) -> Bool {
+        engine == renderer.engine
     }
 
     /// Keeps how fast a chunk rendered against how fast it plays, and reports the log's summary (#540).
@@ -2992,7 +3020,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onVoiceTelemetry?(.chunk(chunk))
         if chunk.isMeasurable { // the resume mark's input (#2703), kept with what it was measured under
             let context = RenderHeadroomMemory.Context(
-                isStandIn: engine != SupertonicNarrationResult.supertonicEngine,
+                isStandIn: !isChosenVoiceAudio(engine),
                 isInBackground: governor.isAppBackgrounded, generation: request.generation)
             lock.withLock { renderHeadroom.record(chunk.headroom, in: context) }
         }

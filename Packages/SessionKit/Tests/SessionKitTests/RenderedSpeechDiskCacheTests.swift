@@ -258,7 +258,8 @@ final class RenderedSpeechDiskCacheTests: XCTestCase {
         let source = root.appending(path: "real.wav")
         try wav(sampleRate: 8_000, frames: 4_000).write(to: source)
         let stored = try store(cache, SupertonicNarrationResult(
-            audioURL: source, duration: 99, sampleRate: 1, renderDuration: 5, sessionLoadCount: 3))
+            audioURL: source, duration: 99, sampleRate: 1, renderDuration: 5, sessionLoadCount: 3,
+            engine: SupertonicNarrationResult.supertonicEngine))
         try age(stored.audioURL, secondsAgo: 1_000)
 
         let hit = try XCTUnwrap(cache.cachedAudio(text: "one", voice: .m2, language: "en", speed: 1, synthesisSteps: 8))
@@ -278,7 +279,8 @@ final class RenderedSpeechDiskCacheTests: XCTestCase {
         let source = root.appending(path: "empty.wav")
         try wav(frames: 0).write(to: source)
         try store(cache, SupertonicNarrationResult(
-            audioURL: source, duration: 0, sampleRate: 8_000, renderDuration: 0, sessionLoadCount: 0))
+            audioURL: source, duration: 0, sampleRate: 8_000, renderDuration: 0, sessionLoadCount: 0,
+            engine: SupertonicNarrationResult.supertonicEngine))
 
         XCTAssertNil(cache.cachedAudio(text: "one", voice: .m2, language: "en", speed: 1, synthesisSteps: 8))
     }

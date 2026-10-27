@@ -1,0 +1,31 @@
+Spoken Margins on-device voice notices: Kokoro-82M (Core ML)
+
+Kokoro-82M model and voices
+By hexgrad. Licensed under the Apache License 2.0
+(https://huggingface.co/hexgrad/Kokoro-82M). The complete license is
+included as APACHE-2.0.txt.
+
+Training data, as the Kokoro-82M model card credits it: Kokoro was trained
+on permissive and non-copyrighted audio, including these CC BY datasets:
+- Koniwa `tnc` (under 1 hour), CC BY 3.0,
+  https://github.com/koniwa/koniwa
+- SIWIS French Speech Synthesis Database (under 11 hours), CC BY 4.0,
+  https://datashare.ed.ac.uk/handle/10283/2353
+Neither dataset is included in these files.
+
+Core ML conversion
+The files in coreml/, voices/ and runtime/ are the Core ML conversion of
+Kokoro-82M published by Matt Mireles as mattmireles/kokoro-coreml
+(https://huggingface.co/mattmireles/kokoro-coreml, revision
+0c1d78b47d19f39be6bc0cf0d07316822ae879d4), licensed under the Apache
+License 2.0. Spoken Margins downloads them unchanged; the compiled/ folder
+is made on this device from them by Core ML.
+
+Pronunciation dictionaries
+The files in lexicon/ are misaki's American English dictionaries, us_gold.json and us_silver.json, by hexgrad
+(https://github.com/hexgrad/misaki, commit e820629b96334db28227df37f280e4836d46fadb), licensed under the Apache
+License 2.0 (the complete license is included as APACHE-2.0.txt). Spoken Margins downloads them unchanged and
+makes a sorted copy on this device (lexicon/misaki-us.tsv) for looking words up. Kokoro was trained on text
+phonemized with these dictionaries, so the app reads text with them first.
+
+No endorsement by hexgrad, Matt Mireles or the dataset authors is implied.

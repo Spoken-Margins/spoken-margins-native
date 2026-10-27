@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitSpeechFrontEnd
 
 /// What Settings › Voices shows and does (#1819). The rules (catalog, agreement, install, Storage row) are in
 /// SessionKit's VoiceCatalogCoordinator; this keeps the screen's state and outlives the screen, so a
@@ -9,16 +10,23 @@ final class VoiceDownloadsModel: ObservableObject {
     enum Activity: Equatable {
         case idle
         case downloading(bytes: Int64, total: Int64)
+        /// Every file is in; the voice's one-time preparation runs (Core ML compile, #2700).
+        case preparing
         case removing
         case failed(String)
     }
 
-    /// Voices this build can play once downloaded. Pocket TTS is in the catalog but has no player here yet.
-    static let playableVoiceIds: Set<String> = [SupertonicAssetResolver.catalogVoiceId]
+    /// Voices this build can play once downloaded: Supertonic, plus each downloaded voice whose slice registered a
+    /// renderer (`DownloadedVoiceRegistry`, #2700). Pocket TTS is in the catalog but has no player here yet.
+    static let playableVoiceIds: Set<String> = Set([SupertonicAssetResolver.catalogVoiceId])
+        .union(DownloadedVoiceRegistry.playableVoiceIds)
     /// No signed catalog is fetched yet: downloads come straight from the publishers on Hugging Face, and the
     /// owner's server is never asked (owner, 2026-10-19; #2055 audit 2). The snapshot bundled with the app is the
     /// catalog until the signed one has a home off that server.
     static let catalogURL: URL? = nil
+    /// The one-time preparation each runtime needs after download (#2700). ONNX Runtime needs none; the
+    /// Kokoro (#2705) and Phonon (#2704) slices register theirs in their own `…VoiceEngine.swift`.
+    static let preparers: VoiceModelPreparers = DownloadedVoiceRegistry.preparers(adding: .standard)
 
     @Published private(set) var rows: [VoiceCatalogRow] = []
     @Published private(set) var activity: [String: Activity] = [:]
@@ -64,7 +72,13 @@ final class VoiceDownloadsModel: ObservableObject {
             .flatMap { try? Data(contentsOf: $0) }
         let coordinator = VoiceCatalogCoordinator(
             supportDirectory: supportDirectory,
-            configuration: .init(catalogURL: catalogURL, playableVoiceIds: playableVoiceIds, bundledSnapshot: snapshot),
+            configuration: .init(
+                catalogURL: catalogURL,
+                playableVoiceIds: playableVoiceIds,
+                deviceChipGeneration: VoiceDeviceProbe.chipGeneration(),
+                preparers: preparers,
+                bundledSnapshot: snapshot
+            ),
             transport: BackgroundVoiceModelTransport.shared,
             repository: repository
         )
@@ -161,6 +175,10 @@ final class VoiceDownloadsModel: ObservableObject {
     /// Whole files the installer has in place. The file in flight is added by `fileProgress`.
     private func installerProgress(voiceId: String, _ progress: VoiceModelInstallProgress) {
         guard case .downloading = activity[voiceId] else { return }
+        if progress.phase == .preparing {
+            activity[voiceId] = .preparing
+            return
+        }
         progressBase[voiceId] = progress.bytesDownloaded
         activity[voiceId] = .downloading(bytes: progress.bytesDownloaded, total: progress.totalBytes)
     }
