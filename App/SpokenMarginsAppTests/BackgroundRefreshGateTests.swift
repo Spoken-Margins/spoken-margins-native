@@ -325,6 +325,50 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertTrue(model.libraryItems.contains { $0.id == model.selectedItem.id }, "the saved item is on the shelf")
     }
 
+    /// A transcript finishing for the playing item used to read the Library and the item on the main thread (#2505).
+    func testAttachingATranscriptReloadsTheLibraryAndItemInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        await model.settleLibraryReload()
+        model.libraryItems = sentinelRows()
+
+        model.attachSourceTranscriptTimeline(
+            TranscriptTimeline(
+                segments: [MediaTimelineSegment(id: "segment-1", startMs: 0, endMs: 2_000, text: "Transcript text")],
+                chapters: [],
+                durationMs: 2_000),
+            itemId: "item-pill")
+        XCTAssertEqual(model.libraryItems.map(\.id), ["sentinel"], "a finished transcript must not read the Library before it returns")
+
+        await model.settleLibraryReload()
+        XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"), "the background reload publishes the stored Library")
+        XCTAssertEqual(model.selectedItem.id, "item-pill")
+    }
+
+    func testATranscriptForAnotherItemNeverRetargetsThePlaybackScreen() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.importTitle = "Other Item" // the seed holds one item; the transcript arrives for a second
+        model.importText = "A second article, not the one playing."
+        model.importTextItem()
+        let other = try XCTUnwrap(model.libraryItems.first { $0.id != "item-pill" }?.id)
+        model.startItem(id: "item-pill")
+        await model.settleLibraryReload()
+        let sessionID = model.snapshot.sessionId
+
+        model.attachSourceTranscriptTimeline(
+            TranscriptTimeline(
+                segments: [MediaTimelineSegment(id: "segment-1", startMs: 0, endMs: 2_000, text: "Other text")],
+                chapters: [],
+                durationMs: 2_000),
+            itemId: other)
+        await model.settleLibraryReload()
+
+        XCTAssertEqual(model.selectedItem.id, "item-pill")
+        XCTAssertEqual(model.snapshot.sessionId, sessionID)
+    }
+
     func testASkipThatFinishesTheItemShowsTheFinishedSessionAtOnce() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()

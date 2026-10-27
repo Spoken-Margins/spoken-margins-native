@@ -42,16 +42,51 @@ extension Gate1AppModel {
         return true
     }
 
-    /// An article clipped or added before a voiceover could be looked up (offline, an older build, a failed fetch)
-    /// is looked up when it is opened: once per launch, and again after a failure, such as being offline.
+    /// An article clipped or added before a voiceover could be looked up (offline, an older build, a failed fetch,
+    /// or a Following import that waited for the listener, #2368) is looked up when the listener opens or starts it:
+    /// once per launch, and again after a failure, such as being offline. The store is read off the main actor, and
+    /// Diagnostics says why a lookup did not happen (#2789).
     func retryVoiceoverLookupIfNeeded(itemId: String) {
-        guard let store, sharedLinkVoiceover.mayLookUp(itemId: itemId),
-              let item = try? store.loadItem(id: itemId),
-              item.text?.isEmpty == false,
-              let address = item.externalReference, let url = URL(string: address),
-              PublisherNarrationEvidence.mayHaveVoiceover(url),
-              ((try? store.loadPublisherAudio(itemId: itemId)) ?? nil) == nil else { return }
-        lookUpVoiceover(itemId: itemId, address: address, title: item.title)
+        guard let store else { return }
+        let alreadyLookedUp = !sharedLinkVoiceover.mayLookUp(itemId: itemId)
+        Task { [weak self] in
+            let read = try? await StoreReader(store).read { store -> (decision: VoiceoverLookupDecision, title: String) in
+                // The summary, so no article text is decoded on every open (#2508).
+                guard let item = try store.loadItemSummary(id: itemId) else { return (.skip(reason: "no_item"), "") }
+                let decision = VoiceoverLookupDecision.decide(
+                    textCharacterCount: item.textCharacterCount,
+                    externalReference: item.externalReference,
+                    hasPublisherAudioRecord: try store.loadPublisherAudio(itemId: itemId) != nil,
+                    alreadyLookedUp: alreadyLookedUp
+                )
+                return (decision, item.title)
+            }
+            guard let self, let read else { return }
+            self.hangTelemetry.labels.scoped("voiceLookupOnOpen") {
+                switch read.decision {
+                case .lookUp(let address):
+                    self.noteVoiceLookup(itemId: itemId, "lookup_started")
+                    self.lookUpVoiceover(itemId: itemId, address: address, title: read.title)
+                case .skip(let reason):
+                    self.noteVoiceLookup(itemId: itemId, "skipped:\(reason)")
+                }
+            }
+        }
+    }
+
+    /// For callers that start or resume an item (Library Play, Continue, the play queue): the same voice lookup and
+    /// map try as opening its screen (#2789). A page is read only for an item the listener acted on.
+    func listenerStartedItem(itemId: String) {
+        retryVoiceoverLookupIfNeeded(itemId: itemId)
+        guard let store else { return }
+        PublisherAudioTextMapper.resume(itemId: itemId, store: store, transcriber: sourceTranscriptionClient) { [weak self] in
+            self?.diagnostics["publisherAudioTextMap"] = "\(itemId): \($0)"
+        }
+    }
+
+    private func noteVoiceLookup(itemId: String, _ outcome: String) {
+        let line = "\(itemId): \(outcome)"
+        if diagnostics["voiceLookupOnOpen"] != line { diagnostics["voiceLookupOnOpen"] = line }
     }
 
     private func lookUpVoiceover(itemId: String, address: String, title: String) {

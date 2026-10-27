@@ -129,7 +129,7 @@ final class SourceTranscriptParsingTests: XCTestCase {
     func testAppDiscoveryDiagnosticsRemainByteIdentical() throws {
         let source = try TestInputs.text(.appSources, "Gate1AppModel.swift")
         let start = try XCTUnwrap(source.range(of: "    func scheduleSourceTranscriptImportIfAvailable("))
-        let end = try XCTUnwrap(source.range(of: "    private static func fetchTranscriptLink(", range: start.upperBound..<source.endIndex))
+        let end = try XCTUnwrap(source.range(of: "    nonisolated private static func fetchTranscriptLink(", range: start.upperBound..<source.endIndex))
         let scheduler = String(source[start.lowerBound..<end.lowerBound])
         for literal in [
             #"diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "no_links""#,

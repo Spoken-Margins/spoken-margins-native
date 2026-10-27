@@ -887,7 +887,7 @@ final class Gate1AppModel: ObservableObject {
         guard selectedItem.chapters.isEmpty,
               selectedItem.mediaChapters.isEmpty,
               selectedItem.listeningMapScenes.isEmpty else { return false }
-        guard let item = try? store?.loadItem(id: activeItemId) else { return false }
+        guard let item = try? store?.loadItemSummary(id: activeItemId) else { return false } // a summary: SwiftUI asks this often, and only `media` is needed (#2508)
         return item.media?.sourceType == .nativeMediaFile
             || item.media?.sourceType == .remoteStream
             || remoteProviderExperienceEnabled
@@ -1882,7 +1882,7 @@ final class Gate1AppModel: ObservableObject {
 
     func startItem(id: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_item") else { return }
-        prepareImportedLocalAudioBridges(itemId: id); fetchCommunityMapIfNeeded(itemId: id)
+        prepareImportedLocalAudioBridges(itemId: id); fetchCommunityMapIfNeeded(itemId: id); listenerStartedItem(itemId: id)
         if [.waiting, .preparing].contains(libraryItems.first(where: { $0.id == id })?.startupAudioState) {
             scheduleStartupAudioPreparationIfNeeded(itemId: id)
             diagnostics["startupAudioPlayback:\(id)"] = "started_without_waiting_for_opening_buffer"
@@ -2948,10 +2948,8 @@ final class Gate1AppModel: ObservableObject {
                 replaceActivePlayback: replaceActivePlayback
             )
             if let store {
-                libraryItems = try loadLibraryRows(store: store)
-                if activeItemId == itemId || selectedItem.id == itemId {
-                    selectedItem = try loadItemDetail(id: itemId, store: store)
-                }
+                refreshLibraryRowsInBackground(mustPublish: true) // #2505: a finished prewarm is no reason to freeze the screen
+                if activeItemId == itemId { refreshSelectedItemInBackground() } else if selectedItem.id == itemId { selectedItem = try loadItemDetail(id: itemId, store: store) }
             }
             activateListeningEditionAudio(itemId: itemId, timeline: prepared.timeline)
             diagnostics["textAudioPrewarm:\(itemId)"] = diagnosticStatus
@@ -3092,7 +3090,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private static func fetchTranscriptLink(_ link: SourceTranscriptLink) async throws -> Data {
+    nonisolated private static func fetchTranscriptLink(_ link: SourceTranscriptLink) async throws -> Data {
         guard let url = URL(string: link.url),
               ["http", "https", "file"].contains(url.scheme?.lowercased() ?? "") else {
             throw SessionKitError.persistenceFailed("source_transcript_url_unsupported")
@@ -3155,13 +3153,13 @@ final class Gate1AppModel: ObservableObject {
         let shouldGeneratePendingMap = pendingMapGenerationItemId == itemId
         run { engine in
             snapshot = try engine.attachTranscriptTimeline(itemId: itemId, timeline: timeline)
-            if let store {
-                libraryItems = try loadLibraryRows(store: store)
+            if store != nil {
+                refreshLibraryRowsInBackground(mustPublish: true) // #2505
                 // Transcript imports can finish long after a shared podcast was
                 // added. They must never retarget the playback screen away from
                 // the item/session that is still active.
-                if activeItemId == itemId {
-                    selectedItem = try loadItemDetail(id: itemId, store: store)
+                if activeItemId == itemId { // a pending map generation reads selectedItem.chapters next, so it keeps the direct read
+                    if shouldGeneratePendingMap, let store { selectedItem = try loadItemDetail(id: itemId, store: store) } else { refreshSelectedItemInBackground() }
                 }
             }
             diagnostics["sourceTranscriptionStatus"] = "complete"
