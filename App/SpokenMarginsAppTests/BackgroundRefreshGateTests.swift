@@ -200,6 +200,18 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"), "the background reload publishes the stored Library")
     }
 
+    func testRebuildingTheEngineForNewSettingsReloadsTheLibraryInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.libraryItems = sentinelRows()
+
+        XCTAssertTrue(model.rebuildEngineForCurrentSettings())
+        XCTAssertEqual(model.libraryItems.map(\.id), ["sentinel"], "a settings change must not read the Library before it returns (#2505)")
+
+        await model.settleLibraryReload()
+        XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"))
+    }
+
     func testTheForegroundAnnouncementSurvivesAnOvertakingReloadAndFiresOnce() {
         let gate = BackgroundRefreshGate()
         XCTAssertFalse(gate.takeAnnouncement(), "nothing asked for one")

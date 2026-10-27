@@ -2818,7 +2818,7 @@ final class Gate1AppModel: ObservableObject {
             }
             let restoredSnapshot = try sessionId.map { try replacement.inspectSession(sessionId: $0) }
             installEngine(replacement)
-            try refreshLibraryRows(store: store)
+            refreshLibraryRowsInBackground(mustPublish: true) // nothing below reads the rows
             if let restoredSnapshot {
                 snapshot = restoredSnapshot
                 activeItemId = restoredSnapshot.itemId ?? activeItemId
