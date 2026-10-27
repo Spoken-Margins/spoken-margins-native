@@ -10,13 +10,13 @@ public enum VoiceoverLookupDecision: Equatable, Sendable {
     case skip(reason: String)
 
     public static func decide(
-        text: String?,
+        textCharacterCount: Int?,
         externalReference: String?,
         hasPublisherAudioRecord: Bool,
         alreadyLookedUp: Bool
     ) -> VoiceoverLookupDecision {
         if alreadyLookedUp { return .skip(reason: "already_looked_up") }
-        if text?.isEmpty != false { return .skip(reason: "no_text") }
+        if (textCharacterCount ?? 0) <= 0 { return .skip(reason: "no_text") }
         guard let address = externalReference, let url = URL(string: address) else { return .skip(reason: "no_address") }
         if !PublisherNarrationEvidence.mayHaveVoiceover(url) { return .skip(reason: "not_substack_address") }
         if hasPublisherAudioRecord { return .skip(reason: "has_record") }

@@ -133,14 +133,7 @@ extension Gate1AppModel {
                 )
             }
         case .landmark(let landmark):
-            do {
-                try persistSparseEpisodeFingerprintLandmark(landmark)
-                diagnostics["episodeFingerprintSpine:\(landmark.itemId)"] =
-                    "captured:\(landmark.trigger.rawValue):epoch=\(landmark.continuityEpoch)"
-            } catch {
-                diagnostics["episodeFingerprintSpine:\(landmark.itemId)"] =
-                    "persistence_failed:\(error.localizedDescription)"
-            }
+            saveSparseEpisodeFingerprintLandmark(landmark)
         case .failed(let request, let reason):
             if let interjection = recordPodcastAnchorEvidenceFailureReason(request: request, reason: "stream_failed:\(reason)") {
                 diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", request)] = "stream_failed:\(reason)"
@@ -151,72 +144,50 @@ extension Gate1AppModel {
         }
     }
 
-    private func persistSparseEpisodeFingerprintLandmark(
-        _ capture: CapturedEpisodeFingerprintLandmark
-    ) throws {
-        guard let store else { throw SessionKitError.persistenceFailed("store_unavailable") }
-        let safeItem = safePodcastEvidenceComponent(capture.itemId)
-        let root = try applicationSupportDirectory()
-            .appending(path: "SpokenMargins/EpisodeMaps", directoryHint: .isDirectory)
-            .appending(path: safeItem, directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let suffix = capture.gridIndex.map { "grid-\($0)" }
-            ?? "epoch-\(capture.continuityEpoch)-\(capture.sourceMediaStartMs)"
-        let assetID = "episode-signature-\(safeItem)-\(suffix)"
-        let fileURL = root.appending(path: "\(assetID).shazamsignature")
-
-        let existing = try store.loadEditionFingerprintSpine(itemId: capture.itemId)
-        let landmark = EpisodeFingerprintLandmark(
-            id: "landmark-\(suffix)",
-            order: 0,
+    /// Saves a landmark on the writer's actor, so the load, compaction and spine rewrite never hold the main thread
+    /// (#2781): a skip is what cuts a landmark, and it must not leave the controls waiting. Only the Diagnostics line
+    /// comes back here.
+    private func saveSparseEpisodeFingerprintLandmark(_ capture: CapturedEpisodeFingerprintLandmark) {
+        let key = "episodeFingerprintSpine:\(capture.itemId)"
+        guard let writer = try? fingerprintLandmarkWriterForCurrentStore() else {
+            diagnostics[key] = "persistence_failed:store_unavailable"
+            return
+        }
+        let input = EpisodeFingerprintLandmarkInput(
+            itemId: capture.itemId,
             sourceMediaStartMs: capture.sourceMediaStartMs,
             sourceMediaEndMs: capture.sourceMediaEndMs,
             anchorMediaTimeMs: capture.anchorMediaTimeMs,
             continuityEpoch: capture.continuityEpoch,
+            gridIndex: capture.gridIndex,
             trigger: capture.trigger,
-            provenance: .observedDecodedPlayback,
-            signatureAssetId: assetID
+            signatureData: capture.signatureData
         )
-        // Build 35 kept cutting post-seek landmarks (#2626). The same rule trims what it left and refuses a repeat.
-        let compacted = EpisodeFingerprintSpineCompaction.compact(existing: existing?.landmarks ?? [], adding: landmark)
-        let landmarks = compacted.kept
-        let keepsNew = compacted.keeps(signatureAssetId: assetID)
-        let hadStoredNew = existing?.landmarks.contains { $0.signatureAssetId == assetID } ?? false
-        let staleAssetIDs = compacted.dropped.map(\.signatureAssetId).filter { $0 != assetID || keepsNew || hadStoredNew }
-        guard keepsNew || !staleAssetIDs.isEmpty else { return }
-        if keepsNew { try capture.signatureData.write(to: fileURL, options: .atomic) }
-        let item = try? store.loadItem(id: capture.itemId)
-        try store.saveEditionFingerprintSpine(EditionFingerprintSpineArtifact(
-            id: existing?.id ?? "episode-spine-\(safeItem)",
-            itemId: capture.itemId,
-            canonicalURL: item?.externalReference ?? item?.media?.url,
-            producingEditionDurationMs: item?.media?.durationMs,
-            producingEditionSHA256: existing?.producingEditionSHA256,
-            createdAt: existing?.createdAt ?? Date(),
-            landmarks: landmarks
-        ))
-        if keepsNew {
-            try store.saveOwnedOfflineAsset(OwnedOfflineAsset(
-                id: assetID,
-                itemId: capture.itemId,
-                category: .fingerprintMap,
-                relativePath: "SpokenMargins/EpisodeMaps/\(safeItem)/\(assetID).shazamsignature",
-                byteCount: Int64(capture.signatureData.count),
-                isReproducible: false
-            ))
-        }
-        removeDroppedFingerprintLandmarkAssets(staleAssetIDs, in: root, store: store)
-    }
-
-    /// Forgets landmarks the spine no longer holds: their offline-asset rows and signature files, off the main thread.
-    private func removeDroppedFingerprintLandmarkAssets(_ assetIDs: [String], in root: URL, store: SQLiteSessionStore) {
-        guard !assetIDs.isEmpty else { return }
-        Task.detached(priority: .utility) {
-            for assetID in assetIDs {
-                try? store.deleteOwnedOfflineAsset(id: assetID)
-                try? FileManager.default.removeItem(at: root.appending(path: "\(assetID).shazamsignature"))
+        let captured = "captured:\(capture.trigger.rawValue):epoch=\(capture.continuityEpoch)"
+        Task { [weak self] in
+            do {
+                try await writer.write(input)
+                self?.diagnostics[key] = captured
+            } catch {
+                self?.diagnostics[key] = "persistence_failed:\(error.localizedDescription)"
             }
         }
+    }
+
+    /// One writer per Library, so its saves run one at a time (#2781). Kept here, not on `Gate1AppModel`, which is at
+    /// its size ceiling (scripts/hot_file_ratchet.py).
+    private static var fingerprintLandmarkWriters: [ObjectIdentifier: EpisodeFingerprintLandmarkWriter] = [:]
+
+    private func fingerprintLandmarkWriterForCurrentStore() throws -> EpisodeFingerprintLandmarkWriter {
+        guard let store else { throw SessionKitError.persistenceFailed("store_unavailable") }
+        if let writer = Self.fingerprintLandmarkWriters[ObjectIdentifier(store)] { return writer }
+        let writer = EpisodeFingerprintLandmarkWriter(
+            store: store,
+            episodeMapsDirectory: try applicationSupportDirectory()
+                .appending(path: "SpokenMargins/EpisodeMaps", directoryHint: .isDirectory)
+        )
+        Self.fingerprintLandmarkWriters[ObjectIdentifier(store)] = writer
+        return writer
     }
     #endif
 
