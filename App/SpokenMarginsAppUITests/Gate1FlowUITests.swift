@@ -1468,10 +1468,10 @@ final class Gate1FlowUITests: XCTestCase {
     }
 
     private func scrollTo(_ candidate: XCUIElement) -> XCUIElement {
-        for _ in 0..<12 where !candidate.isHittable {
+        for _ in 0..<12 where !isReadyToTap(candidate) {
             app.swipeDown()
         }
-        for _ in 0..<20 where !candidate.isHittable {
+        for _ in 0..<20 where !isReadyToTap(candidate) {
             app.swipeUp()
         }
         XCTAssertTrue(candidate.waitForExistence(timeout: 5), "Missing or unreachable element")
@@ -1542,9 +1542,20 @@ final class Gate1FlowUITests: XCTestCase {
         button.tap()
     }
 
+    /// `isHittable` does not answer false for an element with no frame yet, as it does for one off screen: it fails
+    /// the test ("Failed to determine hittability ... Activation point invalid"). That failed the first scroll after a
+    /// launch at AX5 on the hosted Mac twice in a week (#2760). An element with no usable frame is not ready to tap,
+    /// so the scroll loops go on and look again.
+    private func isReadyToTap(_ candidate: XCUIElement) -> Bool {
+        guard candidate.exists else { return false }
+        let frame = candidate.frame
+        guard !frame.isNull, !frame.isInfinite, !frame.isEmpty else { return false }
+        return candidate.isHittable
+    }
+
     private func scrollToElement(_ identifier: String) -> XCUIElement {
         let candidate = element(identifier)
-        for _ in 0..<12 where !candidate.isHittable {
+        for _ in 0..<12 where !isReadyToTap(candidate) {
             app.swipeUp()
         }
         XCTAssertTrue(candidate.waitForExistence(timeout: 4), "Missing \(identifier)")
@@ -1553,7 +1564,7 @@ final class Gate1FlowUITests: XCTestCase {
 
     private func scrollToStaticText(_ text: String) -> XCUIElement {
         let candidate = app.staticTexts[text]
-        for _ in 0..<12 where !candidate.isHittable {
+        for _ in 0..<12 where !isReadyToTap(candidate) {
             app.swipeUp()
         }
         XCTAssertTrue(candidate.waitForExistence(timeout: 4), "Missing \(text)")
@@ -1563,7 +1574,7 @@ final class Gate1FlowUITests: XCTestCase {
     private func scrollToStaticText(containing text: String) -> XCUIElement {
         let predicate = NSPredicate(format: "label CONTAINS %@", text)
         let candidate = app.staticTexts.matching(predicate).firstMatch
-        for _ in 0..<12 where !candidate.isHittable {
+        for _ in 0..<12 where !isReadyToTap(candidate) {
             app.swipeUp()
         }
         XCTAssertTrue(candidate.waitForExistence(timeout: 4), "Missing static text containing \(text)")
@@ -1573,7 +1584,7 @@ final class Gate1FlowUITests: XCTestCase {
     private func scrollToButton(containingLabel text: String) -> XCUIElement {
         let predicate = NSPredicate(format: "label CONTAINS %@", text)
         let candidate = app.buttons.matching(predicate).firstMatch
-        for _ in 0..<12 where !candidate.isHittable {
+        for _ in 0..<12 where !isReadyToTap(candidate) {
             app.swipeUp()
         }
         XCTAssertTrue(candidate.waitForExistence(timeout: 4), "Missing button containing \(text)")
