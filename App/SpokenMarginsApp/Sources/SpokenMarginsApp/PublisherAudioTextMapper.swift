@@ -18,6 +18,10 @@ import SessionKitPersistence
 enum PublisherAudioTextMapper {
     private static var running = Set<String>()
 
+    /// Called with the item id after a map was saved, so an article being read aloud meanwhile can hand over to
+    /// the publisher's recording (#2789). Set by the app model whenever the listener opens or starts an item.
+    static var mapSaved: (@MainActor (String) -> Void)?
+
     /// Tries again for an item whose record has no map status yet.
     static func resume(
         itemId: String,
@@ -93,7 +97,9 @@ enum PublisherAudioTextMapper {
                 case .replaced(let current):
                     report("recording replaced during mapping")
                     start(current, store: store, transcriber: transcriber, report: report)
-                case .saved(let status): report(status)
+                case .saved(let status):
+                    report(status)
+                    mapSaved?(audio.itemId)
                 }
             } catch {
                 running.remove(audio.itemId)

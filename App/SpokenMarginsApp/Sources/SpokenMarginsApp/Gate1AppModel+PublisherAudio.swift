@@ -48,6 +48,7 @@ extension Gate1AppModel {
     /// Diagnostics says why a lookup did not happen (#2789).
     func retryVoiceoverLookupIfNeeded(itemId: String) {
         guard let store else { return }
+        listenForPublisherMaps()
         let alreadyLookedUp = !sharedLinkVoiceover.mayLookUp(itemId: itemId)
         Task { [weak self] in
             let read = try? await StoreReader(store).read { store -> (decision: VoiceoverLookupDecision, title: String) in
@@ -81,6 +82,31 @@ extension Gate1AppModel {
         guard let store else { return }
         PublisherAudioTextMapper.resume(itemId: itemId, store: store, transcriber: sourceTranscriptionClient) { [weak self] in
             self?.diagnostics["publisherAudioTextMap"] = "\(itemId): \($0)"
+        }
+    }
+
+    /// Hears when a text map is saved (it takes minutes, and a post started at once begins in on-device speech).
+    private func listenForPublisherMaps() {
+        PublisherAudioTextMapper.mapSaved = { [weak self] itemId in self?.publisherMapSaved(itemId: itemId) }
+    }
+
+    /// A publisher recording's text map was saved (#2789). If that article is being read aloud right now, the engine
+    /// hands over to the recording at the place the voice has reached; otherwise nothing changes (a paused or other
+    /// item uses the recording the next time it starts).
+    private func publisherMapSaved(itemId: String) {
+        guard let engine, hasActiveSession, snapshot.itemId == itemId, snapshot.status.isPlaybackActive else {
+            diagnostics["publisherVoiceSwitch"] = "\(itemId): map_ready_not_playing"
+            return
+        }
+        do {
+            guard let switched = try engine.adoptPublisherAudioIfReady() else {
+                diagnostics["publisherVoiceSwitch"] = "\(itemId): stayed_on_device_voice"
+                return
+            }
+            snapshot = try applyPreferredPlaybackRate(to: switched, engine: engine)
+            diagnostics["publisherVoiceSwitch"] = "\(itemId): switched_to_publisher_voice"
+        } catch {
+            diagnostics["publisherVoiceSwitch"] = "\(itemId): failed:\(error.localizedDescription)"
         }
     }
 
