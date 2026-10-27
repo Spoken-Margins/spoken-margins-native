@@ -196,7 +196,7 @@ final class EpisodeMapPreparer {
                 job.stage = .generateFingerprintSpine
                 // Saved while the run is in flight, so a run iOS kills is named on the next request.
                 job.lastFailureCode = EpisodeMapRunGuard.runningCode
-                try store.saveEpisodeMapPreparationJob(job)
+                try await self.saveJob(job, store: store)
                 let mapDirectory = try host.episodeMapDirectory(itemId: item.id)
                 try FileManager.default.createDirectory(at: mapDirectory, withIntermediateDirectories: true)
                 let digest = try await Task.detached(priority: .utility) {
@@ -255,22 +255,26 @@ final class EpisodeMapPreparer {
                         startMs: startMs,
                         durationMs: generated.durationMs
                     ))
+                    let generatedFileURL = generated.fileURL
+                    let generatedByteCount = try await Gate1AppModel.offMain {
+                        Int64((try? Data(contentsOf: generatedFileURL).count) ?? 0)
+                    }
                     try await ledger.commit(reservationId: reservation.id, asset: OwnedOfflineAsset(
                         id: assetID,
                         itemId: item.id,
                         category: .fingerprintMap,
                         relativePath: "SpokenMargins/EpisodeMaps/\(host.safePodcastEvidenceComponent(item.id))/\(assetID).shazamsignature",
-                        byteCount: Int64((try? Data(contentsOf: generated.fileURL).count) ?? 0),
+                        byteCount: generatedByteCount,
                         isReproducible: true,
                         protections: [.activeEpisodeMapPreparation]
                     ))
                     gridIndex += 1
                     startMs += SparseFingerprintSchedule.periodicIntervalMs
                     job.nextUnitIndex = gridIndex
-                    try store.saveEpisodeMapPreparationJob(job)
+                    try await self.saveJob(job, store: store)
                     if job.policy == .whileCharging {
                         job.lastFailureCode = nil
-                        try store.saveEpisodeMapPreparationJob(job)
+                        try await self.saveJob(job, store: store)
                         self.status = "Fingerprinting paused at landmark \(gridIndex)"
                         host.recordEpisodeMapDiagnostic(
                             "episodeMapPreparation:\(item.id)",
@@ -281,13 +285,19 @@ final class EpisodeMapPreparer {
                 }
 
                 job.stage = .transcribe
-                try store.saveEpisodeMapPreparationJob(job)
+                try await self.saveJob(job, store: store)
                 self.status = "Transcribing on device"
                 let supportDirectory = try host.applicationSupportDirectory()
                 var timeline: TranscriptTimeline
-                if let relativePath = job.transientTranscriptRelativePath,
-                   let cached = try? Data(contentsOf: supportDirectory.appending(path: relativePath)),
-                   let decoded = try? JSONDecoder().decode(TranscriptTimeline.self, from: cached) {
+                let cachedTimeline: TranscriptTimeline? = if let relativePath = job.transientTranscriptRelativePath {
+                    try await Gate1AppModel.offMain {
+                        guard let cached = try? Data(contentsOf: supportDirectory.appending(path: relativePath)) else { return nil }
+                        return try? JSONDecoder().decode(TranscriptTimeline.self, from: cached)
+                    }
+                } else {
+                    nil
+                }
+                if let decoded = cachedTimeline {
                     timeline = decoded
                 } else {
                     timeline = try await host.sourceTranscriptionClient.transcribeSourceAudio(
@@ -306,7 +316,7 @@ final class EpisodeMapPreparer {
                         byteCount: Int64(transcriptData.count)
                     )
                     do {
-                        try transcriptData.write(to: transcriptURL, options: .atomic)
+                        try await Gate1AppModel.offMain { try transcriptData.write(to: transcriptURL, options: .atomic) }
                         try await ledger.commit(reservationId: reservation.id, asset: OwnedOfflineAsset(
                             id: "episode-transcript-\(safeItemID)",
                             itemId: item.id,
@@ -318,29 +328,32 @@ final class EpisodeMapPreparer {
                         ))
                     } catch {
                         try? await ledger.release(reservationId: reservation.id)
-                        try? FileManager.default.removeItem(at: transcriptURL)
+                        try? await Gate1AppModel.offMain { try FileManager.default.removeItem(at: transcriptURL) }
                         throw error
                     }
                     job.transientTranscriptRelativePath = relativePath
-                    try store.saveEpisodeMapPreparationJob(job)
+                    try await self.saveJob(job, store: store)
                 }
                 try await host.purgeSourceTranscriptionAudioCaches(itemId: item.id)
-                if let publisherChapters = try store.loadTranscriptTimeline(itemId: item.id)?.timeline.chapters,
+                let itemID = item.id
+                let savedTimeline = try await Gate1AppModel.offMain { try store.loadTranscriptTimeline(itemId: itemID) }
+                if let publisherChapters = savedTimeline?.timeline.chapters,
                    !publisherChapters.isEmpty {
                     timeline.chapters = publisherChapters
                 }
                 host.episodeMapTranscribed(itemId: item.id, timeline: timeline, store: store)
 
                 job.stage = .generatePhraseSketch
-                try store.saveEpisodeMapPreparationJob(job)
+                try await self.saveJob(job, store: store)
                 let sketch = TranscriptPhraseSketchBuilder.makeArtifact(
                     id: "episode-sketch-\(host.safePodcastEvidenceComponent(item.id))",
                     itemId: item.id,
                     timeline: timeline
                 )
 
+                let savedSpine = try await Gate1AppModel.offMain { try store.loadEditionFingerprintSpine(itemId: itemID) }
                 let allLandmarks = EpisodeMapAssembly.mergedLandmarks(
-                    existing: try store.loadEditionFingerprintSpine(itemId: item.id)?.landmarks ?? [],
+                    existing: savedSpine?.landmarks ?? [],
                     generated: generatedLandmarks,
                     sketchWindows: sketch.windows
                 )
@@ -354,11 +367,11 @@ final class EpisodeMapPreparer {
                 )
 
                 job.stage = .segmentScenes
-                try store.saveEpisodeMapPreparationJob(job)
+                try await self.saveJob(job, store: store)
                 let drafts = EpisodeSceneSegmenter.makeDrafts(timeline: timeline)
                 var scenes: [PortableListeningMapScene] = []
                 job.stage = .generateSummaries
-                try store.saveEpisodeMapPreparationJob(job)
+                try await self.saveJob(job, store: store)
                 for draft in drafts {
                     try Task.checkCancellation()
                     let text = EpisodeMapAssembly.sceneText(for: draft, in: timeline)
@@ -385,7 +398,7 @@ final class EpisodeMapPreparer {
                 )
 
                 job.stage = .renderBridges
-                try store.saveEpisodeMapPreparationJob(job)
+                try await self.saveJob(job, store: store)
                 for scene in scenes where scene.eligibility == .eligible && scene.summaryText?.isEmpty == false {
                     try Task.checkCancellation()
                     _ = try await host.prepareSummaryBridgeAsset(
@@ -397,27 +410,32 @@ final class EpisodeMapPreparer {
                 }
 
                 job.stage = .commit
-                try store.saveEpisodeMapPreparationJob(job)
-                try store.saveEditionFingerprintSpine(spine)
-                try store.saveTranscriptPhraseSketch(sketch)
-                try store.savePortableListeningMapProposal(proposal, itemId: item.id)
-                try store.saveResolvedListeningMapProjection(EpisodeFingerprintAlignment.makeProjection(
+                // One background step, so a cancel can't land between the saves and leave half a map.
+                let commitJob = job
+                let projection = EpisodeFingerprintAlignment.makeProjection(
                     id: "episode-projection-\(host.safePodcastEvidenceComponent(item.id))",
                     itemId: item.id,
                     proposalId: proposal.id,
                     recipientEditionSHA256: digest,
                     matches: EpisodeMapAssembly.identityMatches(for: allLandmarks),
                     exactEdition: true
-                ))
-                for asset in try store.loadOwnedOfflineAssets() where
-                    asset.itemId == item.id && asset.category == .fingerprintMap {
-                    try store.updateOwnedOfflineAsset(id: asset.id) { $0.protections.remove(.activeEpisodeMapPreparation) }
+                )
+                try await Gate1AppModel.offMain {
+                    try store.saveEpisodeMapPreparationJob(commitJob)
+                    try store.saveEditionFingerprintSpine(spine)
+                    try store.saveTranscriptPhraseSketch(sketch)
+                    try store.savePortableListeningMapProposal(proposal, itemId: itemID)
+                    try store.saveResolvedListeningMapProjection(projection)
+                    for asset in try store.loadOwnedOfflineAssets() where
+                        asset.itemId == itemID && asset.category == .fingerprintMap {
+                        try store.updateOwnedOfflineAsset(id: asset.id) { $0.protections.remove(.activeEpisodeMapPreparation) }
+                    }
                 }
                 try await host.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
                 try Task.checkCancellation() // the purge now suspends; a cancel that lands there must not complete the run
                 job.stage = .completed
-                try store.saveEpisodeMapPreparationJob(job)
-                try store.deleteEpisodeMapPreparationJob(id: job.id)
+                let jobID = job.id
+                try await Gate1AppModel.offMain { try store.deleteEpisodeMapPreparationJob(id: jobID) }
                 self.status = EpisodeMapAssembly.completionStatus(scenes: scenes)
                 host.recordEpisodeMapDiagnostic("episodeMapPreparation:\(item.id)", EpisodeMapAssembly.completionDiagnostic(
                     landmarkCount: allLandmarks.count,
@@ -428,7 +446,7 @@ final class EpisodeMapPreparer {
                 // A pause can surface as the transcriber's own error rather than CancellationError.
                 let stop = self.stopReason ?? .cancelled
                 let diagnostic = EpisodeMapRunGuard.stop(stop, job: &job, at: Date())
-                try? host.store?.saveEpisodeMapPreparationJob(job)
+                try? await self.saveJob(job, store: host.store)
                 if stop.keepsJob {
                     // The saved transcript stays, so the next pass skips transcription; only scratch audio goes.
                     try? await host.purgeSourceTranscriptionAudioCaches(itemId: item.id)
@@ -439,7 +457,7 @@ final class EpisodeMapPreparer {
                 host.recordEpisodeMapDiagnostic("episodeMapPreparation:\(item.id)", diagnostic)
             } catch {
                 job.lastFailureCode = String(describing: error)
-                try? host.store?.saveEpisodeMapPreparationJob(job)
+                try? await self.saveJob(job, store: host.store)
                 self.status = "Failed"
                 host.recordEpisodeMapDiagnostic(
                     "episodeMapPreparation:\(item.id)",
@@ -449,6 +467,13 @@ final class EpisodeMapPreparer {
             }
         }
         watchHeat(policy: initialJob.policy)
+    }
+
+    /// Saves the job on a background thread. It is not tied to the run's cancellation: a cancelled run still records
+    /// where it stopped, as the synchronous save did.
+    private func saveJob(_ job: EpisodeMapPreparationJob, store: SQLiteSessionStore?) async throws {
+        guard let store else { return }
+        try await Gate1AppModel.offMain { try store.saveEpisodeMapPreparationJob(job) }
     }
 
     /// Reads the phone's heat while the run works, and pauses it at serious heat (#2092). Before this, heat was

@@ -20,21 +20,25 @@ struct ImportedFileEpisodeLinker {
         try await PublicPodcastLinkResolver().resolveAsync($0)
     }
 
-    @MainActor
-    func status(itemId: String, store: SQLiteSessionStore) -> Status {
-        guard let item = try? store.loadItem(id: itemId),
-              item.mediaType == "audiobook", item.media?.sourceType == .nativeMediaFile else { return Status() }
-        return Status(
-            canLink: true,
-            episodeTitle: item.linkedEpisode.map { $0.title.isEmpty ? "Podcast episode" : $0.title },
-            canChange: !hasLinkedMargins(item: item, store: store)
-        )
+    /// Reads on a background thread (#2507): the item, its layers and the owned-audio table are one read, and a
+    /// listener with a long Library no longer waits on them with the item screen open.
+    /// Nil when a newer status read started meanwhile (its answer is the one to show) or the read failed.
+    func status(itemId: String, store: SQLiteSessionStore) async -> Status? {
+        let status = try? await StoreReader(store).readLatest("episodeLinkStatus:" + itemId) { store in
+            guard let item = try? store.loadItem(id: itemId),
+                  item.mediaType == "audiobook", item.media?.sourceType == .nativeMediaFile else { return Status() }
+            return Status(
+                canLink: true,
+                episodeTitle: item.linkedEpisode.map { $0.title.isEmpty ? "Podcast episode" : $0.title },
+                canChange: !Self.hasLinkedMargins(item: item, store: store)
+            )
+        }
+        return status ?? nil
     }
 
     /// Layers that stay on the file only through its episode link. Margins from a packet that names the exact
-    /// file do not count, so a wrong link stays fixable when only those are there.
-    @MainActor
-    private func hasLinkedMargins(item: Item, store: SQLiteSessionStore) -> Bool {
+    /// file do not count, so a wrong link stays fixable when only those are there. Runs inside a background read.
+    nonisolated private static func hasLinkedMargins(item: Item, store: SQLiteSessionStore) -> Bool {
         let layers = (try? store.loadImportedCommentaryLayers(itemId: item.id)) ?? []
         let digest = SharedPacketItemMatcher.ownedAudiobookDigest(
             for: item, assets: (try? store.loadOwnedOfflineAssets()) ?? []
@@ -50,7 +54,8 @@ struct ImportedFileEpisodeLinker {
         guard URL(string: pasted)?.scheme?.lowercased() == "https" else {
             throw ImportedFileEpisodeLink.Refusal.couldNotReadLink
         }
-        try requireChangeable(itemId: itemId, store: store)
+        let reader = StoreReader(store)
+        try await reader.read { try Self.requireChangeable(itemId: itemId, store: $0) }
         let request = LinkResolutionRequest(
             id: "imported-file-episode-\(UUID().uuidString)", inputURL: pasted,
             sourceSurface: "imported_file_episode_link", createdAt: Date()
@@ -62,20 +67,22 @@ struct ImportedFileEpisodeLinker {
             throw ImportedFileEpisodeLink.Refusal.couldNotReadLink
         }
         // Load after the wait: the item may have changed while the link was being read.
-        let linked = try ImportedFileEpisodeLink.link(try store.loadItem(id: itemId), resolution: result, pageURL: pasted)
-        try store.saveItem(linked)
-        return linked.linkedEpisode?.title ?? "the episode"
+        return try await reader.read { store in
+            let linked = try ImportedFileEpisodeLink.link(try store.loadItem(id: itemId), resolution: result, pageURL: pasted)
+            try store.saveItem(linked)
+            return linked.linkedEpisode?.title ?? "the episode"
+        }
     }
 
-    @MainActor
-    func unlink(itemId: String, store: SQLiteSessionStore) throws {
-        try requireChangeable(itemId: itemId, store: store)
-        try store.saveItem(ImportedFileEpisodeLink.unlink(try store.loadItem(id: itemId)))
+    func unlink(itemId: String, store: SQLiteSessionStore) async throws {
+        try await StoreReader(store).read { store in
+            try Self.requireChangeable(itemId: itemId, store: store)
+            try store.saveItem(ImportedFileEpisodeLink.unlink(try store.loadItem(id: itemId)))
+        }
     }
 
     /// Margins placed through the linked episode would lose their file if the link changed or went away.
-    @MainActor
-    private func requireChangeable(itemId: String, store: SQLiteSessionStore) throws {
+    nonisolated private static func requireChangeable(itemId: String, store: SQLiteSessionStore) throws {
         if hasLinkedMargins(item: try store.loadItem(id: itemId), store: store) {
             throw ImportedFileEpisodeLink.Refusal.hasSharedMargins
         }

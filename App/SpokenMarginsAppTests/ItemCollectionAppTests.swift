@@ -37,7 +37,7 @@ final class ItemCollectionAppTests: XCTestCase {
         try XCTUnwrap(model.store).saveItemCollection(collection)
     }
 
-    func testExportSessionsPreselectsOnlyTheScopedCollectionsSessions() throws {
+    func testExportSessionsPreselectsOnlyTheScopedCollectionsSessions() async throws {
         let model = makeModel()
         let first = try importItem(model, title: "Course Reading One", margin: "Margin on the first reading.")
         let second = try importItem(model, title: "Course Reading Two", margin: "Margin on the second reading.")
@@ -47,7 +47,7 @@ final class ItemCollectionAppTests: XCTestCase {
                                         itemIDs: [first.itemID, second.itemID, quiet.itemID], createdAt: Date())
         try save(collection, in: model)
 
-        model.openBatchExport(scopedTo: ItemCollectionScope(collection))
+        await model.openBatchExport(scopedTo: ItemCollectionScope(collection)).value
 
         XCTAssertEqual(model.screen, .batchExport)
         XCTAssertEqual(model.batchExportFilter, .withInterjections)
@@ -59,27 +59,45 @@ final class ItemCollectionAppTests: XCTestCase {
                        "the list still shows every session with Margins; only the selection is scoped")
     }
 
-    func testExportSessionsWithNoCollectionStartsWithNothingSelected() throws {
+    func testExportSessionsWithNoCollectionStartsWithNothingSelected() async throws {
         let model = makeModel()
         _ = try importItem(model, title: "Any Article", margin: "A Margin.")
 
-        model.openBatchExport(scopedTo: nil)
+        await model.openBatchExport(scopedTo: nil).value
 
         XCTAssertEqual(model.screen, .batchExport)
         XCTAssertTrue(model.selectedBatchExportSessionIds.isEmpty)
     }
 
-    func testExportSessionsReopenedWithoutAScopeDropsEarlierSelection() throws {
+    func testExportSessionsReopenedWithoutAScopeDropsEarlierSelection() async throws {
         let model = makeModel()
         let first = try importItem(model, title: "Course Reading One", margin: "A Margin.")
         let collection = ItemCollection(id: "collection-a", name: "A", itemIDs: [first.itemID], createdAt: Date())
         try save(collection, in: model)
-        model.openBatchExport(scopedTo: ItemCollectionScope(collection))
+        await model.openBatchExport(scopedTo: ItemCollectionScope(collection)).value
         XCTAssertEqual(model.selectedBatchExportSessionIds, [first.sessionID])
 
-        model.openBatchExport(scopedTo: nil)
+        await model.openBatchExport(scopedTo: nil).value
 
         XCTAssertTrue(model.selectedBatchExportSessionIds.isEmpty)
+    }
+
+    /// Export Sessions reads its rows off the main actor (#2507): a second tap before the first read comes back
+    /// must leave the second's result, not the first's selection.
+    func testOpeningExportSessionsTwiceInARowKeepsTheNewestOpen() async throws {
+        let model = makeModel()
+        let first = try importItem(model, title: "Course Reading One", margin: "A Margin.")
+        let collection = ItemCollection(id: "collection-a", name: "A", itemIDs: [first.itemID], createdAt: Date())
+        try save(collection, in: model)
+
+        let scoped = model.openBatchExport(scopedTo: ItemCollectionScope(collection))
+        let unscoped = model.openBatchExport(scopedTo: nil)
+        await scoped.value
+        await unscoped.value
+
+        XCTAssertEqual(model.screen, .batchExport)
+        XCTAssertTrue(model.selectedBatchExportSessionIds.isEmpty, "the older open was cancelled, so its selection never lands")
+        XCTAssertEqual(model.batchExportRows.map(\.id), [first.sessionID])
     }
 
     func testDeletingACollectionKeepsItsItemsSessionsAndMargins() throws {

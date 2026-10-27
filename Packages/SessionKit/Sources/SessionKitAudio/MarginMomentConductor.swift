@@ -172,7 +172,9 @@ public final class MarginMomentConductor {
             let delegate = VoiceDelegate { [weak self] in
                 Task { @MainActor [weak self] in
                     guard let self, let voice = self.voice, ObjectIdentifier(voice) == playerID else { return }
-                    self.finishVoice()
+                    // Named for the hang probe (#2255): finishing resumes the source or starts the next voice.
+                    let labels = MainThreadOperationLabels.shared
+                    labels.scoped("marginMomentVoiceFinished") { self.finishVoice() }
                 }
             }
             player.delegate = delegate

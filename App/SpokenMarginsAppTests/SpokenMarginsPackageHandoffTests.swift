@@ -924,6 +924,9 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(400))
 
         XCTAssertEqual(model.diagnostics["podcastPlacementDeferred:\(item.id)"], "session_keeps_its_edition")
+        // The caller decides this before the background placement pass has recorded its own deferral (#2507).
+        XCTAssertEqual(model.diagnostics["sourceTranscriptionAfterDownload:\(item.id)"], "not_requested",
+                       "a download the session does not play gets no transcript, and the episode-map branch still runs")
         let requestsWhileStreaming = await transcriber.fullRequestCount()
         XCTAssertEqual(requestsWhileStreaming, 0, "nothing is placed against the download while the stream plays")
         XCTAssertNotEqual(try store.loadImportedCommentaryLayer(packageDigest: digest)?.sourceResolutionStatus, .resolved)
@@ -939,9 +942,9 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
     /// #915, #1255: a placement pass copies each layer when it starts and publishes minutes later. What the
     /// listener changes in between must stand: the pass writes only its own placement fields, and a layer
-    /// deleted meanwhile stays deleted. The pass is held by keeping the main actor busy: the copies are taken
-    /// synchronously when the pass is scheduled, and it can publish only on the main actor, so every change
-    /// below lands after the copy and before the publish.
+    /// deleted meanwhile stays deleted. The pass reads its copies off the main thread (#2507), so the test awaits
+    /// the request until the pass is scheduled, then makes every change below without yielding the main actor. The
+    /// pass can publish only on the main actor, so each change lands after the copy and before the publish.
     @MainActor
     func testAPlacementPassKeepsTheListenersChangesMadeWhileItRuns() async throws {
         let root = try temporaryDirectory(named: "spoken-margins-held-placement-pass")
@@ -983,10 +986,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         try Data("recipient-edition".utf8).write(to: localURL)
         let recipientDigest = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL)
         // The transcript the alignment pass would hand over, so this one pass places the Margins.
-        model.resolveImportedPodcastCommentary(
+        let outcome = await model.importedPodcastPlacement.resolveAndWait(
             itemId: item.id, localURL: localURL,
             recipientTranscriptOverride: PackageAnchorTranscriptionClient.recipientTimeline(durationMs: 300_000)
         )
+        XCTAssertEqual(outcome, .scheduled(joined: false))
         let key = "importedPodcastAnchorResolution:\(item.id)"
         XCTAssertEqual(model.diagnostics[key], "scheduled:2", "the pass has copied both layers")
 

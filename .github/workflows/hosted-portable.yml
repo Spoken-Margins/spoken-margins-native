@@ -460,6 +460,7 @@ jobs:
       contents: read
       pull-requests: read
       issues: write
+      actions: read
       checks: read
       statuses: read
     steps:

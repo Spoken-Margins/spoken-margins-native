@@ -17,6 +17,10 @@
 #   nobody, so the audit script (after auditing such a PR) and the Mac tick (optional backstop,
 #   ops/lane/README.md) remove and re-add the label, and this run posts as the bot and removes it again.
 #
+# - Here too, on a push to the trunk that changes .github/workflows/ or the guard test (#2714): the alert needs the
+#   `workflow files parse` check to have run since the base last changed those, so such a push can make an open PR
+#   stale. The sweep strips `needs-owner-tap` from it and, if it was already alerted, warns once.
+#
 # The script is taken from the PR's base with no credentials kept, and reads PRs only through the API; a base
 # without the script skips quietly. A same-repo PR that edits this file runs its own copy on pull_request; only
 # collaborators can open those (forks are skipped below). One run at a time per PR, and the script reads the
@@ -29,6 +33,9 @@ on:
     # Not opened or synchronize: the head's checks have only just started, and their own last job decides.
     types: [reopened, ready_for_review, labeled]
     paths: ['.github/**', 'scripts/lane-runner.py']
+  push:
+    branches: [main]
+    paths: ['.github/workflows/**', 'scripts/tests/test_workflow_files.py']
   # Refused by GitHub until main carries this file (#1492); kept so it works from then on.
   workflow_dispatch:
     inputs:
@@ -41,6 +48,7 @@ permissions:
   contents: read
   pull-requests: read
   issues: write
+  actions: read
   checks: read
   statuses: read
 

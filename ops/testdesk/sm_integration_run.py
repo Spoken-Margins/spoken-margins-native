@@ -59,6 +59,7 @@ NOT_RUN = 'not run: agent-driven journeys (they need an attended session)'
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(REPO_ROOT / 'scripts'))
 import comment_trust  # noqa: E402  (#1822: whose comments and issues the desk believes)
+import flake_tally  # noqa: E402  (#2176: the retry-pass tally, shared with the lane runner)
 import integration_revert as revert  # noqa: E402
 import journey_promotion  # noqa: E402
 import lane_ledger  # noqa: E402
@@ -802,6 +803,13 @@ class Ops:
                          '--jq', '.[] | {body, author_association, user: {login: .user.login}} | @json']).stdout or ''
         return flake_markers([json.loads(line) for line in out.splitlines() if line.strip()])
 
+    def closed_flake_markers(self) -> dict:
+        """When each test's flake issue was last closed, from trusted issues closed inside the tally window."""
+        since = (dt.datetime.now(dt.timezone.utc) - TALLY_WINDOW).strftime('%Y-%m-%dT%H:%M:%SZ')
+        out = self.must(['gh', 'api', '--paginate', f'repos/{REPO}/issues?state=closed&since={since}&per_page=100',
+                         '--jq', '.[] | {body, state, closed_at, author_association, user: {login: .user.login}} | @json']).stdout or ''
+        return flake_tally.closed_flake_markers([json.loads(line) for line in out.splitlines() if line.strip()])
+
     def open_flake_issue(self, title: str, body: str) -> str:
         res = self.must(['gh', 'issue', 'create', '-R', REPO, '--title', title, '--body', body,
                          '--label', 'ready', '--milestone', 'Showcase'])
@@ -971,69 +979,26 @@ class Ops:
         return filed
 
 
-TALLY_ISSUE = 2176
-TALLY_PREFIX = 'flake-tally:'
-TALLY_WINDOW = dt.timedelta(days=7)
-TALLY_THRESHOLD = 3
+TALLY_ISSUE = flake_tally.TALLY_ISSUE  # the tally's format and judging live in scripts/flake_tally.py
+TALLY_PREFIX = flake_tally.TALLY_PREFIX
+TALLY_WINDOW = flake_tally.TALLY_WINDOW
+TALLY_THRESHOLD = flake_tally.TALLY_THRESHOLD
+FLAKE_MARKER = flake_tally.FLAKE_MARKER
+FLAKE_TITLE_MAX = flake_tally.FLAKE_TITLE_MAX
+tally_line = flake_tally.tally_line
+flake_marker = flake_tally.flake_marker
+flake_markers = flake_tally.flake_markers
+tests_due_an_issue = flake_tally.tests_due_an_issue
 
 
-def tally_line(test: str, sha: str, run_id: str, when: dt.datetime) -> str:
-    """The machine-readable first line of a tally comment: one test that failed, then passed on retry."""
-    return f'{TALLY_PREFIX} {test} {sha[:7]} {run_id} {when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}'
-
-
-def tally_counts(comments: list[dict], now: dt.datetime) -> dict[str, list[str]]:
-    """Retry-passes per test in the last 7 days -> their run ids. Only comments by the workflow's own bot count
-    (#1822): a stranger's look-alike line on #2176 can't open an issue. The same run counts once per test."""
-    seen: dict[str, dict[str, None]] = {}
-    for comment in comments:
-        if comment_trust.author_login(comment) != 'github-actions[bot]':
-            continue
-        first = (comment.get('body') or '').splitlines()[:1]
-        parts = first[0].split() if first else []
-        if len(parts) != 5 or parts[0] != TALLY_PREFIX:
-            continue
-        try:
-            when = dt.datetime.strptime(parts[4], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=dt.timezone.utc)
-        except ValueError:
-            continue
-        if now - TALLY_WINDOW <= when <= now:
-            seen.setdefault(parts[1], {})[parts[3]] = None
-    return {test: list(runs) for test, runs in seen.items()}
-
-
-FLAKE_MARKER = re.compile(r'<!-- flake-test: (.+?) -->')
-FLAKE_TITLE_MAX = 120
-
-
-def flake_marker(test: str) -> str:
-    """The line in a flake issue's body that says which test it is for: the full test id, matched exactly."""
-    return f'<!-- flake-test: {test.replace("-->", "")} -->'
-
-
-def flake_markers(issues: list[dict]) -> set[str]:
-    """Test ids named by a marker in the body of a trusted open issue (#1822: a stranger's marker can't hide a flake)."""
-    return {match.group(1) for issue in comment_trust.trusted_only(issues)
-            for match in FLAKE_MARKER.finditer(issue.get('body') or '')}
-
-
-def tests_due_an_issue(counts: dict[str, list[str]], open_markers: set[str]) -> list[str]:
-    """Tests with 3 or more retry-passes in the window and no open issue carrying their exact marker. The title
-    can't decide this: it is cut to fit, and a short name is a prefix of a longer one."""
-    return sorted(test for test, runs in counts.items() if len(runs) >= TALLY_THRESHOLD
-                  and test.replace('-->', '') not in open_markers)
+def tally_counts(comments: list[dict], now: dt.datetime, closed: Optional[dict] = None) -> dict[str, list[str]]:
+    """Retry-passes per test in the last 7 days, after any close of its flake issue. Only comments by the workflow's
+    own bot count here (#1822)."""
+    return flake_tally.tally_counts(comments, now, trust=flake_tally.bot_only, closed=closed)
 
 
 def flake_issue_text(test: str, runs: list[str]) -> tuple[str, str]:
-    name = test.rsplit('/', 1)[-1].removesuffix('()')
-    links = '\n'.join(f'- https://github.com/{REPO}/actions/runs/{r}' for r in runs)
-    prefix = 'Flaky: '
-    room = FLAKE_TITLE_MAX - len(prefix)
-    return (prefix + (name if len(name) <= room else name[:room - 1] + '\u2026'),
-            f'{flake_marker(test)}\n\n`{test}` failed on its first run and passed on a re-run in {len(runs)} hosted '
-            f'integration runs in the last 7 days (tally on #{TALLY_ISSUE}). The run still counted as a pass '
-            f'(owner, 2026-10-24), so fix the test or the code under it rather than leave it to retry.\n\n'
-            f'Runs:\n{links}\n')
+    return flake_tally.flake_issue_text(test, runs, REPO, 'hosted integration runs')
 
 
 def record_flakes(ops, flaky: list[str], sha: str, run_id: str) -> list[str]:
@@ -1044,7 +1009,7 @@ def record_flakes(ops, flaky: list[str], sha: str, run_id: str) -> list[str]:
         now = dt.datetime.now(dt.timezone.utc)
         for test in flaky:
             ops.post_tally(tally_line(test, sha, run_id, now) + f'\n\n`{test}` passed on retry in run {run_id}.')
-        counts = tally_counts(ops.tally_comments(), now)
+        counts = tally_counts(ops.tally_comments(), now, ops.closed_flake_markers())
         for test in tests_due_an_issue(counts, ops.open_flake_markers()):
             if test in flaky:
                 title, body = flake_issue_text(test, counts[test])

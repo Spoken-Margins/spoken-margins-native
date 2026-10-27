@@ -203,6 +203,16 @@ class UnlabelledTasks(unittest.TestCase):
         self.assertEqual([r['class'] for r in rows], ['store-whole-table-read'])
         self.assertTrue(rows[0]['labelled'])
 
+    def test_the_shared_labels_instance_counts_as_a_label_too(self):
+        body = '    func f() { Task { MainThreadOperationLabels.shared.scoped("reload") { _ = try? store?.listItems() } } }'
+        rows = scan(Model=MODEL % body)
+        self.assertEqual([r['class'] for r in rows], ['store-whole-table-read'])
+
+    def test_a_look_alike_name_is_not_a_label(self):
+        body = '    func f() { Task { notlabels.scoped("reload") { _ = try? store?.listItems() } } }'
+        rows = scan(Model=MODEL % body)
+        self.assertEqual(sorted(r['class'] for r in rows), ['store-whole-table-read', 'unlabelled-main-task'])
+
     def test_reads_reached_through_a_main_actor_call_count_for_the_task(self):
         body = '    func f() { Task { reload() } }\n    func reload() { _ = try? store?.listItems() }'
         rows = scan(Model=MODEL % body)
@@ -539,6 +549,30 @@ class TheRatchet(unittest.TestCase):
         self.run_main('--accept', 'second reason')
         reasons = {e['function']: e['reason'] for e in json.loads(self.baseline.read_text())['entries']}
         self.assertEqual(reasons, {'Model.reload': 'first reason', 'Model.more': 'second reason'})
+
+    def test_accept_refuses_an_empty_or_placeholder_reason(self):
+        for reason in ('', '  ', 'first-run inventory (#2257): not triaged yet', 'inventory, not accepted as correct', 'Moved unchanged from X'):
+            code, out = self.run_main('--accept', reason)
+            self.assertEqual(code, 2, out)
+            self.assertFalse(self.baseline.exists())
+
+    def test_more_placeholder_rows_than_the_ceiling_fails(self):
+        self.run_main('--accept', 'existing')
+        data = json.loads(self.baseline.read_text())
+        self.assertEqual(data['placeholder_ceiling'], 0)
+        data['entries'][0]['reason'] = 'first-run inventory (#2257): not triaged yet'
+        self.baseline.write_text(json.dumps(data))
+        code, out = self.run_main()
+        self.assertEqual(code, 1, out)
+        self.assertIn('not triaged', out)
+        data['placeholder_ceiling'] = 1
+        self.baseline.write_text(json.dumps(data))
+        self.assertEqual(self.run_main()[0], 0)
+        self.run_main('--update')   # the ceiling follows the count down, never up
+        data['entries'][0]['reason'] = 'a real reason'
+        self.baseline.write_text(json.dumps(data))
+        self.run_main('--update')
+        self.assertEqual(json.loads(self.baseline.read_text())['placeholder_ceiling'], 0)
 
 
 class TheRepository(unittest.TestCase):
