@@ -80,34 +80,26 @@ enum SupertonicResourcePolicy {
         SpeechEnginePolicy.onDeviceRenderingBlock(currentConditions(processInfo: processInfo)) == nil
     }
 
-    /// `isOnExternalPower` is for logging only; rendering never depends on it.
+    /// What the phone reports now, from any thread. The engine choice ignores the power source (charging alone
+    /// never stops or starts a voice, #183), but the render-ahead window decides on it (#2703: a cool phone on
+    /// power renders further ahead), so it is read from `power`, never left out.
     static func currentConditions(
         processInfo: ProcessInfo = .processInfo,
-        isOnExternalPower: Bool? = nil
+        power: any ExternalPowerSource = DevicePowerSource.app
     ) -> SpeechEngineConditions {
         SpeechEngineConditions(
             thermal: thermalLevel(processInfo.thermalState),
             isLowPowerModeEnabled: processInfo.isLowPowerModeEnabled,
-            isOnExternalPower: isOnExternalPower,
+            isOnExternalPower: power.isOnExternalPower,
             isRecoveringFromMemoryWarning: memoryBackoff.isActive()
         )
     }
 
-    /// Whether the device is charging or full on power, for the fallback log. Nil off iOS.
+    /// Whether the device is charging or full on power. Nil when it can't tell (the simulator, off iOS).
     @MainActor
     static func isOnExternalPower() -> Bool? {
-        #if canImport(UIKit) && os(iOS)
-        let device = UIDevice.current
-        if !device.isBatteryMonitoringEnabled { device.isBatteryMonitoringEnabled = true }
-        switch device.batteryState {
-        case .charging, .full: return true
-        case .unplugged: return false
-        case .unknown: return nil
-        @unknown default: return nil
-        }
-        #else
-        return nil
-        #endif
+        DevicePowerSource.app.startMonitoring()
+        return DevicePowerSource.app.isOnExternalPower
     }
 
     static func thermalLevel(_ state: ProcessInfo.ThermalState) -> SpeechThermalLevel {
@@ -382,6 +374,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let onBackgroundSeams: BackgroundSeamHandler?
     /// The listening live narration may render ahead now; nil for no limit (#1681).
     private let renderAheadWindow: @Sendable () -> TimeInterval?
+    /// The window the app's clients use: the app's background state and what the phone reports now, power included,
+    /// through `RenderAheadPolicy` (#1681, #2703).
+    static let defaultRenderAheadWindow: @Sendable () -> TimeInterval? = {
+        RenderAheadPolicy.window(appBackgrounded: OnDeviceVoiceGovernor.app.isAppBackgrounded,
+                                 conditions: OnDeviceVoiceGovernor.app.conditions())
+    }
     /// The governor whose shared CPU budget this client's live narration answers to; it reads `liveNarrationBuffer()`
     /// at every budget check once this client plays (#2695).
     private let governor: OnDeviceVoiceGovernor
@@ -523,10 +521,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         applicationIsActive: (@Sendable () -> Bool)? = nil,
         applicationIsInBackground: (@Sendable () -> Bool)? = nil,
         onBackgroundSeams: BackgroundSeamHandler? = nil,
-        renderAheadWindow: @escaping @Sendable () -> TimeInterval? = {
-            RenderAheadPolicy.window(appBackgrounded: OnDeviceVoiceGovernor.app.isAppBackgrounded,
-                                     conditions: OnDeviceVoiceGovernor.app.conditions())
-        },
+        renderAheadWindow: @escaping @Sendable () -> TimeInterval? = SupertonicSpeechPlaybackClient.defaultRenderAheadWindow,
         governor: OnDeviceVoiceGovernor = .app
     ) {
         self.renderer = renderer
