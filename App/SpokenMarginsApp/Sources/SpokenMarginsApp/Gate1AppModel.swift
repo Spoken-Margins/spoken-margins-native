@@ -220,6 +220,8 @@ final class Gate1AppModel: ObservableObject {
     var activePlaybackDetail: ItemDetailState?
     let backgroundRefresh = BackgroundRefreshGate() // #2102
     let summaryRecordsCache = SummaryRecordsCache() // #2508
+    /// Saves fingerprint landmarks off the main thread, one at a time (#2781); made on first use for the current store.
+    var fingerprintLandmarkWriter: (store: SQLiteSessionStore, writer: EpisodeFingerprintLandmarkWriter)?
     @Published var libraryItems: [LibraryItemRow] = [] {
         didSet { quickAccess.invalidateCandidates(); libraryPresentationRevision += 1 }
     }
