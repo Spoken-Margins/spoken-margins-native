@@ -5,7 +5,8 @@ The collaborators-only limit set at the flip (#1393) expires on a date GitHub ne
 reads `GET /repos/{repo}/interaction-limits` and, inside the last 30 days, opens one issue (`priority`,
 `needs-owner`) or, at 7 days and when the limit is already gone, adds one comment to it. It never files more than
 one comment per stage and never closes the issue: renewing is the owner's tap (Settings > Moderation options >
-Interaction limits), and he closes it.
+Interaction limits), and he closes it. A closed issue that already holds a stage's marker keeps that stage quiet, so
+closing it ends the warnings for the stage and the next stage opens a new issue (at most three issues in all).
 
     interaction_limit_watch.py [--dry-run] [--now 2027-04-01T00:00:00Z]
 
@@ -20,6 +21,10 @@ import sys
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import comment_trust  # noqa: E402  (#1822: a stranger's look-alike issue or marker is not ours)
 
 TITLE = "Renew the repository's interaction limit (collaborators only)"
 LABELS = ['priority', 'needs-owner']
@@ -51,11 +56,13 @@ def stage(limit, now):
 
 
 def decide(current, issue_open, marks):
-    """The one GitHub action for this run: 'open', 'comment' or None."""
+    """The one GitHub action for this run: 'open', 'comment' or None. `marks` are the stages already filed: on the open
+    issue, or, with none open, on the closed ones (the owner closed the issue after renewing, and a fallback date
+    that a renewal made stale must not file it again)."""
     if current == 'ok':
         return None
     if not issue_open:
-        return 'open'
+        return None if current in marks else 'open'
     return None if current in marks else 'comment'
 
 
@@ -96,20 +103,23 @@ def read_limit(repo, token):
             f'The token could not read the limit (HTTP {error.code}); using the known expiry {FALLBACK_EXPIRY}.')
 
 
-def open_issue(repo, token):
+def watch_issues(repo, token):
+    """Our issues with the watch's title, open or closed, newest first. A stranger's issue with the same title is not
+    ours (#1822)."""
+    found = []
     for page in range(1, 11):
-        issues = request('GET', f'/repos/{repo}/issues?state=open&per_page=100&page={page}', token)
-        for issue in issues:
-            if 'pull_request' not in issue and issue['title'] == TITLE:
-                return issue
+        issues = request('GET', f'/repos/{repo}/issues?state=all&per_page=100&page={page}', token)
+        found += [issue for issue in comment_trust.trusted_only(issues)
+                  if 'pull_request' not in issue and issue['title'] == TITLE]
         if len(issues) < 100:
-            return None
-    return None
+            break
+    return found
 
 
 def marks_seen(repo, token, issue):
+    """The stages our own text on this issue has filed. A stranger's comment carrying a marker does not count."""
     marks = set(MARKER.findall(issue.get('body') or ''))
-    for comment in request('GET', f'/repos/{repo}/issues/{issue["number"]}/comments?per_page=100', token):
+    for comment in comment_trust.trusted_only(request('GET', f'/repos/{repo}/issues/{issue["number"]}/comments?per_page=100', token)):
         marks.update(MARKER.findall(comment.get('body') or ''))
     return marks
 
@@ -125,8 +135,12 @@ def main():
     if note:
         print(note)
     current = stage(limit, now)
-    issue = open_issue(repo, token)
-    action = decide(current, issue is not None, marks_seen(repo, token, issue) if issue else set())
+    issues = watch_issues(repo, token) if current != 'ok' else []
+    issue = next((candidate for candidate in issues if candidate['state'] == 'open'), None)
+    marks = set()
+    for candidate in [issue] if issue else issues:
+        marks |= marks_seen(repo, token, candidate)
+    action = decide(current, issue is not None, marks)
     print(f'Interaction limit: {current}, open issue {issue["number"] if issue else "none"}: {action or "nothing to file"}.')
     if action is None or args.dry_run:
         return 0

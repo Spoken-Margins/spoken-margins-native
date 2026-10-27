@@ -36,7 +36,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-          sparse-checkout: scripts/interaction_limit_watch.py
+          sparse-checkout: |
+            scripts/interaction_limit_watch.py
+            scripts/comment_trust.py
           sparse-checkout-cone-mode: false
       - name: Check the limit
         env:
