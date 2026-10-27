@@ -95,6 +95,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         coordinator.register(itemId: "episode", remoteURL: url)
 
         XCTAssertEqual(coordinator.recordsByItemId["episode"]?.state, .streamingOnly)
+        coordinator.flushPendingRowWritesForTesting()
         XCTAssertEqual(try fixture.store.loadPodcastDownloads().count, 1)
         XCTAssertEqual(try fixture.store.loadAudioAssets(itemId: "episode").filter { $0.availability == .remote }.count, 1)
     }
@@ -189,6 +190,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         coordinator.removeItem("episode")
 
         XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty)
+        coordinator.flushPendingRowWritesForTesting()
         XCTAssertNil(try fixture.store.loadPodcastDownload(itemId: "episode"))
         XCTAssertTrue(try fixture.store.loadAudioAssets(itemId: "episode").isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
@@ -227,6 +229,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         XCTAssertNil(coordinator.validatedLocalURL(for: "valid"))
         XCTAssertEqual(coordinator.recordsByItemId["valid"]?.state, .failed)
         XCTAssertNil(coordinator.recordsByItemId["valid"]?.localRelativePath)
+        coordinator.flushPendingRowWritesForTesting()
         XCTAssertEqual(try fixture.store.loadPodcastDownloads().first { $0.itemId == "valid" }?.state, .failed)
     }
 
@@ -254,6 +257,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.validatedLocalURL(for: "episode"), saved)
         XCTAssertEqual(try Data(contentsOf: saved), Data([1, 2, 3, 4]))
         XCTAssertNotNil(coordinator.recordsByItemId["episode"]?.failureReason)
+        coordinator.flushPendingRowWritesForTesting()
         coordinator.shutdown()
 
         let restored = try PodcastDownloadCoordinator(
@@ -315,6 +319,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
 
         XCTAssertNil(coordinator.validatedLocalURL(for: "episode"))
         XCTAssertEqual(coordinator.status(itemId: "episode"), .downloading)
+        coordinator.flushPendingRowWritesForTesting()
         XCTAssertEqual(try fixture.store.loadPodcastDownload(itemId: "episode")?.state, .downloading)
 
         let preparation = try XCTUnwrap(coordinator.preparationTasks["episode"])
@@ -342,6 +347,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         )
         XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline)
         XCTAssertEqual(coordinator.validatedLocalURL(for: "episode"), saved)
+        coordinator.flushPendingRowWritesForTesting()
         XCTAssertEqual(try fixture.store.loadPodcastDownload(itemId: "episode")?.bytesWritten, 3)
         coordinator.shutdown()
     }
@@ -398,6 +404,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         await head.finish(8)
         await preparation.value
         XCTAssertEqual(starts, 0)
+        coordinator.flushPendingRowWritesForTesting()
         XCTAssertNil(try fixture.store.loadPodcastDownload(itemId: "episode"))
         XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty)
         coordinator.shutdown()
@@ -418,6 +425,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         await head.finish(8)
         await preparation.value
         XCTAssertEqual(starts, 0)
+        coordinator.flushPendingRowWritesForTesting()
         XCTAssertEqual(try fixture.store.loadPodcastDownload(itemId: "episode")?.state, .streamingOnly)
         XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty)
         coordinator.shutdown()
@@ -951,6 +959,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         let record = coordinator.recordsByItemId["truncated"]
         XCTAssertEqual(record?.state, .failed)
         XCTAssertNil(record?.localRelativePath)
+        coordinator.flushPendingRowWritesForTesting()
         XCTAssertEqual(try fixture.store.loadPodcastDownloads().first { $0.itemId == "truncated" }?.state, .failed)
         XCTAssertEqual(record?.failureReason, "Downloaded file is missing or incomplete. Download it again.")
         XCTAssertNotNil(coordinator.validatedLocalURL(for: "complete"), "control: size equals what was recorded")

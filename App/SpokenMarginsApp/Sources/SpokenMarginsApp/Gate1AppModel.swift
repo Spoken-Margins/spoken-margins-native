@@ -204,7 +204,8 @@ final class Gate1AppModel: ObservableObject {
     @Published var exportIncludesListeningMap = UserDefaults.standard.object(forKey: "exportIncludesListeningMap") as? Bool ?? true
     @Published var exportIncludesInterjections = UserDefaults.standard.object(forKey: "exportIncludesInterjections") as? Bool ?? true
     @Published var exportIncludesTurns = UserDefaults.standard.object(forKey: "exportIncludesTurns") as? Bool ?? true
-    @Published private(set) var batchExportRows: [BatchSessionExportRow] = []
+    @Published var batchExportRows: [BatchSessionExportRow] = []
+    var batchExportLoadTask: Task<Void, Never>?
     @Published var batchExportFilter: BatchSessionExportFilter = .withInterjections
     @Published var selectedBatchExportSessionIds: Set<String> = []
     @Published var batchExportFolderName = SavedFolderSetting.sessionExport.name() ?? "No folder selected"
@@ -3043,21 +3044,6 @@ final class Gate1AppModel: ObservableObject {
             renderSignature: currentSupertonicRenderSignature,
             allowsRendering: SupertonicResourcePolicy.allowsRendering(),
             startupChunkCount: Self.startupAudioChunkCount)
-    }
-
-    func refreshBatchExportRows(store: SQLiteSessionStore) throws {
-        let itemsById = Dictionary(uniqueKeysWithValues: try store.listItemSummaries().map { ($0.id, $0) })
-        let activeCounts = try store.activeInterjectionCountsBySession()
-        batchExportRows = try store.loadSessions().compactMap { session in
-            guard let item = itemsById[session.itemId] else { return nil }
-            return BatchSessionExportRow(
-                session: session,
-                itemTitle: item.title,
-                interjectionCount: activeCounts[session.id] ?? 0
-            )
-        }
-        let availableIds = Set(batchExportRows.map(\.id))
-        selectedBatchExportSessionIds.formIntersection(availableIds)
     }
 
     static func firstURL(in text: String) -> URL? {

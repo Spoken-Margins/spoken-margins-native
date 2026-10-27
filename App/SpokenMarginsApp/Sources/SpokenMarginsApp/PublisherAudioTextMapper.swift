@@ -25,8 +25,11 @@ enum PublisherAudioTextMapper {
         transcriber: any SourceTranscriptionClient,
         report: @escaping @MainActor (String) -> Void
     ) {
-        guard let audio = try? store.loadPublisherAudio(itemId: itemId) else { return }
-        start(audio, store: store, transcriber: transcriber, report: report)
+        // Opening an item asks this every time, so the keyed read leaves the main actor (#2506).
+        Task {
+            guard let audio = try? await StoreReader(store).read({ try $0.loadPublisherAudio(itemId: itemId) }) else { return }
+            start(audio, store: store, transcriber: transcriber, report: report)
+        }
     }
 
     static func start(
@@ -40,14 +43,20 @@ enum PublisherAudioTextMapper {
         guard SFSpeechRecognizer.authorizationStatus() == .authorized else {
             return report("waiting_for_speech_recognition")
         }
-        guard let articleText = try? store.loadItem(id: audio.itemId).text,
-              !articleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let remoteURL = URL(string: audio.audioURL) else {
+        guard let remoteURL = URL(string: audio.audioURL) else {
             return report("skipped: no article text or audio URL")
         }
-        report("transcribing")
+        // Claimed before the first await, so a second open of the item can't start a second try while the text loads.
         running.insert(audio.itemId)
         Task {
+            // The article text can be a whole book: it is read off the main actor (#2506).
+            let reader = StoreReader(store)
+            let articleText = try? await reader.read { try $0.loadItem(id: audio.itemId).text }
+            guard let articleText, !articleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                running.remove(audio.itemId)
+                return report("skipped: no article text or audio URL")
+            }
+            report("transcribing")
             var updated: PublisherAudio
             do {
                 let transcript = try await transcribe(remoteURL, durationMs: audio.durationMs, transcriber: transcriber)
@@ -63,20 +72,31 @@ enum PublisherAudioTextMapper {
                 }
                 updated = audio.recordingTextMapFailure("failed: \(String(describing: error))")
             }
-            running.remove(audio.itemId)
             do {
-                // The item may have been deleted meanwhile; its record went with it.
-                guard let current = try store.loadPublisherAudio(itemId: audio.itemId) else { return report("item removed") }
-                // A reimport may have replaced the recording meanwhile. This map is for the old
-                // one, so drop it and map the new one instead.
-                guard current.isSameRecording(as: audio) else {
-                    report("recording replaced during mapping")
-                    return start(current, store: store, transcriber: transcriber, report: report)
+                // The item may have been deleted meanwhile; its record went with it. A reimport may have replaced
+                // the recording meanwhile, so this map (for the old one) is dropped and the new one mapped instead.
+                // Read, compare and save run in one closure off the main actor, so nothing slips in between.
+                let mapped = updated
+                enum Saved: Sendable { case removed, replaced(PublisherAudio), saved(String) }
+                let outcome = try await reader.read { store -> Saved in
+                    try store.withSessionTransaction {
+                        guard let current = try store.loadPublisherAudio(itemId: audio.itemId) else { return .removed }
+                        guard current.isSameRecording(as: audio) else { return .replaced(current) }
+                        let saved = current.keepingTextMap(of: mapped)
+                        try store.savePublisherAudio(saved)
+                        return .saved(saved.textMapStatus ?? "unknown")
+                    }
                 }
-                let saved = current.keepingTextMap(of: updated)
-                try store.savePublisherAudio(saved)
-                report(saved.textMapStatus ?? "unknown")
+                running.remove(audio.itemId)
+                switch outcome {
+                case .removed: report("item removed")
+                case .replaced(let current):
+                    report("recording replaced during mapping")
+                    start(current, store: store, transcriber: transcriber, report: report)
+                case .saved(let status): report(status)
+                }
             } catch {
+                running.remove(audio.itemId)
                 report("save failed: \(String(describing: error))")
             }
         }

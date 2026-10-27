@@ -13,6 +13,8 @@ struct ExperienceItemDetailScreen: View {
     /// Set while Continue waits on the "hear new Margins first?" question (#474).
     @State private var newMarginsOfferItemId: String?
     @State private var episodeLinkStatus = ImportedFileEpisodeLinker.Status()
+    /// True while a link or unlink saves, so a second tap cannot race it.
+    @State private var isChangingEpisodeLink = false
     @State private var asksForEpisodeLink = false
     @State private var episodeLinkText = ""
     @State private var showsReactions = false
@@ -91,9 +93,11 @@ struct ExperienceItemDetailScreen: View {
                                 episodeLinkText = ""
                                 asksForEpisodeLink = true
                             }
+                            .disabled(isChangingEpisodeLink)
                             .accessibilityIdentifier("item.linkEpisode.button")
                             if episodeLinkStatus.episodeTitle != nil {
                                 Button("Unlink episode", systemImage: "minus.circle") { unlinkEpisode() }
+                                    .disabled(isChangingEpisodeLink)
                             }
                         }
                         if !model.selectedItem.id.isEmpty {
@@ -109,7 +113,7 @@ struct ExperienceItemDetailScreen: View {
                     .accessibilityLabel("Item options")
                 }
             }
-            .task(id: model.selectedItem.id) { refreshEpisodeLinkStatus() }
+            .task(id: model.selectedItem.id) { await refreshEpisodeLinkStatus() }
             .sheet(item: $collectionItem) { item in
                 ItemCollectionSheet(item: item).environmentObject(model)
             }
@@ -166,23 +170,29 @@ struct ExperienceItemDetailScreen: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func refreshEpisodeLinkStatus() {
-        guard let store = model.store, !model.selectedItem.id.isEmpty else {
+    private func refreshEpisodeLinkStatus() async {
+        let itemId = model.selectedItem.id
+        guard let store = model.store, !itemId.isEmpty else {
             episodeLinkStatus = ImportedFileEpisodeLinker.Status()
             return
         }
-        episodeLinkStatus = episodeLinker.status(itemId: model.selectedItem.id, store: store)
+        let read = await episodeLinker.status(itemId: itemId, store: store)
+        // The listener may have moved to another item while the read ran; that item's own refresh sets its status.
+        guard let status = read, !Task.isCancelled, model.selectedItem.id == itemId else { return }
+        episodeLinkStatus = status
     }
 
     private func linkEpisode() {
-        guard let store = model.store else { return }
+        guard let store = model.store, !isChangingEpisodeLink else { return }
         let itemId = model.selectedItem.id
         let pasted = episodeLinkText
+        isChangingEpisodeLink = true
         Task { @MainActor in
+            defer { isChangingEpisodeLink = false }
             do {
                 let title = try await episodeLinker.link(itemId: itemId, to: pasted, store: store)
+                await refreshEpisodeLinkStatus()
                 model.hangTelemetry.labels.scoped("episodeLinked") {
-                    refreshEpisodeLinkStatus()
                     model.refreshSpokenMarginsPackageImportAfterAddingSource()
                     model.reportConfirmation("Linked to \u{201C}\(title)\u{201D}. Margins a friend shares by link for it will land on this file.")
                 }
@@ -193,13 +203,18 @@ struct ExperienceItemDetailScreen: View {
     }
 
     private func unlinkEpisode() {
-        guard let store = model.store else { return }
-        do {
-            try episodeLinker.unlink(itemId: model.selectedItem.id, store: store)
-            refreshEpisodeLinkStatus()
-            model.reportConfirmation("Episode unlinked. The file and its Margins are unchanged.")
-        } catch {
-            model.reportFailure(error.localizedDescription, itemId: model.selectedItem.id)
+        guard let store = model.store, !isChangingEpisodeLink else { return }
+        let itemId = model.selectedItem.id
+        isChangingEpisodeLink = true
+        Task { @MainActor in
+            defer { isChangingEpisodeLink = false }
+            do {
+                try await episodeLinker.unlink(itemId: itemId, store: store)
+                await refreshEpisodeLinkStatus()
+                model.reportConfirmation("Episode unlinked. The file and its Margins are unchanged.")
+            } catch {
+                model.reportFailure(error.localizedDescription, itemId: itemId)
+            }
         }
     }
 

@@ -38,8 +38,11 @@ extension Gate1AppModel {
         scheduleEmbeddedPublisherChapterImport(itemId: itemId, localURL: url)
         retrySourceWindowContexts(itemId: itemId)
         resolveImportedPodcastCommentary(itemId: itemId, localURL: url)
-        if deferredPodcastPlacementURLs[itemId] == nil, importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store),
-           let item = try? store.loadItem(id: itemId) {
+        // Placement reads the item off the main thread and decides later (#2507), so the deferral it records is not
+        // there yet. Ask the #914 question here instead: a stream the session keeps gets no transcript of the download.
+        if importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store),
+           let item = try? store.loadItem(id: itemId),
+           !deferPlacementWhileSessionKeepsItsEdition(item: item, localURL: url) {
             diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_for_imported_commentary"
             scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: url)
             return

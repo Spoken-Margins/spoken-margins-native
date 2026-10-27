@@ -209,7 +209,8 @@ class VerdictTests(unittest.TestCase):
                                started=0, finished=1, previous=None, suspects=[], evidence=Path('/e'))
         self.assertIn(f'passed on retry: {TEST}', text)
         ops = types.SimpleNamespace(posted=[], post_tally=lambda body: ops.posted.append(body),
-                                    tally_comments=lambda: [], open_flake_markers=lambda: [], log=print)
+                                    tally_comments=lambda: [], open_flake_markers=lambda: [],
+                                    closed_flake_markers=lambda: {}, log=print)
         run.record_flakes(ops, settled['flaky'], SHA, '1')
         self.assertEqual(len(ops.posted), 1)
         self.assertIn(TEST, ops.posted[0])
@@ -1030,6 +1031,7 @@ class FlakeTallyTests(unittest.TestCase):
             def post_tally(self, body): self.posted.append(body); self.old.append({'body': body, 'user': {'login': 'github-actions[bot]'}})
             def tally_comments(self): return self.old
             def open_flake_markers(self): return run.flake_markers(self.issues)
+            def closed_flake_markers(self): return {}
             def open_flake_issue(self, title, body): self.opened.append((title, body)); return 'url'
         self_comment = self
         ops = Tally()
@@ -1041,6 +1043,26 @@ class FlakeTallyTests(unittest.TestCase):
         self.assertIn(TEST.rsplit('/', 1)[-1], ops.opened[0][0])
         ops.issues = [{'body': ops.opened[0][1], 'user': {'login': 'github-actions[bot]'}}]
         self.assertEqual(run.record_flakes(ops, [TEST], SHA, '10'), [])
+
+    def test_one_new_pass_after_a_fixed_flake_does_not_reopen_it(self):
+        # Audit on 4ef3196: passes from before a flake issue was closed counted toward a second issue.
+        class Tally(run.Ops):
+            def __init__(self, old, closed):
+                self.posted, self.opened, self.old, self.closed = [], [], old, closed
+            def log(self, text): raise AssertionError(text)
+            def post_tally(self, body): self.posted.append(body); self.old.append({'body': body, 'user': {'login': 'github-actions[bot]'}})
+            def tally_comments(self): return self.old
+            def open_flake_markers(self): return set()
+            def closed_flake_markers(self): return run.flake_tally.closed_flake_markers(self.closed)
+            def open_flake_issue(self, title, body): self.opened.append((title, body)); return 'url'
+        closed_at = (self.NOW - run.dt.timedelta(days=3)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        fixed = dict(self.issue_for(TEST), state='closed', closed_at=closed_at)
+        with patch.object(run.dt, 'datetime', wraps=run.dt.datetime) as clock:
+            clock.now.return_value = self.NOW
+            ops = Tally([self.comment(TEST, str(i), days_ago=5 - i * 0.5) for i in range(3)], [fixed])
+            self.assertEqual(run.record_flakes(ops, [TEST], SHA, '9'), [])
+            again = Tally([self.comment(TEST, str(i), days_ago=2 - i * 0.5) for i in range(2)], [fixed])
+            self.assertEqual(run.record_flakes(again, [TEST], SHA, '9'), ['url'])
 
     def test_a_branch_proof_run_tallies_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:

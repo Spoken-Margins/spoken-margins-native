@@ -44,17 +44,20 @@ public enum IncomingPackageSweep {
     }
 
     /// `directory` is `Application Support/SpokenMargins/IncomingPackages`. Only sub-folders named like a UUID are
-    /// looked at; anything else is left alone.
+    /// looked at; anything else is left alone. With `only`, a folder not in that set is left alone too: a sweep
+    /// that runs in the background passes the folders it listed before deciding what is owned, so a folder staged
+    /// meanwhile (which no one has marked as owned yet) is never a candidate.
     @discardableResult
     public static func sweep(
         directory: URL,
         keeping: Set<String>,
+        only: Set<String>? = nil,
         isUsed: (String) throws -> Bool,
         fileManager: FileManager = .default
     ) -> Outcome {
         var outcome = Outcome()
         guard let names = try? fileManager.contentsOfDirectory(atPath: directory.path) else { return outcome }
-        for name in names.sorted() where UUID(uuidString: name) != nil {
+        for name in names.sorted() where UUID(uuidString: name) != nil && only?.contains(name) ?? true {
             let folder = directory.appending(path: name, directoryHint: .isDirectory)
             let attributes = try? fileManager.attributesOfItem(atPath: folder.path)
             guard attributes?[.type] as? FileAttributeType == .typeDirectory else { continue }
@@ -74,7 +77,9 @@ public enum IncomingPackageSweep {
 
     /// The same sweep with the Library deciding what is used.
     @discardableResult
-    public static func sweep(directory: URL, keeping: Set<String>, store: SQLiteSessionStore) -> Outcome {
-        sweep(directory: directory, keeping: keeping, isUsed: { try store.importedCommentaryRecordsMention($0) })
+    public static func sweep(
+        directory: URL, keeping: Set<String>, only: Set<String>? = nil, store: SQLiteSessionStore
+    ) -> Outcome {
+        sweep(directory: directory, keeping: keeping, only: only, isUsed: { try store.importedCommentaryRecordsMention($0) })
     }
 }

@@ -4,24 +4,10 @@ import SessionKitPersistence
 
 /// Batch export selection. Moved out of `Gate1AppModel.swift` unchanged (#1007).
 extension Gate1AppModel {
-    func openBatchExport() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_batch_export") else { return }
-        syncPlaybackProgressForLifecycle()
-        exportSessionId = nil
-        exportPreview = ""
-        batchExportFilter = .withInterjections
-        selectedBatchExportSessionIds = []
-        batchExportResult = nil
-        // A share whose sheet was torn down with the screen: remove its files and let Export work again.
-        batchExportShare?.discard()
-        batchExportShare = nil
-        do {
-            let store = try requireStore()
-            try refreshBatchExportRows(store: store)
-            screen = .batchExport
-        } catch {
-            reportFailure(error, context: "Session export setup failed")
-        }
+    /// Opens Export Sessions; see `openBatchExport(scopedTo:)`.
+    @discardableResult
+    func openBatchExport() -> Task<Void, Never> {
+        openBatchExport(scopedTo: nil)
     }
 
     var visibleBatchExportRows: [BatchSessionExportRow] {

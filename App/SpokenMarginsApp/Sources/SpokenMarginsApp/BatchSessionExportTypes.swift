@@ -7,11 +7,3 @@ enum BatchSessionExportFilter: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 }
-
-struct BatchSessionExportRow: Identifiable {
-    let session: Session
-    let itemTitle: String
-    let interjectionCount: Int
-
-    var id: String { session.id }
-}
