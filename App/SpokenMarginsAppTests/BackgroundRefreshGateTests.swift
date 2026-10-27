@@ -277,6 +277,38 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"))
     }
 
+    func testAnOlderReloadKnowsWhenANewerOneHasAlreadyPublished() {
+        let gate = BackgroundRefreshGate()
+        let older = gate.beginLibraryReload(mustPublish: true).generation
+        let newer = gate.beginLibraryReload(mustPublish: true).generation
+        XCTAssertFalse(gate.newerLibraryPublished(than: older), "nothing has published yet")
+        gate.libraryWasPublished(generation: newer)
+        XCTAssertTrue(gate.newerLibraryPublished(than: older), "the older read must not land over the newer rows")
+        XCTAssertFalse(gate.newerLibraryPublished(than: newer))
+        gate.libraryWasPublished(generation: older) // a late publish never lowers the mark
+        XCTAssertTrue(gate.newerLibraryPublished(than: older))
+    }
+
+    /// A reorder in Preparing Audio sets the lists directly and starts no reload, so an import's read that began before
+    /// it must not put the old order back (#2775 audit).
+    func testAnImportReloadLeavesAPreparingAudioListThatChangedDuringTheRead() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let store = try XCTUnwrap(model.store)
+        let held = HeldReads()
+        holdReads(held, on: model)
+        var started = held.started.stream.makeAsyncIterator()
+
+        let reload = Task { @MainActor in try await model.reloadLibraryRowsOffMain(store: store) }
+        await started.next()
+        let reordered = [RecentlyPreparedAudioRow(id: "job", itemId: "item", title: "Moved by the listener", completedAt: Date(), durationMs: 1)]
+        model.recentlyPreparedAudio = reordered
+        held.releaseAll()
+        _ = try await reload.value
+
+        XCTAssertEqual(model.recentlyPreparedAudio, reordered, "the read began before the change and must not publish the old lists")
+    }
+
     func testSavingALiveSessionReadsTheLibraryAndItemOffTheMainThread() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
