@@ -147,19 +147,22 @@ struct LiveSessionLineUpView: View {
             recordingURL = url
             player = nil
         default:
+            // A transcript file can be large (a docx is unzipped): it is read and parsed off the main actor.
             let accessed = url.startAccessingSecurityScopedResource()
-            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-            do {
-                let parsed: ImportedTranscript
-                if url.pathExtension.lowercased() == "docx" {
-                    parsed = try TranscriptImport.parse(text: try DocxPlainText.text(from: url))
-                } else {
-                    parsed = try TranscriptImport.parse(data: try Data(contentsOf: url))
+            Task {
+                defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+                do {
+                    let parsed = try await Task.detached(priority: .userInitiated) { () -> ImportedTranscript in
+                        if url.pathExtension.lowercased() == "docx" {
+                            return try TranscriptImport.parse(text: try DocxPlainText.text(from: url))
+                        }
+                        return try TranscriptImport.parse(data: try Data(contentsOf: url))
+                    }.value
+                    transcript = parsed
+                    transcriptName = url.lastPathComponent
+                } catch {
+                    errorMessage = error.localizedDescription
                 }
-                transcript = parsed
-                transcriptName = url.lastPathComponent
-            } catch {
-                errorMessage = error.localizedDescription
             }
         }
     }

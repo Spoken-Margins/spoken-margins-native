@@ -32,7 +32,6 @@ SITES = {
     'MarginOutputCoordinator.swift': ['marginOutputResolveFolder'],
     'PlaybackStartCue.swift': ['playbackStartChime', 'playbackWaitingCue'],
     'ReadwiseHighlightSync.swift': ['readwiseLedgerOpen'],
-    'SpokenMarginsPackageImportCoordinator.swift': ['packageImportCommit'],
 }
 
 

@@ -200,7 +200,7 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
 
     /// Mutation: letting `resolve` continue past a nil store (or returning something other than `.rejected`), or not
     /// clearing the item's earlier deferral.
-    func testResolveRejectsARequestWithoutAStore() throws {
+    func testResolveRejectsARequestWithoutAStore() async throws {
         let h = try PlacementCoordinatorHarness()
         defer { h.shutdown() }
         let store = try h.makeStore()
@@ -208,40 +208,40 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         let file = try h.writeAudio("episode.mp3")
         h.spies.store = nil
 
-        assertRejectedPreflight(h, url: file)
+        await assertRejectedPreflight(h, url: file)
     }
 
     /// Mutation: dropping the file-identity read from the preflight guard.
-    func testResolveRejectsARequestForAMissingFile() throws {
+    func testResolveRejectsARequestForAMissingFile() async throws {
         let h = try PlacementCoordinatorHarness()
         defer { h.shutdown() }
         let store = try h.makeStore()
         try h.seedPodcastItem(in: store)
 
-        assertRejectedPreflight(h, url: h.root.appendingPathComponent("never-written.mp3"))
+        await assertRejectedPreflight(h, url: h.root.appendingPathComponent("never-written.mp3"))
     }
 
     /// Mutation: dropping the item load from the preflight guard (an orphaned layer would then be placed).
-    func testResolveRejectsARequestForAMissingItem() throws {
+    func testResolveRejectsARequestForAMissingItem() async throws {
         let h = try PlacementCoordinatorHarness()
         defer { h.shutdown() }
         let store = try h.makeStore()
         try h.seedLayer(in: store) // a layer for an item the store does not hold
         let file = try h.writeAudio("episode.mp3")
 
-        assertRejectedPreflight(h, url: file)
+        await assertRejectedPreflight(h, url: file)
     }
 
     /// Mutation: dropping the `!layers.isEmpty` clause, which would treat "no layers loaded" as "evaluated empty"
     /// and cancel the running pass.
-    func testResolveRejectsAnItemWithNoLoadedLayers() throws {
+    func testResolveRejectsAnItemWithNoLoadedLayers() async throws {
         let h = try PlacementCoordinatorHarness()
         defer { h.shutdown() }
         let store = try h.makeStore()
         try store.saveItem(h.makeItem())
         let file = try h.writeAudio("episode.mp3")
 
-        assertRejectedPreflight(h, url: file)
+        await assertRejectedPreflight(h, url: file)
     }
 
     /// Mutation: cancelling the matching pass or ending its display on a rejected preflight (the old model code did
@@ -252,12 +252,13 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         let store = try h.makeStore()
         try h.seedPodcastItem(in: store)
         let fileA = try h.writeAudio("a.mp3")
-        XCTAssertEqual(h.coordinator.resolve(itemId: h.itemId, localURL: fileA), .scheduled(joined: false))
+        let scheduledOutcome = await h.coordinator.resolveAndWait(itemId: h.itemId, localURL: fileA)
+        XCTAssertEqual(scheduledOutcome, .scheduled(joined: false))
         let running = try await h.installProbePass(url: fileA)
         let passesBefore = h.coordinator.passes
         XCTAssertNotNil(passesBefore.pass(itemId: h.itemId))
 
-        let outcome = h.coordinator.resolve(itemId: h.itemId, localURL: h.root.appendingPathComponent("missing-b.mp3"))
+        let outcome = await h.coordinator.resolveAndWait(itemId: h.itemId, localURL: h.root.appendingPathComponent("missing-b.mp3"))
 
         XCTAssertEqual(outcome, .rejected)
         XCTAssertTrue(h.coordinator.matching.isCurrent(running), "the running pass was not cancelled")
@@ -280,7 +281,8 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         let item = h.makeItem()
         XCTAssertTrue(h.coordinator.scheduleTransientTranscript(for: item, localSourceURL: fileA))
         let transientFile = try PodcastPlacementFile(url: fileA)
-        XCTAssertEqual(h.coordinator.resolve(itemId: h.itemId, localURL: fileA), .scheduled(joined: false))
+        let scheduledOutcome = await h.coordinator.resolveAndWait(itemId: h.itemId, localURL: fileA)
+        XCTAssertEqual(scheduledOutcome, .scheduled(joined: false))
         let running = try await h.installProbePass(url: fileA)
         XCTAssertTrue(h.coordinator.matching.isCurrent(running))
         XCTAssertEqual(h.coordinator.passes, h.expectedPasses(.transcript, .matching))
@@ -291,7 +293,7 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         try store.saveImportedCommentaryLayer(layer)
         let deferCallsBefore = h.spies.deferCalls.count
 
-        let outcome = h.coordinator.resolve(itemId: h.itemId, localURL: fileC)
+        let outcome = await h.coordinator.resolveAndWait(itemId: h.itemId, localURL: fileC)
 
         XCTAssertEqual(outcome, .noPodcastWork)
         XCTAssertEqual(h.coordinator.requestedURL[h.itemId], fileC, "an evaluated request is remembered")
@@ -313,7 +315,7 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         let running = try await h.installProbePass(url: file)
         h.spies.deferHandler = { _, _ in true }
 
-        let outcome = h.coordinator.resolve(itemId: h.itemId, localURL: file)
+        let outcome = await h.coordinator.resolveAndWait(itemId: h.itemId, localURL: file)
 
         XCTAssertEqual(outcome, .deferred)
         XCTAssertEqual(h.spies.deferCalls.count, 1)
@@ -339,7 +341,8 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
             h.spies.slotWasFreeAtDeferral.append(h.coordinator.admission[h.itemId] == nil)
             return h.spies.deferCalls.count > 1
         }
-        XCTAssertEqual(h.coordinator.resolve(itemId: h.itemId, localURL: file), .scheduled(joined: false))
+        let scheduledOutcome = await h.coordinator.resolveAndWait(itemId: h.itemId, localURL: file)
+        XCTAssertEqual(scheduledOutcome, .scheduled(joined: false))
         h.coordinator.matching.cancel(itemId: h.itemId)
         XCTAssertTrue(h.coordinator.scheduleTransientTranscript(for: item, localSourceURL: file))
         XCTAssertEqual(h.coordinator.admission[h.itemId], .transient(try PodcastPlacementFile(url: file)))
@@ -363,10 +366,12 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         let fileA = try h.writeAudio("a.mp3")
         let fileC = try h.writeAudio("c.mp3")
         let item = h.makeItem()
-        XCTAssertEqual(h.coordinator.resolve(itemId: h.itemId, localURL: fileA), .scheduled(joined: false))
+        let scheduledOutcome = await h.coordinator.resolveAndWait(itemId: h.itemId, localURL: fileA)
+        XCTAssertEqual(scheduledOutcome, .scheduled(joined: false))
         h.coordinator.matching.cancel(itemId: h.itemId)
         XCTAssertTrue(h.coordinator.scheduleTransientTranscript(for: item, localSourceURL: fileA))
-        XCTAssertEqual(h.coordinator.resolve(itemId: h.itemId, localURL: fileC), .scheduled(joined: false))
+        let secondOutcome = await h.coordinator.resolveAndWait(itemId: h.itemId, localURL: fileC)
+        XCTAssertEqual(secondOutcome, .scheduled(joined: false))
         h.coordinator.matching.cancel(itemId: h.itemId)
         XCTAssertEqual(h.spies.deferCalls.count, 2)
 
@@ -389,7 +394,8 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         try h.seedPodcastItem(in: store)
         let file = try h.writeAudio("episode.mp3", bytes: 64)
         let item = h.makeItem()
-        XCTAssertEqual(h.coordinator.resolve(itemId: h.itemId, localURL: file), .scheduled(joined: false))
+        let scheduledOutcome = await h.coordinator.resolveAndWait(itemId: h.itemId, localURL: file)
+        XCTAssertEqual(scheduledOutcome, .scheduled(joined: false))
         h.coordinator.matching.cancel(itemId: h.itemId)
         XCTAssertTrue(h.coordinator.scheduleTransientTranscript(for: item, localSourceURL: file))
         // An atomic write puts a new file (new inode, size and modification time) at the same URL.
@@ -435,7 +441,8 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         let store = try h.makeStore()
         try h.seedPodcastItem(in: store)
         let file = try h.writeAudio("episode.mp3")
-        XCTAssertEqual(h.coordinator.resolve(itemId: h.itemId, localURL: file), .scheduled(joined: false))
+        let scheduledOutcome = await h.coordinator.resolveAndWait(itemId: h.itemId, localURL: file)
+        XCTAssertEqual(scheduledOutcome, .scheduled(joined: false))
 
         // Join the pass `resolve` just started, to hold its completion handle. An identical request is kept, not replaced.
         let layers = try store.loadImportedCommentaryLayers(itemId: h.itemId)
@@ -469,11 +476,11 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         url: URL,
         file: StaticString = #filePath,
         line: UInt = #line
-    ) {
+    ) async {
         let requestedBefore = h.coordinator.requestedURL
         let passesBefore = h.coordinator.passes
 
-        let outcome = h.coordinator.resolve(itemId: h.itemId, localURL: url)
+        let outcome = await h.coordinator.resolveAndWait(itemId: h.itemId, localURL: url)
 
         XCTAssertEqual(outcome, .rejected, file: file, line: line)
         XCTAssertEqual(h.spies.clearedDeferred, [h.itemId], file: file, line: line)
