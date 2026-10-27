@@ -4437,6 +4437,11 @@ final class SupertonicSpeechTests: XCTestCase {
             speed: 1,
             fallbackVoiceIdentifier: nil,
             fallbackRate: 0.5,
+            // No real audio session or player: a 0.5 s chunk playing through on a slow hosted Mac must not
+            // move `hasURL` or the render chain under the poll below (#2749).
+            audioSessionActivator: {},
+            audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false,
             fallbackClient: RecordingFallbackAudioClient()
         )
         let source = String(repeating: "This replay text has stable source offsets. ", count: 10)
@@ -4444,7 +4449,10 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.play(targetId: "generation", from: 0)
         try client.play(targetId: "generation", from: 12)
 
-        for _ in 0..<100 where !client.debugActiveAudioState().hasURL {
+        // The second render is the next chunk rendering ahead once the first has landed. Waiting for the audio
+        // alone read the count before that render began, so a loaded runner saw 1 (#2749).
+        for _ in 0..<250 {
+            if client.debugActiveAudioState().hasURL, await renderer.renderCount >= 2 { break }
             try? await Task.sleep(for: .milliseconds(20))
         }
         let renderCount = await renderer.renderCount
