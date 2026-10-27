@@ -11,6 +11,11 @@ configFiles:
 packages:
   SessionKit:
     path: Packages/SessionKit
+  # Gradium's Phonon runtime (#2704): Swift package `ptts`, module PhononTTS, at tag v0.4.2 (cc0c32bc). Its manifest
+  # pins the compiled PhononCore.xcframework by URL and SHA-256, which Swift Package Manager checks.
+  PhononTTS:
+    url: https://github.com/gradium-ai/xn-ptts
+    exactVersion: 0.4.2
 targets:
   SpokenMarginsApp:
     type: application
@@ -77,6 +82,8 @@ targets:
         product: SessionKitEPUB
       - package: SessionKit
         product: SessionKitFeeds
+      - package: PhononTTS
+        product: ptts
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native

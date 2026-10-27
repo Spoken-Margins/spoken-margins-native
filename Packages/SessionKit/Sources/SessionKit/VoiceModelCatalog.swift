@@ -37,12 +37,12 @@ public struct VoiceModelFileOrigin: Codable, Equatable, Sendable {
 /// An upstream archive a voice's files are taken from (#2086): the publisher ships some files only
 /// inside it, so the app downloads it once, checks it, takes out the members it needs and deletes it.
 public struct VoiceModelArchive: Codable, Equatable, Sendable {
-    /// The archive formats this build can unpack.
-    public static let supportedFormats: Set<String> = ["tar.bz2"]
+    /// The archive formats this build can unpack: `tar.bz2` (Supertonic, #2086) and `zip` (Phonon, #2704).
+    public static let supportedFormats: Set<String> = ["tar.bz2", "zip"]
 
     /// Named by `VoiceModelFile.archiveMember.archive`.
     public var id: String
-    /// `tar.bz2` today.
+    /// `tar.bz2` or `zip`.
     public var format: String
     public var byteCount: Int
     /// Lowercase hex, of the archive as downloaded.

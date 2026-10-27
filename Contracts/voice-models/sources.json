@@ -353,6 +353,453 @@
           "requiresAcceptance": false
         }
       ]
+    },
+    {
+      "id": "phonon-31m-en",
+      "displayName": "Phonon",
+      "publisher": "Gradium (Phonon 31M, Core ML bundle from xn-ptts v0.4.2)",
+      "version": "0.4.2-8acf888",
+      "runtime": {
+        "name": "phonon-ptts",
+        "version": "0.4.2"
+      },
+      "minimumIOSVersion": "26.0",
+      "minimumMemoryMegabytes": 3072,
+      "minimumChip": "A14",
+      "status": "available",
+      "bundled": false,
+      "upstreamArchives": [
+        {
+          "id": "coreml-bundle",
+          "format": "zip",
+          "url": "https://github.com/gradium-ai/xn-ptts/releases/download/v0.4.2/phonon-31m-en-coreml.zip",
+          "byteCount": 137096081,
+          "sha256": "10f3a99fd39256db44f826267ef21d78cca959b16c0554926344c09fde27b436"
+        }
+      ],
+      "files": [
+        {
+          "path": "bundle.json",
+          "byteCount": 9272,
+          "sha256": "ff3156ce14578cee796d6ab99fb03a833f4d03aded05fdd962087129f3c7b87f",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/bundle.json"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "flow-c414-t1.mlpackage/Data/com.apple.CoreML/model.mlmodel",
+          "byteCount": 240018,
+          "sha256": "893c7245265bddc8a5c0ccdf6c975ead9da08045d5a1a9db24e6201f03b19e5f",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/flow-c414-t1.mlpackage/Data/com.apple.CoreML/model.mlmodel"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "flow-c414-t1.mlpackage/Data/com.apple.CoreML/weights/weight.bin",
+          "byteCount": 55118784,
+          "sha256": "41ea56cf0daaeeb89280d8162a5a206d39f7048f7039c5f6570d4be79edeb032",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/flow-c414-t1.mlpackage/Data/com.apple.CoreML/weights/weight.bin"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "flow-c414-t1.mlpackage/Manifest.json",
+          "byteCount": 534,
+          "sha256": "98f982cd816df5ca7a0ce2843a942f95a5bdecae7f987e46b864e8d10620b5a9",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/flow-c414-t1.mlpackage/Manifest.json"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "flow-c414-t48.mlpackage/Data/com.apple.CoreML/model.mlmodel",
+          "byteCount": 240018,
+          "sha256": "6ba426ffee830a5f2b605265aeea218ab0a338f7946a5f730cf3f2cddfe3e039",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/flow-c414-t48.mlpackage/Data/com.apple.CoreML/model.mlmodel"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "flow-c414-t48.mlpackage/Data/com.apple.CoreML/weights/weight.bin",
+          "byteCount": 55118784,
+          "sha256": "41ea56cf0daaeeb89280d8162a5a206d39f7048f7039c5f6570d4be79edeb032",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/flow-c414-t48.mlpackage/Data/com.apple.CoreML/weights/weight.bin"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "flow-c414-t48.mlpackage/Manifest.json",
+          "byteCount": 534,
+          "sha256": "095faf0e079dfb534c4bb2c5b886d65da8f93a17bf10f6d9b51cfbc9e69b7498",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/flow-c414-t48.mlpackage/Manifest.json"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "host.safetensors",
+          "byteCount": 8262120,
+          "sha256": "0f12ba46901604a50b79bf8c644f5481a327392d5eb8a254377572dc19b65d65",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/host.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "mimi-c266.mlpackage/Data/com.apple.CoreML/model.mlmodel",
+          "byteCount": 131109,
+          "sha256": "9d7a6a44803e6ca46e1e6d29130f3933b810f31afcef3f1fa58001f88df39b68",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/mimi-c266.mlpackage/Data/com.apple.CoreML/model.mlmodel"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "mimi-c266.mlpackage/Data/com.apple.CoreML/weights/weight.bin",
+          "byteCount": 41182464,
+          "sha256": "60ec322afab27b8404b02ec0a10a988734b4e1495fbdb3b3d687d9dc9f83ffc3",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/mimi-c266.mlpackage/Data/com.apple.CoreML/weights/weight.bin"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "mimi-c266.mlpackage/Manifest.json",
+          "byteCount": 534,
+          "sha256": "7a96078faae18a3ff5897373d79f55efb9ecb9fb9a3071ff246171f957f18bcc",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/mimi-c266.mlpackage/Manifest.json"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "source.json",
+          "byteCount": 202,
+          "sha256": "5fc9f76b68dbc15954ae39333efc1748003e996fcb913dc421e7da80fd48b329",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/source.json"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "tokenizer.json",
+          "byteCount": 277967,
+          "sha256": "691a00068fa7b989f2f3e5ae5daa2d1a5bb319f2d5360deafcfb19a8bb6e7936",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/tokenizer.json"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Alfie.safetensors",
+          "byteCount": 256080,
+          "sha256": "afb0998882edce5ec497bb3811a69b8741223679223d67f1a7108609e17ee98f",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Alfie.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Bryony.safetensors",
+          "byteCount": 256080,
+          "sha256": "76bd6e832276480fcdd75a258c43b3219ad491728f64f22bce5e7a7a446298a4",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Bryony.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Delia.safetensors",
+          "byteCount": 256080,
+          "sha256": "e33d74cb00eddf1146afc954280feed1a4678b1d47ee90f932c4c8ce53daf346",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Delia.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Easton.safetensors",
+          "byteCount": 256080,
+          "sha256": "0c4f202676fa9d3a145c7f67fe671f119b6843c90987ef501c31d5d7fdae043f",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Easton.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Edwin.safetensors",
+          "byteCount": 256080,
+          "sha256": "096fe506c612b682f5a370ac38e56d2dcd9e4ae7a698d933a45a723d1d10a9e4",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Edwin.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Elodie-Rose.safetensors",
+          "byteCount": 256080,
+          "sha256": "75cc46a6abf7b3dc6bb1895bdfb1914a5e26603b5507672a6910df3e05ff73e4",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Elodie-Rose.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Everly.safetensors",
+          "byteCount": 256080,
+          "sha256": "5e40608feab857153b76bba00973ab303065aae1d005dcf6b8ffafa9ba9f484c",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Everly.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Freya.safetensors",
+          "byteCount": 256080,
+          "sha256": "ee09c8b9489ad7531c0f4edb9f6e829200c1ccb2aeac630683f348bdb81fe00a",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Freya.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Hadley.safetensors",
+          "byteCount": 256080,
+          "sha256": "aea4ad06ea632200e92c7742143ae63f2bf8dbf2bb63dbb71f3236793b049d9d",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Hadley.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Harper.safetensors",
+          "byteCount": 256080,
+          "sha256": "007d6468bcc85bad68590a567d2bc6ab37b14730ba302eba2b0b6152c263ad77",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Harper.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Hugh.safetensors",
+          "byteCount": 256080,
+          "sha256": "ad1a4c6cdc5a1bed165b6aa6e28ce9d1deb1a9e1ab3d4d6b1aa3442292464d2b",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Hugh.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Imogen.safetensors",
+          "byteCount": 256080,
+          "sha256": "4f224d84797a24ad0f77a824f5204d68757826b6e55dd902ba48a5b9b2db9368",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Imogen.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Juniper.safetensors",
+          "byteCount": 256080,
+          "sha256": "0cde0e23b22e64f39a8f6fb00444c0cb979a6a268078d0a4830c15dfd11bb491",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Juniper.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Lottie.safetensors",
+          "byteCount": 256080,
+          "sha256": "9ba860f38b4cfe55884fc616666ff3272d35689ab36f92e759cd5d2ab27c2556",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Lottie.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Maeve.safetensors",
+          "byteCount": 256080,
+          "sha256": "5cf22b2ee74b2033180bb3fc14af79c58bbc02f0f0fa0db10f70172915c21599",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Maeve.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Micah.safetensors",
+          "byteCount": 256080,
+          "sha256": "9347ca6dfb8c1ee86e3fad57f3d92b64fe2d62f2c3ab30318e8b3c73dd730274",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Micah.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Miles.safetensors",
+          "byteCount": 256080,
+          "sha256": "ec7785c2747f7360797cfdfcf440aa06685dc9de7f7c781491ef46647d6be17f",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Miles.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Pippa.safetensors",
+          "byteCount": 256080,
+          "sha256": "f6ef4d6fd0fbe303dcad7c668aa64d4d10a729d05ffe8bfdd95cd3b87fc22e67",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Pippa.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Preston.safetensors",
+          "byteCount": 256080,
+          "sha256": "a29262436888526ed283292cdc86cd74c53bae7b522df495aeec25907cc9a014",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Preston.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Russell.safetensors",
+          "byteCount": 256080,
+          "sha256": "9477c11856e3be342aef7a95e1ff18c3b20722d51372104e8c61df6fe903e7ca",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Russell.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Spencer.safetensors",
+          "byteCount": 256080,
+          "sha256": "55167fbbc846c01d0f289feff77e9732be558b94e215a5a1c00fcdc6e7b75b71",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Spencer.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Teddy.safetensors",
+          "byteCount": 256080,
+          "sha256": "3ea4baa7c1de20f7bc51254c193bb6cedf1ca3342d20bd504ec381a38c38a5d0",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Teddy.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Toby.safetensors",
+          "byteCount": 256080,
+          "sha256": "e5bf5a2f2b590f5de19894e65d908263799765a9c63aeaf34cf2c25e86938faf",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Toby.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Trevor.safetensors",
+          "byteCount": 256080,
+          "sha256": "910dc105abef1a46d09ff9124d657e19bac58c1a949065aaa54d09112b6c3420",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Trevor.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "voices/Zoey.safetensors",
+          "byteCount": 256080,
+          "sha256": "6b572207f2de3df786b25053605d4470d183f112477b827da149fadb001cc33d",
+          "archiveMember": {
+            "archive": "coreml-bundle",
+            "member": "phonon-31m-en-coreml/voices/Zoey.safetensors"
+          },
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "licenses/LICENSE-APACHE.txt",
+          "byteCount": 11357,
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "upstream": "https://raw.githubusercontent.com/gradium-ai/xn-ptts/cc0c32bcad4e79121e98cb16d9a1b19f87772e82/LICENSE-APACHE",
+          "licenseId": "phonon-apache-2-0"
+        },
+        {
+          "path": "licenses/CC-BY-4.0.txt",
+          "byteCount": 18657,
+          "sha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411",
+          "upstream": "https://creativecommons.org/licenses/by/4.0/legalcode.txt",
+          "licenseId": "mimi-cc-by-4-0"
+        },
+        {
+          "path": "licenses/NOTICE.txt",
+          "byteCount": 1305,
+          "sha256": "5ffdd53833dc4dbb1e0620d250c3d758b180a323593d7e50e6056a0bee93c073",
+          "contentFile": "content/phonon-31m-en/licenses/NOTICE.txt"
+        }
+      ],
+      "licenses": [
+        {
+          "id": "phonon-apache-2-0",
+          "name": "Apache License 2.0 (Phonon 31M model, voices and Mimi export; ptts runtime)",
+          "spdxId": "Apache-2.0",
+          "textURL": "https://raw.githubusercontent.com/gradium-ai/xn-ptts/cc0c32bcad4e79121e98cb16d9a1b19f87772e82/LICENSE-APACHE",
+          "watchURL": "https://raw.githubusercontent.com/gradium-ai/xn-ptts/main/LICENSE-APACHE",
+          "textSHA256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "reviewedText": "licenses/xn-ptts-apache-2-0.txt",
+          "requiresAcceptance": false
+        },
+        {
+          "id": "mimi-cc-by-4-0",
+          "name": "Creative Commons Attribution 4.0 (credit for Kyutai's Mimi codec)",
+          "spdxId": "CC-BY-4.0",
+          "textURL": "https://creativecommons.org/licenses/by/4.0/legalcode.txt",
+          "textSHA256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411",
+          "reviewedText": "licenses/cc-by-4-0.txt",
+          "requiresAcceptance": false
+        }
+      ]
     }
   ]
 }

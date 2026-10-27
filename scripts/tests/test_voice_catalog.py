@@ -15,6 +15,8 @@ import sys
 import tempfile
 import threading
 import unittest
+import io
+import zipfile
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -188,6 +190,49 @@ class TheShippedSources(unittest.TestCase):
             self.assertEqual(text.encode("utf-8"), (tools.SUPERTONIC / path).read_bytes(), path)
 
 
+class ThePhononEntry(unittest.TestCase):
+    """#2704: Phonon 31M downloads from Gradium's pinned release zip, never Hugging Face's 40M (CC BY-NC) files,
+    with its licence files and the Mimi credit beside it."""
+
+    def setUp(self):
+        self.sources = vc.load_sources()
+        self.voice = next(v for v in self.sources["voices"] if v["id"] == "phonon-31m-en")
+        self.entry = vc.voice_entry(self.sources, self.voice)
+
+    def test_every_model_file_comes_out_of_the_pinned_v0_4_2_zip(self):
+        self.assertEqual(self.entry["archives"], [{
+            "id": "coreml-bundle", "format": "zip", "byteCount": 137096081,
+            "sha256": "10f3a99fd39256db44f826267ef21d78cca959b16c0554926344c09fde27b436",
+            "sources": ["https://github.com/gradium-ai/xn-ptts/releases/download/v0.4.2/phonon-31m-en-coreml.zip"],
+        }])
+        members = [f for f in self.entry["files"] if "archiveMember" in f]
+        self.assertEqual(len(members), 38)
+        for file in members:
+            with self.subTest(path=file["path"]):
+                self.assertNotIn("sources", file)
+                self.assertEqual(file["archiveMember"], {"archive": "coreml-bundle", "member": "phonon-31m-en-coreml/" + file["path"]})
+
+    def test_it_is_floored_at_a14_on_the_phonon_runtime(self):
+        self.assertEqual(self.entry["runtime"]["name"], "phonon-ptts")
+        self.assertEqual(self.entry["minimumChip"], "A14")
+
+    def test_no_40m_or_character_files(self):
+        text = json.dumps(self.voice)
+        self.assertNotIn("40m", text.lower())
+        voices = sorted(f["path"] for f in self.voice["files"] if f["path"].startswith("voices/"))
+        self.assertEqual(len(voices), 25)
+        self.assertNotIn("voices/default.safetensors", voices)
+        self.assertTrue(all(" " not in path for path in voices))
+
+    def test_the_licences_and_the_mimi_credit_travel_with_the_files(self):
+        paths = {f["path"] for f in self.entry["files"]}
+        self.assertTrue({"licenses/LICENSE-APACHE.txt", "licenses/CC-BY-4.0.txt", "licenses/NOTICE.txt"} <= paths)
+        notice = next(f["content"] for f in self.entry["files"] if f["path"] == "licenses/NOTICE.txt")
+        self.assertIn("Kyutai", notice)
+        self.assertIn("Apache License, Version 2.0", notice)
+        self.assertEqual(sorted(lic["spdxId"] for lic in self.entry["licenses"]), ["Apache-2.0", "CC-BY-4.0"])
+
+
 class TheAppSnapshot(unittest.TestCase):
     """The catalog the app bundles (#1819) must list exactly what sources.json lists, or Settings > Voices
     offers files whose hashes no longer match what the site serves."""
@@ -279,6 +324,17 @@ class ValidatingSources(unittest.TestCase):
             "http watch url": lambda s: alpha(s)["licenses"][0].update(watchURL="ftp://example.test/L"),
             "archive without a hash": lambda s: alpha(s).update(upstreamArchives=[{"url": "https://example.test/a.tar", "byteCount": 5}]),
             "http archive": lambda s: alpha(s).update(upstreamArchives=[{"url": "http://example.test/a.tar", "byteCount": 5, "sha256": sha(b"a")}]),
+            "archive member of an unknown archive": lambda s: alpha(s)["files"].append(
+                {"path": "m.bin", "byteCount": 1, "sha256": sha(b"m"), "archiveMember": {"archive": "nope", "member": "m.bin"}}),
+            "archive member with an upstream too": lambda s: (
+                alpha(s).update(upstreamArchives=[{"id": "z", "format": "zip", "url": "https://example.test/a.zip", "byteCount": 5, "sha256": sha(b"a")}]),
+                alpha(s)["files"].append({"path": "m.bin", "byteCount": 1, "sha256": sha(b"m"), "upstream": "https://example.test/m",
+                                          "archiveMember": {"archive": "z", "member": "m.bin"}})),
+            "archive member path with a space": lambda s: (
+                alpha(s).update(upstreamArchives=[{"id": "z", "format": "zip", "url": "https://example.test/a.zip", "byteCount": 5, "sha256": sha(b"a")}]),
+                alpha(s)["files"].append({"path": "m.bin", "byteCount": 1, "sha256": sha(b"m"), "archiveMember": {"archive": "z", "member": "a b.bin"}})),
+            "archive with an id but no format": lambda s: alpha(s).update(
+                upstreamArchives=[{"id": "z", "url": "https://example.test/a.zip", "byteCount": 5, "sha256": sha(b"a")}]),
             "wrong schema version": lambda s: s.update(schemaVersion="voice-catalog-sources.v0"),
             "base url without slash": lambda s: s["site"].update(baseURL="https://example.test"),
         }
@@ -937,6 +993,24 @@ class Fetching(unittest.TestCase):
         self.assertEqual(sorted(p.relative_to(folder).as_posix() for p in folder.rglob("*") if p.is_file()),
                          ["model.onnx", "onnx/graph.onnx", "styles/a.json"], "nothing else from the archive, no leftovers")
         self.assertEqual(list((self.state / "tmp").iterdir()), [], "the archive is deleted after use")
+
+    def test_a_member_of_a_zip_the_app_unpacks_is_taken_from_it_by_hash(self):
+        """#2704: Phonon's files are members of Gradium's zip; fetch takes them from it as the app does."""
+        wanted = b"phonon weights " * 200
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as bundle:
+            bundle.writestr("bundle/README", b"not wanted")
+            bundle.writestr("bundle/flow.bin", wanted)
+        archive = buffer.getvalue()
+        alpha = self.sources["voices"][0]
+        alpha["upstreamArchives"].append({"id": "bundle", "format": "zip", "url": self.server.base + "up/b.zip",
+                                          "byteCount": len(archive), "sha256": sha(archive)})
+        alpha["files"].append({"path": "flow.bin", "byteCount": len(wanted), "sha256": sha(wanted),
+                               "archiveMember": {"archive": "bundle", "member": "bundle/flow.bin"}})
+        self.server.files["/up/b.zip"] = (200, archive)
+        folder = self.fetch()["alpha"]
+        self.assertEqual((folder / "flow.bin").read_bytes(), wanted)
+        self.assertFalse((folder / "README").exists())
 
     def test_text_the_catalog_carries_is_copied_from_the_repository(self):
         """#2055: a notice the catalog carries (`contentFile`) has no upstream and no mirror. A cold fetch, as the

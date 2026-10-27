@@ -612,6 +612,27 @@ final class VoiceCatalogCoordinatorTests: XCTestCase {
         XCTAssertFalse(VoiceModelPreparers.standard.preparer(forRuntime: "onnxruntime").needsPreparation)
     }
 
+    /// #2704: the shipped snapshot's Phonon entry verifies, is offered on an A14 and not on an A13, and downloads
+    /// as one zip plus its licence texts.
+    func testTheShippedSnapshotsPhononEntryIsOfferedFromA14() async throws {
+        let snapshot = try TestInputs.data(.voiceCatalogSnapshot, "catalog-snapshot.json")
+        let catalog = try JSONDecoder().decode(VoiceModelCatalog.self, from: snapshot)
+        let phonon = try XCTUnwrap(catalog.voices.first { $0.id == PhononVoice.catalogId })
+        XCTAssertEqual(phonon.runtime.name, VoiceModelCatalogVerifier.phononRuntime)
+        XCTAssertEqual(phonon.archives.map(\.format), ["zip"])
+        XCTAssertEqual(phonon.files.filter { $0.archiveMember != nil }.count, 38)
+        XCTAssertTrue(PhononVoice.voiceNames.allSatisfy { name in phonon.files.contains { $0.path == "voices/\(name).safetensors" } })
+
+        for (chip, offered) in [(14, true), (13, false)] {
+            let voices = try coordinator(snapshotData: snapshot, playable: [PhononVoice.catalogId], memory: 4_096, deviceChip: chip)
+            let row = await voices.rows().first { $0.id == PhononVoice.catalogId }
+            XCTAssertEqual(row?.isOffered ?? false, offered, "A\(chip)")
+        }
+        let downloads = phonon.archives.reduce(0) { $0 + $1.byteCount }
+            + phonon.files.filter { !$0.sources.isEmpty }.reduce(0) { $0 + $1.byteCount }
+        XCTAssertEqual(phonon.downloadByteCount, downloads)
+    }
+
     /// #2735 review: Core ML's compiled copy roughly doubles the voice on disk. A phone with room for the download
     /// alone must be told before any byte moves, not fail at "couldn't be prepared" on every retry.
     func testTheSpaceCheckCountsWhatPreparationWritesBesideTheDownload() async throws {

@@ -1,5 +1,5 @@
 {
-  "originHash" : "e9757f5a97c23b71ce717baacd68931c2855a23bb564578e06d420f52b47e16f",
+  "originHash" : "b95e2ff791630cc9ea0faa43150e4c252b4f2a8878f2ef032bd4c4dbef55036a",
   "pins" : [
     {
       "identity" : "onnxruntime-swift-package-manager",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "b7fb7f7dea8a2469e6335d95a61b8f36d0dc83b2",
         "version" : "1.24.2"
+      }
+    },
+    {
+      "identity" : "xn-ptts",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/gradium-ai/xn-ptts",
+      "state" : {
+        "revision" : "cc0c32bcad4e79121e98cb16d9a1b19f87772e82",
+        "version" : "0.4.2"
       }
     },
     {
