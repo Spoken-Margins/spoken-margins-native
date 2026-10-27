@@ -188,6 +188,28 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"))
     }
 
+    func testComingBackToTheForegroundReloadsTheLibraryInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.libraryItems = sentinelRows()
+
+        model.handleAppBecameActive()
+        XCTAssertEqual(model.libraryItems.map(\.id), ["sentinel"], "the foreground return must not read the Library before it returns (#2505)")
+
+        await model.settleLibraryReload()
+        XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"), "the background reload publishes the stored Library")
+    }
+
+    func testTheForegroundAnnouncementSurvivesAnOvertakingReloadAndFiresOnce() {
+        let gate = BackgroundRefreshGate()
+        XCTAssertFalse(gate.takeAnnouncement(), "nothing asked for one")
+        gate.requestAnnouncement()
+        _ = gate.beginLibraryReload(mustPublish: false) // the asked reload is overtaken before it publishes
+        _ = gate.beginLibraryReload(mustPublish: false)
+        XCTAssertTrue(gate.takeAnnouncement(), "the reload that publishes carries the announcement")
+        XCTAssertFalse(gate.takeAnnouncement(), "and only once")
+    }
+
     func testSavingALiveSessionReadsTheLibraryAndItemOffTheMainThread() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()

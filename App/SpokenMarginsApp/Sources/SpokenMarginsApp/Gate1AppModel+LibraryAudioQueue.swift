@@ -247,7 +247,11 @@ extension Gate1AppModel {
         audioPreparationQueue = presentation.queue
         recentlyPreparedAudio = presentation.recentlyPrepared
 
-        guard announceNewCompletions else { return }
+        if announceNewCompletions { announcePreparedAudioIfNeeded(now: now) }
+    }
+
+    /// Says once that audio finished preparing while the listener was away, from the lists as they stand now.
+    func announcePreparedAudioIfNeeded(now: Date = Date()) {
         let defaults = UserDefaults.standard
         guard let notice = AudioPreparationQueueProjection.preparedAudioNotice(
             recentlyPrepared: recentlyPreparedAudio,

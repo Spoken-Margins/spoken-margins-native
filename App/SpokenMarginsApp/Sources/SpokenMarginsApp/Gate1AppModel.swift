@@ -1139,10 +1139,8 @@ final class Gate1AppModel: ObservableObject {
         syncPlaybackProgressForLifecycle()
         gate2CompactControls.reconcileLiveActivities()
         importPendingSourceLinkHandoffs()
-        if let store {
-            try? refreshLibraryRows(store: store)
-            try? refreshAudioPreparationPresentation(store: store, announceNewCompletions: true)
-        }
+        backgroundRefresh.requestAnnouncement() // the reload also announces audio that finished while away
+        refreshLibraryRowsInBackground(mustPublish: true)
         scheduleAutomaticAudioPreparationIfNeeded()
         submitAutomaticEpisodeMapPreparationIfNeeded()
         if canPrepareLibraryAudio { startForegroundAudioPreparationIfNeeded() } // a background task may have ended while the app was away (#534)

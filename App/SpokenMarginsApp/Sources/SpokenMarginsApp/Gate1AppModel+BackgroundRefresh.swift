@@ -13,6 +13,7 @@ final class BackgroundRefreshGate {
     private var itemTask: Task<Void, Never>?
     private var libraryTask: Task<Void, Never>?
     private var mustPublishPending = false
+    private var announcePending = false
     private var isPublishingItem = false
 
     /// Starts a reload and returns its number; the reload before it can no longer publish.
@@ -34,6 +35,16 @@ final class BackgroundRefreshGate {
     func beginLibrary() -> Int { beginLibraryReload(mustPublish: false).generation }
 
     func libraryWasPublished() { mustPublishPending = false }
+
+    /// The foreground return wants "your audio is ready" announced from whichever Library reload publishes next, so a
+    /// reload that overtakes the one that was asked hands the announcement on, like `mustPublish`.
+    func requestAnnouncement() { announcePending = true }
+
+    /// True once per request, for the reload that just published.
+    func takeAnnouncement() -> Bool {
+        defer { announcePending = false }
+        return announcePending
+    }
 
     /// Returns once the newest Library reload has published or been dropped, following reloads that overtake it.
     /// For tests that tap, then read the rows.
@@ -127,6 +138,7 @@ extension Gate1AppModel {
                 self.publishLibrary(data)
                 self.backgroundRefresh.libraryWasPublished()
                 if !listsMoved { self.publishAudioPreparationPresentation(from: data, store: store) }
+                if self.backgroundRefresh.takeAnnouncement() { self.announcePreparedAudioIfNeeded() }
                 return
             }
         })
