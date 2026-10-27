@@ -92,12 +92,18 @@ extension Gate1AppModel {
             let ledger = requireOfflineLedger(store: store, rootDirectory: support)
             await ledger.removeRetiredPreparedAudio(itemId: item.id)
         }
-        return try finishBackgroundBrowserTextImport(item, handoff: handoff)
+        if item.mediaType == "pdf" { PreparedSpeechHooks.texts.invalidate(itemId: item.id) }
+        try await reloadLibraryRowsOffMain(store: try requireStore()) // the rows are on screen when this returns, as before (#2505)
+        return recordBackgroundBrowserTextImport(item, handoff: handoff)
     }
 
     func finishBackgroundBrowserTextImport(_ item: Item, handoff: BrowserTextHandoff) throws -> String {
         if item.mediaType == "pdf" { PreparedSpeechHooks.texts.invalidate(itemId: item.id) }
         libraryItems = try loadLibraryRows(store: try requireStore())
+        return recordBackgroundBrowserTextImport(item, handoff: handoff)
+    }
+
+    private func recordBackgroundBrowserTextImport(_ item: Item, handoff: BrowserTextHandoff) -> String {
         scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
         diagnostics["lastBackgroundBrowserTextImport"] = item.id
         if let structure = item.documentStructure {

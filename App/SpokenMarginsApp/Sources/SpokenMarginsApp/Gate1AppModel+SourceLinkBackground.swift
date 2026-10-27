@@ -125,7 +125,7 @@ extension Gate1AppModel {
             }
             diagnostics["sourceEntryImport:\(feedEntry.id)"] = "item:\(item.id),subscription:\(feedEntry.subscriptionId),title:feed_entry"
         }
-        libraryItems = try loadLibraryRows(store: store)
+        try await reloadLibraryRowsOffMain(store: store) // the rows are on screen when this returns, as before (#2505)
         diagnostics["lastBackgroundSourceLinkImport"] = item.id
         markOnboardingSteps([.addedOwnSource, .addedPodcast])
         schedulePodcastDownloadIfNeeded(itemId: item.id)

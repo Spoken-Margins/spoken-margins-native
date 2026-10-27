@@ -212,6 +212,24 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"))
     }
 
+    func testABackgroundBrowserTextImportReadsTheLibraryOffTheMainThread() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let held = HeldReads()
+        holdReads(held, on: model)
+        held.releaseAll()
+        let handoff = BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: "https://example.com/off-main-import", title: "Off main import"),
+            text: "A shared article that arrives while the app is in the foreground.",
+            contentFormat: .plainText)
+
+        let id = try await model.importBrowserTextInBackgroundOffMain(handoff, structuredDocument: nil)
+
+        XCTAssertGreaterThanOrEqual(held.count, 1, "the import reloads the Library through the off-main read (#2505)")
+        XCTAssertTrue(model.libraryItems.contains { $0.id == id }, "the imported item is on the shelf when the import returns")
+    }
+
     func testTheForegroundAnnouncementSurvivesAnOvertakingReloadAndFiresOnce() {
         let gate = BackgroundRefreshGate()
         XCTAssertFalse(gate.takeAnnouncement(), "nothing asked for one")
