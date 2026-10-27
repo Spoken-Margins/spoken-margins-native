@@ -228,6 +228,9 @@ final class BackgroundRefreshGateTests: XCTestCase {
     func testATranscriptForAnotherItemNeverRetargetsThePlaybackScreen() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
+        model.importTitle = "Other Item" // the seed holds one item; the transcript arrives for a second
+        model.importText = "A second article, not the one playing."
+        model.importTextItem()
         let other = try XCTUnwrap(model.libraryItems.first { $0.id != "item-pill" }?.id)
         model.startItem(id: "item-pill")
         await model.settleLibraryReload()
