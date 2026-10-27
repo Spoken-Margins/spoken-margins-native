@@ -132,6 +132,59 @@ final class IncomingPackageSweepTests: XCTestCase {
         XCTAssertEqual(try folderNames(), [folder], "when the Library can't be read, no folder is guessed unused")
     }
 
+    /// #2246: imported folders are kept for good, so a long-time listener has many of them on every cold launch. The
+    /// sweep read every imported payload once per folder; it now reads them once, whatever the folder count.
+    func testTheImportedPayloadsAreReadOncePerLaunchHoweverManyFoldersThereAre() throws {
+        let used = try stagedFolder(files: ["assets/voice.m4a"])
+        try saveImportedMargin(audioPath: audioPath(in: used, file: "assets/voice.m4a"))
+        let meter = StoreReadMeter()
+        let metered = try SQLiteSessionStore(path: databasePath, readMeter: meter)
+        var reads: [Int: Int] = [:]
+        for orphans in [1, 40] {
+            let created = try (0..<orphans).map { _ in try stagedFolder(files: ["package.spokenmargins"]) }
+            meter.reset()
+
+            let outcome = IncomingPackageSweep.sweep(directory: incoming, keeping: [], store: metered)
+
+            XCTAssertEqual(Set(outcome.removed), Set(created))
+            XCTAssertEqual(outcome.kept, [used])
+            reads[orphans] = meter.samples.count
+            XCTAssertEqual(meter.totals(for: "imported_commentary_mentions").calls, 0, "no scan of the payloads per folder")
+        }
+        XCTAssertEqual(reads[1], reads[40], "the number of payload reads does not grow with the number of folders")
+        XCTAssertLessThanOrEqual(try XCTUnwrap(reads[40]), 2, "one pass over the live rows and one over the quarantined ones")
+    }
+
+    func testTheBatchCheckFindsAFolderNamedInAnyCaseOrBesideOtherText() throws {
+        let lower = UUID().uuidString.lowercased(), upper = UUID().uuidString, unmentioned = UUID().uuidString
+        try StoreRawSQL.execute("""
+            INSERT INTO quarantined_records(kind, id, payload, decode_error, quarantined_at)
+            VALUES ('imported_commentary_interjection', 'held', ?, 'newer build', '2026-02-03 04:05:06');
+            """, bindings: ["{\"audioPath\":\"\\/var\\/IncomingPackages\\/\(lower)\\/a.m4a\",\"other\":\"x\(upper)y\"}"], at: databasePath)
+
+        let found = try store.importedCommentaryRecordsMentioning(among: [lower, upper, unmentioned])
+
+        XCTAssertEqual(found, [lower, upper], "a name inside escaped slashes or between letters still counts; another UUID does not")
+        XCTAssertEqual(try store.importedCommentaryRecordsMentioning(among: [lower.uppercased()]), [],
+                       "the match is case-sensitive, as the single-name check is")
+    }
+
+    func testAFolderNameThatIsNotUUIDShapedIsReportedUsedSoItIsKept() throws {
+        XCTAssertEqual(try store.importedCommentaryRecordsMentioning(among: ["not-a-uuid"]), ["not-a-uuid"])
+        XCTAssertEqual(try store.importedCommentaryRecordsMentioning(among: []), [])
+    }
+
+    func testTheBatchCheckAgreesWithTheSingleNameCheckOnEveryFolder() throws {
+        let names = try (0..<6).map { _ in try stagedFolder(files: ["package.spokenmargins"]) }
+        try saveImportedMargin(audioPath: audioPath(in: names[2], file: "assets/voice.m4a"))
+        try store.saveImportedCommentaryLayer(makeLayer(episodeMapEvidencePaths: ["s": audioPath(in: names[4], file: "m.bin")]))
+
+        let batch = try store.importedCommentaryRecordsMentioning(among: Set(names))
+
+        XCTAssertEqual(batch, Set(try names.filter { try store.importedCommentaryRecordsMention($0) }))
+        XCTAssertEqual(batch, [names[2], names[4]])
+    }
+
     func testAMissingFolderIsNotAnError() {
         let outcome = IncomingPackageSweep.sweep(
             directory: root.appendingPathComponent("never-made"), keeping: [], store: store)

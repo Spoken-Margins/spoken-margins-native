@@ -25,6 +25,39 @@ extension SQLiteSessionStore {
     }
 }
 
+extension SQLiteSessionStore {
+    /// Which of `folderNames` (UUID-shaped names) any imported layer or imported Margin, live or quarantined, names
+    /// anywhere in its stored JSON: `importedCommentaryRecordsMention` for many names in one pass over the rows
+    /// instead of one scan of every payload per name (#2246). A payload is read once and the UUID-shaped runs in it
+    /// are checked against the names, which finds exactly the names a substring search would, since a UUID's
+    /// hyphens fix where another UUID could start. A name that is not UUID-shaped is reported as used, so the
+    /// caller keeps it. Like the single-name check it reads the stored text, not decoded values, and a database
+    /// error throws: never "not used".
+    public func importedCommentaryRecordsMentioning(among folderNames: Set<String>) throws -> Set<String> {
+        var used = folderNames.filter { UUID(uuidString: $0) == nil }
+        var remaining = folderNames.subtracting(used)
+        guard !remaining.isEmpty else { return used }
+        for table in ["records", "quarantined_records"] {
+            try readTexts(
+                "SELECT payload FROM \(table) WHERE kind IN ('imported_commentary_layer', 'imported_commentary_interjection');",
+                [], name: "imported_commentary_mentions_batch"
+            ) { payload in
+                guard !remaining.isEmpty else { return }
+                for match in Self.uuidShape.matches(in: payload, range: NSRange(payload.startIndex..., in: payload)) {
+                    guard let range = Range(match.range, in: payload) else { continue }
+                    let name = String(payload[range])
+                    if remaining.remove(name) != nil { used.insert(name) }
+                }
+            }
+            if remaining.isEmpty { break }
+        }
+        return used
+    }
+
+    private static let uuidShape = try! NSRegularExpression(
+        pattern: "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}")
+}
+
 /// Removes the working folders of shared packets that nothing uses (#2154).
 ///
 /// Staging a packet extracts it to `IncomingPackages/<uuid>/`. Import keeps that folder for good, because the
@@ -75,11 +108,30 @@ public enum IncomingPackageSweep {
         return outcome
     }
 
-    /// The same sweep with the Library deciding what is used.
+    /// The same sweep with the Library deciding what is used, from one read of the imported payloads however many
+    /// folders there are (#2246). A folder that appeared after the listing, or a failed read, keeps its folder.
     @discardableResult
     public static func sweep(
-        directory: URL, keeping: Set<String>, only: Set<String>? = nil, store: SQLiteSessionStore
+        directory: URL, keeping: Set<String>, only: Set<String>? = nil, store: SQLiteSessionStore,
+        fileManager: FileManager = .default
     ) -> Outcome {
-        sweep(directory: directory, keeping: keeping, only: only, isUsed: { try store.importedCommentaryRecordsMention($0) })
+        let candidates = Set(folderNames(in: directory, fileManager: fileManager)
+            .filter { !keeping.contains($0) && (only?.contains($0) ?? true) })
+        let used = try? store.importedCommentaryRecordsMentioning(among: candidates)
+        struct Unreadable: Error {}
+        return sweep(directory: directory, keeping: keeping, only: only, isUsed: { name in
+            guard let used, candidates.contains(name) else { throw Unreadable() }
+            return used.contains(name)
+        }, fileManager: fileManager)
+    }
+
+    /// The UUID-named sub-folders of `directory`.
+    static func folderNames(in directory: URL, fileManager: FileManager) -> [String] {
+        guard let names = try? fileManager.contentsOfDirectory(atPath: directory.path) else { return [] }
+        return names.sorted().filter { name in
+            guard UUID(uuidString: name) != nil else { return false }
+            let attributes = try? fileManager.attributesOfItem(atPath: directory.appending(path: name).path)
+            return attributes?[.type] as? FileAttributeType == .typeDirectory
+        }
     }
 }
