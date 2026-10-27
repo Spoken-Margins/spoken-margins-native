@@ -51,10 +51,10 @@ class DecideTests(unittest.TestCase):
         for stage in ('warn30', 'warn7', 'gone'):
             self.assertIsNone(watch.decide(stage, 'closed', {'warn30'}))
 
-    def test_the_issue_is_named_for_the_expiry_or_the_month_of_the_lapse(self):
-        self.assertEqual(watch.issue_key(LIMIT, at('2027-03-25T00:00:00')), '2027-04-21')
-        self.assertEqual(watch.issue_key({}, at('2027-05-02T00:00:00')), 'lapsed 2027-05')
-        self.assertEqual(watch.issue_key(None, at('2027-05-02T00:00:00')), 'lapsed 2027-05')
+    def test_the_issue_is_named_for_the_expiry_and_a_limit_with_none_has_no_key(self):
+        self.assertEqual(watch.issue_key(LIMIT), '2027-04-21')
+        self.assertIsNone(watch.issue_key({}))
+        self.assertIsNone(watch.issue_key(None))
 
 
 def titled(key):
@@ -134,11 +134,22 @@ class RunTests(unittest.TestCase):
         self.assertEqual([path for path, _ in posts], ['/repos/o/r/issues'])
         self.assertEqual(posts[0][1]['title'], titled('2027-10-21'))
 
-    def test_a_limit_that_is_gone_files_one_issue_a_month_until_it_is_set_again(self):
+    def test_a_gone_limit_joins_the_open_issue_of_the_expiry_that_ran_out(self):
+        open_issue = ours(3, body=marker('warn30'), key='2027-04-21')
+        posts, _ = self.run_watch([open_issue], {3: [{'body': marker('warn7'), 'author_association': 'OWNER', 'user': {'login': 'u'}}]},
+                                  now='2027-04-22T00:00:00', limit={})
+        self.assertEqual([path for path, _ in posts], ['/repos/o/r/issues/3/comments'])
+        self.assertIn('is gone', posts[0][1]['body'])
+
+    def test_a_gone_limit_with_no_issue_at_all_opens_one_lapsed_issue(self):
         posts, _ = self.run_watch([], {}, now='2027-05-02T00:00:00', limit={})
-        self.assertEqual(posts[0][1]['title'], titled('lapsed 2027-05'))
-        closed_in_may = ours(3, state='closed', key='lapsed 2027-05')
-        self.assertEqual(self.run_watch([closed_in_may], {}, now='2027-05-20T00:00:00', limit={})[0], [])
+        self.assertEqual(posts[0][1]['title'], titled('lapsed'))
+
+    def test_a_gone_limit_files_nothing_more_once_the_newest_issue_is_marked_or_closed(self):
+        marked = ours(4, body=marker('gone'), key='lapsed')
+        self.assertEqual(self.run_watch([marked], {}, now='2027-06-02T00:00:00', limit={})[0], [])
+        closed = ours(5, state='closed', key='2027-04-21')  # a lasting rule replaced the limit; the owner closed it
+        self.assertEqual(self.run_watch([closed], {}, now='2027-06-02T00:00:00', limit={})[0], [])
 
 
 class MessageAndReadTests(unittest.TestCase):

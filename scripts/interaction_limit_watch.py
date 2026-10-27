@@ -7,10 +7,12 @@ reads `GET /repos/{repo}/interaction-limits` and, inside the last 30 days, opens
 one comment per stage and never closes the issue: renewing is the owner's tap (Settings > Moderation options >
 Interaction limits), and he closes it.
 
-Each expiry gets its own issue, named in its title ("... (2027-04-21)"; a limit that is gone and unreadable is
-"lapsed 2027-05"). The watch finds it by a title search, which has no page window, and a closed issue for the current
-expiry means the owner dealt with it: nothing more is filed for that expiry, so a stale fallback date after a renewal
-stays quiet, and the next renewal (a new expiry) gets a fresh warning.
+Each expiry gets its own issue, named in its title ("... (2027-04-21)"). The watch finds it by a title search, which has
+no page window, and a closed issue for the current expiry means the owner dealt with it: nothing more is filed for that
+expiry, so a stale fallback date after a renewal stays quiet, and the next renewal (a new expiry) gets a fresh warning.
+A limit the API reports as gone, with no expiry to name, goes on the newest issue of ours, open or closed, whatever its
+expiry; only with none at all is a "(lapsed)" issue opened. So a limit replaced by a lasting rule, whose issue the owner
+closes, is not filed again.
 
     interaction_limit_watch.py [--dry-run] [--now 2027-04-01T00:00:00Z]
 
@@ -60,11 +62,11 @@ def stage(limit, now):
     return 'ok'
 
 
-def issue_key(limit, now):
-    """What the issue is about: the expiry date it warns of, or the month of a lapse that has no date to name."""
+def issue_key(limit):
+    """What the issue is about: the expiry date it warns of, or None for a limit that is gone with no date to name."""
     if limit and limit.get('limit') and limit.get('expires_at'):
         return parse_time(limit['expires_at']).strftime('%Y-%m-%d')
-    return f'lapsed {now:%Y-%m}'
+    return None
 
 
 def decide(current, issue_state, marks):
@@ -115,13 +117,15 @@ def read_limit(repo, token):
             f'The token could not read the limit (HTTP {error.code}); using the known expiry {FALLBACK_EXPIRY}.')
 
 
-def find_issue(repo, token, title):
-    """Our newest issue with exactly this title, open or closed. A title search has no 1,000-item window to fall out
-    of, and a stranger's issue with the same title is not ours (#1822)."""
+def find_issue(repo, token, title=None):
+    """Our newest issue with exactly this title (any watch title when None), open or closed. A title search has no
+    1,000-item window to fall out of, and a stranger's issue with the same title is not ours (#1822)."""
     query = urllib.parse.quote(f'repo:{repo} is:issue in:title "{TITLE}"')
     found = request('GET', f'/search/issues?q={query}&sort=created&order=desc&per_page=100', token)
     for issue in comment_trust.trusted_only(found.get('items', [])):
-        if 'pull_request' not in issue and issue['title'] == title:
+        if 'pull_request' in issue:
+            continue
+        if issue['title'] == title or (title is None and issue['title'].startswith(TITLE)):
             return issue
     return None
 
@@ -145,8 +149,11 @@ def main():
     if note:
         print(note)
     current = stage(limit, now)
-    title = f'{TITLE} ({issue_key(limit, now)})'
-    issue = find_issue(repo, token, title) if current != 'ok' else None
+    key = issue_key(limit)
+    title = f'{TITLE} ({key or "lapsed"})'
+    issue = None
+    if current != 'ok':
+        issue = find_issue(repo, token, title if key else None)  # a gone limit joins whichever issue is ours
     marks = marks_seen(repo, token, issue) if issue and issue['state'] == 'open' else set()
     action = decide(current, issue['state'] if issue else None, marks)
     print(f'Interaction limit: {current}, issue {issue["number"] if issue else "none"} ({issue["state"] if issue else "-"}): {action or "nothing to file"}.')
