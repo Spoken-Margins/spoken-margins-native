@@ -71,6 +71,38 @@ final class AddMarginShortcutIntentTests: XCTestCase {
         XCTAssertEqual(model.snapshot.sessionId, sessionId)
     }
 
+    /// Audit on #2747: the Margins tab's full read is still running when Siri saves a Margin. The one-item refresh
+    /// shows it first; when the older full read lands it must not take the new Margin back off the list.
+    func testAMarginSavedWhileTheFullListIsBeingReadStaysOnTheList() async throws {
+        let model = makeModel()
+        model.startItem(id: "item-pill")
+        model.refreshMarginRows()
+        let text = "Saved while the Margins tab loads."
+        let gate = FullReadGate()
+        defer { MarginRowsTickets.fullReadLanded = nil }
+        // Hold the full read after it has read the store and before it publishes.
+        await withCheckedContinuation { (reached: CheckedContinuation<Void, Never>) in
+            MarginRowsTickets.fullReadLanded = {
+                MarginRowsTickets.fullReadLanded = nil // only the first landing is held
+                await withCheckedContinuation { gate.release = $0; reached.resume() }
+            }
+            model.refreshMarginRowsInBackground()
+        }
+
+        let priorModel = ListeningEditionShortcutBridge.model
+        ListeningEditionShortcutBridge.model = model
+        defer { ListeningEditionShortcutBridge.model = priorModel }
+        let intent = AddMarginToSpokenMarginsIntent()
+        intent.text = text
+        _ = try await intent.perform()
+        await model.refreshMarginRowsAsync(forItem: "item-pill")
+        XCTAssertTrue(model.marginRows.contains { $0.fullText == text }, "the one-item refresh shows the new Margin")
+
+        try XCTUnwrap(gate.release).resume()
+        await model.settleMarginRows()
+        XCTAssertTrue(model.marginRows.contains { $0.fullText == text }, "the older full read must not hide it")
+    }
+
     func testPlayingSourceKeepsPlayingAfterTheMargin() async throws {
         let model = makeModel()
         model.startItem(id: "item-pill")
@@ -270,4 +302,10 @@ final class AddMarginShortcutIntentTests: XCTestCase {
         let resolved = try await query.entities(for: [sampleId, "item-pill", "item-gone"]).map(\.id)
         XCTAssertEqual(Set(resolved), [sampleId, "item-pill"])
     }
+}
+
+/// Holds a background Margins read until the test lets it go.
+@MainActor
+private final class FullReadGate {
+    var release: CheckedContinuation<Void, Never>?
 }

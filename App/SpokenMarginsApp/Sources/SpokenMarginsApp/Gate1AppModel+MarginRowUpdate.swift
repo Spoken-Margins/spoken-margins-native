@@ -12,9 +12,11 @@ extension Gate1AppModel {
         case .update:
             guard let index, let saved else { return refreshMarginRows() }
             let old = marginRows[index]
+            noteMarginRowsChanged(forItem: old.interjection.itemId) // A read already running must not undo this.
             marginRows[index] = MarginRow(interjection: saved, itemTitle: old.itemTitle, sessionDate: old.sessionDate, place: old.place)
         case .remove:
             guard let index else { return }
+            noteMarginRowsChanged(forItem: marginRows[index].interjection.itemId)
             marginRows.remove(at: index)
         case .unchanged:
             return

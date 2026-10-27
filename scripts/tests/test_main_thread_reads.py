@@ -568,7 +568,8 @@ class TheRepository(unittest.TestCase):
         baseline until their fixes delete them."""
         base = mtr.load_baseline(ROOT / mtr.BASELINE)
         functions = {(k[0], k[1]) for k in base}
-        for name in (('Gate1AppModel.refreshMarginRows', 'store.listItems'),
+        # The main-thread Margins rebuild now reads through MarginRowsReading.all (#2505), the same whole-library read
+        for name in (('Gate1AppModel.refreshMarginRows', 'via MarginRowsReading.all'),
                      # #2102 swapped the full items for summaries here; it is still a whole-table read on main
                      ('Gate1AppModel.refreshAudioPreparationPresentation', 'store.listItemSummaries'),
                      # #2184 cached Skim's reads once per item, but the cache fill is still a main-thread
