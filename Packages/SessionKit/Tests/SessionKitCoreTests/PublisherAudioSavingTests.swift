@@ -41,6 +41,15 @@ final class PublisherAudioSavingTests: XCTestCase {
         XCTAssertNil(try store.loadPublisherAudio(itemId: "gone"), "no orphan record is left for an item that is not there")
     }
 
+    func testTheRecordIsSavedForAnItemInTheTrash() throws {
+        let (store, item, directory) = try makeStoreAndItem()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try store.moveItemToTrash(id: item.id)
+        let found = PublisherAudio(itemId: item.id, audioURL: "https://cdn.example.com/a.mp3", detectedFrom: "substack_voiceover")
+
+        XCTAssertEqual(try store.savePublisherAudioIfItemExists(found), found, "a trashed article can still be restored with its voiceover")
+    }
+
     func testTheSameRecordingKeepsItsTextMapAndADifferentOneStartsOver() throws {
         let (store, item, directory) = try makeStoreAndItem()
         defer { try? FileManager.default.removeItem(at: directory) }
