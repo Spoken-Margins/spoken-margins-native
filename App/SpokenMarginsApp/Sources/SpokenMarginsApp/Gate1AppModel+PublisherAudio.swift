@@ -46,8 +46,8 @@ extension Gate1AppModel {
     /// is looked up when it is opened: once per launch, and again after a failure, such as being offline.
     func retryVoiceoverLookupIfNeeded(itemId: String) {
         guard let store, sharedLinkVoiceover.mayLookUp(itemId: itemId),
-              let item = try? store.loadItem(id: itemId),
-              item.text?.isEmpty == false,
+              let item = try? store.loadItemSummary(id: itemId), // no article text decoded on every open (#2508)
+              (item.textCharacterCount ?? 0) > 0,
               let address = item.externalReference, let url = URL(string: address),
               PublisherNarrationEvidence.mayHaveVoiceover(url),
               ((try? store.loadPublisherAudio(itemId: itemId)) ?? nil) == nil else { return }

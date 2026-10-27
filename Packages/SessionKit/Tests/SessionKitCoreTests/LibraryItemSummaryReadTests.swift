@@ -79,6 +79,23 @@ final class LibraryItemSummaryReadTests: XCTestCase {
         XCTAssertNil(fromSummaries.first { $0.id == "nil" }?.publishedAt)
     }
 
+    /// #2508: `retryVoiceoverLookupIfNeeded` and `canGenerateListeningMap` ask the store for one item's summary where they
+    /// loaded the whole item. They ask "is there any text" and "what is its media", and the answers must not change.
+    func testOneItemsSummaryAnswersWhatTheWholeItemAnswered() throws {
+        let store = try SQLiteSessionStore(path: path)
+        let items = table()
+        for item in items { try store.saveItem(item) }
+        for item in items {
+            let full = try store.loadItem(id: item.id)
+            let summary = try XCTUnwrap(try store.loadItemSummary(id: item.id), item.id)
+            XCTAssertEqual((summary.textCharacterCount ?? 0) > 0, full.text?.isEmpty == false, "any text at all: \(item.id)")
+            XCTAssertEqual(summary.media, full.media, item.id)
+            XCTAssertEqual(summary.externalReference, full.externalReference, item.id)
+            XCTAssertEqual(summary.title, full.title, item.id)
+        }
+        XCTAssertNil(try store.loadItemSummary(id: "missing"))
+    }
+
     func testTheSummaryReadDoesNotCarryTheTextOrTheDocumentStructure() throws {
         let store = try SQLiteSessionStore(path: path)
         try store.saveItem(item("a", text: "Body"))
