@@ -1273,6 +1273,12 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;", ["offline_storage_reservation"])
     }
 
+    /// One reservation by id, for a caller that already knows which one it wants and would otherwise decode every
+    /// reservation to find it (#2507).
+    public func loadOfflineStorageReservation(id: String) throws -> OfflineStorageReservation? {
+        try loadOptional(kind: "offline_storage_reservation", id: id)
+    }
+
     public func deleteOfflineStorageReservation(id: String) throws { try deleteRecord(kind: "offline_storage_reservation", id: id) }
 
     public func saveFeedSubscription(_ subscription: FeedSubscription) throws {
