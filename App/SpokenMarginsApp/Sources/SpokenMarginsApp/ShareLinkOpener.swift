@@ -14,11 +14,11 @@ final class ShareLinkOpener {
     }
 
     /// Starts opening `link`. A second link while the first is still downloading replaces it.
-    /// `stage` receives the unsealed packet file, which is removed once it returns. `fail` gets the message to
+    /// `stage` receives the unsealed packet file, which is removed once it finishes. `fail` gets the message to
     /// show and whether the same link is worth another try (offline, a server fault).
     func open(
         _ link: ShareLinkURL,
-        stage: @escaping @MainActor (URL) -> Void,
+        stage: @escaping @MainActor (URL) async -> Void,
         fail: @escaping @MainActor (_ message: String, _ retryable: Bool) -> Void
     ) {
         task?.cancel()
@@ -30,7 +30,7 @@ final class ShareLinkOpener {
             do {
                 let file = try await downloader.download(link, into: directory)
                 try Task.checkCancellation()
-                stage(file)
+                await stage(file)
             } catch is CancellationError {
                 return
             } catch let failure as ShareLinkPacketDownloader.Failure {

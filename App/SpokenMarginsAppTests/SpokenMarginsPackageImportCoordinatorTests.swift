@@ -12,11 +12,11 @@ import SessionKitSharing
 final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
     // MARK: Stage
 
-    func testStageShowsAnEmbeddedPacketForReviewAndLeavesTheLibraryAlone() throws {
+    func testStageShowsAnEmbeddedPacketForReviewAndLeavesTheLibraryAlone() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
 
-        assertStaged(h.coordinator.stage(from: packet.url))
+        assertStaged(await h.coordinator.stage(from: packet.url))
 
         let review = try XCTUnwrap(h.coordinator.review)
         XCTAssertEqual(review.contents.manifest.packageId, "package-alpha")
@@ -30,12 +30,12 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(h.events, ["error:nil", "review:\(review.id)"], "the error clears before the review shows, once each")
     }
 
-    func testUnreadablePacketIsRejectedAndLeavesNoFolderBehind() throws {
+    func testUnreadablePacketIsRejectedAndLeavesNoFolderBehind() async throws {
         let h = try makeHarness()
         let junk = h.root.appendingPathComponent("junk.spokenmargins")
         try Data("not a zip".utf8).write(to: junk)
 
-        guard case .rejected = h.coordinator.stage(from: junk) else { return XCTFail("a corrupt packet must be rejected") }
+        guard case .rejected = await h.coordinator.stage(from: junk) else { return XCTFail("a corrupt packet must be rejected") }
 
         XCTAssertNil(h.coordinator.review)
         XCTAssertTrue(h.diagnostics["lastSpokenMarginsPackageImport"]?.hasPrefix("rejected:") == true)
@@ -47,13 +47,13 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
     func testStagingTheSamePacketAfterImportOpensItsItemAndRemovesTheNewFolder() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
-        assertStaged(h.coordinator.stage(from: packet.url))
+        assertStaged(await h.coordinator.stage(from: packet.url))
         let firstFolder = try XCTUnwrap(h.coordinator.review).extractionDirectory
         await h.confirmCurrentReview()
         XCTAssertEqual(h.shownItems.count, 1)
         h.events.removeAll()
 
-        assertStaged(h.coordinator.stage(from: packet.url))
+        assertStaged(await h.coordinator.stage(from: packet.url))
 
         XCTAssertEqual(h.openedItems, h.shownItems, "the existing item opens")
         XCTAssertEqual(h.diagnostics["lastSpokenMarginsPackageImport"], "duplicate:\(packet.digest)")
@@ -70,7 +70,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         let item = try h.seedArticle(id: "mine", reference: "https://example.com/harbour")
         let packet = try h.writeMapPacket(named: "map-a")
 
-        assertStaged(h.coordinator.stage(from: packet.url))
+        assertStaged(await h.coordinator.stage(from: packet.url))
 
         let review = try XCTUnwrap(h.coordinator.review)
         XCTAssertTrue(review.isListeningMap)
@@ -95,9 +95,9 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         let h = try makeHarness()
         let item = try h.seedArticle(id: "mine", reference: "https://example.com/harbour")
         let packet = try h.writeMapPacket(named: "map-a")
-        assertStaged(h.coordinator.stage(from: packet.url))
+        assertStaged(await h.coordinator.stage(from: packet.url))
         await h.confirmCurrentReview()
-        assertStaged(h.coordinator.stage(from: packet.url))
+        assertStaged(await h.coordinator.stage(from: packet.url))
 
         await h.confirmCurrentReview()
 
@@ -108,10 +108,10 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
     func testAnotherMapIsOfferedAsAReplacementAndReplacesTheFirst() async throws {
         let h = try makeHarness()
         let item = try h.seedArticle(id: "mine", reference: "https://example.com/harbour")
-        assertStaged(h.coordinator.stage(from: try h.writeMapPacket(named: "map-a").url))
+        assertStaged(await h.coordinator.stage(from: try h.writeMapPacket(named: "map-a").url))
         await h.confirmCurrentReview()
 
-        assertStaged(h.coordinator.stage(from: try h.writeMapPacket(named: "map-b").url))
+        assertStaged(await h.coordinator.stage(from: try h.writeMapPacket(named: "map-b").url))
 
         XCTAssertEqual(h.coordinator.review?.replacesExistingMap, true, "the sheet says Replace Map before anything changes")
         XCTAssertEqual(try h.store.loadPortableListeningMapProposals(itemId: item.id).map(\.id), ["map-a"])
@@ -130,7 +130,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
             try h.store.seed(item: fetched)
             return fetched.id
         }
-        assertStaged(h.coordinator.stage(from: try h.writeMapPacket(named: "map-a").url))
+        assertStaged(await h.coordinator.stage(from: try h.writeMapPacket(named: "map-a").url))
         XCTAssertNil(h.coordinator.review?.matchingItemId)
         XCTAssertEqual(h.coordinator.review?.requiresRecipientItem, false, "an article with a link is fetched, not asked for")
 
@@ -140,11 +140,11 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(try h.store.loadListeningMap(itemId: "fetched")?.chapters.count, 5)
     }
 
-    func testAMapForAPDFTheListenerLacksAsksThemToAddIt() throws {
+    func testAMapForAPDFTheListenerLacksAsksThemToAddIt() async throws {
         let h = try makeHarness()
         let packet = try h.writeMapPacket(named: "map-pdf", itemType: .pdf, link: "https://example.com/harbour.pdf")
 
-        assertStaged(h.coordinator.stage(from: packet.url))
+        assertStaged(await h.coordinator.stage(from: packet.url))
 
         let review = try XCTUnwrap(h.coordinator.review)
         XCTAssertNil(review.matchingItemId)
@@ -152,12 +152,12 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertNil(h.coordinator.beginConfirmation())
     }
 
-    func testAPickedPDFWithDifferentTextIsMatchedByWhereTheChaptersLand() throws {
+    func testAPickedPDFWithDifferentTextIsMatchedByWhereTheChaptersLand() async throws {
         let h = try makeHarness()
         let pdf = try h.seedArticle(id: "pdf", reference: "harbour.pdf", mediaType: "pdf", text: Self.harbourText.replacingOccurrences(of: "harbour", with: "harbor"))
         let packet = try h.writeMapPacket(named: "map-pdf", itemType: .pdf, link: nil)
 
-        assertStaged(h.coordinator.stage(from: packet.url))
+        assertStaged(await h.coordinator.stage(from: packet.url))
 
         XCTAssertEqual(h.coordinator.review?.matchingItemId, pdf.id)
         XCTAssertEqual(h.coordinator.review?.requiresRecipientItem, false)
@@ -167,7 +167,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         let h = try makeHarness()
         let item = try h.seedArticle(id: "mine", reference: "https://example.com/harbour",
                                      text: "A different edition with entirely other words about gardens and tea.")
-        assertStaged(h.coordinator.stage(from: try h.writeMapPacket(named: "map-a").url))
+        assertStaged(await h.coordinator.stage(from: try h.writeMapPacket(named: "map-a").url))
         XCTAssertEqual(h.coordinator.review?.matchingItemId, item.id, "matched by link")
 
         await h.confirmCurrentReview()
@@ -182,7 +182,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
     func testTheAppGetsToSaveTheMapSoARunningSessionHearsAboutIt() async throws {
         let h = try makeHarness()
         let item = try h.seedArticle(id: "mine", reference: "https://example.com/harbour")
-        assertStaged(h.coordinator.stage(from: try h.writeMapPacket(named: "map-a").url))
+        assertStaged(await h.coordinator.stage(from: try h.writeMapPacket(named: "map-a").url))
 
         await h.confirmCurrentReview()
 
@@ -194,7 +194,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         let h = try makeHarness()
         let item = try h.seedArticle(id: "mine", reference: "https://example.com/harbour")
         h.attachFailure = SessionKitError.persistenceFailed("shared_map_item_is_playing")
-        assertStaged(h.coordinator.stage(from: try h.writeMapPacket(named: "map-a").url))
+        assertStaged(await h.coordinator.stage(from: try h.writeMapPacket(named: "map-a").url))
         await h.confirmCurrentReview()
 
         XCTAssertEqual(h.coordinator.importError, SharedMarginsImportMessage.userFacing(SessionKitError.persistenceFailed("shared_map_item_is_playing")))
@@ -207,10 +207,10 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
 
     // MARK: Cancel
 
-    func testCancelClearsTheReviewAndRemovesItsFolder() throws {
+    func testCancelClearsTheReviewAndRemovesItsFolder() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
-        assertStaged(h.coordinator.stage(from: packet.url))
+        assertStaged(await h.coordinator.stage(from: packet.url))
         let folder = try XCTUnwrap(h.coordinator.review).extractionDirectory
 
         h.coordinator.cancel()
@@ -221,10 +221,10 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(Array(h.events.suffix(2)), ["review:nil", "error:nil"])
     }
 
-    func testCancelDoesNothingWhileAnImportIsRunning() throws {
+    func testCancelDoesNothingWhileAnImportIsRunning() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
-        assertStaged(h.coordinator.stage(from: packet.url))
+        assertStaged(await h.coordinator.stage(from: packet.url))
         let folder = try XCTUnwrap(h.coordinator.review).extractionDirectory
         _ = try XCTUnwrap(h.coordinator.beginConfirmation())
 
@@ -240,7 +240,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
     func testConfirmImportsAndKeepsTheIncomingFolderForGood() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
-        assertStaged(h.coordinator.stage(from: packet.url))
+        assertStaged(await h.coordinator.stage(from: packet.url))
         let review = try XCTUnwrap(h.coordinator.review)
         h.events.removeAll()
 
@@ -271,7 +271,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
     func testFailureAfterTheLayerIsSavedKeepsTheReviewAndTheRetryRepairsTheAssociation() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
-        assertStaged(h.coordinator.stage(from: packet.url))
+        assertStaged(await h.coordinator.stage(from: packet.url))
         let review = try XCTUnwrap(h.coordinator.review)
         h.showImportedItemFailure = StubFailure()
 
@@ -301,9 +301,9 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         let h = try makeHarness()
         let a = try h.writePacket(named: "alpha", text: Self.alphaText)
         let b = try h.writePacket(named: "beta", text: Self.betaText)
-        assertStaged(h.coordinator.stage(from: a.url))
+        assertStaged(await h.coordinator.stage(from: a.url))
         let captured = try XCTUnwrap(h.coordinator.beginConfirmation())
-        assertStaged(h.coordinator.stage(from: b.url))
+        assertStaged(await h.coordinator.stage(from: b.url))
         XCTAssertEqual(h.coordinator.review?.id, captured.id, "A's review stays up while A imports")
         XCTAssertTrue(h.coordinator.isImporting)
         XCTAssertEqual(h.diagnostics["lastSpokenMarginsPackageImport"], "queued:\(b.digest)")
@@ -330,9 +330,9 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         let h = try makeHarness()
         let a = try h.writePacket(named: "alpha", text: Self.alphaText)
         let b = try h.writePacket(named: "beta", text: Self.betaText)
-        assertStaged(h.coordinator.stage(from: a.url))
+        assertStaged(await h.coordinator.stage(from: a.url))
         let captured = try XCTUnwrap(h.coordinator.beginConfirmation())
-        assertStaged(h.coordinator.stage(from: b.url))
+        assertStaged(await h.coordinator.stage(from: b.url))
         h.showImportedItemFailure = StubFailure()
 
         await h.coordinator.confirm(captured)
@@ -352,7 +352,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
 
         XCTAssertNil(h.coordinator.review)
         XCTAssertFalse(FileManager.default.fileExists(atPath: waiting.extractionDirectory.path), "B's staged files are removed, not leaked")
-        XCTAssertEqual(h.incomingFolderNames(), [])
+        XCTAssertTrue(h.incomingFolderNames().isEmpty)
     }
 
     /// #2122, the map-packet path: a map's success brings up the packet that waited behind it.
@@ -361,9 +361,9 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         _ = try h.seedArticle(id: "mine", reference: "https://example.com/harbour")
         let map = try h.writeMapPacket(named: "map-a")
         let b = try h.writePacket(named: "beta", text: Self.betaText)
-        assertStaged(h.coordinator.stage(from: map.url))
+        assertStaged(await h.coordinator.stage(from: map.url))
         let captured = try XCTUnwrap(h.coordinator.beginConfirmation())
-        assertStaged(h.coordinator.stage(from: b.url))
+        assertStaged(await h.coordinator.stage(from: b.url))
 
         await h.coordinator.confirm(captured)
 
@@ -373,24 +373,24 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
     }
 
     /// #2122: opening a second packet while the first is only showing does not drop the first or leak its files.
-    func testAPacketOpenedWhileAnotherIsShowingWaitsBehindIt() throws {
+    func testAPacketOpenedWhileAnotherIsShowingWaitsBehindIt() async throws {
         let h = try makeHarness()
         let a = try h.writePacket(named: "alpha", text: Self.alphaText)
         let b = try h.writePacket(named: "beta", text: Self.betaText)
-        assertStaged(h.coordinator.stage(from: a.url))
+        assertStaged(await h.coordinator.stage(from: a.url))
         let first = try XCTUnwrap(h.coordinator.review)
 
-        assertStaged(h.coordinator.stage(from: b.url))
+        assertStaged(await h.coordinator.stage(from: b.url))
 
         XCTAssertEqual(h.coordinator.review?.id, first.id)
         h.coordinator.cancel()
         XCTAssertEqual(h.coordinator.review?.contents.manifest.packageId, "package-beta")
     }
 
-    func testRecipientSuppliedPacketCannotBeConfirmedUntilASourceMatches() throws {
+    func testRecipientSuppliedPacketCannotBeConfirmedUntilASourceMatches() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "gamma", text: Self.alphaText, recipientSupplied: true)
-        assertStaged(h.coordinator.stage(from: packet.url))
+        assertStaged(await h.coordinator.stage(from: packet.url))
         XCTAssertEqual(h.coordinator.review?.requiresRecipientItem, true)
 
         XCTAssertNil(h.coordinator.beginConfirmation())
@@ -401,7 +401,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         )
 
         let before = try XCTUnwrap(h.coordinator.review)
-        h.coordinator.refreshAfterAddingSource()
+        await h.coordinator.refreshAfterAddingSource()
         XCTAssertNotEqual(h.coordinator.review?.id, before.id, "re-matching replaces the review")
         XCTAssertEqual(h.coordinator.review?.extractionDirectory, before.extractionDirectory)
         XCTAssertEqual(
@@ -410,13 +410,67 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         )
     }
 
+    /// #2507: the Library is searched off the main actor, so the screen can change while the answer is on its way.
+    /// The test is on the main actor, so Cancel runs after the re-match has handed its search off and before its
+    /// answer can be used.
+    func testAReMatchThatFinishesAfterCancelDoesNotBringTheReviewBack() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "gamma", text: Self.alphaText, recipientSupplied: true)
+        assertStaged(await h.coordinator.stage(from: packet.url))
+        let showing = try XCTUnwrap(h.coordinator.review)
+
+        let rematch = Task { @MainActor in await h.coordinator.refreshAfterAddingSource() }
+        await Task.yield()
+        h.coordinator.cancel()
+        await rematch.value
+
+        XCTAssertNil(h.coordinator.review, "Cancel ended that review; a late answer must not show it again")
+        XCTAssertNil(h.coordinator.importError)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: showing.extractionDirectory.path))
+    }
+
+    /// #2507: `stage` suspends while the Library is searched, so a second packet can start meanwhile. Both reach
+    /// the queue, one showing and one waiting, and neither loses its folder.
+    func testTwoPacketsStagedAtTheSameTimeBothReachTheQueueWithTheirFolders() async throws {
+        let h = try makeHarness()
+        let a = try h.writePacket(named: "alpha", text: Self.alphaText)
+        let b = try h.writePacket(named: "beta", text: Self.betaText)
+
+        let first = Task { @MainActor in await h.coordinator.stage(from: a.url) }
+        let second = Task { @MainActor in await h.coordinator.stage(from: b.url) }
+        assertStaged(await first.value)
+        assertStaged(await second.value)
+
+        XCTAssertEqual(h.incomingFolderNames().count, 2, "one showing, one waiting")
+        XCTAssertNotNil(h.coordinator.review)
+        XCTAssertEqual(h.confirmations.last, SpokenMarginsPackageImportCoordinator.waitingMessage)
+    }
+
+    /// #2507: a stage whose caller went away (a replaced share link) leaves no folder and tells nobody.
+    func testAStageCancelledWhileTheLibraryIsSearchedLeavesNothingBehind() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
+        let failuresBefore = h.failures.count
+
+        let staging = Task { @MainActor in await h.coordinator.stage(from: packet.url) }
+        await Task.yield()
+        staging.cancel()
+        let result = await staging.value
+
+        guard case .rejected(let needsNewerApp) = result else { return XCTFail("a cancelled stage is not staged") }
+        XCTAssertFalse(needsNewerApp)
+        XCTAssertNil(h.coordinator.review)
+        XCTAssertTrue(h.incomingFolderNames().isEmpty)
+        XCTAssertEqual(h.failures.count, failuresBefore, "nothing to tell the listener")
+    }
+
     // MARK: The file a packet came from (#2123)
 
     func testTheSourceFileIsReleasedWhenTheReviewIsImportedNotWhenItOpens() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
         var released = 0
-        assertStaged(h.coordinator.stage(from: packet.url, releaseSource: { released += 1 }))
+        assertStaged(await h.coordinator.stage(from: packet.url, releaseSource: { released += 1 }))
         XCTAssertEqual(released, 0, "opening the review keeps the source, so a killed app finds it again")
 
         await h.confirmCurrentReview()
@@ -428,7 +482,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
         var released = 0
-        assertStaged(h.coordinator.stage(from: packet.url, releaseSource: { released += 1 }))
+        assertStaged(await h.coordinator.stage(from: packet.url, releaseSource: { released += 1 }))
         h.showImportedItemFailure = StubFailure()
 
         await h.confirmCurrentReview()
@@ -443,23 +497,23 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
     func testAPacketAlreadyInTheLibraryReleasesItsSourceStraightAway() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
-        assertStaged(h.coordinator.stage(from: packet.url))
+        assertStaged(await h.coordinator.stage(from: packet.url))
         await h.confirmCurrentReview()
         var released = 0
 
-        assertStaged(h.coordinator.stage(from: packet.url, releaseSource: { released += 1 }))
+        assertStaged(await h.coordinator.stage(from: packet.url, releaseSource: { released += 1 }))
 
         XCTAssertNil(h.coordinator.review)
         XCTAssertEqual(released, 1, "nothing is left to review, so nothing should reopen at the next launch")
     }
 
-    func testARejectedPacketLeavesItsSourceToTheCaller() throws {
+    func testARejectedPacketLeavesItsSourceToTheCaller() async throws {
         let h = try makeHarness()
         let junk = h.root.appendingPathComponent("junk.spokenmargins")
         try Data("not a zip".utf8).write(to: junk)
         var released = 0
 
-        guard case .rejected = h.coordinator.stage(from: junk, releaseSource: { released += 1 }) else { return XCTFail() }
+        guard case .rejected = await h.coordinator.stage(from: junk, releaseSource: { released += 1 }) else { return XCTFail() }
 
         XCTAssertEqual(released, 0)
     }
@@ -470,8 +524,8 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         let b = try h.writePacket(named: "beta", text: Self.betaText)
         var releasedA = 0
         var releasedB = 0
-        assertStaged(h.coordinator.stage(from: a.url, releaseSource: { releasedA += 1 }))
-        assertStaged(h.coordinator.stage(from: b.url, releaseSource: { releasedB += 1 }))
+        assertStaged(await h.coordinator.stage(from: a.url, releaseSource: { releasedA += 1 }))
+        assertStaged(await h.coordinator.stage(from: b.url, releaseSource: { releasedB += 1 }))
 
         await h.confirmCurrentReview()
         XCTAssertEqual([releasedA, releasedB], [1, 0])
@@ -480,14 +534,14 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertEqual([releasedA, releasedB], [1, 1])
     }
 
-    func testReMatchingAfterAddingASourceKeepsTheSourceToRelease() throws {
+    func testReMatchingAfterAddingASourceKeepsTheSourceToRelease() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "gamma", text: Self.alphaText, recipientSupplied: true)
         var released = 0
-        assertStaged(h.coordinator.stage(from: packet.url, releaseSource: { released += 1 }))
+        assertStaged(await h.coordinator.stage(from: packet.url, releaseSource: { released += 1 }))
         let before = try XCTUnwrap(h.coordinator.review)
 
-        h.coordinator.refreshAfterAddingSource()
+        await h.coordinator.refreshAfterAddingSource()
         XCTAssertNotEqual(h.coordinator.review?.id, before.id)
         h.coordinator.cancel()
 
@@ -496,10 +550,10 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
 
     // MARK: State shared with the views
 
-    func testWritesFromTheViewsAreAdoptedWithoutBeingPublishedBackOrCleanedUp() throws {
+    func testWritesFromTheViewsAreAdoptedWithoutBeingPublishedBackOrCleanedUp() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
-        assertStaged(h.coordinator.stage(from: packet.url))
+        assertStaged(await h.coordinator.stage(from: packet.url))
         let folder = try XCTUnwrap(h.coordinator.review).extractionDirectory
         h.events.removeAll()
 
@@ -521,7 +575,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
 
     /// The model's three properties are the views' copy: still `@Published`, still written by the sheet binding, and
     /// each coordinator change reaches them once.
-    func testTheModelKeepsItsThreePublishersAndAWritableSheetBinding() throws {
+    func testTheModelKeepsItsThreePublishersAndAWritableSheetBinding() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
         let model = Gate1AppModel(
@@ -540,6 +594,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         defer { subscriptions.forEach { $0.cancel() } }
 
         model.handleIncomingURL(packet.url)
+        await model.waitForPackageStaging()
 
         let review = try XCTUnwrap(model.spokenMarginsPackageImportReview)
         defer { try? FileManager.default.removeItem(at: review.extractionDirectory) }
@@ -557,12 +612,12 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: review.extractionDirectory.path), "a bare write of nil leaves the folder")
     }
 
-    func testForcedFirstSourceMissLeavesTheReviewWithoutAMatch() throws {
+    func testForcedFirstSourceMissLeavesTheReviewWithoutAMatch() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
         h.forceSourceMiss = true
 
-        assertStaged(h.coordinator.stage(from: packet.url))
+        assertStaged(await h.coordinator.stage(from: packet.url))
 
         XCTAssertNil(h.coordinator.review?.matchingItemId)
         XCTAssertEqual(h.diagnostics["uiTestSharedSourceMiss"], "forced_once")
@@ -574,7 +629,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
     func testKillAndRelaunchTwiceLeavesOneStagedCopyOfThePacket() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
-        assertStaged(h.coordinator.stage(from: packet.url))
+        assertStaged(await h.coordinator.stage(from: packet.url))
         XCTAssertEqual(h.incomingFolderNames().count, 1)
 
         // The app is killed before Import; each launch sweeps, then reopens the packet from the Share inbox.
@@ -582,7 +637,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
             let relaunched = SpokenMarginsPackageImportCoordinator(environment: h.makeEnvironment())
             relaunched.sweepOrphanedFoldersOnce()
             // Staged while the sweep is still running: the sweep must not take the new folder.
-            assertStaged(relaunched.stage(from: packet.url))
+            assertStaged(await relaunched.stage(from: packet.url))
             await relaunched.sweepTask?.value
             XCTAssertEqual(h.incomingFolderNames(), [try XCTUnwrap(relaunched.review).extractionDirectory.lastPathComponent],
                            "only the folder of the review that is showing is left")
@@ -594,8 +649,8 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         let h = try makeHarness()
         let first = try h.writePacket(named: "alpha", text: Self.alphaText)
         let second = try h.writePacket(named: "beta", text: Self.betaText)
-        assertStaged(h.coordinator.stage(from: first.url))
-        assertStaged(h.coordinator.stage(from: second.url))
+        assertStaged(await h.coordinator.stage(from: first.url))
+        assertStaged(await h.coordinator.stage(from: second.url))
         XCTAssertEqual(h.incomingFolderNames().count, 2, "one showing, one waiting")
 
         h.coordinator.sweepOrphanedFoldersOnce()

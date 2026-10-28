@@ -210,6 +210,7 @@ final class EpisodeMapStoredNamesTests: XCTestCase {
         _ = try SpokenMarginsPackageArchive.write(PreparedSpokenMarginsPackage(manifest: manifest,
             artifactData: prepared.artifactData, assetFiles: assetFiles), to: packetURL)
         model.handleIncomingURL(packetURL)
+        await model.waitForPackageStaging()
         XCTAssertEqual(model.spokenMarginsPackageImportReview?.matchingItemId, itemID)
         model.confirmSpokenMarginsPackageImport()
         for _ in 0..<500 where model.isImportingSpokenMarginsPackage {

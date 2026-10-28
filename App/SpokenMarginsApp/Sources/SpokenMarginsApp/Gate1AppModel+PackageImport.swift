@@ -18,9 +18,10 @@ extension Gate1AppModel {
         keptNotices: KeptPackageNotices = KeptPackageNotices(),
         appVersion: String = KeptPackageNotices.currentAppVersion,
         now: Date = Date()
-    ) throws {
+    ) async throws {
         packageImport.sweepOrphanedFoldersOnce()
-        let payloadIDs = try packageStore.pendingPayloadIDs()
+        // The staging below is awaited, so the label covers only the folder listing; `stagePackageFiles` names the rest.
+        let payloadIDs = try hangTelemetry.labels.scoped("pendingPackageHandoffs") { try packageStore.pendingPayloadIDs() }
         diagnostics["pendingSpokenMarginsPackages"] = "\(payloadIDs.count)"
         for payloadID in payloadIDs where spokenMarginsPackageImportReview == nil {
             do {
@@ -38,7 +39,7 @@ extension Gate1AppModel {
                     continue
                 }
                 let packageURL = try packageStore.packageURL(payloadID: payloadID)
-                let outcome = stageSpokenMarginsPackage(from: packageURL, announcesRejection: announces) {
+                let outcome = await stageSpokenMarginsPackage(from: packageURL, announcesRejection: announces) {
                     try? packageStore.deletePackage(payloadID: payloadID)
                     keptNotices.forget(payloadID: payloadID)
                 }
@@ -51,6 +52,8 @@ extension Gate1AppModel {
                     diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "opened"
                     continue
                 }
+                // A staging cut short by a cancelled caller says nothing about the file: keep it for the next launch.
+                guard !Task.isCancelled else { return }
                 try packageStore.deletePackage(payloadID: payloadID)
                 keptNotices.forget(payloadID: payloadID)
                 diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "rejected"
@@ -65,7 +68,7 @@ extension Gate1AppModel {
             try? packageStore.deletePackage(payloadID: payloadID)
             keptNotices.forget(payloadID: payloadID)
         }
-        keptNotices.forgetAll(except: Set(try packageStore.pendingPayloadIDs()))
+        keptNotices.forgetAll(except: Set(try hangTelemetry.labels.scoped("pendingPackageHandoffs") { try packageStore.pendingPayloadIDs() }))
     }
 
     enum SpokenMarginsPackageStageOutcome: Equatable {
@@ -75,14 +78,26 @@ extension Gate1AppModel {
     }
 
     @discardableResult
-    func stageSpokenMarginsPackageImport(from sourceURL: URL) -> Bool {
-        stageSpokenMarginsPackage(from: sourceURL, announcesRejection: true) == .opened
+    func stageSpokenMarginsPackageImport(from sourceURL: URL) async -> Bool {
+        await stageSpokenMarginsPackage(from: sourceURL, announcesRejection: true) == .opened
+    }
+
+    /// Opens a packet from a place that cannot wait for the staging (a URL the system handed over). The staging
+    /// searches the Library off the main actor, so the review shows a moment later; `waitForPackageStaging` is for tests.
+    func stageSpokenMarginsPackageImportInBackground(from sourceURL: URL) {
+        packageImport.launch { [weak self] in
+            _ = await self?.stageSpokenMarginsPackageImport(from: sourceURL)
+        }
+    }
+
+    func waitForPackageStaging() async {
+        await packageImport.waitForStaging()
     }
 
     func stageSpokenMarginsPackage(
         from sourceURL: URL, announcesRejection: Bool, releaseSource: (@MainActor () -> Void)? = nil
-    ) -> SpokenMarginsPackageStageOutcome {
-        switch packageImport.stage(from: sourceURL, announcesRejection: announcesRejection, releaseSource: releaseSource) {
+    ) async -> SpokenMarginsPackageStageOutcome {
+        switch await packageImport.stage(from: sourceURL, announcesRejection: announcesRejection, releaseSource: releaseSource) {
         case .rejected(let needsNewerApp):
             return needsNewerApp ? .rejectedNeedsNewerApp : .rejected
         case .staged:
@@ -112,7 +127,7 @@ extension Gate1AppModel {
             link,
             stage: { [weak self] file in
                 guard let self else { return }
-                let opened = self.stageSpokenMarginsPackageImport(from: file)
+                let opened = await self.stageSpokenMarginsPackageImport(from: file)
                 self.diagnostics["lastShareLink"] = opened ? "opened" : "rejected"
             },
             fail: { [weak self] message, retryable in
@@ -134,7 +149,7 @@ extension Gate1AppModel {
         isSharedSpokenMarginsPackagePresented = false
         Task { @MainActor [weak self] in
             await Task.yield()
-            self?.stageSpokenMarginsPackageImport(from: packageURL)
+            await self?.stageSpokenMarginsPackageImport(from: packageURL)
         }
     }
 
@@ -146,7 +161,7 @@ extension Gate1AppModel {
     /// Build 23 presentation code calls this seam instead of asking the user to
     /// reopen the package and repeat integrity verification.
     func refreshSpokenMarginsPackageImportAfterAddingSource() {
-        packageImport.refreshAfterAddingSource()
+        packageImport.launchRefreshAfterAddingSource()
     }
 
     func confirmSpokenMarginsPackageImport() {
@@ -337,7 +352,8 @@ extension SpokenMarginsPackageImportCoordinator.Environment {
             publishReview: { [weak model] in model?.spokenMarginsPackageImportReview = $0 },
             publishIsImporting: { [weak model] in model?.isImportingSpokenMarginsPackage = $0 },
             publishError: { [weak model] in model?.spokenMarginsPackageImportError = $0 },
-            attachListeningMap: { [weak model] map in try model?.attachSharedTextListeningMap(map) }
+            attachListeningMap: { [weak model] map in try model?.attachSharedTextListeningMap(map) },
+            labels: model.hangTelemetry.labels
         )
     }
 }
