@@ -33,14 +33,19 @@ final class CommunityMapFetchService {
     ) {
         // Opted out: read nothing, send nothing, not even a config request.
         guard Self.optedIn else { return }
-        guard !inFlight.contains(itemId), let item = try? store.loadItem(id: itemId) else { return }
-        let episodeKey = CommunityMapEpisodeKey.key(for: item)
-        let blockedUntil = episodeKey.flatMap { Self.loadLog().blockedUntil(episodeKey: $0) }
+        guard !inFlight.contains(itemId) else { return }
         let audioFile = localAudio(itemId)
         let fetcher = self.fetcher
         let bridge = self.bridge
         inFlight.insert(itemId)
         Task {
+            // The item is read off the main thread (#2507); an item that is gone asks nothing, as before.
+            guard let item = try? await StoreReader(store).read({ try $0.loadItem(id: itemId) }) else {
+                self.inFlight.remove(itemId)
+                return
+            }
+            let episodeKey = CommunityMapEpisodeKey.key(for: item)
+            let blockedUntil = episodeKey.flatMap { Self.loadLog().blockedUntil(episodeKey: $0) }
             let outcome = await fetcher.fetchIfEligible(
                 item: item, blockedUntil: blockedUntil,
                 optedIn: { await MainActor.run { Self.optedIn } },

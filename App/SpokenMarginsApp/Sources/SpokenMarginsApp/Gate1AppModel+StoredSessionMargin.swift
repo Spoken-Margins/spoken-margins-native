@@ -19,8 +19,9 @@ extension Gate1AppModel {
 
     /// The Library items the Add Margin action offers. Read from the database, not `libraryItems`, because a
     /// shortcut can run before the Library screen has loaded its rows.
-    func shortcutItemChoices(startedOnly: Bool, matching query: String? = nil) -> [StoredSessionMargin.ItemChoice] {
-        guard let store, let items = try? store.listItemSummaries(), let sessions = try? store.loadSessions() else { return [] }
-        return StoredSessionMargin.itemChoices(items: items, sessions: sessions, startedOnly: startedOnly, matching: query)
+    /// The reads run off the main thread (#2507): Siri and Shortcuts ask while the listener waits on the picker.
+    func shortcutItemChoices(startedOnly: Bool, matching query: String? = nil) async -> [StoredSessionMargin.ItemChoice] {
+        guard let store else { return [] }
+        return (try? await StoreReader(store).shortcutItemChoices(startedOnly: startedOnly, matching: query)) ?? []
     }
 }
