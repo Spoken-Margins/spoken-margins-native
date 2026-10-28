@@ -85,6 +85,7 @@ public actor LiveSessionFileWorker {
     struct Lifecycle: Equatable {
         var startedAt: Date
         var endedAt: Date?
+        var endTappedAt: Date?
         var endReason: String?
         var endNote: String?
         var resumedAt: Date?
@@ -92,6 +93,7 @@ public actor LiveSessionFileWorker {
         init(_ session: LiveSession) {
             startedAt = session.startedAt
             endedAt = session.endedAt
+            endTappedAt = session.endTappedAt
             endReason = session.endReason
             endNote = session.endNote
             resumedAt = session.resumedAt
@@ -100,6 +102,7 @@ public actor LiveSessionFileWorker {
         func apply(to session: inout LiveSession) {
             session.startedAt = startedAt
             session.endedAt = endedAt
+            session.endTappedAt = endTappedAt
             session.endReason = endReason
             session.endNote = endNote
             session.resumedAt = resumedAt

@@ -59,8 +59,8 @@ struct LiveSessionView: View {
         .onAppear { controller.load() }
         .onDisappear { controller.stopPolling() }
         .sheet(isPresented: $showsEndSheet) {
-            LiveSessionEndSheet(kind: controller.session?.kind ?? .meeting) { endPosition, endWhere in
-                if controller.end(endPositionMs: endPosition, endWhere: endWhere) { showsEndSheet = false }
+            LiveSessionEndSheet(kind: controller.session?.kind ?? .meeting, startedAt: controller.session?.startedAt ?? Date()) { when, endPosition, endWhere in
+                if controller.end(when: when, endPositionMs: endPosition, endWhere: endWhere) { showsEndSheet = false }
             }
         }
         .sheet(isPresented: $showsLineUp) {
@@ -313,13 +313,42 @@ struct PositionNudgeRow: View {
 /// Asks where the listener is at the end. Skippable; nudged for audiobooks, where it sets the pace.
 private struct LiveSessionEndSheet: View {
     let kind: ElsewhereKind
-    let onEnd: (Int?, String?) -> Void
+    let startedAt: Date
+    let onEnd: (LiveSessionEnd.When, Int?, String?) -> Void
     @State private var endPosition = ""
     @State private var endWhere = ""
+    /// Index into the quick choices; one past the last is "At a time".
+    @State private var whenIndex = 0
+    @State private var clockTime = Date()
+    /// Fixed when the sheet opens, so the offered choices don't shift while it is up.
+    @State private var openedAt = Date()
+
+    private var choices: [LiveSessionEnd.When] { LiveSessionEnd.quickChoices(startedAt: startedAt, tappedAt: openedAt) }
+
+    private var when: LiveSessionEnd.When {
+        guard whenIndex < choices.count else {
+            let parts = Calendar.current.dateComponents([.hour, .minute], from: clockTime)
+            return .clockTime(hour: parts.hour ?? 0, minute: parts.minute ?? 0)
+        }
+        return choices[whenIndex]
+    }
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Picker("When did it end?", selection: $whenIndex) {
+                        ForEach(Array(choices.enumerated()), id: \.offset) { index, choice in
+                            Text(choice.label).tag(index)
+                        }
+                        Text("At a time…").tag(choices.count)
+                    }
+                    if whenIndex >= choices.count {
+                        DatePicker("Time", selection: $clockTime, displayedComponents: .hourAndMinute)
+                    }
+                } footer: {
+                    Text("If you stopped a while ago, say so: it keeps your Margins' places close.")
+                }
                 if kind != .paper {
                     Section {
                         TextField(kind == .meeting ? "Meeting clock, like 47:30" : "Time in the book, like 1:23:10", text: $endPosition)
@@ -342,7 +371,7 @@ private struct LiveSessionEndSheet: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("End") {
-                        onEnd(LiveSessionPositionMap.parse(endPosition), endWhere.isEmpty ? nil : endWhere)
+                        onEnd(when, LiveSessionPositionMap.parse(endPosition), endWhere.isEmpty ? nil : endWhere)
                     }
                 }
             }

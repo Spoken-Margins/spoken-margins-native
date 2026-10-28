@@ -125,6 +125,7 @@ public enum LiveSessionMarkdown {
         if let end = session.endedAt {
             formatter.dateFormat = "HH:mm"
             when += " to \(formatter.string(from: end))"
+            if let tapped = session.endTappedAt { when += ", told us at \(formatter.string(from: tapped))" }
         }
         lines.append(when)
         if let start = session.startPositionMs { lines.append("- Started at: \(LiveSessionPositionMap.clock(start))") }

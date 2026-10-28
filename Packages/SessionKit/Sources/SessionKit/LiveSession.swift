@@ -26,7 +26,11 @@ public struct LiveSession: Codable, Equatable, Sendable {
     public var kind: ElsewhereKind
     public var title: String
     public var startedAt: Date
+    /// When it stopped, as the listener said (#2709). The tap time when they ended it at once.
     public var endedAt: Date?
+    /// When the listener tapped End, kept only when they said it stopped earlier (`LiveSessionEnd`). Nil for a
+    /// session from an earlier build and for one ended at once; either reads as ended at `endedAt`.
+    public var endTappedAt: Date?
     /// "Where are you now?" as a time in the source when the session started and ended: 0:00 at the start of
     /// an audiobook, 2:00 when the meeting clock shows two minutes. The main field; `LiveSessionPositionMap`
     /// turns it into each Margin's approximate position.

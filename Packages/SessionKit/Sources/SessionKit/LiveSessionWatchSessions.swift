@@ -52,6 +52,7 @@ public enum LiveSessionWatchSessions {
             session = existing
             session.startedAt = min(existing.startedAt, startedAt)
             session.endedAt = nil
+            session.endTappedAt = nil
             session.endReason = nil
             for index in session.margins.indices {
                 session.margins[index].sessionOffsetMs = max(0, Int((session.margins[index].markedAt.timeIntervalSince(session.startedAt) * 1_000).rounded()))
@@ -108,12 +109,14 @@ public enum LiveSessionWatchSessions {
     public static func resume(id: String, at: Date, sessions: [String: LiveSession]) -> LiveSession? {
         guard var session = sessions[id], session.savedItemId == nil, session.isQuick != true,
               let end = session.endedAt, session.endReason != EndReason.placeholder.rawValue else { return nil }
-        let since = at.timeIntervalSince(end)
+        // The Resume window runs from when End was tapped, not from the earlier time the listener said it stopped.
+        let since = at.timeIntervalSince(session.endTappedAt ?? end)
         guard since >= -WatchContract.offsetMaxRoundTrip, since <= WatchContract.resumeWindow else { return nil }
         // Another named session started since it ended: that one is what the listener is doing.
         let startedSince = sessions.values.contains { $0.id != id && $0.isQuick != true && $0.savedItemId == nil && $0.startedAt >= end }
         guard !startedSince else { return nil }
         session.endedAt = nil
+        session.endTappedAt = nil
         session.endReason = nil
         session.endNote = nil
         session.resumedAt = at

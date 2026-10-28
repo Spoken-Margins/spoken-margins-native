@@ -82,18 +82,18 @@ final class LiveSessionController: ObservableObject {
         sessionChanged()
     }
 
-    /// Ends the session. Rejects an end position before the start position.
-    func end(endPositionMs: Int?, endWhere: String?) -> Bool {
+    /// Ends the session, which stopped at `when` (#2709). Rejects an end position before the start position, and a
+    /// stopped time before the session began or in the future.
+    func end(when: LiveSessionEnd.When = .now, endPositionMs: Int?, endWhere: String?) -> Bool {
+        guard var ending = session else { return false }
         do {
-            try LiveSessionPositionMap.validate(startPositionMs: session?.startPositionMs, endPositionMs: endPositionMs)
+            try LiveSessionEnd.end(&ending, when: when, tappedAt: Date(), endPositionMs: endPositionMs, endWhere: endWhere)
         } catch {
             errorMessage = error.localizedDescription
             return false
         }
         WatchMarginReceiver.shared.fileWaitingMarks()
-        session?.endedAt = Date()
-        session?.endPositionMs = endPositionMs
-        session?.endWhere = endWhere
+        session = ending
         save()
         endActivities()
         sessionChanged()

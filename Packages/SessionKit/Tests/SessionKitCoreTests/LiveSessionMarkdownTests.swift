@@ -79,6 +79,16 @@ final class LiveSessionMarkdownTests: XCTestCase {
         XCTAssertTrue(markdown.contains("## 2. 1:01\n\nSaid while replaying\n\nPosition: Added after the session, at 1:01 in the recording"), markdown)
     }
 
+    // #2709: the export says when it stopped and when the listener told us.
+    func testTheExportSaysWhenItStoppedAndWhenWeWereTold() {
+        var told = record()
+        told.session.endedAt = start.addingTimeInterval(900)
+        told.session.endTappedAt = start.addingTimeInterval(1_500)
+        XCTAssertTrue(LiveSessionMarkdown.render(told, includeTranscript: false, timeZone: utc).contains("- Date: 2026-03-04 10:00 to 10:15, told us at 10:25\n"))
+        let plain = LiveSessionMarkdown.render(record(), includeTranscript: false, timeZone: utc)
+        XCTAssertTrue(plain.contains("- Date: 2026-03-04 10:00 to 10:15\n"), plain)
+    }
+
     func testARecordWithoutLinksFallsBackToTheOrdinaryExport() {
         XCTAssertNil(record().current([]))
     }
