@@ -38,7 +38,7 @@ A packet is a zip holding `manifest.json`, `preview.md`, `artifacts/<name>.json`
 1. The archive: no other paths, no duplicates, size limits (100 MB in all, 1 MB manifest, 5 MB per artifact, 20 MB per voice), and no entry that unpacks to more than 100 times its packed size.
 2. The manifest: the version, no unknown keys, the field types, unique ids and paths, and every declared file present with its `byteCount` and `sha256`.
 3. The artifacts: each known kind at its one version. An unknown kind or version is skipped when `required` is false and refused when it is true.
-4. The rules across fields: the item's links are https without a user name, the redactions, the item transport, the embedded text's edition hashes, the Margins' bounds, and reply links that name a Margin in the packet.
+4. The rules across fields: the item's links are https without a user name, the redactions, the item transport, the embedded text's edition hashes, the Margins' bounds, the limits inside fingerprint spines and phrase sketches (the first failed rule is named, as the app's diagnostics name it), and reply links that name a Margin in the packet.
 5. `contentDigest`: SHA-256 over the manifest without `contentDigest` (sorted keys, no spaces, slashes unescaped, absent optionals left out, `createdAt` with milliseconds), then, for `preview.md` and each declared file in path order, `path NUL sha256(bytes) NUL byte-count NUL`.
 6. `preview.md` must be exactly the text the writer derives from the packet.
 
@@ -49,8 +49,9 @@ A packet is a zip holding `manifest.json`, `preview.md`, `artifacts/<name>.json`
 The Swift reader in `Packages/SessionKit/Sources/SessionKitSharing/InterjectionPackageArchive.swift` stays the authority. This reader leaves to it:
 
 - decoding voice audio (it only looks for an MPEG-4 `ftyp` box) and parsing acoustic signatures;
-- the Listening Map quotation rule (`PortableListeningMapContract`) when it turns on non-ASCII text, where Python splits words differently (it warns `not-checked` instead; a text under ten words, or a scene with no source of ten words, needs no guess), and the bounds inside fingerprint spines and phrase sketches (their field types are checked);
+- the Listening Map quotation rule (`PortableListeningMapContract`) when it turns on non-ASCII text, where Python splits words differently (it warns `not-checked` instead; a text under ten words, or a scene with no source of ten words, needs no guess);
 - URL syntax beyond the scheme, host and user name (Foundation's `URLComponents`), and whether `ISO8601DateFormatter` takes a zone written without a colon (this reader does; digits and field ranges are checked);
+- hexadecimal digits written in fullwidth forms (Swift's `isHexDigit` takes them in a digest or a phrase-sketch hash; this reader takes ASCII only, and no writer emits them);
 - the normalized-content hash of non-ASCII text, which depends on Foundation's case and diacritic folding (it warns instead).
 
 It counts characters as extended grapheme clusters (UAX #29, with the Indic conjunct rule of Unicode 15.1) from its own property ranges, since Python has no segmenter; the emoji ranges are the common ones, so a rare symbol may count differently. That matters only for the limits and the character count in the preview.

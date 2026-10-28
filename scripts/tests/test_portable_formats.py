@@ -43,6 +43,25 @@ def verdict(data):
     return 'valid' if not report.errors else report.errors[0].code
 
 
+SALT_32 = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='   # 32 bytes, the size the sketch builder writes
+HASH = 'a' * 32
+
+
+def with_signature(manifest, assets, asset_id='sig'):
+    """The packet's manifest and assets with one acoustic signature a fingerprint landmark can name."""
+    manifest = json.loads(json.dumps(manifest))
+    path = f'assets/evidence/{asset_id}.shazamsignature'
+    manifest['assets'] = [*manifest['assets'], {
+        'id': asset_id, 'role': fmt.ROLE_SIGNATURE, 'path': path, 'mimeType': fmt.SIGNATURE_MIME_TYPE,
+        'durationMs': 10_000, 'anchorOffsetMs': 0, 'provenance': 'observed_decoded_playback'}]
+    return manifest, {**assets, path: b'signature'}
+
+
+def message_of(data):
+    report = fmt.read_packet(data)
+    return report.errors[0].message if report.errors else ''
+
+
 class ShippedPacketTests(unittest.TestCase):
     def test_packets_written_by_the_app_read_as_valid(self):
         packets = sorted(KIT_PACKETS.glob('*.spokenmargins')) + [EXAMPLES / 'article-reference.spokenmargins',
@@ -347,6 +366,159 @@ class RefusalTests(unittest.TestCase):
                 self.assertEqual(verdict(fmt.write_packet(manifest, artifacts, assets)), expected)
 
 
+class SpineAndSketchBoundsTests(unittest.TestCase):
+    """#1856: the limits the Swift reader enforces inside a fingerprint spine and a phrase sketch. One row per rule
+    that fails, named in the message; one row per limit exactly at its edge that stays valid. Both shipped readers
+    (this build's and Build 29's frozen copy) hold the same rules, so none of these is an `older-reader-refuses`."""
+
+    DATE = '2026-10-17T12:00:00Z'
+
+    def landmark(self, order=0, **changes):
+        return {'id': f'l{order}', 'order': order, 'sourceMediaStartMs': 0, 'sourceMediaEndMs': 10,
+                'anchorMediaTimeMs': 5, 'continuityEpoch': 0, 'trigger': 'initial_playback',
+                'provenance': 'observed_decoded_playback', 'signatureAssetId': 'sig', 'generatorVersion': 'g',
+                **changes}
+
+    def spine(self, landmarks=None, **changes):
+        return {'id': 'spine', 'itemId': 'item', 'createdAt': self.DATE, 'generatorVersion': 'g',
+                'landmarks': [self.landmark()] if landmarks is None else landmarks, **changes}
+
+    def sketch(self, windows=None, **changes):
+        return {'id': 'sketch', 'itemId': 'item', 'saltBase64': SALT_32, 'normalizationVersion': 'v1',
+                'shingleWidth': 3, 'maximumHashesPerWindow': 24, 'createdAt': self.DATE,
+                'windows': [self.window()] if windows is None else windows, **changes}
+
+    def window(self, index=0, **changes):
+        return {'id': f'w{index}', 'sourceStartMs': 0, 'sourceEndMs': 10, 'hashes': [HASH], **changes}
+
+    def packet(self, kind, document):
+        # An article, so a spine's episodeGUID has no podcast GUID to disagree with.
+        manifest, artifacts, assets = example('article-reference.spokenmargins')
+        manifest, assets = with_signature(manifest, assets)
+        path = f'artifacts/{kind}.json'
+        version = fmt.ARTIFACT_VERSIONS[kind]
+        manifest['artifacts'].append({'id': document['id'], 'kind': kind, 'path': path, 'required': False,
+                                      'schemaVersion': version})
+        artifacts = {**artifacts, path: fmt.encode_manifest({**document, 'schemaVersion': version})}
+        return fmt.write_packet(manifest, artifacts, assets)
+
+    def run_rows(self, kind, rows):
+        for label, document, rule in rows:
+            with self.subTest(label):
+                data = self.packet(kind, document)
+                if rule is None:
+                    self.assertEqual(verdict(data), 'valid', message_of(data))
+                else:
+                    self.assertEqual(verdict(data), 'invalid-manifest')
+                    self.assertIn(f': {rule}', message_of(data))
+
+    def test_a_valid_spine_and_sketch_read_as_valid(self):
+        self.run_rows('edition_fingerprint_spine', [('spine', self.spine(), None)])
+        self.run_rows('transcript_phrase_sketch', [('sketch', self.sketch(), None)])
+
+    def test_spine_rules(self):
+        many = [self.landmark(i, id=f'l{i}') for i in range(501)]
+        self.run_rows('edition_fingerprint_spine', [
+            ('item_id empty', self.spine(itemId=''), 'item_id'),
+            ('item_id 501', self.spine(itemId='x' * 501), 'item_id'),
+            ('item_id 500', self.spine(itemId='x' * 500), None),
+            ('landmark_count 501', self.spine(many), 'landmark_count'),
+            ('landmark_count 500', self.spine(many[:500]), None),
+            ('generator_version 201', self.spine(generatorVersion='g' * 201), 'generator_version'),
+            ('generator_version 200', self.spine(generatorVersion='g' * 200), None),
+            ('canonical_url http', self.spine(canonicalURL='http://example.com/a'), 'canonical_url'),
+            ('canonical_url with a password', self.spine(canonicalURL='https://u:p@example.com/a'), 'canonical_url'),
+            ('canonical_url https', self.spine(canonicalURL='https://example.com/a'), None),
+            ('episode_guid 1001', self.spine(episodeGUID='g' * 1001), 'episode_guid'),
+            ('episode_guid 1000', self.spine(episodeGUID='g' * 1000), None),
+            ('duration negative', self.spine(producingEditionDurationMs=-1), 'duration'),
+            ('duration zero', self.spine(producingEditionDurationMs=0), None),
+            ('edition_sha256 upper case', self.spine(producingEditionSHA256='A' * 64), 'edition_sha256'),
+            ('edition_sha256 short', self.spine(producingEditionSHA256='a' * 63), 'edition_sha256'),
+            ('edition_sha256 lower case', self.spine(producingEditionSHA256='a' * 64), None),
+            ('landmark_ids repeated', self.spine([self.landmark(0), self.landmark(1, id='l0')]), 'landmark_ids'),
+            ('landmark_order starts at 1', self.spine([self.landmark(1)]), 'landmark_order'),
+            ('landmark_order skips', self.spine([self.landmark(0), self.landmark(2)]), 'landmark_order'),
+            ('landmark_order out of order', self.spine([self.landmark(1), self.landmark(0)]), 'landmark_order'),
+        ])
+
+    def test_the_spine_names_the_items_episode_by_canonical_equivalence(self):
+        """Swift compares strings by canonical equivalence: an NFC and an NFD spelling of one GUID are the same."""
+        manifest, artifacts, assets = example('podcast-reference.spokenmargins')
+        manifest, assets = with_signature(manifest, assets)
+        manifest['item']['episodeGUID'] = 'caf\u00e9-1'
+        document = self.spine(episodeGUID='cafe\u0301-1')
+        path, version = 'artifacts/spine.json', fmt.ARTIFACT_VERSIONS['edition_fingerprint_spine']
+        manifest['artifacts'].append({'id': 'spine', 'kind': 'edition_fingerprint_spine', 'path': path,
+                                      'required': False, 'schemaVersion': version})
+        artifacts = {**artifacts, path: fmt.encode_manifest({**document, 'schemaVersion': version})}
+        self.assertEqual(verdict(fmt.write_packet(manifest, artifacts, assets)), 'valid')
+        artifacts[path] = fmt.encode_manifest({**self.spine(episodeGUID='other'), 'schemaVersion': version})
+        self.assertEqual(verdict(fmt.write_packet(manifest, artifacts, assets)), 'edition-mismatch')
+
+    def test_the_first_failed_spine_rule_is_the_one_named(self):
+        data = self.packet('edition_fingerprint_spine', self.spine(itemId='', generatorVersion='g' * 201))
+        self.assertIn(': item_id', message_of(data))
+
+    def test_landmark_rules(self):
+        self.run_rows('edition_fingerprint_spine', [(label, self.spine([self.landmark(**change)]), rule) for label, change, rule in [
+            ('source start negative', {'sourceMediaStartMs': -1}, 'source_range'),
+            ('source end before start', {'sourceMediaStartMs': 5, 'sourceMediaEndMs': 4}, 'source_range'),
+            ('source end equals start', {'sourceMediaStartMs': 5, 'sourceMediaEndMs': 5}, None),
+            ('span 30001', {'sourceMediaEndMs': 30_001}, 'duration'),
+            ('span 30000', {'sourceMediaEndMs': 30_000}, None),
+            ('anchor time negative', {'anchorMediaTimeMs': -1}, 'anchor_time'),
+            ('continuity epoch negative', {'continuityEpoch': -1}, 'continuity_epoch'),
+            ('generator 201', {'generatorVersion': 'g' * 201}, 'generator_version'),
+            ('generator 200', {'generatorVersion': 'g' * 200}, None),
+            ('signature names no asset', {'signatureAssetId': 'nope'}, 'signature_asset'),
+        ]])
+
+    def test_sketch_rules(self):
+        many = [self.window(i) for i in range(10_001)]
+        self.run_rows('transcript_phrase_sketch', [
+            ('item_id empty', self.sketch(itemId=''), 'item_id'),
+            ('item_id 501', self.sketch(itemId='x' * 501), 'item_id'),
+            ('item_id 500', self.sketch(itemId='x' * 500), None),
+            ('normalization_version 201', self.sketch(normalizationVersion='v' * 201), 'normalization_version'),
+            ('normalization_version 200', self.sketch(normalizationVersion='v' * 200), None),
+            ('shingle_width 2', self.sketch(shingleWidth=2), 'shingle_width'),
+            ('maximum_hashes 23', self.sketch(maximumHashesPerWindow=23), 'maximum_hashes'),
+            ('salt 31 bytes', self.sketch(saltBase64='AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHg=='), 'salt'),
+            ('salt 33 bytes', self.sketch(saltBase64='AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g'), 'salt'),
+            ('salt not base64', self.sketch(saltBase64='not base64!'), 'salt'),
+            ('salt unpadded', self.sketch(saltBase64='AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8'), 'salt'),
+            ('window_count 10001', self.sketch(many), 'window_count'),
+            ('window_count 10000', self.sketch(many[:10_000]), None),
+            ('window_ids repeated', self.sketch([self.window(0), self.window(1, id='w0')]), 'window_ids'),
+        ])
+
+    def test_window_rules(self):
+        self.run_rows('transcript_phrase_sketch', [(label, self.sketch([self.window(**change)]), rule) for label, change, rule in [
+            ('start negative', {'sourceStartMs': -1}, 'start'),
+            ('end before start', {'sourceStartMs': 5, 'sourceEndMs': 4}, 'range'),
+            ('end equals start', {'sourceStartMs': 5, 'sourceEndMs': 5}, None),
+            ('span 30001', {'sourceEndMs': 30_001}, 'span'),
+            ('span 30000', {'sourceEndMs': 30_000}, None),
+            ('25 hashes', {'hashes': [HASH] * 25}, 'hash_count'),
+            ('24 hashes', {'hashes': [HASH] * 24}, None),
+            ('no hashes', {'hashes': []}, None),
+            ('hash 31 characters', {'hashes': ['a' * 31]}, 'hash_form'),
+            ('hash 33 characters', {'hashes': ['a' * 33]}, 'hash_form'),
+            ('hash upper case', {'hashes': ['A' * 32]}, 'hash_form'),
+            ('hash not hex', {'hashes': ['g' * 32]}, 'hash_form'),
+            ('hash with digits and a-f', {'hashes': ['0123456789abcdef' * 2]}, None),
+        ]])
+
+    def test_the_rules_run_in_swift_order(self):
+        """A landmark is read only after the spine's own rules held; a window only after the sketch's."""
+        bad_landmark = self.landmark(sourceMediaStartMs=-1)
+        data = self.packet('edition_fingerprint_spine', self.spine([bad_landmark], itemId=''))
+        self.assertIn(': item_id', message_of(data))
+        data = self.packet('transcript_phrase_sketch', self.sketch([self.window(sourceStartMs=-1)], shingleWidth=2))
+        self.assertIn(': shingle_width', message_of(data))
+
+
 class ListeningMapProposalTests(unittest.TestCase):
     """Claude audit on f529489: the reader passes proposals through PortableListeningMapContract.forSharing before
     it checks them, so a proposal that breaks a scene rule is left out, not a reason to refuse the Margins."""
@@ -568,7 +740,7 @@ class DecodeTests(unittest.TestCase):
 
     def packet_with(self, kind, document, required=False):
         manifest, artifacts, assets = example('podcast-reference.spokenmargins')
-        manifest = json.loads(json.dumps(manifest))
+        manifest, assets = with_signature(manifest, assets)
         path = f'artifacts/{kind}.json'
         version = fmt.ARTIFACT_VERSIONS[kind]
         manifest['artifacts'].append({'id': document['id'], 'kind': kind, 'path': path, 'required': required,
@@ -578,7 +750,7 @@ class DecodeTests(unittest.TestCase):
 
     def test_a_date_that_is_not_a_date_refuses_the_packet_wherever_it_sits(self):
         spine = {'id': 'spine', 'itemId': 'i', 'createdAt': self.DATE, 'generatorVersion': 'g', 'landmarks': []}
-        sketch = {'id': 'sketch', 'itemId': 'i', 'saltBase64': 'AA==', 'normalizationVersion': 'v', 'shingleWidth': 3,
+        sketch = {'id': 'sketch', 'itemId': 'i', 'saltBase64': SALT_32, 'normalizationVersion': 'v', 'shingleWidth': 3,
                   'maximumHashesPerWindow': 24, 'createdAt': self.DATE, 'windows': []}
         for kind, document in [('edition_fingerprint_spine', spine), ('transcript_phrase_sketch', sketch)]:
             with self.subTest(kind):
