@@ -7,7 +7,7 @@ final class LiveSessionClockTests: XCTestCase {
 
     func testTheOriginPlacesZeroWhereTheSourcesOwnClockBegan() throws {
         let live = LiveSession(id: "s", kind: .meeting, startedAt: start, startPositionMs: 12 * 60_000 + 30_000)
-        let origin = try XCTUnwrap(LiveSessionClock.origin(of: live))
+        let origin = try XCTUnwrap(LiveSessionClock.origin(of: live, now: start.addingTimeInterval(3_600)))
         XCTAssertEqual(start.timeIntervalSince(origin), 750, accuracy: 0.001)
         // Four minutes later the session counter says 4:00 and the meeting clock says 16:30.
         XCTAssertEqual(start.addingTimeInterval(240).timeIntervalSince(origin), 990, accuracy: 0.001)
@@ -16,15 +16,26 @@ final class LiveSessionClockTests: XCTestCase {
     func testTheOriginAgreesWithTheSessionsPredictedPosition() throws {
         var live = LiveSession(id: "s", kind: .meeting, startedAt: start, startPositionMs: 0)
         try LiveSessionEdit.setSourceClock(positionMs: 5 * 60_000, at: start.addingTimeInterval(15 * 60), on: &live)
-        let origin = try XCTUnwrap(LiveSessionClock.origin(of: live))
+        let origin = try XCTUnwrap(LiveSessionClock.origin(of: live, now: start.addingTimeInterval(3_600)))
         let later = start.addingTimeInterval(20 * 60)
         XCTAssertEqual(Double(try XCTUnwrap(LiveSessionPositionMap.position(at: later, in: live)).ms) / 1_000, later.timeIntervalSince(origin), accuracy: 0.001)
         XCTAssertGreaterThan(origin, start, "Start was tapped in the lobby, before the meeting's clock began")
     }
 
+    func testBeforeTheSourcesClockBeginsThereIsNoOriginAndTheBeginningIsNamed() throws {
+        var live = LiveSession(id: "s", kind: .meeting, startedAt: start, startPositionMs: 0)
+        try LiveSessionEdit.setSourceClock(positionMs: 0, at: start.addingTimeInterval(120), on: &live)
+        let begins = start.addingTimeInterval(120)
+        let before = begins.addingTimeInterval(-1)
+        XCTAssertNil(LiveSessionClock.origin(of: live, now: before))
+        XCTAssertEqual(LiveSessionClock.beginsAt(live, now: before), begins)
+        XCTAssertEqual(LiveSessionClock.origin(of: live, now: begins.addingTimeInterval(1)), begins)
+        XCTAssertNil(LiveSessionClock.beginsAt(live, now: begins.addingTimeInterval(1)))
+    }
+
     func testAPaperBookAndASessionWithNoStartPositionHaveNoClock() {
-        XCTAssertNil(LiveSessionClock.origin(of: LiveSession(id: "p", kind: .paper, startedAt: start, startPositionMs: 5_000)))
-        XCTAssertNil(LiveSessionClock.origin(of: LiveSession(id: "a", kind: .audiobook, startedAt: start)))
+        XCTAssertNil(LiveSessionClock.origin(of: LiveSession(id: "p", kind: .paper, startedAt: start, startPositionMs: 5_000), now: start))
+        XCTAssertNil(LiveSessionClock.origin(of: LiveSession(id: "a", kind: .audiobook, startedAt: start), now: start))
         XCTAssertNil(LiveSessionClock.title(for: .paper))
         XCTAssertEqual(LiveSessionClock.title(for: .meeting), "Meeting clock")
     }

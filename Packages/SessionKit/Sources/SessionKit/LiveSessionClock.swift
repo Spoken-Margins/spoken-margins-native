@@ -15,9 +15,21 @@ public enum LiveSessionClock {
     }
 
     /// The moment the source's clock read 0:00, so `Text(origin, style: .timer)` counts the source's own time.
-    /// Nil when the session has no clock: a paper book, or no start position given. It lies after the start when
-    /// Start was tapped before the source began.
-    public static func origin(of session: LiveSession) -> Date? {
+    /// Nil when the session has no clock: a paper book, or no start position given. Also nil while the source's clock
+    /// has not begun yet (Start tapped in the lobby): a timer counts down to a moment in the future, but the screen
+    /// holds at 0:00, so both wait for it (`beginsAt`).
+    public static func origin(of session: LiveSession, now: Date) -> Date? {
+        guard let origin = rawOrigin(of: session), origin <= now else { return nil }
+        return origin
+    }
+
+    /// When the source's clock begins, if that is still ahead: the moment to look again.
+    public static func beginsAt(_ session: LiveSession, now: Date) -> Date? {
+        guard let origin = rawOrigin(of: session), origin > now else { return nil }
+        return origin
+    }
+
+    private static func rawOrigin(of session: LiveSession) -> Date? {
         guard session.kind != .paper, let start = session.startPositionMs else { return nil }
         return session.startedAt.addingTimeInterval(-Double(start) / 1_000)
     }

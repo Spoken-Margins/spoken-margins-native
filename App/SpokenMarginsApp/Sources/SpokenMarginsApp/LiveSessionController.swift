@@ -24,6 +24,7 @@ final class LiveSessionController: ObservableObject {
     private var lastWrite: Task<Void, Never>?
     private var spokenStart: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
+    private var clockStartTask: Task<Void, Never>?
     private let phoneRecorder = LiveSessionPhoneRecorder()
     private var diskObserver: NSObjectProtocol?
 
@@ -192,6 +193,7 @@ final class LiveSessionController: ObservableObject {
     func stopPolling() {
         pollTask?.cancel()
         pollTask = nil
+        clockStartTask?.cancel()
         if let diskObserver { NotificationCenter.default.removeObserver(diskObserver) }
         diskObserver = nil
     }
@@ -352,13 +354,22 @@ final class LiveSessionController: ObservableObject {
     private static func activityState(for session: LiveSession, markCount: Int, lastMarkAt: Date?) -> LiveSessionActivityAttributes.ContentState {
         .init(
             markCount: markCount, lastMarkAt: lastMarkAt,
-            clockOrigin: LiveSessionClock.origin(of: session), clockTitle: LiveSessionClock.title(for: session.kind)
+            clockOrigin: LiveSessionClock.origin(of: session, now: Date()), clockTitle: LiveSessionClock.title(for: session.kind)
         )
     }
 
     /// The Lock Screen shows the source's clock (#2834), so a change to the kind or the clock reaches it.
     private func refreshActivities() {
         guard let session else { return }
+        // A clock that has not begun yet (Start tapped in the lobby) shows on the Lock Screen when it does.
+        clockStartTask?.cancel()
+        if let begins = LiveSessionClock.beginsAt(session, now: Date()) {
+            clockStartTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(max(0, begins.timeIntervalSinceNow) + 0.5))
+                guard !Task.isCancelled else { return }
+                self?.refreshActivities()
+            }
+        }
         Task {
             for activity in Activity<LiveSessionActivityAttributes>.activities {
                 let current = activity.content.state

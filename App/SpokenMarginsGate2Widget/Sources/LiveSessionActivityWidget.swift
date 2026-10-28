@@ -10,10 +10,10 @@ struct LiveSessionActivityWidget: Widget {
         ActivityConfiguration(for: LiveSessionActivityAttributes.self) { context in
             HStack(spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Live session")
+                    Text(context.state.clockTitle ?? "Live session")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.white.opacity(0.8))
-                    Text(context.attributes.sessionStartedAt, style: .timer)
+                    Text(context.state.clockOrigin ?? context.attributes.sessionStartedAt, style: .timer)
                         .font(.title2.monospacedDigit().weight(.semibold))
                         .foregroundStyle(.white)
                     Text(markLabel(context.state.markCount))
