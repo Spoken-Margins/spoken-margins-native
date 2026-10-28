@@ -90,6 +90,11 @@ extension Gate2LiveActivityAttributes.ContentState {
 
     var recordingTint: Color { microphone == .capturing ? .red : .orange }
 
+    /// Progress and the idle glyph are sky blue, never green: red and green sit side by side on this card when a
+    /// Margin records, and the pair cannot be told apart by a red-green colourblind listener (#1924). Sky blue is the
+    /// Okabe-Ito colour that stays distinct from both red and orange.
+    static let progressTint = Color(red: 0.34, green: 0.71, blue: 0.91)
+
     /// The status in words. A Margin whose microphone is not capturing never reads "Recording".
     var statusLabel: String {
         guard isRecording else { return isLoadingAudio ? "Loading…" : status.capitalized }
@@ -158,7 +163,7 @@ private struct Gate2LiveActivitySmallView: View {
             HStack(alignment: .center, spacing: 8) {
                 Image(systemName: stateImage)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(state.isRecording ? state.recordingTint : .green)
+                    .foregroundStyle(state.isRecording ? state.recordingTint : Gate2LiveActivityAttributes.ContentState.progressTint)
                     .frame(width: 22, height: 22)
                     .accessibilityHidden(true)
 
@@ -192,7 +197,7 @@ private struct Gate2LiveActivitySmallView: View {
                 }
 
                 ProgressView(value: Double(max(0, min(100, state.progressPercent))), total: 100)
-                    .tint(isLuminanceReduced ? .white.opacity(0.72) : .green)
+                    .tint(isLuminanceReduced ? .white.opacity(0.72) : Gate2LiveActivityAttributes.ContentState.progressTint)
             }
         }
         .padding(.horizontal, 12)
@@ -226,7 +231,7 @@ private struct Gate2LiveActivityView: View {
             }
 
             ProgressView(value: Double(max(0, min(100, state.progressPercent))), total: 100)
-                .tint(state.offersResume(isStale: isStale) ? .white.opacity(0.45) : .green)
+                .tint(state.offersResume(isStale: isStale) ? .white.opacity(0.45) : Gate2LiveActivityAttributes.ContentState.progressTint)
 
             if state.offersResume(isStale: isStale) {
                 Label(Gate2LiveActivityCopy.pausedPrompt, systemImage: "play.circle.fill")
