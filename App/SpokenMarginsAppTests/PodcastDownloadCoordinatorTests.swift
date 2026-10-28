@@ -21,6 +21,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         ))
 
         coordinator.register(itemId: "bbc-episode", remoteURL: url)
+        coordinator.flushPendingRowWritesForTesting()
 
         let expected = "https://open.live.bbc.co.uk/mediaselector/6/redir/version/2.0/mediaset/audio-nondrm-download-rss/proto/https/vpid/p0kbxb7s.mp3"
         XCTAssertEqual(coordinator.recordsByItemId["bbc-episode"]?.remoteURL, expected)
@@ -151,6 +152,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         coordinator.configureActiveItem("active")
 
         coordinator.clearDownloads()
+        coordinator.flushPendingRowWritesForTesting()
 
         XCTAssertEqual(coordinator.recordsByItemId["active"]?.state, .availableOffline)
         XCTAssertEqual(coordinator.recordsByItemId["old"]?.state, .evicted)
@@ -188,9 +190,9 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
             relativePath: "PodcastAudio/episode.mp3", byteCount: 1, isReproducible: true
         ))
         coordinator.removeItem("episode")
+        coordinator.flushPendingRowWritesForTesting()
 
         XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty)
-        coordinator.flushPendingRowWritesForTesting()
         XCTAssertNil(try fixture.store.loadPodcastDownload(itemId: "episode"))
         XCTAssertTrue(try fixture.store.loadAudioAssets(itemId: "episode").isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))

@@ -35,6 +35,9 @@ extension Gate1AppModel {
         }
     }
 
+    /// The prepared narration file goes off the main thread (#2510), like the recordings and the episode-map folder,
+    /// so a permanent delete does not wait on the unlink. The path is checked here, where the support directory
+    /// is known; only the removal runs in the background.
     func removeDurableGeneratedAudio(for item: Item) {
         guard item.media?.sourceType == .generatedTTSPrerendered,
               let identifier = item.media?.nativeMediaId ?? item.media?.url,
@@ -46,6 +49,6 @@ extension Gate1AppModel {
             .standardizedFileURL
         let file = url.standardizedFileURL
         guard file.deletingLastPathComponent() == generatedDirectory else { return }
-        try? FileManager.default.removeItem(at: file)
+        Task.detached(priority: .utility) { try? FileManager.default.removeItem(at: file) }
     }
 }

@@ -102,9 +102,11 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
                             // Old unscoped tasks cannot safely publish into a replacement item.
                             task.cancel()
                             let owner = task.taskDescription.map { "podcast-download-\($0)" }
-                            for reservation in (try? self.store.loadOfflineStorageReservations()) ?? []
-                            where reservation.ownerId == owner {
-                                try? self.store.deleteOfflineStorageReservation(id: reservation.id)
+                            self.rowWriter.async { [store = self.store] in
+                                for reservation in (try? store.loadOfflineStorageReservations()) ?? []
+                                where reservation.ownerId == owner {
+                                    try? store.deleteOfflineStorageReservation(id: reservation.id)
+                                }
                             }
                         }
                     }
@@ -156,7 +158,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         if let current = generations[attempt.itemId] { return current == attempt.generation }
         guard var record = recordsByItemId[attempt.itemId],
               record.state == .downloading || record.state == .waitingForWiFi,
-              let reservation = try? store.loadOfflineStorageReservations().first(where: { $0.id == attempt.reservationId }),
+              let reservation = try? store.loadOfflineStorageReservation(id: attempt.reservationId),
               reservation.ownerId == "podcast-download-\(attempt.itemId):\(attempt.generation)",
               reservation.expiresAt > Date() else { return false }
         generations[attempt.itemId] = attempt.generation
@@ -248,7 +250,9 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             availability: .remote,
             url: transportURL.absoluteString
         )
-        try? store.saveAudioAsset(remoteAsset)
+        // Queued behind any delete of the same row (an earlier `removeItem` or `evict`), so that delete can't land
+        // after this save and remove the new row (#2507).
+        rowWriter.async { [store] in try? store.saveAudioAsset(remoteAsset) }
 
         var record = existing ?? PodcastDownloadRecord(
             id: "podcast-download-\(itemId)",
@@ -306,18 +310,24 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
 
     func removeItem(_ itemId: String) {
         invalidateAttempt(itemId: itemId)
-        if let record = recordsByItemId[itemId], let localURL = localURL(for: record) {
-            try? FileManager.default.removeItem(at: localURL)
-        }
+        let file = recordsByItemId[itemId].flatMap { localURL(for: $0) }
         recordsByItemId[itemId] = nil
-        try? store.deleteAudioAsset(id: "podcast-local-\(itemId)")
-        try? store.deleteAudioAsset(id: "podcast-remote-\(itemId)")
-        try? store.deleteOwnedOfflineAsset(id: "podcast-offline-\(itemId)")
+        // The file and the asset rows go on the row queue, in order with the saves and deletes around them, so the
+        // listener's delete does not wait on the unlink (#2510) or the row deletes (#2507).
         rowWriter.async { [store] in
+            if let file { try? FileManager.default.removeItem(at: file) }
+            try? store.deleteAudioAsset(id: "podcast-local-\(itemId)")
+            try? store.deleteAudioAsset(id: "podcast-remote-\(itemId)")
+            try? store.deleteOwnedOfflineAsset(id: "podcast-offline-\(itemId)")
             if let id = try? store.loadPodcastDownload(itemId: itemId)?.id {
                 try? store.deletePodcastDownload(id: id)
             }
         }
+    }
+
+    /// Suspends, without blocking the main actor, until the writes and deletes queued so far have run.
+    private func drainRowWrites() async {
+        await withCheckedContinuation { continuation in rowWriter.async { continuation.resume() } }
     }
 
     /// Waits for queued row writes. Tests read the store right after an action; the app never needs this.
@@ -409,6 +419,10 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             }
             do {
                 let announced = try await self.announcedContentLength(at: url, userInitiated: userInitiated)
+                guard self.generations[record.itemId] == generation else { return }
+                // A delete queued by `removeItem` or `evict` must land before the ledger counts bytes, or it would
+                // count a file that is already gone and evict another episode to make room.
+                await self.drainRowWrites()
                 guard self.generations[record.itemId] == generation else { return }
                 var budgetLimitBytes: Int64 = 0
                 if announced == nil { budgetLimitBytes = try self.store.loadOfflineStorageBudget().limitBytes }
@@ -556,9 +570,14 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     }
 
     private func evict(_ record: PodcastDownloadRecord) {
-        if let url = localURL(for: record) { try? FileManager.default.removeItem(at: url) }
-        try? store.deleteAudioAsset(id: "podcast-local-\(record.itemId)")
-        try? store.deleteOwnedOfflineAsset(id: "podcast-offline-\(record.itemId)")
+        let file = localURL(for: record)
+        let itemId = record.itemId
+        // Off the main thread (#2510, #2507), on the same queue as the saves, so the new `evicted` row lands after.
+        rowWriter.async { [store] in
+            if let file { try? FileManager.default.removeItem(at: file) }
+            try? store.deleteAudioAsset(id: "podcast-local-\(itemId)")
+            try? store.deleteOwnedOfflineAsset(id: "podcast-offline-\(itemId)")
+        }
         var updated = record
         updated.state = .evicted
         updated.localRelativePath = nil
@@ -641,10 +660,9 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
 
     private func removeAdoptedFile(_ url: URL, itemId: String) {
         try? FileManager.default.removeItem(at: url)
-        if let asset = try? store.loadOwnedOfflineAssets().first(where: { $0.id == "podcast-offline-\(itemId)" }),
-           asset.relativePath == "PodcastAudio/\(url.lastPathComponent)" {
-            try? store.deleteOwnedOfflineAsset(id: asset.id)
-        }
+        // Only a row that names this file: a newer attempt's row for the same item stays. One row, one transaction.
+        let relativePath = "PodcastAudio/\(url.lastPathComponent)"
+        _ = try? store.deleteOwnedOfflineAsset(id: "podcast-offline-\(itemId)") { $0.relativePath == relativePath }
     }
 
     func completeDownload(_ attempt: PodcastDownloadAttempt, error: Error?) {

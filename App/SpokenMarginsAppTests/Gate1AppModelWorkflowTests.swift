@@ -3361,10 +3361,11 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.moveItemToTrash(id: "item-pill")
 
         model.permanentlyDeleteItem(id: "item-pill")
-        // The episode-map folder and the recordings are removed off the main thread (#2510), so they go a moment
+        // The narration file, the episode-map folder and the recordings are removed off the main thread (#2510), so they go a moment
         // after the delete returns.
-        try await waitFor("the deleted item's episode map folder and recordings to be removed", timeoutNanoseconds: 5_000_000_000) {
+        try await waitFor("the deleted item's narration, episode map folder and recordings to be removed", timeoutNanoseconds: 5_000_000_000) {
             !FileManager.default.fileExists(atPath: doomedFiles.episodeMap.path)
+                && !FileManager.default.fileExists(atPath: doomedFiles.narration.path)
                 && doomed.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) }
         }
 
@@ -3445,10 +3446,13 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(Set(model.recentlyDeletedItems.map(\.id)), Set(trashed))
 
         model.permanentlyDeleteRecentlyDeletedItems()
-        // The episode-map folders and the recordings are removed off the main thread (#2510), so they go a moment
+        // The narration files, the episode-map folders and the recordings are removed off the main thread (#2510), so they go a moment
         // after the delete returns.
-        try await waitFor("the deleted items' episode map folders and recordings to be removed", timeoutNanoseconds: 5_000_000_000) {
-            doomedFiles.allSatisfy { !FileManager.default.fileExists(atPath: $0.episodeMap.path) }
+        try await waitFor("the deleted items' narration, episode map folders and recordings to be removed", timeoutNanoseconds: 5_000_000_000) {
+            doomedFiles.allSatisfy {
+                !FileManager.default.fileExists(atPath: $0.episodeMap.path)
+                    && !FileManager.default.fileExists(atPath: $0.narration.path)
+            }
                 && doomed.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) }
         }
 

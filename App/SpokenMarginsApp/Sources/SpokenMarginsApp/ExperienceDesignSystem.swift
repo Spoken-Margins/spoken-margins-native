@@ -36,16 +36,18 @@ struct ExperienceSurface<Content: View>: View {
     @Environment(\.colorSchemeContrast) private var contrast
 
     let tint: Color?
+    let padding: CGFloat
     let content: Content
 
-    init(tint: Color? = nil, @ViewBuilder content: () -> Content) {
+    init(tint: Color? = nil, padding: CGFloat = 16, @ViewBuilder content: () -> Content) {
         self.tint = tint
+        self.padding = padding
         self.content = content()
     }
 
     var body: some View {
         content
-            .padding(16)
+            .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .foregroundStyle(AppColors.text)
             .background(AppColors.panel)

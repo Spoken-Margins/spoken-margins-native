@@ -23,6 +23,9 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
     static let sampleRate = KokoroVoice.sampleRate
     /// How many times a piece the 7 s bucket may have cut off is halved before it is kept as it is.
     static let maxResplits = 3
+    /// What `warmUp()` renders: one text for the 3 s bucket (about 12 characters at 14 a second) and one for the 7 s
+    /// bucket (about 75), so each bucket's models are specialised for the Neural Engine before the first Play (#2856).
+    static let warmUpTexts = ["Hello there.", "This is a short sentence that warms the longer model before you press play."]
 
     enum RenderError: Error, LocalizedError, Equatable {
         case missingFile(String)
@@ -47,6 +50,15 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
         private var cancelled = false
         var isCancelled: Bool { lock.withLock { cancelled } }
         func cancel() { lock.withLock { cancelled = true } }
+    }
+
+    /// How many loads (a warm-up, or the first render) are queued or running; the player reads it from any thread.
+    private final class LoadingCount: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        var isLoading: Bool { lock.withLock { count > 0 } }
+        func begin() { lock.withLock { count += 1 } }
+        func end() { lock.withLock { count -= 1 } }
     }
 
     private final class Runtime {
@@ -105,6 +117,12 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
     let governor: OnDeviceVoiceGovernor
     private let renderQueue = DispatchQueue(label: "com.spokenmargins.kokoro.render", qos: .userInitiated)
     private var runtime: Runtime?
+    /// Whether this runtime has run one inference yet. The first one makes Core ML specialise the models for the
+    /// Neural Engine, which is the slow part of a voice's first Play (#2856). Read and written on `renderQueue` only.
+    private var hasRunWarmInference = false
+    private let loadingCount = LoadingCount()
+    /// Receives `voice.load` for the diagnostics export; set by whoever builds the renderer.
+    private let events: @Sendable (String, [String: String]) -> Void
     private var sessionLoadCount = 0
     private var generatedAudioURLs: Set<URL> = []
     /// When the next inference may start, from the last one's cost (#1679). Read and written on `renderQueue` only.
@@ -113,7 +131,8 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
     /// `voiceFolder` is the installed `kokoro-82m` folder (it holds `coreml/`, `compiled/`, `voices/`, `runtime/`).
     init(
         voiceFolder: URL, kittenAssets: KittenAssetLocation, voice: String = KokoroVoice.defaultVoice,
-        outputDirectory: URL, governor: OnDeviceVoiceGovernor, fileManager: FileManager = .default
+        outputDirectory: URL, governor: OnDeviceVoiceGovernor, fileManager: FileManager = .default,
+        events: @escaping @Sendable (String, [String: String]) -> Void = { _, _ in }
     ) throws {
         guard KokoroVoice.voices.contains(voice) else { throw RenderError.unknownVoice(voice) }
         try kittenAssets.validate(fileManager: fileManager)
@@ -124,6 +143,7 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
         self.outputDirectory = outputDirectory
         self.fileManager = fileManager
         self.governor = governor
+        self.events = events
     }
 
     /// Live narration: paced only while the app is in the background.
@@ -153,10 +173,17 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
         }
     }
 
-    private func renderOnQueue(_ text: String, speed: Float, pacing: OnDeviceRenderPacing, cancellation: CancellationFlag) throws -> SupertonicNarrationResult {
+    private func renderOnQueue(
+        _ text: String, speed: Float, pacing: OnDeviceRenderPacing, cancellation: CancellationFlag, trigger: String = "render"
+    ) throws -> SupertonicNarrationResult {
         let startedAt = Date()
+        // Until this runtime has finished one render, the pipeline load and the Neural Engine specialisation inside its
+        // first inferences (both buckets) are all loading, so the player keeps waiting through them (#2856).
+        let cold = !hasRunWarmInference
+        if cold { loadingCount.begin() }
+        defer { if cold { loadingCount.end() } }
         // Loading the pipeline is paid once and isn't counted as inference.
-        let runtime = try loadRuntimeIfNeeded()
+        let runtime = try loadRuntimeIfNeeded(trigger: trigger)
         let planner = KokoroBucketPlanner(speed: Double(speed))
         var queue = planner.pieces(for: text).map { (piece: $0, resplits: 0) }
         var segments: [[Float]] = []
@@ -196,6 +223,7 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
             segments.append(result.audio)
             seams.append(piece.seamAfter)
         }
+        hasRunWarmInference = true
         let joined = KokoroSeamJoiner.join(segments: segments, seams: seams, sampleRate: Self.sampleRate)
         guard !joined.isEmpty else { throw RenderError.emptyAudio }
         guard joined.allSatisfy(\.isFinite) else { throw RenderError.unsafeAudio("non_finite_samples") }
@@ -216,11 +244,66 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
         )
     }
 
+    /// True while the model is loading or being warmed (#2856): the player waits longer than for a slow render.
+    var isLoadingModel: Bool { loadingCount.isLoading }
+
+    /// Loads the pipeline and runs one short render, so the Neural Engine specialisation happens now and not inside
+    /// the listener's first Play (#2856). Never throws: a failure is logged as `voice.load` and the first Play reports
+    /// it again. The sample audio is deleted at once.
+    ///
+    /// Cancelling the calling task stops it before the next step (the load itself can't be interrupted): a warm-up
+    /// started for a client the listener has since replaced must not go on to load or render more.
+    func warmUp() async {
+        let cancellation = CancellationFlag()
+        await withTaskCancellationHandler {
+            await runWarmUp(cancellation: cancellation)
+        } onCancel: {
+            cancellation.cancel()
+        }
+    }
+
+    private func runWarmUp(cancellation: CancellationFlag) async {
+        loadingCount.begin()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            renderQueue.async { [self] in
+                autoreleasepool { warmUpOnQueue(cancellation: cancellation) }
+                loadingCount.end()
+                continuation.resume()
+            }
+        }
+    }
+
+    private func warmUpOnQueue(cancellation: CancellationFlag) {
+        guard !hasRunWarmInference else { return }
+        let started = Date()
+        do {
+            for text in Self.warmUpTexts {
+                if cancellation.isCancelled { return }
+                let result = try renderOnQueue(text, speed: 1, pacing: .whenAppBackgrounded, cancellation: cancellation, trigger: "warm")
+                nextInferenceNotBefore = nil // a warm-up's cost must not hold back the next text or a real render
+                try? fileManager.removeItem(at: result.audioURL)
+                generatedAudioURLs.remove(result.audioURL)
+            }
+            events("voice.warm", ["voice": KokoroVoice.catalogId, "ms": Self.milliseconds(since: started), "result": "ok"])
+        } catch {
+            events("voice.warm", ["voice": KokoroVoice.catalogId, "ms": Self.milliseconds(since: started), "result": Self.describe(error)])
+        }
+    }
+
+    private static func milliseconds(since start: Date) -> String { String(Int(Date().timeIntervalSince(start) * 1000)) }
+
+    /// The error's type and, for Kokoro's own, its case, so a failed export names it (a bare type said only "RenderError").
+    static func describe(_ error: Error) -> String {
+        let text = String(describing: error)
+        return "failed:\(type(of: error)):\(text.prefix(120))"
+    }
+
     /// Drops the pipeline and the front end, and by default the audio this renderer wrote.
     func unload(removingGeneratedAudio: Bool = true) async {
         await withCheckedContinuation { continuation in
             renderQueue.async { [self] in
                 runtime = nil
+                hasRunWarmInference = false
                 if removingGeneratedAudio {
                     for url in generatedAudioURLs { try? fileManager.removeItem(at: url) }
                     generatedAudioURLs.removeAll()
@@ -246,11 +329,21 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
         }
     }
 
-    private func loadRuntimeIfNeeded() throws -> Runtime {
+    private func loadRuntimeIfNeeded(trigger: String) throws -> Runtime {
         if let runtime { return runtime }
-        let loaded = try Runtime(voiceFolder: voiceFolder, kittenAssets: kittenAssets, voice: voice)
+        loadingCount.begin()
+        defer { loadingCount.end() }
+        let started = Date()
+        let loaded: Runtime
+        do {
+            loaded = try Runtime(voiceFolder: voiceFolder, kittenAssets: kittenAssets, voice: voice)
+        } catch {
+            events("voice.load", ["voice": KokoroVoice.catalogId, "trigger": trigger, "ms": Self.milliseconds(since: started), "result": Self.describe(error)])
+            throw error
+        }
         runtime = loaded
         sessionLoadCount += 1
+        events("voice.load", ["voice": KokoroVoice.catalogId, "trigger": trigger, "ms": Self.milliseconds(since: started), "result": "ok"])
         return loaded
     }
 }
