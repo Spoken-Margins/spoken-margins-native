@@ -56,4 +56,13 @@ final class LiveSessionLinkTests: XCTestCase {
         router.cover = nil
         XCTAssertNil(router.takeAction(now: opened))
     }
+
+    func testOnlyALiveSessionURLIsTakenByTheRouter() throws {
+        let router = LiveSessionLinkRouter()
+        XCTAssertFalse(router.handle(try XCTUnwrap(URL(string: "spokenmargins://margin?session=a&margin=b"))))
+        XCTAssertNil(router.cover)
+        XCTAssertTrue(router.handle(LiveSessionDeepLink.url(.write)))
+        XCTAssertNotNil(router.cover)
+        XCTAssertEqual(router.takeAction(), .write)
+    }
 }

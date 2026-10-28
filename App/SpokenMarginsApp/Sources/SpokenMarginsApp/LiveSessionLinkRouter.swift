@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// Carries a live-session link (#2833) from `handleIncomingURL` to the live session screen. With no screen showing
 /// the running session the root view presents one; with one open (from the Library's Live row, say) it takes the
@@ -25,6 +26,13 @@ final class LiveSessionLinkRouter: ObservableObject {
     private var pendingSince = Date.distantPast
     private var screensOpen = 0
 
+    /// Takes a live-session link from `onOpenURL`; false for any other URL, which the model handles.
+    func handle(_ url: URL) -> Bool {
+        guard let action = LiveSessionDeepLink.action(from: url) else { return false }
+        open(action)
+        return true
+    }
+
     func open(_ action: LiveSessionDeepLink.Action, now: Date = Date()) {
         pendingAction = action
         pendingSince = now
@@ -47,5 +55,24 @@ final class LiveSessionLinkRouter: ObservableObject {
         defer { pendingAction = nil }
         guard now.timeIntervalSince(pendingSince) <= Self.timeToLive else { return nil }
         return pendingAction
+    }
+}
+
+/// Presents the live session screen when a live-session link finds none open. A modifier of its own so the root view,
+/// which is size-capped, gains no lines for it.
+private struct LiveSessionLinkCover: ViewModifier {
+    @ObservedObject private var links = LiveSessionLinkRouter.shared
+    let model: Gate1AppModel
+
+    func body(content: Content) -> some View {
+        content.fullScreenCover(item: $links.cover) { _ in
+            LiveSessionView().environmentObject(model)
+        }
+    }
+}
+
+extension View {
+    func liveSessionLinkCover(_ model: Gate1AppModel) -> some View {
+        modifier(LiveSessionLinkCover(model: model))
     }
 }

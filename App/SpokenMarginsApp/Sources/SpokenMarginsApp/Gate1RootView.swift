@@ -12,7 +12,6 @@ struct Gate1RootView: View {
     @State private var navigation = AppNavigationState()
     @State private var keyboardIsPresented = false
     @StateObject private var supertonicNotice = SupertonicDownloadNotice()
-    @ObservedObject private var liveSessionLinks = LiveSessionLinkRouter.shared
 
     /// The tabs and the Timeline place their own mini player.
     private var showsRootMiniPlayer: Bool {
@@ -70,10 +69,7 @@ struct Gate1RootView: View {
             navigation.select(root, recordingIsLocked: model.recordingNavigationIsLocked)
             model.requestedExperienceRoot = nil
         }
-        .tracksKeyboard($keyboardIsPresented)
-        .fullScreenCover(item: $liveSessionLinks.cover) { _ in
-            LiveSessionView().environmentObject(model)
-        }
+        .tracksKeyboard($keyboardIsPresented).liveSessionLinkCover(model)
         .sheet(isPresented: $model.isAIDataSharingConsentPresented) {
             AIDataSharingConsentView()
                 .environmentObject(model)

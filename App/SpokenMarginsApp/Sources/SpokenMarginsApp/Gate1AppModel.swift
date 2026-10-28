@@ -2232,7 +2232,6 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleIncomingURL(_ url: URL) {
-        if let action = LiveSessionDeepLink.action(from: url) { LiveSessionLinkRouter.shared.open(action); return }
         if let marginLink = MarginDeepLink(url: url) { openMargin(marginLink); return }
         if ShareLinkURL.isOnShareHost(url) { openShareLink(url); return }
         if url.isFileURL, url.pathExtension.lowercased() == "json" { importListeningEditionFile(url); return }
