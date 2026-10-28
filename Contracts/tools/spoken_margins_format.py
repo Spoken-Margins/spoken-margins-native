@@ -996,6 +996,10 @@ def _check_boundary(report, manifest, decoded):
         _check_proposal(report, proposal, assets_by_id, descriptor['path'], item_text)
     for descriptor, spine in decoded['edition_fingerprint_spine']:
         _check_spine(report, spine, item, assets_by_id, descriptor['path'])
+    shared = _shared_signature(spine for _, spine in decoded['edition_fingerprint_spine'])
+    if shared is not None:
+        report.warn('older-reader-refuses', f'two fingerprint landmarks name the signature {shared!r}; Build 29 '
+                    'stops with a fatal error importing this packet, and Build 30 and later keep one (#536)')
     for descriptor, sketch in decoded['transcript_phrase_sketch']:
         _check_sketch(report, sketch, descriptor['path'])
     if len(decoded['conversation']) > 1:
@@ -1064,6 +1068,20 @@ def _check_spine(report, spine, item, assets_by_id, where):
         ])
         if failed:
             _refuse(report, 'invalid-manifest', f'fingerprint landmark {index + 1} is invalid: {failed}', where)
+
+
+def _shared_signature(spines):
+    """The first signature id a second landmark names, across every spine. Build 29's import keys the episode map's
+    evidence by signature id with `uniqueKeysWithValues`, which traps on a repeat; Build 30 keeps the first, and the
+    app's writer keeps one landmark per signature (#536). Found with coop-packet check on the Mac (#1856)."""
+    seen = set()
+    for spine in spines:
+        for landmark in spine['landmarks']:
+            key = _canon(landmark['signatureAssetId'])
+            if key in seen:
+                return landmark['signatureAssetId']
+            seen.add(key)
+    return None
 
 
 def _salt_is_32_bytes(salt):
@@ -1685,6 +1703,36 @@ def corpus(sources=EXAMPLES):
         lambda scenes: (scenes[1].pop('summaryText'), scenes[0].update(order=1), scenes[1].update(order=0)))
     out['invalid-proposal-order.spokenmargins'] = with_proposal(
         lambda scenes: (scenes[0].update(order=1), scenes[1].update(order=0)))
+
+    # Fingerprint spines and phrase sketches (#1856). A valid spine needs a real ShazamKit signature, which this
+    # module can't write, so only a spine refused before its assets are read is an example.
+    def with_artifact(kind, document):
+        manifest, artifacts, assets = copy(podcast)
+        path = f'artifacts/{document["id"]}.json'
+        manifest['artifacts'].append({'id': document['id'], 'kind': kind, 'path': path, 'required': False,
+                                      'schemaVersion': ARTIFACT_VERSIONS[kind]})
+        artifacts[path] = encode_manifest({**document, 'schemaVersion': ARTIFACT_VERSIONS[kind]})
+        return write_packet(manifest, artifacts, assets)
+
+    def sketch(window_end_ms):
+        windows = [{'id': f'window-{i}', 'sourceStartMs': i * 30_000, 'sourceEndMs': (i + 1) * 30_000,
+                    'hashes': [hashlib.md5(f'{i}-{h}'.encode()).hexdigest() for h in range(PHRASE_SKETCH_MAX_HASHES)]}
+                   for i in range(2)]
+        windows[-1]['sourceEndMs'] = window_end_ms
+        return {'id': 'sketch-1', 'itemId': 'podcast-item', 'createdAt': '2026-10-28T12:00:00Z',
+                'saltBase64': base64.b64encode(bytes(range(PHRASE_SKETCH_SALT_BYTES))).decode(),
+                'normalizationVersion': 'spoken_margins_format.py corpus', 'shingleWidth': PHRASE_SKETCH_SHINGLE_WIDTH,
+                'maximumHashesPerWindow': PHRASE_SKETCH_MAX_HASHES, 'windows': windows}
+
+    out['phrase-sketch.spokenmargins'] = with_artifact('transcript_phrase_sketch', sketch(60_000))
+    out['invalid-sketch-window-span.spokenmargins'] = with_artifact('transcript_phrase_sketch', sketch(60_001))
+    landmark = {'id': 'landmark-1', 'order': 1, 'sourceMediaStartMs': 60_000, 'sourceMediaEndMs': 70_000,
+                'anchorMediaTimeMs': 65_000, 'continuityEpoch': 0, 'trigger': 'initial_playback',
+                'provenance': 'observed_decoded_playback', 'signatureAssetId': 'signature-1',
+                'generatorVersion': 'spoken_margins_format.py corpus'}
+    out['invalid-spine-landmark-order.spokenmargins'] = with_artifact('edition_fingerprint_spine', {
+        'id': 'spine-1', 'itemId': 'podcast-item', 'createdAt': '2026-10-28T12:00:00Z',
+        'generatorVersion': 'spoken_margins_format.py corpus', 'landmarks': [landmark]})
     return out
 
 
