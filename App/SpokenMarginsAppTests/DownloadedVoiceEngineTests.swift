@@ -12,6 +12,8 @@ final class DownloadedVoiceEngineTests: XCTestCase {
     private var root: URL!
 
     override func setUpWithError() throws {
+        // The plan's 120 s default would end an assembly wait (`assemblySeconds`) early; its maximum is 180 s.
+        executionTimeAllowance = 170
         root = FileManager.default.temporaryDirectory.appending(path: "downloaded-voice-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     }
@@ -19,6 +21,13 @@ final class DownloadedVoiceEngineTests: XCTestCase {
     override func tearDownWithError() throws {
         try? FileManager.default.removeItem(at: root)
     }
+
+    /// #2811: how long a test waits for the player to finish assembling a downloaded voice's article into one m4a.
+    /// On the hosted Mac the first assembly in a process failed at the old 60 s mark in 3 of 3 flagged runs
+    /// (40461243762, 40534421987, 40622953386): the chunks had rendered but no assembled audio had arrived, and the
+    /// retry in the same process took 0.2 to 16 s. Assembly is the one step that encodes AAC through the system's media
+    /// services, so its first use in a process is the likely slow part. A real hang still fails, at the end of this.
+    private static let assemblySeconds: TimeInterval = 150
 
     // MARK: The player
 
@@ -39,10 +48,10 @@ final class DownloadedVoiceEngineTests: XCTestCase {
         )
         _ = try client.prepareSpeechText("A short sentence that the downloaded voice reads in about two seconds.")
         try client.play(targetId: "item", from: 0)
-        await fulfillment(of: [ready], timeout: 60)
+        await fulfillment(of: [ready], timeout: Self.assemblySeconds)
         let renders = await renderer.renderCount
         XCTAssertGreaterThan(renders, 0)
-        XCTAssertEqual(assemblies.value, 1, "the downloaded voice's own audio is assembled like Supertonic's")
+        XCTAssertEqual(assemblies.value, 1, "the downloaded voice's own audio is assembled like Supertonic's (\(renders) renders, waited up to \(Int(Self.assemblySeconds)) s)")
         try client.stop()
     }
 
@@ -89,7 +98,7 @@ final class DownloadedVoiceEngineTests: XCTestCase {
         )
         _ = try client.prepareSpeechText("A short sentence that the downloaded voice saved earlier and now replays.")
         try client.play(targetId: "replayed-item", from: 0)
-        await fulfillment(of: [ready], timeout: 60)
+        await fulfillment(of: [ready], timeout: Self.assemblySeconds)
         let renders = await renderer.renderCount
         XCTAssertEqual(renders, 0, "every chunk came from saved audio")
         XCTAssertEqual(assemblies.value, 1, "saved audio of the voice's own engine is assembled, not held back as a stand-in")
