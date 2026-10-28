@@ -20,6 +20,19 @@ extension Gate1AppModel {
 /// Following actions, discovery and refresh (#1008), moved unchanged out of Gate1AppModel.swift.
 /// Stored state, observers and the discovery test seam remain in the model.
 extension Gate1AppModel {
+    /// Reads the subscriptions off the main thread and publishes them to `feedSubscriptions`, unless a newer read has
+    /// started: that one publishes, and this older answer must not land over it (#2507). Returns the list read, for the
+    /// caller's own checks, and reads again when a newer read took the publish, so the caller never works from a stale list.
+    @discardableResult
+    func publishFeedSubscriptions(store: SQLiteSessionStore) async throws -> [FeedSubscription] {
+        let reader = StoreReader(store)
+        if let latest = try await reader.latestFeedSubscriptions() {
+            feedSubscriptions = latest
+            return latest
+        }
+        return try await reader.feedSubscriptions()
+    }
+
     func toggleMuteSource(id: String) {
         guard let coordinator = followedSourceCoordinator,
               let subscription = feedSubscriptions.first(where: { $0.id == id }) else { return }
@@ -155,8 +168,9 @@ extension Gate1AppModel {
             let coordinator = self.requireFollowedSourceCoordinator(store: store)
             var candidates: [SourceCandidateEvidence]?, failure = "none:empty"
             do { candidates = try await self.sharedFollowDiscovery(item: item, preferredURL: url, coordinator: coordinator) } catch { failure = "none:" + FollowedSourceCoordinator.diagnosticCode(for: error) }
+            let subscriptions = (try? await StoreReader(store).feedSubscriptions()) ?? self.feedSubscriptions
             self.diagnostics["followOffer"] = FollowedSourceMatching.discoveryDiagnostic(
-                item: item, candidates: candidates, failure: failure, subscriptions: (try? store.loadFeedSubscriptions()) ?? self.feedSubscriptions
+                item: item, candidates: candidates, failure: failure, subscriptions: subscriptions
             )
         }
     }
@@ -220,10 +234,7 @@ extension Gate1AppModel {
                     self.reportConfirmation("Choose the source feed to follow.")
                     return
                 }
-                let subscriptionsBySourceID = Dictionary(
-                    uniqueKeysWithValues: try store.loadFeedSubscriptions().map { ($0.source.id, $0) }
-                )
-                let subscription = if let existing = subscriptionsBySourceID[candidate.source.id] {
+                let subscription = if let existing = try await StoreReader(store).feedSubscription(sourceId: candidate.source.id) {
                     existing
                 } else {
                     try await coordinator.follow(candidate: candidate)
@@ -235,7 +246,7 @@ extension Gate1AppModel {
                     try store.saveItem(updated)
                     self.refreshLibraryRowsInBackground(mustPublish: true)
                 }
-                self.feedSubscriptions = try store.loadFeedSubscriptions()
+                try await self.publishFeedSubscriptions(store: store)
                 await self.performFollowedSourceRefresh(force: true)
                 self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
@@ -268,7 +279,8 @@ extension Gate1AppModel {
             defer { self.sourceSuggestionChecks.remove(itemId) }
             do {
                 let coordinator = self.requireFollowedSourceCoordinator(store: store)
-                guard !FollowedSourceMatching.isItemAlreadyFollowed(item, subscriptions: try store.loadFeedSubscriptions()) else { return }
+                let known = try await StoreReader(store).feedSubscriptions()
+                guard !FollowedSourceMatching.isItemAlreadyFollowed(item, subscriptions: known) else { return }
                 let candidates = try await self.sharedFollowDiscovery(
                     item: item,
                     preferredURL: url,
@@ -282,8 +294,7 @@ extension Gate1AppModel {
                     return
                 }
                 // Following may finish while network discovery is suspended.
-                let subscriptions = try store.loadFeedSubscriptions()
-                self.feedSubscriptions = subscriptions
+                let subscriptions = try await self.publishFeedSubscriptions(store: store)
                 let unfollowed = FollowedSourceMatching.uniqueUnfollowedCandidates(candidates, subscriptions: subscriptions)
                 guard !FollowedSourceMatching.isItemAlreadyFollowed(current, subscriptions: subscriptions),
                       !unfollowed.isEmpty || candidates.isEmpty else {
@@ -300,9 +311,10 @@ extension Gate1AppModel {
                 self.storedSourceFollowSuggestionCandidates = eligible
                 self.diagnostics["sourceFollowSuggestion"] = FollowedSourceMatching.stampedDiagnostic("offered:\(eligible.count)")
             } catch { // #539: a background check, not a Follow tap, so no followSourceFailure line.
+                let subscriptions = (try? await StoreReader(store).feedSubscriptions()) ?? self.feedSubscriptions
                 self.diagnostics["sourceFollowSuggestion"] = FollowedSourceMatching.discoveryDiagnostic(
                     item: item, candidates: nil, failure: "unavailable:" + FollowedSourceCoordinator.diagnosticCode(for: error),
-                    subscriptions: (try? store.loadFeedSubscriptions()) ?? self.feedSubscriptions
+                    subscriptions: subscriptions
                 )
             }
         }
@@ -344,7 +356,7 @@ extension Gate1AppModel {
                     try store.saveItem(item)
                     self.refreshLibraryRowsInBackground(mustPublish: true)
                 }
-                self.feedSubscriptions = try store.loadFeedSubscriptions()
+                try await self.publishFeedSubscriptions(store: store)
                 try store.saveSourceSuggestionDecision(SourceSuggestionDecision(sourceId: candidate.source.id, decision: .accepted, lastPromptAt: Date()))
                 self.storedSourceFollowSuggestionCandidates = []
                 await self.performFollowedSourceRefresh(force: true)
@@ -388,9 +400,9 @@ extension Gate1AppModel {
             let store = try requireStore()
             let coordinator = requireFollowedSourceCoordinator(store: store)
             for entry in await coordinator.refreshStale(force: force) { importFollowedSourceEntry(entry, startedByListener: false) } // "Add every new item" (#466)
-            feedSubscriptions = try store.loadFeedSubscriptions()
+            let subscriptions = try await publishFeedSubscriptions(store: store)
             followedSourceEntries = try await coordinator.entries()
-            diagnostics["followedSourceCount"] = "\(feedSubscriptions.count)"
+            diagnostics["followedSourceCount"] = "\(subscriptions.count)"
             diagnostics["followedSourceEntryCount"] = "\(followedSourceEntries.count)"
         } catch {
             diagnostics["followedSourceRefresh"] = "failed:\(String(describing: type(of: error)))"
@@ -409,7 +421,7 @@ extension Gate1AppModel {
                     throw ReadablePageExtractionError.invalidURL
                 }
                 let store = try self.requireStore()
-                guard let subscription = try store.loadFeedSubscriptions().first(where: { $0.id == entry.subscriptionId }) else {
+                guard let subscription = try await StoreReader(store).feedSubscription(id: entry.subscriptionId) else {
                     throw FollowedSourceError.noFeedCandidates
                 }
                 if FollowedArticleImport.holdsBackgroundImport(entry, startedByListener: startedByListener) { return }

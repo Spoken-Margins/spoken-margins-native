@@ -13,11 +13,10 @@ import Foundation
 /// later lets a long closure see `Task.isCancelled`, but a closure that has started runs to its end.
 ///
 /// `readLatest` is for a screen that asks again before the answer comes back: it returns nil for every request
-/// except the newest one with the same key, so an old answer can't overwrite a newer one.
+/// except the newest one with the same key on the same store, so an old answer can't overwrite a newer one. The
+/// newest request is tracked per store, not per `StoreReader`, so a call site may make a reader for each call.
 public struct StoreReader: Sendable {
     public let store: SQLiteSessionStore
-    private let latest = LatestRequests()
-
     public init(_ store: SQLiteSessionStore) {
         self.store = store
     }
@@ -46,25 +45,36 @@ public struct StoreReader: Sendable {
         priority: TaskPriority = .utility,
         _ body: @escaping @Sendable (SQLiteSessionStore) throws -> Value
     ) async throws -> Value? {
-        let ticket = latest.next(for: key)
+        let storeKey = ObjectIdentifier(store)
+        let ticket = LatestRequests.shared.next(store: storeKey, key: key)
         let value = try await read(priority: priority, body)
-        return latest.isCurrent(ticket, for: key) ? value : nil
+        return LatestRequests.shared.isCurrent(ticket, store: storeKey, key: key) ? value : nil
     }
 }
 
+/// One counter per (store, key). A store that is gone leaves its counters behind; they are a few bytes each, and a
+/// new store at the same address only continues the count, which no ticket comparison can mistake.
 private final class LatestRequests: @unchecked Sendable {
-    private let lock = NSLock()
-    private var counters: [String: Int] = [:]
+    static let shared = LatestRequests()
 
-    func next(for key: String) -> Int {
+    private struct Key: Hashable {
+        let store: ObjectIdentifier
+        let name: String
+    }
+
+    private let lock = NSLock()
+    private var counters: [Key: Int] = [:]
+
+    func next(store: ObjectIdentifier, key: String) -> Int {
         lock.lock(); defer { lock.unlock() }
-        let value = (counters[key] ?? 0) + 1
-        counters[key] = value
+        let id = Key(store: store, name: key)
+        let value = (counters[id] ?? 0) + 1
+        counters[id] = value
         return value
     }
 
-    func isCurrent(_ ticket: Int, for key: String) -> Bool {
+    func isCurrent(_ ticket: Int, store: ObjectIdentifier, key: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        return counters[key] == ticket
+        return counters[Key(store: store, name: key)] == ticket
     }
 }
