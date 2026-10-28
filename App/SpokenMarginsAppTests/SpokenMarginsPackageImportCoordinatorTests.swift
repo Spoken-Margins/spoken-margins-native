@@ -575,7 +575,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
 
     /// The model's three properties are the views' copy: still `@Published`, still written by the sheet binding, and
     /// each coordinator change reaches them once.
-    func testTheModelKeepsItsThreePublishersAndAWritableSheetBinding() throws {
+    func testTheModelKeepsItsThreePublishersAndAWritableSheetBinding() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
         let model = Gate1AppModel(
@@ -594,6 +594,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         defer { subscriptions.forEach { $0.cancel() } }
 
         model.handleIncomingURL(packet.url)
+        await model.waitForPackageStaging()
 
         let review = try XCTUnwrap(model.spokenMarginsPackageImportReview)
         defer { try? FileManager.default.removeItem(at: review.extractionDirectory) }
