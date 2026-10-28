@@ -29,7 +29,7 @@ struct LiveSessionActivityWidget: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Text(context.attributes.sessionStartedAt, style: .timer)
+                    Text(context.state.clockOrigin ?? context.attributes.sessionStartedAt, style: .timer)
                         .font(.caption.monospacedDigit())
                 }
                 DynamicIslandExpandedRegion(.trailing) {

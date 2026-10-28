@@ -79,7 +79,7 @@ final class LiveSessionController: ObservableObject {
         )
         session = started
         save()
-        startActivity(startedAt: started.startedAt)
+        startActivity(for: started)
         sessionChanged()
     }
 
@@ -121,6 +121,7 @@ final class LiveSessionController: ObservableObject {
         }
         session = edited
         save()
+        refreshActivities()
         sessionChanged()
         return true
     }
@@ -131,6 +132,7 @@ final class LiveSessionController: ObservableObject {
         guard edited != session else { return }
         session = edited
         save()
+        refreshActivities()
         sessionChanged()
     }
 
@@ -337,14 +339,33 @@ final class LiveSessionController: ObservableObject {
         return saveGeneration
     }
 
-    private func startActivity(startedAt: Date) {
+    private func startActivity(for session: LiveSession) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         // The Lock Screen Mark is a convenience; the session works without it.
         _ = try? Activity<LiveSessionActivityAttributes>.request(
-            attributes: LiveSessionActivityAttributes(sessionStartedAt: startedAt),
-            content: ActivityContent(state: .init(markCount: 0), staleDate: nil),
+            attributes: LiveSessionActivityAttributes(sessionStartedAt: session.startedAt),
+            content: ActivityContent(state: Self.activityState(for: session, markCount: 0, lastMarkAt: nil), staleDate: nil),
             pushType: nil
         )
+    }
+
+    private static func activityState(for session: LiveSession, markCount: Int, lastMarkAt: Date?) -> LiveSessionActivityAttributes.ContentState {
+        .init(
+            markCount: markCount, lastMarkAt: lastMarkAt,
+            clockOrigin: LiveSessionClock.origin(of: session), clockTitle: LiveSessionClock.title(for: session.kind)
+        )
+    }
+
+    /// The Lock Screen shows the source's clock (#2834), so a change to the kind or the clock reaches it.
+    private func refreshActivities() {
+        guard let session else { return }
+        Task {
+            for activity in Activity<LiveSessionActivityAttributes>.activities {
+                let current = activity.content.state
+                let state = Self.activityState(for: session, markCount: current.markCount, lastMarkAt: current.lastMarkAt)
+                await activity.update(ActivityContent(state: state, staleDate: nil))
+            }
+        }
     }
 
     private func endActivities() {

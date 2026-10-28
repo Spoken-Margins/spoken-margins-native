@@ -161,14 +161,7 @@ struct LiveSessionView: View {
                 }
             }
             TimelineView(.periodic(from: .now, by: 0.5)) { context in
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(LiveSessionPositionMap.clock(controller.elapsedMs(at: context.date)))
-                        .font(.system(size: 44, weight: .semibold, design: .rounded).monospacedDigit())
-                        .accessibilityLabel("Session time \(LiveSessionPositionMap.clock(controller.elapsedMs(at: context.date)))")
-                    if let position = controller.predictedPosition(at: context.date) {
-                        Text("Source now: \(position.label)").font(.subheadline).foregroundStyle(AppColors.secondaryText)
-                    }
-                }
+                clockBlock(session, at: context.date)
             }
             if let bracket = session.bracket {
                 Text(bracket).font(.caption).foregroundStyle(AppColors.secondaryText)
@@ -186,6 +179,36 @@ struct LiveSessionView: View {
     private func commitDrafts() {
         controller.setTitle(titleDraft)
         controller.setStartWhere(whereDraft)
+    }
+
+    /// While it runs, the big clock is the source's own (the meeting's elapsed time) and the session counter is the
+    /// small line under it (#2834). Without a clock, or once it has ended, the session counter is the big one.
+    @ViewBuilder
+    private func clockBlock(_ session: LiveSession, at date: Date) -> some View {
+        let sessionTime = LiveSessionPositionMap.clock(controller.elapsedMs(at: date))
+        if controller.isRunning, let title = LiveSessionClock.title(for: session.kind),
+           let position = controller.predictedPosition(at: date) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(AppColors.secondaryText)
+                Text(LiveSessionPositionMap.clock(position.ms))
+                    .font(.system(size: 44, weight: .semibold, design: .rounded).monospacedDigit())
+                    .accessibilityLabel("\(title) \(LiveSessionPositionMap.clock(position.ms))")
+                Text("Session time \(sessionTime)").font(.subheadline.monospacedDigit()).foregroundStyle(AppColors.secondaryText)
+                if session.kind == .meeting {
+                    Text("Not where the meeting is? Tap Edit and say where it is now.")
+                        .font(.caption).foregroundStyle(AppColors.secondaryText)
+                }
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(sessionTime)
+                    .font(.system(size: 44, weight: .semibold, design: .rounded).monospacedDigit())
+                    .accessibilityLabel("Session time \(sessionTime)")
+                if let position = controller.predictedPosition(at: date) {
+                    Text("Source: \(position.label)").font(.subheadline).foregroundStyle(AppColors.secondaryText)
+                }
+            }
+        }
     }
 
     private func toggleDetails(_ session: LiveSession) {

@@ -9,10 +9,16 @@ public struct LiveSessionActivityAttributes: ActivityAttributes {
     public struct ContentState: Codable, Hashable, Sendable {
         public var markCount: Int
         public var lastMarkAt: Date?
+        /// When the source's own clock (the meeting's, the audiobook's) read 0:00, and what that clock is called
+        /// (#2834). Optional, so an activity started by an earlier build still decodes: it shows the session counter.
+        public var clockOrigin: Date?
+        public var clockTitle: String?
 
-        public init(markCount: Int, lastMarkAt: Date? = nil) {
+        public init(markCount: Int, lastMarkAt: Date? = nil, clockOrigin: Date? = nil, clockTitle: String? = nil) {
             self.markCount = markCount
             self.lastMarkAt = lastMarkAt
+            self.clockOrigin = clockOrigin
+            self.clockTitle = clockTitle
         }
     }
 
