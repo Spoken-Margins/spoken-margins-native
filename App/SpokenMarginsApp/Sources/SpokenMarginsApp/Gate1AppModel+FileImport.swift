@@ -317,8 +317,11 @@ extension Gate1AppModel {
                     if !saved.preservedSelectedItemId.isEmpty {
                         preservedDetail = try await loadItemDetailOffMain(id: saved.preservedSelectedItemId, store: store)
                     }
-                    activeItemId = saved.preservedActiveItemId
-                    if let preservedDetail { selectedItem = preservedDetail }
+                    // The listener may have opened another item while the read ran: then there is nothing to restore.
+                    if activeItemId == saved.preservedActiveItemId, selectedItem.id == saved.preservedSelectedItemId,
+                       let preservedDetail {
+                        selectedItem = preservedDetail
+                    }
                 } else {
                     let openedId = imported.first?.id ?? activeItemId
                     let detail = try await loadItemDetailOffMain(id: openedId, store: store)
