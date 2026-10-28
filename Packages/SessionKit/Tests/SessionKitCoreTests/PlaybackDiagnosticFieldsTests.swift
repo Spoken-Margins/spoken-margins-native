@@ -54,6 +54,21 @@ final class PlaybackDiagnosticFieldsTests: XCTestCase {
         XCTAssertEqual(fields["conditions"], "thermal=serious lowPower=false power=external memoryBackoff=false")
     }
 
+    /// #2856: the first Kokoro export had Phonon installed too and the fallback line named neither voice.
+    func testAFallbackNamesTheChosenVoiceWhenTheCallerKnowsIt() {
+        let conditions = SpeechEngineConditions()
+        let reason = SpeechFallbackReason(supertonicCode: "supertonic_render_timeout", resourceBlock: nil)
+        let named = PlaybackDiagnosticFields.supertonicFallback(
+            code: "supertonic_render_timeout", reason: reason, policyBlock: nil, conditions: conditions, offset: 0,
+            voice: ReadingVoiceChoice.kokoro.rawValue
+        )
+        XCTAssertEqual(named["voice"], "kokoro:af_heart")
+        let unnamed = PlaybackDiagnosticFields.supertonicFallback(
+            code: "supertonic_render_timeout", reason: reason, policyBlock: nil, conditions: conditions, offset: 0
+        )
+        XCTAssertNil(unnamed["voice"])
+    }
+
     func testAMemoryBackoffFallbackIsNamedAsMemory() {
         let conditions = SpeechEngineConditions(isRecoveringFromMemoryWarning: true)
         let block = SpeechEnginePolicy.onDeviceRenderingBlock(conditions)

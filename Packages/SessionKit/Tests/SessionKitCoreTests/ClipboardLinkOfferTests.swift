@@ -105,24 +105,50 @@ final class ClipboardLinkOfferTests: XCTestCase {
         XCTAssertTrue(offer.isOffered)
     }
 
-    func testPasteOutcomeTable() {
+    func testPasteResultTable() {
         let article = String(repeating: "A sentence about things. ", count: 200) + "Read more at https://example.com/post today."
-        let cases: [(String?, ClipboardLinkOffer.PasteOutcome)] = [
-            ("https://example.com/post", .addLink),
-            ("  https://example.com/post\n", .addLink),
-            ("Episode title https://example.com/ep/1", .addLink),
-            ("example.com/post", .addLink),
+        func link(_ address: String) -> ClipboardLinkOffer.PasteResult { .link(URL(string: address)!) }
+        let cases: [(String?, ClipboardLinkOffer.PasteResult)] = [
+            ("https://example.com/post", link("https://example.com/post")),
+            ("  https://example.com/post\n", link("https://example.com/post")),
+            ("Episode title https://example.com/ep/1", link("https://example.com/ep/1")),
+            ("example.com/post", link("https://example.com/post")),
             (article, .notALink),
             ("a few words with no link", .notALink),
             ("https://a.com/x and https://b.com/y", .notALink),
-            ("", .notALink),
-            (nil, .notALink),
+            ("", .nothingPasted),
+            ("  \n ", .nothingPasted),
+            (nil, .nothingPasted),
             (String(repeating: "x", count: 100_000), .notALink),
             ("mailto:me@example.com", .notALink),
             ("ftp://example.com/file", .notALink),
         ]
         for (content, expected) in cases {
-            XCTAssertEqual(ClipboardLinkOffer.pasteOutcome(for: content), expected, "\(String(describing: content?.prefix(40)))")
+            XCTAssertEqual(ClipboardLinkOffer.pasteResult(for: content), expected, "\(String(describing: content?.prefix(40)))")
+        }
+    }
+
+    /// A Paste tap must never end with nothing to show (#2835): a link, or a message.
+    func testEveryPasteResultHasALinkOrAMessage() {
+        for content in [nil, "", "words", "https://example.com/a", "ftp://x.com/y"] {
+            switch ClipboardLinkOffer.pasteResult(for: content) {
+            case .link: continue
+            case .nothingPasted, .notALink:
+                XCTAssertFalse(ClipboardLinkOffer.pasteResult(for: content).message?.isEmpty ?? true, "\(String(describing: content))")
+            }
+        }
+        XCTAssertNil(ClipboardLinkOffer.PasteResult.link(URL(string: "https://example.com")!).message)
+    }
+
+    func testDisplayHost() {
+        let cases: [(String, String)] = [
+            ("https://www.example.com/post?x=1", "example.com"),
+            ("https://WWW.Example.com/", "example.com"),
+            ("https://open.substack.com/pub/a/p/b", "open.substack.com"),
+            ("https://wwwx.example.com/", "wwwx.example.com"),
+        ]
+        for (address, expected) in cases {
+            XCTAssertEqual(ClipboardLinkOffer.displayHost(of: URL(string: address)!), expected, address)
         }
     }
 
