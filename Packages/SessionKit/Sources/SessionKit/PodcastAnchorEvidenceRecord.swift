@@ -8,8 +8,9 @@ public enum PodcastAnchorEvidenceRecord {
     /// Adds captured evidence and marks the capture `ready`.
     ///
     /// A new entry replaces a stored one with the same id, or with the same (windowRole, provenance) pair, and keeps
-    /// every other entry. Entries are stored sorted by id. `sourceExactEditionSHA256` is assigned as passed, so nil
-    /// overwrites an earlier value (the source-window job passes nil). A context status still `pending` becomes
+    /// every other entry. Entries are stored sorted by id. A non-nil `sourceExactEditionSHA256` replaces the stored one;
+    /// nil keeps it, because the stream and source-window captures have no edition to report and must not blank the
+    /// digest an exact local capture stored (#972 entry 8; the packet's shared item identity reads it). A context status still `pending` becomes
     /// `unavailable`, because the evidence is now final; `ready` and nil stay as they are.
     public static func merging(
         _ evidence: [CapturedPodcastAnchorEvidence],
@@ -26,7 +27,7 @@ public enum PodcastAnchorEvidenceRecord {
             merged.append(newEvidence)
         }
         interjection.podcastAnchorEvidence = merged.sorted { $0.id < $1.id }
-        interjection.sourceExactEditionSHA256 = sourceExactEditionSHA256
+        if let sourceExactEditionSHA256 { interjection.sourceExactEditionSHA256 = sourceExactEditionSHA256 }
         interjection.podcastAnchorEvidenceCaptureStatus = .ready
         if interjection.anchorContextStatus == .pending {
             interjection.anchorContextStatus = .unavailable

@@ -197,7 +197,8 @@ extension Gate1AppModel {
         }
         if reportsResult { reportConfirmation("Recovering source context…") }
         diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "scheduled"
-        let provenance = transcriptionURL.isFileURL ? "downloaded_local_audio" : "bounded_remote_window"
+        // A stream URL returned above, so this is always a local file.
+        let provenance = "downloaded_local_audio"
         diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", interjection)] = provenance
         pendingSourceContextInterjectionIds.insert(Self.marginIdentity(interjection))
         run { engine in
