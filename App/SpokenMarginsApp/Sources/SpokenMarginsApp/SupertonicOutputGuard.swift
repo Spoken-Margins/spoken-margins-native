@@ -49,6 +49,9 @@ final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
 
     /// The wrapped renderer's engine, so a downloaded voice's own chunks still count as its own (#2700).
     var engine: String { inner.engine }
+    var isLoadingModel: Bool { inner.isLoadingModel }
+    func prepareToRender() async { await inner.prepareToRender() }
+    func setEventSink(_ sink: @escaping @Sendable (String, [String: String]) -> Void) { inner.setEventSink(sink) }
 
     func render(
         text: String,
