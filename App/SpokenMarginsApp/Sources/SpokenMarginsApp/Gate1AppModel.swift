@@ -2808,7 +2808,7 @@ final class Gate1AppModel: ObservableObject {
         guard let store else { return true }
         do {
             libraryAudioLoop.stopAndInvalidate()
-            pendingStartupAudioPreparationItemIds.removeAll()
+            startupAudioPreparation.pending.removeAll().forEach { $0.cancel() }
             let replacement = try makeEngine(store: store)
             let sessionId = engine?.currentSession?.id ?? snapshot.sessionId
             if engine?.currentSession != nil {
