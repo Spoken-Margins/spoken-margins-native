@@ -250,23 +250,36 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
     /// Loads the pipeline and runs one short render, so the Neural Engine specialisation happens now and not inside
     /// the listener's first Play (#2856). Never throws: a failure is logged as `voice.load` and the first Play reports
     /// it again. The sample audio is deleted at once.
+    ///
+    /// Cancelling the calling task stops it before the next step (the load itself can't be interrupted): a warm-up
+    /// started for a client the listener has since replaced must not go on to load or render more.
     func warmUp() async {
+        let cancellation = CancellationFlag()
+        await withTaskCancellationHandler {
+            await runWarmUp(cancellation: cancellation)
+        } onCancel: {
+            cancellation.cancel()
+        }
+    }
+
+    private func runWarmUp(cancellation: CancellationFlag) async {
         loadingCount.begin()
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             renderQueue.async { [self] in
-                autoreleasepool { warmUpOnQueue() }
+                autoreleasepool { warmUpOnQueue(cancellation: cancellation) }
                 loadingCount.end()
                 continuation.resume()
             }
         }
     }
 
-    private func warmUpOnQueue() {
+    private func warmUpOnQueue(cancellation: CancellationFlag) {
         guard !hasRunWarmInference else { return }
         let started = Date()
         do {
             for text in Self.warmUpTexts {
-                let result = try renderOnQueue(text, speed: 1, pacing: .whenAppBackgrounded, cancellation: CancellationFlag(), trigger: "warm")
+                if cancellation.isCancelled { return }
+                let result = try renderOnQueue(text, speed: 1, pacing: .whenAppBackgrounded, cancellation: cancellation, trigger: "warm")
                 nextInferenceNotBefore = nil // a warm-up's cost must not hold back the next text or a real render
                 try? fileManager.removeItem(at: result.audioURL)
                 generatedAudioURLs.remove(result.audioURL)

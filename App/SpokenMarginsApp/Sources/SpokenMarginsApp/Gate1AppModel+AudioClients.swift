@@ -60,15 +60,9 @@ extension Gate1AppModel {
                 // A Core ML voice's first render loads and specialises its models for the Neural Engine, which took
                 // longer than the player's 15 s wait (#2856). Doing it now, off the main thread and a moment after the
                 // client is built, leaves the listener's first Play with only inference to wait for.
-                // Weak: a client rebuilt within the delay (voice or speed changed) drops its renderer, and a stale one
-                // must not load a second copy of the model.
-                let renderingAllowed = engine.renderingAllowed
-                let warming = renderer as AnyObject
-                Task.detached(priority: .utility) { [weak warming] in
-                    try? await Task.sleep(for: .seconds(2))
-                    guard renderingAllowed(), let renderer = warming as? any SupertonicRendering else { return }
-                    await renderer.prepareToRender()
-                }
+                // One warm-up at a time for the whole app: a rebuilt client cancels the one before it, which stops at
+                // its next step and frees its renderer, so trying voices in Settings never holds several models.
+                VoiceWarmUpSchedule.shared.schedule(renderer, allowed: engine.renderingAllowed)
             }
             guard let store else { throw SessionKitError.persistenceFailed("prepared_audio_store_unavailable") }
             // Saved audio's identity needs no model files, so saved Supertonic chunks and Kitten's stand-ins play before
