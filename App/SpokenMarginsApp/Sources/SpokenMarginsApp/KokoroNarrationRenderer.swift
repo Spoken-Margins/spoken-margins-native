@@ -252,28 +252,28 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
     /// it again. The sample audio is deleted at once.
     func warmUp() async {
         loadingCount.begin()
-        await withCheckedContinuation { continuation in
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             renderQueue.async { [self] in
-                defer {
-                    loadingCount.end()
-                    continuation.resume()
-                }
-                autoreleasepool {
-                    guard !hasRunWarmInference else { return }
-                    let started = Date()
-                    do {
-                        for text in Self.warmUpTexts {
-                            let result = try renderOnQueue(text, speed: 1, pacing: .whenAppBackgrounded, cancellation: CancellationFlag(), trigger: "warm")
-                            nextInferenceNotBefore = nil // a warm-up's cost must not hold back the next text or a real render
-                            try? fileManager.removeItem(at: result.audioURL)
-                            generatedAudioURLs.remove(result.audioURL)
-                        }
-                        events("voice.warm", ["voice": KokoroVoice.catalogId, "ms": Self.milliseconds(since: started), "result": "ok"])
-                    } catch {
-                        events("voice.warm", ["voice": KokoroVoice.catalogId, "ms": Self.milliseconds(since: started), "result": Self.describe(error)])
-                    }
-                }
+                autoreleasepool { warmUpOnQueue() }
+                loadingCount.end()
+                continuation.resume()
             }
+        }
+    }
+
+    private func warmUpOnQueue() {
+        guard !hasRunWarmInference else { return }
+        let started = Date()
+        do {
+            for text in Self.warmUpTexts {
+                let result = try renderOnQueue(text, speed: 1, pacing: .whenAppBackgrounded, cancellation: CancellationFlag(), trigger: "warm")
+                nextInferenceNotBefore = nil // a warm-up's cost must not hold back the next text or a real render
+                try? fileManager.removeItem(at: result.audioURL)
+                generatedAudioURLs.remove(result.audioURL)
+            }
+            events("voice.warm", ["voice": KokoroVoice.catalogId, "ms": Self.milliseconds(since: started), "result": "ok"])
+        } catch {
+            events("voice.warm", ["voice": KokoroVoice.catalogId, "ms": Self.milliseconds(since: started), "result": Self.describe(error)])
         }
     }
 
