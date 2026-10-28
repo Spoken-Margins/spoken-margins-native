@@ -81,6 +81,8 @@ struct ReadCostReport {
             ("loadPodcastDownload(itemId: mapped)", { _ = try store.loadPodcastDownload(itemId: mapped) }),
             ("loadPreparedAudioManifest(id:)", { _ = try store.loadPreparedAudioManifest(id: manifest) }),
             ("loadPreparedAudioManifests(itemId:)", { _ = try store.loadPreparedAudioManifests(itemId: article) }),
+            ("loadAudioPreparationJob(id:)", { _ = try store.loadAudioPreparationJob(id: "prep-job-0") }),
+            ("loadEpisodeMapPreparationJob(id:)", { _ = try store.loadEpisodeMapPreparationJob(id: "map-job-0") }),
             ("loadOfflineStorageBudget()", { _ = try store.loadOfflineStorageBudget() }),
             ("loadAIJobs(sessionId:)", { _ = try store.loadAIJobs(sessionId: "session-0") }),
             ("loadWatchAudioPackage(id:)", { _ = try store.loadWatchAudioPackage(id: "watch-package-0") }),
