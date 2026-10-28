@@ -44,7 +44,11 @@ PLANS = {
     'release': ('SpokenMarginsReleaseTests', 'Release', 3600),
     # The scripted journeys in TestPlans/scripted-journeys.json, from the Release plan (it holds every UI test).
     'journeys': ('SpokenMarginsReleaseTests', 'Release', 1800),
+    'tour': ('SpokenMarginsUISeams', 'ScreenTour', 600),
 }
+
+# Plans whose screenshots are exported from the result bundle, one file per screen, for the critics (#381).
+SCREENSHOT_PLANS = {'tour'}
 
 PLAN_TIMEOUT_ENV = 'SM_PLAN_TIMEOUT_SECONDS'
 
@@ -163,9 +167,8 @@ def t3_selection(only, plan_name, root=None):
     misspelled name fails before anything builds instead of running nothing (#2138). Shared with the hosted Mac
     (scripts/hosted_t3_check.py), so both judge a T3 by one rule."""
     root = ROOT if root is None else root
-    selectors = [s if s.startswith((f'{APP_TEST_TARGET}/', f'{UI_TEST_TARGET}/')) else f'{APP_TEST_TARGET}/{s}'
-                 for s in only]
     planned = plan_tests(root, plan_name)
+    selectors = [full_selector(s, planned) for s in only]
     unmatched = [s for s in selectors if not any(selected(test, s) for test in planned)]
     if unmatched:
         raise RuntimeError(f'Not in the {plan_name} test plan: {", ".join(unmatched)}')
@@ -173,6 +176,36 @@ def t3_selection(only, plan_name, root=None):
                                  {f'{APP_TEST_TARGET}/{test}' for test in target_tests(root, APP_TEST_TARGET)})
     expected = {test for test in planned if not selectors or any(selected(test, s) for s in selectors)}
     return selectors, planned, expected
+
+
+def full_selector(selector, planned):
+    """Prefix a bare Class[/method] with its test target: the plan's only target, else the app tests."""
+    targets = sorted({test.split('/', 1)[0] for test in planned})
+    if selector.startswith((f'{APP_TEST_TARGET}/', f'{UI_TEST_TARGET}/')) or selector.split('/', 1)[0] in targets:
+        return selector
+    return f'{targets[0] if len(targets) == 1 else APP_TEST_TARGET}/{selector}'
+
+
+def name_screenshots(exported, screens):
+    """Copy xcresulttool's exported attachments into `screens`, each named after its XCTAttachment.
+
+    xcresulttool names the files by UUID and records the attachment's name in manifest.json as
+    `suggestedHumanReadableName`, `<name>_<index>_<UUID>.<ext>`. Returns the new file names, sorted.
+    """
+    screens.mkdir(parents=True, exist_ok=True)
+    names = []
+    for test in json.loads((exported / 'manifest.json').read_text()):
+        for attachment in test.get('attachments', []):
+            source = exported / attachment['exportedFileName']
+            human = attachment.get('suggestedHumanReadableName') or source.name
+            match = re.fullmatch(r'(.+?)_\d+_[0-9A-Fa-f-]{36}(\.\w+)?', human)
+            name = match[1] + (match[2] or source.suffix) if match else human
+            stem, suffix, copy = Path(name).stem, Path(name).suffix, 2
+            while name in names:
+                name, copy = f'{stem}-{copy}{suffix}', copy + 1
+            shutil.copyfile(source, screens / name)
+            names.append(name)
+    return sorted(names)
 
 
 def dedicated_simulator(devices, ios=None):
@@ -2132,8 +2165,30 @@ class Run:
                     slot.close()
                 else:
                     release_handle(slot)
+        if plan in SCREENSHOT_PLANS:
+            self.export_screenshots()
         if input_identity() != identity:
             raise RuntimeError('Inputs changed during testing; rerun on a stable source state')
+
+    def export_screenshots(self):
+        """Export the run's screenshots to screens/, named per screen, and list them in the manifest."""
+        exported = self.output / 'attachments'
+        self.command('export-screenshots', ['xcrun', 'xcresulttool', 'export', 'attachments',
+                     '--path', str(self.output / 'tests.xcresult'), '--output-path', str(exported)], timeout=120)
+        screens = self.output / 'screens'
+        try:
+            names = name_screenshots(exported, screens)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            # An xcresulttool whose manifest reads differently still yields the files, under its names.
+            self.manifest['screenshot_naming_error'] = repr(error)
+            shutil.rmtree(screens, ignore_errors=True)
+            shutil.copytree(exported, screens, ignore=shutil.ignore_patterns('manifest.json'))
+            names = sorted(path.name for path in screens.iterdir())
+        shutil.rmtree(exported, ignore_errors=True)
+        self.manifest['screenshots'] = names
+        self.save()
+        if not names:
+            raise RuntimeError('The tour passed but its result bundle held no screenshots')
 
 
 def read_changed_files(path):
