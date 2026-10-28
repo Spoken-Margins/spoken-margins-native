@@ -94,4 +94,63 @@ final class PDFItemTitleTests: XCTestCase {
             "Listening to Papers: A Field Study"
         )
     }
+
+    // MARK: #2807 - an outlined PDF with no Abstract label
+
+    private func line(_ text: String, _ size: Double) -> PDFItemTitle.PageLine { .init(text: text, pointSize: size) }
+
+    /// "Collected Stories / Edited by Example Author / Contents" imported as "Story 1", its first bookmark.
+    func testAStoryCollectionIsTitledByPageOneNotItsFirstBookmark() {
+        let page1 = [line("Collected Stories", 28), line("Edited by Example Author", 14), line("Contents", 18),
+                     line("Story 1 .......... 3", 11), line("Story 2 .......... 9", 11)]
+        let title = PDFItemTitle.displayTitle(onPageOne: page1, bodySize: 11)
+        XCTAssertEqual(title, "Collected Stories")
+        XCTAssertEqual(PDFItemTitle.choose(metadata: nil, printedTitles: title.map { [$0] } ?? [], firstHeading: "Story 1"), "Collected Stories")
+    }
+
+    func testAMetadataTitleStillBeatsThePageOneTitle() {
+        XCTAssertEqual(
+            PDFItemTitle.choose(metadata: "Stories of the Coast", printedTitles: ["Collected Stories"], firstHeading: "Story 1"),
+            "Stories of the Coast"
+        )
+    }
+
+    func testDisplayTitleNeighbours() {
+        let cases: [(String, [PDFItemTitle.PageLine], String?)] = [
+            ("a title over two lines is one title",
+             [line("The Collected Stories", 28), line("of Example Author", 28), line("Contents", 18), line("Story 1", 11)],
+             "The Collected Stories of Example Author"),
+            ("a contents label set larger than the title is not the title",
+             [line("Stories", 20), line("Table of Contents", 26), line("Story 1", 11)], "Stories"),
+            ("a numbered section label is not the title",
+             [line("1 Introduction", 22), line("Body text of the first section goes here.", 11)], nil),
+            ("a title that starts with a number is kept",
+             [line("21 Lessons for Listening", 26), line("Contents", 18)], "21 Lessons for Listening"),
+            ("a single heading equal to its first bookmark",
+             [line("Chapter One", 24), line("It began on a Tuesday, as these things do.", 11)], "Chapter One"),
+            ("no display type on page 1",
+             [line("It began on a Tuesday, as these things do.", 11), line("Nobody remembered why.", 11)], nil),
+            ("a page number in display type is not a title",
+             [line("12", 24), line("Body text of the page.", 11)], nil),
+            ("empty page", [], nil),
+            ("a notice in display type is not a title",
+             [line("Provided proper attribution is provided, Google hereby grants permission to reproduce the tables and figures in this paper solely for use in journalistic or", 14),
+              line("Body text.", 11)], nil),
+            ("a title after a masthead of the same size runs on from the masthead's first line",
+             [line("Example Review", 20), line("Collected Stories", 20), line("Contents", 14)], "Example Review Collected Stories"),
+        ]
+        for (name, lines, expected) in cases {
+            XCTAssertEqual(PDFItemTitle.displayTitle(onPageOne: lines, bodySize: 11), expected, name)
+        }
+    }
+
+    func testStructuralLabels() {
+        for label in ["Contents", "TABLE OF CONTENTS", "Table of Contents", "1 Introduction", "I. INTRODUCTION", "1. Introduction",
+                      "Preface", "Foreword", "Acknowledgements", "Acknowledgments", "Dedication", "About the Author"] {
+            XCTAssertTrue(PDFItemTitle.isStructuralLabel(label), label)
+        }
+        for title in ["Contents of the Mind", "Introduction to Algorithms", "Dedication and Other Stories", "The Preface Problem", "Summary Statistics Done Right"] {
+            XCTAssertFalse(PDFItemTitle.isStructuralLabel(title), title)
+        }
+    }
 }

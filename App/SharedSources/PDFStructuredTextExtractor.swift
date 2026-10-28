@@ -248,12 +248,31 @@ enum PDFStructuredTextExtractor {
         }
         // With an outline the printed title has no heading level, so the first level-1 heading is
         // the outline's "1 Introduction" (#2062): take the printed title instead.
-        let printedTitles = headingOutline(in: document).isEmpty ? []
-            : structured.segments.filter { $0.role == .title }.map(text(of:))
-        return PDFItemTitle.choose(
-            metadata: (document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String).map(cleaned),
-            printedTitles: printedTitles,
-            firstHeading: firstHeading
+        let hasOutline = !headingOutline(in: document).isEmpty
+        let metadata = (document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String).map(cleaned)
+        var printedTitles = hasOutline ? structured.segments.filter { $0.role == .title }.map(text(of:)) : []
+        // Only an Abstract or Summary label makes a printed title a `.title` segment. Without one, an
+        // outlined PDF's first bookmark ("Story 1") would win over the title page 1 prints (#2807).
+        if hasOutline, printedTitles.isEmpty, !(metadata.map { !PDFItemTitle.isPlaceholder($0) } ?? false),
+           let displayTitle = pageOneDisplayTitle(in: document) {
+            printedTitles = [displayTitle]
+        }
+        return PDFItemTitle.choose(metadata: metadata, printedTitles: printedTitles, firstHeading: firstHeading)
+    }
+
+    /// The title page 1 prints in display type (#2807). The body size comes from the first few pages,
+    /// which is cheaper than the whole PDF and enough to tell display type from text.
+    private static func pageOneDisplayTitle(in document: PDFDocument) -> String? {
+        var pages: [[TextLine]] = []
+        for index in 0..<min(document.pageCount, 8) {
+            guard let page = document.page(at: index) else { pages.append([]); continue }
+            let pageBox = page.bounds(for: .mediaBox)
+            pages.append(lines(from: page).filter { !isSideStamp($0.text, bounds: $0.bounds, pageBox: pageBox) })
+        }
+        guard let first = pages.first, !first.isEmpty else { return nil }
+        return PDFItemTitle.displayTitle(
+            onPageOne: first.map { .init(text: $0.text, pointSize: Double($0.pointSize)) },
+            bodySize: Double(inferredBodyPointSize(from: pages.flatMap { $0 }))
         )
     }
 

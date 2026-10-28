@@ -6,7 +6,22 @@ import Foundation
 /// heading level when the PDF has an outline, so the first level-1 heading was the first outline
 /// entry. The printed title now wins over an outline heading, and a metadata title that is only a
 /// file name or a word processor's default is not a title.
+///
+/// #2807: an outlined PDF with no "Abstract" or "Summary" line has no printed-title block, so its
+/// first bookmark ("Story 1") won over a page 1 that reads "Collected Stories / Edited by … /
+/// Contents". `displayTitle(onPageOne:bodySize:)` reads that title from page 1's type.
 public enum PDFItemTitle {
+    /// One line of page 1, in reading order, with the size its type is set in.
+    public struct PageLine: Equatable, Sendable {
+        public var text: String
+        public var pointSize: Double
+
+        public init(text: String, pointSize: Double) {
+            self.text = text
+            self.pointSize = pointSize
+        }
+    }
+
     /// The metadata title when it says something, else the printed title (given only for a PDF
     /// that has an outline), else the first level-1 heading.
     public static func choose(metadata: String?, printedTitle: String?, firstHeading: String?) -> String? {
@@ -22,6 +37,38 @@ public enum PDFItemTitle {
         let blocks = printedTitles.compactMap(tidy)
         let printed = blocks.dropLast().first { !readsAsSentence($0) } ?? blocks.last
         return choose(metadata: metadata, printedTitle: printed, firstHeading: firstHeading)
+    }
+
+    /// The title page 1 prints in its largest display type: the first run of lines at the largest size
+    /// that is at least 1.5 pt over the body text. A contents or front-matter label ("Contents",
+    /// "Preface") is not a title, a subtitle or editor line in smaller type is left out, and a run that
+    /// reads as a sentence (a notice set in display type) is not a title. Nil when page 1 sets nothing
+    /// in display type.
+    public static func displayTitle(onPageOne lines: [PageLine], bodySize: Double) -> String? {
+        func isCandidate(_ line: PageLine) -> Bool {
+            guard line.pointSize >= bodySize + 1.5, let text = tidy(line.text), text.count >= 2,
+                  text.contains(where: \.isLetter), !isStructuralLabel(text) else { return false }
+            return true
+        }
+        let candidates = lines.indices.filter { isCandidate(lines[$0]) }
+        guard let titleSize = candidates.map({ lines[$0].pointSize }).max(),
+              let first = candidates.first(where: { abs(lines[$0].pointSize - titleSize) < 0.3 }) else { return nil }
+        var run: [String] = []
+        var index = first
+        while index < lines.count, isCandidate(lines[index]), abs(lines[index].pointSize - titleSize) < 0.3 {
+            run.append(lines[index].text)
+            index += 1
+        }
+        guard let title = tidy(run.joined(separator: " ")), !readsAsSentence(title) else { return nil }
+        return title
+    }
+
+    /// "Contents", "Table of Contents", "1 Introduction", "Preface": a part of a book or paper, not its name.
+    static func isStructuralLabel(_ text: String) -> Bool {
+        text.range(
+            of: #"^(?:(?:[0-9]+|[ivxlcdm]+)[.)]?\s+)?(?:table of contents|contents|preface|foreword|introduction|prologue|epigraph|dedication|acknowledg(?:e)?ments?|copyright|about the authors?|abstract|summary)\s*$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
     }
 
     /// Twelve or more words, two in three starting lower case, ending with a full stop or broken off mid-sentence
