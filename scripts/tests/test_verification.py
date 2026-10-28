@@ -2514,6 +2514,46 @@ class VerificationTests(unittest.TestCase):
             self.assertTrue(inventory.scripted_journey_errors(root))
 
 
+class WarmLaunchTests(unittest.TestCase):
+    """#2806: a UI plan's first launch of the app happens before its first test, not inside it."""
+    UDID = 'A1B2C3D4-0000-0000-0000-SYNTHETIC00'
+    APP = Path('/derived/SpokenMarginsApp.app')
+
+    def warm(self, failing=()):
+        calls, slept = [], []
+
+        def quietly(args, timeout=60):
+            calls.append(args[0])
+            return None if args[0] in failing else True
+
+        seen = verification.warm_launch(self.UDID, self.APP, 'com.example.app', sleep=slept.append, quietly=quietly)
+        return calls, slept, seen
+
+    def test_the_app_is_installed_run_for_a_few_seconds_stopped_and_removed_in_that_order(self):
+        calls, slept, seen = self.warm()
+        self.assertEqual(calls, ['install', 'launch', 'terminate', 'uninstall'])
+        self.assertEqual(slept, [verification.WARM_LAUNCH_SECONDS])
+        self.assertEqual({k: seen[k] for k in ('install', 'launch', 'terminate', 'uninstall')},
+                         dict.fromkeys(('install', 'launch', 'terminate', 'uninstall'), True))
+
+    def test_a_failed_launch_still_removes_the_app_so_the_tests_start_clean(self):
+        calls, slept, seen = self.warm(failing=('launch',))
+        self.assertEqual(calls, ['install', 'launch', 'terminate', 'uninstall'])
+        self.assertEqual(slept, [], 'nothing to wait for when the app did not start')
+        self.assertIsNone(seen['launch'])
+
+    def test_a_failed_install_stops_there(self):
+        calls, slept, _ = self.warm(failing=('install',))
+        self.assertEqual((calls, slept), (['install'], []))
+
+    def test_it_installs_the_built_app_on_the_given_simulator(self):
+        recorded = []
+        verification.warm_launch(self.UDID, self.APP, 'com.example.app', sleep=lambda _: None,
+                                 quietly=lambda args, timeout=60: recorded.append(args) or True)
+        self.assertEqual(recorded[0], ['install', self.UDID, str(self.APP)])
+        self.assertEqual(recorded[1], ['launch', self.UDID, 'com.example.app'])
+
+
 class SimulatorSettleTests(unittest.TestCase):
     """#705: don't launch the host app in the window where it stalls at startup."""
     UDID = 'A1B2C3D4-0000-0000-0000-SYNTHETIC00'
