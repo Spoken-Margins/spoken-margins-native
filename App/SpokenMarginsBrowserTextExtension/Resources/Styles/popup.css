@@ -1,10 +1,12 @@
 body {
   margin: 0;
-  width: 214px;
-  min-width: 214px;
+  /* Sizes are in em from the body's text style, so the popup follows the listener's text size (#1941).
+     The width grows with it and stops at the popup's own width. */
+  width: min(16.5em, 100vw);
+  min-width: min(16.5em, 100vw);
   color: #f6f6f6;
   background: #101312;
-  font: 14px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  font: -apple-system-body;
 }
 
 main {
@@ -22,30 +24,30 @@ main {
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
+  width: 2.85em;
+  height: 2.85em;
+  border-radius: 0.9em;
   color: #07110d;
   background: #57d696;
-  font-size: 11px;
+  font-size: 0.8em;
   font-weight: 800;
   letter-spacing: -0.2px;
 }
 
 h1 {
   margin: 0;
-  font-size: 14px;
+  font-size: 1em;
   line-height: 1.2;
 }
 
 .brand p {
   margin: 2px 0 0;
   color: #aeb8b3;
-  font-size: 11px;
+  font-size: 0.85em;
 }
 
 button {
-  min-height: 32px;
+  min-height: 2.3em;
   border: 0;
   border-radius: 8px;
   color: #111;
@@ -59,9 +61,9 @@ button:disabled {
 }
 
 #status {
-  min-height: 14px;
+  min-height: 1em;
   margin: 0;
   color: #bdbdbd;
-  font-size: 11px;
+  font-size: 0.85em;
   line-height: 1.4;
 }

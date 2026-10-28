@@ -40,8 +40,11 @@ test("popup and manifest reference flattened bundled resources", () => {
   assert.match(popup, /href="popup\.css"/);
   assert.match(popup, /src="popup\.js"/);
   assert.doesNotMatch(popup, /Styles\/popup\.css|Scripts\/popup\.js/);
-  assert.match(styles, /width:\s*214px/);
-  assert.match(styles, /min-height:\s*32px/);
+  // Text follows the listener's text size (#1941): the body takes the system text style and no font size is in px.
+  assert.match(styles, /font:\s*-apple-system-body/);
+  assert.doesNotMatch(styles, /font-size:\s*[\d.]+px/);
+  assert.match(styles, /width:\s*min\(16\.5em,\s*100vw\)/);
+  assert.match(styles, /min-height:\s*2\.3em/);
   assert.doesNotMatch(popup, /selectedTextButton|Selected Text/);
   assert.match(popup, /Adding this page/);
 });
