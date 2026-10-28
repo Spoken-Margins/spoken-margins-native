@@ -12,24 +12,27 @@ extension Gate1AppModel {
     ///
     /// `quarantinedAudioPaths` are the recordings of the item's Margins that were set aside because they
     /// couldn't be decoded (`SQLiteSessionStore.quarantinedMarginAudioPaths`, read before the delete, #1466).
+    ///
+    /// The surviving-paths scan and the file removals run on `StoreReader`'s background task (#2507, #2510), so
+    /// permanent delete no longer waits on them. A recording whose removal is still pending when the app is killed
+    /// stays on disk, as one whose removal failed always did.
     func removeMarginRecordings(_ deleted: [Interjection], quarantinedAudioPaths: [String] = [], store: SQLiteSessionStore) {
         let deletedAudioPaths = deleted.compactMap(\.audioPath) + quarantinedAudioPaths
         guard !deletedAudioPaths.isEmpty,
-              let surviving = try? store.allMarginAudioPaths(),
               let supportDirectory = try? applicationSupportDirectory() else { return }
         let recordings = supportDirectory.appending(path: "SpokenMargins", directoryHint: .isDirectory)
-        // The leveled playback copies (#467) are the same voice. They are found by the recording's content,
-        // so they go before the recording does.
-        for file in MarginRecordingCleanup.filesToRemove(
-            deletedAudioPaths: deletedAudioPaths, survivingAudioPaths: surviving, within: recordings,
-            resolve: resolvedInterjectionAudioURL(for:)
-        ) {
-            Self.leveledMargins.removeCopies(of: file)
+        let resolve: @Sendable (String) -> URL? = {
+            Self.resolvedInterjectionAudioURL(for: $0, applicationSupportDirectory: supportDirectory)
         }
-        MarginRecordingCleanup.removeFiles(
-            deletedAudioPaths: deletedAudioPaths, survivingAudioPaths: surviving, within: recordings,
-            resolve: resolvedInterjectionAudioURL(for:)
-        )
+        let leveledMargins = Self.leveledMargins
+        Task {
+            await MarginRecordingRemoval.removeUnreferenced(
+                deletedAudioPaths: deletedAudioPaths, store: store, within: recordings, resolve: resolve,
+                // The leveled playback copies (#467) are the same voice. They are found by the recording's
+                // content, so they go before the recording does.
+                beforeRemoving: { leveledMargins.removeCopies(of: $0) }
+            )
+        }
     }
 
     func removeDurableGeneratedAudio(for item: Item) {
