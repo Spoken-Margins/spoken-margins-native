@@ -2242,7 +2242,7 @@ final class Gate1AppModel: ObservableObject {
             } catch { reportFailure(error, context: "Listening edition handoff failed") }
             return
         }
-        if url.isFileURL, url.pathExtension.lowercased() == SpokenMarginsPackageArchive.fileExtension { stageSpokenMarginsPackageImport(from: url); return }
+        if url.isFileURL, url.pathExtension.lowercased() == SpokenMarginsPackageArchive.fileExtension { stageSpokenMarginsPackageImportInBackground(from: url); return }
         if url.scheme == Gate5BrowserTextHandoffURL.scheme, url.host == "open" {
             screen = hasActiveSession ? .playback : .home
             return

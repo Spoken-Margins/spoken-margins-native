@@ -2308,7 +2308,7 @@ extension SourceLinkImportTests {
     /// podcast, recipient-supplied, no link and no GUID.
     private func makePrivateFeedFixture(
         showTitle: String? = "Members Only Show", publishedAt: String? = "2026-09-01T00:00:00Z"
-    ) throws -> PrivateFeedFixture {
+    ) async throws -> PrivateFeedFixture {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         // Model background tasks retain SQLite beyond this test; do not unlink its open WAL.
@@ -2340,6 +2340,7 @@ extension SourceLinkImportTests {
             sourceLinkResolver: EchoAudioLinkResolver(), audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
         model.resetAndSeed()
         model.handleIncomingURL(packageURL)
+        await model.waitForPackageStaging()
         return PrivateFeedFixture(model: model, store: store, packageURL: packageURL, manifest: manifest)
     }
 
@@ -2373,13 +2374,14 @@ extension SourceLinkImportTests {
     }
 
     func testPastedFeedWithOneMatchingEpisodeAddsThatEpisodeAndThePendingImportBecomesImportable() async throws {
-        let fixture = try makePrivateFeedFixture()
+        let fixture = try await makePrivateFeedFixture()
         let model = fixture.model
         XCTAssertTrue(SharedEpisodeFeedMatcher.isPrivatePodcastSource(fixture.manifest))
         XCTAssertEqual(model.spokenMarginsPackageImportReview?.requiresRecipientItem, true)
         let recovery = recovery(for: model, feed: try membersFeed())
 
         await recovery.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+        await fixture.model.waitForPackageStaging()
 
         guard case .added(let itemId) = recovery.phase else { return XCTFail("expected the episode to be added, got \(recovery.phase)") }
         let review = try XCTUnwrap(model.spokenMarginsPackageImportReview)
@@ -2410,19 +2412,22 @@ extension SourceLinkImportTests {
         XCTAssertNotEqual(layer.sourceResolutionStatus, .wrongSource)
 
         model.handleIncomingURL(fixture.packageURL)
+        await model.waitForPackageStaging()
         XCTAssertNil(model.spokenMarginsPackageImportReview, "already imported: there is nothing to confirm")
         XCTAssertEqual(model.diagnostics["lastSpokenMarginsPackageImport"], "duplicate:\(digest)")
         await recovery.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+        await fixture.model.waitForPackageStaging()
         XCTAssertEqual(recovery.phase, .added(itemId: itemId), "pasting the feed again finds the episode already in the Library")
         XCTAssertEqual(try fixture.store.listItems().filter { $0.media?.url == Self.episode12Audio }.count, 1)
         XCTAssertEqual(try fixture.store.loadImportedCommentaryLayers(itemId: itemId).count, 1)
     }
 
     func testFriendsFeedThatTitlesTheShowDifferentlyStillMatchesTheEpisode() async throws {
-        let fixture = try makePrivateFeedFixture()
+        let fixture = try await makePrivateFeedFixture()
         let recovery = recovery(for: fixture.model, feed: try membersFeed(show: "Members Only Show (subscriber B)"))
 
         await recovery.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+        await fixture.model.waitForPackageStaging()
 
         guard case .added(let itemId) = recovery.phase else { return XCTFail("expected the episode to be added, got \(recovery.phase)") }
         XCTAssertEqual(fixture.model.spokenMarginsPackageImportReview?.matchingItemId, itemId)
@@ -2432,7 +2437,7 @@ extension SourceLinkImportTests {
     }
 
     func testAnotherEpisodeOfTheSameShowIsNeverGivenThisEpisodesIdentity() async throws {
-        let fixture = try makePrivateFeedFixture()
+        let fixture = try await makePrivateFeedFixture()
         // An episode added before GUIDs were kept, whose feed link is the show's page for every episode.
         let other = Item(
             id: "other-episode", title: "Episode 11: The Earlier One", mediaType: "transcript_backed_media", text: nil,
@@ -2442,6 +2447,7 @@ extension SourceLinkImportTests {
         let recovery = recovery(for: fixture.model, feed: try membersFeed())
 
         await recovery.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+        await fixture.model.waitForPackageStaging()
 
         guard case .added(let itemId) = recovery.phase else { return XCTFail("expected the episode to be added, got \(recovery.phase)") }
         XCTAssertNotEqual(itemId, "other-episode")
@@ -2450,7 +2456,7 @@ extension SourceLinkImportTests {
     }
 
     func testEpisodeAlreadyInTheLibraryIsReusedAndGainsTheIdentityItWasAddedWithout() async throws {
-        let fixture = try makePrivateFeedFixture()
+        let fixture = try await makePrivateFeedFixture()
         let model = fixture.model
         // The listener added the episode earlier by its audio link, which keeps no GUID, show or date.
         let existing = Item(
@@ -2461,6 +2467,7 @@ extension SourceLinkImportTests {
         let recovery = recovery(for: model, feed: try membersFeed())
 
         await recovery.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+        await fixture.model.waitForPackageStaging()
 
         XCTAssertEqual(recovery.phase, .added(itemId: "already-here"))
         XCTAssertEqual(try fixture.store.listItems().filter { $0.media?.url == Self.episode12Audio }.count, 1, "no second episode")
@@ -2471,7 +2478,7 @@ extension SourceLinkImportTests {
     }
 
     func testEpisodeAddedEarlierByItsAudioLinkUnderTheFileNameIsLeftAloneAndTheFeedsEpisodeIsAdded() async throws {
-        let fixture = try makePrivateFeedFixture()
+        let fixture = try await makePrivateFeedFixture()
         let model = fixture.model
         // Pasting the audio link titles the item from the file name, so the packet's title never matches it.
         let byAudioLink = Item(
@@ -2482,6 +2489,7 @@ extension SourceLinkImportTests {
         let recovery = recovery(for: model, feed: try membersFeed())
 
         await recovery.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+        await fixture.model.waitForPackageStaging()
 
         guard case .added(let itemId) = recovery.phase else { return XCTFail("expected the episode to be added, got \(recovery.phase)") }
         XCTAssertNotEqual(itemId, "by-audio-link", "reusing it would leave the import refusing it")
@@ -2496,11 +2504,12 @@ extension SourceLinkImportTests {
 
     func testEpisodeTheFeedMatchesByTitleAloneIsNotAddedWhenTheImportWouldRefuseIt() async throws {
         // A sender who added the episode by its audio link: the packet has a title and a length, no show and no day.
-        let fixture = try makePrivateFeedFixture(showTitle: nil, publishedAt: nil)
+        let fixture = try await makePrivateFeedFixture(showTitle: nil, publishedAt: nil)
         let before = try fixture.store.listItems().count
         let recovery = recovery(for: fixture.model, feed: try membersFeed())
 
         await recovery.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+        await fixture.model.waitForPackageStaging()
 
         XCTAssertEqual(recovery.phase, .noMatch, "an episode the import can't match is not added")
         XCTAssertEqual(try fixture.store.listItems().count, before, "no extra episode in the Library")
@@ -2508,11 +2517,12 @@ extension SourceLinkImportTests {
     }
 
     func testPastedFeedWithoutTheEpisodeSaysSoAndAddsNothing() async throws {
-        let fixture = try makePrivateFeedFixture()
+        let fixture = try await makePrivateFeedFixture()
         let before = try fixture.store.listItems().count
         let recovery = recovery(for: fixture.model, feed: try membersFeed(includingEpisode12: false))
 
         await recovery.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+        await fixture.model.waitForPackageStaging()
 
         XCTAssertEqual(recovery.phase, .noMatch)
         XCTAssertEqual(try fixture.store.listItems().count, before)
@@ -2522,7 +2532,7 @@ extension SourceLinkImportTests {
     }
 
     func testPastedFeedWithSeveralMatchingEpisodesAsksAndNeverGuesses() async throws {
-        let fixture = try makePrivateFeedFixture()
+        let fixture = try await makePrivateFeedFixture()
         let before = try fixture.store.listItems().count
         let secondAudio = "https://media.members.example/ep12-second.mp3"
         let feed = try parsedFeed([
@@ -2532,12 +2542,14 @@ extension SourceLinkImportTests {
         let recovery = recovery(for: fixture.model, feed: feed)
 
         await recovery.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+        await fixture.model.waitForPackageStaging()
 
         guard case .choose(let candidates) = recovery.phase else { return XCTFail("expected a choice, got \(recovery.phase)") }
         XCTAssertEqual(candidates.count, 2)
         XCTAssertEqual(try fixture.store.listItems().count, before, "nothing is added until the listener picks")
 
         await recovery.choose(candidates[1].id)
+        await fixture.model.waitForPackageStaging()
 
         guard case .added(let itemId) = recovery.phase else { return XCTFail("expected the pick to be added, got \(recovery.phase)") }
         XCTAssertEqual(try fixture.store.loadItem(id: itemId).media?.url, secondAudio)
@@ -2546,7 +2558,7 @@ extension SourceLinkImportTests {
     }
 
     func testAFeedThatCannotBeReadFailsPlainlyWithoutAddingAnything() async throws {
-        let fixture = try makePrivateFeedFixture()
+        let fixture = try await makePrivateFeedFixture()
         let before = try fixture.store.listItems().count
         var services = SharedEpisodeRecovery.services(model: fixture.model)
         services.fetchFeed = { _ in throw URLError(.notConnectedToInternet) }

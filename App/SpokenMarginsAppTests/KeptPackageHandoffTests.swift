@@ -20,41 +20,41 @@ final class KeptPackageHandoffTests: XCTestCase {
 
     private let launch = Date(timeIntervalSince1970: 1_800_000_000)
 
-    func testAFileThatNeedsANewerAppStaysInTheInboxAndADamagedOneIsRemoved() throws {
+    func testAFileThatNeedsANewerAppStaysInTheInboxAndADamagedOneIsRemoved() async throws {
         let h = try makeHarness()
         let newer = try h.store.savePackage(from: try writePacket(manifestSchema: "spoken-margins.package.v99"))
         let damaged = try h.store.savePackage(from: try writeFile(Data("not a zip".utf8)))
 
-        try h.model.consumePendingSpokenMarginsPackageHandoffs(from: h.store, keptNotices: h.notices, appVersion: "v1", now: launch)
+        try await h.model.consumePendingSpokenMarginsPackageHandoffs(from: h.store, keptNotices: h.notices, appVersion: "v1", now: launch)
 
         XCTAssertEqual(try h.store.pendingPayloadIDs(), [newer], "the newer-app file is kept, the damaged one is removed")
         XCTAssertEqual(h.model.diagnostics["pendingSpokenMarginsPackage:\(newer)"], "kept_needs_newer_app")
         XCTAssertEqual(h.model.diagnostics["pendingSpokenMarginsPackage:\(damaged)"], "rejected")
     }
 
-    func testTheMessageComesOncePerAppVersionAndTheFileStaysForTheNextOne() throws {
+    func testTheMessageComesOncePerAppVersionAndTheFileStaysForTheNextOne() async throws {
         let h = try makeHarness()
         let newer = try h.store.savePackage(from: try writePacket(manifestSchema: "spoken-margins.package.v99"))
 
-        try h.model.consumePendingSpokenMarginsPackageHandoffs(from: h.store, keptNotices: h.notices, appVersion: "v1", now: launch)
+        try await h.model.consumePendingSpokenMarginsPackageHandoffs(from: h.store, keptNotices: h.notices, appVersion: "v1", now: launch)
         XCTAssertEqual(h.model.feedbackEvent?.message, "These Margins need a newer Spoken Margins. Update the app, then open them again.")
 
         h.model.dismissFeedback()
-        try h.model.consumePendingSpokenMarginsPackageHandoffs(from: h.store, keptNotices: h.notices, appVersion: "v1", now: launch.addingTimeInterval(3_600))
+        try await h.model.consumePendingSpokenMarginsPackageHandoffs(from: h.store, keptNotices: h.notices, appVersion: "v1", now: launch.addingTimeInterval(3_600))
         XCTAssertNil(h.model.feedbackEvent, "the same build doesn't repeat the banner")
         XCTAssertEqual(try h.store.pendingPayloadIDs(), [newer], "and the file is still there")
 
-        try h.model.consumePendingSpokenMarginsPackageHandoffs(from: h.store, keptNotices: h.notices, appVersion: "v2", now: launch.addingTimeInterval(7_200))
+        try await h.model.consumePendingSpokenMarginsPackageHandoffs(from: h.store, keptNotices: h.notices, appVersion: "v2", now: launch.addingTimeInterval(7_200))
         XCTAssertNotNil(h.model.feedbackEvent, "a new build tells again")
     }
 
-    func testAKeptFileIsRemovedAfterThirtyDays() throws {
+    func testAKeptFileIsRemovedAfterThirtyDays() async throws {
         let h = try makeHarness()
         _ = try h.store.savePackage(from: try writePacket(manifestSchema: "spoken-margins.package.v99"))
-        try h.model.consumePendingSpokenMarginsPackageHandoffs(from: h.store, keptNotices: h.notices, appVersion: "v1", now: launch)
+        try await h.model.consumePendingSpokenMarginsPackageHandoffs(from: h.store, keptNotices: h.notices, appVersion: "v1", now: launch)
         XCTAssertEqual(try h.store.pendingPayloadIDs().count, 1)
 
-        try h.model.consumePendingSpokenMarginsPackageHandoffs(
+        try await h.model.consumePendingSpokenMarginsPackageHandoffs(
             from: h.store, keptNotices: h.notices, appVersion: "v1", now: launch.addingTimeInterval(31 * 24 * 3_600))
 
         XCTAssertEqual(try h.store.pendingPayloadIDs(), [])

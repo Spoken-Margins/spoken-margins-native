@@ -145,11 +145,9 @@ extension Gate1AppModel {
         }
 
         do {
-            try hangTelemetry.labels.scoped("pendingPackageHandoffs") {
-                try consumePendingSpokenMarginsPackageHandoffs(
-                    from: SpokenMarginsPackageHandoffStore.appGroup()
-                )
-            }
+            try await consumePendingSpokenMarginsPackageHandoffs(
+                from: SpokenMarginsPackageHandoffStore.appGroup()
+            )
         } catch {
             diagnostics["pendingSpokenMarginsPackageImport"] = "unavailable:\(error.localizedDescription)"
         }

@@ -101,21 +101,21 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let store = SpokenMarginsPackageHandoffStore(baseDirectory: root)
         _ = try store.savePackage(from: packageURL)
 
-        try model.consumePendingSpokenMarginsPackageHandoffs(from: store)
+        try await model.consumePendingSpokenMarginsPackageHandoffs(from: store)
 
         let review = try XCTUnwrap(model.spokenMarginsPackageImportReview)
         XCTAssertEqual(try store.pendingPayloadIDs().count, 1, "the shared copy waits until Import or Cancel (#2123)")
         XCTAssertTrue(model.diagnostics.values.contains("opened"))
 
         // Coming back to the foreground while the review shows stages nothing again.
-        try model.consumePendingSpokenMarginsPackageHandoffs(from: store)
+        try await model.consumePendingSpokenMarginsPackageHandoffs(from: store)
         XCTAssertEqual(model.spokenMarginsPackageImportReview?.id, review.id)
 
         // The app is killed before Import: the next launch reopens the review once, not on every foreground.
         let relaunched = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
-        try relaunched.consumePendingSpokenMarginsPackageHandoffs(from: store)
+        try await relaunched.consumePendingSpokenMarginsPackageHandoffs(from: store)
         let reopened = try XCTUnwrap(relaunched.spokenMarginsPackageImportReview, "the packet survived the relaunch")
-        try relaunched.consumePendingSpokenMarginsPackageHandoffs(from: store)
+        try await relaunched.consumePendingSpokenMarginsPackageHandoffs(from: store)
         XCTAssertEqual(relaunched.spokenMarginsPackageImportReview?.id, reopened.id, "reopened once, not on a loop")
         XCTAssertEqual(try store.pendingPayloadIDs().count, 1)
 
@@ -296,6 +296,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let previouslySelectedItemID = model.selectedItem.id
 
         model.handleIncomingURL(packageURL)
+        await model.waitForPackageStaging()
 
         XCTAssertEqual(model.spokenMarginsPackageImportReview?.contents.manifest.item.title, Self.podcastTitle)
         XCTAssertNil(model.spokenMarginsPackageImportReview?.matchingItemId)
@@ -313,6 +314,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertNil(model.snapshot.sessionId, "Import must not start playback")
 
         model.handleIncomingURL(packageURL)
+        await model.waitForPackageStaging()
 
         XCTAssertNil(model.spokenMarginsPackageImportReview)
         XCTAssertEqual(model.selectedItem.id, importedItem.id)
@@ -320,6 +322,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         model.moveItemToTrash(id: importedItem.id)
         XCTAssertFalse(model.libraryItems.contains(where: { $0.id == importedItem.id }))
         model.handleIncomingURL(packageURL)
+        await model.waitForPackageStaging()
         XCTAssertNotNil(model.spokenMarginsPackageImportReview, "Reopening must restore a deleted target instead of routing elsewhere")
         model.confirmSpokenMarginsPackageImport()
         try await waitForImportToFinish(model)
@@ -353,6 +356,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         model.resetAndSeed()
 
         model.handleIncomingURL(packageURL)
+        await model.waitForPackageStaging()
         XCTAssertNil(model.spokenMarginsPackageImportReview?.matchingItemId)
         model.confirmSpokenMarginsPackageImport()
         try await waitForImportToFinish(model)
@@ -371,7 +375,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
     @MainActor
     func testPodcastPackageUsesItsOwnEnclosureWhenThePageLookupFindsNoAudio() async throws {
         // Omny-style: the page resolves, but only to a title with no audio (#157).
-        let (model, store, manifest) = try makePackageImport(
+        let (model, store, manifest) = try await makePackageImport(
             named: "lookup-without-audio",
             resolver: reviewResolver(candidates: [LinkResolutionCandidate(
                 sourceLink: SourceLink(url: Self.podcastURL, provider: "podcasts.example.com", role: "discovery"),
@@ -392,7 +396,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
     @MainActor
     func testPodcastPackageMatchesATrackingWrappedEnclosureDespiteAdLengthDifference() async throws {
         let wrapped = "https://dts.podtrac.com/redirect.mp3/chtbl.com/track/ABC/cdn.example.com/imported-story.mp3?utm_source=feed"
-        let (model, store, _) = try makePackageImport(
+        let (model, store, _) = try await makePackageImport(
             named: "wrapped-enclosure",
             resolver: reviewResolver(candidates: [
                 LinkResolutionCandidate(
@@ -421,7 +425,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
     @MainActor
     func testAmbiguousPodcastPackageShowsASentenceNotAnInternalCode() async throws {
-        let (model, _, _) = try makePackageImport(
+        let (model, _, _) = try await makePackageImport(
             named: "ambiguous",
             resolver: reviewResolver(candidates: ["one", "two"].map { name in
                 LinkResolutionCandidate(
@@ -487,6 +491,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         var podcastId: String?
         for index in [1, 2, 0] {
             model.handleIncomingURL(packets[index].0)
+            await model.waitForPackageStaging()
             // The second and third packets find the podcast the first one added, rather than adding it again.
             XCTAssertEqual(model.spokenMarginsPackageImportReview?.matchingItemId, podcastId, senders[index].name)
             model.confirmSpokenMarginsPackageImport()
@@ -505,6 +510,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
         // Opening one again adds nothing.
         model.handleIncomingURL(packets[0].0)
+        await model.waitForPackageStaging()
         XCTAssertNil(model.spokenMarginsPackageImportReview)
         XCTAssertEqual(
             model.diagnostics["lastSpokenMarginsPackageImport"],
@@ -518,7 +524,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
     private func makePackageImport(
         named name: String,
         resolver: LinkResolutionClient
-    ) throws -> (Gate1AppModel, SQLiteSessionStore, SpokenMarginsPackageManifest) {
+    ) async throws -> (Gate1AppModel, SQLiteSessionStore, SpokenMarginsPackageManifest) {
         let root = try temporaryDirectory(named: "spoken-margins-\(name)")
         let databaseURL = root.appendingPathComponent("recipient.sqlite")
         let packageURL = root.appendingPathComponent("\(name).spokenmargins")
@@ -531,6 +537,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         )
         model.resetAndSeed()
         model.handleIncomingURL(packageURL)
+        await model.waitForPackageStaging()
         XCTAssertNil(model.spokenMarginsPackageImportReview?.matchingItemId)
         return (model, store, manifest)
     }
@@ -578,6 +585,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertEqual(try store.loadImportedCommentaryLayer(packageDigest: digest)?.sourceResolutionStatus, .wrongSource)
 
         model.handleIncomingURL(packageURL)
+        await model.waitForPackageStaging()
 
         XCTAssertNotNil(model.spokenMarginsPackageImportReview)
         XCTAssertTrue(model.diagnostics["lastSpokenMarginsPackageImport"]?.hasPrefix("repair_previewed:") == true)
@@ -734,6 +742,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         )
         model.resetAndSeed()
         model.handleIncomingURL(packageURL)
+        await model.waitForPackageStaging()
         model.confirmSpokenMarginsPackageImport()
         try await waitForImportToFinish(model)
 
@@ -780,7 +789,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
     /// attaches the Margins to it, instead of saving a layer with no item and reporting success.
     @MainActor
     func testArticlePackageFetchesTheArticleAndAttachesItsMargins() async throws {
-        let (model, store, manifest, extractor) = try makeArticlePackageImport(named: "article-fetch", extraction: .success(
+        let (model, store, manifest, extractor) = try await makeArticlePackageImport(named: "article-fetch", extraction: .success(
             BrowserTextHandoff(
                 captureMode: .readablePage,
                 source: BrowserTextSource(url: Self.articleURL, title: Self.articleTitle),
@@ -803,7 +812,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
     @MainActor
     func testArticlePackageThatCannotBeFetchedFailsInsteadOfSavingMarginsWithNoSource() async throws {
-        let (model, store, manifest, _) = try makeArticlePackageImport(
+        let (model, store, manifest, _) = try await makeArticlePackageImport(
             named: "article-unreadable",
             extraction: .failure(ReadablePageExtractionError.httpStatus(403))
         )
@@ -827,7 +836,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
     /// The link redirects to a consent wall that answers 200: the wall must not be saved as the article.
     @MainActor
     func testArticlePackageWhoseLinkLandsOnAnotherPageFailsInsteadOfSavingItAsTheArticle() async throws {
-        let (model, store, manifest, _) = try makeArticlePackageImport(named: "article-consent-wall", extraction: .success(
+        let (model, store, manifest, _) = try await makeArticlePackageImport(named: "article-consent-wall", extraction: .success(
             BrowserTextHandoff(
                 captureMode: .readablePage,
                 source: BrowserTextSource(url: "https://consent.example.com/collect?next=story", title: "Before you continue"),
@@ -857,7 +866,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
     private func makeArticlePackageImport(
         named name: String,
         extraction: Result<BrowserTextHandoff, Error>
-    ) throws -> (Gate1AppModel, SQLiteSessionStore, SpokenMarginsPackageManifest, ArticlePackageExtractor) {
+    ) async throws -> (Gate1AppModel, SQLiteSessionStore, SpokenMarginsPackageManifest, ArticlePackageExtractor) {
         let root = try temporaryDirectory(named: "spoken-margins-\(name)")
         let databaseURL = root.appendingPathComponent("recipient.sqlite")
         let packageURL = root.appendingPathComponent("\(name).spokenmargins")
@@ -885,6 +894,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         model.resetAndSeed()
         model.readablePageExtractor = extractor
         model.handleIncomingURL(packageURL)
+        await model.waitForPackageStaging()
         XCTAssertNotNil(model.spokenMarginsPackageImportReview)
         XCTAssertNil(model.spokenMarginsPackageImportReview?.matchingItemId)
         return (model, store, manifest, extractor)
@@ -907,6 +917,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         )
         model.resetAndSeed()
         model.handleIncomingURL(packageURL)
+        await model.waitForPackageStaging()
         model.confirmSpokenMarginsPackageImport()
         try await waitForImportToFinish(model)
 
@@ -963,6 +974,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         model.resetAndSeed()
         for sender in ["Ana", "Ben"] {
             model.handleIncomingURL(root.appendingPathComponent("\(sender).spokenmargins"))
+            await model.waitForPackageStaging()
             model.confirmSpokenMarginsPackageImport()
             try await waitForImportToFinish(model)
             XCTAssertNil(model.spokenMarginsPackageImportError, sender)
