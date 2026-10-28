@@ -344,16 +344,22 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "Spoken Margins"
         titleLabel.font = .preferredFont(forTextStyle: .headline)
+        titleLabel.adjustsFontForContentSizeCategory = true
+        // Wraps at the largest text sizes instead of truncating (#1941).
+        titleLabel.numberOfLines = 0
         titleLabel.textColor = .label
 
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.textAlignment = .left
         statusLabel.numberOfLines = 0
         statusLabel.font = .preferredFont(forTextStyle: .subheadline)
+        statusLabel.adjustsFontForContentSizeCategory = true
         statusLabel.textColor = .secondaryLabel
 
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.setTitle("Done", for: .normal)
+        closeButton.titleLabel?.font = .preferredFont(forTextStyle: .body)
+        closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         closeButton.addTarget(self, action: #selector(close), for: .touchUpInside)
         closeButton.isHidden = true
 
@@ -375,7 +381,9 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
 
             titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 10),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -8),
-            titleLabel.centerYAnchor.constraint(equalTo: iconView.centerYAnchor),
+            // Top-aligned with the icon and at least as tall, so one line stays centred on it and a wrapped title grows down.
+            titleLabel.topAnchor.constraint(equalTo: iconView.topAnchor),
+            titleLabel.heightAnchor.constraint(greaterThanOrEqualTo: iconView.heightAnchor),
 
             statusLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             statusLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
