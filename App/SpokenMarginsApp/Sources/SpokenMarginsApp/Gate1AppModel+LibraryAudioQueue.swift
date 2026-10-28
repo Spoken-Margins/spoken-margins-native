@@ -282,11 +282,10 @@ extension Gate1AppModel {
     func skipAudioPreparationJob(id: String) {
         do {
             let store = try requireStore()
-            let jobs = try store.loadAudioPreparationJobs()
-            guard let selected = jobs.first(where: { $0.id == id }) else { return }
+            guard let selected = try store.loadAudioPreparationJob(id: id) else { return }
             suppressAudioPreparation(itemId: selected.itemId)
             try store.deleteAudioPreparationJobs(
-                ids: jobs.filter { $0.itemId == selected.itemId }.map(\.id)
+                ids: try store.loadAudioPreparationJobs(itemId: selected.itemId).map(\.id)
             )
             cancelStartupAudioPreparation(itemIds: [selected.itemId])
             failedStartupAudioPreparationItemIds.remove(selected.itemId)

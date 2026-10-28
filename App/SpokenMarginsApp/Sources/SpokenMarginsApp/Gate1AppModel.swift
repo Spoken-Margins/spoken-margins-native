@@ -2994,7 +2994,7 @@ final class Gate1AppModel: ObservableObject {
         // The map folder holds the transient folder, so one removal covers both; the files go off the main thread (#2510).
         Self.removeEpisodeTranscriptionFilesInBackground(itemId: itemId, directories: [try? episodeMapDirectory(itemId: itemId)].compactMap { $0 })
         try? deleteTransientTranscriptAssets(itemId: itemId)
-        for job in (try? store?.loadEpisodeMapPreparationJobs()) ?? [] where job.itemId == itemId {
+        for job in (try? store?.loadEpisodeMapPreparationJobs(itemId: itemId)) ?? [] {
             try? store?.deleteEpisodeMapPreparationJob(id: job.id)
         }
     }

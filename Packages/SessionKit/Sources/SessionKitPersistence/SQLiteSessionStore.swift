@@ -1085,6 +1085,16 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;", ["audio_preparation_job"])
     }
 
+    /// One job by id, for a caller that would otherwise decode the whole queue to find it (#2507).
+    public func loadAudioPreparationJob(id: String) throws -> AudioPreparationJob? {
+        try loadOptional(kind: "audio_preparation_job", id: id)
+    }
+
+    /// One item's jobs, in `loadAudioPreparationJobs()`'s order, read through the `item_id` index (#2507).
+    public func loadAudioPreparationJobs(itemId: String) throws -> [AudioPreparationJob] {
+        try loadByItem(kind: "audio_preparation_job", itemId: itemId)
+    }
+
     public func deleteAudioPreparationJob(id: String) throws { try deleteRecord(kind: "audio_preparation_job", id: id) }
 
     public func deleteAudioPreparationJobs(ids: [String]) throws {
@@ -1195,6 +1205,16 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
 
     public func loadEpisodeMapPreparationJobs() throws -> [EpisodeMapPreparationJob] {
         try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;", ["episode_map_preparation_job"])
+    }
+
+    /// One job by id, for a caller that would otherwise decode every episode-map job to find it (#2507).
+    public func loadEpisodeMapPreparationJob(id: String) throws -> EpisodeMapPreparationJob? {
+        try loadOptional(kind: "episode_map_preparation_job", id: id)
+    }
+
+    /// One item's jobs, in `loadEpisodeMapPreparationJobs()`'s order, read through the `item_id` index (#2507).
+    public func loadEpisodeMapPreparationJobs(itemId: String) throws -> [EpisodeMapPreparationJob] {
+        try loadByItem(kind: "episode_map_preparation_job", itemId: itemId)
     }
 
     public func deleteEpisodeMapPreparationJob(id: String) throws {
@@ -2203,7 +2223,7 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
             for interjection in upgrade.interjections { try saveInterjection(interjection) }
             for session in upgrade.sessions { try saveSession(session) }
             for manifest in try loadPreparedAudioManifests(itemId: itemId) { try deletePreparedAudioManifest(id: manifest.id) }
-            for job in try loadAudioPreparationJobs() where job.itemId == itemId { try deleteAudioPreparationJob(id: job.id) }
+            for job in try loadAudioPreparationJobs(itemId: itemId) { try deleteAudioPreparationJob(id: job.id) }
             try saveStructuredDocument(upgrade.document, itemId: itemId)
         }
     }

@@ -113,9 +113,7 @@ final class EpisodeMapPreparer {
             guard item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream else {
                 throw SessionKitError.invalidCommandForState("episode_map_requires_native_audio")
             }
-            let existingJob = (try store.loadEpisodeMapPreparationJobs()).first {
-                $0.itemId == requestedItemId && !$0.isCancelled
-            }
+            let existingJob = (try store.loadEpisodeMapPreparationJobs(itemId: requestedItemId)).first { !$0.isCancelled }
             if let interrupted = EpisodeMapRunGuard.interruptedRunDiagnostic(previous: existingJob) {
                 host.recordEpisodeMapDiagnostic("episodeMapPreparationInterrupted:\(requestedItemId)", interrupted)
             }
