@@ -1971,18 +1971,30 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
 
 /// Read-only connections to one WAL database, checked out one reader at a time and opened as readers need them (#2103).
 /// A connection is never shared by two readers, so a long read can't make another reader wait behind it.
-private final class ReadConnectionPool: @unchecked Sendable {
+///
+/// Only `idleLimit` connections stay open between reads; a burst opens up to `limit` and the rest close as they come
+/// back. A WAL reader holds the database, `-wal` and `-shm` files, and iOS gives an app 256 descriptors, so six idle
+/// readers on every store a test run leaves alive added up to EMFILE (#2818).
+final class ReadConnectionPool: @unchecked Sendable {
     private let path: String
     private let limit: Int
+    private let idleLimit: Int
     private let condition = NSCondition()
     private var idle: [OpaquePointer] = []
     /// Connections open or being opened, idle or checked out.
     private var openCount = 0
     private var isClosed = false
 
-    init(path: String, limit: Int) {
+    init(path: String, limit: Int, idleLimit: Int = 2) {
         self.path = path
         self.limit = limit
+        self.idleLimit = max(0, min(idleLimit, limit))
+    }
+
+    /// Connections open now, idle or checked out.
+    var openConnectionCount: Int {
+        condition.lock(); defer { condition.unlock() }
+        return openCount
     }
 
     /// A connection to read on, or nil when none can be opened: the caller then reads on the writer's connection.
@@ -2008,9 +2020,10 @@ private final class ReadConnectionPool: @unchecked Sendable {
 
     func checkIn(_ connection: OpaquePointer) {
         condition.lock()
-        if isClosed {
+        if isClosed || idle.count >= idleLimit {
             sqlite3_close(connection)
             openCount -= 1
+            condition.signal()
         } else {
             idle.append(connection)
             condition.signal()
