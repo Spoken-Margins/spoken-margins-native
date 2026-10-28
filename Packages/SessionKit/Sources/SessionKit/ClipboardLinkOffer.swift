@@ -89,23 +89,34 @@ public struct ClipboardLinkOffer: Equatable, Sendable {
         observe(changeCount: changeCount, holdsProbableLink: signals.looksLikeLink)
     }
 
-    /// What a Paste tap on the card does with the clipboard's text. The card offered a link, so it adds
-    /// exactly what the link rules accept and nothing else; other text is never added from here.
-    public static func pasteOutcome(for content: String?) -> PasteOutcome {
-        if case .link = ClipboardIntakeClassifier.classify(content) { return .addLink }
+    /// What a Paste tap on the card got from the clipboard. The card offered a link, so it takes exactly what
+    /// the link rules accept and nothing else; other text is never added from here. Every result has
+    /// something to show: the link to add, or the message for why nothing was added (#2835).
+    public static func pasteResult(for content: String?) -> PasteResult {
+        if (content ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .nothingPasted }
+        if case .link(let url) = ClipboardIntakeClassifier.classify(content) { return .link(url) }
         return .notALink
     }
 
-    public enum PasteOutcome: Equatable, Sendable {
-        case addLink
+    public enum PasteResult: Equatable, Sendable {
+        case link(URL)
+        /// The Paste control returned no readable text: the copy changed or held something unreadable.
+        case nothingPasted
         case notALink
 
         public var message: String? {
             switch self {
-            case .addLink: nil
+            case .link: nil
+            case .nothingPasted: "Couldn't read the copied link. Copy it again, then tap Paste."
             case .notALink: "That copy is text, not a link. Use + then Paste to add text."
             }
         }
+    }
+
+    /// The link's site for the card's one line: the host without a leading "www.", or the whole address if it has none.
+    public static func displayHost(of url: URL) -> String {
+        guard let host = url.host?.lowercased(), !host.isEmpty else { return url.absoluteString }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 
     /// Records a clipboard check, on appearing, returning to the app, or a clipboard change.
