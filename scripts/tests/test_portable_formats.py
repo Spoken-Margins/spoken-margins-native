@@ -442,6 +442,20 @@ class SpineAndSketchBoundsTests(unittest.TestCase):
             ('landmark_order out of order', self.spine([self.landmark(1), self.landmark(0)]), 'landmark_order'),
         ])
 
+    def test_the_spine_names_the_items_episode_by_canonical_equivalence(self):
+        """Swift compares strings by canonical equivalence: an NFC and an NFD spelling of one GUID are the same."""
+        manifest, artifacts, assets = example('podcast-reference.spokenmargins')
+        manifest, assets = with_signature(manifest, assets)
+        manifest['item']['episodeGUID'] = 'caf\u00e9-1'
+        document = self.spine(episodeGUID='cafe\u0301-1')
+        path, version = 'artifacts/spine.json', fmt.ARTIFACT_VERSIONS['edition_fingerprint_spine']
+        manifest['artifacts'].append({'id': 'spine', 'kind': 'edition_fingerprint_spine', 'path': path,
+                                      'required': False, 'schemaVersion': version})
+        artifacts = {**artifacts, path: fmt.encode_manifest({**document, 'schemaVersion': version})}
+        self.assertEqual(verdict(fmt.write_packet(manifest, artifacts, assets)), 'valid')
+        artifacts[path] = fmt.encode_manifest({**self.spine(episodeGUID='other'), 'schemaVersion': version})
+        self.assertEqual(verdict(fmt.write_packet(manifest, artifacts, assets)), 'edition-mismatch')
+
     def test_the_first_failed_spine_rule_is_the_one_named(self):
         data = self.packet('edition_fingerprint_spine', self.spine(itemId='', generatorVersion='g' * 201))
         self.assertIn(': item_id', message_of(data))

@@ -51,6 +51,7 @@ The Swift reader in `Packages/SessionKit/Sources/SessionKitSharing/InterjectionP
 - decoding voice audio (it only looks for an MPEG-4 `ftyp` box) and parsing acoustic signatures;
 - the Listening Map quotation rule (`PortableListeningMapContract`) when it turns on non-ASCII text, where Python splits words differently (it warns `not-checked` instead; a text under ten words, or a scene with no source of ten words, needs no guess);
 - URL syntax beyond the scheme, host and user name (Foundation's `URLComponents`), and whether `ISO8601DateFormatter` takes a zone written without a colon (this reader does; digits and field ranges are checked);
+- hexadecimal digits written in fullwidth forms (Swift's `isHexDigit` takes them in a digest or a phrase-sketch hash; this reader takes ASCII only, and no writer emits them);
 - the normalized-content hash of non-ASCII text, which depends on Foundation's case and diacritic folding (it warns instead).
 
 It counts characters as extended grapheme clusters (UAX #29, with the Indic conjunct rule of Unicode 15.1) from its own property ranges, since Python has no segmenter; the emoji ranges are the common ones, so a rare symbol may count differently. That matters only for the limits and the character count in the preview.

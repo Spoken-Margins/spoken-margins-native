@@ -1049,7 +1049,7 @@ def _check_spine(report, spine, item, assets_by_id, where):
     if failed:
         _refuse(report, 'invalid-manifest', f'the episode fingerprint spine is out of bounds: {failed}', where)
     guid = spine.get('episodeGUID')
-    if item.get('episodeGUID') is not None and guid is not None and guid != item['episodeGUID']:
+    if item.get('episodeGUID') is not None and guid is not None and _canon(guid) != _canon(item['episodeGUID']):
         _refuse(report, 'edition-mismatch', 'the fingerprint spine names a different episode from the item', where)
     for index, landmark in enumerate(landmarks):
         failed = _first_failed([
