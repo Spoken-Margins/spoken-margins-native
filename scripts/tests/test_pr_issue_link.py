@@ -33,6 +33,7 @@ class Names(unittest.TestCase):
             f'See {URL}': [],          # a bare URL is no link
             'Related to #12': [],
             'see #12': [],
+            'Closes\n#12': [],         # GitHub needs the number on the same line
             'Closes #50': [],          # the PR's own number
             'Closes 12': [],
             'Closes': [],
@@ -53,6 +54,9 @@ class Names(unittest.TestCase):
         self.assertTrue(link.exempt(pull(title='chore: bump the lockfile')))
         self.assertTrue(link.exempt(pull(title='Chore(ops): rotate logs')))
         self.assertFalse(link.exempt(pull(body='There is no issue for this yet, sorry')))
+        self.assertFalse(link.exempt(pull(body='No issue yet, filing later')))
+        self.assertTrue(link.exempt(pull(body='**No issue**')))
+        self.assertTrue(link.exempt(pull(body='No issue: ops notes only.')))
         self.assertFalse(link.exempt(pull(title='chores for the week')))
         self.assertFalse(link.exempt(pull()))
 
@@ -101,10 +105,27 @@ class Reconcile(unittest.TestCase):
         api = API([pull(1)])
         report = link.reconcile(api, apply=True)
         self.assertEqual(report['flagged'], [1])
-        self.assertEqual(api.writes[0], ('POST', 'issues/1/labels', {'labels': [link.LABEL]}))
-        self.assertEqual(api.writes[1][:2], ('POST', 'issues/1/comments'))
-        self.assertIn(link.MARKER, api.writes[1][2]['body'])
-        self.assertIn('Closes #N', api.writes[1][2]['body'])
+        self.assertEqual(api.writes[0][:2], ('POST', 'issues/1/comments'))
+        self.assertIn(link.MARKER, api.writes[0][2]['body'])
+        self.assertIn('Closes #N', api.writes[0][2]['body'])
+        self.assertEqual(api.writes[1], ('POST', 'issues/1/labels', {'labels': [link.LABEL]}))
+
+    def test_a_failed_comment_leaves_no_label_so_the_next_run_retries(self):
+        class NoComment(API):
+            def post(self, path, body):
+                if path.endswith('/comments'):
+                    raise sm_status.GitHubError('HTTP 502')
+                super().post(path, body)
+        api = NoComment([pull(1)])
+        report = link.reconcile(api, apply=True)
+        self.assertEqual((api.writes, report['unknown'][0]['pr']), ([], 1))
+
+    def test_a_label_already_gone_is_not_a_fault(self):
+        class Gone(API):
+            def delete(self, path):
+                raise sm_status.GitHubError('DELETE ' + path + ': HTTP 404 Label does not exist')
+        report = link.reconcile(Gone([pull(1, 'Closes #9', labels=[link.LABEL])]), apply=True)
+        self.assertEqual((report['cleared'], report['unknown']), ([1], []))
 
     def test_a_labelled_pr_that_is_still_unlinked_is_left_alone(self):
         api = API([pull(1, labels=[link.LABEL])])
@@ -119,7 +140,7 @@ class Reconcile(unittest.TestCase):
     def test_a_stranger_copying_the_marker_does_not_silence_the_comment(self):
         api = API([pull(1)], comments={1: [comment(link.MARKER, 'NONE', 'mallory')]})
         link.reconcile(api, apply=True)
-        self.assertEqual([w[1] for w in api.writes], ['issues/1/labels', 'issues/1/comments'])
+        self.assertEqual([w[1] for w in api.writes], ['issues/1/comments', 'issues/1/labels'])
 
     def test_fixing_the_body_clears_the_label(self):
         api = API([pull(1, 'Closes #9', labels=[link.LABEL])])

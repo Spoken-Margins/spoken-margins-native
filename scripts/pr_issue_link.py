@@ -31,9 +31,10 @@ import sm_status
 LABEL = 'needs-issue-link'
 MARKER = '<!-- needs-issue-link -->'
 TARGET = r'(?:#(\d+)|https://github\.com/[\w.-]+/[\w.-]+/issues/(\d+))'   # `#12` or a URL to the issue
-CLOSING = re.compile(r'\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+' + TARGET, re.I)
-PART_OF = re.compile(r'\bpart\s+of\s*:?\s+' + TARGET, re.I)
-NO_ISSUE = re.compile(r'^\s*[*_>\s-]*no\s+issue\b', re.I | re.M)
+CLOSING = re.compile(r'\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[ \t]*:?[ \t]+' + TARGET, re.I)   # same line, as GitHub reads it
+PART_OF = re.compile(r'\bpart[ \t]+of[ \t]*:?[ \t]+' + TARGET, re.I)
+NO_ISSUE = re.compile(r'^[ \t]*[*_>\- \t]*no[ \t]+issue[*_]*(?:[ \t]*[:.!—-].*)?$', re.I | re.M)   # not "No issue yet"
+
 HOUSEKEEPING_TITLE = re.compile(r'^\s*chore(\([^)]*\))?!?:', re.I)
 COMMENT = (
     f"{MARKER}\n"
@@ -84,16 +85,21 @@ def reconcile(api, apply: bool = False) -> dict:
             elif clean:
                 report['cleared'].append(number)
                 if apply:
-                    api.delete(f'issues/{number}/labels/{LABEL}')
+                    try:
+                        api.delete(f'issues/{number}/labels/{LABEL}')
+                    except sm_status.GitHubError as error:
+                        if 'HTTP 404' not in str(error):   # 404: someone took the label off first
+                            raise
             elif has_label:
                 report['unchanged'] += 1
             else:
                 report['flagged'].append(number)
                 if apply:
-                    api.post(f'issues/{number}/labels', {'labels': [LABEL]})
+                    # Comment first, label last: the label means "already told", so a failure in between retries.
                     seen = comment_trust.trusted_only(api.pages(f'issues/{number}/comments'))
                     if not any(MARKER in (c.get('body') or '') for c in seen):
                         api.post(f'issues/{number}/comments', {'body': COMMENT})
+                    api.post(f'issues/{number}/labels', {'labels': [LABEL]})
         except (sm_status.GitHubError, KeyError, TypeError, ValueError, OSError) as error:
             report['unknown'].append({'pr': number, 'reason': str(error)})
     return report
