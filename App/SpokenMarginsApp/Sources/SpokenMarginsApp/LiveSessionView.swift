@@ -8,6 +8,7 @@ struct LiveSessionView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
     @StateObject private var controller: LiveSessionController
+    @ObservedObject private var links = LiveSessionLinkRouter.shared
 
     /// `sessionId` opens that session (from the Library's Live row); nil opens the running one, or the setup card.
     init(sessionId: String? = nil) {
@@ -56,8 +57,16 @@ struct LiveSessionView: View {
                 ToolbarItem(placement: .topBarLeading) { Button("Close") { dismiss() } }
             }
         }
-        .onAppear { controller.load() }
-        .onDisappear { controller.stopPolling() }
+        .onAppear {
+            links.screenAppeared()
+            controller.load()
+        }
+        .onDisappear {
+            links.screenDisappeared()
+            controller.stopPolling()
+        }
+        .onChange(of: links.pendingAction) { _, _ in applyLink() }
+        .onChange(of: controller.didLoad) { _, _ in applyLink() }
         .sheet(isPresented: $showsEndSheet) {
             LiveSessionEndSheet(kind: controller.session?.kind ?? .meeting, startedAt: controller.session?.startedAt ?? Date()) { when, endPosition, endWhere in
                 if controller.end(when: when, endPositionMs: endPosition, endWhere: endWhere) { showsEndSheet = false }
@@ -83,6 +92,18 @@ struct LiveSessionView: View {
                 controller.discard()
                 dismiss()
             }
+        }
+    }
+
+    /// A tap on the Live Activity's Write a Margin or Speak a Margin (#2833): the written field is ready to type in,
+    /// or the spoken Margin is already recording. Needs a running session; otherwise the screen just opens.
+    private func applyLink() {
+        guard controller.didLoad, let action = links.takeAction() else { return }
+        guard controller.isRunning else { return }
+        switch action {
+        case .open: break
+        case .write: DispatchQueue.main.async { marginFieldFocused = true }
+        case .speak: if !controller.isRecordingSpoken { controller.startSpokenMargin() }
         }
     }
 
