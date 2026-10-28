@@ -133,6 +133,80 @@ final class PortableArticleAnchorResolverTests: XCTestCase {
         XCTAssertEqual(resolution.confidence, 0.84)
     }
 
+    // MARK: The two copies of a PDF differ only in word spacing (#2402)
+
+    private let spaced = "a standard tool for describing"
+
+    func testAGluedQuoteLandsInTheRecipientsSpacedText() {
+        let text = "The paper offers a standard tool for describing graphs. It then turns to proofs."
+        let resolution = resolve(anchor(quote: "standardtoolfordescribing"), in: text)
+        XCTAssertEqual(resolution.evidenceClass, .articleTextVerified)
+        XCTAssertEqual(covered(resolution, in: text), "standard tool for describing")
+        XCTAssertEqual(resolution.localStartChar, "The paper offers a ".count)
+        XCTAssertEqual(resolution.localEndChar, "The paper offers a standard tool for describing".count)
+        XCTAssertEqual(resolution.confidence, 0.8, "less certain than a match that kept the senders word breaks")
+        XCTAssertFalse(resolution.isAmbiguous)
+    }
+
+    func testASpacedQuoteLandsInTheRecipientsGluedText() {
+        let text = "Thepaperoffersastandardtoolfordescribinggraphs.Itthenturnstoproofs."
+        let resolution = resolve(anchor(quote: "a standard tool for describing"), in: text)
+        XCTAssertEqual(resolution.evidenceClass, .articleTextVerified)
+        XCTAssertEqual(covered(resolution, in: text), "astandardtoolfordescribing")
+        XCTAssertEqual(resolution.localStartChar, "Thepaperoffers".count)
+        XCTAssertEqual(resolution.localEndChar, "Thepaperoffersastandardtoolfordescribing".count)
+    }
+
+    func testCaseAccentsAndPunctuationAreIgnoredWhenTheWordBreaksDiffer() {
+        let text = "Il aime le CAFÉ-crème, très fort. Fin."
+        let resolution = resolve(anchor(quote: "lecafecreme,tresfort"), in: text)
+        XCTAssertEqual(covered(resolution, in: text), "le CAFÉ-crème, très fort")
+    }
+
+    func testAGluedQuoteThatMatchesTwoPlacesStaysUnresolved() {
+        let text = "First, a standard tool for describing graphs. Later, a standard tool for describing trees."
+        let resolution = resolve(anchor(quote: "astandardtoolfordescribing"), in: text)
+        XCTAssertEqual(resolution.evidenceClass, .unresolved, "where the words break is no evidence for choosing a copy")
+        XCTAssertFalse(resolution.isAmbiguous, "a packet whose other Margins landed is not held back by this one")
+        XCTAssertNil(resolution.localStartChar)
+        XCTAssertNil(resolution.localEndChar)
+    }
+
+    func testAShortGluedQuoteIsNotTrustedAcrossWordBreaks() {
+        let text = "We then pick the tool to use. The toolbox is elsewhere."
+        let resolution = resolve(anchor(quote: "tooltouse"), in: text)
+        XCTAssertEqual(resolution.evidenceClass, .unresolved)
+        XCTAssertNil(resolution.localStartChar)
+    }
+
+    func testTheSeparatorFreeSearchOnlyRunsWhenTheWordMatchesFail() {
+        // Both tiers could place this; the word-level match wins and keeps its confidence.
+        let text = "It offers \(spaced) in full."
+        let resolution = resolve(anchor(quote: spaced), in: text)
+        XCTAssertEqual(resolution.confidence, 0.98)
+        let spacedWider = resolve(anchor(quote: "a   STANDARD tool\nfor describing"), in: text)
+        XCTAssertEqual(spacedWider.confidence, 0.88)
+        // And a quote that a word-level match finds twice stays ambiguous, not unresolved.
+        let twice = "It offers \(spaced) here. It offers \(spaced) there."
+        let ambiguous = resolve(anchor(quote: "a standard tool for describing."), in: twice)
+        XCTAssertEqual(ambiguous.evidenceClass, .ambiguous)
+        XCTAssertTrue(ambiguous.isAmbiguous)
+    }
+
+    func testSpaceDifferencesStillResolveThroughTheImportedItemResolver() {
+        // An edition hash that agrees names the same work, so the packet reaches the anchor search (#2402).
+        let source = SharedItemIdentity(itemType: .pdf, title: "Paper", exactEditionSHA256: String(repeating: "a", count: 64))
+        let record = SharedInterjectionPackageRecord(
+            packageScopedId: "margin-0001", createdAt: Date(timeIntervalSince1970: 0),
+            anchor: anchor(quote: "standardtoolfordescribing"), defaultRepresentationId: "text",
+            representations: [.init(id: "text", kind: .textOnly, approvedTranscript: "Keep this", provenance: .senderApprovedTextOnly)]
+        )
+        let text = "The paper offers a standard tool for describing graphs."
+        let resolved = ImportedItemResolver.resolve(item: source, interjections: [record], against: source, itemText: text)
+        XCTAssertEqual(resolved.status, .resolved)
+        XCTAssertEqual(resolved.anchorsByPackageScopedId["margin-0001"]?.evidenceClass, .articleTextVerified)
+    }
+
     // MARK: The exact edition: the sender's offsets are used, and only when they still say the same words
 
     func testTheSameEditionUsesTheSendersOffsetsEvenForARepeatedQuote() {

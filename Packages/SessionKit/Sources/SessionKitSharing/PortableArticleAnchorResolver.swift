@@ -72,11 +72,23 @@ public enum PortableArticleAnchorResolver {
            ) {
             return resolution(for: winner, in: sourceText, confidence: 0.84)
         }
-        return ImportedAnchorResolution(
-            evidenceClass: normalizedMatches.isEmpty ? .unresolved : .ambiguous,
-            isAmbiguous: normalizedMatches.count > 1
-        )
+        if normalizedMatches.isEmpty {
+            // Last resort (#2402): a PDF whose text layer lost its word spaces, on either side, so the quote and the
+            // copy hold the same letters but split them into different words.
+            let compactMatches = compactLetterMatches(of: exact, in: sourceText)
+            if compactMatches.count == 1, let match = compactMatches.first {
+                return resolution(for: match, in: sourceText, confidence: compactMatchConfidence)
+            }
+            return ImportedAnchorResolution(evidenceClass: .unresolved)
+        }
+        return ImportedAnchorResolution(evidenceClass: .ambiguous, isAmbiguous: normalizedMatches.count > 1)
     }
+
+    /// Below the token match (0.88): it ignores where the words break, and it takes only a unique hit.
+    private static let compactMatchConfidence = 0.8
+    /// Letters and digits a quote needs before the separator-free search is trusted. A shorter run lands inside
+    /// unrelated words too easily once the spaces are gone.
+    private static let compactMatchMinimumLength = 12
 
     private static func resolution(
         for range: Range<String.Index>,
@@ -170,6 +182,62 @@ public enum PortableArticleAnchorResolver {
             guard candidate == quoteTokens else { return nil }
             return sourceTokens[start].range.lowerBound..<sourceTokens[start + quoteTokens.count - 1].range.upperBound
         }
+    }
+
+    /// Matches the quote's letters and digits, with every space and punctuation mark dropped from both sides, and maps
+    /// the hit back to the copy's own characters. It is the only tier that can bridge `standardtoolfordescribing`
+    /// and `standard tool for describing`. Only a unique hit counts: where the words break is no longer evidence.
+    private static func compactLetterMatches(
+        of quote: String,
+        in source: String
+    ) -> [Range<String.Index>] {
+        let needle = compactLetters(in: quote).map(\.letter)
+        guard needle.count >= compactMatchMinimumLength else { return [] }
+        let haystack = compactLetters(in: source)
+        guard haystack.count >= needle.count else { return [] }
+        var matches: [Range<String.Index>] = []
+        var start = 0
+        let lastStart = haystack.count - needle.count
+        while start <= lastStart {
+            if haystack[start].letter == needle[0],
+               (1..<needle.count).allSatisfy({ haystack[start + $0].letter == needle[$0] }) {
+                let lastCharacter = haystack[start + needle.count - 1].at
+                matches.append(haystack[start].at..<source.index(after: lastCharacter))
+                // Two hits are already not unique; there is no need to find a third.
+                if matches.count > 1 { break }
+            }
+            start += 1
+        }
+        return matches
+    }
+
+    /// The folded letters and digits of `text`, each with the character of `text` it came from (a letter that folds to
+    /// two, like a sharp s, keeps one source character for both).
+    private static func compactLetters(in text: String) -> [(letter: Character, at: String.Index)] {
+        var result: [(letter: Character, at: String.Index)] = []
+        result.reserveCapacity(text.utf8.count)
+        var index = text.startIndex
+        while index < text.endIndex {
+            let next = text.index(after: index)
+            let character = text[index]
+            if let ascii = character.asciiValue {
+                // The common case without a trip through Foundation: a whole PDF is searched one character at a time.
+                switch ascii {
+                case 0x30...0x39, 0x61...0x7A: result.append((character, index))
+                case 0x41...0x5A: result.append((Character(UnicodeScalar(ascii + 0x20)), index))
+                default: break
+                }
+            } else if character.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) }) {
+                let folded = String(character)
+                    .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: normalizationLocale)
+                    .lowercased(with: normalizationLocale)
+                for letter in folded where letter.isLetter || letter.isNumber {
+                    result.append((letter, index))
+                }
+            }
+            index = next
+        }
+        return result
     }
 
     private static func normalizedTokens(in text: String) -> [(value: String, range: Range<String.Index>)] {
