@@ -12,6 +12,8 @@ struct PreparationPassSeams {
     var memoryBackoffActive: @MainActor () -> Bool = { SupertonicResourcePolicy.memoryBackoff.isActive() }
     /// How a run waits out a heat pause or a memory backoff (#905). Tests pass one that returns at once and counts the seconds.
     var pause: @Sendable (Int) async throws -> Void = { seconds in try await Task.sleep(for: .seconds(seconds)) }
+    /// The chip generation a downloaded voice's "may it render?" check reads (#2857). Tests pass a phone that fits.
+    var deviceChipGeneration: @Sendable () -> Int? = { VoiceDeviceProbe.chipGeneration() }
 }
 
 extension Gate1AppModel {

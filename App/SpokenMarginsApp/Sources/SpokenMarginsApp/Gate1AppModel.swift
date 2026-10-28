@@ -2025,8 +2025,8 @@ final class Gate1AppModel: ObservableObject {
                     reportFailure("This item does not have text that can be prepared for offline listening.")
                     return
                 }
-                guard hasAcceptedCurrentTerms, ttsVoiceSelection.supertonicVoice != nil else {
-                    reportWarning("Offline preparation needs James or Lily, with the Terms accepted.")
+                guard hasAcceptedCurrentTerms, PreparationVoice.current(for: ttsVoiceSelection, model: self) != nil else {
+                    reportWarning("Offline preparation needs James, Lily, Phonon or Kokoro, with the Terms accepted.")
                     return
                 }
                 Task { [weak self] in

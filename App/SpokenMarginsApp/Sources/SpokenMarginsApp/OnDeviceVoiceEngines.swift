@@ -152,7 +152,10 @@ enum OnDeviceVoiceEngines {
         if let voiceId = selection.choice.downloadedVoiceId {
             guard let descriptor = DownloadedVoiceRegistry.descriptor(for: selection.choice),
                   let registration = descriptor.registration else { return unregistered(voiceId: voiceId, model: model) }
-            return downloaded(descriptor, registration: registration, supportDirectory: supportDirectory)
+            return downloaded(
+                descriptor, registration: registration, supportDirectory: supportDirectory,
+                renderer: SharedDownloadedRenderers.shared.renderer(for: descriptor, registration: registration, supportDirectory: supportDirectory)
+            )
         }
         let voice = selection.supertonicVoice ?? .m2
         return OnDeviceVoiceEngine(
@@ -183,7 +186,8 @@ enum OnDeviceVoiceEngines {
         entry: @escaping @Sendable () -> VoiceModelEntry? = { nil },
         deviceChipGeneration: @escaping @Sendable () -> Int? = { VoiceDeviceProbe.chipGeneration() },
         physicalMemoryMegabytes: @escaping @Sendable () -> Int = { Int(ProcessInfo.processInfo.physicalMemory / 1_048_576) },
-        governorAllows: @escaping @Sendable () -> Bool = SupertonicModelNotDownloaded.governorAllowsRendering
+        governorAllows: @escaping @Sendable () -> Bool = SupertonicModelNotDownloaded.governorAllowsRendering,
+        renderer sharedRenderer: (any SupertonicRendering)? = nil
     ) -> OnDeviceVoiceEngine {
         let voiceId = descriptor.voiceId
         BundledVoiceCatalog.warm()
@@ -192,7 +196,7 @@ enum OnDeviceVoiceEngines {
             VoiceCatalogCoordinator.installedFolder(voiceId: voiceId, supportDirectory: supportDirectory)
         }
         return OnDeviceVoiceEngine(
-            renderer: registration.makeRenderer(descriptor.speaker, installedFolder),
+            renderer: sharedRenderer ?? registration.makeRenderer(descriptor.speaker, installedFolder),
             signature: .downloaded(descriptor, entry: catalogEntry),
             renderingAllowed: {
                 guard let entry = catalogEntry(),

@@ -23,10 +23,16 @@ protocol SupertonicRendering: Sendable {
     /// own audio, not a stand-in, only when its result says this engine. Supertonic by default; a downloaded voice's
     /// renderer returns its descriptor's engine.
     var engine: String { get }
+
+    /// This renderer as background preparation must use it: paced whatever the app's state, so it never competes with
+    /// live narration for CPU (#377). Supertonic has `BackgroundPreparationRenderer` for that; a downloaded voice's
+    /// renderer returns a view of itself that renders with `.always` pacing (#2857).
+    func pacedForBackgroundPreparation() -> any SupertonicRendering
 }
 
 extension SupertonicRendering {
     var engine: String { SupertonicNarrationResult.supertonicEngine }
+    func pacedForBackgroundPreparation() -> any SupertonicRendering { self }
 }
 
 extension SupertonicNarrationRenderer: SupertonicRendering {}
