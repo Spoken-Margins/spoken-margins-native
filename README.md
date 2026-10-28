@@ -95,7 +95,7 @@ Preserve the existing playback spine. Changes must pass contract validation, Ses
 
 ## Licence
 
-Copyright (C) 2026 Cole Miller.
+Copyright (C) 2026 Proximity to Progress LLC.
 
 Spoken Margins is licensed under the [GNU Affero General Public License, version 3 only](LICENSE) (`AGPL-3.0-only`), with an [additional permission for Apple App Store distribution](COPYING.iOS). The permission's wording is adapted from the [Nextcloud iOS app's App Store exception](https://github.com/nextcloud/ios/blob/master/COPYING.iOS).
 
