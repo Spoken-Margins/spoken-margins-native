@@ -154,18 +154,28 @@ final class DownloadedVoiceEngineTests: XCTestCase {
             },
             onRestore: { _ in progress.recordRestore() }
         )
-        let text = (0..<4).map { _ in
+        // Two paragraphs, not four: the item only needs a chunk before the phone cools and a chunk after it (#2819).
+        let text = (0..<2).map { _ in
             "The committee met on Tuesday to discuss the proposal, which had been circulating among members for several weeks and had attracted a surprising amount of criticism from both sides. Most of the objections concerned cost."
         }.joined(separator: " ")
         _ = try client.prepareSpeechText(text)
         try client.play(targetId: "hot-item")
 
         await fulfillment(of: [started], timeout: 60)
-        let deadline = ContinuousClock.now + .seconds(120)
-        while progress.total == 0 || progress.completed < progress.total, ContinuousClock.now < deadline {
+        // #2819: on the hosted Mac this item stalled part-way (at 3, 4 and 6 of 7 chunks) on the first run of 3 of 3 flagged runs, took
+        // the plan's whole 120 s allowance, and passed on the retry in 11 to 19 s. Give up when no chunk has arrived for
+        // `stallSeconds`, or at `ceilingSeconds`, which is inside that allowance, and say where it stopped.
+        let stallSeconds = 45.0, ceilingSeconds = 100.0
+        let begun = ContinuousClock.now
+        var lastCompleted = -1, lastAdvance = begun
+        while progress.total == 0 || progress.completed < progress.total {
+            let now = ContinuousClock.now
+            if progress.completed != lastCompleted { lastCompleted = progress.completed; lastAdvance = now }
+            if now - begun > .seconds(ceilingSeconds) || now - lastAdvance > .seconds(stallSeconds) { break }
             try await Task.sleep(for: .milliseconds(200))
         }
-        XCTAssertEqual(progress.completed, progress.total)
+        let waited = ContinuousClock.now - begun
+        XCTAssertEqual(progress.completed, progress.total, "Kitten stopped at \(progress.completed) of \(progress.total) chunks after \(waited)")
         XCTAssertTrue(allowed.value, "the phone cooled during the generation")
         let rendersDuringItem = await chosen.renderCount
         XCTAssertEqual(rendersDuringItem, 0, "the downloaded voice never takes a chunk back mid-item")
