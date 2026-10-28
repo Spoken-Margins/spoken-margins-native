@@ -115,6 +115,14 @@ final class SourceTranscriptParsingTests: XCTestCase {
             let body = "[{\"text\":\"Words\",\"startTime\":0,\"\(key)\":\(value)}]"
             XCTAssertEqual(try parse(body)?.segments.first?.endMs, expected, body)
         }
+        // Untrusted input that doesn't fit an Int reads as no time instead of trapping.
+        for (key, value) in [("startTime", "1e16"), ("startTime", "9223372036854775807"), ("start", "1e30"), ("start_ms", "1e30"),
+                             ("startTime", "\"nan\""), ("startTime", "\"inf\""), ("start", "\"1e30\"")] {
+            let body = "[{\"text\":\"Words\",\"\(key)\":\(value)}]"
+            XCTAssertEqual(try parse(body)?.segments.first?.startMs, 0, body)
+        }
+        let stringEnd = try XCTUnwrap(parse(#"[{"text":"Words","startTime":"1","endTime":"2.5","durationMs":1.6}]"#)?.segments.first)
+        XCTAssertEqual(stringEnd.endMs, 2500)
         // The case the issue names: whole-second startTime next to a fractional endTime.
         let mixed = try XCTUnwrap(parse(#"[{"text":"Words","startTime":12,"endTime":15.5}]"#)?.segments.first)
         XCTAssertEqual(mixed.startMs, 12_000)

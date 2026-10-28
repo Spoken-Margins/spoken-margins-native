@@ -169,16 +169,22 @@ public enum SourceTranscriptParsing {
     }
 
     private static func jsonTimeMs(_ value: Any?, unit: JSONTimeUnit) -> Int? {
-        func scaled(_ number: Double) -> Int {
+        // The JSON is untrusted: "nan", "inf" and 1e30 parse as Doubles but don't fit an Int, so they read as no time.
+        func scaled(_ number: Double) -> Int? {
+            guard number.isFinite else { return nil }
+            let ms: Double
             switch unit {
-            case .seconds: return Int((number * 1000).rounded())
-            case .milliseconds: return Int(number.rounded())
-            case .ambiguous: return number < 10_000 ? Int((number * 1000).rounded()) : Int(number.rounded())
+            case .seconds: ms = number * 1000
+            case .milliseconds: ms = number
+            case .ambiguous: ms = number < 10_000 ? number * 1000 : number
             }
+            return Int(exactly: ms.rounded())
         }
         switch value {
         case let int as Int:
-            return unit == .seconds ? int.multipliedReportingOverflow(by: 1000).partialValue : int
+            guard unit == .seconds else { return int }
+            let (ms, overflow) = int.multipliedReportingOverflow(by: 1000)
+            return overflow ? nil : ms
         case let double as Double:
             return scaled(double)
         case let string as String:
