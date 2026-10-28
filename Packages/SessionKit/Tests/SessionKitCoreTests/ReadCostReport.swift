@@ -53,6 +53,7 @@ struct ReadCostReport {
             ("loadEpisodeMapPreparationJobs()", { _ = try store.loadEpisodeMapPreparationJobs() }),
             ("loadOwnedOfflineAssets()", { _ = try store.loadOwnedOfflineAssets() }),
             ("loadOfflineStorageReservations()", { _ = try store.loadOfflineStorageReservations() }),
+            ("loadOfflineStorageReservation(id:)", { _ = try store.loadOfflineStorageReservation(id: "reservation-0") }),
             ("loadItemCollections()", { _ = try store.loadItemCollections() }),
             ("loadFeedSubscriptions()", { _ = try store.loadFeedSubscriptions() }),
             ("loadFeedEntries(all)", { _ = try store.loadFeedEntries(subscriptionId: nil) }),
