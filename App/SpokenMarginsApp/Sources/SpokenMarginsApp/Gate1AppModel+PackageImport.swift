@@ -20,7 +20,8 @@ extension Gate1AppModel {
         now: Date = Date()
     ) async throws {
         packageImport.sweepOrphanedFoldersOnce()
-        let payloadIDs = try packageStore.pendingPayloadIDs()
+        // The staging below is awaited, so the label covers only the folder listing; `stagePackageFiles` names the rest.
+        let payloadIDs = try hangTelemetry.labels.scoped("pendingPackageHandoffs") { try packageStore.pendingPayloadIDs() }
         diagnostics["pendingSpokenMarginsPackages"] = "\(payloadIDs.count)"
         for payloadID in payloadIDs where spokenMarginsPackageImportReview == nil {
             do {
@@ -67,7 +68,7 @@ extension Gate1AppModel {
             try? packageStore.deletePackage(payloadID: payloadID)
             keptNotices.forget(payloadID: payloadID)
         }
-        keptNotices.forgetAll(except: Set(try packageStore.pendingPayloadIDs()))
+        keptNotices.forgetAll(except: Set(try hangTelemetry.labels.scoped("pendingPackageHandoffs") { try packageStore.pendingPayloadIDs() }))
     }
 
     enum SpokenMarginsPackageStageOutcome: Equatable {
