@@ -480,6 +480,47 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertEqual(PDFStructuredTextExtractor.itemTitle(for: pdf, structured: document), "Attention Is All You Need")
     }
 
+    func testAnOutlinedPDFWithNoAbstractLabelIsTitledByPageOneNotItsFirstBookmark() throws {
+        // #2807: "Collected Stories / Edited by … / Contents", bookmarks "Story 1", "Story 2", no Title
+        // metadata and no Abstract line, imported as "Story 1".
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 11)]
+        let prose = [
+            "The first story is about a lighthouse keeper who counts the ships that never arrive.",
+            "The second story follows two sisters who divide their father's library between them.",
+        ]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            ("Collected Stories" as NSString).draw(at: CGPoint(x: 60, y: 80), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 28)])
+            ("Edited by Example Author" as NSString).draw(at: CGPoint(x: 60, y: 130), withAttributes: [.font: UIFont.systemFont(ofSize: 14)])
+            ("Contents" as NSString).draw(at: CGPoint(x: 60, y: 200), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 18)])
+            ("Story 1" as NSString).draw(at: CGPoint(x: 60, y: 240), withAttributes: body)
+            ("Story 2" as NSString).draw(at: CGPoint(x: 60, y: 256), withAttributes: body)
+            for (index, heading) in ["Story 1", "Story 2"].enumerated() {
+                context.beginPage()
+                (heading as NSString).draw(at: CGPoint(x: 60, y: 90), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 14)])
+                (prose[index] as NSString).draw(at: CGPoint(x: 60, y: 120), withAttributes: body)
+                (prose[index] as NSString).draw(at: CGPoint(x: 60, y: 136), withAttributes: body)
+            }
+        }
+        let pdf = try XCTUnwrap(PDFDocument(data: data))
+        let root = PDFOutline()
+        for (index, label) in ["Story 1", "Story 2"].enumerated() {
+            let entry = PDFOutline()
+            entry.label = label
+            entry.destination = PDFDestination(page: try XCTUnwrap(pdf.page(at: index + 1)), at: CGPoint(x: 60, y: 700))
+            root.insertChild(entry, at: index)
+        }
+        pdf.outlineRoot = root
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        XCTAssertEqual(PDFStructuredTextExtractor.itemTitle(for: pdf, structured: document), "Collected Stories")
+
+        // A metadata title still wins.
+        pdf.documentAttributes = [PDFDocumentAttribute.titleAttribute: "Stories of the Coast"]
+        let withMetadata = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        XCTAssertEqual(PDFStructuredTextExtractor.itemTitle(for: pdf, structured: withMetadata), "Stories of the Coast")
+    }
+
     func testV2StartsTheChaptersAtAnAbstractLabelSetInBodyType() throws {
         // The real paper sets "Abstract" in 12 pt regular, so it is not a heading by its type.
         // The chapter list started with "Front Matter", holding the title page and the abstract.
