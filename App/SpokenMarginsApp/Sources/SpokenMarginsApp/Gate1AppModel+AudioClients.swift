@@ -60,10 +60,13 @@ extension Gate1AppModel {
                 // A Core ML voice's first render loads and specialises its models for the Neural Engine, which took
                 // longer than the player's 15 s wait (#2856). Doing it now, off the main thread and a moment after the
                 // client is built, leaves the listener's first Play with only inference to wait for.
+                // Weak: a client rebuilt within the delay (voice or speed changed) drops its renderer, and a stale one
+                // must not load a second copy of the model.
                 let renderingAllowed = engine.renderingAllowed
-                Task.detached(priority: .utility) {
+                let warming = renderer as AnyObject
+                Task.detached(priority: .utility) { [weak warming] in
                     try? await Task.sleep(for: .seconds(2))
-                    guard renderingAllowed() else { return }
+                    guard renderingAllowed(), let renderer = warming as? any SupertonicRendering else { return }
                     await renderer.prepareToRender()
                 }
             }

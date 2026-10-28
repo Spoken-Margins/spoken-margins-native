@@ -187,6 +187,29 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    /// #2856: the extra wait is capped, so a model that never finishes loading still hands the passage over.
+    func testRendererStuckLoadingStillFallsBackAfterTheExtendedWaits() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = LoadingModelRenderer(inner: CountingAudioSupertonicRenderer(templateURL: template), loadTime: .seconds(30))
+        let fallback = RecordingFallbackAudioClient()
+        let timedOut = expectation(description: "fell back after the capped waits")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in }, observesPlayerLifecycle: false,
+            fallbackClient: fallback,
+            onFallback: { reason, _, _ in
+                XCTAssertEqual(reason, "supertonic_render_timeout")
+                timedOut.fulfill()
+            },
+            renderWaitLimit: .milliseconds(50)
+        )
+        _ = try client.prepareSpeechText("This model never finishes loading.")
+        try client.play(targetId: "stuck-load", from: 0)
+        await fulfillment(of: [timedOut], timeout: 3)
+        try client.stop()
+    }
+
     func testPreparedAudioPlaysWithoutInferenceWhenResourcesDisallowRendering() async throws {
         let template = try makeTestWAV(duration: 1)
         defer { try? FileManager.default.removeItem(at: template) }

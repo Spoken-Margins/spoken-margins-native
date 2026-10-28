@@ -177,6 +177,11 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
         _ text: String, speed: Float, pacing: OnDeviceRenderPacing, cancellation: CancellationFlag, trigger: String = "render"
     ) throws -> SupertonicNarrationResult {
         let startedAt = Date()
+        // Until this runtime has finished one render, the pipeline load and the Neural Engine specialisation inside its
+        // first inferences (both buckets) are all loading, so the player keeps waiting through them (#2856).
+        let cold = !hasRunWarmInference
+        if cold { loadingCount.begin() }
+        defer { if cold { loadingCount.end() } }
         // Loading the pipeline is paid once and isn't counted as inference.
         let runtime = try loadRuntimeIfNeeded(trigger: trigger)
         let planner = KokoroBucketPlanner(speed: Double(speed))
@@ -209,7 +214,6 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
                 try runtime.pipeline.synthesize(inputIds: input.inputIds, attentionMask: input.attentionMask,
                                                 refS: runtime.style(row: input.styleRow), speed: speed)
             }
-            hasRunWarmInference = true
             nextInferenceNotBefore = governor.nextInference(after: cost, pacing: pacing)
             if KokoroBucketPlanner.mayHaveOverflowed(audioSeconds: result.audioDurationSeconds, bucketSeconds: result.bucketSeconds),
                resplits < Self.maxResplits, let halves = planner.split(piece) {
@@ -219,6 +223,7 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
             segments.append(result.audio)
             seams.append(piece.seamAfter)
         }
+        hasRunWarmInference = true
         let joined = KokoroSeamJoiner.join(segments: segments, seams: seams, sampleRate: Self.sampleRate)
         guard !joined.isEmpty else { throw RenderError.emptyAudio }
         guard joined.allSatisfy(\.isFinite) else { throw RenderError.unsafeAudio("non_finite_samples") }
@@ -259,6 +264,7 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
                     do {
                         for text in Self.warmUpTexts {
                             let result = try renderOnQueue(text, speed: 1, pacing: .whenAppBackgrounded, cancellation: CancellationFlag(), trigger: "warm")
+                            nextInferenceNotBefore = nil // a warm-up's cost must not hold back the next text or a real render
                             try? fileManager.removeItem(at: result.audioURL)
                             generatedAudioURLs.remove(result.audioURL)
                         }

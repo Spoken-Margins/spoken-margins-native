@@ -34,8 +34,8 @@ protocol SupertonicRendering: Sendable {
     /// (#2856). Best effort: it never throws, and a renderer that has nothing to load does nothing.
     func prepareToRender() async
 
-    /// Where a renderer reports its own events (`voice.load`) for the diagnostics export. Voice and timing only,
-    /// never text.
+    /// Where a renderer reports its own events (`voice.load`) for the diagnostics export: voice, timing and error text,
+    /// never source text.
     func setEventSink(_ sink: @escaping @Sendable (_ kind: String, _ fields: [String: String]) -> Void)
 }
 
