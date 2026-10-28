@@ -360,6 +360,29 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertTrue(model.libraryItems.contains { $0.id == model.selectedItem.id }, "the saved item is on the shelf")
     }
 
+    /// Importing a file used to read the Library and the opened item on the main thread when it finished (#2505).
+    func testFinishingAFileImportReadsTheLibraryAndItemOffTheMainThread() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "spoken-margins-import-reads-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "Off Main Article.md")
+        try "# Off Main Article\n\nA short article imported from a file.".write(to: file, atomically: true, encoding: .utf8)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let held = HeldReads()
+        holdReads(held, on: model)
+        held.releaseAll()
+
+        model.importObsidianMarkdownFiles(urls: [file])
+        for _ in 0..<600 where model.isImportingSources { try await Task.sleep(for: .milliseconds(100)) }
+
+        XCTAssertFalse(model.isImportingSources, "the import finished")
+        XCTAssertGreaterThanOrEqual(held.count, 1, "the Library is read through the off-main read")
+        XCTAssertEqual(model.selectedItem.title, "Off Main Article")
+        XCTAssertTrue(model.libraryItems.contains { $0.id == model.selectedItem.id }, "the imported item is on the shelf")
+    }
+
     /// A transcript finishing for the playing item used to read the Library and the item on the main thread (#2505).
     func testAttachingATranscriptReloadsTheLibraryAndItemInTheBackground() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
