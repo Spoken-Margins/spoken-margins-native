@@ -10,7 +10,6 @@ import SessionKit
 @MainActor
 final class LiveSessionController: ObservableObject {
     @Published private(set) var session: LiveSession?
-    @Published private(set) var now = Date()
     @Published var errorMessage: String?
     @Published private(set) var isRecordingSpoken = false
     /// True once the stored session has been read, so a link waiting on it knows whether there is one to act on.
@@ -58,14 +57,16 @@ final class LiveSessionController: ObservableObject {
     var isRunning: Bool { session != nil && session?.endedAt == nil }
     var hasEnded: Bool { session?.endedAt != nil }
 
-    var elapsedMs: Int {
+    /// The clock is not published: the screen draws it from a `TimelineView`, so a tick redraws the clock and nothing
+    /// else (a tick that redrew the whole screen closed its menus and sheets, #2831).
+    func elapsedMs(at now: Date) -> Int {
         guard let session else { return 0 }
         let end = session.endedAt ?? now
         return max(0, Int((end.timeIntervalSince(session.startedAt) * 1_000).rounded()))
     }
 
     /// The estimated source position now, "about 1:23:10", when the listener gave a start position.
-    func predictedPosition(adjustmentMs: Int = 0) -> LiveSessionPositionMap.Position? {
+    func predictedPosition(at now: Date, adjustmentMs: Int = 0) -> LiveSessionPositionMap.Position? {
         guard let session, var position = LiveSessionPositionMap.position(at: now, in: session) else { return nil }
         position.ms = max(0, position.ms + adjustmentMs)
         return position
@@ -280,7 +281,6 @@ final class LiveSessionController: ObservableObject {
         pollTask?.cancel()
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
-                self?.now = Date()
                 if self?.isRunning == true { WatchMarginReceiver.shared.fileWaitingMarks() }
                 try? await Task.sleep(for: .milliseconds(500))
             }

@@ -26,7 +26,7 @@ struct LiveSessionView: View {
     @State private var adjustmentMs = 0
     @FocusState private var marginFieldFocused: Bool
     // Ending
-    @State private var showsEndSheet = false
+    @State private var showsEndCard = false
     @State private var showsLineUp = false
     @State private var confirmsDiscard = false
     @State private var isSaving = false
@@ -34,20 +34,34 @@ struct LiveSessionView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    if let session = controller.session {
-                        sessionHeader(session)
-                        if controller.isRunning { marginComposer(session) }
-                        marginList(session)
-                        if controller.hasEnded { finishCard(session) } else { endButton }
-                    } else {
-                        setupCard
+            ScrollViewReader { scroller in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        if let session = controller.session {
+                            sessionHeader(session)
+                            if controller.isRunning { marginComposer(session) }
+                            marginList(session)
+                            if controller.hasEnded {
+                                finishCard(session)
+                            } else if showsEndCard {
+                                endCard(session).id(Self.endCardId)
+                            } else {
+                                endButton
+                            }
+                        } else {
+                            setupCard
+                        }
+                    }
+                    .padding(20)
+                    .frame(maxWidth: 720)
+                    .frame(maxWidth: .infinity)
+                }
+                .onChange(of: controller.session?.id) { _, _ in showsEndCard = false }
+                .onChange(of: showsEndCard) { _, shown in
+                    if shown {
+                        DispatchQueue.main.async { withAnimation { scroller.scrollTo(Self.endCardId, anchor: .bottom) } }
                     }
                 }
-                .padding(20)
-                .frame(maxWidth: 720)
-                .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
             .background(AppColors.bone)
@@ -65,11 +79,6 @@ struct LiveSessionView: View {
         }
         .onChange(of: links.pendingAction) { _, _ in applyLink() }
         .onChange(of: controller.didLoad) { _, _ in applyLink() }
-        .sheet(isPresented: $showsEndSheet) {
-            LiveSessionEndSheet(kind: controller.session?.kind ?? .meeting, startedAt: controller.session?.startedAt ?? Date()) { when, endPosition, endWhere in
-                if controller.end(when: when, endPositionMs: endPosition, endWhere: endWhere) { showsEndSheet = false }
-            }
-        }
         .sheet(isPresented: $showsLineUp) {
             if let session = controller.session {
                 LiveSessionLineUpView(session: session) {
@@ -166,11 +175,15 @@ struct LiveSessionView: View {
     private func sessionHeader(_ session: LiveSession) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(session.title.isEmpty ? "\(session.kind.label) session" : session.title).font(.headline)
-            Text(LiveSessionPositionMap.clock(controller.elapsedMs))
-                .font(.system(size: 44, weight: .semibold, design: .rounded).monospacedDigit())
-                .accessibilityLabel("Session time \(LiveSessionPositionMap.clock(controller.elapsedMs))")
-            if let position = controller.predictedPosition() {
-                Text("Source now: \(position.label)").font(.subheadline).foregroundStyle(AppColors.secondaryText)
+            TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(LiveSessionPositionMap.clock(controller.elapsedMs(at: context.date)))
+                        .font(.system(size: 44, weight: .semibold, design: .rounded).monospacedDigit())
+                        .accessibilityLabel("Session time \(LiveSessionPositionMap.clock(controller.elapsedMs(at: context.date)))")
+                    if let position = controller.predictedPosition(at: context.date) {
+                        Text("Source now: \(position.label)").font(.subheadline).foregroundStyle(AppColors.secondaryText)
+                    }
+                }
             }
             if let bracket = session.bracket {
                 Text(bracket).font(.caption).foregroundStyle(AppColors.secondaryText)
@@ -201,8 +214,10 @@ struct LiveSessionView: View {
             if session.kind == .paper {
                 TextField("Page (optional)", text: $marginWhere).textFieldStyle(.roundedBorder)
             }
-            if let position = controller.predictedPosition(adjustmentMs: adjustmentMs) {
-                PositionNudgeRow(label: adjustmentMs == 0 ? position.label : "you set \(LiveSessionPositionMap.clock(position.ms))", adjustmentMs: $adjustmentMs)
+            TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                if let position = controller.predictedPosition(at: context.date, adjustmentMs: adjustmentMs) {
+                    PositionNudgeRow(label: adjustmentMs == 0 ? position.label : "you set \(LiveSessionPositionMap.clock(position.ms))", adjustmentMs: $adjustmentMs)
+                }
             }
             Button {
                 controller.addMargin(text: marginText, whereNote: marginWhere.isEmpty ? nil : marginWhere, adjustmentMs: adjustmentMs)
@@ -277,11 +292,24 @@ struct LiveSessionView: View {
         }
     }
 
+    private static let endCardId = "liveSession.endCard"
+
+    /// Ending asks "when did it end?" on the screen itself, not in a sheet (#2831): the sheet closed by itself before
+    /// the listener could answer, and nothing on the screen can close this card but its own End and Cancel.
+    private func endCard(_ session: LiveSession) -> some View {
+        LiveSessionEndCard(kind: session.kind, startedAt: session.startedAt) { when, endPosition, endWhere in
+            if controller.end(when: when, endPositionMs: endPosition, endWhere: endWhere) { showsEndCard = false }
+        } onCancel: {
+            showsEndCard = false
+        }
+    }
+
     private var endButton: some View {
-        Button { showsEndSheet = true } label: {
+        Button { showsEndCard = true } label: {
             Label("End Session", systemImage: "stop.circle").frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.bordered)
+        .accessibilityIdentifier("liveSession.endSession")
     }
 
     private func finishCard(_ session: LiveSession) -> some View {
@@ -345,17 +373,19 @@ struct PositionNudgeRow: View {
     }
 }
 
-/// Asks where the listener is at the end. Skippable; nudged for audiobooks, where it sets the pace.
-private struct LiveSessionEndSheet: View {
+/// Asks when the session stopped and where the listener is, on the session screen. Skippable; nudged for audiobooks,
+/// where it sets the pace. It stays until the listener taps End or Cancel.
+private struct LiveSessionEndCard: View {
     let kind: ElsewhereKind
     let startedAt: Date
     let onEnd: (LiveSessionEnd.When, Int?, String?) -> Void
+    let onCancel: () -> Void
     @State private var endPosition = ""
     @State private var endWhere = ""
     /// Index into the quick choices; one past the last is "At a time".
     @State private var whenIndex = 0
     @State private var clockTime = Date()
-    /// Fixed when the sheet opens, so the offered choices don't shift while it is up.
+    /// Fixed when the card opens, so the offered choices don't shift while it is up.
     @State private var openedAt = Date()
 
     private var choices: [LiveSessionEnd.When] { LiveSessionEnd.quickChoices(startedAt: startedAt, tappedAt: openedAt) }
@@ -369,48 +399,48 @@ private struct LiveSessionEndSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Picker("When did it end?", selection: $whenIndex) {
-                        ForEach(Array(choices.enumerated()), id: \.offset) { index, choice in
-                            Text(choice.label).tag(index)
-                        }
-                        Text("At a time…").tag(choices.count)
+        VStack(alignment: .leading, spacing: 14) {
+            Text("End Session").font(.headline)
+            VStack(alignment: .leading, spacing: 4) {
+                Picker("When did it end?", selection: $whenIndex) {
+                    ForEach(Array(choices.enumerated()), id: \.offset) { index, choice in
+                        Text(choice.label).tag(index)
                     }
-                    if whenIndex >= choices.count {
-                        DatePicker("Time", selection: $clockTime, displayedComponents: .hourAndMinute)
-                    }
-                } footer: {
-                    Text("If you stopped a while ago, say so: it keeps your Margins' places close.")
+                    Text("At a time…").tag(choices.count)
                 }
-                if kind != .paper {
-                    Section {
-                        TextField(kind == .meeting ? "Meeting clock, like 47:30" : "Time in the book, like 1:23:10", text: $endPosition)
-                            .keyboardType(.numbersAndPunctuation)
-                    } header: {
-                        Text("Where are you now?")
-                    } footer: {
-                        Text(kind == .audiobook
-                             ? "Worth filling in: it tells Spoken Margins your listening speed and pauses, so each Margin's place is closer."
-                             : "Optional.")
-                    }
+                .pickerStyle(.menu)
+                if whenIndex >= choices.count {
+                    DatePicker("Time", selection: $clockTime, displayedComponents: .hourAndMinute)
                 }
-                Section {
-                    TextField("Chapter or page (optional)", text: $endWhere)
+                Text("If you stopped a while ago, say so: it keeps your Margins' places close.")
+                    .font(.caption).foregroundStyle(AppColors.secondaryText)
+            }
+            if kind != .paper {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Where are you now?").font(.subheadline.weight(.semibold))
+                    TextField(kind == .meeting ? "Meeting clock, like 47:30" : "Time in the book, like 1:23:10", text: $endPosition)
+                        .textFieldStyle(.roundedBorder)
+                        .keyboardType(.numbersAndPunctuation)
+                    Text(kind == .audiobook
+                         ? "Worth filling in: it tells Spoken Margins your listening speed and pauses, so each Margin's place is closer."
+                         : "Optional.")
+                        .font(.caption).foregroundStyle(AppColors.secondaryText)
                 }
             }
-            .miniPlayerKeepOut()
-            .navigationTitle("End Session")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("End") {
-                        onEnd(when, LiveSessionPositionMap.parse(endPosition), endWhere.isEmpty ? nil : endWhere)
-                    }
-                }
+            TextField("Chapter or page (optional)", text: $endWhere)
+                .textFieldStyle(.roundedBorder)
+            Button {
+                onEnd(when, LiveSessionPositionMap.parse(endPosition), endWhere.isEmpty ? nil : endWhere)
+            } label: {
+                Label("End Session", systemImage: "stop.circle.fill").frame(maxWidth: .infinity, minHeight: 44)
             }
+            .filledActionButton()
+            .accessibilityIdentifier("liveSession.confirmEnd")
+            Button("Cancel", action: onCancel)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .accessibilityIdentifier("liveSession.cancelEnd")
         }
-        .presentationDetents([.medium])
+        .padding(16)
+        .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
