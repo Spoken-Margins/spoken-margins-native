@@ -17,6 +17,15 @@ final class VoiceWarmUpSchedule: @unchecked Sendable {
     private let lock = NSLock()
     private var current: Task<Void, Never>?
 
+    /// Stops the pending or running warm-up. The speech client is being built for a voice that has none to run (James,
+    /// Lily, Kitten), so a downloaded voice chosen a moment ago must not go on loading its model.
+    func cancel() {
+        lock.withLock {
+            current?.cancel()
+            current = nil
+        }
+    }
+
     /// `delay` gives a client that is rebuilt straight away (a speed change) time to replace this one before it loads.
     func schedule(_ renderer: any SupertonicRendering, allowed: @escaping @Sendable () -> Bool, delay: Duration = .seconds(2)) {
         let weakRenderer = WeakRenderer(renderer as AnyObject)

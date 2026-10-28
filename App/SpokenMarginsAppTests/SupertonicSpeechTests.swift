@@ -228,6 +228,14 @@ final class SupertonicSpeechTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(tally.events, ["older start", "older cancelled", "newer start", "newer end"])
         XCTAssertEqual(tally.mostAtOnce, 1)
+
+        // Switching to a voice with nothing to warm (James, Lily, Kitten) stops a warm-up that is still running.
+        let leaving = WarmUpProbeRenderer(name: "leaving", tally: tally, inner: CountingAudioSupertonicRenderer(templateURL: template))
+        schedule.schedule(leaving, allowed: { true }, delay: .milliseconds(10))
+        try await Task.sleep(for: .milliseconds(150))
+        schedule.cancel()
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(Array(tally.events.suffix(2)), ["leaving start", "leaving cancelled"])
     }
 
     func testPreparedAudioPlaysWithoutInferenceWhenResourcesDisallowRendering() async throws {

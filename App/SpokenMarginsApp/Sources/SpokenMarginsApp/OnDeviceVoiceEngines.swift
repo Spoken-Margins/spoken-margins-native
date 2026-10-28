@@ -157,7 +157,9 @@ enum OnDeviceVoiceEngines {
                 renderer: SharedDownloadedRenderers.shared.renderer(for: descriptor, registration: registration, supportDirectory: supportDirectory)
             )
         }
-        SharedDownloadedRenderers.shared.releaseRetained() // a downloaded voice's model doesn't stay loaded beside Supertonic's
+        // A downloaded voice's model doesn't stay loaded, or go on loading, beside Supertonic's.
+        SharedDownloadedRenderers.shared.releaseRetained()
+        VoiceWarmUpSchedule.shared.cancel()
         let voice = selection.supertonicVoice ?? .m2
         return OnDeviceVoiceEngine(
             renderer: SupertonicDownloadedModelRenderer(model: model),
@@ -172,6 +174,7 @@ enum OnDeviceVoiceEngines {
     @MainActor
     static func unregistered(voiceId: String, model: Gate1AppModel) -> OnDeviceVoiceEngine {
         SharedDownloadedRenderers.shared.releaseRetained()
+        VoiceWarmUpSchedule.shared.cancel()
         return OnDeviceVoiceEngine(
             renderer: SupertonicDownloadedModelRenderer(model: model),
             signature: .unregistered(voiceId: voiceId),
