@@ -122,7 +122,20 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
         do {
             try Task.checkCancellation()
             let store = try requireStore()
-            var queuedJobs = try store.loadAudioPreparationJobs()
+            // Jobs another voice's engine filed (James's while Phonon is chosen) wait for that voice: they are neither
+            // picked, so they can't hold up this voice's jobs behind them, nor marked for re-preparing. The engines are
+            // read off the main thread, once per pass.
+            let manifestEngines = await Task.detached(priority: .utility) {
+                var engines: [String: String] = [:]
+                for job in (try? store.loadAudioPreparationJobs()) ?? [] {
+                    if let manifest = try? store.loadPreparedAudioManifest(id: job.manifestId) { engines[job.manifestId] = manifest.signature.engine }
+                }
+                return engines
+            }.value
+            let ownJobs: ([AudioPreparationJob]) -> [AudioPreparationJob] = { jobs in
+                preparationVoice.jobsFiledUnderItsEngine(jobs, manifestEngines: manifestEngines)
+            }
+            var queuedJobs = ownJobs(try store.loadAudioPreparationJobs())
                 .filter({ !PreparationChunkGate.setsAsideForLowPowerMode($0.policy, thermal: device.thermal, isLowPowerModeEnabled: device.isLowPowerModeEnabled) })
             if !foregroundDemandOnly {
                 queuedJobs = OfflinePreparationRecovery.backgroundJobs(queuedJobs, automaticPolicy: automaticAudioPreparationPolicy)
@@ -131,11 +144,11 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                PreparationChunkGate.allowsAutomaticWork(thermal: device.thermal, isLowPowerModeEnabled: device.isLowPowerModeEnabled) {
                 await enqueueAutomaticAudioPreparationJobs()
                 queuedJobs = OfflinePreparationRecovery.backgroundJobs(
-                    try store.loadAudioPreparationJobs(), automaticPolicy: automaticAudioPreparationPolicy
+                    ownJobs(try store.loadAudioPreparationJobs()), automaticPolicy: automaticAudioPreparationPolicy
                 )
             }
             let hasMoreMatchingJobs = {
-                let jobs = try store.loadAudioPreparationJobs()
+                let jobs = ownJobs(try store.loadAudioPreparationJobs())
                 return !LibraryAudioPreparationTurns.eligible(
                     foregroundDemandOnly ? jobs : OfflinePreparationRecovery.backgroundJobs(jobs, automaticPolicy: self.automaticAudioPreparationPolicy),
                     for: caller
@@ -160,9 +173,6 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             let signature = try await Task.detached(priority: .utility) {
                 try preparationVoice.signature()
             }.value
-            // A job another engine filed (James's while Phonon is chosen) waits for that voice, as the pass did before
-            // downloaded voices could prepare; only a change inside one engine marks its audio for re-preparing.
-            guard manifest.signature.engine == signature.engine else { libraryAudioLoop.turns.blocked(caller); return false }
             guard manifest.signature == signature else {
                 manifest.state = .needsRepreparation
                 manifest.updatedAt = Date()

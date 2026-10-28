@@ -157,6 +157,7 @@ enum OnDeviceVoiceEngines {
                 renderer: SharedDownloadedRenderers.shared.renderer(for: descriptor, registration: registration, supportDirectory: supportDirectory)
             )
         }
+        SharedDownloadedRenderers.shared.releaseRetained() // a downloaded voice's model doesn't stay loaded beside Supertonic's
         let voice = selection.supertonicVoice ?? .m2
         return OnDeviceVoiceEngine(
             renderer: SupertonicDownloadedModelRenderer(model: model),
@@ -170,7 +171,8 @@ enum OnDeviceVoiceEngines {
     /// passage; Supertonic never renders in its place and no saved audio is claimed for it.
     @MainActor
     static func unregistered(voiceId: String, model: Gate1AppModel) -> OnDeviceVoiceEngine {
-        OnDeviceVoiceEngine(
+        SharedDownloadedRenderers.shared.releaseRetained()
+        return OnDeviceVoiceEngine(
             renderer: SupertonicDownloadedModelRenderer(model: model),
             signature: .unregistered(voiceId: voiceId),
             renderingAllowed: { false },

@@ -719,6 +719,31 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         model.libraryAudioLoop.cancelOnly()
     }
 
+    /// #2857 audit: with Phonon chosen, a queued James job must not be picked ahead of Phonon's (it would stop the pass
+    /// and starve the Phonon job behind it), and James's own pass still sees it.
+    func testAnotherEnginesJobIsSetAsideNotPickedForTheChosenVoice() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let james = try await coordinator.begin(itemId: "item", sourceText: "First chunk. Second chunk.", signature: signature("one"), plan: plans())
+        let jamesJob = AudioPreparationJob(id: "james-job", itemId: "item", manifestId: james.id, policy: .explicit, requestedAt: Date())
+        let unreadableJob = AudioPreparationJob(id: "orphan", itemId: "item", manifestId: "missing", policy: .explicit, requestedAt: Date())
+        let engines = [james.id: james.signature.engine]
+
+        func voice(engine: String) -> PreparationVoice {
+            PreparationVoice(
+                engine: engine, renderVoice: .m2, key: engine, notInstalledMessage: "", isInstalled: { true },
+                signature: { throw CocoaError(.fileNoSuchFile) }, allowedNow: { true },
+                makeRenderer: { throw CocoaError(.fileNoSuchFile) }, assemblyVoiceKey: { _ in nil }
+            )
+        }
+        let jobs = [jamesJob, unreadableJob]
+        XCTAssertEqual(voice(engine: PhononVoice.engine).jobsFiledUnderItsEngine(jobs, manifestEngines: engines).map(\.id), ["orphan"],
+                       "James's job waits for James; a job with no readable manifest still reaches the pass to be discarded")
+        XCTAssertEqual(voice(engine: SupertonicNarrationResult.supertonicEngine).jobsFiledUnderItsEngine(jobs, manifestEngines: engines).map(\.id),
+                       ["james-job", "orphan"])
+    }
+
     func testStopPersistsCancellationWithoutDiscardingEarlierCommits() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

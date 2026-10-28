@@ -217,6 +217,12 @@ final class DownloadedVoiceEngineTests: XCTestCase {
         XCTAssertNotNil(prepared, "Prepare keeps its renderer between chunks")
         autoreleasepool { _ = shared.renderer(for: descriptor(), registration: registration, supportDirectory: root) }
         XCTAssertNil(prepared, "choosing another voice frees the held model")
+
+        weak var held: AnyObject?
+        autoreleasepool { held = shared.renderer(for: other, registration: registration, supportDirectory: root, retain: true) as AnyObject }
+        XCTAssertNotNil(held)
+        shared.releaseRetained()
+        XCTAssertNil(held, "choosing James, Lily or Kitten frees it too")
     }
 
     // MARK: The engine factory

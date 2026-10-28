@@ -12,6 +12,8 @@ import SessionKitSupertonic
 /// player while the player holds it (`SharedDownloadedRenderers`), so preparing doesn't load a second copy of an
 /// 800 MB model. Only explicit Prepare uses it; the automatic startup and charging jobs stay Supertonic's.
 struct PreparationVoice {
+    /// The engine name this voice's saved audio is filed under (`TTSRenderSignature.engine`).
+    let engine: String
     /// What `render(voice:)` is given. A downloaded voice's renderer ignores it.
     let renderVoice: SupertonicVoiceID
     /// Names this voice in per-item retry cooldowns.
@@ -31,12 +33,20 @@ struct PreparationVoice {
     /// Supertonic voice's own name for it, which is what every earlier build wrote.
     let assemblyVoiceKey: @Sendable (TTSRenderSignature) -> String?
 
+    /// The jobs whose prepared audio is filed under this voice's engine, plus any whose manifest isn't in
+    /// `manifestEngines` (unreadable, or filed after it was read: the pass handles those). Another engine's jobs are
+    /// left in the queue for when that voice is chosen again.
+    func jobsFiledUnderItsEngine(_ jobs: [AudioPreparationJob], manifestEngines: [String: String]) -> [AudioPreparationJob] {
+        jobs.filter { manifestEngines[$0.manifestId].map { $0 == engine } ?? true }
+    }
+
     /// The voice for `selection`, or nil when it has none: Kitten, the iOS voice, or a downloaded voice this build
     /// has no player for.
     @MainActor
     static func current(for selection: AppTTSVoiceSelection, model: Gate1AppModel) -> PreparationVoice? {
         if let voice = selection.supertonicVoice {
             return PreparationVoice(
+                engine: SupertonicNarrationResult.supertonicEngine,
                 renderVoice: voice,
                 key: voice.rawValue,
                 notInstalledMessage: "Supertonic isn't downloaded. Get it in Settings › Voices.",
@@ -65,6 +75,7 @@ struct PreparationVoice {
         let signatureSource = engine.signature
         let renderer = engine.renderer
         return PreparationVoice(
+            engine: descriptor.engine,
             renderVoice: .m2,
             key: selection.rawValue,
             notInstalledMessage: "\(selection.displayName) isn't downloaded. Get it in Settings › Voices.",
@@ -122,6 +133,15 @@ final class SharedDownloadedRenderers: @unchecked Sendable {
             }
         }
         return renderer
+    }
+
+    /// Lets go of whatever Prepare was holding. The speech client is being built for a voice that isn't a downloaded
+    /// one (James, Lily, Kitten), so nothing else will ask this cache for a renderer and drop the old model.
+    func releaseRetained() {
+        lock.withLock {
+            retained.removeAll()
+            for key in uses.keys { uses[key, default: 0] += 1 } // a pending timer must not release what is held again later
+        }
     }
 
     private func release(key: String, ifLastUse use: Int) {
