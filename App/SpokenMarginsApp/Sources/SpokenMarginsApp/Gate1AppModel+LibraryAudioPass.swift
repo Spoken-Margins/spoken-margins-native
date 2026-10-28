@@ -251,7 +251,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 return try hasMoreMatchingJobs()
             }
             let needsAssembly = try PreparedAudioEnqueue.withCurrentManifest(updated, repository: store) { _, _ in
-                job = (try store.loadAudioPreparationJobs()).first(where: { $0.id == job.id }) ?? job
+                job = try store.loadAudioPreparationJob(id: job.id) ?? job
                 recordDeveloperDiagnostic("preparation.committed", ["item": DeveloperDiagnosticRecording.token(item.id), "chunks": String(updated.chunks.count),
                                                                     "renderMs": String(renderMs), "thermal": SupertonicResourcePolicy.currentConditions().thermal.rawValue])
                 job.nextChunkIndex = updated.chunks.count
@@ -305,7 +305,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 job.lastFailureCode = OfflinePreparationRecovery.waitingForSystem
                 if let current = try? store.loadPreparedAudioManifest(id: job.manifestId) {
                     _ = try? PreparedAudioEnqueue.withCurrentManifest(current, repository: store) { _, _ in
-                        if try store.loadAudioPreparationJobs().contains(where: { $0.id == job.id }) { try store.saveAudioPreparationJob(job) }
+                        if try store.loadAudioPreparationJob(id: job.id) != nil { try store.saveAudioPreparationJob(job) }
                     }
                 }
                 try? refreshAudioPreparationPresentation(store: store)
@@ -317,7 +317,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 job.lastFailureCode = String(describing: type(of: error))
                 if let current = try? store.loadPreparedAudioManifest(id: job.manifestId) {
                     _ = try? PreparedAudioEnqueue.withCurrentManifest(current, repository: store) { _, _ in
-                        if try store.loadAudioPreparationJobs().contains(where: { $0.id == job.id }) { try store.saveAudioPreparationJob(job) }
+                        if try store.loadAudioPreparationJob(id: job.id) != nil { try store.saveAudioPreparationJob(job) }
                     }
                 }
                 if job.maximumChunkCount != nil {

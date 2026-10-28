@@ -243,10 +243,10 @@ extension Gate1AppModel {
                   podcastDownloadCoordinator?.validatedLocalURL(for: row.id) != nil else { return nil }
             return item
         }
-        let existingJobIDs = candidates.isEmpty ? [] : Set(((try? store.loadEpisodeMapPreparationJobs()) ?? []).filter { !$0.isCancelled }.map(\.id))
         for item in candidates {
             let id = "episode-map-job-\(safePodcastEvidenceComponent(item.id))"
-            if existingJobIDs.contains(id) { continue }
+            // One job by id, not every job decoded to build a set of ids (#2507).
+            if let existing = try? store.loadEpisodeMapPreparationJob(id: id), !existing.isCancelled { continue }
             try? store.saveEpisodeMapPreparationJob(EpisodeMapPreparationJob(
                 id: id,
                 itemId: item.id,
