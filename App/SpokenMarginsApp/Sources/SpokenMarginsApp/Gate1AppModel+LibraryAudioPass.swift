@@ -160,6 +160,9 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             let signature = try await Task.detached(priority: .utility) {
                 try preparationVoice.signature()
             }.value
+            // A job another engine filed (James's while Phonon is chosen) waits for that voice, as the pass did before
+            // downloaded voices could prepare; only a change inside one engine marks its audio for re-preparing.
+            guard manifest.signature.engine == signature.engine else { libraryAudioLoop.turns.blocked(caller); return false }
             guard manifest.signature == signature else {
                 manifest.state = .needsRepreparation
                 manifest.updatedAt = Date()

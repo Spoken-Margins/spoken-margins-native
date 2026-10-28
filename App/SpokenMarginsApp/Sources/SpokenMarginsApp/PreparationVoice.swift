@@ -57,7 +57,9 @@ struct PreparationVoice {
         let engine = OnDeviceVoiceEngines.downloaded(
             descriptor, registration: registration, supportDirectory: supportDirectory,
             deviceChipGeneration: model.preparationSeams.deviceChipGeneration,
-            renderer: SharedDownloadedRenderers.shared.renderer(for: descriptor, registration: registration, supportDirectory: supportDirectory)
+            renderer: SharedDownloadedRenderers.shared.renderer(
+                for: descriptor, registration: registration, supportDirectory: supportDirectory, retain: true
+            )
         )
         let voiceId = descriptor.voiceId
         let signatureSource = engine.signature
@@ -78,13 +80,17 @@ struct PreparationVoice {
 /// One renderer per downloaded voice while anything holds it: the player's and Prepare's share a loaded model
 /// instead of each loading its own. Weak, so a voice nobody is using frees its model as it did before; tests that build
 /// engines with `OnDeviceVoiceEngines.downloaded` directly never touch it.
+///
+/// Only Prepare asks to have its renderer held a while longer (`retain`), and only for the voice it is preparing: a
+/// request for any other voice drops what was held, so choosing a different voice never leaves the old model in memory
+/// next to the new one (#2857 audit; the same rule as `VoiceWarmUpSchedule`).
 final class SharedDownloadedRenderers: @unchecked Sendable {
     static let shared = SharedDownloadedRenderers()
 
     private struct Entry { weak var renderer: AnyObject? }
     private let lock = NSLock()
     private var entries: [String: Entry] = [:]
-    /// Preparation builds its voice for every chunk and keeps no reference between them, so the renderer is also held
+    /// Preparation builds its voice for every chunk and keeps no reference between them, so its renderer is also held
     /// here for a while after each use. Otherwise, with no player holding it, every chunk would load the model again
     /// and lose the renderer's pacing rest.
     private var retained: [String: any SupertonicRendering] = [:]
@@ -92,23 +98,28 @@ final class SharedDownloadedRenderers: @unchecked Sendable {
     static let retention: Duration = .seconds(90)
 
     func renderer(
-        for descriptor: DownloadedVoiceDescriptor, registration: DownloadedVoiceRegistration, supportDirectory: URL
+        for descriptor: DownloadedVoiceDescriptor, registration: DownloadedVoiceRegistration, supportDirectory: URL,
+        retain: Bool = false
     ) -> any SupertonicRendering {
         let key = "\(descriptor.voiceId)|\(descriptor.speaker)"
-        let (renderer, use) = lock.withLock { () -> (any SupertonicRendering, Int) in
+        let (renderer, use) = lock.withLock { () -> (any SupertonicRendering, Int?) in
+            for other in retained.keys where other != key { retained[other] = nil }
             let found = entries[key]?.renderer as? any SupertonicRendering
             let voiceId = descriptor.voiceId
             let made = found ?? registration.makeRenderer(descriptor.speaker) {
                 VoiceCatalogCoordinator.installedFolder(voiceId: voiceId, supportDirectory: supportDirectory)
             }
             if found == nil { entries[key] = Entry(renderer: made as AnyObject) }
+            guard retain else { return (made, nil) }
             retained[key] = made
             uses[key, default: 0] += 1
-            return (made, uses[key] ?? 0)
+            return (made, uses[key])
         }
-        Task.detached(priority: .utility) { [weak self] in
-            try? await Task.sleep(for: Self.retention)
-            self?.release(key: key, ifLastUse: use)
+        if let use {
+            Task.detached(priority: .utility) { [weak self] in
+                try? await Task.sleep(for: Self.retention)
+                self?.release(key: key, ifLastUse: use)
+            }
         }
         return renderer
     }

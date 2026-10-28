@@ -195,6 +195,30 @@ final class DownloadedVoiceEngineTests: XCTestCase {
         await kitten.unload()
     }
 
+    // MARK: Renderers shared with Prepare (#2857)
+
+    /// Only Prepare holds a downloaded voice's renderer past its last user, and asking for another voice lets go of it
+    /// at once, so choosing a different voice never leaves two models in memory.
+    func testOnlyPreparationHoldsARendererAndAnotherVoiceReleasesIt() {
+        let shared = SharedDownloadedRenderers()
+        let other = DownloadedVoiceDescriptor(
+            voiceId: "phonon-31m", choice: .kokoro, runtime: VoiceModelCatalogVerifier.coreMLRuntime,
+            engine: "kokoro", speaker: "af_heart",
+            identity: { entry, speaker in KokoroRenderSignature.make(voice: speaker, entry: entry) },
+            registration: registration
+        )
+        weak var played: AnyObject?
+        weak var prepared: AnyObject?
+        autoreleasepool {
+            played = shared.renderer(for: descriptor(), registration: registration, supportDirectory: root) as AnyObject
+            prepared = shared.renderer(for: other, registration: registration, supportDirectory: root, retain: true) as AnyObject
+        }
+        XCTAssertNil(played, "the player's renderer is held by the player only")
+        XCTAssertNotNil(prepared, "Prepare keeps its renderer between chunks")
+        autoreleasepool { _ = shared.renderer(for: descriptor(), registration: registration, supportDirectory: root) }
+        XCTAssertNil(prepared, "choosing another voice frees the held model")
+    }
+
     // MARK: The engine factory
 
     private func descriptor(registered: Bool = true, engine: String = "kokoro") -> DownloadedVoiceDescriptor {
