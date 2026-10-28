@@ -120,9 +120,9 @@ public enum SourceTranscriptParsing {
             let text = body.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
-            let startMs = jsonTimeMs(entry["start"] ?? entry["startTime"] ?? entry["start_ms"] ?? entry["offset"]) ?? 0
-            let explicitEndMs = jsonTimeMs(entry["end"] ?? entry["endTime"] ?? entry["end_ms"])
-            let duration = jsonTimeMs(entry["duration"] ?? entry["durationMs"] ?? entry["duration_ms"])
+            let startMs = jsonTimeMs(in: entry, keys: [("start", .ambiguous), ("startTime", .seconds), ("start_ms", .milliseconds), ("offset", .ambiguous)]) ?? 0
+            let explicitEndMs = jsonTimeMs(in: entry, keys: [("end", .ambiguous), ("endTime", .seconds), ("end_ms", .milliseconds)])
+            let duration = jsonTimeMs(in: entry, keys: [("duration", .ambiguous), ("durationMs", .milliseconds), ("duration_ms", .milliseconds)])
             let endMs = explicitEndMs ?? duration.map { startMs + $0 } ?? max(startMs + 1, durationMs ?? startMs + 1)
             segments.append(MediaTimelineSegment(
                 id: "transcript-\(itemId)-json-\(String(format: "%04d", segments.count + 1))",
@@ -154,18 +154,45 @@ public enum SourceTranscriptParsing {
         return Int(((hours * 3600) + (minutes * 60) + seconds) * 1000)
     }
 
-    private static func jsonTimeMs(_ value: Any?) -> Int? {
+    /// The unit a JSON key promises. `startTime` and `endTime` are seconds in the Podcasting 2.0
+    /// transcript spec and `*_ms`/`*Ms` are milliseconds, whatever the number looks like; only the
+    /// bare keys fall back to guessing from the value.
+    private enum JSONTimeUnit {
+        case seconds, milliseconds, ambiguous
+    }
+
+    private static func jsonTimeMs(in entry: [String: Any], keys: [(String, JSONTimeUnit)]) -> Int? {
+        for (key, unit) in keys {
+            if let value = entry[key] { return jsonTimeMs(value, unit: unit) }
+        }
+        return nil
+    }
+
+    private static func jsonTimeMs(_ value: Any?, unit: JSONTimeUnit) -> Int? {
+        // The JSON is untrusted: "nan", "inf" and 1e30 parse as Doubles but don't fit an Int, so they read as no time.
+        func scaled(_ number: Double) -> Int? {
+            guard number.isFinite else { return nil }
+            let ms: Double
+            switch unit {
+            case .seconds: ms = number * 1000
+            case .milliseconds: ms = number
+            case .ambiguous: ms = number < 10_000 ? number * 1000 : number
+            }
+            return Int(exactly: ms.rounded())
+        }
         switch value {
         case let int as Int:
-            return int
+            guard unit == .seconds else { return int }
+            let (ms, overflow) = int.multipliedReportingOverflow(by: 1000)
+            return overflow ? nil : ms
         case let double as Double:
-            return double < 10_000 ? Int((double * 1000).rounded()) : Int(double.rounded())
+            return scaled(double)
         case let string as String:
             if string.contains(":") {
                 return parseCueTime(string)
             }
             guard let double = Double(string) else { return nil }
-            return double < 10_000 ? Int((double * 1000).rounded()) : Int(double.rounded())
+            return scaled(double)
         default:
             return nil
         }
