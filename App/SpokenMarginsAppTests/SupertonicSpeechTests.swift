@@ -1991,6 +1991,54 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(harness.playingChunkStart, chunk[1])
     }
 
+    // #2242: the queued-chunk catch-up reads the queue player (current item, items, rate) from the stall monitor's
+    // thread. It used to do that while holding the client's lock, so an AVFoundation read that blocked (a slow or
+    // resetting media server) held up stop(), play() and the state read on the main thread. The reads are now made
+    // outside the lock, and what they found is checked again under it before anything changes.
+    func testABlockedQueuePlayerReadDoesNotFreezeTheClient() async throws {
+        let blocker = BlockableClock()
+        defer { blocker.release() }
+        let harness = try SupertonicClientHarness(
+            applicationIsActive: { false },
+            queuedPlayerReader: { player, item, includesEndFacts in
+                _ = blocker.read()
+                var reading = SupertonicSpeechPlaybackClient.QueuedPlayerReading(current: player.currentItem)
+                if includesEndFacts {
+                    reading.queuedChunkIsOnThePlayer = player.items().contains(item)
+                    reading.playerAdvancesAtItemEnd = player.actionAtItemEnd == .advance
+                    reading.playerIsPlaying = player.rate != 0
+                }
+                return reading
+            }
+        )
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 3)
+        let queued = await harness.waitForQueuedChunk(chunk[1])
+        XCTAssertTrue(queued, "B is on the player behind A")
+
+        blocker.blockReads()
+        let client = harness.client
+        DispatchQueue.global().async { _ = client.currentCharOffset() }
+        for _ in 0..<150 where !blocker.isStuck { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(blocker.isStuck, "the catch-up is inside the blocked queue player read")
+
+        let finished = CompletionFlag()
+        DispatchQueue.global().async {
+            _ = client.debugActiveAudioState()
+            try? client.stop()
+            finished.set()
+        }
+        for _ in 0..<100 where !finished.isSet { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(finished.isSet, "stop() and the state read return while the queue player read is blocked")
+
+        // The read finishes after the stop: what it saw is stale, so it must not move the client on to chunk B.
+        blocker.release()
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertNil(client.debugQueuedChunkStart, "the stop dropped the queued chunk")
+        XCTAssertFalse((client.debugBackgroundSeamSummary ?? "").contains("queued_ahead"), "a stale read caught nothing up")
+    }
+
     // The same seam with the app in front is unchanged: nothing is queued, each chunk gets its own player, and
     // the seam is not counted as a background one.
     func testWhileTheAppIsInFrontNothingIsQueuedAndTheSeamIsAsBefore() async throws {

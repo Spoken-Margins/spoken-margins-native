@@ -183,6 +183,18 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         var player: AVQueuePlayer
     }
 
+    /// What `applyQueuedAdvance` reads from the queue player. Every one of these is an AVFoundation call that can
+    /// block when the media server is slow, so they are made outside `lock` (#2242).
+    struct QueuedPlayerReading {
+        var current: AVPlayerItem?
+        /// Only read when the end of the playing chunk was just heard (`includesEndFacts`).
+        var queuedChunkIsOnThePlayer = false
+        var playerAdvancesAtItemEnd = false
+        var playerIsPlaying = false
+    }
+
+    typealias QueuedPlayerReader = @Sendable (_ player: AVQueuePlayer, _ queuedItem: AVPlayerItem, _ includesEndFacts: Bool) -> QueuedPlayerReading
+
     private final class RenderTaskControl: @unchecked Sendable {
         private let lock = NSLock()
         private var task: Task<Void, Never>?
@@ -246,6 +258,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// Reads a player's clock in seconds. Nil reads `currentTime()`; a test supplies one that blocks, as
     /// AVFoundation can when the media server is slow (#2119).
     private let playerClock: (@Sendable (AVPlayer) -> TimeInterval)?
+    /// Reads the queue player's current item and end-of-item facts. Nil reads the player; a test supplies one that
+    /// blocks, as AVFoundation can when the media server is slow (#2242).
+    private let queuedPlayerReader: QueuedPlayerReader?
     private let observesPlayerLifecycle: Bool
     private let onDeviceRenderingAllowed: @Sendable () -> Bool
     /// The bundled Kitten voice (#849): renders a chunk when `onDeviceRenderingAllowed` refuses Supertonic, so a
@@ -496,6 +511,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         audioSessionActivator: (@Sendable () throws -> Void)? = nil,
         audioPlayerStarter: (@Sendable (AVPlayer, Float) -> Void)? = nil,
         playerClock: (@Sendable (AVPlayer) -> TimeInterval)? = nil,
+        queuedPlayerReader: QueuedPlayerReader? = nil,
         observesPlayerLifecycle: Bool = true,
         voiceChangeCue: (@Sendable () -> Void)? = nil,
         onDeviceRenderingAllowed: @escaping @Sendable () -> Bool = { OnDeviceVoiceGovernor.app.supertonicRenderingBlock() == nil },
@@ -555,6 +571,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.audioSessionActivator = audioSessionActivator
         self.audioPlayerStarter = audioPlayerStarter
         self.playerClock = playerClock
+        self.queuedPlayerReader = queuedPlayerReader
         self.observesPlayerLifecycle = observesPlayerLifecycle
         self.voiceChangeCue = voiceChangeCue
         self.onDeviceRenderingAllowed = onDeviceRenderingAllowed
@@ -3615,11 +3632,23 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     @discardableResult
     private func applyQueuedAdvance(finished: AVPlayerItem?) -> Bool {
         guard applicationIsActive != nil else { return false }
+        // Look under the lock, read the player outside it, then re-check under it before changing anything: the
+        // stall monitor calls from another thread, and an AVFoundation read that blocks while holding `lock` would
+        // hold up every caller of the client, the main thread included (#2242, as #2119 did for the clock).
+        let seen = lock.withLock { () -> (queued: QueuedChunk, active: AVPlayerItem?)? in
+            guard let queued = queuedChunk, player === queued.player, activeItem !== queued.item else { return nil }
+            return (queued, activeItem)
+        }
+        guard let seen else { return false }
+        let reading = readQueuedPlayer(seen.queued, includesEndFacts: finished != nil && finished === seen.active)
         var finishedURL: URL?
         var replacedObservers: (NSObjectProtocol?, NSKeyValueObservation?)?
+        var takeOffQueued: QueuedChunk?
         let applied = lock.withLock { () -> Bool in
-            guard let queued = queuedChunk, player === queued.player, activeItem !== queued.item else { return false }
-            let current = queued.player.currentItem
+            // Something moved while the player was being read (a seek, a new chunk, a stop): that read is stale.
+            guard let queued = queuedChunk, queued.item === seen.queued.item, player === queued.player,
+                  activeItem === seen.active else { return false }
+            let current = reading.current
             if finished != nil, finished === activeItem, current === activeItem {
                 // The end of the playing chunk was heard while the player still names it. With the queued chunk
                 // still on a player that advances, the queue is moving on to it: the end notification reaches the
@@ -3628,14 +3657,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 // there, or the player stops at the end, is it not playing: take it off and let the seam go through
                 // the app, which still has its audio in the cache.
                 let queueMovesOn = BackgroundChunkSeam.queueMovesOnAtEnd(
-                    queuedChunkIsOnThePlayer: queued.player.items().contains(queued.item),
-                    playerAdvancesAtItemEnd: queued.player.actionAtItemEnd == .advance,
-                    playerIsPlaying: queued.player.rate != 0
+                    queuedChunkIsOnThePlayer: reading.queuedChunkIsOnThePlayer,
+                    playerAdvancesAtItemEnd: reading.playerAdvancesAtItemEnd,
+                    playerIsPlaying: reading.playerIsPlaying
                 )
                 if !queueMovesOn {
-                    queued.player.remove(queued.item)
-                    queued.player.actionAtItemEnd = .pause
-                    queuedChunk = nil
+                    takeOffQueued = queued
                     return false
                 }
             }
@@ -3675,6 +3702,20 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             queuedStatusObservation = nil
             return true
         }
+        if let takeOff = takeOffQueued {
+            // The facts above may be as old as a slow read was long, and the queue could have moved on to the queued
+            // chunk since. Taking a chunk off that has started would cut it off, so look again before doing it; if it
+            // is current now, leave it, and the next caller catches the bookkeeping up.
+            if readQueuedPlayer(takeOff, includesEndFacts: false).current !== takeOff.item {
+                lock.withLock {
+                    guard let queued = queuedChunk, queued.item === takeOff.item else { return }
+                    queued.player.remove(queued.item)
+                    queued.player.actionAtItemEnd = .pause
+                    queuedChunk = nil
+                }
+            }
+            return false
+        }
         guard applied else { return false }
         if let finishedChunkObserver = replacedObservers?.0 {
             NotificationCenter.default.removeObserver(finishedChunkObserver)
@@ -3693,6 +3734,19 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             DispatchQueue.main.async { [weak self] in self?.queueNextChunkIfWanted() }
         }
         return true
+    }
+
+    /// The queue player's state, read with no lock held (#2242). The end facts are only needed when the end of the
+    /// playing chunk was just heard.
+    private func readQueuedPlayer(_ queued: QueuedChunk, includesEndFacts: Bool) -> QueuedPlayerReading {
+        if let queuedPlayerReader { return queuedPlayerReader(queued.player, queued.item, includesEndFacts) }
+        var reading = QueuedPlayerReading(current: queued.player.currentItem)
+        if includesEndFacts {
+            reading.queuedChunkIsOnThePlayer = queued.player.items().contains(queued.item)
+            reading.playerAdvancesAtItemEnd = queued.player.actionAtItemEnd == .advance
+            reading.playerIsPlaying = queued.player.rate != 0
+        }
+        return reading
     }
 
     /// Counts a seam that came with the app away; the first of each kind also goes into the event log (#538).
