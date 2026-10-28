@@ -84,19 +84,39 @@ final class SharedDownloadedRenderers: @unchecked Sendable {
     private struct Entry { weak var renderer: AnyObject? }
     private let lock = NSLock()
     private var entries: [String: Entry] = [:]
+    /// Preparation builds its voice for every chunk and keeps no reference between them, so the renderer is also held
+    /// here for a while after each use. Otherwise, with no player holding it, every chunk would load the model again
+    /// and lose the renderer's pacing rest.
+    private var retained: [String: any SupertonicRendering] = [:]
+    private var uses: [String: Int] = [:]
+    static let retention: Duration = .seconds(90)
 
     func renderer(
         for descriptor: DownloadedVoiceDescriptor, registration: DownloadedVoiceRegistration, supportDirectory: URL
     ) -> any SupertonicRendering {
         let key = "\(descriptor.voiceId)|\(descriptor.speaker)"
-        return lock.withLock {
-            if let existing = entries[key]?.renderer as? any SupertonicRendering { return existing }
+        let (renderer, use) = lock.withLock { () -> (any SupertonicRendering, Int) in
+            let found = entries[key]?.renderer as? any SupertonicRendering
             let voiceId = descriptor.voiceId
-            let made = registration.makeRenderer(descriptor.speaker) {
+            let made = found ?? registration.makeRenderer(descriptor.speaker) {
                 VoiceCatalogCoordinator.installedFolder(voiceId: voiceId, supportDirectory: supportDirectory)
             }
-            entries[key] = Entry(renderer: made as AnyObject)
-            return made
+            if found == nil { entries[key] = Entry(renderer: made as AnyObject) }
+            retained[key] = made
+            uses[key, default: 0] += 1
+            return (made, uses[key] ?? 0)
+        }
+        Task.detached(priority: .utility) { [weak self] in
+            try? await Task.sleep(for: Self.retention)
+            self?.release(key: key, ifLastUse: use)
+        }
+        return renderer
+    }
+
+    private func release(key: String, ifLastUse use: Int) {
+        lock.withLock {
+            guard uses[key] == use else { return }
+            retained[key] = nil
         }
     }
 }

@@ -157,7 +157,6 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             recordDeveloperDiagnostic("preparation.selected", ["item": DeveloperDiagnosticRecording.token(job.itemId), "policy": String(describing: job.policy), "nextChunk": String(job.nextChunkIndex)])
             let support = try applicationSupportDirectory()
             guard preparationVoice.isInstalled() else { return !foregroundDemandOnly }
-            guard preparationVoice.allowedNow() else { diagnostics["backgroundAudioPreparation"] = "voice_not_allowed_now"; return false } // heat, memory or power (#2857)
             let signature = try await Task.detached(priority: .utility) {
                 try preparationVoice.signature()
             }.value
@@ -192,6 +191,8 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 return try hasMoreMatchingJobs()
             }
             guard gate == .render else { diagnostics["backgroundAudioPreparation"] = gate.rawValue; return false }
+            // After the heat gate, so a hot phone pauses the manifest as it always did (#2857).
+            guard preparationVoice.allowedNow() else { diagnostics["backgroundAudioPreparation"] = "voice_not_allowed_now"; return false }
             manifest = try await coordinator.droppingMissingChunks(manifestId: manifest.id) ?? manifest // a lost chunk is rendered again, not assembled (#645)
             let completedIndexes = PreparedAudioCoordinator.completedIndexes(manifest, plan: plan, sourceText: sourceText, retryingStandInsFor: job)
             guard let next = eligiblePlan.first(where: { !completedIndexes.contains($0.index) }) else {

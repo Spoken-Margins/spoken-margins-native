@@ -674,7 +674,11 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         let installed = VoiceCatalogCoordinator.voicesRoot(supportDirectory: support)
             .appending(path: "\(ReadingVoiceChoice.phononVoiceId)/test-2857", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: installed, withIntermediateDirectories: true)
-        addTeardownBlock { try? FileManager.default.removeItem(at: installed) }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: installed)
+            let parent = installed.deletingLastPathComponent()
+            if (try? FileManager.default.contentsOfDirectory(atPath: parent.path))?.isEmpty == true { try? FileManager.default.removeItem(at: parent) }
+        }
 
         model.ttsVoiceSelection = .phonon
         let template = try makeHeatTestWAV()
@@ -685,11 +689,18 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         )
 
         let itemId = "phonon-prepare-\(UUID().uuidString)"
-        let text = (1...12).map { "Sentence \($0) of the article carries enough ordinary words to fill part of a chunk." }.joined(separator: " ")
+        let text = (1...24).map { "Sentence \($0) of the article carries enough ordinary words to fill part of a chunk." }.joined(separator: " ")
         let item = Item(id: itemId, title: "Prepared with Phonon", mediaType: "text", text: text, externalReference: nil, status: "ready")
         try store.saveItem(item)
+        XCTAssertGreaterThan(PreparedChunkPlan.articlePlan(text).count, 1, "more than one chunk, so the pass never assembles inside this test")
         let preparedRoot = support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
-        addTeardownBlock { try? FileManager.default.removeItem(at: preparedRoot.appending(path: itemId, directoryHint: .isDirectory)) }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: preparedRoot.appending(path: itemId, directoryHint: .isDirectory))
+            let assembled = support.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory)
+            for name in (try? FileManager.default.contentsOfDirectory(atPath: assembled.path)) ?? [] where name.hasPrefix(itemId) {
+                try? FileManager.default.removeItem(at: assembled.appending(path: name))
+            }
+        }
 
         await model.enqueueExplicitAudioPreparation(item: item)
         let manifests = try store.loadPreparedAudioManifests(itemId: itemId)
@@ -705,6 +716,7 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         let texts = await renderer.texts
         XCTAssertFalse(texts.isEmpty)
         XCTAssertEqual(try store.loadPreparedAudioManifests(itemId: itemId).count, 1, "nothing is filed under another voice's signature")
+        model.libraryAudioLoop.cancelOnly()
     }
 
     func testStopPersistsCancellationWithoutDiscardingEarlierCommits() async throws {
