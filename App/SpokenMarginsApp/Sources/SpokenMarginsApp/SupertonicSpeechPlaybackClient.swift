@@ -23,10 +23,27 @@ protocol SupertonicRendering: Sendable {
     /// own audio, not a stand-in, only when its result says this engine. Supertonic by default; a downloaded voice's
     /// renderer returns its descriptor's engine.
     var engine: String { get }
+
+    /// True while the renderer is loading its model for the first time (a Neural Engine voice loads and specialises
+    /// its Core ML models then, which can take longer than the player's usual wait). The player doesn't give a
+    /// waiting listener's passage to the iOS voice for being slow while this is true, up to
+    /// `SupertonicSpeechPlaybackClient.maxModelLoadExtensions` more waits (#2856).
+    var isLoadingModel: Bool { get }
+
+    /// Loads the model and runs one short render ahead of the first Play, so that first Play doesn't pay the load
+    /// (#2856). Best effort: it never throws, and a renderer that has nothing to load does nothing.
+    func prepareToRender() async
+
+    /// Where a renderer reports its own events (`voice.load`) for the diagnostics export. Voice and timing only,
+    /// never text.
+    func setEventSink(_ sink: @escaping @Sendable (_ kind: String, _ fields: [String: String]) -> Void)
 }
 
 extension SupertonicRendering {
     var engine: String { SupertonicNarrationResult.supertonicEngine }
+    var isLoadingModel: Bool { false }
+    func prepareToRender() async {}
+    func setEventSink(_ sink: @escaping @Sendable (_ kind: String, _ fields: [String: String]) -> Void) {}
 }
 
 extension SupertonicNarrationRenderer: SupertonicRendering {}
@@ -273,6 +290,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let maxCharacters: Int
     private let startupBufferChunkCount: Int
     private let renderWaitLimit: Duration
+    /// How many more `renderWaitLimit` waits a render gets while its renderer is still loading its model (#2856):
+    /// 15 s plus 8 × 15 s, two minutes in all, for a Core ML voice's first Neural Engine specialisation.
+    static let maxModelLoadExtensions = 8
     /// How long a background seam handed to the bundled voice waits in silence for its render (#1786 audit).
     private let backgroundGapWaitLimit: Duration
     private var playbackRate: Float
@@ -1705,6 +1725,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         reportGenerationState(.rendering)
         let waitLimit = renderWaitLimit
         let pressureRenderer = pressureRenderer
+        let loadingRenderer = renderer
         let task = Task { [weak self, renderer, voice, pressureRenderer] in
             // Each renderer deletes only the files it wrote and ignores the rest.
             let discard: @Sendable (URL) async -> Void = { url in
@@ -1712,6 +1733,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 await pressureRenderer?.discardGeneratedAudio(at: url)
             }
             let timeout = Task { @MainActor [weak self] in
+                var loadExtensions = 0
                 while !Task.isCancelled {
                     do { try await Task.sleep(for: waitLimit) } catch { return }
                     guard let self else { return }
@@ -1723,6 +1745,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     // Slow speculative work must not interrupt audible prepared
                     // audio. The deadline applies only when the listener waits.
                     guard demand.waiting else { continue }
+                    // A voice's first render loads its model; that load isn't a slow render (#2856).
+                    if loadingRenderer.isLoadingModel, loadExtensions < Self.maxModelLoadExtensions {
+                        loadExtensions += 1
+                        continue
+                    }
                     self.renderFailed(request: request, shouldPlayWhenReady: shouldPlayWhenReady, reason: "supertonic_render_timeout")
                     return
                 }

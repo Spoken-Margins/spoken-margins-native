@@ -53,6 +53,20 @@ extension Gate1AppModel {
             let engine = OnDeviceVoiceEngines.make(for: selection, model: self, supportDirectory: supportDirectory) // #2700
             let renderer = engine.renderer
             let signature = engine.signature
+            if selection.choice.downloadedVoiceId != nil {
+                renderer.setEventSink { [weak self] kind, fields in
+                    Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) }
+                }
+                // A Core ML voice's first render loads and specialises its models for the Neural Engine, which took
+                // longer than the player's 15 s wait (#2856). Doing it now, off the main thread and a moment after the
+                // client is built, leaves the listener's first Play with only inference to wait for.
+                let renderingAllowed = engine.renderingAllowed
+                Task.detached(priority: .utility) {
+                    try? await Task.sleep(for: .seconds(2))
+                    guard renderingAllowed() else { return }
+                    await renderer.prepareToRender()
+                }
+            }
             guard let store else { throw SessionKitError.persistenceFailed("prepared_audio_store_unavailable") }
             // Saved audio's identity needs no model files, so saved Supertonic chunks and Kitten's stand-ins play before
             // the download too.

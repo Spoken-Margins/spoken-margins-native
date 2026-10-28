@@ -165,6 +165,28 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    /// #2856: Kokoro's first render loads and specialises its Core ML models, which outlasted the 15 s wait and handed
+    /// the first passage to the iOS voice at offset 0. A renderer that says it is loading its model keeps the wait open.
+    func testFirstRenderStillLoadingItsModelIsNotHandedToTheIOSVoiceAtTheWaitLimit() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = LoadingModelRenderer(inner: CountingAudioSupertonicRenderer(templateURL: template), loadTime: .milliseconds(350))
+        let fallback = RecordingFallbackAudioClient()
+        let started = expectation(description: "first passage played in the chosen voice")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in started.fulfill() }, observesPlayerLifecycle: false,
+            fallbackClient: fallback,
+            onFallback: { reason, _, _ in XCTFail("a model that is still loading must not fall back: \(reason)") },
+            renderWaitLimit: .milliseconds(100)
+        )
+        _ = try client.prepareSpeechText("The first passage waits for the model to load.")
+        try client.play(targetId: "cold-load", from: 0)
+        await fulfillment(of: [started], timeout: 3)
+        XCTAssertTrue(fallback.playedOffsets.isEmpty)
+        try client.stop()
+    }
+
     func testPreparedAudioPlaysWithoutInferenceWhenResourcesDisallowRendering() async throws {
         let template = try makeTestWAV(duration: 1)
         defer { try? FileManager.default.removeItem(at: template) }
@@ -6457,4 +6479,28 @@ private final class NarrationClockAudioClient: AudioPlaybackClient {
     func isAwaitingRenderedAudio(targetId: String) -> Bool { false }
     func playbackTransportState(targetId: String) -> PlaybackTransportState? { nil }
     func setRemoteCommandHandlingEnabled(_ enabled: Bool) {}
+}
+
+/// A renderer whose first render spends `loadTime` loading its model and says so through `isLoadingModel` (#2856).
+private final class LoadingModelRenderer: SupertonicRendering, @unchecked Sendable {
+    private let inner: CountingAudioSupertonicRenderer
+    private let loadTime: Duration
+    private let lock = NSLock()
+    private var loading = false
+
+    init(inner: CountingAudioSupertonicRenderer, loadTime: Duration) {
+        self.inner = inner
+        self.loadTime = loadTime
+    }
+
+    var isLoadingModel: Bool { lock.withLock { loading } }
+
+    func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+        lock.withLock { loading = true }
+        defer { lock.withLock { loading = false } }
+        try await Task.sleep(for: loadTime)
+        return try await inner.render(text: text, voice: voice, language: language, speed: speed, synthesisSteps: synthesisSteps)
+    }
+
+    func discardGeneratedAudio(at url: URL) async { await inner.discardGeneratedAudio(at: url) }
 }
