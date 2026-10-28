@@ -172,6 +172,17 @@ final class PortableArticleAnchorResolverTests: XCTestCase {
         XCTAssertNil(resolution.localEndChar)
     }
 
+    func testAHitThatStartsOrEndsInsideAWordOfAnAgreeingCopyIsNotAMatch() {
+        // Both copies break the words the same way, so "an" is not the end of "Roman": the letters line up by chance.
+        let text = "The Roman, old standard tool for describing graphs."
+        let resolution = resolve(anchor(quote: "an old standard tool for describing"), in: text)
+        XCTAssertEqual(resolution.evidenceClass, .unresolved)
+        XCTAssertNil(resolution.localStartChar)
+        let endsInside = resolve(anchor(quote: "a standard tool for describing"), in: "A standard tool for describingly odd graphs.")
+        XCTAssertEqual(endsInside.evidenceClass, .unresolved, "ends inside \"describingly\"")
+        XCTAssertNil(endsInside.localStartChar)
+    }
+
     func testAShortGluedQuoteIsNotTrustedAcrossWordBreaks() {
         let text = "We then pick the tool to use. The toolbox is elsewhere."
         let resolution = resolve(anchor(quote: "tooltouse"), in: text)

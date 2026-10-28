@@ -25,6 +25,20 @@ public enum PortableArticleAnchorResolver {
         in sourceText: String,
         expectedExactEditionSHA256: String?
     ) -> ImportedAnchorResolution {
+        resolve(
+            anchor: anchor, in: sourceText, expectedExactEditionSHA256: expectedExactEditionSHA256,
+            compactIndex: CompactLetterIndex(sourceText)
+        )
+    }
+
+    /// For callers that place many anchors in one text: they share one `CompactLetterIndex`, which is built only when
+    /// an anchor falls through to the separator-free search.
+    static func resolve(
+        anchor: PortableAnchorEvidence,
+        in sourceText: String,
+        expectedExactEditionSHA256: String?,
+        compactIndex: CompactLetterIndex
+    ) -> ImportedAnchorResolution {
         if let expectedExactEditionSHA256,
            expectedExactEditionSHA256 == exactEditionSHA256(sourceText),
            let start = anchor.startChar,
@@ -75,7 +89,7 @@ public enum PortableArticleAnchorResolver {
         if normalizedMatches.isEmpty {
             // Last resort (#2402): a PDF whose text layer lost its word spaces, on either side, so the quote and the
             // copy hold the same letters but split them into different words.
-            let compactMatches = compactLetterMatches(of: exact, in: sourceText)
+            let compactMatches = compactLetterMatches(of: exact, in: compactIndex)
             if compactMatches.count == 1, let match = compactMatches.first {
                 return resolution(for: match, in: sourceText, confidence: compactMatchConfidence)
             }
@@ -189,12 +203,14 @@ public enum PortableArticleAnchorResolver {
     /// and `standard tool for describing`. Only a unique hit counts: where the words break is no longer evidence.
     private static func compactLetterMatches(
         of quote: String,
-        in source: String
+        in index: CompactLetterIndex
     ) -> [Range<String.Index>] {
-        let needle = compactLetters(in: quote).map(\.letter)
+        let needle = CompactLetterIndex.letters(in: quote).map(\.letter)
         guard needle.count >= compactMatchMinimumLength else { return [] }
-        let haystack = compactLetters(in: source)
+        let source = index.text
+        let haystack = index.letters
         guard haystack.count >= needle.count else { return [] }
+        let quoteRuns = letterRuns(in: quote)
         var matches: [Range<String.Index>] = []
         var start = 0
         let lastStart = haystack.count - needle.count
@@ -202,42 +218,34 @@ public enum PortableArticleAnchorResolver {
             if haystack[start].letter == needle[0],
                (1..<needle.count).allSatisfy({ haystack[start + $0].letter == needle[$0] }) {
                 let lastCharacter = haystack[start + needle.count - 1].at
-                matches.append(haystack[start].at..<source.index(after: lastCharacter))
-                // Two hits are already not unique; there is no need to find a third.
-                if matches.count > 1 { break }
+                let range = haystack[start].at..<source.index(after: lastCharacter)
+                // Where the copy breaks its words the way the quote does, the word search should have found the hit, so
+                // one that starts or ends inside a word ("data" for "a") is letters lining up by chance.
+                let startsInsideWord = range.lowerBound > source.startIndex
+                    && isLetterOrNumber(source[source.index(before: range.lowerBound)])
+                let endsInsideWord = range.upperBound < source.endIndex && isLetterOrNumber(source[range.upperBound])
+                if !(startsInsideWord || endsInsideWord) || letterRuns(in: source[range]) != quoteRuns {
+                    matches.append(range)
+                    // Two hits are already not unique; there is no need to find a third.
+                    if matches.count > 1 { break }
+                }
             }
             start += 1
         }
         return matches
     }
 
-    /// The folded letters and digits of `text`, each with the character of `text` it came from (a letter that folds to
-    /// two, like a sharp s, keeps one source character for both).
-    private static func compactLetters(in text: String) -> [(letter: Character, at: String.Index)] {
-        var result: [(letter: Character, at: String.Index)] = []
-        result.reserveCapacity(text.utf8.count)
-        var index = text.startIndex
-        while index < text.endIndex {
-            let next = text.index(after: index)
-            let character = text[index]
-            if let ascii = character.asciiValue {
-                // The common case without a trip through Foundation: a whole PDF is searched one character at a time.
-                switch ascii {
-                case 0x30...0x39, 0x61...0x7A: result.append((character, index))
-                case 0x41...0x5A: result.append((Character(UnicodeScalar(ascii + 0x20)), index))
-                default: break
-                }
-            } else if character.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) }) {
-                let folded = String(character)
-                    .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: normalizationLocale)
-                    .lowercased(with: normalizationLocale)
-                for letter in folded where letter.isLetter || letter.isNumber {
-                    result.append((letter, index))
-                }
-            }
-            index = next
+    private static func isLetterOrNumber(_ character: Character) -> Bool { character.isLetter || character.isNumber }
+
+    private static func letterRuns<S: StringProtocol>(in text: S) -> Int {
+        var runs = 0
+        var inRun = false
+        for character in text {
+            let isLetter = isLetterOrNumber(character)
+            if isLetter && !inRun { runs += 1 }
+            inRun = isLetter
         }
-        return result
+        return runs
     }
 
     private static func normalizedTokens(in text: String) -> [(value: String, range: Range<String.Index>)] {
@@ -258,6 +266,58 @@ public enum PortableArticleAnchorResolver {
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased(with: normalizationLocale)
+    }
+}
+
+/// The folded letters and digits of a text, each with the character it came from. Built once, on first use, for a text
+/// that several anchors are placed in (#2402).
+final class CompactLetterIndex {
+    let text: String
+    private var built: [(letter: Character, at: String.Index)]?
+
+    init(_ text: String) { self.text = text }
+
+    var letters: [(letter: Character, at: String.Index)] {
+        if let built { return built }
+        let letters = Self.letters(in: text)
+        built = letters
+        return letters
+    }
+
+    private static let normalizationLocale = Locale(identifier: "en_US_POSIX")
+
+    /// A letter that folds to two, like a sharp s, keeps one source character for both.
+    static func letters(in text: String) -> [(letter: Character, at: String.Index)] {
+        var result: [(letter: Character, at: String.Index)] = []
+        result.reserveCapacity(text.utf8.count)
+        // Folding goes through Foundation, so each distinct non-ASCII character is folded once (a CJK page repeats few).
+        var folded: [Character: [Character]] = [:]
+        var index = text.startIndex
+        while index < text.endIndex {
+            let next = text.index(after: index)
+            let character = text[index]
+            if let ascii = character.asciiValue {
+                switch ascii {
+                case 0x30...0x39, 0x61...0x7A: result.append((character, index))
+                case 0x41...0x5A: result.append((Character(UnicodeScalar(ascii + 0x20)), index))
+                default: break
+                }
+            } else if character.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) }) {
+                let letters: [Character]
+                if let known = folded[character] {
+                    letters = known
+                } else {
+                    letters = Array(String(character)
+                        .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: normalizationLocale)
+                        .lowercased(with: normalizationLocale))
+                        .filter { $0.isLetter || $0.isNumber }
+                    folded[character] = letters
+                }
+                for letter in letters { result.append((letter, index)) }
+            }
+            index = next
+        }
+        return result
     }
 }
 
@@ -295,11 +355,13 @@ public enum ImportedItemResolver {
         guard item.itemType != .podcast, let itemText else {
             return result(status: .contextOnly, interjections: interjections, evidenceClass: .unresolved)
         }
+        let compactIndex = CompactLetterIndex(itemText)
         let resolutions = Dictionary(uniqueKeysWithValues: interjections.map { record in
             (record.packageScopedId, PortableArticleAnchorResolver.resolve(
                 anchor: record.anchor,
                 in: itemText,
-                expectedExactEditionSHA256: item.exactEditionSHA256
+                expectedExactEditionSHA256: item.exactEditionSHA256,
+                compactIndex: compactIndex
             ))
         })
         if resolutions.values.contains(where: \.isAmbiguous) {

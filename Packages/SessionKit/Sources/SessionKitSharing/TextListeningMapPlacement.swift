@@ -79,9 +79,11 @@ public enum TextListeningMapPlacer {
         var found: [(sceneIndex: Int, start: Int)] = []
         var misses = 0
         var tried = 0
+        let compactIndex = CompactLetterIndex(text)
         for index in spreadOrder(scenes.count) {
             let resolution = PortableArticleAnchorResolver.resolve(
-                anchor: scenes[index].startAnchor, in: text, expectedExactEditionSHA256: expectedExactEditionSHA256
+                anchor: scenes[index].startAnchor, in: text, expectedExactEditionSHA256: expectedExactEditionSHA256,
+                compactIndex: compactIndex
             )
             tried += 1
             if resolution.evidenceClass == .articleTextVerified, !resolution.isAmbiguous, let start = resolution.localStartChar {
