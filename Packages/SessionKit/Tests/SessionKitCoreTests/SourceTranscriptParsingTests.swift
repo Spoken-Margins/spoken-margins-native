@@ -73,21 +73,52 @@ final class SourceTranscriptParsingTests: XCTestCase {
     }
 
     func testJSONAcceptedTextStartEndAndDurationKeys() throws {
+        // `startTime`/`endTime` are seconds in the Podcasting 2.0 spec, so 100 is 100 s there (#2813).
+        let startKeys: [(String, Int)] = [("start", 100), ("startTime", 100_000), ("start_ms", 100), ("offset", 100)]
+        let endKeys: [(String, Int)] = [("end", 300), ("endTime", 300_000), ("end_ms", 300)]
         for textKey in ["text", "body", "caption"] {
-            for startKey in ["start", "startTime", "start_ms", "offset"] {
-                for endKey in ["end", "endTime", "end_ms"] {
+            for (startKey, expectedStart) in startKeys {
+                for (endKey, expectedEnd) in endKeys {
                     let body = "[{\"\(textKey)\":\"Words\",\"\(startKey)\":100,\"\(endKey)\":300}]"
                     let segment = try XCTUnwrap(parse(body)?.segments.first)
                     XCTAssertEqual(segment.text, "Words")
-                    XCTAssertEqual(segment.startMs, 100, body)
-                    XCTAssertEqual(segment.endMs, 300, body)
+                    XCTAssertEqual(segment.startMs, expectedStart, body)
+                    XCTAssertEqual(segment.endMs, max(expectedStart + 1, expectedEnd), body) // an end before the start is clamped
                 }
                 for durationKey in ["duration", "durationMs", "duration_ms"] {
                     let body = "[{\"\(textKey)\":\"Words\",\"\(startKey)\":100,\"\(durationKey)\":250}]"
-                    XCTAssertEqual(try parse(body)?.segments.first?.endMs, 350, body)
+                    XCTAssertEqual(try parse(body)?.segments.first?.endMs, expectedStart + 250, body)
                 }
             }
         }
+    }
+
+    func testJSONUnitFollowsTheKey() throws {
+        // key, value as written in the JSON, expected start in ms
+        let rows: [(String, String, Int)] = [
+            ("startTime", "12", 12_000), ("startTime", "1.5", 1500), ("startTime", "0", 0),
+            ("startTime", "9999", 9_999_000), ("startTime", "10000", 10_000_000), ("startTime", "10000.5", 10_000_500),
+            ("startTime", "\"12\"", 12_000), ("startTime", "\"1.5\"", 1500), ("startTime", "\"01:02,500\"", 62_500),
+            ("start_ms", "12", 12), ("start_ms", "1.5", 2), ("start_ms", "9999", 9999), ("start_ms", "10000", 10_000),
+            ("start_ms", "\"12\"", 12), ("start_ms", "\"10000\"", 10_000),
+            ("start", "12", 12), ("start", "1.5", 1500), ("start", "9999", 9999), ("start", "10000", 10_000),
+            ("offset", "12", 12), ("offset", "1.5", 1500)
+        ]
+        for (key, value, expected) in rows {
+            let body = "[{\"text\":\"Words\",\"\(key)\":\(value)}]"
+            XCTAssertEqual(try parse(body)?.segments.first?.startMs, expected, body)
+        }
+        let endRows: [(String, String, Int)] = [
+            ("endTime", "15", 15_000), ("endTime", "15.5", 15_500), ("end_ms", "15", 15), ("end", "15.5", 15_500)
+        ]
+        for (key, value, expected) in endRows {
+            let body = "[{\"text\":\"Words\",\"startTime\":0,\"\(key)\":\(value)}]"
+            XCTAssertEqual(try parse(body)?.segments.first?.endMs, expected, body)
+        }
+        // The case the issue names: whole-second startTime next to a fractional endTime.
+        let mixed = try XCTUnwrap(parse(#"[{"text":"Words","startTime":12,"endTime":15.5}]"#)?.segments.first)
+        XCTAssertEqual(mixed.startMs, 12_000)
+        XCTAssertEqual(mixed.endMs, 15_500)
     }
 
     func testJSONNumericUnitsAndStringTimes() throws {
