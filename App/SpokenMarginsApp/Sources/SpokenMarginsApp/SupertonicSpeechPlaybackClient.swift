@@ -3705,14 +3705,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         if let takeOff = takeOffQueued {
             // The facts above may be as old as a slow read was long, and the queue could have moved on to the queued
             // chunk since. Taking a chunk off that has started would cut it off, so look again before doing it; if it
-            // is current now, leave it, and the next caller catches the bookkeeping up.
-            if readQueuedPlayer(takeOff, includesEndFacts: false).current !== takeOff.item {
-                lock.withLock {
-                    guard let queued = queuedChunk, queued.item === takeOff.item else { return }
-                    queued.player.remove(queued.item)
-                    queued.player.actionAtItemEnd = .pause
-                    queuedChunk = nil
-                }
+            // is current now, catch the bookkeeping up to it here: returning false would send the caller (the end of
+            // the chunk before) to start the queued chunk again from the cache, and its first words would play twice.
+            if readQueuedPlayer(takeOff, includesEndFacts: false).current === takeOff.item {
+                return applyQueuedAdvance(finished: nil)
+            }
+            lock.withLock {
+                guard let queued = queuedChunk, queued.item === takeOff.item else { return }
+                queued.player.remove(queued.item)
+                queued.player.actionAtItemEnd = .pause
+                queuedChunk = nil
             }
             return false
         }
