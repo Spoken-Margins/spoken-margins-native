@@ -12,6 +12,8 @@ final class LiveSessionController: ObservableObject {
     @Published private(set) var session: LiveSession?
     @Published var errorMessage: String?
     @Published private(set) var isRecordingSpoken = false
+    /// True once the stored session has been read, so a link waiting on it knows whether there is one to act on.
+    @Published private(set) var didLoad = false
 
     private let files: LiveSessionFileWorker
     /// The session this screen opened: nil opens the running one, or the setup card when none runs.
@@ -43,6 +45,7 @@ final class LiveSessionController: ObservableObject {
             guard let self else { return }
             // A session started or discarded while the file was read is newer than the file.
             if saveGeneration == generation { session = stored }
+            didLoad = true
             WatchMarginReceiver.shared.fileWaitingMarks()
             startPolling()
             observeDisk()
