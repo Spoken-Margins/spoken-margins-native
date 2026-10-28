@@ -323,6 +323,7 @@ struct PlaybackScreen: View {
                 .accessibilityIdentifier("playback.finished.share.button")
             } else {
                 marginRow
+                PlaybackMarkCompleteButton()
             }
         }
         .padding(.horizontal, 22)
