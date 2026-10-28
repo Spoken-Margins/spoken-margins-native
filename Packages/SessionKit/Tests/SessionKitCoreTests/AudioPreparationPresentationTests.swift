@@ -94,4 +94,31 @@ final class AudioPreparationPresentationTests: XCTestCase {
         XCTAssertEqual(try store.deleteStaleAudioPreparationJobs(among: read.staleJobIds), ["job-trashed"])
         XCTAssertEqual(try store.loadAudioPreparationJobs().map(\.id), ["job-other"])
     }
+
+    /// #2507: the app's Library reload builds the Preparing Audio lists from its own snapshot instead of reading the
+    /// items, sessions, manifests and jobs a second time. The two must agree on a real store, or the shortcut changes
+    /// what the queue shows and which jobs are deleted.
+    func testTheLibrarySnapshotOfARealStoreGivesTheSameListsAsTheFourSeparateReads() throws {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("snapshot-lists-\(UUID().uuidString).sqlite").path
+        let store = try SQLiteSessionStore(path: path)
+        for id in ["live", "trashed", "second"] {
+            try store.seed(item: Item(id: id, title: "Title \(id)", mediaType: "text", text: "Some words to read.", externalReference: nil, status: "ready"))
+        }
+        try store.moveItemToTrash(id: "trashed")
+        try store.saveAudioPreparationJob(job("live", at: 2))
+        try store.saveAudioPreparationJob(job("second", policy: .explicit, at: 3))
+        try store.saveAudioPreparationJob(job("trashed", at: 1))
+        try store.savePreparedAudioManifest(manifest("live", updatedAt: 5))
+
+        for active in [nil, "second"] {
+            let fromSnapshot = AudioPreparationPresentation(snapshot: try LibraryReadSnapshot.read(store: store), activeItemId: active)
+            let fromReads = AudioPreparationPresentation(
+                items: try store.listItemSummaries(), sessions: try store.loadSessions(),
+                manifests: try store.loadPreparedAudioManifests(), jobs: try store.loadAudioPreparationJobs(), activeItemId: active)
+            XCTAssertEqual(fromSnapshot, fromReads)
+            XCTAssertEqual(fromSnapshot.staleJobIds, ["job-trashed"])
+            XCTAssertEqual(Set(fromSnapshot.queue.map(\.itemId)), ["live", "second"])
+            XCTAssertEqual(fromSnapshot.recentlyPrepared.map(\.title), ["Title live"])
+        }
+    }
 }

@@ -119,6 +119,7 @@ extension Gate1AppModel {
             if let notice = [recordingDraftNotice, writtenMarginNotice].compactMap({ $0 }).joined(separator: " ").nilIfEmpty {
                 reportWarning(notice)
             }
+            // Read again, not from `launchData`: restoring the session above can re-prepare a manifest or finish a session.
             try refreshAudioPreparationPresentation(store: store, announceNewCompletions: true)
             scheduleAutomaticAudioPreparationIfNeeded()
             // Recover missing opening windows as well as durable jobs. Yield

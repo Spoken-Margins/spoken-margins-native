@@ -252,6 +252,28 @@ extension Gate1AppModel {
             items: try store.listItemSummaries(), sessions: try store.loadSessions(),
             manifests: try store.loadPreparedAudioManifests(), jobs: try store.loadAudioPreparationJobs(),
             activeItemId: activePlaybackItemId)
+        try applyAudioPreparationPresentation(presentation, store: store, announceNewCompletions: announceNewCompletions, now: now)
+    }
+
+    /// The same refresh from a Library read the caller has just made, so it costs no second pass over the items,
+    /// sessions, manifests and jobs (#2507). Call it only with a snapshot read in this same main-actor step: an older one
+    /// would list jobs that were since moved or finished.
+    func refreshAudioPreparationPresentation(
+        from data: LibraryReadSnapshot,
+        store: SQLiteSessionStore,
+        announceNewCompletions: Bool = false,
+        now: Date = Date()
+    ) throws {
+        let presentation = AudioPreparationPresentation(snapshot: data, activeItemId: activePlaybackItemId)
+        try applyAudioPreparationPresentation(presentation, store: store, announceNewCompletions: announceNewCompletions, now: now)
+    }
+
+    private func applyAudioPreparationPresentation(
+        _ presentation: AudioPreparationPresentation,
+        store: SQLiteSessionStore,
+        announceNewCompletions: Bool,
+        now: Date
+    ) throws {
         try store.deleteAudioPreparationJobs(ids: presentation.staleJobIds)
         audioPreparationQueue = presentation.queue
         recentlyPreparedAudio = presentation.recentlyPrepared

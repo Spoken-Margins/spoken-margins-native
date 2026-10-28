@@ -105,7 +105,7 @@ Spoken interjection transcription requests on-device speech recognition. **The f
 
 The Share extension and Safari extension write only the item you explicitly share or capture into the app's private shared container. The Safari extension runs only when you invoke Selected Text or Readable Page; it does not continuously read browsing activity.
 
-When you use the system share sheet, copy an export, or email support, the destination you choose receives the content you select. Diagnostics are created locally for you to review and are not sent automatically.
+When you use the system share sheet, copy an export, or email support, the destination you choose receives the content you select. Diagnostics are created locally for you to review and are not sent automatically. A diagnostics file holds timings, states, routes and short codes; it holds no article titles, web addresses, file names, Margin text or transcripts, and the codes that stand for your library items can't be turned back into titles.
 
 ### Deletion and retention
 
