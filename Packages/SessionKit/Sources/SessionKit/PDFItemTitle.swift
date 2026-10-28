@@ -47,7 +47,7 @@ public enum PDFItemTitle {
     public static func displayTitle(onPageOne lines: [PageLine], bodySize: Double) -> String? {
         func isCandidate(_ line: PageLine) -> Bool {
             guard line.pointSize >= bodySize + 1.5, let text = tidy(line.text), text.count >= 2,
-                  text.contains(where: \.isLetter), !isStructuralLabel(text) else { return false }
+                  text.contains(where: \.isLetter), !isStructuralLabel(text), !isFrontMatterLine(text) else { return false }
             return true
         }
         let candidates = lines.indices.filter { isCandidate(lines[$0]) }
@@ -63,10 +63,19 @@ public enum PDFItemTitle {
         return title
     }
 
-    /// "Contents", "Table of Contents", "1 Introduction", "Preface": a part of a book or paper, not its name.
+    /// "Edited by …", "Translated by …", "© 2026 …", an ISBN, DOI or address: the credit and imprint lines under or
+    /// beside a title, not part of it.
+    static func isFrontMatterLine(_ text: String) -> Bool {
+        text.range(
+            of: #"^(?:(?:edited|translated|illustrated|compiled|foreword|introduction|photographs|published|printed) by\b|copyright\b|©|\(c\)|isbn\b|doi:|https?://|all rights reserved)"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+    }
+
+    /// "Contents", "Table of Contents", "1 Introduction", "Preface", "Part II", "Chapter 3": a part of a book or paper, not its name.
     static func isStructuralLabel(_ text: String) -> Bool {
         text.range(
-            of: #"^(?:(?:[0-9]+|[ivxlcdm]+)[.)]?\s+)?(?:table of contents|contents|preface|foreword|introduction|prologue|epigraph|dedication|acknowledg(?:e)?ments?|copyright|about the authors?|abstract|summary)\s*$"#,
+            of: #"^(?:(?:[0-9]+|[ivxlcdm]+)[.)]?\s+)?(?:table of contents|contents|preface|foreword|introduction|prologue|epigraph|dedication|acknowledg(?:e)?ments?|copyright|about the authors?|abstract|summary|(?:chapter|part|volume|book|section) (?:[0-9]+|[ivxlcdm]+))\s*$"#,
             options: [.regularExpression, .caseInsensitive]
         ) != nil
     }

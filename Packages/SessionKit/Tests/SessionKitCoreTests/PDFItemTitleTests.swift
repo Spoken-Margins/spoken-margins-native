@@ -136,8 +136,12 @@ final class PDFItemTitleTests: XCTestCase {
             ("a notice in display type is not a title",
              [line("Provided proper attribution is provided, Google hereby grants permission to reproduce the tables and figures in this paper solely for use in journalistic or", 14),
               line("Body text.", 11)], nil),
-            ("a title after a masthead of the same size runs on from the masthead's first line",
-             [line("Example Review", 20), line("Collected Stories", 20), line("Contents", 14)], "Example Review Collected Stories"),
+            ("an editor line set as large as the title is a credit, not part of it",
+             [line("Collected Stories", 24), line("Edited by Example Author", 24), line("Contents", 18)], "Collected Stories"),
+            ("a copyright line in display type is skipped",
+             [line("© 2026 Example Press", 24), line("Collected Stories", 24)], "Collected Stories"),
+            ("a part or chapter label is not the title",
+             [line("Part II", 30), line("The Long Way Home", 20), line("Chapter 3", 14)], "The Long Way Home"),
         ]
         for (name, lines, expected) in cases {
             XCTAssertEqual(PDFItemTitle.displayTitle(onPageOne: lines, bodySize: 11), expected, name)
@@ -146,10 +150,11 @@ final class PDFItemTitleTests: XCTestCase {
 
     func testStructuralLabels() {
         for label in ["Contents", "TABLE OF CONTENTS", "Table of Contents", "1 Introduction", "I. INTRODUCTION", "1. Introduction",
-                      "Preface", "Foreword", "Acknowledgements", "Acknowledgments", "Dedication", "About the Author"] {
+                      "Preface", "Foreword", "Acknowledgements", "Acknowledgments", "Dedication", "About the Author",
+                      "Part II", "Chapter 3", "Volume 2"] {
             XCTAssertTrue(PDFItemTitle.isStructuralLabel(label), label)
         }
-        for title in ["Contents of the Mind", "Introduction to Algorithms", "Dedication and Other Stories", "The Preface Problem", "Summary Statistics Done Right"] {
+        for title in ["Contents of the Mind", "Introduction to Algorithms", "Dedication and Other Stories", "The Preface Problem", "Summary Statistics Done Right", "Part of the Problem", "Chapter and Verse"] {
             XCTAssertFalse(PDFItemTitle.isStructuralLabel(title), title)
         }
     }

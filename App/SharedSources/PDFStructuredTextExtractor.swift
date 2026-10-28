@@ -271,7 +271,8 @@ enum PDFStructuredTextExtractor {
         }
         guard let first = pages.first, !first.isEmpty else { return nil }
         return PDFItemTitle.displayTitle(
-            onPageOne: first.map { .init(text: $0.text, pointSize: Double($0.pointSize)) },
+            onPageOne: // The size most of the line is set in, not its first character's: a drop cap is not a title.
+            first.map { .init(text: $0.text, pointSize: Double($0.mainPointSize > 0 ? $0.mainPointSize : $0.pointSize)) },
             bodySize: Double(inferredBodyPointSize(from: pages.flatMap { $0 }))
         )
     }
