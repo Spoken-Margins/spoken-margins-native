@@ -41,7 +41,7 @@ struct ImportedFileEpisodeLinker {
     nonisolated private static func hasLinkedMargins(item: Item, store: SQLiteSessionStore) -> Bool {
         let layers = (try? store.loadImportedCommentaryLayers(itemId: item.id)) ?? []
         let digest = SharedPacketItemMatcher.ownedAudiobookDigest(
-            for: item, assets: (try? store.loadOwnedOfflineAssets()) ?? []
+            for: item, assets: (try? store.loadOwnedOfflineAssets(itemId: item.id)) ?? []
         )
         return !SharedPacketItemMatcher.layersDependingOnEpisodeLink(layers, item: item, ownedAudiobookDigest: digest).isEmpty
     }

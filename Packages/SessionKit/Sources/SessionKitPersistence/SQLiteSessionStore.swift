@@ -1217,6 +1217,12 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;", ["owned_offline_asset"])
     }
 
+    /// One item's owned offline assets, in `loadOwnedOfflineAssets()`'s order, read through the `item_id` index: for a
+    /// caller that already has the item and would otherwise decode every ledger row to filter by `itemId` (#2507).
+    public func loadOwnedOfflineAssets(itemId: String) throws -> [OwnedOfflineAsset] {
+        try loadByItem(kind: "owned_offline_asset", itemId: itemId)
+    }
+
     public func deleteOwnedOfflineAsset(id: String) throws { try deleteRecord(kind: "owned_offline_asset", id: id) }
 
     @discardableResult
