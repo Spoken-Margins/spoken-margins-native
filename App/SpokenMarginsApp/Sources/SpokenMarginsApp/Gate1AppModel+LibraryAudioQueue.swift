@@ -399,7 +399,7 @@ extension Gate1AppModel {
     func enqueueExplicitAudioPreparation(item: Item) async {
         guard let sourceText = PreparedSpeechHooks.preparedText(of: item, in: store),
               !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let voice = ttsVoiceSelection.supertonicVoice else { return }
+              let preparationVoice = PreparationVoice.current(for: ttsVoiceSelection, model: self) else { return }
         do {
             allowAudioPreparation(itemId: item.id)
             libraryAudioLoop.renderPolicy.noteListenerEngaged() // an explicit request ends the post-relaunch hold (#2694)
@@ -407,12 +407,12 @@ extension Gate1AppModel {
             startupAudioPreparationCooldown.clear(Self.startupAudioCooldownKeys([item.id]))
             let store = try requireStore()
             let support = try applicationSupportDirectory()
-            guard let assets = SupertonicAssetResolver.location() else {
-                reportFailure("Supertonic isn't downloaded. Get it in Settings › Voices.")
+            guard preparationVoice.isInstalled() else {
+                reportFailure(preparationVoice.notInstalledMessage)
                 return
             }
             let signature = try await Task.detached(priority: .utility) {
-                try SupertonicRenderIdentity.make(assets: assets, voice: voice)
+                try preparationVoice.signature()
             }.value
             let coordinator = requirePreparedAudioCoordinator(store: store, supportDirectory: support)
             currentSupertonicRenderSignature = signature

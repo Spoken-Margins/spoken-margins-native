@@ -649,6 +649,101 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: try chunkFile(0).path))
     }
 
+    /// #2857: Prepare Offline did nothing with Phonon chosen, because every preparation path asked for a Supertonic voice.
+    /// With Phonon chosen and installed, an explicit Prepare now files chunks under Phonon's own signature, stamped with
+    /// Phonon's engine and not as stand-ins, and files nothing under Supertonic's.
+    @MainActor
+    func testExplicitPrepareWithPhononChosenFilesChunksUnderPhononsSignature() async throws {
+        let defaults = UserDefaults.standard
+        let keys = ["supertonicTTSMigrationV1", "supertonicVoicePendingTermsV1", "ttsMode", "ttsVoiceSelection",
+                    SpokenMarginsTerms.acceptanceVersionKey, SpokenMarginsTerms.acceptanceDateKey, "guidedOnboardingTombstone"]
+        let prior = keys.reduce(into: [String: Any]()) { $0[$1] = defaults.object(forKey: $1) }
+        defer { for key in keys { if let value = prior[key] { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) } } }
+        SpokenMarginsTerms.recordAcceptance()
+        defaults.set(true, forKey: "guidedOnboardingTombstone")
+
+        let root = FileManager.default.temporaryDirectory.appending(path: "phonon-prepare-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(),
+                                  databaseURLOverride: root.appending(path: "store.sqlite"))
+        let store = try model.libraryStoreForTesting()
+        addTeardownBlock { [weak model, weak store] in
+            if model == nil, store == nil { try? FileManager.default.removeItem(at: root) }
+        }
+        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let installed = VoiceCatalogCoordinator.voicesRoot(supportDirectory: support)
+            .appending(path: "\(ReadingVoiceChoice.phononVoiceId)/test-2857", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: installed, withIntermediateDirectories: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: installed)
+            let parent = installed.deletingLastPathComponent()
+            if (try? FileManager.default.contentsOfDirectory(atPath: parent.path))?.isEmpty == true { try? FileManager.default.removeItem(at: parent) }
+        }
+
+        model.ttsVoiceSelection = .phonon
+        let template = try makeHeatTestWAV()
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = HeatTestRenderer(templateURL: template, engine: PhononVoice.engine)
+        model.preparationSeams = PreparationPassSeams(
+            deviceConditions: { SpeechEngineConditions(thermal: .nominal) }, renderer: { renderer }, deviceChipGeneration: { 17 }
+        )
+
+        let itemId = "phonon-prepare-\(UUID().uuidString)"
+        let text = (1...24).map { "Sentence \($0) of the article carries enough ordinary words to fill part of a chunk." }.joined(separator: " ")
+        let item = Item(id: itemId, title: "Prepared with Phonon", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        try store.saveItem(item)
+        XCTAssertGreaterThan(PreparedChunkPlan.articlePlan(text).count, 1, "more than one chunk, so the pass never assembles inside this test")
+        let preparedRoot = support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: preparedRoot.appending(path: itemId, directoryHint: .isDirectory))
+            let assembled = support.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory)
+            for name in (try? FileManager.default.contentsOfDirectory(atPath: assembled.path)) ?? [] where name.hasPrefix(itemId) {
+                try? FileManager.default.removeItem(at: assembled.appending(path: name))
+            }
+        }
+
+        await model.enqueueExplicitAudioPreparation(item: item)
+        let manifests = try store.loadPreparedAudioManifests(itemId: itemId)
+        let manifest = try XCTUnwrap(manifests.first, "Prepare queued nothing with Phonon chosen")
+        XCTAssertEqual(manifests.count, 1)
+        XCTAssertEqual(manifest.signature.engine, PhononVoice.engine)
+        XCTAssertNotEqual(manifest.signature.engine, SupertonicNarrationResult.supertonicEngine)
+
+        _ = await model.performBackgroundAudioPreparationPass(foregroundDemandOnly: true)
+        let saved = try XCTUnwrap(try store.loadPreparedAudioManifest(id: manifest.id))
+        XCTAssertFalse(saved.chunks.isEmpty, "the pass rendered a chunk in Phonon")
+        XCTAssertTrue(saved.chunks.allSatisfy { $0.engine == nil }, "Phonon's own audio, not stand-ins")
+        let texts = await renderer.texts
+        XCTAssertFalse(texts.isEmpty)
+        XCTAssertEqual(try store.loadPreparedAudioManifests(itemId: itemId).count, 1, "nothing is filed under another voice's signature")
+        model.libraryAudioLoop.cancelOnly()
+    }
+
+    /// #2857 audit: with Phonon chosen, a queued James job must not be picked ahead of Phonon's (it would stop the pass
+    /// and starve the Phonon job behind it), and James's own pass still sees it.
+    func testAnotherEnginesJobIsSetAsideNotPickedForTheChosenVoice() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let james = try await coordinator.begin(itemId: "item", sourceText: "First chunk. Second chunk.", signature: signature("one"), plan: plans())
+        let jamesJob = AudioPreparationJob(id: "james-job", itemId: "item", manifestId: james.id, policy: .explicit, requestedAt: Date())
+        let unreadableJob = AudioPreparationJob(id: "orphan", itemId: "item", manifestId: "missing", policy: .explicit, requestedAt: Date())
+        let engines = [james.id: james.signature.engine]
+
+        func voice(engine: String) -> PreparationVoice {
+            PreparationVoice(
+                engine: engine, renderVoice: .m2, key: engine, notInstalledMessage: "", isInstalled: { true },
+                signature: { throw CocoaError(.fileNoSuchFile) }, allowedNow: { true },
+                makeRenderer: { throw CocoaError(.fileNoSuchFile) }, assemblyVoiceKey: { _ in nil }
+            )
+        }
+        let jobs = [jamesJob, unreadableJob]
+        XCTAssertEqual(voice(engine: PhononVoice.engine).jobsFiledUnderItsEngine(jobs, manifestEngines: engines).map(\.id), ["orphan"],
+                       "James's job waits for James; a job with no readable manifest still reaches the pass to be discarded")
+        XCTAssertEqual(voice(engine: SupertonicNarrationResult.supertonicEngine).jobsFiledUnderItsEngine(jobs, manifestEngines: engines).map(\.id),
+                       ["james-job", "orphan"])
+    }
+
     func testStopPersistsCancellationWithoutDiscardingEarlierCommits() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -954,10 +1049,15 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
 /// preparation pass commits it as Supertonic audio without loading the model.
 private actor HeatTestRenderer: SupertonicRendering {
     let templateURL: URL
+    /// The engine each result carries; a downloaded voice's stand-in passes its own (#2857).
+    nonisolated let engine: String
     private(set) var texts: [String] = []
     private var generated: Set<URL> = []
 
-    init(templateURL: URL) { self.templateURL = templateURL }
+    init(templateURL: URL, engine: String = SupertonicNarrationResult.supertonicEngine) {
+        self.templateURL = templateURL
+        self.engine = engine
+    }
 
     func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
         texts.append(text)
@@ -966,7 +1066,7 @@ private actor HeatTestRenderer: SupertonicRendering {
         generated.insert(url)
         return SupertonicNarrationResult(audioURL: url, duration: Double(text.count) / 15, sampleRate: 44_100,
                                          renderDuration: 0.01, sessionLoadCount: 1,
-                                         engine: SupertonicNarrationResult.supertonicEngine)
+                                         engine: engine)
     }
 
     func discardGeneratedAudio(at url: URL) async {

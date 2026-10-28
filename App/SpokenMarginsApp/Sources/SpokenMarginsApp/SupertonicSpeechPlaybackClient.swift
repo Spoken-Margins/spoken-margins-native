@@ -24,6 +24,11 @@ protocol SupertonicRendering: Sendable {
     /// renderer returns its descriptor's engine.
     var engine: String { get }
 
+    /// This renderer as background preparation must use it: paced whatever the app's state, so it never competes with
+    /// live narration for CPU (#377). Supertonic has `BackgroundPreparationRenderer` for that; a downloaded voice's
+    /// renderer returns a view of itself that renders with `.always` pacing (#2857).
+    func pacedForBackgroundPreparation() -> any SupertonicRendering
+
     /// True while the renderer is loading its model for the first time (a Neural Engine voice loads and specialises
     /// its Core ML models then, which can take longer than the player's usual wait). The player doesn't give a
     /// waiting listener's passage to the iOS voice for being slow while this is true, up to
@@ -41,6 +46,7 @@ protocol SupertonicRendering: Sendable {
 
 extension SupertonicRendering {
     var engine: String { SupertonicNarrationResult.supertonicEngine }
+    func pacedForBackgroundPreparation() -> any SupertonicRendering { self }
     var isLoadingModel: Bool { false }
     func prepareToRender() async {}
     func setEventSink(_ sink: @escaping @Sendable (_ kind: String, _ fields: [String: String]) -> Void) {}
@@ -3151,6 +3157,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             return
         }
         let voice = voice
+        // A downloaded voice's assembled file is named by its engine, so it never replaces James's or Lily's of the same text (#2857).
+        let engine = renderer.engine
+        let voiceKey = engine == SupertonicNarrationResult.supertonicEngine ? nil : engine
         Task.detached(priority: .utility) { [weak self] in
             do {
                 let prepared = try await SupertonicPreparedAudioAssembler.assemble(
@@ -3158,6 +3167,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     sourceText: snapshot.sourceText,
                     projection: snapshot.projection,
                     voice: voice,
+                    voiceKey: voiceKey,
                     chunks: snapshot.chunks,
                     outputDirectory: preparedAudioDirectory
                 )

@@ -8,6 +8,7 @@ extension Gate1AppModel {
         item: Item,
         sourceText: String,
         voice: SupertonicVoiceID,
+        assemblyVoiceKey: String? = nil,
         signature: TTSRenderSignature,
         manifest: PreparedAudioManifest,
         plan: [PreparedChunkPlan],
@@ -42,6 +43,7 @@ extension Gate1AppModel {
                 sourceText: speech.itemText,
                 projection: speech.assemblyProjection(),
                 voice: voice,
+                voiceKey: assemblyVoiceKey,
                 chunks: chunks,
                 outputDirectory: support.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory)
             )

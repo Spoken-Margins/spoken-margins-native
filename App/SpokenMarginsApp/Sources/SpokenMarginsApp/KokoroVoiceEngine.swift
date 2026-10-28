@@ -66,12 +66,24 @@ final class KokoroDownloadedVoiceRenderer: SupertonicRendering, @unchecked Senda
         return try await renderer.render(text: text, speed: speed, pacing: .whenAppBackgrounded)
     }
 
+    /// Background preparation renders at `.always` pacing (#2857).
+    func pacedForBackgroundPreparation() -> any SupertonicRendering { Paced(base: self) }
+
+    private struct Paced: SupertonicRendering {
+        let base: KokoroDownloadedVoiceRenderer
+        var engine: String { base.engine }
+        func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+            try await base.currentRenderer().render(text: text, speed: speed, pacing: .always)
+        }
+        func discardGeneratedAudio(at url: URL) async { await base.discardGeneratedAudio(at: url) }
+    }
+
     func discardGeneratedAudio(at url: URL) async {
         let renderer = lock.withLock { cached?.renderer }
         await renderer?.discardGeneratedAudio(at: url)
     }
 
-    private func currentRenderer() throws -> KokoroNarrationRenderer {
+    fileprivate func currentRenderer() throws -> KokoroNarrationRenderer {
         guard let folder = installedFolder() else { throw KokoroNarrationRenderer.RenderError.missingFile(KokoroVoice.catalogId) }
         guard let kitten = Bundle.main.resourceURL?.appending(path: "Kitten", directoryHint: .isDirectory) else {
             throw KokoroNarrationRenderer.RenderError.missingFile("Kitten")

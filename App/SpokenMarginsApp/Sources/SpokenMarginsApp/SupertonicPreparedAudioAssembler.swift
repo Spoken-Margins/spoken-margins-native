@@ -18,6 +18,7 @@ enum SupertonicPreparedAudioAssembler {
         sourceText: String,
         projection: NormalizedSpeechText,
         voice: SupertonicVoiceID,
+        voiceKey: String? = nil,
         chunks: [SupertonicPreparedChunk],
         outputDirectory: URL,
         fileManager: FileManager = .default
@@ -32,7 +33,7 @@ enum SupertonicPreparedAudioAssembler {
         values.isExcludedFromBackup = true
         try? directory.setResourceValues(values)
 
-        let signature = signatureFor(sourceText: sourceText, voice: voice)
+        let signature = signatureFor(sourceText: sourceText, voiceKey: voiceKey ?? voice.rawValue)
         let baseName = "\(safePathComponent(itemId))-\(signature)"
         let destination = outputDirectory.appending(path: "\(baseName).m4a")
         let pcmTemporary = outputDirectory.appending(path: "\(baseName)-\(UUID().uuidString).tmp.caf")
@@ -193,8 +194,10 @@ enum SupertonicPreparedAudioAssembler {
         }
     }
 
-    private static func signatureFor(sourceText: String, voice: SupertonicVoiceID) -> String {
-        let payload = "supertonic-prepared-v1\u{1f}\(voice.rawValue)\u{1f}\(sourceText)"
+    /// `voiceKey` is the Supertonic voice's name for James and Lily, so their files keep the names earlier builds wrote,
+    /// and the downloaded voice's saved-audio digest for the others, so one voice never replaces another's file (#2857).
+    private static func signatureFor(sourceText: String, voiceKey: String) -> String {
+        let payload = "supertonic-prepared-v1\u{1f}\(voiceKey)\u{1f}\(sourceText)"
         return SHA256.hash(data: Data(payload.utf8))
             .prefix(12)
             .map { String(format: "%02x", $0) }

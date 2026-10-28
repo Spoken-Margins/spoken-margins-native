@@ -116,12 +116,26 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
         // demand. A stale/background job must not queue ahead of its next chunk.
         guard canPrepareLibraryAudio else { libraryAudioLoop.turns.stopped(caller); return false }
         guard hasAcceptedCurrentTerms,
-              let voice = ttsVoiceSelection.supertonicVoice else { libraryAudioLoop.turns.blocked(caller); return false } // settles until these change (#647)
+              let preparationVoice = PreparationVoice.current(for: ttsVoiceSelection, model: self) else { libraryAudioLoop.turns.blocked(caller); return false } // settles until these change (#647)
+        let voice = preparationVoice.renderVoice
         let device = preparationSeams.deviceConditions() // heat and Low Power Mode, checked per chunk (#64)
         do {
             try Task.checkCancellation()
             let store = try requireStore()
-            var queuedJobs = try store.loadAudioPreparationJobs()
+            // Jobs another voice's engine filed (James's while Phonon is chosen) wait for that voice: they are neither
+            // picked, so they can't hold up this voice's jobs behind them, nor marked for re-preparing. The engines are
+            // read off the main thread, once per pass.
+            let manifestEngines = await Task.detached(priority: .utility) {
+                var engines: [String: String] = [:]
+                for job in (try? store.loadAudioPreparationJobs()) ?? [] {
+                    if let manifest = try? store.loadPreparedAudioManifest(id: job.manifestId) { engines[job.manifestId] = manifest.signature.engine }
+                }
+                return engines
+            }.value
+            let ownJobs: ([AudioPreparationJob]) -> [AudioPreparationJob] = { jobs in
+                preparationVoice.jobsFiledUnderItsEngine(jobs, manifestEngines: manifestEngines)
+            }
+            var queuedJobs = ownJobs(try store.loadAudioPreparationJobs())
                 .filter({ !PreparationChunkGate.setsAsideForLowPowerMode($0.policy, thermal: device.thermal, isLowPowerModeEnabled: device.isLowPowerModeEnabled) })
             if !foregroundDemandOnly {
                 queuedJobs = OfflinePreparationRecovery.backgroundJobs(queuedJobs, automaticPolicy: automaticAudioPreparationPolicy)
@@ -130,11 +144,11 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                PreparationChunkGate.allowsAutomaticWork(thermal: device.thermal, isLowPowerModeEnabled: device.isLowPowerModeEnabled) {
                 await enqueueAutomaticAudioPreparationJobs()
                 queuedJobs = OfflinePreparationRecovery.backgroundJobs(
-                    try store.loadAudioPreparationJobs(), automaticPolicy: automaticAudioPreparationPolicy
+                    ownJobs(try store.loadAudioPreparationJobs()), automaticPolicy: automaticAudioPreparationPolicy
                 )
             }
             let hasMoreMatchingJobs = {
-                let jobs = try store.loadAudioPreparationJobs()
+                let jobs = ownJobs(try store.loadAudioPreparationJobs())
                 return !LibraryAudioPreparationTurns.eligible(
                     foregroundDemandOnly ? jobs : OfflinePreparationRecovery.backgroundJobs(jobs, automaticPolicy: self.automaticAudioPreparationPolicy),
                     for: caller
@@ -155,11 +169,9 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             attemptedJob = job
             recordDeveloperDiagnostic("preparation.selected", ["item": DeveloperDiagnosticRecording.token(job.itemId), "policy": String(describing: job.policy), "nextChunk": String(job.nextChunkIndex)])
             let support = try applicationSupportDirectory()
-            guard let assets = SupertonicAssetResolver.location() else {
-                return !foregroundDemandOnly
-            }
+            guard preparationVoice.isInstalled() else { return !foregroundDemandOnly }
             let signature = try await Task.detached(priority: .utility) {
-                try SupertonicRenderIdentity.make(assets: assets, voice: voice)
+                try preparationVoice.signature()
             }.value
             guard manifest.signature == signature else {
                 manifest.state = .needsRepreparation
@@ -192,6 +204,8 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 return try hasMoreMatchingJobs()
             }
             guard gate == .render else { diagnostics["backgroundAudioPreparation"] = gate.rawValue; return false }
+            // After the heat gate, so a hot phone pauses the manifest as it always did (#2857).
+            guard preparationVoice.allowedNow() else { diagnostics["backgroundAudioPreparation"] = "voice_not_allowed_now"; return false }
             manifest = try await coordinator.droppingMissingChunks(manifestId: manifest.id) ?? manifest // a lost chunk is rendered again, not assembled (#645)
             let completedIndexes = PreparedAudioCoordinator.completedIndexes(manifest, plan: plan, sourceText: sourceText, retryingStandInsFor: job)
             guard let next = eligiblePlan.first(where: { !completedIndexes.contains($0.index) }) else {
@@ -199,7 +213,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 // otherwise happens only right after the last chunk is committed.
                 if manifest.isCompleteButUnassembled, manifest.plannedChunkCount == plan.count, completedIndexes.count == plan.count {
                     try await finishBackgroundPreparedAudio(
-                        item: item, sourceText: sourceText, voice: voice, signature: signature,
+                        item: item, sourceText: sourceText, voice: voice, assemblyVoiceKey: preparationVoice.assemblyVoiceKey(signature), signature: signature,
                         manifest: manifest, plan: plan, store: store, ledger: ledger,
                         coordinator: coordinator, support: support
                     )
@@ -213,7 +227,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 pinning: PreparedAudioCoordinator.ledgerPaths(ofChunksIn: manifest) // never evicts this article's own chunks (#645)
             )
             // Paced per render, not through the shared lifecycle flag (#377).
-            let pacedRenderer: any SupertonicRendering = try preparationSeams.renderer?() ?? BackgroundPreparationRenderer(base: makeSupertonicRenderer())
+            let pacedRenderer: any SupertonicRendering = try preparationSeams.renderer?() ?? preparationVoice.makeRenderer()
             if try await preparationHeldAtRenderStart(policy: job.policy, manifestId: manifest.id, reservationId: reservation.id, ledger: ledger, coordinator: coordinator, store: store) != nil { return false }
             var renderStarted = Date(), renderMs = 0
             do {
@@ -284,6 +298,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                     item: item,
                     sourceText: sourceText,
                     voice: voice,
+                    assemblyVoiceKey: preparationVoice.assemblyVoiceKey(signature),
                     signature: signature,
                     manifest: updated,
                     plan: plan,
