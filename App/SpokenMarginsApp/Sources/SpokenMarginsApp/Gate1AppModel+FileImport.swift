@@ -183,17 +183,19 @@ extension Gate1AppModel {
                 }
             }
             guard let self else { return }
-            self.hangTelemetry.labels.scoped("obsidianImportFinish") {
-                self.completeObsidianMarkdownImport(
-                    batch,
-                    refreshQuickFolderWhenFinished: refreshQuickFolderWhenFinished,
-                    openImportedItemWhenFinished: openImportedItemWhenFinished,
-                    quickAccessFileToDismiss: quickAccessFileToDismiss,
-                    onImported: onImported,
-                    navigatesWhenFinished: navigatesWhenFinished,
-                    confirmationOverride: confirmationOverride
-                )
+            // The writes stay on the main actor under their hang label; the reads after them do not (#2505).
+            let saved = self.hangTelemetry.labels.scoped("obsidianImportFinish") {
+                Result { try self.completeObsidianMarkdownImport(batch) }
             }
+            await self.finishObsidianMarkdownImport(
+                saved,
+                refreshQuickFolderWhenFinished: refreshQuickFolderWhenFinished,
+                openImportedItemWhenFinished: openImportedItemWhenFinished,
+                quickAccessFileToDismiss: quickAccessFileToDismiss,
+                onImported: onImported,
+                navigatesWhenFinished: navigatesWhenFinished,
+                confirmationOverride: confirmationOverride
+            )
         }
     }
 
@@ -239,15 +241,52 @@ extension Gate1AppModel {
         #endif
     }
 
-    private func completeObsidianMarkdownImport(
-        _ batch: ObsidianImportBatch,
+    /// What `completeObsidianMarkdownImport` leaves for the finish: the saved items, the failures, and where the listener was.
+    private struct SavedObsidianBatch {
+        var imported: [Item]
+        var failures: [String]
+        var rawFailures: [String]
+        var preservesActiveSession: Bool
+        var preservedActiveItemId: String
+        var preservedSelectedItemId: String
+    }
+
+    private func completeObsidianMarkdownImport(_ batch: ObsidianImportBatch) throws -> SavedObsidianBatch {
+        let store = try requireStore()
+        var saved = SavedObsidianBatch(
+            imported: [], failures: batch.failures, rawFailures: batch.rawFailures,
+            preservesActiveSession: hasActiveSession && engine != nil,
+            preservedActiveItemId: activeItemId, preservedSelectedItemId: selectedItem.id)
+        for prepared in batch.prepared {
+            do {
+                try store.saveItem(prepared.item)
+                if let listeningMap = prepared.listeningMap {
+                    try store.saveListeningMap(listeningMap)
+                }
+                if let document = prepared.structuredDocument {
+                    try store.saveStructuredDocument(document, itemId: prepared.item.id)
+                }
+                saved.imported.append(prepared.item)
+            } catch {
+                saved.failures.append("\(prepared.item.title)\n\(ListenerErrorText.message(for: error))")
+                saved.rawFailures.append("\(prepared.item.title): \(error)")
+            }
+        }
+        if !saved.imported.isEmpty, engine == nil {
+            installEngine(try makeEngine(store: store))
+        }
+        return saved
+    }
+
+    private func finishObsidianMarkdownImport(
+        _ result: Result<SavedObsidianBatch, Error>,
         refreshQuickFolderWhenFinished: Bool,
         openImportedItemWhenFinished: Bool,
         quickAccessFileToDismiss: QuickAccessFile?,
         onImported: (([Item]) -> Void)? = nil,
         navigatesWhenFinished: Bool = true,
         confirmationOverride: ((Int) -> String)? = nil
-    ) {
+    ) async {
         defer {
             sourceImportTask = nil
             sourceImportProgressMessage = nil
@@ -256,50 +295,35 @@ extension Gate1AppModel {
             }
         }
         do {
+            let saved = try result.get()
             let store = try requireStore()
-            let preservesActiveSession = hasActiveSession && engine != nil
-            let preservedActiveItemId = activeItemId
-            let preservedSelectedItemId = selectedItem.id
-            var imported: [Item] = []
-            var failures = batch.failures
-            var rawFailures = batch.rawFailures
-            for prepared in batch.prepared {
-                do {
-                    try store.saveItem(prepared.item)
-                    if let listeningMap = prepared.listeningMap {
-                        try store.saveListeningMap(listeningMap)
-                    }
-                    if let document = prepared.structuredDocument {
-                        try store.saveStructuredDocument(document, itemId: prepared.item.id)
-                    }
-                    imported.append(prepared.item)
-                } catch {
-                    failures.append("\(prepared.item.title)\n\(ListenerErrorText.message(for: error))")
-                    rawFailures.append("\(prepared.item.title): \(error)")
-                }
-            }
+            let imported = saved.imported
+            let failures = saved.failures
             guard !imported.isEmpty else {
                 reportFailure(failures.isEmpty ? "No source files were imported." : failures.joined(separator: "\n\n"))
-                if !rawFailures.isEmpty { diagnostics["recentFailure"] = rawFailures.joined(separator: "\n") }
+                if !saved.rawFailures.isEmpty { diagnostics["recentFailure"] = saved.rawFailures.joined(separator: "\n") }
                 return
             }
-            if engine == nil {
-                installEngine(try makeEngine(store: store))
-            }
-            libraryItems = try loadLibraryRows(store: store)
+            // The Library and the opened item are read off the main actor, as the EPUB and audiobook imports do.
+            _ = try await reloadLibraryRowsOffMain(store: store)
             if navigatesWhenFinished {
                 if openImportedItemWhenFinished, let item = imported.first {
+                    let detail = try await loadItemDetailOffMain(id: item.id, store: store)
                     activeItemId = item.id
-                    selectedItem = try loadItemDetail(id: item.id, store: store)
+                    selectedItem = detail
                     screen = .item
-                } else if preservesActiveSession {
-                    activeItemId = preservedActiveItemId
-                    if !preservedSelectedItemId.isEmpty {
-                        selectedItem = try loadItemDetail(id: preservedSelectedItemId, store: store)
+                } else if saved.preservesActiveSession {
+                    var preservedDetail: ItemDetailState?
+                    if !saved.preservedSelectedItemId.isEmpty {
+                        preservedDetail = try await loadItemDetailOffMain(id: saved.preservedSelectedItemId, store: store)
                     }
+                    activeItemId = saved.preservedActiveItemId
+                    if let preservedDetail { selectedItem = preservedDetail }
                 } else {
-                    activeItemId = imported.first?.id ?? activeItemId
-                    selectedItem = try loadItemDetail(id: activeItemId, store: store)
+                    let openedId = imported.first?.id ?? activeItemId
+                    let detail = try await loadItemDetailOffMain(id: openedId, store: store)
+                    activeItemId = openedId
+                    selectedItem = detail
                     screen = .home
                 }
             }
