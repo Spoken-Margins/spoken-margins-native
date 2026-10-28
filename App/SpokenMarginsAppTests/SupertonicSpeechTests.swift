@@ -2039,6 +2039,32 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertFalse((client.debugBackgroundSeamSummary ?? "").contains("queued_ahead"), "a stale read caught nothing up")
     }
 
+    // #2242 audit note: the end of the playing chunk is heard while the queue player reads as stopped at the end (so the
+    // queued chunk is to come off), but by the time the player is read again the queue has moved on to the queued
+    // chunk. The chunk must be caught up to, not left for the end handler to start again from the cache: that played
+    // its first words twice.
+    func testAQueueThatMovesOnWhileTheEndFactsAreReadIsCaughtUpNotStartedAgain() async throws {
+        let reads = StaleThenMovedReads()
+        let harness = try SupertonicClientHarness(
+            applicationIsActive: { false },
+            queuedPlayerReader: { player, item, includesEndFacts in reads.read(player, item, includesEndFacts) }
+        )
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 3)
+        let queued = await harness.waitForQueuedChunk(chunk[1])
+        XCTAssertTrue(queued, "B is on the player behind A")
+        let starts = harness.playerStarts
+
+        reads.arm(playing: harness.newestQueuePlayer?.currentItem)
+        await harness.finishPlayingChunk()
+
+        let caughtUp = await harness.waitForPlayingChunk(chunk[1])
+        XCTAssertTrue(caughtUp, "the client's place moved on to B")
+        XCTAssertTrue(reads.gaveStaleFacts, "the end handler saw the stopped-at-the-end reading")
+        XCTAssertEqual(harness.playerStarts, starts, "B was not started again in a new player")
+    }
+
     // The same seam with the app in front is unchanged: nothing is queued, each chunk gets its own player, and
     // the seam is not counted as a background one.
     func testWhileTheAppIsInFrontNothingIsQueuedAndTheSeamIsAsBefore() async throws {
@@ -6050,6 +6076,35 @@ private final class BlockableClock: @unchecked Sendable {
             lock.withLock { waiting -= 1 }
         }
         return 0.1
+    }
+}
+
+/// A queue-player reader (#2242) that, once armed, answers the first end-of-chunk reading as a player stopped at the
+/// end of the playing chunk, and every reading after it as a queue that has moved on to the queued chunk.
+private final class StaleThenMovedReads: @unchecked Sendable {
+    private let lock = NSLock()
+    private var playing: AVPlayerItem?
+    private var armed = false
+    private var gave = false
+    var gaveStaleFacts: Bool { lock.withLock { gave } }
+
+    func arm(playing item: AVPlayerItem?) { lock.withLock { playing = item; armed = true } }
+
+    func read(_ player: AVQueuePlayer, _ queuedItem: AVPlayerItem, _ includesEndFacts: Bool)
+        -> SupertonicSpeechPlaybackClient.QueuedPlayerReading {
+        let answer = lock.withLock { () -> SupertonicSpeechPlaybackClient.QueuedPlayerReading? in
+            if armed, !gave, includesEndFacts { gave = true; return .init(current: playing) }
+            if gave { return .init(current: queuedItem) }
+            return nil
+        }
+        if let answer { return answer }
+        var reading = SupertonicSpeechPlaybackClient.QueuedPlayerReading(current: player.currentItem)
+        if includesEndFacts {
+            reading.queuedChunkIsOnThePlayer = player.items().contains(queuedItem)
+            reading.playerAdvancesAtItemEnd = player.actionAtItemEnd == .advance
+            reading.playerIsPlaying = player.rate != 0
+        }
+        return reading
     }
 }
 
