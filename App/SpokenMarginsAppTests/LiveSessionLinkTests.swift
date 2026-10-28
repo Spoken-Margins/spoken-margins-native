@@ -38,12 +38,22 @@ final class LiveSessionLinkTests: XCTestCase {
 
     func testALinkWithAScreenAlreadyOpenPresentsNothingElse() {
         let router = LiveSessionLinkRouter()
-        router.screenAppeared()
+        router.runningScreenAppeared()
         router.open(.write)
         XCTAssertNil(router.cover)
         XCTAssertEqual(router.takeAction(), .write)
-        router.screenDisappeared()
+        router.runningScreenDisappeared()
         router.open(.open)
         XCTAssertNotNil(router.cover)
+    }
+
+    func testALinkNobodyActsOnSoonIsDroppedAndDismissingTheScreenDropsIt() {
+        let router = LiveSessionLinkRouter()
+        let opened = Date(timeIntervalSince1970: 1_800_000_000)
+        router.open(.speak, now: opened)
+        XCTAssertNil(router.takeAction(now: opened.addingTimeInterval(LiveSessionLinkRouter.timeToLive + 1)))
+        router.open(.speak, now: opened)
+        router.cover = nil
+        XCTAssertNil(router.takeAction(now: opened))
     }
 }

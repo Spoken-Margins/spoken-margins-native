@@ -30,6 +30,7 @@ struct LiveSessionView: View {
     @State private var showsLineUp = false
     @State private var confirmsDiscard = false
     @State private var isSaving = false
+    @State private var isRegisteredRunning = false
 
     var body: some View {
         NavigationStack {
@@ -57,12 +58,9 @@ struct LiveSessionView: View {
                 ToolbarItem(placement: .topBarLeading) { Button("Close") { dismiss() } }
             }
         }
-        .onAppear {
-            links.screenAppeared()
-            controller.load()
-        }
+        .onAppear { controller.load() }
         .onDisappear {
-            links.screenDisappeared()
+            unregisterRunningScreen()
             controller.stopPolling()
         }
         .onChange(of: links.pendingAction) { _, _ in applyLink() }
@@ -98,13 +96,29 @@ struct LiveSessionView: View {
     /// A tap on the Live Activity's Write a Margin or Speak a Margin (#2833): the written field is ready to type in,
     /// or the spoken Margin is already recording. Needs a running session; otherwise the screen just opens.
     private func applyLink() {
-        guard controller.didLoad, let action = links.takeAction() else { return }
-        guard controller.isRunning else { return }
+        guard controller.didLoad else { return }
+        // Only a screen showing the running session takes a link; one open on an ended session leaves it waiting.
+        guard controller.isRunning else { return unregisterRunningScreen() }
+        if !isRegisteredRunning {
+            isRegisteredRunning = true
+            links.runningScreenAppeared()
+        }
+        guard let action = links.takeAction() else { return }
         switch action {
         case .open: break
-        case .write: DispatchQueue.main.async { marginFieldFocused = true }
+        case .write:
+            Task {
+                try? await Task.sleep(for: .milliseconds(400)) // after the screen has finished presenting
+                marginFieldFocused = true
+            }
         case .speak: if !controller.isRecordingSpoken { controller.startSpokenMargin() }
         }
+    }
+
+    private func unregisterRunningScreen() {
+        guard isRegisteredRunning else { return }
+        isRegisteredRunning = false
+        links.runningScreenDisappeared()
     }
 
     // MARK: Setup
