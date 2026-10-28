@@ -91,7 +91,8 @@ extension Gate1AppModel {
             reason: reason,
             policyBlock: SpeechEnginePolicy.onDeviceRenderingBlock(conditions),
             conditions: conditions,
-            offset: offset
+            offset: offset,
+            voice: ttsVoiceSelection.choice.rawValue
         ))
     }
 }

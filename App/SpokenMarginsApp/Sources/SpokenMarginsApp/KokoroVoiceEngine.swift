@@ -39,6 +39,7 @@ final class KokoroDownloadedVoiceRenderer: SupertonicRendering, @unchecked Senda
     private let installedFolder: @Sendable () -> URL?
     private let lock = NSLock()
     private var cached: Cached?
+    private var eventSink: @Sendable (String, [String: String]) -> Void = { _, _ in }
 
     init(voice: String, installedFolder: @escaping @Sendable () -> URL?) {
         self.voice = voice
@@ -46,6 +47,19 @@ final class KokoroDownloadedVoiceRenderer: SupertonicRendering, @unchecked Senda
     }
 
     var engine: String { KokoroNarrationRenderer.engine }
+
+    var isLoadingModel: Bool { lock.withLock { cached?.renderer }?.isLoadingModel ?? false }
+
+    func setEventSink(_ sink: @escaping @Sendable (String, [String: String]) -> Void) {
+        lock.withLock { eventSink = sink }
+    }
+
+    /// Loads the model and runs a short render before the first Play (#2856). Nothing installed, or a renderer that
+    /// can't be built, is left for the first Play to report.
+    func prepareToRender() async {
+        guard let renderer = try? currentRenderer() else { return }
+        await renderer.warmUp()
+    }
 
     func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
         let renderer = try currentRenderer()
@@ -76,13 +90,15 @@ final class KokoroDownloadedVoiceRenderer: SupertonicRendering, @unchecked Senda
         }
         return try lock.withLock {
             if let cached, cached.folder == folder { return cached.renderer }
+            let sink = eventSink
             if let previous = cached?.renderer { Task { await previous.unload() } }
             let renderer = try KokoroNarrationRenderer(
                 voiceFolder: folder,
                 kittenAssets: KittenAssetLocation(rootURL: kitten),
                 voice: voice,
                 outputDirectory: FileManager.default.temporaryDirectory.appending(path: "KokoroNarration", directoryHint: .isDirectory),
-                governor: .app
+                governor: .app,
+                events: { kind, fields in sink(kind, fields) }
             )
             cached = Cached(folder: folder, renderer: renderer)
             return renderer

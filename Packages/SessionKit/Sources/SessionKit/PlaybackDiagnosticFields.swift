@@ -73,14 +73,18 @@ public enum PlaybackDiagnosticFields {
         reason: SpeechFallbackReason,
         policyBlock: SpeechFallbackReason?,
         conditions: SpeechEngineConditions,
-        offset: Int
+        offset: Int,
+        voice: String? = nil
     ) -> [String: String] {
-        [
+        var fields = [
             "code": code,
             "reason": reason.rawValue,
             "policyBlock": policyBlock?.rawValue ?? "none",
             "conditions": conditions.logDescription,
             "offset": String(offset)
         ]
+        // The chosen reading voice (#2856): the first Kokoro export could not say whether Kokoro or Phonon had fallen back.
+        if let voice { fields["voice"] = voice }
+        return fields
     }
 }

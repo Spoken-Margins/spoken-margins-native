@@ -165,6 +165,71 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    /// #2856: Kokoro's first render loads and specialises its Core ML models, which outlasted the 15 s wait and handed
+    /// the first passage to the iOS voice at offset 0. A renderer that says it is loading its model keeps the wait open.
+    func testFirstRenderStillLoadingItsModelIsNotHandedToTheIOSVoiceAtTheWaitLimit() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = LoadingModelRenderer(inner: CountingAudioSupertonicRenderer(templateURL: template), loadTime: .milliseconds(350))
+        let fallback = RecordingFallbackAudioClient()
+        let started = expectation(description: "first passage played in the chosen voice")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in started.fulfill() }, observesPlayerLifecycle: false,
+            fallbackClient: fallback,
+            onFallback: { reason, _, _ in XCTFail("a model that is still loading must not fall back: \(reason)") },
+            renderWaitLimit: .milliseconds(100)
+        )
+        _ = try client.prepareSpeechText("The first passage waits for the model to load.")
+        try client.play(targetId: "cold-load", from: 0)
+        await fulfillment(of: [started], timeout: 3)
+        XCTAssertTrue(fallback.playedOffsets.isEmpty)
+        try client.stop()
+    }
+
+    /// #2856: the extra wait is capped, so a model that never finishes loading still hands the passage over.
+    func testRendererStuckLoadingStillFallsBackAfterTheExtendedWaits() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = LoadingModelRenderer(inner: CountingAudioSupertonicRenderer(templateURL: template), loadTime: .seconds(30))
+        let fallback = RecordingFallbackAudioClient()
+        let timedOut = expectation(description: "fell back after the capped waits")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in }, observesPlayerLifecycle: false,
+            fallbackClient: fallback,
+            onFallback: { reason, _, _ in
+                XCTAssertEqual(reason, "supertonic_render_timeout")
+                timedOut.fulfill()
+            },
+            renderWaitLimit: .milliseconds(50)
+        )
+        _ = try client.prepareSpeechText("This model never finishes loading.")
+        try client.play(targetId: "stuck-load", from: 0)
+        await fulfillment(of: [timedOut], timeout: 3)
+        try client.stop()
+    }
+
+    /// #2856 audit: trying voices in Settings rebuilds the client each time. Only one warm-up may load at once, a newer
+    /// one cancels the one before it, and one that isn't allowed to render never starts.
+    func testWarmUpsRunOneAtATimeAndANewerOneCancelsTheOlder() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let tally = WarmUpTally()
+        let older = WarmUpProbeRenderer(name: "older", tally: tally, inner: CountingAudioSupertonicRenderer(templateURL: template))
+        let newer = WarmUpProbeRenderer(name: "newer", tally: tally, inner: CountingAudioSupertonicRenderer(templateURL: template))
+        let refused = WarmUpProbeRenderer(name: "refused", tally: tally, inner: CountingAudioSupertonicRenderer(templateURL: template))
+        let schedule = VoiceWarmUpSchedule()
+        schedule.schedule(older, allowed: { true }, delay: .milliseconds(10))
+        try await Task.sleep(for: .milliseconds(150))
+        schedule.schedule(newer, allowed: { true }, delay: .milliseconds(10))
+        try await Task.sleep(for: .milliseconds(900))
+        schedule.schedule(refused, allowed: { false }, delay: .milliseconds(10))
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(tally.events, ["older start", "older cancelled", "newer start", "newer end"])
+        XCTAssertEqual(tally.mostAtOnce, 1)
+    }
+
     func testPreparedAudioPlaysWithoutInferenceWhenResourcesDisallowRendering() async throws {
         let template = try makeTestWAV(duration: 1)
         defer { try? FileManager.default.removeItem(at: template) }
@@ -6457,4 +6522,74 @@ private final class NarrationClockAudioClient: AudioPlaybackClient {
     func isAwaitingRenderedAudio(targetId: String) -> Bool { false }
     func playbackTransportState(targetId: String) -> PlaybackTransportState? { nil }
     func setRemoteCommandHandlingEnabled(_ enabled: Bool) {}
+}
+
+/// A renderer whose first render spends `loadTime` loading its model and says so through `isLoadingModel` (#2856).
+private final class LoadingModelRenderer: SupertonicRendering, @unchecked Sendable {
+    private let inner: CountingAudioSupertonicRenderer
+    private let loadTime: Duration
+    private let lock = NSLock()
+    private var loading = false
+
+    init(inner: CountingAudioSupertonicRenderer, loadTime: Duration) {
+        self.inner = inner
+        self.loadTime = loadTime
+    }
+
+    var isLoadingModel: Bool { lock.withLock { loading } }
+
+    func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+        lock.withLock { loading = true }
+        defer { lock.withLock { loading = false } }
+        try await Task.sleep(for: loadTime)
+        return try await inner.render(text: text, voice: voice, language: language, speed: speed, synthesisSteps: synthesisSteps)
+    }
+
+    func discardGeneratedAudio(at url: URL) async { await inner.discardGeneratedAudio(at: url) }
+}
+
+
+/// Records the order of warm-ups and how many ran at the same moment (#2856).
+private final class WarmUpTally: @unchecked Sendable {
+    private let lock = NSLock()
+    private var log: [String] = []
+    private var running = 0
+    private var most = 0
+
+    var events: [String] { lock.withLock { log } }
+    var mostAtOnce: Int { lock.withLock { most } }
+
+    func began(_ name: String) {
+        lock.withLock { running += 1; most = max(most, running); log.append("\(name) start") }
+    }
+
+    func finished(_ name: String, cancelled: Bool) {
+        lock.withLock { running -= 1; log.append("\(name) \(cancelled ? "cancelled" : "end")") }
+    }
+}
+
+/// A renderer whose warm-up takes half a second unless its task is cancelled first (#2856).
+private final class WarmUpProbeRenderer: SupertonicRendering, @unchecked Sendable {
+    private let name: String
+    private let tally: WarmUpTally
+    private let inner: CountingAudioSupertonicRenderer
+
+    init(name: String, tally: WarmUpTally, inner: CountingAudioSupertonicRenderer) {
+        self.name = name
+        self.tally = tally
+        self.inner = inner
+    }
+
+    func prepareToRender() async {
+        tally.began(name)
+        var cancelled = false
+        do { try await Task.sleep(for: .milliseconds(500)) } catch { cancelled = true }
+        tally.finished(name, cancelled: cancelled)
+    }
+
+    func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+        try await inner.render(text: text, voice: voice, language: language, speed: speed, synthesisSteps: synthesisSteps)
+    }
+
+    func discardGeneratedAudio(at url: URL) async { await inner.discardGeneratedAudio(at: url) }
 }

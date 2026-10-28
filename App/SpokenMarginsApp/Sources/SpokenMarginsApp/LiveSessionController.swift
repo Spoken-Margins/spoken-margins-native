@@ -101,6 +101,39 @@ final class LiveSessionController: ObservableObject {
         return true
     }
 
+    // MARK: Editing while it runs (#2832)
+
+    func setKind(_ kind: ElsewhereKind) { edit { LiveSessionEdit.setKind(kind, on: &$0) } }
+
+    func setTitle(_ title: String) { edit { LiveSessionEdit.setTitle(title, on: &$0) } }
+
+    func setStartWhere(_ text: String) { edit { LiveSessionEdit.setStartWhere(text, on: &$0) } }
+
+    /// "The source is at `positionMs` now." Returns false, with `errorMessage` set, when that can't be.
+    @discardableResult
+    func setSourceClock(positionMs: Int) -> Bool {
+        guard isRunning, var edited = session else { return false }
+        do {
+            try LiveSessionEdit.setSourceClock(positionMs: positionMs, at: Date(), on: &edited)
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+        session = edited
+        save()
+        sessionChanged()
+        return true
+    }
+
+    private func edit(_ change: (inout LiveSession) -> Void) {
+        guard isRunning, var edited = session else { return }
+        change(&edited)
+        guard edited != session else { return }
+        session = edited
+        save()
+        sessionChanged()
+    }
+
     /// Adds a Margin now. `adjustmentMs` is the listener's slide of the predicted position; nonzero stores it as
     /// their own position.
     func addMargin(text: String, whereNote: String?, adjustmentMs: Int) {

@@ -17,9 +17,11 @@ Changing the licence later needs the agreement of everyone who holds copyright i
 Every commit you contribute must carry a `Signed-off-by:` line (`git commit -s`). By adding it, you agree to both of these:
 
 1. **The Developer Certificate of Origin 1.1** (https://developercertificate.org/). In short: you wrote the change, or you have the right to submit it under this project's licence.
-2. **A licence grant to the project.** You license your contribution under the GNU Affero General Public License, version 3 only, with the App Store permission in `COPYING.iOS`. You also grant Cole Miller, and anyone he passes the project to, a perpetual, worldwide, non-exclusive, royalty-free, irrevocable licence to use, copy, modify and distribute your contribution, and to relicense it under the Mozilla Public License 2.0.
+2. **A licence grant to the project.** You license your contribution under the GNU Affero General Public License, version 3 only, with the App Store permission in `COPYING.iOS`. You also grant Proximity to Progress LLC, which owns the project, and anyone it passes the project to, a perpetual, worldwide, non-exclusive, royalty-free, irrevocable licence to use, copy, modify and distribute your contribution, and to relicense it under the Mozilla Public License 2.0.
 
 You keep the copyright in your contribution.
+
+Until 28 October 2026 this grant named Cole Miller. On that date he assigned the project, and the grants made to him, to Proximity to Progress LLC.
 
 Don't submit code you copied from elsewhere unless its licence is compatible and you say where it came from. Third-party components are listed in `THIRD_PARTY_NOTICES.md`.
 
