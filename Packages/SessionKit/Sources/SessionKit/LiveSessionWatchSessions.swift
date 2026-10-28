@@ -110,7 +110,7 @@ public enum LiveSessionWatchSessions {
         guard var session = sessions[id], session.savedItemId == nil, session.isQuick != true,
               let end = session.endedAt, session.endReason != EndReason.placeholder.rawValue else { return nil }
         // The Resume window runs from when End was tapped, not from the earlier time the listener said it stopped.
-        let since = at.timeIntervalSince(session.endTappedAt ?? end)
+        let since = at.timeIntervalSince(session.endHeardAt ?? end)
         guard since >= -WatchContract.offsetMaxRoundTrip, since <= WatchContract.resumeWindow else { return nil }
         // Another named session started since it ended: that one is what the listener is doing.
         let startedSince = sessions.values.contains { $0.id != id && $0.isQuick != true && $0.savedItemId == nil && $0.startedAt >= end }
@@ -132,26 +132,28 @@ public enum LiveSessionWatchSessions {
         if running == nil {
             recentlyEnded = sessions
                 .filter { session in
-                    guard session.isQuick != true, session.savedItemId == nil, let end = session.endedAt,
+                    guard session.isQuick != true, session.savedItemId == nil, let end = session.endHeardAt,
                           session.endReason != EndReason.placeholder.rawValue else { return false }
                     let since = now.timeIntervalSince(end)
                     return since >= 0 && since <= WatchContract.resumeWindow
                 }
-                .max { ($0.endedAt ?? .distantPast, $0.id) < ($1.endedAt ?? .distantPast, $1.id) }
+                .max { ($0.endHeardAt ?? .distantPast, $0.id) < ($1.endHeardAt ?? .distantPast, $1.id) }
         }
         var notes: [String: String] = [:]
         for session in sessions {
-            guard let note = session.endNote, let end = session.endedAt, now.timeIntervalSince(end) <= endNoteKept else { continue }
+            guard let note = session.endNote, let end = session.endHeardAt, now.timeIntervalSince(end) <= endNoteKept else { continue }
             notes[session.id] = note
         }
         return WatchBoard(running: running.map(info), recentlyEnded: recentlyEnded.map(info), endNotes: notes, phoneTime: now)
     }
 
+    /// The Watch counts its Resume window from `endedAt`, so it is sent when the phone heard the End (`endHeardAt`),
+    /// not the earlier time the listener said it stopped. The Watch shows the stopped time in a later slice (#2709).
     public static func info(_ session: LiveSession) -> WatchSessionInfo {
         WatchSessionInfo(
             id: session.id, kind: WatchSessionKind(rawValue: session.kind.rawValue) ?? .other, title: session.title,
             owner: session.ownerDevice == WatchDevice.watch.rawValue ? .watch : .phone,
-            startedAt: session.startedAt, startPositionMs: session.startPositionMs, endedAt: session.endedAt
+            startedAt: session.startedAt, startPositionMs: session.startPositionMs, endedAt: session.endHeardAt
         )
     }
 

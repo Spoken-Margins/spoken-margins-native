@@ -84,7 +84,9 @@ public enum LiveSessionEnd {
         calendar: Calendar = .current
     ) throws {
         try LiveSessionPositionMap.validate(startPositionMs: session.startPositionMs, endPositionMs: endPositionMs)
-        guard let stoppedAt = when.date(tappedAt: tappedAt, calendar: calendar) else { throw Failure.stoppedBeforeStart }
+        guard var stoppedAt = when.date(tappedAt: tappedAt, calendar: calendar) else { throw Failure.stoppedBeforeStart }
+        // A time picked from a clock has no seconds: "this minute" lies up to a minute before the tap and means now.
+        if case .clockTime = when, tappedAt.timeIntervalSince(stoppedAt) < 60 { stoppedAt = tappedAt }
         try validate(stoppedAt: stoppedAt, startedAt: session.startedAt, tappedAt: tappedAt)
         let late = tappedAt.timeIntervalSince(stoppedAt) > sameInstant
         session.endedAt = late ? stoppedAt : tappedAt

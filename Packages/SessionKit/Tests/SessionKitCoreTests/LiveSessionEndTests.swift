@@ -119,4 +119,30 @@ final class LiveSessionEndTests: XCTestCase {
         let late = tap(minutes: 60).addingTimeInterval(WatchContract.resumeWindow + 60)
         XCTAssertNil(LiveSessionWatchSessions.resume(id: "s", at: late, sessions: ["s": live]))
     }
+
+    func testTheBoardOffersResumeFromTheTapAndTellsTheWatchThatTime() throws {
+        var live = session()
+        try LiveSessionEnd.end(&live, when: .minutesAgo(30), tappedAt: tap(minutes: 60), endPositionMs: nil, endWhere: nil, calendar: calendar)
+        let board = LiveSessionWatchSessions.board(sessions: [live], now: tap(minutes: 65))
+        XCTAssertEqual(board.recentlyEnded?.id, "s", "5 minutes after the tap is inside the window, though 35 after the stop")
+        XCTAssertEqual(board.recentlyEnded?.endedAt, tap(minutes: 60), "the Watch counts its window from when the phone heard End")
+        XCTAssertNil(LiveSessionWatchSessions.board(sessions: [live], now: tap(minutes: 60).addingTimeInterval(WatchContract.resumeWindow + 60)).recentlyEnded)
+        // A session ended at once (or by an earlier build) is unchanged.
+        var plain = session()
+        plain.endedAt = tap(minutes: 60)
+        XCTAssertEqual(LiveSessionWatchSessions.board(sessions: [plain], now: tap(minutes: 65)).recentlyEnded?.endedAt, tap(minutes: 60))
+    }
+
+    func testThisMinuteOnTheClockPickerMeansNow() throws {
+        // The picker has no seconds: 10:20 picked at 10:20:40 is not "40 seconds ago".
+        let tapped = tap(minutes: 20).addingTimeInterval(40)
+        var live = session()
+        try LiveSessionEnd.end(&live, when: .clockTime(hour: 10, minute: 20), tappedAt: tapped, endPositionMs: nil, endWhere: nil, calendar: calendar)
+        XCTAssertEqual(live.endedAt, tapped)
+        XCTAssertNil(live.endTappedAt)
+        var earlier = session()
+        try LiveSessionEnd.end(&earlier, when: .clockTime(hour: 10, minute: 15), tappedAt: tapped, endPositionMs: nil, endWhere: nil, calendar: calendar)
+        XCTAssertEqual(earlier.endedAt, tap(minutes: 15))
+        XCTAssertEqual(earlier.endTappedAt, tapped)
+    }
 }

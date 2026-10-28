@@ -100,6 +100,7 @@ public struct LiveSessionCollection {
         }
         if merged.endedAt == nil, let end = legacy.endedAt {
             merged.endedAt = end
+            merged.endTappedAt = legacy.endTappedAt
             merged.endPositionMs = merged.endPositionMs ?? legacy.endPositionMs
             merged.endWhere = merged.endWhere ?? legacy.endWhere
             changed = true

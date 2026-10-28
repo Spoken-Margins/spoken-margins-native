@@ -78,6 +78,11 @@ public struct LiveSession: Codable, Equatable, Sendable {
         self.margins = margins
     }
 
+    /// When the app was told it ended: the tap time if the listener said it stopped earlier, else `endedAt`. Windows
+    /// that run "after End" (the Watch's Resume, how long its end note shows) count from here, so ending a session
+    /// 30 minutes late doesn't use up the listener's Resume window.
+    public var endHeardAt: Date? { endTappedAt ?? endedAt }
+
     /// A Margin taken at `markedAt`, with its offset into the session.
     public func margin(id: String, text: String, markedAt: Date, whereNote: String? = nil, isBlindMark: Bool = false) -> LiveSessionMargin {
         LiveSessionMargin(

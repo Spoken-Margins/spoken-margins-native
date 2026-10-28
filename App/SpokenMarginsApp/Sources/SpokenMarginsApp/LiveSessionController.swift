@@ -244,6 +244,7 @@ final class LiveSessionController: ObservableObject {
             && (stored.resumedAt.map { $0 > (current.endedAt ?? .distantFuture) } ?? false)
         guard endedByWatch || resumedByWatch else { return false }
         session?.endedAt = stored.endedAt
+        session?.endTappedAt = stored.endTappedAt
         session?.endReason = stored.endReason
         session?.endNote = stored.endNote
         session?.resumedAt = stored.resumedAt
