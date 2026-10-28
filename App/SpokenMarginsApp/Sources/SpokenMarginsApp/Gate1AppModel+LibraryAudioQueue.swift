@@ -108,8 +108,9 @@ extension Gate1AppModel {
             failedStartupAudioPreparationItemIds.remove(itemId)
             updateLibraryStartupAudioState(itemId: itemId, state: .waiting)
             diagnostics["startupAudioPreparation:\(itemId)"] = "queued"
-            let task = Task { @MainActor [weak self] in
-                await self?.enqueueStartupAudioPreparation(itemId: itemId, token: claim.token)
+            let task = Task<Void, Never> { @MainActor [weak self] in
+                guard let self else { return }
+                await self.enqueueStartupAudioPreparation(itemId: itemId, token: claim.token)
             }
             startupAudioPreparation.pending.attach(task, to: itemId, token: claim.token)
         } catch {
