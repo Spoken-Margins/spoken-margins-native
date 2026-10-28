@@ -400,9 +400,9 @@ extension Gate1AppModel {
             let store = try requireStore()
             let coordinator = requireFollowedSourceCoordinator(store: store)
             for entry in await coordinator.refreshStale(force: force) { importFollowedSourceEntry(entry, startedByListener: false) } // "Add every new item" (#466)
-            try await publishFeedSubscriptions(store: store)
+            let subscriptions = try await publishFeedSubscriptions(store: store)
             followedSourceEntries = try await coordinator.entries()
-            diagnostics["followedSourceCount"] = "\(feedSubscriptions.count)"
+            diagnostics["followedSourceCount"] = "\(subscriptions.count)"
             diagnostics["followedSourceEntryCount"] = "\(followedSourceEntries.count)"
         } catch {
             diagnostics["followedSourceRefresh"] = "failed:\(String(describing: type(of: error)))"

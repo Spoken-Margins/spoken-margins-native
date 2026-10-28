@@ -5894,6 +5894,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         model.openItem(id: "article")
         model.offerFollowSuggestionIfEligible(itemId: "article", store: store)
+        // The subscriptions are read in the background, so the check has to finish before the negatives mean anything.
+        try await waitFor("suggestion check finished") { model.sourceSuggestionChecks.isEmpty }
         for _ in 0..<10 { await Task.yield() }
 
         XCTAssertEqual(discovered, [], "a followed site is not looked up again")
