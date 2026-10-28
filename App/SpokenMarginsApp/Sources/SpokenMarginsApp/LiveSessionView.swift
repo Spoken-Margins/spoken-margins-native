@@ -54,8 +54,11 @@ struct LiveSessionView: View {
                     .frame(maxWidth: 720)
                     .frame(maxWidth: .infinity)
                 }
+                .onChange(of: controller.session?.id) { _, _ in showsEndCard = false }
                 .onChange(of: showsEndCard) { _, shown in
-                    if shown { withAnimation { scroller.scrollTo(Self.endCardId, anchor: .bottom) } }
+                    if shown {
+                        DispatchQueue.main.async { withAnimation { scroller.scrollTo(Self.endCardId, anchor: .bottom) } }
+                    }
                 }
             }
             .scrollDismissesKeyboard(.interactively)
@@ -137,11 +140,15 @@ struct LiveSessionView: View {
     private func sessionHeader(_ session: LiveSession) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(session.title.isEmpty ? "\(session.kind.label) session" : session.title).font(.headline)
-            Text(LiveSessionPositionMap.clock(controller.elapsedMs))
-                .font(.system(size: 44, weight: .semibold, design: .rounded).monospacedDigit())
-                .accessibilityLabel("Session time \(LiveSessionPositionMap.clock(controller.elapsedMs))")
-            if let position = controller.predictedPosition() {
-                Text("Source now: \(position.label)").font(.subheadline).foregroundStyle(AppColors.secondaryText)
+            TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(LiveSessionPositionMap.clock(controller.elapsedMs(at: context.date)))
+                        .font(.system(size: 44, weight: .semibold, design: .rounded).monospacedDigit())
+                        .accessibilityLabel("Session time \(LiveSessionPositionMap.clock(controller.elapsedMs(at: context.date)))")
+                    if let position = controller.predictedPosition(at: context.date) {
+                        Text("Source now: \(position.label)").font(.subheadline).foregroundStyle(AppColors.secondaryText)
+                    }
+                }
             }
             if let bracket = session.bracket {
                 Text(bracket).font(.caption).foregroundStyle(AppColors.secondaryText)
@@ -172,8 +179,10 @@ struct LiveSessionView: View {
             if session.kind == .paper {
                 TextField("Page (optional)", text: $marginWhere).textFieldStyle(.roundedBorder)
             }
-            if let position = controller.predictedPosition(adjustmentMs: adjustmentMs) {
-                PositionNudgeRow(label: adjustmentMs == 0 ? position.label : "you set \(LiveSessionPositionMap.clock(position.ms))", adjustmentMs: $adjustmentMs)
+            TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                if let position = controller.predictedPosition(at: context.date, adjustmentMs: adjustmentMs) {
+                    PositionNudgeRow(label: adjustmentMs == 0 ? position.label : "you set \(LiveSessionPositionMap.clock(position.ms))", adjustmentMs: $adjustmentMs)
+                }
             }
             Button {
                 controller.addMargin(text: marginText, whereNote: marginWhere.isEmpty ? nil : marginWhere, adjustmentMs: adjustmentMs)
