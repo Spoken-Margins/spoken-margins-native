@@ -426,8 +426,7 @@ final class EpisodeMapPreparer {
                     try store.saveTranscriptPhraseSketch(sketch)
                     try store.savePortableListeningMapProposal(proposal, itemId: itemID)
                     try store.saveResolvedListeningMapProjection(projection)
-                    for asset in try store.loadOwnedOfflineAssets() where
-                        asset.itemId == itemID && asset.category == .fingerprintMap {
+                    for asset in try store.loadOwnedOfflineAssets(itemId: itemID) where asset.category == .fingerprintMap {
                         try store.updateOwnedOfflineAsset(id: asset.id) { $0.protections.remove(.activeEpisodeMapPreparation) }
                     }
                 }

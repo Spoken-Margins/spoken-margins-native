@@ -87,8 +87,8 @@ extension Gate1AppModel {
     func resolvedOwnedAudiobookURL(for item: Item) -> URL? {
         // iOS can relocate the data container during an update. The ledger path
         // is relative to today's Application Support directory; item URLs are not.
-        if let assets = try? store?.loadOwnedOfflineAssets(),
-           let asset = assets.first(where: { $0.itemId == item.id && $0.category == .audiobook && $0.integrity == .valid }),
+        if let assets = try? store?.loadOwnedOfflineAssets(itemId: item.id),
+           let asset = assets.first(where: { $0.category == .audiobook && $0.integrity == .valid }),
            let url = resolvedApplicationSupportAssetURL(for: asset.relativePath) {
             return url
         }

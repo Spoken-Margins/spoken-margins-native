@@ -268,7 +268,7 @@ extension Gate1AppModel {
     }
 
     func localAudiobookDigest(for item: Item) -> String? {
-        item.mediaType == "audiobook" ? SharedPacketItemMatcher.ownedAudiobookDigest(for: item, assets: (try? store?.loadOwnedOfflineAssets()) ?? []) : nil
+        item.mediaType == "audiobook" ? SharedPacketItemMatcher.ownedAudiobookDigest(for: item, assets: (try? store?.loadOwnedOfflineAssets(itemId: item.id)) ?? []) : nil
     }
 }
 

@@ -77,7 +77,7 @@ extension Gate1AppModel {
                     isReproducible: true
                 ), manifest: manifest
             ) else { return }
-            for asset in try store.loadOwnedOfflineAssets() where asset.itemId == item.id && asset.category == .preparedChunk {
+            for asset in try store.loadOwnedOfflineAssets(itemId: item.id) where asset.category == .preparedChunk {
                 try store.updateOwnedOfflineAsset(id: asset.id) { $0.isRedundant = true }
             }
         } catch {

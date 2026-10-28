@@ -214,8 +214,7 @@ extension Gate1AppModel {
     /// The transcript rows the run recorded for the item; the files they name are removed with the folders.
     func deleteTransientTranscriptAssets(itemId: String) throws {
         guard let store else { return }
-        for asset in try store.loadOwnedOfflineAssets() where
-            asset.itemId == itemId && asset.category == .transientEpisodeTranscript {
+        for asset in try store.loadOwnedOfflineAssets(itemId: itemId) where asset.category == .transientEpisodeTranscript {
             try store.deleteOwnedOfflineAsset(id: asset.id)
         }
     }
