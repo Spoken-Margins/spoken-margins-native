@@ -91,6 +91,97 @@ final class DiagnosticsExportTests: XCTestCase {
         )
     }
 
+    // MARK: Rule D: no article title or address in an entry name or value (#2850)
+
+    /// Library ids for web imports are the page title plus the start of the address.
+    private static let itemIds = [
+        "My Secret Reading List https://example.com/a",
+        "Café «Résumé»: Ünïcödé naïveté – 日本語の記事 https://例え.jp/記事",
+        "https://substack.com/@someone/p/a-private-post?token=abc",
+        "Re: Re: Fwd: the lawyer's memo, (draft) [v2] #3 \"final\"",
+        String(repeating: "Zanzibar Harvest Diaries ", count: 40) + "https://example.com/" + String(repeating: "x", count: 300),
+        "file name with spaces & symbols.pdf",
+        "a:b:c::d",
+    ]
+
+    private static let itemKeyNames = [
+        "automaticAudioPreparation", "startupAudioPreparation", "podcastDownload", "explicitAudioPreparation",
+        "textAudioPrewarm", "sourceTranscriptDiscovery", "localAudioSkim", "podcastPlacementDeferred",
+    ]
+
+    func testNoItemIdSurvivesInAnEntryNameForAnyKindOfId() throws {
+        for id in Self.itemIds {
+            let live = Dictionary(uniqueKeysWithValues: Self.itemKeyNames.map { ("\($0):\(id)", "queued") })
+            let entries = DiagnosticsExport.entries(live: live, stored: [:], fixed: fixed())
+            let text = try DiagnosticsExport.jsonText(entries)
+            for fragment in id.split(whereSeparator: { " :/".contains($0) }) where fragment.count >= 4 {
+                XCTAssertFalse(text.contains(String(fragment)), "\(fragment) of \(id.prefix(30)) is in the export")
+            }
+            for name in Self.itemKeyNames {
+                let keys = entries.keys.filter { $0.hasPrefix("\(name):") }
+                XCTAssertEqual(keys.count, 1, "\(name) keeps one entry for the item")
+                XCTAssertEqual(entries[keys[0]], "queued", "the value is kept")
+            }
+        }
+    }
+
+    func testEntriesForTheSameItemShareOneTokenAndDifferentItemsDoNot() {
+        let live = [
+            "automaticAudioPreparation:\(Self.itemIds[0])": "queued",
+            "startupAudioPreparation:\(Self.itemIds[0])": "ready_2_of_4",
+            "automaticAudioPreparation:\(Self.itemIds[1])": "queued",
+            "lastImport": Self.itemIds[0],
+        ]
+        let entries = DiagnosticsExport.entries(live: live, stored: [:], fixed: fixed())
+        let token = DiagnosticsExport.token(Self.itemIds[0])
+        XCTAssertEqual(entries["automaticAudioPreparation:\(token)"], "queued")
+        XCTAssertEqual(entries["startupAudioPreparation:\(token)"], "ready_2_of_4")
+        XCTAssertEqual(entries["lastImport"], token, "a value that names the item carries the same token as its keys")
+        XCTAssertEqual(entries["automaticAudioPreparation:\(DiagnosticsExport.token(Self.itemIds[1]))"], "queued")
+        XCTAssertNotEqual(token, DiagnosticsExport.token(Self.itemIds[1]))
+        XCTAssertEqual(token.count, 12)
+    }
+
+    func testValuesThatNameAnItemLeaveAsTokensAndNoneStaysNone() {
+        let id = Self.itemIds[0]
+        var live: [String: String] = [:]
+        for key in DiagnosticsExport.keysHoldingAnItemId { live[key] = id }
+        live["lastSourceLinkImport"] = "none"
+        live["lastSharedPDFImport"] = "Tax Return 2025.pdf"
+        live["lastRemotePDFImport"] = "https://example.com/private.pdf"
+        let entries = DiagnosticsExport.entries(live: live, stored: [:], fixed: fixed())
+        for key in DiagnosticsExport.keysHoldingAnItemId where key != "lastSourceLinkImport" {
+            XCTAssertEqual(entries[key], DiagnosticsExport.token(id), key)
+        }
+        XCTAssertEqual(entries["lastSourceLinkImport"], "none")
+        XCTAssertNil(entries["lastSharedPDFImport"], "a file name is what the listener chose")
+        XCTAssertEqual(entries["lastRemotePDFImport"], "<redacted-url>")
+    }
+
+    func testAFeedEntryImportKeepsItsShapeWithTokensForTheIds() {
+        let item = Self.itemIds[2]
+        let entries = DiagnosticsExport.entries(
+            live: ["sourceEntryImport:https://example.com/feed/1": "item:\(item),subscription:sub-1"],
+            stored: [:],
+            fixed: fixed()
+        )
+        let key = "sourceEntryImport:\(DiagnosticsExport.token("https://example.com/feed/1"))"
+        XCTAssertEqual(entries[key], "item:\(DiagnosticsExport.token(item)),subscription:sub-1")
+    }
+
+    func testKeysWithoutAnIdAndPerMarginKeysAreLeftAlone() {
+        let marginKey = PodcastAnchorCaptureDiagnostics.marginKey("marginCuration", sessionId: "s1", interjectionId: "ij-1")
+        let entries = DiagnosticsExport.entries(
+            live: ["automaticAudioPreparation": "whileCharging", "trailing:": "x", marginKey: "starred", "a:b": "y"],
+            stored: [:],
+            fixed: fixed()
+        )
+        XCTAssertEqual(entries["automaticAudioPreparation"], "whileCharging")
+        XCTAssertEqual(entries["trailing:"], "x")
+        XCTAssertEqual(entries[marginKey], "starred")
+        XCTAssertNil(entries["a:b"], "any other suffix is treated as an id")
+    }
+
     // MARK: Rule C: a stored entry wins a key clash
 
     func testAStoredEntryOverridesALiveEntryWithTheSameKey() {
