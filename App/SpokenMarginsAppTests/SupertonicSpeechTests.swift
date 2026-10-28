@@ -3458,6 +3458,42 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(outcome.servedIndices, Array(run.indices), "the saved chunks come from the saved audio, in order")
     }
 
+    /// #2132: the phone cools in the middle of a saved Supertonic run and stays cool. The run plays to its end from
+    /// the saved audio, and the chunks after it are rendered by Supertonic: the bundled voice does not take the item
+    /// back at the run's end when the phone no longer blocks Supertonic. A client that kept the bundled voice's hold
+    /// after the run, whatever the phone's state, would render the chunks after the run with it and fail here.
+    func testAPhoneThatCoolsDuringASavedRunFinishesItAndThenRendersWithSupertonic() async throws {
+        let text = Self.pressureArticle(paragraphs: 14)
+        let run = try Self.savedRun(in: text, startingAtOrAfter: 2, chunks: 5)
+        let outcome = try await renderUnderPressure(
+            text: text, savedSupertonic: Set(run.indices), declaredSeconds: 70,
+            coolsAfterCompleted: run.indices.lowerBound + 2)
+        let after = run.plan.indices.filter { $0 > run.indices.upperBound }.map { run.plan[$0].text }
+        XCTAssertFalse(after.isEmpty)
+        XCTAssertEqual(outcome.servedIndices, Array(run.indices), "the whole saved run plays from its saved audio")
+        XCTAssertTrue(run.texts.allSatisfy { !outcome.bundledTexts.contains($0) }, "the bundled voice reads none of the run: \(outcome.bundledTexts)")
+        XCTAssertTrue(after.allSatisfy { !outcome.bundledTexts.contains($0) },
+                      "the phone is cool at the run's end, so the bundled voice does not take the item back: \(outcome.bundledTexts)")
+        XCTAssertGreaterThanOrEqual(outcome.supertonicRenders, after.count, "Supertonic renders what follows the run")
+    }
+
+    /// #2132: the phone cools in the middle of the run and is hot again by its end. The run still plays to the end, and
+    /// the voice then follows the phone back to the bundled voice, once: it does not hand back mid-run. A client that
+    /// let the cool-down end the run early would read part of the run with the bundled voice and fail here.
+    func testAPhoneThatCoolsAndHeatsAgainDuringASavedRunHandsBackAtItsEnd() async throws {
+        let text = Self.pressureArticle(paragraphs: 14)
+        let run = try Self.savedRun(in: text, startingAtOrAfter: 2, chunks: 5)
+        let outcome = try await renderUnderPressure(
+            text: text, savedSupertonic: Set(run.indices), declaredSeconds: 70,
+            coolsAfterCompleted: run.indices.lowerBound + 2, heatsAgainAfterCompleted: run.indices.lowerBound + 4)
+        let after = run.plan.indices.filter { $0 > run.indices.upperBound }.map { run.plan[$0].text }
+        XCTAssertFalse(after.isEmpty)
+        XCTAssertEqual(outcome.servedIndices, Array(run.indices), "the whole saved run plays from its saved audio")
+        XCTAssertTrue(run.texts.allSatisfy { !outcome.bundledTexts.contains($0) }, "the bundled voice reads none of the run: \(outcome.bundledTexts)")
+        XCTAssertTrue(after.allSatisfy(outcome.bundledTexts.contains),
+                      "the phone is hot again at the run's end, so the bundled voice takes the item back: \(outcome.bundledTexts)")
+    }
+
     /// #1892: five minutes of listening is more audio at a faster speed. A saved run just over 300 s of audio is five
     /// minutes of listening at 1x but only 2.5 at 2x, so at the listener's 2x the bundled voice keeps it. A client that
     /// passed 1.0 to the rule instead of its playback rate would take it over and fail here.
@@ -3546,7 +3582,7 @@ final class SupertonicSpeechTests: XCTestCase {
     /// make a wrong one. `servedIndices` are the chunks it answered for, once each, in the order first answered.
     private func renderUnderPressure(
         text: String, savedSupertonic: Set<Int>, declaredSeconds: TimeInterval, playbackRate: Double = 1,
-        savedStartShift: Int = 0
+        savedStartShift: Int = 0, coolsAfterCompleted: Int? = nil, heatsAgainAfterCompleted: Int? = nil
     ) async throws -> (bundledTexts: [String], supertonicRenders: Int, servedIndices: [Int]) {
         let template = try makeTestWAV(duration: 0.2)
         defer { try? FileManager.default.removeItem(at: template) }
@@ -3556,14 +3592,22 @@ final class SupertonicSpeechTests: XCTestCase {
         let served = ServedChunkLog()
         let expectedIdentity = NarrationChunkPlanner.identity(ofArticle: text)
         let expectedPlan = Self.expectedArticlePlan(for: text)
+        // The phone starts hot (Supertonic may not render). The weather can turn while the generation runs: it cools
+        // once `coolsAfterCompleted` chunks are done and is hot again once `heatsAgainAfterCompleted` are. A chunk's
+        // voice is chosen as its render starts, so a change lands on the chunk after the one that completed.
+        let cool = KittenAllowedFlag()
         let client = SupertonicSpeechPlaybackClient(
             renderer: supertonic, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             audioSessionActivator: {}, audioPlayerStarter: { player, rate in player.volume = 0; player.playImmediately(atRate: rate) },
             observesPlayerLifecycle: false,
-            onDeviceRenderingAllowed: { false },
+            onDeviceRenderingAllowed: { cool.value },
             pressureRenderer: bundled,
             fallbackClient: RecordingFallbackAudioClient(),
-            onGenerationProgress: { log.record($0) },
+            onGenerationProgress: { progress in
+                log.record(progress)
+                if let coolAt = coolsAfterCompleted, progress.completedChunks >= coolAt { cool.value = true }
+                if let heatAt = heatsAgainAfterCompleted, progress.completedChunks >= heatAt { cool.value = false }
+            },
             preparedChunkLookup: { itemId, identity, plan in
                 guard itemId == "saved-run", identity == expectedIdentity,
                       let expected = expectedPlan.first(where: { $0.index == plan.index }), savedSupertonic.contains(plan.index),
