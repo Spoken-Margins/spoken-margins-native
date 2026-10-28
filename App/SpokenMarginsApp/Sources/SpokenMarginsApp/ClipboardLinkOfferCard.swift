@@ -239,8 +239,7 @@ struct ClipboardLinkOfferCard: View {
     @ViewBuilder
     private func addButtons(_ url: URL, host: String, addAndPlay: Bool, wraps: Bool = false) -> some View {
         Button("Add to Library") { add(url, play: false) }
-            .buttonStyle(.borderedProminent)
-            .tint(AppColors.evergreen)
+            .filledActionButton()
             .fixedSize(horizontal: wraps ? false : true, vertical: true)
             .accessibilityLabel("Add to Library, \(host)")
             .accessibilityIdentifier("library.clipboardLink.add")
