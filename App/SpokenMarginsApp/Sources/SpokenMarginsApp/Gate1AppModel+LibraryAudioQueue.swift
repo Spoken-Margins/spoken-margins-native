@@ -9,14 +9,18 @@ import SessionKitPersistence
 import SessionKitFeeds
 /// Startup audio preparation's bookkeeping, held as one value so `Gate1AppModel.swift` doesn't grow (hot-file ratchet).
 struct StartupAudioPreparationState {
-    var pendingItemIds: Set<String> = []
+    /// The in-flight task per item; a task that was replaced or cancelled can't clear its successor's mark (#2812).
+    var pending = OwnedWorkRegistry<Task<Void, Never>>()
     var failedItemIds: Set<String> = []
     /// Failed or not-ready items wait before the next trigger retries (#2653).
     var cooldown = RetryCooldown(base: 30, ceiling: 10 * 60)
 }
 
 extension Gate1AppModel {
-    var pendingStartupAudioPreparationItemIds: Set<String> { get { startupAudioPreparation.pendingItemIds } set { startupAudioPreparation.pendingItemIds = newValue } }
+    /// Drops the pending mark for these items and cancels their tasks, so none keeps running unmarked.
+    func cancelStartupAudioPreparation<S: Sequence>(itemIds: S) where S.Element == String {
+        startupAudioPreparation.pending.remove(itemIds).forEach { $0.cancel() }
+    }
     var failedStartupAudioPreparationItemIds: Set<String> { get { startupAudioPreparation.failedItemIds } set { startupAudioPreparation.failedItemIds = newValue } }
     var startupAudioPreparationCooldown: RetryCooldown { get { startupAudioPreparation.cooldown } set { startupAudioPreparation.cooldown = newValue } }
 
@@ -85,7 +89,7 @@ extension Gate1AppModel {
               let voice = ttsVoiceSelection.supertonicVoice,
               !suppressedAutomaticAudioPreparationItemIds.contains(itemId),
               !liveSpeechFallbackItemIds.contains(itemId),
-              !pendingStartupAudioPreparationItemIds.contains(itemId),
+              !startupAudioPreparation.pending.contains(itemId),
               startupAudioPreparationCooldown.canAttempt(Self.startupAudioCooldownKey(itemId, voice)),
               libraryItems.first(where: { $0.id == itemId })?.startupAudioState != .ready else {
             return
@@ -100,13 +104,14 @@ extension Gate1AppModel {
                   item.hasListenableText else {
                 return
             }
-            pendingStartupAudioPreparationItemIds.insert(itemId)
+            let claim = startupAudioPreparation.pending.begin(itemId)
             failedStartupAudioPreparationItemIds.remove(itemId)
             updateLibraryStartupAudioState(itemId: itemId, state: .waiting)
             diagnostics["startupAudioPreparation:\(itemId)"] = "queued"
-            Task { @MainActor [weak self] in
-                await self?.enqueueStartupAudioPreparation(itemId: itemId)
+            let task = Task { @MainActor [weak self] in
+                await self?.enqueueStartupAudioPreparation(itemId: itemId, token: claim.token)
             }
+            startupAudioPreparation.pending.attach(task, to: itemId, token: claim.token)
         } catch {
             failedStartupAudioPreparationItemIds.insert(itemId)
             updateLibraryStartupAudioState(itemId: itemId, state: .failed)
@@ -115,8 +120,8 @@ extension Gate1AppModel {
         }
     }
 
-    private func enqueueStartupAudioPreparation(itemId: String) async {
-        defer { pendingStartupAudioPreparationItemIds.remove(itemId) }
+    private func enqueueStartupAudioPreparation(itemId: String, token: OwnedWorkRegistry<Task<Void, Never>>.Token) async {
+        defer { startupAudioPreparation.pending.finish(itemId, token: token) }
         do {
             try Task.checkCancellation()
             let store = try requireStore()
@@ -165,6 +170,9 @@ extension Gate1AppModel {
                 ? "queued_0_of_\(targetChunkCount)" : "ready_from_cache"
             refreshLibraryRowsInBackground()
             startForegroundAudioPreparationIfNeeded()
+        } catch where Task.isCancelled {
+            // Cancelled by an engine rebuild or a skip: an error thrown on the way out is not a failure of the item.
+            diagnostics["startupAudioPreparation:\(itemId)"] = "cancelled"
         } catch PreparedAudioEnqueue.Rejection.staleSource {
             diagnostics["startupAudioPreparation:\(itemId)"] = "retired_source"
             // The import may have requested startup audio while the old request was still pending.
@@ -279,7 +287,7 @@ extension Gate1AppModel {
             try store.deleteAudioPreparationJobs(
                 ids: jobs.filter { $0.itemId == selected.itemId }.map(\.id)
             )
-            pendingStartupAudioPreparationItemIds.remove(selected.itemId)
+            cancelStartupAudioPreparation(itemIds: [selected.itemId])
             failedStartupAudioPreparationItemIds.remove(selected.itemId)
             startupAudioPreparationCooldown.clear(Self.startupAudioCooldownKeys([selected.itemId]))
             refreshLibraryRowsInBackground(mustPublish: true)
@@ -298,7 +306,7 @@ extension Gate1AppModel {
             libraryAudioLoop.stopAndInvalidate()
             suppressAudioPreparation(itemIds: itemIds)
             try store.deleteAudioPreparationJobs(ids: jobs.map(\.id))
-            pendingStartupAudioPreparationItemIds.subtract(itemIds)
+            cancelStartupAudioPreparation(itemIds: itemIds)
             failedStartupAudioPreparationItemIds.subtract(itemIds)
             startupAudioPreparationCooldown.clear(Self.startupAudioCooldownKeys(itemIds))
             refreshLibraryRowsInBackground(mustPublish: true)
