@@ -147,6 +147,7 @@ struct SpokenMarginsApp: App {
                 .environmentObject(bridge)
                 .onReceive(NotificationCenter.default.publisher(for: ListeningReadyNotifications.opened)) { _ in model.openReadyListeningEdition() }
                 .onOpenURL { url in
+                    if LiveSessionLinkRouter.shared.handle(url) { return }
                     model.handleIncomingURL(url)
                 }
                 .onCompatibleChange(of: scenePhase) { phase in

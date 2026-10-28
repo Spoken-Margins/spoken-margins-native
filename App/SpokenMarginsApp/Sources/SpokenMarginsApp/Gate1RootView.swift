@@ -69,7 +69,7 @@ struct Gate1RootView: View {
             navigation.select(root, recordingIsLocked: model.recordingNavigationIsLocked)
             model.requestedExperienceRoot = nil
         }
-        .tracksKeyboard($keyboardIsPresented)
+        .tracksKeyboard($keyboardIsPresented).liveSessionLinkCover(model)
         .sheet(isPresented: $model.isAIDataSharingConsentPresented) {
             AIDataSharingConsentView()
                 .environmentObject(model)
