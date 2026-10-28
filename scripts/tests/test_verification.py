@@ -2389,7 +2389,8 @@ class VerificationTests(unittest.TestCase):
                     'Release': [selecting(app), selecting(uis)],
                     'UISeams': [selecting(uis, 'TourUITests/testTour')],
                     'SpeechCanary': [selecting(uis, 'TourUITests/testShare')],
-                    'Smoke': [selecting(uis, 'TourUITests/testTour')]}
+                    'Smoke': [selecting(uis, 'TourUITests/testTour')],
+                    'ScreenTour': [selecting(uis, 'TourUITests/testTour')]}
         (root / 'TestPlans').mkdir()
         (root / 'TestPlans/scripted-journeys.json').write_text(json.dumps({'version': 1, 'gating': [], 'probation': []}))
         for name, targets in {**defaults, **plans}.items():
@@ -2424,7 +2425,7 @@ class VerificationTests(unittest.TestCase):
                 self.assertEqual(inventory.validate(Path(temporary)), [release])
 
     def test_inventory_rejects_a_ui_plan_that_selects_an_app_test(self):
-        for plan in ('UISeams', 'SpeechCanary', 'Smoke'):
+        for plan in ('UISeams', 'SpeechCanary', 'Smoke', 'ScreenTour'):
             with self.subTest(plan), tempfile.TemporaryDirectory() as temporary:
                 self.plan_root(Path(temporary), **{plan: [
                     ('SpokenMarginsAppUITests', {'selectedTests': ['TourUITests/testTour']}),
@@ -2586,6 +2587,42 @@ class InheritedSimulatorSlotTests(unittest.TestCase):
                 fcntl.flock(handle, fcntl.LOCK_EX)
                 with self.assertRaises(ValueError):
                     verification.inherited_simulator_slot(handle.fileno())
+
+    def test_bare_selectors_take_the_plans_own_target(self):
+        tour = inventory.plan_tests(inventory.ROOT, 'ScreenTour')
+        self.assertEqual(verification.full_selector('ScreenTourTests', tour), 'SpokenMarginsAppUITests/ScreenTourTests')
+        self.assertTrue(any(verification.selected(t, 'SpokenMarginsAppUITests/ScreenTourTests') for t in tour))
+        app = inventory.plan_tests(inventory.ROOT, 'AppBehavior')
+        self.assertEqual(verification.full_selector('Gate1AppModelWorkflowTests', app),
+                         'SpokenMarginsAppTests/Gate1AppModelWorkflowTests')
+        release = inventory.plan_tests(inventory.ROOT, 'Release')  # two targets: bare names stay app tests
+        self.assertEqual(verification.full_selector('Foo', release), 'SpokenMarginsAppTests/Foo')
+        self.assertEqual(verification.full_selector('SpokenMarginsAppUITests/ScreenTourTests', release),
+                         'SpokenMarginsAppUITests/ScreenTourTests')
+
+    def test_the_tour_plan_runs_only_the_screen_tour_and_exports_its_screenshots(self):
+        self.assertIn('tour', verification.PLANS)
+        self.assertIn('tour', verification.SCREENSHOT_PLANS)
+        tests = inventory.plan_tests(inventory.ROOT, 'ScreenTour')
+        self.assertEqual({t.rsplit('/', 1)[0] for t in tests}, {'SpokenMarginsAppUITests/ScreenTourTests'})
+
+    def test_exported_screenshots_are_named_after_their_attachments(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            exported, screens = Path(temporary) / 'attachments', Path(temporary) / 'screens'
+            exported.mkdir()
+            attachments = []
+            for index, name in enumerate(['tour-light-01-library', 'tour-dark-01-library', 'tour-dark-01-library']):
+                exported_name = f'{index:08X}-0000-0000-0000-000000000000.png'
+                (exported / exported_name).write_bytes(name.encode())
+                attachments.append({'exportedFileName': exported_name, 'isAssociatedWithFailure': False,
+                                    'suggestedHumanReadableName': f'{name}_{index}_1A2B3C4D-0000-0000-0000-00000000000{index}.png'})
+            (exported / 'manifest.json').write_text(json.dumps([
+                {'testIdentifier': 'ScreenTourTests/testTourInLightAppearance()', 'attachments': attachments[:1]},
+                {'testIdentifier': 'ScreenTourTests/testTourInDarkAppearance()', 'attachments': attachments[1:]}]))
+            names = verification.name_screenshots(exported, screens)
+            self.assertEqual(names, ['tour-dark-01-library-2.png', 'tour-dark-01-library.png', 'tour-light-01-library.png'])
+            self.assertEqual((screens / 'tour-light-01-library.png').read_bytes(), b'tour-light-01-library')
+            self.assertEqual(sorted(p.name for p in screens.iterdir()), names)
 
 
 if __name__ == '__main__':

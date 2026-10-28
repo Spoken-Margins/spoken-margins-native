@@ -142,9 +142,17 @@ final class ScreenTourTests: XCTestCase {
         button.tap()
     }
 
+    /// `isHittable` fails the test on an element with no frame yet, so look at the frame first (#2760).
+    private func isReadyToTap(_ candidate: XCUIElement) -> Bool {
+        guard candidate.exists else { return false }
+        let frame = candidate.frame
+        guard !frame.isNull, !frame.isInfinite, !frame.isEmpty else { return false }
+        return candidate.isHittable
+    }
+
     private func scrollTo(_ identifier: String) -> XCUIElement {
         let candidate = element(identifier)
-        for _ in 0..<12 where !candidate.isHittable {
+        for _ in 0..<12 where !isReadyToTap(candidate) {
             app.swipeUp()
         }
         XCTAssertTrue(candidate.waitForExistence(timeout: 5), "Missing \(identifier)")
