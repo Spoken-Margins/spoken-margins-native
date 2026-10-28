@@ -31,19 +31,19 @@ struct LibraryItemEntityQuery: EntityStringQuery {
     func entities(for identifiers: [String]) async throws -> [LibraryItemEntity] {
         guard let model = ListeningEditionShortcutBridge.model else { return [] }
         let wanted = Set(identifiers)
-        return model.shortcutItemChoices(startedOnly: false).filter { wanted.contains($0.id) }.map { LibraryItemEntity($0) }
+        return await model.shortcutItemChoices(startedOnly: false).filter { wanted.contains($0.id) }.map { LibraryItemEntity($0) }
     }
 
     @MainActor
     func suggestedEntities() async throws -> [LibraryItemEntity] {
         guard let model = ListeningEditionShortcutBridge.model else { return [] }
-        return model.shortcutItemChoices(startedOnly: true).prefix(25).map { LibraryItemEntity($0) }
+        return await model.shortcutItemChoices(startedOnly: true).prefix(25).map { LibraryItemEntity($0) }
     }
 
     @MainActor
     func entities(matching string: String) async throws -> [LibraryItemEntity] {
         guard let model = ListeningEditionShortcutBridge.model else { return [] }
-        return model.shortcutItemChoices(startedOnly: true, matching: string).prefix(25).map { LibraryItemEntity($0) }
+        return await model.shortcutItemChoices(startedOnly: true, matching: string).prefix(25).map { LibraryItemEntity($0) }
     }
 }
 #endif
