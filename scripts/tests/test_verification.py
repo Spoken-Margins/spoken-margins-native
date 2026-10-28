@@ -2519,37 +2519,47 @@ class WarmLaunchTests(unittest.TestCase):
     UDID = 'A1B2C3D4-0000-0000-0000-SYNTHETIC00'
     APP = Path('/derived/SpokenMarginsApp.app')
 
-    def warm(self, failing=()):
+    def warm(self, failing=(), uninstall_error=None):
         calls, slept = [], []
 
         def quietly(args, timeout=60):
             calls.append(args[0])
-            return None if args[0] in failing else True
+            return False if args[0] in failing else True
 
-        seen = verification.warm_launch(self.UDID, self.APP, 'com.example.app', sleep=slept.append, quietly=quietly)
+        def uninstall(udid, bundle_id):
+            calls.append('uninstall')
+            if uninstall_error:
+                raise uninstall_error
+
+        seen = verification.warm_launch(self.UDID, self.APP, 'com.example.app', sleep=slept.append,
+                                        quietly=quietly, uninstall=uninstall)
         return calls, slept, seen
 
     def test_the_app_is_installed_run_for_a_few_seconds_stopped_and_removed_in_that_order(self):
         calls, slept, seen = self.warm()
         self.assertEqual(calls, ['install', 'launch', 'terminate', 'uninstall'])
         self.assertEqual(slept, [verification.WARM_LAUNCH_SECONDS])
-        self.assertEqual({k: seen[k] for k in ('install', 'launch', 'terminate', 'uninstall')},
-                         dict.fromkeys(('install', 'launch', 'terminate', 'uninstall'), True))
+        self.assertEqual(seen['ran_seconds'], verification.WARM_LAUNCH_SECONDS)
 
-    def test_a_failed_launch_still_removes_the_app_so_the_tests_start_clean(self):
+    def test_a_launch_that_timed_out_still_removes_the_app_so_the_tests_start_clean(self):
         calls, slept, seen = self.warm(failing=('launch',))
         self.assertEqual(calls, ['install', 'launch', 'terminate', 'uninstall'])
         self.assertEqual(slept, [], 'nothing to wait for when the app did not start')
-        self.assertIsNone(seen['launch'])
+        self.assertNotIn('ran_seconds', seen)
 
-    def test_a_failed_install_stops_there(self):
+    def test_an_install_that_timed_out_is_still_removed_in_case_it_finished_late(self):
         calls, slept, _ = self.warm(failing=('install',))
-        self.assertEqual((calls, slept), (['install'], []))
+        self.assertEqual((calls, slept), (['install', 'terminate', 'uninstall'], []))
+
+    def test_an_app_that_cannot_be_removed_ends_the_run_rather_than_leave_data_for_the_first_test(self):
+        with self.assertRaises(RuntimeError):
+            self.warm(uninstall_error=RuntimeError('simulator-clean: simctl uninstall did not finish'))
 
     def test_it_installs_the_built_app_on_the_given_simulator(self):
         recorded = []
         verification.warm_launch(self.UDID, self.APP, 'com.example.app', sleep=lambda _: None,
-                                 quietly=lambda args, timeout=60: recorded.append(args) or True)
+                                 quietly=lambda args, timeout=60: recorded.append(args) or True,
+                                 uninstall=lambda udid, bundle_id: None)
         self.assertEqual(recorded[0], ['install', self.UDID, str(self.APP)])
         self.assertEqual(recorded[1], ['launch', self.UDID, 'com.example.app'])
 

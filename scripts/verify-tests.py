@@ -1269,25 +1269,27 @@ def uninstall_from_reused_device(udid, bundle_id, timeout=60):
 # test is only the first one by name (Gate1FlowUITests sorts before the J* classes); the other launches in the same
 # runs, about 20 of them, never stalled, and xcodebuild's own retry then passed it. The app-hosted plans have a startup
 # watchdog (#705); UI plans cannot, because their launch happens inside a test case. So the app is launched once
-# before the first test and taken off again, which pays the first-launch cost outside any test.
+# before the first test and taken off again, which pays the first-launch cost outside any test. Worst case it adds
+# its install (120 s), launch (60 s) and terminate and uninstall budgets, scaled on a hosted runner.
 WARM_LAUNCH_SECONDS = 8  # how long the warm-up app is left running before it is stopped
 
 
-def warm_launch(udid, app, bundle_id, sleep=time.sleep, quietly=None):
-    """Install the built app, run it for a few seconds and remove it again. Never raises, never decides a verdict.
+def warm_launch(udid, app, bundle_id, sleep=time.sleep, quietly=None, uninstall=None):
+    """Install the built app, run it for a few seconds and remove it again.
 
-    The app is uninstalled afterwards so the tests start from the empty container they expect. Returns what happened
-    for the manifest."""
+    The install, launch and terminate never decide a verdict. The final uninstall does: once the app has been installed
+    or run, a container that could not be emptied would hand the first test someone else's data, so a timeout there
+    ends the run INCONCLUSIVE, as for a reused device (#2602). Returns what happened for the manifest."""
     quietly = quietly or simctl_quietly
+    uninstall = uninstall or uninstall_from_reused_device
     started = time.monotonic()
-    steps = {}
-    steps['install'] = quietly(['install', udid, str(app)], 120)
-    if steps['install']:
-        steps['launch'] = quietly(['launch', udid, bundle_id], 60)
-        if steps['launch']:
-            sleep(WARM_LAUNCH_SECONDS)
-        steps['terminate'] = quietly(['terminate', udid, bundle_id], TERMINATE_TIMEOUT_SECONDS)
-        steps['uninstall'] = quietly(['uninstall', udid, bundle_id], 60)
+    steps = {'installed': quietly(['install', udid, str(app)], 120)}
+    if steps['installed'] and quietly(['launch', udid, bundle_id], 60):
+        steps['ran_seconds'] = WARM_LAUNCH_SECONDS
+        sleep(WARM_LAUNCH_SECONDS)
+    # Even a timed-out install may complete late, so the app comes off whatever the install reported.
+    quietly(['terminate', udid, bundle_id], TERMINATE_TIMEOUT_SECONDS)
+    uninstall(udid, bundle_id)
     steps['seconds'] = round(time.monotonic() - started, 1)
     return steps
 
