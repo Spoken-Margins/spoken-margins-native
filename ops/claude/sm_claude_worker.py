@@ -921,6 +921,23 @@ class Ops:
             told = one_line(res.stderr or res.stdout or 'no output')
         return f'exit {res.returncode}: {told}'
 
+    def pr_link_sync(self) -> str:
+        """Label open PRs whose body names no issue (#2167). Never raises. No model, a few GitHub reads."""
+        script = self.own_root / 'scripts' / 'pr_issue_link.py'
+        if not script.exists():
+            return 'skipped: scripts/pr_issue_link.py is not on this checkout'
+        try:
+            res = self.run([sys.executable, str(script), '--apply'], cwd=self.repo_root, timeout=BOARD_TIMEOUT_S)
+        except Exception as exc:
+            return f'error: {exc}'
+        try:
+            report = json.loads(res.stdout or '')
+            told = (f"{len(report.get('flagged', []))} flagged, {len(report.get('cleared', []))} cleared, "
+                    f"{len(report.get('unknown', []))} unknown")
+        except (ValueError, AttributeError, TypeError):
+            told = one_line(res.stderr or res.stdout or 'no output')
+        return f'exit {res.returncode}: {told}'
+
     def label(self, number: int, add: Optional[str] = None, remove: Optional[str] = None) -> None:
         cmd = ['gh', 'issue', 'edit', str(number), '-R', REPO]
         if add:
@@ -956,6 +973,7 @@ def board_pass(ops: Ops, now: dt.datetime) -> Optional[str]:
         return None
     result = ops.board_sync(ledger=LANE_STATE if LANE_STATE.is_dir() else None)
     ops.log(f'board sync (hourly, #1621): {result}')
+    ops.log(f'PR issue links (hourly, #2167): {ops.pr_link_sync()}')
     return result
 
 
