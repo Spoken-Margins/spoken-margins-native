@@ -30,12 +30,17 @@ final class LiveSessionEditTests: XCTestCase {
         XCTAssertEqual(LiveSessionPositionMap.position(of: live.margins[1], in: live)?.ms, 99_000)
     }
 
-    func testAClockEarlierThanTheTimeSinceStartIsRejectedAndChangesNothing() {
-        var live = session(startPositionMs: 30_000)
-        XCTAssertThrowsError(try LiveSessionEdit.setSourceClock(positionMs: 60_000, at: start.addingTimeInterval(5 * 60), on: &live)) { error in
-            XCTAssertEqual(error as? LiveSessionEdit.Failure, .clockBeforeStart(sessionTime: "5:00"))
-        }
-        XCTAssertEqual(live.startPositionMs, 30_000)
+    func testAClockSmallerThanTheTimeSinceStartIsAllowedForStartTappedInTheLobby() throws {
+        var live = session()
+        live.margins = [
+            live.margin(id: "lobby", text: "", markedAt: start.addingTimeInterval(2 * 60)),
+            live.margin(id: "talk", text: "", markedAt: start.addingTimeInterval(14 * 60)),
+        ]
+        try LiveSessionEdit.setSourceClock(positionMs: 5 * 60_000, at: start.addingTimeInterval(15 * 60), on: &live)
+        XCTAssertEqual(live.startPositionMs, -10 * 60_000)
+        XCTAssertEqual(LiveSessionPositionMap.position(of: live.margins[0], in: live)?.ms, 0, "before the meeting began")
+        XCTAssertEqual(LiveSessionPositionMap.position(of: live.margins[1], in: live)?.ms, 4 * 60_000)
+        XCTAssertEqual(LiveSessionPositionMap.position(at: start.addingTimeInterval(15 * 60), in: live)?.ms, 5 * 60_000)
     }
 
     func testAClockThatPutsTheStartAfterTheEndPositionIsRejected() {
@@ -45,14 +50,18 @@ final class LiveSessionEditTests: XCTestCase {
         XCTAssertEqual(live.startPositionMs, 0)
     }
 
-    func testChangingTheKindKeepsTheClockExceptForAPaperBook() {
+    func testAPaperBookHidesTheClockButKeepsItForTheWayBack() {
         var live = session(kind: .meeting, startPositionMs: 90_000)
         LiveSessionEdit.setKind(.audiobook, on: &live)
-        XCTAssertEqual(live.kind, .audiobook)
         XCTAssertEqual(live.startPositionMs, 90_000)
         LiveSessionEdit.setKind(.paper, on: &live)
-        XCTAssertNil(live.startPositionMs)
-        XCTAssertNil(live.endPositionMs)
+        XCTAssertNil(LiveSessionPositionMap.position(at: start.addingTimeInterval(60), in: live))
+        LiveSessionEdit.setKind(.meeting, on: &live)
+        XCTAssertEqual(LiveSessionPositionMap.position(at: start.addingTimeInterval(60), in: live)?.ms, 150_000)
+    }
+
+    func testAMeetingFromAKindWithNoClockStartsItAtTheBeginning() {
+        var live = session(kind: .paper, startPositionMs: nil)
         LiveSessionEdit.setKind(.meeting, on: &live)
         XCTAssertEqual(live.startPositionMs, 0)
     }

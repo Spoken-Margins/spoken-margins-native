@@ -60,7 +60,11 @@ struct LiveSessionView: View {
                     .frame(maxWidth: 720)
                     .frame(maxWidth: .infinity)
                 }
-                .onChange(of: controller.session?.id) { _, _ in showsEndCard = false }
+                .onChange(of: controller.session?.id) { _, _ in
+                    showsEndCard = false
+                    showsDetails = false
+                }
+                .onChange(of: controller.isRunning) { _, running in if !running { showsDetails = false } }
                 .onChange(of: showsEndCard) { _, shown in
                     if shown {
                         DispatchQueue.main.async { withAnimation { scroller.scrollTo(Self.endCardId, anchor: .bottom) } }
@@ -178,7 +182,14 @@ struct LiveSessionView: View {
         .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
+    /// The name and chapter are saved when the listener finishes with them, not on every keystroke.
+    private func commitDrafts() {
+        controller.setTitle(titleDraft)
+        controller.setStartWhere(whereDraft)
+    }
+
     private func toggleDetails(_ session: LiveSession) {
+        if showsDetails { commitDrafts() }
         if !showsDetails {
             titleDraft = session.title
             whereDraft = session.startWhere ?? ""
@@ -197,7 +208,7 @@ struct LiveSessionView: View {
             .pickerStyle(.segmented)
             TextField(session.kind == .meeting ? "Meeting name" : "Title", text: $titleDraft)
                 .textFieldStyle(.roundedBorder)
-                .onChange(of: titleDraft) { _, text in controller.setTitle(text) }
+                .onSubmit { commitDrafts() }
             if session.kind != .paper {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Where are you now?").font(.subheadline.weight(.semibold))
@@ -222,7 +233,7 @@ struct LiveSessionView: View {
             }
             TextField(session.kind == .paper ? "Chapter or page" : "Chapter or page (optional)", text: $whereDraft)
                 .textFieldStyle(.roundedBorder)
-                .onChange(of: whereDraft) { _, text in controller.setStartWhere(text) }
+                .onSubmit { commitDrafts() }
         }
         .padding(16)
         .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -336,7 +347,10 @@ struct LiveSessionView: View {
     }
 
     private var endButton: some View {
-        Button { showsEndCard = true } label: {
+        Button {
+            if showsDetails { commitDrafts() }
+            showsEndCard = true
+        } label: {
             Label("End Session", systemImage: "stop.circle").frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.bordered)
