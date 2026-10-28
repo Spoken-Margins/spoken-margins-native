@@ -369,7 +369,9 @@ class RefusalTests(unittest.TestCase):
 class SpineAndSketchBoundsTests(unittest.TestCase):
     """#1856: the limits the Swift reader enforces inside a fingerprint spine and a phrase sketch. One row per rule
     that fails, named in the message; one row per limit exactly at its edge that stays valid. Both shipped readers
-    (this build's and Build 29's frozen copy) hold the same rules, so none of these is an `older-reader-refuses`."""
+    (this build's and Build 29's frozen copy) hold the same rules, and `coop-packet check` on the Mac gave both the
+    same verdict as this reader for every row. The one difference is a signature named by two landmarks: Build 29
+    traps on it, so it is an `older-reader-refuses` warning."""
 
     DATE = '2026-10-17T12:00:00Z'
 
@@ -455,6 +457,43 @@ class SpineAndSketchBoundsTests(unittest.TestCase):
         self.assertEqual(verdict(fmt.write_packet(manifest, artifacts, assets)), 'valid')
         artifacts[path] = fmt.encode_manifest({**self.spine(episodeGUID='other'), 'schemaVersion': version})
         self.assertEqual(verdict(fmt.write_packet(manifest, artifacts, assets)), 'edition-mismatch')
+
+    def warning_codes(self, data):
+        return {w.code for w in fmt.read_packet(data).warnings}
+
+    def test_a_signature_named_by_two_landmarks_warns_that_build_29_stops(self):
+        """Build 29 keys the evidence by signature id with uniqueKeysWithValues and traps on a repeat (#536); this
+        build keeps the first. coop-packet check crashed on such a packet in Build 29's reader (#1856)."""
+        shared = self.spine([self.landmark(0), self.landmark(1)])
+        data = self.packet('edition_fingerprint_spine', shared)
+        self.assertEqual(verdict(data), 'valid')
+        self.assertIn('older-reader-refuses', self.warning_codes(data))
+        self.assertIn("'sig'", fmt.read_packet(data).warnings[0].message)
+        manifest, artifacts, assets = example('article-reference.spokenmargins')
+        manifest, assets = with_signature(manifest, assets)
+        manifest, assets = with_signature(manifest, assets, 'sig2')
+        version = fmt.ARTIFACT_VERSIONS['edition_fingerprint_spine']
+        for spine_id, landmarks in [('a', [self.landmark(0), self.landmark(1, signatureAssetId='sig2')]),
+                                    ('b', [self.landmark(0, id='x', signatureAssetId='sig2')])]:
+            path = f'artifacts/{spine_id}.json'
+            manifest['artifacts'].append({'id': spine_id, 'kind': 'edition_fingerprint_spine', 'path': path,
+                                          'required': False, 'schemaVersion': version})
+            artifacts[path] = fmt.encode_manifest({**self.spine(landmarks, id=spine_id), 'schemaVersion': version})
+        across_spines = fmt.write_packet(manifest, artifacts, assets)
+        self.assertEqual(verdict(across_spines), 'valid')
+        self.assertIn('older-reader-refuses', self.warning_codes(across_spines))
+
+    def test_landmarks_with_their_own_signatures_do_not_warn(self):
+        manifest, artifacts, assets = example('article-reference.spokenmargins')
+        manifest, assets = with_signature(manifest, assets)
+        manifest, assets = with_signature(manifest, assets, 'sig2')
+        version = fmt.ARTIFACT_VERSIONS['edition_fingerprint_spine']
+        document = self.spine([self.landmark(0), self.landmark(1, signatureAssetId='sig2')])
+        manifest['artifacts'].append({'id': 'spine', 'kind': 'edition_fingerprint_spine', 'path': 'artifacts/s.json',
+                                      'required': False, 'schemaVersion': version})
+        artifacts['artifacts/s.json'] = fmt.encode_manifest({**document, 'schemaVersion': version})
+        data = fmt.write_packet(manifest, artifacts, assets)
+        self.assertEqual((verdict(data), self.warning_codes(data)), ('valid', set()))
 
     def test_the_first_failed_spine_rule_is_the_one_named(self):
         data = self.packet('edition_fingerprint_spine', self.spine(itemId='', generatorVersion='g' * 201))
