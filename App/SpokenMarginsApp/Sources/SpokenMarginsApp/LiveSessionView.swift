@@ -24,6 +24,11 @@ struct LiveSessionView: View {
     @State private var marginWhere = ""
     @State private var adjustmentMs = 0
     @FocusState private var marginFieldFocused: Bool
+    // Editing while it runs
+    @State private var showsDetails = false
+    @State private var titleDraft = ""
+    @State private var whereDraft = ""
+    @State private var clockDraft = ""
     // Ending
     @State private var showsEndCard = false
     @State private var showsLineUp = false
@@ -37,6 +42,7 @@ struct LiveSessionView: View {
                     VStack(alignment: .leading, spacing: 18) {
                         if let session = controller.session {
                             sessionHeader(session)
+                            if showsDetails && controller.isRunning { detailsCard(session) }
                             if controller.isRunning { marginComposer(session) }
                             marginList(session)
                             if controller.hasEnded {
@@ -54,7 +60,11 @@ struct LiveSessionView: View {
                     .frame(maxWidth: 720)
                     .frame(maxWidth: .infinity)
                 }
-                .onChange(of: controller.session?.id) { _, _ in showsEndCard = false }
+                .onChange(of: controller.session?.id) { _, _ in
+                    showsEndCard = false
+                    showsDetails = false
+                }
+                .onChange(of: controller.isRunning) { _, running in if !running { showsDetails = false } }
                 .onChange(of: showsEndCard) { _, shown in
                     if shown {
                         DispatchQueue.main.async { withAnimation { scroller.scrollTo(Self.endCardId, anchor: .bottom) } }
@@ -139,7 +149,17 @@ struct LiveSessionView: View {
 
     private func sessionHeader(_ session: LiveSession) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(session.title.isEmpty ? "\(session.kind.label) session" : session.title).font(.headline)
+            HStack(alignment: .firstTextBaseline) {
+                Text(session.title.isEmpty ? "\(session.kind.label) session" : session.title).font(.headline)
+                Spacer()
+                if controller.isRunning {
+                    Button(showsDetails ? "Done" : "Edit") { toggleDetails(session) }
+                        .buttonStyle(.bordered)
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("liveSession.editDetails")
+                        .accessibilityHint("Change the kind, name, clock or chapter while the session runs.")
+                }
+            }
             TimelineView(.periodic(from: .now, by: 0.5)) { context in
                 VStack(alignment: .leading, spacing: 6) {
                     Text(LiveSessionPositionMap.clock(controller.elapsedMs(at: context.date)))
@@ -158,6 +178,63 @@ struct LiveSessionView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    /// The name and chapter are saved when the listener finishes with them, not on every keystroke.
+    private func commitDrafts() {
+        controller.setTitle(titleDraft)
+        controller.setStartWhere(whereDraft)
+    }
+
+    private func toggleDetails(_ session: LiveSession) {
+        if showsDetails { commitDrafts() }
+        if !showsDetails {
+            titleDraft = session.title
+            whereDraft = session.startWhere ?? ""
+            clockDraft = ""
+        }
+        showsDetails.toggle()
+    }
+
+    /// Everything the start card asks, changeable while the session runs (#2832): starting stays one tap with
+    /// blanks allowed.
+    private func detailsCard(_ session: LiveSession) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Picker("Kind", selection: Binding(get: { session.kind }, set: { controller.setKind($0) })) {
+                ForEach(ElsewhereKind.allCases, id: \.self) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            TextField(session.kind == .meeting ? "Meeting name" : "Title", text: $titleDraft)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { commitDrafts() }
+            if session.kind != .paper {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Where are you now?").font(.subheadline.weight(.semibold))
+                    HStack {
+                        TextField(session.kind == .meeting ? "What the meeting's clock shows, like 12:30" : "Time in the book, like 1:23:10", text: $clockDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .keyboardType(.numbersAndPunctuation)
+                        Button("Set") {
+                            guard let ms = LiveSessionPositionMap.parse(clockDraft) else {
+                                controller.errorMessage = "Enter a time like 12:30 or 1:23:10."
+                                return
+                            }
+                            if controller.setSourceClock(positionMs: ms) { clockDraft = "" }
+                        }
+                        .buttonStyle(.bordered)
+                        .frame(minHeight: 44)
+                        .disabled(clockDraft.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                    Text("Type it once and the clock runs from there. Margins you've already taken move with it.")
+                        .font(.caption).foregroundStyle(AppColors.secondaryText)
+                }
+            }
+            TextField(session.kind == .paper ? "Chapter or page" : "Chapter or page (optional)", text: $whereDraft)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { commitDrafts() }
+        }
         .padding(16)
         .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
@@ -270,7 +347,10 @@ struct LiveSessionView: View {
     }
 
     private var endButton: some View {
-        Button { showsEndCard = true } label: {
+        Button {
+            if showsDetails { commitDrafts() }
+            showsEndCard = true
+        } label: {
             Label("End Session", systemImage: "stop.circle").frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.bordered)

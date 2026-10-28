@@ -72,10 +72,13 @@ public enum LiveSessionPositionMap {
             let ms = Double(lower.positionMs) + fraction * Double(upper.positionMs - lower.positionMs)
             return Position(ms: Int(ms.rounded()), isApproximate: true)
         }
-        guard let startPosition = session.startPositionMs else { return nil }
+        // A paper book has no clock, even if the session had one before the listener changed its kind (#2832).
+        guard session.kind != .paper, let startPosition = session.startPositionMs else { return nil }
         let elapsedMs = max(0, wallTime.timeIntervalSince(session.startedAt) * 1_000)
         var ms = Int((Double(startPosition) + elapsedMs * rate(for: session)).rounded())
         ms = max(startPosition, ms)
+        // The meeting clock may start after Start was tapped (#2832), so a Margin before it reads 0:00.
+        ms = max(0, ms)
         if let endPosition = session.endPositionMs, endPosition >= startPosition { ms = min(endPosition, ms) }
         return Position(ms: ms, isApproximate: true)
     }
