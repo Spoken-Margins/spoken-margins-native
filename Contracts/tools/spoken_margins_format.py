@@ -21,6 +21,7 @@ commentary layer and the Listening Map scene rules; it does not decode audio (se
 from __future__ import annotations
 
 import argparse
+import base64
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
@@ -994,10 +995,9 @@ def _check_boundary(report, manifest, decoded):
     for descriptor, proposal in decoded['listening_map_proposal']:
         _check_proposal(report, proposal, assets_by_id, descriptor['path'], item_text)
     for descriptor, spine in decoded['edition_fingerprint_spine']:
-        guid = spine.get('episodeGUID')
-        if item.get('episodeGUID') is not None and guid is not None and guid != item['episodeGUID']:
-            _refuse(report, 'edition-mismatch', 'the fingerprint spine names a different episode from the item',
-                    descriptor['path'])
+        _check_spine(report, spine, item, assets_by_id, descriptor['path'])
+    for descriptor, sketch in decoded['transcript_phrase_sketch']:
+        _check_sketch(report, sketch, descriptor['path'])
     if len(decoded['conversation']) > 1:
         _refuse(report, 'invalid-manifest', 'more than one conversation artifact')
     scoped = {_canon(m['packageScopedId']) for m in layers[0][1]['interjections']}
@@ -1012,6 +1012,91 @@ def _check_boundary(report, manifest, decoded):
                     or not 1 <= len(reply['parentPackageScopedId']) <= 200):
                 _refuse(report, 'invalid-manifest', 'a reply link names no Margin in this packet or is out of bounds',
                         descriptor['path'])
+
+
+PHRASE_SKETCH_SHINGLE_WIDTH = 3             # TranscriptPhraseSketchBuilder.shingleWidth
+PHRASE_SKETCH_MAX_HASHES = 24               # TranscriptPhraseSketchBuilder.maximumHashesPerWindow
+PHRASE_SKETCH_WINDOW_MS = 30_000            # TranscriptPhraseSketchBuilder.windowDurationMs
+PHRASE_SKETCH_SALT_BYTES = 32
+MAX_FINGERPRINT_LANDMARKS = 500
+MAX_PHRASE_SKETCH_WINDOWS = 10_000
+MAX_LANDMARK_SPAN_MS = 30_000
+_SKETCH_HASH = re.compile(r'[0-9a-f]{32}')
+
+
+def _first_failed(rules):
+    """The name of the first rule whose check is false. Swift stops at its first failure (#536 names it), and a
+    later rule may rely on the earlier ones having held, so the checks are lazy and run in order."""
+    return next((name for name, holds in rules if not holds()), None)
+
+
+def _check_spine(report, spine, item, assets_by_id, where):
+    """SpokenMarginsPackageArchive.validate(_ spine:) (Build 29's frozen copy holds the same rules, unnamed)."""
+    landmarks = spine['landmarks']
+    failed = _first_failed([
+        ('item_id', lambda: 1 <= character_count(spine['itemId']) <= 500),
+        ('landmark_count', lambda: len(landmarks) <= MAX_FINGERPRINT_LANDMARKS),
+        ('generator_version', lambda: character_count(spine['generatorVersion']) <= 200),
+        ('canonical_url', lambda: spine.get('canonicalURL') is None or is_https_url(spine['canonicalURL'])),
+        ('episode_guid', lambda: _length_ok(spine.get('episodeGUID'), 1_000)),
+        ('duration', lambda: spine.get('producingEditionDurationMs') is None
+         or spine['producingEditionDurationMs'] >= 0),
+        ('edition_sha256', lambda: spine.get('producingEditionSHA256') is None
+         or _is_sha(spine['producingEditionSHA256'])),
+        ('landmark_ids', lambda: len({_canon(m['id']) for m in landmarks}) == len(landmarks)),
+        ('landmark_order', lambda: [m['order'] for m in landmarks] == list(range(len(landmarks)))),
+    ])
+    if failed:
+        _refuse(report, 'invalid-manifest', f'the episode fingerprint spine is out of bounds: {failed}', where)
+    guid = spine.get('episodeGUID')
+    if item.get('episodeGUID') is not None and guid is not None and guid != item['episodeGUID']:
+        _refuse(report, 'edition-mismatch', 'the fingerprint spine names a different episode from the item', where)
+    for index, landmark in enumerate(landmarks):
+        failed = _first_failed([
+            ('source_range', lambda: landmark['sourceMediaStartMs'] >= 0
+             and landmark['sourceMediaEndMs'] >= landmark['sourceMediaStartMs']),
+            ('duration', lambda: landmark['sourceMediaEndMs'] - landmark['sourceMediaStartMs'] <= MAX_LANDMARK_SPAN_MS),
+            ('anchor_time', lambda: landmark['anchorMediaTimeMs'] >= 0),
+            ('continuity_epoch', lambda: landmark['continuityEpoch'] >= 0),
+            ('generator_version', lambda: character_count(landmark['generatorVersion']) <= 200),
+            ('signature_asset', lambda: (assets_by_id.get(landmark['signatureAssetId']) or {}).get('role')
+             == ROLE_SIGNATURE),
+        ])
+        if failed:
+            _refuse(report, 'invalid-manifest', f'fingerprint landmark {index + 1} is invalid: {failed}', where)
+
+
+def _salt_is_32_bytes(salt):
+    try:
+        return len(base64.b64decode(salt, validate=True)) == PHRASE_SKETCH_SALT_BYTES
+    except ValueError:
+        return False
+
+
+def _check_sketch(report, sketch, where):
+    """SpokenMarginsPackageArchive.validate(_ sketch:) and the check on each of its windows."""
+    windows = sketch['windows']
+    failed = _first_failed([
+        ('item_id', lambda: 1 <= character_count(sketch['itemId']) <= 500),
+        ('normalization_version', lambda: character_count(sketch['normalizationVersion']) <= 200),
+        ('shingle_width', lambda: sketch['shingleWidth'] == PHRASE_SKETCH_SHINGLE_WIDTH),
+        ('maximum_hashes', lambda: sketch['maximumHashesPerWindow'] == PHRASE_SKETCH_MAX_HASHES),
+        ('salt', lambda: _salt_is_32_bytes(sketch['saltBase64'])),
+        ('window_count', lambda: len(windows) <= MAX_PHRASE_SKETCH_WINDOWS),
+        ('window_ids', lambda: len({_canon(w['id']) for w in windows}) == len(windows)),
+    ])
+    if failed:
+        _refuse(report, 'invalid-manifest', f'the transcript phrase sketch is out of bounds: {failed}', where)
+    for index, window in enumerate(windows):
+        failed = _first_failed([
+            ('start', lambda: window['sourceStartMs'] >= 0),
+            ('range', lambda: window['sourceEndMs'] >= window['sourceStartMs']),
+            ('span', lambda: window['sourceEndMs'] - window['sourceStartMs'] <= PHRASE_SKETCH_WINDOW_MS),
+            ('hash_count', lambda: len(window['hashes']) <= sketch['maximumHashesPerWindow']),
+            ('hash_form', lambda: all(isinstance(h, str) and _SKETCH_HASH.fullmatch(h) for h in window['hashes'])),
+        ])
+        if failed:
+            _refuse(report, 'invalid-manifest', f'phrase sketch window {index + 1} is invalid: {failed}', where)
 
 
 INTERJECTION_KEYS = frozenset({'packageScopedId', 'createdAt', 'anchor', 'defaultRepresentationId', 'representations'})
