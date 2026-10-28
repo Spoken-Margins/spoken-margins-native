@@ -149,15 +149,18 @@ final class PodcastAnchorEvidenceRecordTests: XCTestCase {
         }
     }
 
-    func testMergingSetsTheEditionHashAndANilOverwritesAnEarlierOne() {
+    func testMergingSetsTheEditionHashAndANilKeepsTheEarlierOne() {
         let new = [evidence("a", role: .postResume, provenance: .decodedPlaybackStream)]
 
         let hashed = PodcastAnchorEvidenceRecord.merging(new, sourceExactEditionSHA256: "abc123", into: margin(sha: "old"))
         XCTAssertEqual(hashed.sourceExactEditionSHA256, "abc123")
 
-        // The source-window job passes nil. That erases the hash an earlier capture stored; pinned as it is today.
-        let cleared = PodcastAnchorEvidenceRecord.merging(new, sourceExactEditionSHA256: nil, into: margin(sha: "old"))
-        XCTAssertNil(cleared.sourceExactEditionSHA256)
+        // The stream and source-window captures pass nil. They must not erase the hash an exact local capture
+        // stored, because the shared item identity of a packet needs every Margin's digest (#972 entry 8).
+        let kept = PodcastAnchorEvidenceRecord.merging(new, sourceExactEditionSHA256: nil, into: margin(sha: "old"))
+        XCTAssertEqual(kept.sourceExactEditionSHA256, "old")
+        let stillNone = PodcastAnchorEvidenceRecord.merging(new, sourceExactEditionSHA256: nil, into: margin())
+        XCTAssertNil(stillNone.sourceExactEditionSHA256)
     }
 
     func testMergingTurnsAPendingContextIntoUnavailableAndLeavesTheOtherStatesAlone() {
