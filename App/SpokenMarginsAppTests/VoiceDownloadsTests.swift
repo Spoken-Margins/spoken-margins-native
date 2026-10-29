@@ -120,6 +120,24 @@ final class VoiceDownloadsTests: XCTestCase {
         XCTAssertFalse(defaults.bool(forKey: FirstRunVoiceDefault.downloadDueKey), "Phonon's Cancel is the listener saying no")
     }
 
+    /// #2858 audit: after a relaunch the app's own start must not take over a pending download the listener started,
+    /// which may be on mobile data by their say-so. It would turn their download Wi-Fi only and fetch the file twice.
+    func testTheAutomaticStartLeavesAPendingDownloadTheListenerStarted() throws {
+        let coordinator = VoiceCatalogCoordinator(
+            supportDirectory: root,
+            configuration: .init(catalogURL: nil, trustedKeys: [], playableVoiceIds: [], bundledSnapshot: nil),
+            transport: FixtureTransport(files: [:]),
+            installerConfiguration: .init(marginBytes: 0, attemptsPerSource: 1, retryDelay: .zero, availableCapacity: { _ in nil }),
+            repository: nil
+        )
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "voice-downloads-\(UUID().uuidString)"))
+        defaults.set([ReadingVoiceChoice.phononVoiceId], forKey: "voiceDownloads.pending")
+        let voices = VoiceDownloadsModel(coordinator: coordinator, defaults: defaults)
+
+        voices.download(ReadingVoiceChoice.phononVoiceId, automatic: true)
+        XCTAssertFalse(voices.isAutomatic(ReadingVoiceChoice.phononVoiceId), "the listener's pending download stays theirs")
+    }
+
     /// #2858 audit: a Wi-Fi-only task is told apart from one the listener started by its own request, which is what
     /// keeps its resume data (it carries the request) and its running task out of a mobile-data download.
     func testAWiFiOnlyTaskIsToldApartFromOneTheListenerStarted() {

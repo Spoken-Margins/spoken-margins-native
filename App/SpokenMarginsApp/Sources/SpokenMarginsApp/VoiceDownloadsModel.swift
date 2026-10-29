@@ -134,9 +134,12 @@ final class VoiceDownloadsModel: ObservableObject {
         }
     }
 
-    /// `automatic` is for the download the app starts by itself: it waits for Wi-Fi and is restarted that way.
+    /// `automatic` is for the download the app starts by itself: it waits for Wi-Fi and is restarted that way. It never
+    /// takes over a pending download the listener started, which may be using mobile data by their own say-so; that one
+    /// resumes as theirs when Voices opens.
     func download(_ voiceId: String, automatic isAutomatic: Bool = false) {
         guard downloads[voiceId] == nil else { return }
+        if isAutomatic, pending.contains(voiceId), !automatic.contains(voiceId) { return }
         if isAutomatic { automatic.insert(voiceId) } else { automatic.remove(voiceId) }
         let total = rows.first { $0.id == voiceId }.map { Int64($0.entry.downloadByteCount) } ?? 0
         activity[voiceId] = .downloading(bytes: 0, total: total)
