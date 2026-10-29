@@ -14,11 +14,11 @@ Publishers: BMC (Springer Nature); BMJ; Cell Press (Elsevier); Elsevier; F1000 (
 
 | Extractor | Median clutter | Median missing | Markers silent (I14) | No text |
 | --- | ---: | ---: | ---: | ---: |
-| app-baseline | 24.2% | 0.9% | 0.0% | 1 |
+| app-baseline | 24.2% | 0.9% | 1.3% | 1 |
 | pymupdf-raw | 35.7% | 0.4% | 0.0% | 1 |
 | pdfminer | 35.9% | 0.6% | 0.0% | 1 |
 | gt-i14 (ground truth spoken per I14: the floor for M3) | 0.2% | 0.1% | 100.0% | 0 |
-| app-v2 | 10.3% | 1.0% | 98.9% | 1 |
+| app-v2 | 10.3% | 1.0% | 100.0% | 1 |
 
 ## app-baseline
 
@@ -26,7 +26,7 @@ Publishers: BMC (Springer Nature); BMJ; Cell Press (Elsevier); Elsevier; F1000 (
 - Median clutter rate: **24.2%** of spoken words
 - Median missing body text: **0.9%**
 - Median reading-order breaks: 2.38 per 1000 body words
-- Median extraction time: 808 ms
+- Median extraction time: 880 ms
 
 ### Failure categories ranked by listener cost
 
@@ -43,7 +43,7 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 | 6 | Display equations read aloud | 118 | 0.1 | 20 |
 | 7 | Page furniture: running headers, footers, page and line numbers | 108 | 0.7 | 44 |
 | 8 | Line-end hyphenation left in ("bio- logy") | 84 | 0.6 | 37 |
-| 9 | Citation and footnote markers read as numbers or names | 72 | 0.8 | 47 |
+| 9 | Citation and footnote markers read as numbers or names | 71 | 0.8 | 47 |
 | 10 | Mid-sentence interruptions (captions, footers inside a sentence) | 58 | 0.5 | 28 |
 | 11 | Repeated text (running titles, duplicated lines) | 58 | 0.5 | 34 |
 | 12 | Back matter: funding, contributions, competing interests, reviewer reports | 55 | 0.3 | 28 |
@@ -58,16 +58,16 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 | --- | ---: | ---: |
 | body | 403898 | 63.3% |
 | reference | 43711 | 6.8% |
-| math | 35600 | 5.6% |
+| math | 35615 | 5.6% |
 | table | 30848 | 4.8% |
 | caption | 26877 | 4.2% |
 | equation | 18261 | 2.9% |
 | furniture | 16667 | 2.6% |
-| unattributed_prose | 15826 | 2.5% |
+| unattributed_prose | 15829 | 2.5% |
 | repeated | 9017 | 1.4% |
 | back_matter | 8598 | 1.3% |
-| citation_markers | 7840 | 1.2% |
-| front_matter | 7471 | 1.2% |
+| citation_markers | 7822 | 1.2% |
+| front_matter | 7467 | 1.2% |
 | inline_residue | 4473 | 0.7% |
 | fragment | 4247 | 0.7% |
 | footnote | 2448 | 0.4% |
@@ -80,11 +80,11 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 ### Citations, footnotes, figures and tables
 
-- Citation markers (3274 sites): spoken label 1540 (47%), label read 636 (19%), number read 481 (15%), silent 244 (7%), glued number 215 (7%), context missing 158 (5%)
+- Citation markers (3274 sites): spoken label 1540 (47%), label read 641 (20%), number read 454 (14%), silent 259 (8%), glued number 215 (7%), context missing 158 (5%), named read 7 (0%)
 - Footnote markers (95 sites): label read 43 (45%), glued number 25 (26%), number read 11 (12%), silent 7 (7%), context missing 7 (7%), spoken label 2 (2%)
 - Figure and table captions: 506 of 544 read aloud (≥ half their words spoken)
 - Tables: 159 of 203 had their cells read aloud (≥ 30% of cell words)
-- Mid-sentence interruptions by what interrupted: {'unattributed_prose': 398, 'furniture': 252, 'caption': 73, 'repeated': 57, 'table': 36, 'fragment': 20, 'front_matter': 11, 'stamp_link': 11, 'footnote': 7, 'reference': 6, 'equation': 5}
+- Mid-sentence interruptions by what interrupted: {'unattributed_prose': 399, 'furniture': 252, 'caption': 73, 'repeated': 57, 'table': 36, 'fragment': 20, 'front_matter': 11, 'stamp_link': 11, 'footnote': 7, 'reference': 6, 'equation': 5}
 - Line-end hyphenation left unrepaired: 5064 words
 
 Marker outcomes: *silent* (nothing spoken between the words around it), *spoken label* ("citation 12", the app's normalizer), *number read* ("cells 12 divide"), *glued number* ("cells12"), *label read* (the author-year text read in full), *context missing* (the neighbouring words weren't spoken, so the marker can't be judged).
@@ -94,13 +94,13 @@ Marker outcomes: *silent* (nothing spoken between the words around it), *spoken 
 | Format | Papers | Median clutter | Median missing | Median order breaks /1000 |
 | --- | ---: | ---: | ---: | ---: |
 | journal | 43 | 20.1% | 0.9% | 2.08 |
-| single-column | 33 | 23.4% | 0.7% | 1.64 |
+| single-column | 33 | 23.5% | 0.7% | 1.64 |
 | two-column | 31 | 24.8% | 0.9% | 2.74 |
 | math-heavy | 19 | 33.5% | 1.8% | 3.18 |
 | conference | 12 | 25.9% | 0.7% | 3.32 |
 | author-manuscript | 5 | 20.8% | 0.4% | 1.55 |
 | scanned | 4 | 21.8% | 12.3% | 4.60 |
-| preprint | 4 | 42.3% | 2.5% | 2.74 |
+| preprint | 4 | 42.4% | 2.5% | 2.74 |
 | ocr-text-layer | 3 | 21.8% | 10.2% | 4.60 |
 | thesis | 3 | 43.6% | 2.7% | 4.50 |
 | image-only | 1 | – | 100.0% | – |
@@ -119,8 +119,8 @@ Ranked by listener cost per minute of real body text.
 | arxiv-2605.07149v1 | conference, two-column, math-heavy | 1.23 | 43.8% | 0.7% |
 | arxiv-2609.07965v1 | conference, two-column | 1.16 | 46.8% | 0.3% |
 | arxiv-2609.27549v1 | thesis, single-column, math-heavy | 1.14 | 44.6% | 2.8% |
-| arxiv-2609.25172v1 | thesis, single-column, math-heavy | 1.07 | 43.6% | 2.7% |
 | pmc-pmc10755645 | journal, two-column | 1.07 | 39.7% | 0.9% |
+| arxiv-2609.25172v1 | thesis, single-column, math-heavy | 1.07 | 43.6% | 2.7% |
 | arxiv-2506.00390v1 | preprint, single-column, math-heavy | 1.03 | 45.2% | 2.7% |
 | pmc-pmc11154291 | journal, single-column | 1.00 | 44.8% | 0.1% |
 | pmc-pmc11960816-imageonly | journal, scanned, image-only, derived | 1.00 | – | 100.0% |
@@ -448,7 +448,7 @@ Ranked by listener cost per minute of real body text.
 - Median clutter rate: **10.3%** of spoken words
 - Median missing body text: **1.0%**
 - Median reading-order breaks: 1.00 per 1000 body words
-- Median extraction time: 905 ms
+- Median extraction time: 1025 ms
 
 ### Failure categories ranked by listener cost
 
@@ -461,8 +461,8 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 | 2 | Reading order broken (columns, floats) | 118 | 0.7 | 40 |
 | 3 | Body text missing (never spoken) | 89 | 0.4 | 31 |
 | 4 | Table cells read aloud | 80 | 0.0 | 17 |
-| 5 | Reference list read aloud | 67 | 0.0 | 9 |
-| 6 | Back matter: funding, contributions, competing interests, reviewer reports | 60 | 0.3 | 29 |
+| 5 | Back matter: funding, contributions, competing interests, reviewer reports | 60 | 0.3 | 29 |
+| 6 | Reference list read aloud | 52 | 0.0 | 7 |
 | 7 | Mid-sentence interruptions (captions, footers inside a sentence) | 49 | 0.3 | 15 |
 | 8 | Display equations read aloud | 42 | 0.0 | 14 |
 | 9 | Title-page matter: authors, affiliations, identifiers | 29 | 0.1 | 18 |
@@ -470,7 +470,7 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 | 11 | Page furniture: running headers, footers, page and line numbers | 27 | 0.0 | 10 |
 | 12 | Stray fragments: figure labels, axis ticks | 11 | 0.1 | 3 |
 | 13 | Footnote text read inline | 10 | 0.0 | 7 |
-| 14 | Citation and footnote markers read as numbers or names | 8 | 0.0 | 5 |
+| 14 | Citation and footnote markers read as numbers or names | 6 | 0.0 | 4 |
 | 15 | Stamps, licences and links | 3 | 0.0 | 1 |
 | 16 | Line-end hyphenation left in ("bio- logy") | 0 | 0.0 | 0 |
 
@@ -478,23 +478,23 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 | Category | Words | Share of spoken |
 | --- | ---: | ---: |
-| body | 415751 | 75.4% |
-| math | 28894 | 5.2% |
+| body | 415750 | 75.8% |
+| math | 28903 | 5.3% |
 | caption | 26924 | 4.9% |
 | table | 12473 | 2.3% |
-| unattributed_prose | 10716 | 1.9% |
-| reference | 10330 | 1.9% |
+| unattributed_prose | 10716 | 2.0% |
 | back_matter | 9351 | 1.7% |
-| announcement | 7538 | 1.4% |
-| equation | 6580 | 1.2% |
-| front_matter | 4515 | 0.8% |
+| reference | 8102 | 1.5% |
+| announcement | 7542 | 1.4% |
+| equation | 6575 | 1.2% |
+| front_matter | 4504 | 0.8% |
 | repeated | 4376 | 0.8% |
-| furniture | 4136 | 0.8% |
+| furniture | 4137 | 0.8% |
 | inline_residue | 3972 | 0.7% |
-| fragment | 1758 | 0.3% |
+| fragment | 1760 | 0.3% |
 | footnote | 1627 | 0.3% |
 | authors | 782 | 0.1% |
-| citation_markers | 713 | 0.1% |
+| citation_markers | 656 | 0.1% |
 | stamp_link | 477 | 0.1% |
 | footnote_markers | 130 | 0.0% |
 
@@ -502,7 +502,7 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 ### Citations, footnotes, figures and tables
 
-- Citation markers (3274 sites): silent 2974 (91%), label read 135 (4%), context missing 92 (3%), number read 58 (2%), glued number 15 (0%)
+- Citation markers (3274 sites): silent 3012 (92%), label read 140 (4%), context missing 92 (3%), glued number 15 (0%), number read 8 (0%), named read 7 (0%)
 - Footnote markers (95 sites): label read 43 (45%), silent 35 (37%), number read 9 (9%), context missing 6 (6%), glued number 2 (2%)
 - Figure and table captions: 511 of 544 read aloud (≥ half their words spoken)
 - Tables: 48 of 203 had their cells read aloud (≥ 30% of cell words)
@@ -515,7 +515,7 @@ Marker outcomes: *silent* (nothing spoken between the words around it), *spoken 
 
 | Format | Papers | Median clutter | Median missing | Median order breaks /1000 |
 | --- | ---: | ---: | ---: | ---: |
-| journal | 43 | 8.7% | 0.7% | 0.58 |
+| journal | 43 | 8.8% | 0.7% | 0.58 |
 | single-column | 33 | 11.0% | 0.6% | 0.44 |
 | two-column | 31 | 9.8% | 1.1% | 1.24 |
 | math-heavy | 19 | 27.4% | 1.7% | 2.52 |
@@ -542,11 +542,11 @@ Ranked by listener cost per minute of real body text.
 | pmc-pmc11154291 | journal, single-column | 0.72 | 40.6% | 0.1% |
 | arxiv-2609.22558v1 | journal, two-column, math-heavy | 0.72 | 35.1% | 3.0% |
 | arxiv-2609.25172v1 | thesis, single-column, math-heavy | 0.71 | 27.9% | 4.2% |
-| arxiv-2506.00390v1 | preprint, single-column, math-heavy | 0.69 | 31.9% | 3.8% |
+| arxiv-2506.00390v1 | preprint, single-column, math-heavy | 0.69 | 32.0% | 3.8% |
 | pmc-pmc11326079 | journal, single-column | 0.66 | 24.6% | 0.1% |
 | arxiv-2607.07895v1 | conference, two-column | 0.60 | 32.2% | 1.9% |
-| pmc-pmc11150781 | journal, two-column | 0.60 | 34.9% | 0.5% |
 | arxiv-2609.21432v1 | conference, two-column, math-heavy | 0.59 | 30.5% | 1.7% |
+| arxiv-2609.19108v1 | journal, two-column, math-heavy | 0.53 | 29.9% | 1.2% |
 
 ## Cost model
 
