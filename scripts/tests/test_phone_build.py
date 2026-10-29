@@ -433,6 +433,10 @@ with open(os.path.join(app, "Info.plist"), "wb") as handle:
     plistlib.dump(info, handle)
 open(os.path.join(app, "embedded.mobileprovision"), "w").write("profile")
 subprocess.check_call(["codesign", "-s", "-", "--force", app], stderr=subprocess.DEVNULL)
+if os.environ.get("FAKE_DSYM"):
+    dwarf = os.path.join(app + ".dSYM", "Contents/Resources/DWARF")
+    os.makedirs(dwarf, exist_ok=True)
+    open(os.path.join(dwarf, "SpokenMarginsApp"), "w").write("dwarf")
 '''
 
 FAKE_NOTIFY = '''#!/bin/sh
@@ -583,6 +587,38 @@ class PhoneBuildTests(unittest.TestCase):
         self.assertIn(f'Commit {self.tip[:7]} is ready: 2 things to try.', builds)  # the owner's notification
         self.assertFalse(any((self.phone / '.work').iterdir()))  # temporary logs gone; cache persists
         self.assertNotIn('.work', self.git('worktree', 'list'))
+
+    def test_keeps_the_dsym_next_to_the_app_so_crash_frames_can_be_symbolicated(self):
+        done = self.run_build(FAKE_DSYM='1')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        latest = (self.phone / 'latest').resolve()
+        self.assertTrue((latest / 'SpokenMarginsApp.app.dSYM/Contents/Resources/DWARF/SpokenMarginsApp').is_file())
+        # 'matches' on the Mac, where dwarfdump reads the fake files' UUIDs; 'unchecked' where it can't.
+        self.assertIn(json.loads((latest / 'build.json').read_text())['dsym'], ('matches', 'unchecked', 'mismatch'))
+
+    def test_a_build_without_a_dsym_still_ships_and_says_so(self):
+        done = self.run_build()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        latest = (self.phone / 'latest').resolve()
+        self.assertEqual(json.loads((latest / 'build.json').read_text())['dsym'], 'missing')
+        self.assertFalse((latest / 'SpokenMarginsApp.app.dSYM').exists())
+        self.assertIn('no usable dSYM (missing)', done.stdout)
+
+    def test_check_dsym_keeps_only_a_dsym_whose_uuid_matches_the_binary(self):
+        module = load_phone_build()
+        dsym = self.tmp / 'x.dSYM'
+        dsym.mkdir()
+        app = self.tmp / 'SpokenMarginsApp.app'
+        uuid_a, uuid_b = 'A' * 8 + '-' + 'B' * 4 + '-' + 'C' * 4 + '-' + 'D' * 4 + '-' + 'E' * 12, '1' * 8 + '-2222-3333-4444-' + '5' * 12
+        cases = [({str(app / 'SpokenMarginsApp'): {uuid_a}, str(dsym): {uuid_a}}, (dsym, 'matches')),
+                 ({str(app / 'SpokenMarginsApp'): {uuid_a}, str(dsym): {uuid_b}}, (None, 'mismatch')),
+                 ({}, (dsym, 'unchecked'))]
+        for uuids, expected in cases:
+            with self.subTest(expected=expected[1]), unittest.mock.patch.object(
+                    module, 'binary_uuids', side_effect=lambda path, table=uuids: table.get(str(path), set())):
+                self.assertEqual(module.check_dsym(app, dsym), expected)
+        self.assertEqual(module.check_dsym(app, None), (None, 'missing'))
+        self.assertEqual(module.check_dsym(app, self.tmp / 'absent.dSYM'), (None, 'missing'))
 
     def test_plan_starts_at_the_installed_build(self):
         second = self.git('rev-parse', 'HEAD~1')  # after #10 and #11
@@ -842,6 +878,8 @@ elif args[:2] == ["run", "download"]:
     out = args[args.index("-D") + 1]
     os.makedirs(out)
     shutil.copy(os.environ["FAKE_HOSTED_ZIP"], os.path.join(out, "SpokenMarginsApp.app.zip"))
+    if os.environ.get("FAKE_HOSTED_DSYM_ZIP"):
+        shutil.copy(os.environ["FAKE_HOSTED_DSYM_ZIP"], os.path.join(out, "SpokenMarginsApp.app.dSYM.zip"))
     json.dump({"sha": tip, "build_seconds": 1500}, open(os.path.join(out, "build.json"), "w"))
     open(os.path.join(out, "build.log"), "w").write("** BUILD SUCCEEDED ** (hosted)\n")
 else:
@@ -898,6 +936,24 @@ class HostedPhoneBuildTests(unittest.TestCase):
         self.assertIn('gh run download 77 -R Spoken-Margins/spoken-margins-native -n phone-build-' + self.tip, calls)
         self.assertNotIn('-configuration Release', calls)  # no xcodebuild at all
         self.assertNotIn('verify-tests.py', calls)
+
+    def test_keeps_the_hosted_builds_dsym_when_the_artifact_has_one(self):
+        dsym = self.tmp / 'hosted-dsym' / 'SpokenMarginsApp.app.dSYM'
+        (dsym / 'Contents/Resources/DWARF').mkdir(parents=True)
+        (dsym / 'Contents/Resources/DWARF/SpokenMarginsApp').write_text('dwarf')
+        archive = dsym.parent / 'SpokenMarginsApp.app.dSYM.zip'
+        subprocess.check_call(['ditto', '-c', '-k', '--keepParent', str(dsym), str(archive)])
+        done = self.run_build(FAKE_HOSTED_DSYM_ZIP=str(archive))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        latest = (self.phone / 'latest').resolve()
+        self.assertTrue((latest / 'SpokenMarginsApp.app.dSYM/Contents/Resources/DWARF/SpokenMarginsApp').is_file())
+        # The fake app has no real UUID; a Mac's dwarfdump reads none from either file, so they are kept unchecked.
+        self.assertEqual(json.loads((latest / 'build.json').read_text())['dsym'], 'unchecked')
+
+    def test_a_hosted_build_without_a_dsym_still_installs(self):
+        done = self.run_build()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(json.loads((self.phone / 'latest/build.json').read_text())['dsym'], 'missing')
 
     def test_only_the_workflows_own_schedule_or_dispatch_runs_count(self):
         for extra in ({'FAKE_HOSTED_EVENT': 'pull_request'}, {'FAKE_HOSTED_EVENT': 'push'},
