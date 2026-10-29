@@ -21,10 +21,27 @@ public enum LiveSessionEdit {
         session.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// The chapter or page the session started at. Blank clears it.
+    /// The chapter, page or percent the session started at. Blank clears it. What can be read as a place ("p. 118",
+    /// "chapter seven", "40%") is kept as one, in the unit the listener used, and its words normalised ("Page 118");
+    /// anything else stays as typed.
     public static func setStartWhere(_ text: String, on session: inout LiveSession) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        session.startWhere = trimmed.isEmpty ? nil : trimmed
+        // Unchanged words are left as they were, so opening the details of a session from an earlier build rewrites nothing.
+        if text.trimmingCharacters(in: .whitespacesAndNewlines) == (session.startWhere ?? "") { return }
+        let read = LiveSessionWhere.interpret(clockText: "", whereText: text, kind: session.kind)
+        session.startWhere = read.text
+        session.startPlace = read.place
+    }
+
+    /// Takes the start a meeting's end clock implies as the start position (see `LiveSessionPlaceMap.clockCheck`).
+    /// False, changing nothing, when there is nothing to take or it would put the start after the end.
+    @discardableResult
+    public static func useImpliedStart(on session: inout LiveSession) -> Bool {
+        // A negative start (Start tapped before the call's clock began) is not offered: it is said, not adopted.
+        guard let check = LiveSessionPlaceMap.clockCheck(for: session), check.impliedStartMs >= 0,
+              (try? LiveSessionPositionMap.validate(startPositionMs: check.impliedStartMs, endPositionMs: session.endPositionMs)) != nil
+        else { return false }
+        session.startPositionMs = check.impliedStartMs
+        return true
     }
 
     /// Says where the source is at `now`: "the meeting is at 12:30". The clock then runs from there, so the start

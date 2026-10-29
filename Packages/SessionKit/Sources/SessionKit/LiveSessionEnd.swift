@@ -81,9 +81,10 @@ public enum LiveSessionEnd {
     /// before the tap are kept and noted "after the session ended". Throws, changing nothing, for a time that can't be.
     public static func end(
         _ session: inout LiveSession, when: When, tappedAt: Date, endPositionMs: Int?, endWhere: String?,
-        calendar: Calendar = .current
+        endPlace: LiveSessionPlace? = nil, calendar: Calendar = .current
     ) throws {
         try LiveSessionPositionMap.validate(startPositionMs: session.startPositionMs, endPositionMs: endPositionMs)
+        try LiveSessionPlaceMap.validate(start: session.startPlace, end: endPlace)
         guard var stoppedAt = when.date(tappedAt: tappedAt, calendar: calendar) else { throw Failure.stoppedBeforeStart }
         // A time picked from a clock has no seconds: "this minute" lies up to a minute before the tap and means now.
         if case .clockTime = when, tappedAt.timeIntervalSince(stoppedAt) < 60 { stoppedAt = tappedAt }
@@ -93,6 +94,7 @@ public enum LiveSessionEnd {
         session.endTappedAt = late ? tappedAt : nil
         session.endPositionMs = endPositionMs
         session.endWhere = endWhere
+        session.endPlace = endPlace
         guard late else { return }
         for index in session.margins.indices where session.margins[index].markedAt > stoppedAt {
             session.margins[index].filingNote = session.margins[index].filingNote ?? LiveSessionFiling.afterEndNote

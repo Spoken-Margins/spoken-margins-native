@@ -103,6 +103,7 @@ public struct LiveSessionCollection {
             merged.endTappedAt = legacy.endTappedAt
             merged.endPositionMs = merged.endPositionMs ?? legacy.endPositionMs
             merged.endWhere = merged.endWhere ?? legacy.endWhere
+            merged.endPlace = merged.endPlace ?? legacy.endPlace
             changed = true
         }
         guard changed else { return false }
