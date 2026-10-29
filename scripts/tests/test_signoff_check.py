@@ -23,8 +23,9 @@ class CheckTests(unittest.TestCase):
             ('unsigned first-timer', [commit('x')], 'FIRST_TIME_CONTRIBUTOR', 'ada', 1),
             ('one of two unsigned', [commit(SIGNED), commit('Fix typo\n')], 'NONE', 'ada', 1),
             ('unsigned merge commit', [commit('Merge branch main', parents=('p', 'q'))], 'NONE', 'ada', 0),
-            ('unsigned commit by a bot account', [commit('x', email='41898282+dependabot[bot]@users.noreply.github.com')],
-             'NONE', 'ada', 0),
+            # The author email is typed by the contributor, so it can't exempt a commit.
+            ('unsigned commit with a bot-style author email', [commit('x', email='me[bot]@users.noreply.github.com')],
+             'NONE', 'ada', 1),
             ('unsigned PR by a bot', [commit('x')], 'NONE', 'dependabot[bot]', 0),
             ('unsigned collaborator', [commit('x')], 'COLLABORATOR', 'cole', 0),
             ('unsigned owner', [commit('x')], 'OWNER', 'cole', 0),

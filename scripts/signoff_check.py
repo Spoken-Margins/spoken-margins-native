@@ -33,8 +33,10 @@ FIX = (
 )
 
 
-def is_bot(login: str, commit_author_email: str = '') -> bool:
-    return login.lower().endswith('[bot]') or bool(re.search(r'\[bot\]@users\.noreply\.github\.com$', commit_author_email, re.I))
+def is_bot(login: str) -> bool:
+    """A bot PR author. Only the login counts: GitHub sets it, whereas a commit's author email is whatever the
+    contributor typed, so `me[bot]@users.noreply.github.com` must not exempt an outsider's commits."""
+    return login.lower().endswith('[bot]')
 
 
 def parse_log(raw: str) -> list[dict]:
@@ -49,10 +51,8 @@ def parse_log(raw: str) -> list[dict]:
 
 
 def unsigned(commits: list[dict]) -> list[dict]:
-    """The commits that need a sign-off and lack one. Merge commits (two parents or more) are exempt, as are
-    commits by a bot account."""
-    return [c for c in commits
-            if len(c['parents']) < 2 and not is_bot('', c['author_email']) and not SIGNOFF.search(c['body'])]
+    """The commits that need a sign-off and lack one. Merge commits (two parents or more) are exempt."""
+    return [c for c in commits if len(c['parents']) < 2 and not SIGNOFF.search(c['body'])]
 
 
 def check(commits: list[dict], association: str, login: str) -> list[dict]:
