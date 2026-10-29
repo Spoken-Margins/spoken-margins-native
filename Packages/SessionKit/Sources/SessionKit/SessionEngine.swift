@@ -2927,7 +2927,7 @@ public final class SessionEngine {
     @discardableResult
     public func transcriptionRetryFailed(interjectionId: String, sessionId: String? = nil, error: String) throws -> SessionSnapshot {
         if let sessionId,
-           let stored = try repository.loadInterjections(sessionId: sessionId).first(where: { $0.id == interjectionId }),
+           let stored = try loadInterjection(interjectionId, inSession: sessionId),
            stored.transcriptionStatus != "pending" {
             return snapshot
         }
@@ -5023,9 +5023,7 @@ public final class SessionEngine {
     ) throws {
         if let sessionId {
             guard (try repository.loadSession(id: sessionId)) != nil,
-                  var interjection = try repository.loadInterjections(sessionId: sessionId).first(where: {
-                      $0.id == id && $0.sessionId == sessionId
-                  }) else {
+                  var interjection = try loadInterjection(id, inSession: sessionId) else {
                 throw SessionKitError.invalidCommandForState("updateInterjection")
             }
             mutate(&interjection)
@@ -5040,10 +5038,9 @@ public final class SessionEngine {
             return
         }
         guard let session = currentSession else { throw SessionKitError.invalidCommandForState("updateInterjection") }
-        var all = try repository.loadInterjections(sessionId: session.id)
-        guard var interjection = all.first(where: { $0.id == id }) else {
+        guard var interjection = try loadInterjection(id, inSession: session.id) else {
             // Fixtures may use a mapless session while the current runtime session differs; preserve trace intent.
-            all = try repository.loadInterjections(sessionId: "session-pill-mapless")
+            let all = try repository.loadInterjections(sessionId: "session-pill-mapless")
             guard var fallback = all.first(where: { $0.id == id }) else { throw SessionKitError.invalidCommandForState("updateInterjection") }
             mutate(&fallback)
             try repository.saveInterjection(fallback)
@@ -5053,6 +5050,15 @@ public final class SessionEngine {
         mutate(&interjection)
         try repository.saveInterjection(interjection)
         lastMediaPercentageRepair = nil
+    }
+
+    /// One Margin of a session, read by id where the store can (#2509) instead of decoding every Margin of the session.
+    private func loadInterjection(_ id: String, inSession sessionId: String) throws -> Interjection? {
+        if let reader = repository as? InterjectionByIdReading,
+           let found = try reader.loadInterjection(id: id, sessionId: sessionId) {
+            return found
+        }
+        return try repository.loadInterjections(sessionId: sessionId).first { $0.id == id && $0.sessionId == sessionId }
     }
 
     private func ensureWatchPackageRecords(_ package: WatchAudioPackage) throws {

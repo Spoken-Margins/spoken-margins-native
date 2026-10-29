@@ -2131,6 +2131,14 @@ private struct ImportedWatchSyncEvent: Codable {
     var importedAt: Date
 }
 
+extension SQLiteSessionStore: InterjectionByIdReading {
+    /// A Margin row is keyed by its session and id (`storageID`), so this is one primary-key read.
+    public func loadInterjection(id: String, sessionId: String) throws -> Interjection? {
+        let stored: Interjection? = try loadOptional(kind: "interjection", id: storageID(kind: "interjection", id: id, sessionId: sessionId))
+        return stored.flatMap { $0.id == id && $0.sessionId == sessionId ? $0 : nil }
+    }
+}
+
 extension SQLiteSessionStore: ItemRevisionReading {}
 extension SQLiteSessionStore: ItemAddressLookup {}
 
