@@ -425,6 +425,7 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(opening("cytokines such as IFN-γ.", "46 In the CD16+ NK cells, expression rose."), ["46"])
         XCTAssertEqual(opening("in one or another direction”", ".", "12 He published his findings."), ["12"])
         XCTAssertEqual(opening("as reported before.", "14,15 Essential definitions of the term followed."), ["14,15"])
+        XCTAssertEqual(opening("infection with Clostridioides difficile.", "2 Recent studies have"), ["2"], "a short line of a sentence")
         // Prose keeps its numbers: no superscripts elsewhere, no such entry, a lowercase word, a number before the stop.
         XCTAssertEqual(opening("cytokines such as IFN-γ.", "46 In the CD16+ NK cells, expression rose.", with: []), [])
         XCTAssertEqual(opening("cytokines such as IFN-γ.", "60 In the CD16+ NK cells, expression rose."), [])
@@ -434,6 +435,7 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(opening("cytokines such as IFN-γ", "46 In the CD16+ NK cells, expression rose."), [], "no full stop before the line break")
         // A heading stub or a numbered list that opens the line keeps its number.
         XCTAssertEqual(opening("Ten were excluded.", "2 Materials and Methods"), [])
+        XCTAssertEqual(opening("Ten were excluded.", "2 Results"), [])
         XCTAssertEqual(opening("The steps were as follows.", "1 Mix the reagents in a tube.", "2 Heat the tube to 90 C."), [])
         XCTAssertEqual(opening("Then heat it.", "3 Cool the tube on ice for a while.", "4 Spin the tube down."), [])
     }

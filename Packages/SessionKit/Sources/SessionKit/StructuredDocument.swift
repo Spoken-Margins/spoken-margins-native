@@ -516,7 +516,7 @@ public enum StructuredDocumentBuilder {
     }
 
     /// A number opening a line ("46 In the CD16+ NK cells, the expression rose") is a wrapped superscript
-    /// only inside running prose: not a heading stub ("2 Materials and Methods"), and not a numbered list,
+    /// only inside running prose: not a heading ("2 Materials and Methods"), and not a numbered list,
     /// whose lines before and after open with the numbers either side of it ("1 Mix…", "2 Heat…").
     private static func continuesAParagraph(_ text: NSString, digits: NSRange) -> Bool {
         let numbers = text.substring(with: digits).split { !$0.isNumber }.compactMap { Int($0) }
@@ -524,7 +524,11 @@ public enum StructuredDocumentBuilder {
         let line = text.lineRange(for: digits)
         let end = digits.location + digits.length
         let rest = text.substring(with: NSRange(location: end, length: line.location + line.length - end))
-        guard rest.split(whereSeparator: \.isWhitespace).count >= 4 else { return false }
+        // "Recent studies have" runs on as a sentence; "Materials and Methods" is a heading in title case.
+        let words = rest.split(whereSeparator: \.isWhitespace)
+        guard words.count >= 3,
+              words.dropFirst().contains(where: { $0.first?.isLowercase == true && !headingConnectives.contains($0.lowercased()) })
+        else { return false }
         func opens(_ range: NSRange, with number: Int) -> Bool {
             text.substring(with: range).range(of: "^\\s*\(number)[ .)]", options: .regularExpression) != nil
         }
@@ -532,6 +536,8 @@ public enum StructuredDocumentBuilder {
         let after = line.location + line.length
         return !(after < text.length && opens(text.lineRange(for: NSRange(location: after, length: 0)), with: last + 1))
     }
+
+    private static let headingConnectives: Set<String> = ["a", "an", "and", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "with"]
 
     private static let nonCitationAbbreviations: Set<String> = [
         "no", "nos", "vol", "vols", "ref", "refs", "p", "pp", "v", "ver", "version", "ch", "chap", "art", "para",
