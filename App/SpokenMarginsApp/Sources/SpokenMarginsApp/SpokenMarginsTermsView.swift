@@ -88,13 +88,26 @@ struct SpokenMarginsTermsView: View {
 }
 
 /// The Terms at a first Play (#2853): one screen with a short summary, a link to the complete Terms, and both
-/// actions in view without scrolling. Accepting starts the play; so does choosing the iOS voice. The complete Terms
-/// and the same two actions stay behind "Read the complete Terms" and in Settings, where a voice the listener picks
-/// shows the whole text first.
+/// actions in view without scrolling. Accepting starts the play; so does choosing the iOS voice. "Read the complete
+/// Terms" opens the whole text to read, and Back returns here; Settings shows the whole text, with the actions at its
+/// end, for a voice the listener picks.
 private struct TermsSummaryView: View {
     @EnvironmentObject private var model: Gate1AppModel
 
+    /// The whole screen when it fits; a scrolling copy at accessibility text sizes or in landscape, so the buttons
+    /// can always be reached on a sheet that can't be swiped away.
     var body: some View {
+        ViewThatFits(in: .vertical) {
+            content.frame(maxHeight: .infinity, alignment: .topLeading)
+            ScrollView { content }
+        }
+        .padding()
+        .navigationTitle("Terms of Use")
+        .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("terms.screen")
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Before you listen")
                 .font(.title2.bold())
@@ -132,10 +145,6 @@ private struct TermsSummaryView: View {
                 .accessibilityIdentifier("terms.decline.button")
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding()
-        .navigationTitle("Terms of Use")
-        .navigationBarTitleDisplayMode(.inline)
-        .accessibilityIdentifier("terms.screen")
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
