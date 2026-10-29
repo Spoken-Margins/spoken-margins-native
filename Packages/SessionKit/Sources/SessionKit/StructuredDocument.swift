@@ -435,9 +435,10 @@ public enum StructuredDocumentBuilder {
     ) -> [StructuredDocument.Marker] {
         let group = #"([0-9]{1,3}(?:\s*[,–-]\s*[0-9]{1,3}|[ ][0-9]{1,3})*)(?=\s|$|[;:,.](?:\s|$))"#
         // The last form is a number set apart after a full stop and ahead of a new sentence: "respectively. 18,19 Of these",
-        // or opening the next line: "such as IFN-γ." then "46 In the CD16+" (#1189).
+        // or opening the next line: "such as IFN-γ." then "46 In the CD16+" (#1189). A letter standing alone
+        // before that stop is a unit or an initial ("for 24 h.", "from J."), not a cited term.
         guard let regex = try? NSRegularExpression(pattern: #"(?<=\p{L}\p{L})([.,;])"# + group + #"|([)\]”"])[.,;:]?"# + group
-                                                    + #"|(\.)(?:(?<=\p{L}\p{L}\.)[ ]|(?<=[\p{L}”’"]\n?\.)\n)"# + group + #"(?= \p{Lu})"#),
+                                                    + #"|(\.)(?:(?<=\p{L}\p{L}\.)[ ]|(?<=[\p{L}”’"]\n?\.)(?<!\s\p{L}\n?\.)\n)"# + group + #"(?= \p{Lu})"#),
               let math = try? NSRegularExpression(pattern: #"[+−×÷^=<>/*|]|(?:^|[^\p{L}])[\p{L}0-9]\s*-\s*[\p{L}0-9](?:[^\p{L}]|$)"#),
               let lostSpace = try? NSRegularExpression(pattern: #"\p{Ll}{2}[,;]\p{Ll}{2}"#),
               // "(a, b)2", "(x, y)2": a pair of variables, squared.

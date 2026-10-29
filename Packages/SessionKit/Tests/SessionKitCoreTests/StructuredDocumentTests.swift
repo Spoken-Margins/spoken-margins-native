@@ -433,6 +433,9 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(opening("Samples are in Table 2.", "7 Of these were kept."), [])
         XCTAssertEqual(opening("Counts rose; see Fig.", "7 Of these, none were."), [])
         XCTAssertEqual(opening("cytokines such as IFN-γ", "46 In the CD16+ NK cells, expression rose."), [], "no full stop before the line break")
+        // A unit or an initial before the stop is a word on its own, not a cited term.
+        XCTAssertEqual(opening("Cells were incubated for 24 h.", "12 Mice were treated with the drug."), [])
+        XCTAssertEqual(opening("The strain was a gift from J.", "12 Smith and colleagues at the institute."), [])
         // A heading stub or a numbered list that opens the line keeps its number.
         XCTAssertEqual(opening("Ten were excluded.", "2 Materials and Methods"), [])
         XCTAssertEqual(opening("Ten were excluded.", "2 Results"), [])
