@@ -131,6 +131,9 @@ public enum LiveSessionMarkdown {
         if let start = session.startPositionMs { lines.append("- Started at: \(LiveSessionPositionMap.clock(start))") }
         if let end = session.endPositionMs { lines.append("- Ended at: \(LiveSessionPositionMap.clock(end))") }
         if let bracket = session.bracket { lines.append("- Where: \(bracket)") }
+        // Evidence that disagrees is said, never settled silently (#2707).
+        for conflict in LiveSessionPlaceMap.conflicts(in: session) { lines.append("- Check: " + conflict.description(timeZone: timeZone)) }
+        if let check = LiveSessionPlaceMap.clockCheck(for: session) { lines.append("- Check: " + check.note) }
         lines.append("- Margins: \(session.margins.count)")
 
         let placedById = Dictionary(record.placed.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -142,12 +145,23 @@ public enum LiveSessionMarkdown {
         }
         for (number, margin) in ordered.enumerated() {
             let placed = placedById[margin.id]
-            let at = placed.map { LiveSessionPositionMap.clock($0.offsetMs) }
-                ?? LiveSessionPositionMap.position(of: margin, in: session).map(\.label)
             let exact = placed?.source == .transcriptMatch || placed?.addedLater == true
-            lines += ["", "## \(number + 1). " + (at.map { exact ? $0 : "About \($0)" } ?? "Margin")]
+            // A session placed by page, percent or chapter is headed by that place and never by a time (#2707): the
+            // session offset in `placed` is how far into the session the Margin was, not where in the source.
+            let located = session.usesPlaces && !exact ? LiveSessionPlaceMap.located(margin, in: session) : nil
+            let heading: String
+            if session.usesPlaces && !exact {
+                heading = located?.sentenceLabel ?? "Margin"
+            } else {
+                let at = placed.map { LiveSessionPositionMap.clock($0.offsetMs) }
+                    ?? LiveSessionPositionMap.position(of: margin, in: session).map(\.label)
+                heading = at.map { exact ? $0 : "About \($0)" } ?? "Margin"
+            }
+            lines += ["", "## \(number + 1). " + heading]
             lines += ["", margin.isBlindMark && margin.text.trimmingCharacters(in: .whitespaces).isEmpty ? "_Mark, no words._" : margin.savedText]
-            if let note = margin.whereNote?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+            if let place = margin.place, located?.basis != .said {
+                lines += ["", "Where: \(place.label)."]
+            } else if margin.place == nil, let note = margin.whereNote?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
                 lines += ["", "Where: \(note) or so."]
             }
             lines += ["", "Position: " + evidence(margin: margin, placed: placed, session: session)]
@@ -174,6 +188,16 @@ public enum LiveSessionMarkdown {
             return "Added after the session" + (placed?.listenerMs.map { ", at \(LiveSessionPositionMap.clock($0)) in the recording" } ?? "")
         }
         var parts: [String] = []
+        if session.usesPlaces, placed?.matchMs == nil {
+            // Placed by page, percent or chapter: say what the listener said and what is worked out, in their unit.
+            if let place = margin.place { parts.append("you said \(place.label)") }
+            if let estimate = LiveSessionPlaceMap.located(margin, in: session), estimate.basis == .estimate {
+                parts.append("estimate \(estimate.label)")
+            }
+            parts.append("\(LiveSessionPositionMap.clock(margin.sessionOffsetMs)) into the session")
+            let joined = parts.joined(separator: " · ")
+            return joined.prefix(1).uppercased() + joined.dropFirst()
+        }
         if let matchMs = placed?.matchMs {
             let score = placed?.matchScore.map { " \(Int(($0 * 100).rounded()))%" } ?? ""
             // A match that disagreed with the other evidence is still shown, marked as not used (#2485 audit).

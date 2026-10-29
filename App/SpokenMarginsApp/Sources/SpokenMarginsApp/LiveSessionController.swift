@@ -73,14 +73,15 @@ final class LiveSessionController: ObservableObject {
         return position
     }
 
-    func start(kind: ElsewhereKind, title: String, startPositionMs: Int?, startWhere: String?) {
+    func start(kind: ElsewhereKind, title: String, startPositionMs: Int?, startWhere: String?, startPlace: LiveSessionPlace? = nil) {
         // Marks from before this session are filed by their time, so they don't land in it (slice 1a point 7).
         WatchMarginReceiver.shared.fileWaitingMarks()
-        let started = LiveSession(
+        var started = LiveSession(
             id: "live-\(UUID().uuidString.lowercased())", kind: kind,
             title: title.trimmingCharacters(in: .whitespacesAndNewlines), startedAt: Date(),
             startPositionMs: startPositionMs, startWhere: startWhere
         )
+        started.startPlace = startPlace
         session = started
         save()
         startActivity(for: started)
@@ -89,10 +90,10 @@ final class LiveSessionController: ObservableObject {
 
     /// Ends the session, which stopped at `when` (#2709). Rejects an end position before the start position, and a
     /// stopped time before the session began or in the future.
-    func end(when: LiveSessionEnd.When = .now, endPositionMs: Int?, endWhere: String?) -> Bool {
+    func end(when: LiveSessionEnd.When = .now, endPositionMs: Int?, endWhere: String?, endPlace: LiveSessionPlace? = nil) -> Bool {
         guard var ending = session else { return false }
         do {
-            try LiveSessionEnd.end(&ending, when: when, tappedAt: Date(), endPositionMs: endPositionMs, endWhere: endWhere)
+            try LiveSessionEnd.end(&ending, when: when, tappedAt: Date(), endPositionMs: endPositionMs, endWhere: endWhere, endPlace: endPlace)
         } catch {
             errorMessage = error.localizedDescription
             return false
@@ -147,12 +148,35 @@ final class LiveSessionController: ObservableObject {
         guard isRunning, let current = session, !trimmed.isEmpty else { return }
         let markedAt = Date()
         var margin = current.margin(id: UUID().uuidString.lowercased(), text: trimmed, markedAt: markedAt, whereNote: whereNote)
+        // "page 118" typed with the Margin is the listener's own place, in their unit (#2707).
+        if let whereNote {
+            margin.place = LiveSessionPlace.parseWhole(whereNote, defaultUnit: LiveSessionPlace.defaultUnit(for: current.kind), allowsTime: false)
+        }
         if adjustmentMs != 0, let estimate = LiveSessionPositionMap.position(at: markedAt, in: current) {
             margin.listenerPositionMs = max(0, estimate.ms + adjustmentMs)
         }
         session?.margins.append(margin)
         session?.margins.sort { $0.markedAt < $1.markedAt }
         save()
+    }
+
+    /// Keeps the page, percent or chapter heard in a Margin's words as that Margin's checkpoint (#2707).
+    func keepHeardPlace(id: String) {
+        guard session?.keepHeardPlace(forMarginId: id) == true else { return }
+        save()
+    }
+
+    func declineHeardPlace(id: String) {
+        guard session?.declineHeardPlace(forMarginId: id) == true else { return }
+        save()
+    }
+
+    /// Takes the meeting start that the end clock implies, when it disagrees with the one typed (#2707).
+    func useImpliedStart() {
+        guard hasEnded, var edited = session, LiveSessionEdit.useImpliedStart(on: &edited) else { return }
+        session = edited
+        save()
+        sessionChanged()
     }
 
     func updateText(id: String, text: String) {
