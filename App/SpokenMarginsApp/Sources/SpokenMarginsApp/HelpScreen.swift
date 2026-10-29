@@ -76,17 +76,10 @@ struct HelpScreen: View {
                     Text("Open the Margins tab and tap a Margin to hear its recording or read its transcript.")
                 }
                 Section("Optional AI") {
-                    if model.remoteProviderExperienceEnabled {
-                        Text("Summarize Notes synthesizes the Margins in the current session. Discuss answers a question using relevant source and session context.")
-                        Text("Both features require your OpenAI API key, network access, and separate permission to send content. Listening, Margins, the timeline, and export work without AI.")
-                        Button("Open AI Settings", action: model.openAISettingsFromOnboarding)
-                            .accessibilityIdentifier("help.aiSettings.button")
-                    } else {
-                        Text("Summarize Notes uses Apple’s on-device Foundation Model when available. Listening Maps use publisher chapters for podcasts and deterministic structure for native text.")
-                        Text("AI-generated Listening Maps are reserved for a future server-hosted option and are not included in this release.")
-                        Text("Discuss and third-party API settings are disabled. Copy your Margins to another chatbot and paste its response into the Conversation section if you want that workflow.")
-                        LabeledContent("Availability", value: model.localFoundationModelAvailabilityDescription)
-                    }
+                    Text("Summarize Notes uses Apple’s on-device Foundation Model when available. Listening Maps use publisher chapters for podcasts and deterministic structure for native text.")
+                    Text("AI-generated Listening Maps are reserved for a future server-hosted option and are not included in this release.")
+                    Text("Discuss and third-party API settings are disabled. Copy your Margins to another chatbot and paste its response into the Conversation section if you want that workflow.")
+                    LabeledContent("Availability", value: model.localFoundationModelAvailabilityDescription)
                 }
                 Section("Safari Articles") {
                     Text("In Safari, open Manage Extensions and enable Spoken Margins Text. Tap the extension once to send the readable page to Spoken Margins.")

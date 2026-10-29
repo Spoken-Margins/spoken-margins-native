@@ -44,7 +44,6 @@ struct PlaybackScreen: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var selectedPane: PlaybackPane = .now
     @State private var isTimelineEditing = false
-    @State private var followUp = ""
     @State private var selectedInterjection: Interjection?
     @State private var isPastingAssistantResponse = false
     @State private var mediaScrubState = PlaybackScrubState()
@@ -59,7 +58,6 @@ struct PlaybackScreen: View {
     @State private var timelinePullTriggered = false
     @State private var playbackTick = 0 // bumped by each progress tick, so this screen follows the clock (#2074)
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
-    @FocusState private var followUpFocused: Bool
 
     /// Back to the Library while playback goes on. The Library label lower down stays; this one is where a listener
     /// looks first. On Now it sits in line with the title, so the screen gets no taller (#2262).
@@ -195,12 +193,6 @@ struct PlaybackScreen: View {
                     }
                 } else if selectedPane == .margins {
                     ToolbarItem(placement: .topBarLeading) { libraryExitButton }
-                }
-                if selectedPane != .timeline {
-                    ToolbarItemGroup(placement: .keyboard) {
-                        Spacer()
-                        Button("Done") { followUpFocused = false }
-                    }
                 }
             }
             .scrollDismissesKeyboard(.interactively)
@@ -424,17 +416,6 @@ struct PlaybackScreen: View {
             .buttonStyle(SecondaryButtonStyle())
             .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
             .accessibilityIdentifier("playback.summary.button")
-        }
-        if model.remoteProviderExperienceEnabled {
-            TextField("Ask about this session", text: $followUp, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .focused($followUpFocused)
-            Button("Discuss", systemImage: "bubble.left.and.bubble.right") {
-                followUpFocused = false
-                model.discuss(followUp: followUp)
-            }
-            .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .accessibilityIdentifier("playback.discuss.button")
         }
         Button("Margins", systemImage: "quote.bubble") {
             closeOptions(to: .margins)
@@ -1653,9 +1634,7 @@ struct PlaybackScreen: View {
                     .accessibilityIdentifier("conversation.pasteResponse.button")
                 }
                 if model.selectedItem.turns.isEmpty {
-                    Text(model.remoteProviderExperienceEnabled
-                        ? "Generate a summary or send a follow-up after listening."
-                        : "Generate an on-device summary, or paste a response from another chatbot.")
+                    Text("Generate an on-device summary, or paste a response from another chatbot.")
                         .foregroundStyle(AppColors.secondaryText)
                 } else {
                     ForEach(model.selectedItem.turns, id: \.id) { turn in
@@ -1700,26 +1679,6 @@ struct PlaybackScreen: View {
                     Button("Retry Summary", action: model.retryPendingAI)
                         .buttonStyle(SecondaryButtonStyle())
                         .accessibilityIdentifier("conversation.retrySummary.button")
-                }
-                if model.remoteProviderExperienceEnabled {
-                    TextField("Ask a follow-up…", text: $followUp, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-                        .focused($followUpFocused)
-                        .accessibilityLabel("Ask a follow-up")
-                        .accessibilityIdentifier("conversation.followup.field")
-                    HStack {
-                        Button("Submit") {
-                            followUpFocused = false
-                            model.followUp(followUp)
-                        }
-                        .buttonStyle(PrimaryButtonStyle())
-                        .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .accessibilityIdentifier("conversation.submit.button")
-                        Button("Retry AI", action: model.retryPendingAI)
-                            .buttonStyle(SecondaryButtonStyle())
-                            .disabled(!model.hasActiveSession)
-                            .accessibilityIdentifier("conversation.retry.button")
-                    }
                 }
             }
         }
@@ -1783,32 +1742,13 @@ private struct GuidedOnboardingPlaybackCard: View {
             Text("AI is optional")
                 .font(.title3.bold())
                 .screenTitle()
-            Text(model.remoteProviderExperienceEnabled
-                ? "Summarize Notes sums up this session’s Margins. Discuss answers a question using relevant source and session context. Both require your OpenAI API key, network access, and permission to send content."
-                : "Summarize Notes uses Apple’s on-device model when it is available. Nothing is sent to a third-party AI service. You can also copy notes to another chatbot and paste its response back here.")
+            Text("Summarize Notes uses Apple’s on-device model when it is available. Nothing is sent to a third-party AI service. You can also copy notes to another chatbot and paste its response back here.")
                 .foregroundStyle(AppColors.secondaryText)
-            if model.remoteProviderExperienceEnabled {
-                ViewThatFits(in: .horizontal) {
-                    HStack {
-                        Button("Set Up AI", action: model.openAISettingsFromOnboarding)
-                            .buttonStyle(SecondaryButtonStyle())
-                        Button("Continue Without AI", action: model.continueGuidedOnboardingPastAI)
-                            .buttonStyle(PrimaryButtonStyle())
-                    }
-                    VStack(alignment: .leading, spacing: 10) {
-                        Button("Continue Without AI", action: model.continueGuidedOnboardingPastAI)
-                            .buttonStyle(PrimaryButtonStyle())
-                        Button("Set Up AI", action: model.openAISettingsFromOnboarding)
-                            .buttonStyle(SecondaryButtonStyle())
-                    }
-                }
-            } else {
-                Text(model.localFoundationModelAvailabilityDescription)
-                    .font(.caption)
-                    .foregroundStyle(AppColors.secondaryText)
-                Button("Continue", action: model.continueGuidedOnboardingPastAI)
-                    .buttonStyle(PrimaryButtonStyle())
-            }
+            Text(model.localFoundationModelAvailabilityDescription)
+                .font(.caption)
+                .foregroundStyle(AppColors.secondaryText)
+            Button("Continue", action: model.continueGuidedOnboardingPastAI)
+                .buttonStyle(PrimaryButtonStyle())
         case .exportSession:
             Text("Keep the useful context")
                 .font(.title3.bold())

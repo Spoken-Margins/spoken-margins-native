@@ -29,7 +29,6 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         let provider = HeldSummaryProvider()
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
-            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
             localFoundationModelClient: provider,
             databaseURLOverride: database
         )
@@ -344,7 +343,6 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         let provider = HeldSummaryProvider()
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
-            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
             localFoundationModelClient: provider,
             databaseURLOverride: f.database
         )

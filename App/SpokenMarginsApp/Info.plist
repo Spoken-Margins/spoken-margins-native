@@ -78,8 +78,6 @@
 	<true/>
 	<key>SMBuildCommit</key>
 	<string>$(SM_BUILD_COMMIT)</string>
-	<key>SMRemoteProviderExperienceEnabled</key>
-	<false/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

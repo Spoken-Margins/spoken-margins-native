@@ -376,10 +376,6 @@ final class Gate1AppModel: ObservableObject {
     @Published var listeningMapJSON = ""
     @Published var isGeneratingListeningMap = false
     @Published private(set) var localFoundationModelAvailability: LocalFoundationModelAvailability = .unavailable("Checking availability")
-    @Published private(set) var providerBaseURL = "https://api.openai.com/v1"
-    @Published var listeningMapModel = UserDefaults.standard.string(forKey: "listeningMapModel") ?? UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
-    @Published var summaryModel = UserDefaults.standard.string(forKey: "summaryModel") ?? UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
-    @Published var conversationModel = UserDefaults.standard.string(forKey: "conversationModel") ?? UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
     @Published var skipUnit = UserDefaults.standard.string(forKey: "skipUnit") ?? "paragraph"
     @Published var mediaSkipBackSeconds = Gate1AppModel.storedMediaSkipSeconds(forKey: "mediaSkipBackSeconds")
     @Published var mediaSkipForwardSeconds = Gate1AppModel.storedMediaSkipSeconds(forKey: "mediaSkipForwardSeconds")
@@ -445,13 +441,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var isRenderingSupertonicPreview = false
     /// The Supertonic preview still rendering; playback, a Margin or a voice change makes it stale (#2125).
     var supertonicPreviewRequest = VoicePreviewRequest<SupertonicVoiceID>()
-    @Published var providerAPIKey = KeychainStore.load(service: "SpokenMargins", account: "OpenAICompatibleAPIKey") ?? ""
     @Published var providerProbeStatus = "Not checked"
-    @Published var aiDataSharingConsent = AIDataSharingConsent(
-        rawValue: UserDefaults.standard.string(forKey: "aiDataSharingConsent") ?? ""
-    ) ?? .unknown
-    @Published var isAIDataSharingConsentPresented = false
-    @Published var isAISetupNeededPresented = false
     @Published private(set) var hasAcceptedCurrentTerms = SpokenMarginsTerms.hasAcceptedCurrentVersion()
         && SpokenMarginsTerms.hasBundledText()
     @Published private(set) var acceptedTermsVersion = SpokenMarginsTerms.acceptedVersion()
@@ -477,9 +467,7 @@ final class Gate1AppModel: ObservableObject {
     lazy var listeningSignals = ListeningSignalsCoordinator(repository: { [weak self] in self?.store })
     var databaseURLOverride: URL?
     let gate2CompactControls: Gate2CompactControlController
-    private let featureFlags: SpokenMarginsFeatureFlags
     let localFoundationModelClient: any LocalFoundationModelClient
-    let openAIResponsesClient = OpenAIResponsesClient()
     let streamingSpeechQueue = StreamingSpeechQueue(speech: SystemSpeechPlaybackClient())
     var speechPlaybackClient: AudioPlaybackClient?
     var sessionAudioPlaybackClient: AudioPlaybackClient?
@@ -521,7 +509,6 @@ final class Gate1AppModel: ObservableObject {
     let shareMarginAudioCleanupHandler: ShareMarginAudioCleanupHandler
     let trashUndoDismissDelay: Duration
     var activeItemId = "item-pill"
-    var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
     private var playbackProgressTask: Task<Void, Never>?
     let sleepTimerFade = SleepTimerFadeController() // the timer's ticker, fade and cue; its functions are in Gate1AppModel+SleepTimer.swift (#1979)
     var onDeviceSpeechGenerationDelayTask: Task<Void, Never>?
@@ -570,8 +557,6 @@ final class Gate1AppModel: ObservableObject {
     lazy var importedPodcastPlacement = makeImportedPodcastPlacementCoordinator() // placing shared podcast Margins and the transcript slot (#1015)
     var deferredPodcastPlacementURLs: [String: URL] = [:] // see Gate1AppModel+PodcastPlacementDeferral (#914)
     var importedPodcastRecipientLocalURLs: [String: URL] = [:]
-    var pendingProviderJobForConsent: PendingProviderJob?
-    private var pendingMapGenerationAfterConsent = false
     var pendingTermsVoiceSelection: AppTTSVoiceSelection?
     var pendingPlaybackAfterTerms: PendingPlaybackAfterTerms?
     private let preparedTextAudioStarterDurationMs = 30_000
@@ -650,7 +635,6 @@ final class Gate1AppModel: ObservableObject {
         shareMarginSilenceAnalysisHandler: ShareMarginSilenceAnalysisHandler? = nil,
         shareMarginAudioCleanupHandler: ShareMarginAudioCleanupHandler? = nil,
         gate2CompactControls: Gate2CompactControlController = Gate2CompactControlController(),
-        featureFlags: SpokenMarginsFeatureFlags = .release,
         localFoundationModelClient: any LocalFoundationModelClient = AppleFoundationModelClient(),
         databaseURLOverride: URL? = nil,
         trashUndoDismissDelay: Duration = .seconds(5)
@@ -663,7 +647,6 @@ final class Gate1AppModel: ObservableObject {
         self.microphoneAccess = MarginMicrophoneAccess(recorderInjected: recordingClient != nil, request: microphonePermissionRequest, status: microphonePermissionStatus)
         self.sourceTranscriptionClient = sourceTranscriptionClient
         self.gate2CompactControls = gate2CompactControls
-        self.featureFlags = featureFlags
         self.localFoundationModelClient = UITestingHooks.localFoundationModelClient ?? localFoundationModelClient
         self.databaseURLOverride = databaseURLOverride
         self.trashUndoDismissDelay = trashUndoDismissDelay
@@ -859,18 +842,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    var aiDataSharingConsentDescription: String {
-        switch aiDataSharingConsent {
-        case .unknown: return "Not decided"
-        case .grantedV1: return "Allowed for live OpenAI requests"
-        case .declined: return "Not allowed"
-        }
-    }
-
-    var remoteProviderExperienceEnabled: Bool {
-        featureFlags.remoteProviderExperienceEnabled
-    }
-
     var localFoundationModelAvailable: Bool {
         localFoundationModelAvailability.isAvailable
     }
@@ -880,7 +851,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var aiSummaryExperienceAvailable: Bool {
-        remoteProviderExperienceEnabled || localFoundationModelAvailable
+        localFoundationModelAvailable
     }
 
     var canGenerateListeningMap: Bool {
@@ -890,7 +861,6 @@ final class Gate1AppModel: ObservableObject {
         guard let item = try? store?.loadItemSummary(id: activeItemId) else { return false } // a summary: SwiftUI asks this often, and only `media` is needed (#2508)
         return item.media?.sourceType == .nativeMediaFile
             || item.media?.sourceType == .remoteStream
-            || remoteProviderExperienceEnabled
             || item.media == nil
     }
 
@@ -924,68 +894,6 @@ final class Gate1AppModel: ObservableObject {
     private static func storedRenderedSpeechCacheLimitMB() -> Int {
         let value = UserDefaults.standard.integer(forKey: "renderedSpeechCacheLimitMB")
         return supportedRenderedSpeechCacheLimitsMB.contains(value) ? value : 256
-    }
-
-    func grantAIDataSharingConsent() {
-        aiDataSharingConsent = .grantedV1
-        UserDefaults.standard.set(aiDataSharingConsent.rawValue, forKey: "aiDataSharingConsent")
-        isAIDataSharingConsentPresented = false
-        diagnostics["aiDataSharingConsent"] = aiDataSharingConsent.rawValue
-
-        let pendingJob = pendingProviderJobForConsent
-        pendingProviderJobForConsent = nil
-        let shouldGenerateMap = pendingMapGenerationAfterConsent
-        pendingMapGenerationAfterConsent = false
-        if shouldGenerateMap {
-            generateListeningMap()
-        }
-        if let pendingJob {
-            submitProviderJobIfNeeded(
-                kind: pendingJob.kind,
-                itemId: pendingJob.itemId,
-                turnId: pendingJob.turnId,
-                messages: pendingJob.messages,
-                force: pendingJob.force
-            )
-        }
-    }
-
-    func declineAIDataSharingConsent() {
-        aiDataSharingConsent = .declined
-        UserDefaults.standard.set(aiDataSharingConsent.rawValue, forKey: "aiDataSharingConsent")
-        isAIDataSharingConsentPresented = false
-        pendingMapGenerationAfterConsent = false
-        if let pendingJob = pendingProviderJobForConsent {
-            markProviderFailure("ai_data_sharing_not_allowed", userMessage: "Live AI request cancelled. No content was sent.", itemId: pendingJob.itemId)
-        } else {
-            reportConfirmation("Live AI request cancelled. No content was sent.")
-        }
-        pendingProviderJobForConsent = nil
-    }
-
-    func revokeAIDataSharingConsent() {
-        aiDataSharingConsent = .unknown
-        UserDefaults.standard.removeObject(forKey: "aiDataSharingConsent")
-        pendingProviderJobForConsent = nil
-        pendingMapGenerationAfterConsent = false
-        diagnostics["aiDataSharingConsent"] = aiDataSharingConsent.rawValue
-        reportConfirmation("OpenAI data-sharing permission revoked.")
-    }
-
-    func deleteProviderAPIKey() {
-        let existingKey = providerAPIKey
-        providerAPIKey = ""
-        let status = KeychainStore.save("", service: "SpokenMargins", account: "OpenAICompatibleAPIKey")
-        guard status == errSecSuccess else {
-            providerAPIKey = existingKey
-            diagnostics["keychainStatus"] = "delete_failed:\(status)"
-            reportFailure("The OpenAI API key could not be deleted from Keychain (\(status)).")
-            return
-        }
-        diagnostics["apiKeyConfigured"] = "false"
-        diagnostics["keychainStatus"] = "deleted"
-        _ = rebuildEngineForCurrentSettings()
-        reportConfirmation("OpenAI API key deleted from Keychain.")
     }
 
     deinit {
@@ -1437,7 +1345,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func makeAppOverviewSample() throws -> (Item, ListeningMap) {
-        try WelcomeSample.make(itemId: Self.welcomeSampleItemId, remoteProviderExperienceEnabled: remoteProviderExperienceEnabled)
+        try WelcomeSample.make(itemId: Self.welcomeSampleItemId)
     }
 
     @discardableResult func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> String {
@@ -1693,96 +1601,14 @@ final class Gate1AppModel: ObservableObject {
             prepareEpisodeMap(itemId: item.id, policy: .explicit)
             return
         }
-        if !remoteProviderExperienceEnabled {
-            guard selectedItemRecord?.media == nil else {
-                diagnostics["lastListeningMapMode"] = "on_device_generation_disabled"
-                isGeneratingListeningMap = false
-                reportFailure("Publisher chapters appear when available. AI-generated podcast maps are reserved for a future server-hosted option.")
-                return
-            }
-            generateLocalListeningMap(confirmation: "Generated Listening Map.")
+        guard selectedItemRecord?.media == nil else {
+            diagnostics["lastListeningMapMode"] = "on_device_generation_disabled"
             isGeneratingListeningMap = false
+            reportFailure("Publisher chapters appear when available. AI-generated podcast maps are reserved for a future server-hosted option.")
             return
         }
-        if let item = selectedItemRecord,
-           item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
-            item.media?.url != nil {
-            if sourceTranscriptStatus == "transcribing" || sourceTranscriptStatus == "queued" || sourceTranscriptStatus == "downloading" {
-                pendingMapGenerationItemId = item.id
-                isGeneratingListeningMap = false
-                reportSuccess("Preparing the podcast transcript. Listening Map generation will continue when it is ready.")
-                return
-            }
-            pendingMapGenerationItemId = item.id
-            isGeneratingListeningMap = false
-            scheduleFullSourceTranscriptionForListeningMap(for: item)
-            reportSuccess("Preparing the podcast transcript for its Listening Map. Playback remains available.")
-            return
-        }
-        guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            generateLocalListeningMap(confirmation: "Generated local Listening Map.")
-            isGeneratingListeningMap = false
-            return
-        }
-
-        guard aiDataSharingConsent == .grantedV1 else {
-            pendingMapGenerationAfterConsent = true
-            isGeneratingListeningMap = false
-            isAIDataSharingConsentPresented = true
-            reportSuccess("Review how live AI uses this source before continuing.")
-            return
-        }
-
-        statusMessage = "Calling \(modelForAIJob(kind: "listening_map")) for Listening Map."
-        lastError = nil
-        Task {
-            await generateProviderListeningMap()
-        }
-    }
-
-    private func generateProviderListeningMap() async {
-        defer { isGeneratingListeningMap = false }
-        do {
-            let store = try requireStore()
-            var item = try store.loadItem(id: activeItemId)
-            guard let text = item.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw ManualListeningMapError.itemHasNoText
-            }
-            let model = modelForAIJob(kind: "listening_map")
-            diagnostics["lastListeningMapModel"] = model
-            let firstPrompt = ProviderPrompts.listeningMap(sourceText: text)
-            let firstResponse = try await callProvider(messages: [firstPrompt], model: model, systemPrompt: systemPromptForAIJob(kind: "listening_map"))
-            do {
-                try saveProviderListeningMapResponse(firstResponse, item: &item, store: store)
-                diagnostics["lastListeningMapRepairAttempt"] = "0"
-                reportConfirmation("Generated Listening Map with \(model).")
-            } catch {
-                let repairPrompt = ProviderPrompts.listeningMapRepair(sourceText: text, invalidResponse: firstResponse, error: String(describing: error))
-                let repairedResponse = try await callProvider(messages: [repairPrompt], model: model, systemPrompt: systemPromptForAIJob(kind: "listening_map"))
-                try saveProviderListeningMapResponse(repairedResponse, item: &item, store: store)
-                diagnostics["lastListeningMapRepairAttempt"] = "1"
-                diagnostics["lastListeningMapInitialError"] = String(describing: error)
-                reportConfirmation("Generated repaired Listening Map with \(model).")
-            }
-        } catch {
-            reportFailure(error, context: "Listening Map generation failed")
-        }
-    }
-
-    private func saveProviderListeningMapResponse(_ response: String, item: inout Item, store: SQLiteSessionStore) throws {
-        let map = try ManualListeningMapParser.parse(response, item: item)
-        if let engine {
-            snapshot = try engine.attachListeningMap(map)
-        } else {
-            try store.saveListeningMap(map)
-        }
-        item.status = "ready"
-        try store.saveItem(item)
-        libraryItems = try loadLibraryRows(store: store)
-        selectedItem = try loadItemDetail(id: item.id, store: store)
-        diagnostics["lastGeneratedMapItem"] = item.id
-        diagnostics["lastListeningMapMode"] = "provider"
-        schedulePrewarmAfterPreparedTextChange(itemId: item.id)
+        generateLocalListeningMap(confirmation: "Generated Listening Map.")
+        isGeneratingListeningMap = false
     }
 
     private func generateLocalListeningMap(confirmation: String) {
@@ -2833,17 +2659,8 @@ final class Gate1AppModel: ObservableObject {
 
     func makeEngine(store: SQLiteSessionStore) throws -> SessionEngine {
         let loadedProfile = try loadProfile(id: selectedProfileId)
-        let profile = remoteProviderExperienceEnabled
-            ? loadedProfile
-            : loadedProfile.limitedToOnDeviceAI(foundationModelAvailable: localFoundationModelAvailable)
-        let provider: AIProviderClient
-        if !remoteProviderExperienceEnabled {
-            provider = AppleFoundationAIProvider()
-        } else if let url = URL(string: providerBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)) {
-            provider = OpenAICompatibleProvider(baseURL: url, model: fallbackProviderModel(), apiKeyReference: providerAPIKey.isEmpty ? nil : "keychain:SpokenMargins/OpenAICompatibleAPIKey")
-        } else {
-            provider = FixtureAIProvider()
-        }
+        let profile = loadedProfile.limitedToOnDeviceAI(foundationModelAvailable: localFoundationModelAvailable)
+        let provider: AIProviderClient = AppleFoundationAIProvider()
         return SessionEngine(
             profile: profile,
             repository: store,
@@ -3265,13 +3082,6 @@ final class Gate1AppModel: ObservableObject {
         ].joined(separator: ";")
     }
 
-    func summaryPrompt(interjections: [Interjection]) -> String {
-        """
-        I would like to have a session with you, the article, and my interjections below.
-        \(sessionContextJSON(interjections: interjections, currentFollowUp: nil))
-        """
-    }
-
     func localSummaryContexts(interjections: [Interjection]) -> [String] {
         let records: [[String: String]] = interjections.map { interjection in
             [
@@ -3312,41 +3122,6 @@ final class Gate1AppModel: ObservableObject {
             }.joined(separator: "\n")
         }
         return json
-    }
-
-    func conversationPrompt(followUp: String, explicitFollowUp: String, primaryInterjections: [Interjection]) -> String {
-        let scopedInterjections = primaryInterjections.isEmpty ? currentDiscussionInterjections() : primaryInterjections
-        return Gate1ProviderRequestFactory.conversationPrompt(
-            followUp: followUp,
-            contextJSON: sessionContextJSON(
-                interjections: scopedInterjections,
-                currentFollowUp: followUp,
-                explicitFollowUp: explicitFollowUp,
-                primaryInterjections: scopedInterjections
-            )
-        )
-    }
-
-    private func sessionContextJSON(
-        interjections: [Interjection], currentFollowUp: String?,
-        explicitFollowUp: String? = nil, primaryInterjections: [Interjection] = []
-    ) -> String {
-        DiscussionContext.contextJSON(
-            itemTitle: selectedItem.title, itemText: selectedItem.text, overview: selectedItem.overview,
-            chapters: selectedItem.chapters, turns: selectedItem.turns,
-            currentTargetType: currentPlaybackTargetType, currentTargetId: currentPlaybackTargetId,
-            interjections: interjections, currentFollowUp: currentFollowUp,
-            explicitFollowUp: explicitFollowUp, primaryInterjections: primaryInterjections
-        )
-    }
-
-    func currentDiscussionInterjections() -> [Interjection] {
-        Gate1DiscussionContext.currentTargetInterjections(
-            interjections: selectedItem.interjections,
-            currentTargetType: currentPlaybackTargetType,
-            currentTargetId: currentPlaybackTargetId,
-            itemId: selectedItem.id
-        )
     }
 
     private func turnTitleText(_ turn: ConversationTurn) -> String {

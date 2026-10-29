@@ -70,11 +70,6 @@ struct Gate1RootView: View {
             model.requestedExperienceRoot = nil
         }
         .tracksKeyboard($keyboardIsPresented).liveSessionLinkCover(model)
-        .sheet(isPresented: $model.isAIDataSharingConsentPresented) {
-            AIDataSharingConsentView()
-                .environmentObject(model)
-                .interactiveDismissDisabled()
-        }
         .sheet(isPresented: $model.isTermsOfUsePresented) {
             NavigationStack {
                 SpokenMarginsTermsView(allowsAcceptance: true)
@@ -102,12 +97,6 @@ struct Gate1RootView: View {
             Build23RecipientSharingHost(coordinator: sharingCoordinator)
                 .environmentObject(model)
                 .interactiveDismissDisabled()
-        }
-        .alert("AI Setup Needed", isPresented: $model.isAISetupNeededPresented) {
-            Button("Open AI Settings", action: model.openAISettingsFromSummaryPrompt)
-            Button("Not Now", role: .cancel) {}
-        } message: {
-            Text("Summarize Notes uses your OpenAI API key to turn this session’s Margins into a spoken debrief. Your session and saved position have not changed.")
         }
     }
 }
@@ -177,36 +166,6 @@ private struct Build23RecipientSharingHost: View {
         case .other:
             .linkOrPodcast
         }
-    }
-}
-
-private struct AIDataSharingConsentView: View {
-    @EnvironmentObject private var model: Gate1AppModel
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    Label("Send this content to OpenAI?", systemImage: "hand.raised.fill")
-                        .font(.title2.bold())
-                    Text("A live AI request can include the source text needed for the task, your Margin transcripts, the current follow-up, nearby words, and recent conversation turns.")
-                    Text("Spoken Margins does not send recorded audio, local file paths, or internal database identifiers. Requests disable OpenAI response storage. You can revoke permission or delete your API key in Settings.")
-                        .foregroundStyle(AppColors.secondaryText)
-                    Link("Read the Privacy Policy", destination: AppLinks.privacy)
-                    Button("Send to OpenAI", action: model.grantAIDataSharingConsent)
-                        .buttonStyle(PrimaryButtonStyle())
-                        .accessibilityIdentifier("aiConsent.allow.button")
-                    Button("Not Now", role: .cancel, action: model.declineAIDataSharingConsent)
-                        .buttonStyle(SecondaryButtonStyle())
-                        .accessibilityIdentifier("aiConsent.decline.button")
-                }
-                .padding(24)
-            }
-            .navigationTitle("AI Data Sharing")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        .presentationDetents([.medium, .large])
-        .accessibilityIdentifier("aiConsent.sheet")
     }
 }
 

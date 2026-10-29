@@ -17,57 +17,11 @@ import AVFoundation
 import PDFKit
 #endif
 
-/// Provider and speech settings, voice previews and rate wording (#961), moved unchanged out of the central model.
+/// Speech settings, voice previews and rate wording (#961), moved out of the central model.
 extension Gate1AppModel {
-    func saveProviderSettings() {
-        guard remoteProviderExperienceEnabled else {
-            reportFailure("Remote provider settings are disabled in this release.")
-            return
-        }
-        sanitizeTTSMode()
-        providerModel = fallbackProviderModel()
-        UserDefaults.standard.set(providerModel, forKey: "providerModel")
-        UserDefaults.standard.set(listeningMapModel, forKey: "listeningMapModel")
-        UserDefaults.standard.set(summaryModel, forKey: "summaryModel")
-        UserDefaults.standard.set(conversationModel, forKey: "conversationModel")
-        UserDefaults.standard.set(skipUnit, forKey: "skipUnit")
-        UserDefaults.standard.set(mediaSkipBackSeconds, forKey: "mediaSkipBackSeconds")
-        UserDefaults.standard.set(mediaSkipForwardSeconds, forKey: "mediaSkipForwardSeconds")
-        UserDefaults.standard.set(speechRate, forKey: "speechRate")
-        UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
-        UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
-        UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
-        UserDefaults.standard.set(renderedSpeechCacheLimitMB, forKey: "renderedSpeechCacheLimitMB")
-        let keychainStatus = KeychainStore.save(providerAPIKey, service: "SpokenMargins", account: "OpenAICompatibleAPIKey")
-        guard keychainStatus == errSecSuccess else {
-            diagnostics["keychainStatus"] = "save_failed:\(keychainStatus)"
-            reportFailure("Provider settings were not saved because Keychain returned \(keychainStatus).")
-            return
-        }
-        diagnostics["keychainStatus"] = providerAPIKey.isEmpty ? "empty" : "saved"
-        cancelTextAudioPrewarmTasks()
-        diagnostics["providerBaseURL"] = providerBaseURL
-        diagnostics["fallbackModel"] = providerModel
-        diagnostics["listeningMapModel"] = listeningMapModel
-        diagnostics["summaryModel"] = summaryModel
-        diagnostics["conversationModel"] = conversationModel
-        diagnostics["skipUnit"] = skipUnit
-        diagnostics["mediaSkipBackSeconds"] = "\(mediaSkipBackSeconds)"
-        diagnostics["mediaSkipForwardSeconds"] = "\(mediaSkipForwardSeconds)"
-        diagnostics["speechRate"] = String(format: "%.2f", speechRate)
-        diagnostics["speechVoice"] = speechVoiceDescription
-        diagnostics["ttsVoiceSelection"] = ttsVoiceSelection.rawValue
-        diagnostics["ttsMode"] = ttsMode
-        diagnostics["renderedSpeechCacheLimitMB"] = String(renderedSpeechCacheLimitMB)
-        diagnostics["apiKeyConfigured"] = providerAPIKey.isEmpty ? "false" : "true"
-        if rebuildEngineForCurrentSettings() {
-            showSettingsTab()
-            reportConfirmation("Provider settings saved.")
-        }
-    }
-
     func saveSpeechSettings() {
         sanitizeTTSMode()
+        UserDefaults.standard.set(skipUnit, forKey: "skipUnit")
         UserDefaults.standard.set(speechRate, forKey: "speechRate")
         UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
         UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
@@ -277,11 +231,6 @@ extension Gate1AppModel {
     }
 
     func settingsValueChanged() {
-        diagnostics["providerBaseURL"] = providerBaseURL
-        diagnostics["fallbackModel"] = fallbackProviderModel()
-        diagnostics["listeningMapModel"] = listeningMapModel
-        diagnostics["summaryModel"] = summaryModel
-        diagnostics["conversationModel"] = conversationModel
         diagnostics["skipUnit"] = skipUnit
         diagnostics["mediaSkipBackSeconds"] = "\(mediaSkipBackSeconds)"
         diagnostics["mediaSkipForwardSeconds"] = "\(mediaSkipForwardSeconds)"
@@ -289,41 +238,6 @@ extension Gate1AppModel {
         diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["ttsMode"] = ttsMode
         diagnostics["renderedSpeechCacheLimitMB"] = String(renderedSpeechCacheLimitMB)
-    }
-
-    func probeProvider() {
-        guard remoteProviderExperienceEnabled else {
-            providerProbeStatus = "Disabled by release feature flag"
-            reportFailure("Remote provider access is disabled in this release.")
-            return
-        }
-        saveProviderSettings()
-        providerProbeStatus = "Checking..."
-        guard let url = URL(string: providerBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/models") else {
-            providerProbeStatus = "Invalid URL"
-            reportFailure("Invalid provider URL.")
-            return
-        }
-        var request = URLRequest(url: url)
-        if !providerAPIKey.isEmpty {
-            request.setValue("Bearer \(providerAPIKey)", forHTTPHeaderField: "Authorization")
-        }
-        Task {
-            do {
-                let (_, response) = try await URLSession.shared.data(for: request)
-                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                await MainActor.run {
-                    providerProbeStatus = (200..<300).contains(status) ? "Reachable (\(status))" : "HTTP \(status)"
-                    diagnostics["providerProbe"] = providerProbeStatus
-                    reportSuccess("Provider probe completed: \(providerProbeStatus).")
-                }
-            } catch {
-                await MainActor.run {
-                    providerProbeStatus = "Failed: \(error.localizedDescription)"
-                    reportFailure(error, context: "Provider probe failed")
-                }
-            }
-        }
     }
 
     var speechVoiceDescription: String {
@@ -359,10 +273,6 @@ extension Gate1AppModel {
             return String(format: "%.2f×", mediaPlaybackRate)
         }
         return String(format: "%.2f×", speechPlaybackRateMultiplier)
-    }
-
-    var hasConfiguredProviderAPIKey: Bool {
-        !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     #if canImport(AVFoundation)

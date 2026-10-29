@@ -4,20 +4,6 @@ import SessionKit
 
 import FoundationModels
 
-struct SpokenMarginsFeatureFlags: Equatable, Sendable {
-    static let remoteProviderInfoKey = "SMRemoteProviderExperienceEnabled"
-
-    let remoteProviderExperienceEnabled: Bool
-
-    static var release: SpokenMarginsFeatureFlags {
-        SpokenMarginsFeatureFlags(
-            remoteProviderExperienceEnabled: Bundle.main.object(
-                forInfoDictionaryKey: remoteProviderInfoKey
-            ) as? Bool ?? false
-        )
-    }
-}
-
 enum LocalFoundationModelAvailability: Equatable, Sendable {
     case available
     case unavailable(String)

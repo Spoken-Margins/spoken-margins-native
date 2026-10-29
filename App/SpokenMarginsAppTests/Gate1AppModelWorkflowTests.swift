@@ -194,7 +194,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.lastError, "Record at least one Margin on this item before sharing.")
     }
 
-    /// #1254: Settings is a tab, so every route to it (the Offline Storage back button, a missing API key) lands
+    /// #1254: Settings is a tab, so every route to it (the Offline Storage back button) lands
     /// on the tab bar's home with the Settings tab requested, never on a screen of its own.
     func testEveryRouteToSettingsAsksForTheSettingsTab() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
@@ -203,11 +203,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.openOfflineStorage()
         XCTAssertEqual(model.screen, .offlineStorage)
         model.returnToSettingsFromOfflineStorage()
-        XCTAssertEqual(model.screen, .home)
-        XCTAssertEqual(model.requestedExperienceRoot, .settings)
-
-        model.requestedExperienceRoot = nil
-        model.openAISettingsFromSummaryPrompt()
         XCTAssertEqual(model.screen, .home)
         XCTAssertEqual(model.requestedExperienceRoot, .settings)
     }
@@ -1645,14 +1640,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.isCurrentTimelineMediaChapter(pivot))
     }
 
-    func testConfiguredProviderKeyIgnoresWhitespaceOnlyValues() {
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
-        model.providerAPIKey = "   \n"
-        XCTAssertFalse(model.hasConfiguredProviderAPIKey)
-
-        model.providerAPIKey = "configured-key"
-        XCTAssertTrue(model.hasConfiguredProviderAPIKey)
-    }
 
     func testWelcomeSampleSeedsOnlyForANewEmptyNonUITestLibrary() {
         XCTAssertTrue(Gate1AppModel.shouldSeedWelcomeSample(
@@ -3659,61 +3646,25 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.sessions.count, 2)
     }
 
-    func testMissingAPIKeySummaryPreflightDoesNotMutateSession() {
+
+
+    func testUnavailableLocalModelDoesNotCreateSummaryJobs() {
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
-            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: true)
+            localFoundationModelClient: WorkflowFoundationModelStub(availability: .unavailable("Unsupported test device"))
         )
         model.resetAndSeed()
         model.startItem(id: "item-pill")
         model.pause()
-        model.providerAPIKey = ""
         let snapshotBefore = model.snapshot
         let turnsBefore = model.selectedItem.turns
 
         model.summarize()
 
-        XCTAssertTrue(model.isAISetupNeededPresented)
-        XCTAssertEqual(model.snapshot, snapshotBefore)
-        XCTAssertEqual(model.selectedItem.turns, turnsBefore)
-        XCTAssertEqual(model.diagnostics["summaryPreflight"], "api_key_missing")
-    }
-
-    func testReleaseFeatureFlagDisablesRemoteProviderAndProbe() {
-        let model = Gate1AppModel(
-            audioPlaybackClient: NoopAudioPlaybackClient(),
-            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
-            localFoundationModelClient: WorkflowFoundationModelStub(availability: .unavailable("Unsupported test device"))
-        )
-        model.providerAPIKey = "configured-but-unused"
-
-        model.probeProvider()
-
-        XCTAssertFalse(model.remoteProviderExperienceEnabled)
         XCTAssertFalse(model.aiSummaryExperienceAvailable)
-        XCTAssertEqual(model.providerProbeStatus, "Disabled by release feature flag")
-        XCTAssertEqual(model.lastError, "Remote provider access is disabled in this release.")
-    }
-
-    func testUnavailableLocalModelDoesNotCreateRemoteSummaryOrDiscussionJobs() {
-        let model = Gate1AppModel(
-            audioPlaybackClient: NoopAudioPlaybackClient(),
-            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
-            localFoundationModelClient: WorkflowFoundationModelStub(availability: .unavailable("Unsupported test device"))
-        )
-        model.resetAndSeed()
-        model.startItem(id: "item-pill")
-        model.pause()
-        let snapshotBefore = model.snapshot
-        let turnsBefore = model.selectedItem.turns
-
-        model.summarize()
-        model.discuss(followUp: "Send this remotely")
-
         XCTAssertEqual(model.snapshot, snapshotBefore)
         XCTAssertEqual(model.selectedItem.turns, turnsBefore)
         XCTAssertEqual(model.diagnostics["summaryPreflight"], "local_model_unavailable")
-        XCTAssertEqual(model.lastError, "Discuss is disabled in this release. Copy your notes to another chatbot and paste its response back here instead.")
     }
 
     func testAvailableLocalFoundationModelCompletesInterjectionSummaryWithoutAPIKey() async throws {
@@ -3728,13 +3679,11 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             audioPlaybackClient: NoopAudioPlaybackClient(),
             recordingClient: NoopRecordingClient(),
             interjectionTranscriptionHandler: { _ in "Structure helps me remember the source." },
-            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
             localFoundationModelClient: WorkflowFoundationModelStub(
                 availability: .available,
                 summary: "The listener wants to preserve the relationship between structure and recall."
             )
         )
-        model.providerAPIKey = ""
         model.resetAndSeed()
         model.startItem(id: "item-pill")
         model.dispatchGate2CompactCommand(.beginInterjection)
@@ -3747,7 +3696,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         try await waitFor("local summary completion") {
             model.diagnostics["lastSummaryMode"] == "apple_foundation_on_device"
         }
-        XCTAssertEqual(model.providerAPIKey, "")
         XCTAssertTrue(model.selectedItem.turns.contains {
             $0.turnType == "interjection_summary"
                 && $0.text?.contains("relationship between structure and recall") == true
@@ -3766,7 +3714,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             audioPlaybackClient: NoopAudioPlaybackClient(),
             recordingClient: NoopRecordingClient(),
             interjectionTranscriptionHandler: { _ in "I am uncertain whether this premise supports the conclusion." },
-            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
             localFoundationModelClient: ThrowingWorkflowFoundationModelStub()
         )
         model.resetAndSeed()
@@ -3812,7 +3759,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             audioPlaybackClient: NoopAudioPlaybackClient(),
             recordingClient: NoopRecordingClient(),
             interjectionTranscriptionHandler: { _ in "A newly added listener note." },
-            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
             localFoundationModelClient: WorkflowFoundationModelStub(
                 availability: .available,
                 summary: "A concise listener note."
@@ -3859,7 +3805,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     func testDefaultReleaseBuildsDeterministicTextMapOnPasteInsteadOfUsingFoundationModel() {
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
-            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
             localFoundationModelClient: WorkflowFoundationModelStub(availability: .available)
         )
         model.resetAndSeed()

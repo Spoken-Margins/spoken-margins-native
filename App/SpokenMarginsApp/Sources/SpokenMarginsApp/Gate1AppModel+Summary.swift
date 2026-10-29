@@ -2,7 +2,7 @@ import Foundation
 import SessionKit
 import SessionKitPersistence
 
-/// Summary, discussion and pasted response entry points. Moved out of `Gate1AppModel.swift` unchanged (#960).
+/// Summary and pasted response entry points. Moved out of `Gate1AppModel.swift` (#960).
 extension Gate1AppModel {
     /// The AI jobs (and, for a failed summary, its notes) behind the Summarize / Retry controls. Those controls ask on
     /// every render of the playback screen, so this reads the store once per state of the session, off the main
@@ -46,56 +46,24 @@ extension Gate1AppModel {
     func summarize() {
         // Retry vs a new summary is decided from the jobs as they are now. With no on-device model both ways end in
         // the same message, so that answer stays immediate.
-        if !remoteProviderExperienceEnabled, localFoundationModelAvailable,
+        if localFoundationModelAvailable,
            deferUntilSummaryRecordsSettle("summarizeAfterSettle", { $0.summarize() }) {
             return
         }
-        if !remoteProviderExperienceEnabled {
-            do {
-                if let original = try recoverableLocalSummaryRetryContext() {
-                    retryLocalSummary(original)
-                    return
-                }
-            } catch {
-                reportFailure(error, context: "Could not check the original summary", itemId: snapshot.itemId)
+        do {
+            if let original = try recoverableLocalSummaryRetryContext() {
+                retryLocalSummary(original)
                 return
             }
+        } catch {
+            reportFailure(error, context: "Could not check the original summary", itemId: snapshot.itemId)
+            return
         }
         let itemId = snapshot.itemId ?? ""
         withdrawRetryOffer("summary")
-        if !remoteProviderExperienceEnabled {
-            guard localFoundationModelAvailable else {
-                diagnostics["summaryPreflight"] = "local_model_unavailable"
-                reportFailure(localFoundationModelAvailabilityDescription)
-                return
-            }
-            guard pendingSourceContextInterjectionIds.isEmpty else {
-                reportFailure("Source context is still being prepared. Try again when the podcast context is ready.")
-                return
-            }
-            guard canSummarizeInterjections else {
-                reportFailure("A Margin summary already exists for this session.")
-                return
-            }
-            syncPlaybackProgressForLifecycle()
-            run { engine in
-                snapshot = try engine.generateInterjectionSummary(scope: summaryScopeForCurrentTarget())
-                let turnId = latestPendingSummaryTurnId() ?? "turn-summary-001"
-                let contexts = localSummaryContexts(interjections: engine.lastSummaryCandidates)
-                let retryContext = LocalSummaryRetryContext(
-                    itemId: itemId, sessionId: snapshot.sessionId ?? "", turnId: turnId,
-                    scope: summaryScopeForCurrentTarget(),
-                    interjectionIds: engine.lastSummaryCandidates.map(\.id), contexts: contexts
-                )
-                submitLocalSummary(itemId: itemId, turnId: turnId, contexts: contexts, retryContext: retryContext)
-                refreshSelectedItem()
-                reportSuccess("On-device summary started.")
-            }
-            return
-        }
-        guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            isAISetupNeededPresented = true
-            diagnostics["summaryPreflight"] = "api_key_missing"
+        guard localFoundationModelAvailable else {
+            diagnostics["summaryPreflight"] = "local_model_unavailable"
+            reportFailure(localFoundationModelAvailabilityDescription)
             return
         }
         guard pendingSourceContextInterjectionIds.isEmpty else {
@@ -110,9 +78,15 @@ extension Gate1AppModel {
         run { engine in
             snapshot = try engine.generateInterjectionSummary(scope: summaryScopeForCurrentTarget())
             let turnId = latestPendingSummaryTurnId() ?? "turn-summary-001"
-            submitProviderJobIfNeeded(kind: "interjection_summary", itemId: itemId, turnId: turnId, messages: [summaryPrompt(interjections: engine.lastSummaryCandidates)])
+            let contexts = localSummaryContexts(interjections: engine.lastSummaryCandidates)
+            let retryContext = LocalSummaryRetryContext(
+                itemId: itemId, sessionId: snapshot.sessionId ?? "", turnId: turnId,
+                scope: summaryScopeForCurrentTarget(),
+                interjectionIds: engine.lastSummaryCandidates.map(\.id), contexts: contexts
+            )
+            submitLocalSummary(itemId: itemId, turnId: turnId, contexts: contexts, retryContext: retryContext)
             refreshSelectedItem()
-            reportConfirmation(snapshot.pendingAiJobStatus == "deferred" ? "Summary queued for later." : "Summary job started.")
+            reportSuccess("On-device summary started.")
         }
     }
 
@@ -171,7 +145,7 @@ extension Gate1AppModel {
     /// The label and action use the same current-target recovery rule. An unrelated
     /// or unrecoverable old failure must not trap every new Summarize action in Retry.
     var canRetryLocalSummary: Bool {
-        guard !remoteProviderExperienceEnabled, hasActiveSession else { return false }
+        guard hasActiveSession else { return false }
         return (try? recoverableLocalSummaryRetryContext()) != nil
     }
 
@@ -220,78 +194,12 @@ extension Gate1AppModel {
         }
     }
 
-    func discuss(followUp: String) {
-        guard remoteProviderExperienceEnabled else {
-            reportFailure("Discuss is disabled in this release. Copy your notes to another chatbot and paste its response back here instead.")
-            return
-        }
-        guard pendingSourceContextInterjectionIds.isEmpty else {
-            reportFailure("Source context is still being prepared. Try again when the podcast context is ready.")
-            return
-        }
-        let trimmed = followUp.trimmingCharacters(in: .whitespacesAndNewlines)
-        let currentInterjections = currentDiscussionInterjections()
-        let request = Gate1DiscussionContext.primaryRequest(explicitFollowUp: trimmed, currentInterjections: currentInterjections)
-        submitDiscussionFollowUp(request, explicitFollowUp: trimmed, primaryInterjections: currentInterjections)
-    }
-
     func latestPendingJob(kind: String) -> AIJob? {
         summaryRecords.flatMap { SummaryRetryRecords.latestPending(in: $0.jobs, kind: kind) }
     }
 
-    func followUp(_ text: String) {
-        guard remoteProviderExperienceEnabled else {
-            reportFailure("Remote discussion is disabled in this release.")
-            return
-        }
-        submitDiscussionFollowUp(text, explicitFollowUp: text, primaryInterjections: currentDiscussionInterjections())
-    }
-
-    private func submitDiscussionFollowUp(_ text: String, explicitFollowUp: String, primaryInterjections: [Interjection]) {
-        guard run({ engine in snapshot = try engine.submitFollowup(text: text) }), let store, let sessionId = snapshot.sessionId else { return }
-        Task {
-            // The job the engine just saved is read off the main thread (#2508).
-            let jobs = (try? await StoreReader(store).read { try $0.loadAIJobs(sessionId: sessionId) }) ?? []
-            let turnId = SummaryRetryRecords.latestPending(in: jobs, kind: "assistant_response")?.turnId ?? "turn-response-001"
-            submitProviderJobIfNeeded(
-                kind: "assistant_response",
-                itemId: snapshot.itemId ?? "",
-                turnId: turnId,
-                messages: [conversationPrompt(
-                    followUp: text,
-                    explicitFollowUp: explicitFollowUp,
-                    primaryInterjections: primaryInterjections
-                )]
-            )
-            refreshSelectedItem()
-            reportConfirmation(snapshot.pendingAiJobStatus == "deferred" ? "Follow-up queued for later." : "Follow-up submitted.")
-        }
-    }
-
     func retryPendingAI() {
-        guard remoteProviderExperienceEnabled else {
-            retryPendingLocalSummary()
-            return
-        }
-        guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            isAISetupNeededPresented = true
-            diagnostics["aiRetryPreflight"] = "api_key_missing"
-            return
-        }
-        run { engine in
-            guard let sessionId = snapshot.sessionId,
-                  let job = try store?.loadAIJobs(sessionId: sessionId)
-                    .last(where: { $0.status == "retryable" || $0.status == "pending" || $0.status == "deferred" }) else {
-                reportFailure("No retryable AI job is available.")
-                return
-            }
-            snapshot = try engine.retryAIJob(jobId: job.id)
-            let turnId = job.turnId ?? (job.kind == "interjection_summary" ? "turn-summary-001" : "turn-response-001")
-            let messages = job.messages.isEmpty ? [job.kind == "interjection_summary" ? summaryPrompt(interjections: engine.lastSummaryCandidates) : "Continue the discussion."] : job.messages
-            submitProviderJobIfNeeded(kind: job.kind, itemId: snapshot.itemId ?? "", turnId: turnId, messages: messages, force: true)
-            refreshSelectedItem()
-            reportConfirmation("Retrying \(job.kind).")
-        }
+        retryPendingLocalSummary()
     }
 
     func importPastedAssistantResponse(autoPlay: Bool = true) {

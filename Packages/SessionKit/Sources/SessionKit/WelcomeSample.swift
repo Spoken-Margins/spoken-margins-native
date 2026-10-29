@@ -7,11 +7,9 @@ public enum WelcomeSample {
     public static let fileName = "Welcome to Spoken Margins.md"
     public static let listeningMapOverview = "Take a guided tour of the Listening Map, playback navigation, spoken Margins, and the three ways to add your own sources."
 
-    /// The sample's Markdown. Only the optional-AI paragraph depends on the flag.
-    public static func markdown(remoteProviderExperienceEnabled: Bool) -> String {
-        let optionalAIOverview = remoteProviderExperienceEnabled
-            ? "Summarize Notes synthesizes the Margins in this session. Discuss answers a question using relevant source and session context. Both are optional and require your OpenAI API key, network access, and separate permission to send content."
-            : "Summarize Notes synthesizes the Margins in this session with Apple’s on-device model when available. Remote discussion and third-party API keys are disabled; you can copy your notes to another chatbot and paste its response back into Spoken Margins."
+    /// The sample's Markdown.
+    public static func markdown() -> String {
+        let optionalAIOverview = "Summarize Notes synthesizes the Margins in this session with Apple’s on-device model when available. Remote discussion and third-party API keys are disabled; you can copy your notes to another chatbot and paste its response back into Spoken Margins."
         return """
         # Welcome to Spoken Margins
 
@@ -40,8 +38,8 @@ public enum WelcomeSample {
     }
 
     /// The welcome Item (id `itemId`) and its deterministic Listening Map.
-    public static func make(itemId: String, remoteProviderExperienceEnabled: Bool) throws -> (Item, ListeningMap) {
-        try build(itemId: itemId, contents: markdown(remoteProviderExperienceEnabled: remoteProviderExperienceEnabled))
+    public static func make(itemId: String) throws -> (Item, ListeningMap) {
+        try build(itemId: itemId, contents: markdown())
     }
 
     /// `make` for any Markdown, so a test can reach the error for a text with no chapters.

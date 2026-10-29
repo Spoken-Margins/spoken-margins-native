@@ -29,7 +29,6 @@ final class SummarySuccessOwnershipWorkflowTests: XCTestCase {
         let database = FileManager.default.temporaryDirectory.appending(path: "active-summary-\(UUID().uuidString).sqlite")
         let provider = HeldSummarySuccessProvider()
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(),
-            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
             localFoundationModelClient: provider, databaseURLOverride: database)
         addTeardownBlock { @MainActor in
             await provider.cancelAll()
@@ -66,7 +65,6 @@ final class SummarySuccessOwnershipWorkflowTests: XCTestCase {
         let provider = HeldSummarySuccessProvider()
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
-            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
             localFoundationModelClient: provider,
             databaseURLOverride: database
         )

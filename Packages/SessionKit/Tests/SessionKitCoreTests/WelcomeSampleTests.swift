@@ -7,8 +7,7 @@ import XCTest
 final class WelcomeSampleTests: XCTestCase {
     private let itemId = "item-spoken-margins-overview"
 
-    private let aiParagraphWithRemoteProviders = "Summarize Notes synthesizes the Margins in this session. Discuss answers a question using relevant source and session context. Both are optional and require your OpenAI API key, network access, and separate permission to send content."
-    private let aiParagraphWithoutRemoteProviders = "Summarize Notes synthesizes the Margins in this session with Apple’s on-device model when available. Remote discussion and third-party API keys are disabled; you can copy your notes to another chatbot and paste its response back into Spoken Margins."
+    private let aiParagraph = "Summarize Notes synthesizes the Margins in this session with Apple’s on-device model when available. Remote discussion and third-party API keys are disabled; you can copy your notes to another chatbot and paste its response back into Spoken Margins."
 
     /// The Markdown with the optional-AI paragraph left as a marker.
     private let markdownTemplate = """
@@ -37,48 +36,38 @@ final class WelcomeSampleTests: XCTestCase {
         {{AI}} Listening, interjections, the Timeline, and export work without AI. Export the useful context for another writing or thinking tool. The goal is not passive playback; it is to help you retain and develop the ideas that mattered.
         """
 
-    private func expectedMarkdown(remoteProviders: Bool) -> String {
-        markdownTemplate.replacingOccurrences(
-            of: "{{AI}}",
-            with: remoteProviders ? aiParagraphWithRemoteProviders : aiParagraphWithoutRemoteProviders
-        )
+    private var expectedMarkdown: String {
+        markdownTemplate.replacingOccurrences(of: "{{AI}}", with: aiParagraph)
     }
 
     func testTheWelcomeMarkdownIsPinnedInFull() {
-        XCTAssertEqual(WelcomeSample.markdown(remoteProviderExperienceEnabled: false), expectedMarkdown(remoteProviders: false))
-        XCTAssertEqual(WelcomeSample.markdown(remoteProviderExperienceEnabled: true), expectedMarkdown(remoteProviders: true))
+        XCTAssertEqual(WelcomeSample.markdown(), expectedMarkdown)
         XCTAssertEqual(WelcomeSample.fileName, "Welcome to Spoken Margins.md")
     }
 
-    func testTheOptionalAIParagraphFollowsTheFlag() {
-        let off = WelcomeSample.markdown(remoteProviderExperienceEnabled: false)
-        let on = WelcomeSample.markdown(remoteProviderExperienceEnabled: true)
-        XCTAssertTrue(on.contains(aiParagraphWithRemoteProviders))
-        XCTAssertFalse(on.contains(aiParagraphWithoutRemoteProviders))
-        XCTAssertTrue(off.contains(aiParagraphWithoutRemoteProviders))
-        XCTAssertFalse(off.contains(aiParagraphWithRemoteProviders))
+    func testTheOptionalAIParagraphNamesOnlyOnDeviceAI() {
+        let text = WelcomeSample.markdown()
+        XCTAssertTrue(text.contains(aiParagraph))
         // The curly apostrophes are part of the text.
-        XCTAssertTrue(off.contains("Apple\u{2019}s on-device model"))
-        XCTAssertTrue(off.contains("Safari\u{2019}s Share menu"))
+        XCTAssertTrue(text.contains("Apple\u{2019}s on-device model"))
+        XCTAssertTrue(text.contains("Safari\u{2019}s Share menu"))
     }
 
     func testTheSampleItemKeepsItsStoredFields() throws {
-        for remoteProviders in [false, true] {
-            let (item, _) = try WelcomeSample.make(itemId: itemId, remoteProviderExperienceEnabled: remoteProviders)
-            XCTAssertEqual(item.id, "item-spoken-margins-overview")
-            XCTAssertEqual(item.title, "Welcome to Spoken Margins")
-            XCTAssertEqual(item.mediaType, "text")
-            XCTAssertEqual(item.externalReference, "")
-            XCTAssertEqual(item.status, "ready")
-            XCTAssertNil(item.externalReferenceType)
-            XCTAssertNil(item.createdAt)
-            XCTAssertTrue(try XCTUnwrap(item.text).hasPrefix("Welcome to Spoken Margins\n\nSpoken Margins is a structured listening workspace. It restores"))
-            XCTAssertEqual(item.text?.count, remoteProviders ? 2135 : 2150)
-        }
+        let (item, _) = try WelcomeSample.make(itemId: itemId)
+        XCTAssertEqual(item.id, "item-spoken-margins-overview")
+        XCTAssertEqual(item.title, "Welcome to Spoken Margins")
+        XCTAssertEqual(item.mediaType, "text")
+        XCTAssertEqual(item.externalReference, "")
+        XCTAssertEqual(item.status, "ready")
+        XCTAssertNil(item.externalReferenceType)
+        XCTAssertNil(item.createdAt)
+        XCTAssertTrue(try XCTUnwrap(item.text).hasPrefix("Welcome to Spoken Margins\n\nSpoken Margins is a structured listening workspace. It restores"))
+        XCTAssertEqual(item.text?.count, 2150)
     }
 
     func testTheSampleMapIsTheDeterministicMapWithTheTourOverview() throws {
-        let (_, map) = try WelcomeSample.make(itemId: itemId, remoteProviderExperienceEnabled: false)
+        let (_, map) = try WelcomeSample.make(itemId: itemId)
         XCTAssertEqual(map.itemId, itemId)
         XCTAssertEqual(map.id, "map-item-spoken-margins-overview-markdown")
         XCTAssertEqual(
@@ -105,11 +94,11 @@ final class WelcomeSampleTests: XCTestCase {
             XCTAssertEqual(error as? SessionKitError, .persistenceFailed("welcome_sample_listening_map_missing"))
         }
         // The error code is what the app records when seeding fails, so the real sample must not trip it.
-        XCTAssertNoThrow(try WelcomeSample.build(itemId: itemId, contents: WelcomeSample.markdown(remoteProviderExperienceEnabled: false)))
+        XCTAssertNoThrow(try WelcomeSample.build(itemId: itemId, contents: WelcomeSample.markdown()))
     }
 
     func testTheItemIdIsWhateverTheCallerSupplies() throws {
-        let (item, map) = try WelcomeSample.make(itemId: "another-id", remoteProviderExperienceEnabled: false)
+        let (item, map) = try WelcomeSample.make(itemId: "another-id")
         XCTAssertEqual(item.id, "another-id")
         XCTAssertEqual(map.itemId, "another-id")
     }

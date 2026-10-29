@@ -66,7 +66,7 @@ struct SupertonicDownloadNoticePresentation: ViewModifier {
                 notice.presentIfNeeded(
                     savedVoiceIsSupertonic: model.ttsVoiceSelection.supertonicVoice != nil,
                     anotherSheetShowing: catalogDrawer.isPresented || model.isTermsOfUsePresented
-                        || model.isAIDataSharingConsentPresented || model.spokenMarginsPackageImportReview != nil
+                        || model.spokenMarginsPackageImportReview != nil
                 )
             }
             .sheet(isPresented: $notice.isPresented) {

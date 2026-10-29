@@ -7,7 +7,7 @@ The app target is generated from `project.yml` using XcodeGen and links the loca
 - link `Packages/SessionKit`
 - use `SessionKitPersistence.SQLiteSessionStore` for local state
 - use `SessionKitAudio.SystemSpeechPlaybackClient` and `SystemRecordingClient` on device
-- use `SessionKitAI.OpenAICompatibleProvider` for configured online providers
+- use `SessionKitAI.FixtureAIProvider` in tests; the app itself uses only the on-device model (no online provider)
 - bundle `Contracts/fixtures` as development seed data
 
 Build the simulator app without signing:
