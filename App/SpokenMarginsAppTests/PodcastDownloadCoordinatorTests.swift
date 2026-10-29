@@ -493,6 +493,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: local), Data([4, 5, 6]))
         XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline)
         XCTAssertFalse(FileManager.default.fileExists(atPath: oldFile.path))
+        coordinator.flushPendingRowWritesForTesting()
         XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty)
         XCTAssertEqual(try fixture.store.loadOwnedOfflineAssets().count, 1)
         coordinator.shutdown()
@@ -515,6 +516,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
             try Data([1, 2, 3]).write(to: staged)
             await coordinator.finishDownload(attempt, stagedURL: staged, responseOK: httpOK)
             XCTAssertEqual(coordinator.status(itemId: "episode"), .failed)
+            coordinator.flushPendingRowWritesForTesting()
             XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty)
             XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty)
             XCTAssertNil(coordinator.validatedLocalURL(for: "episode"))
@@ -561,6 +563,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
             XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), ["saved.wav"],
                            "\(name): the page was not kept next to the episode")
             XCTAssertFalse(FileManager.default.fileExists(atPath: staged.path), name)
+            coordinator.flushPendingRowWritesForTesting()
             XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty, name)
             XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty, name)
             coordinator.shutdown()
@@ -590,6 +593,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
             XCTAssertEqual(coordinator.status(itemId: "episode"), .failed, name)
             XCTAssertNil(coordinator.validatedLocalURL(for: "episode"), name)
             XCTAssertTrue(coordinator.recordsByItemId["episode"]?.failureReason?.contains("web page or text") == true, name)
+            coordinator.flushPendingRowWritesForTesting()
             XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty, name)
             XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty, name)
             XCTAssertTrue(try fixture.store.loadAudioAssets(itemId: "episode").isEmpty, name)
@@ -643,6 +647,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         await coordinator.finishDownload(attempt, stagedURL: staged, responseOK: true)
         XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline)
         XCTAssertNotNil(coordinator.validatedLocalURL(for: "episode"))
+        coordinator.flushPendingRowWritesForTesting()
         XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty)
         coordinator.shutdown()
     }
@@ -748,6 +753,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
             XCTAssertGreaterThan(try AVAudioFile(forReading: local).length, 0, "the downloaded bytes are valid audio")
             XCTAssertEqual(try fixture.store.loadOwnedOfflineAssets().map(\.byteCount), [audioBytes], row.note)
             XCTAssertLessThanOrEqual(audioBytes, unannouncedBudget, row.note)
+            coordinator.flushPendingRowWritesForTesting()
             XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty, row.note)
         }
     }
@@ -786,6 +792,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.status(itemId: "episode"), .failed, "the real audio response exceeds the 1,000-byte budget")
         XCTAssertNil(coordinator.validatedLocalURL(for: "episode"))
         XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty)
+        coordinator.flushPendingRowWritesForTesting()
         XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty)
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: fixture.support.appending(path: "PodcastAudio").path).isEmpty,
                       "neither staging nor committed audio remains after refusal")
@@ -820,6 +827,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         XCTAssertEqual(starts, 0)
         XCTAssertEqual(coordinator.status(itemId: "gone"), .failed)
         XCTAssertEqual(coordinator.recordsByItemId["gone"]?.failureReason, "The episode's host refused the download (HTTP 404).")
+        coordinator.flushPendingRowWritesForTesting()
         XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty, "nothing was reserved")
         XCTAssertEqual(try fixture.store.loadOwnedOfflineAssets().map(\.id), ["podcast-offline-other"],
                        "the other episode was not evicted to make room for one that can't download")
@@ -885,6 +893,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
 
             let label = httpOK ? "a 2xx response" : "a non-2xx response"
             XCTAssertFalse(FileManager.default.fileExists(atPath: staged.path), "\(label): the staged file is gone")
+            coordinator.flushPendingRowWritesForTesting()
             XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty, "\(label): the reservation is released")
             if httpOK {
                 XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline, "control: the same file is adopted")
@@ -928,6 +937,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(coordinator.status(itemId: "episode"), .downloading, "the replacement is still downloading")
         XCTAssertFalse(FileManager.default.fileExists(atPath: oldFile.path))
+        coordinator.flushPendingRowWritesForTesting()
         XCTAssertEqual(try fixture.store.loadOfflineStorageReservations().map(\.id), [current.reservationId],
                        "only the replacement's reservation is held")
         XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty, "the old bytes were not adopted")
@@ -1029,6 +1039,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         XCTAssertNil(coordinator.validatedLocalURL(for: "episode"))
         XCTAssertFalse(published, "nothing is offered to the player")
         XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty, "nothing is owned")
+        coordinator.flushPendingRowWritesForTesting()
         XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty, "the reservation is released")
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: fixture.support.appending(path: "PodcastAudio").path).isEmpty,
                       "the error response's body is not kept")
