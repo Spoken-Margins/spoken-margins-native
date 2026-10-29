@@ -14,10 +14,12 @@ public enum SharedPacketItemMatcher {
     public static func matchingItemId(
         for packetItem: SharedItemIdentity,
         among items: [Item],
-        ownedAudiobookDigest: (Item) -> String? = { _ in nil }
+        ownedAudiobookDigest: (Item) -> String? = { _ in nil },
+        textDigests: (Item) -> ItemTextDigests? = { _ in nil }
     ) -> String? {
         let candidates = items.map { item in
-            (item: item, identity: localIdentity(for: item, ownedAudiobookDigest: ownedAudiobookDigest(item)))
+            (item: item, identity: localIdentity(
+                for: item, ownedAudiobookDigest: ownedAudiobookDigest(item), textDigests: textDigests(item)))
         }.filter { ImportedItemResolver.canRepresentSameWork(packetItem, $0.identity) }
         if candidates.count == 1 { return candidates[0].item.id }
         // The listener linked their own file to this episode, and a streamed copy of it exists too (an earlier
@@ -49,9 +51,13 @@ public enum SharedPacketItemMatcher {
     }
 
     /// How a Library item describes itself when it is compared with a packet's item.
-    public static func localIdentity(for item: Item, ownedAudiobookDigest: String?) -> SharedItemIdentity {
+    public static func localIdentity(
+        for item: Item,
+        ownedAudiobookDigest: String?,
+        textDigests: ItemTextDigests? = nil
+    ) -> SharedItemIdentity {
         SharedItemIdentityBuilder.localIdentity(
-            for: item, localAudioDigest: item.mediaType == "audiobook" ? ownedAudiobookDigest : nil
+            for: item, localAudioDigest: item.mediaType == "audiobook" ? ownedAudiobookDigest : nil, textDigests: textDigests
         )
     }
 

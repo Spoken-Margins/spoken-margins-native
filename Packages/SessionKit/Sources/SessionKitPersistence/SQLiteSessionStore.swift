@@ -22,8 +22,8 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     /// The Library read, audio preparation, the map preparer and the placement passes can read together, and the main thread beside them.
     private static let readConnectionLimit = 6
     private static let sessionScopedRecordKinds: Set<String> = ["interjection", "turn", "ai_job"]
-    private var db: OpaquePointer?
-    private let connectionLock = NSRecursiveLock()
+    var db: OpaquePointer?
+    let connectionLock = NSRecursiveLock()
     /// How many `withTransaction` calls are open on this connection. Guarded by `connectionLock`.
     private var transactionDepth = 0
     /// Read-only connections for reads, so a read never waits for `connectionLock` or for another read (#2103).
@@ -42,14 +42,18 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     private let anchorContextLock = NSLock()
     private var anchorContextByItem: [String: (stamp: String, contexts: [Int: SourceAnchorContext?])] = [:]
     private var anchorTimelineDecodeCount = 0
-    private let encoder = JSONEncoder()
-    private let decoder = JSONDecoder()
+    let encoder = JSONEncoder()
+    let decoder = JSONDecoder()
     /// How often each item was written or deleted through this connection, for `itemRevision(id:)`.
     /// Its own lock, so a caller asking never waits behind a query holding `connectionLock`.
-    private let itemRevisionLock = NSLock()
+    let itemRevisionLock = NSLock()
     private var itemRevisions: [String: Int] = [:]
     /// Moved by `reset()`, which can remove any item.
     private var itemRevisionBase = 0
+    /// Moves with every write that can change an item's stored row, inside the lock hold that makes the write, and
+    /// again when a transaction ends. A read that is about to store a record derived from an item (#2506) checks it
+    /// has not moved since the read began. Guarded by `itemRevisionLock`.
+    var itemWriteGeneration = 0
 
     /// Counts each read when set (#2258). Fixed at init, so the unmetered app path needs no lock to check it.
     public let readMeter: StoreReadMeter?
@@ -137,7 +141,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
             try execute("DELETE FROM records;")
             try execute("DELETE FROM quarantined_records;")
         }
-        itemRevisionLock.withLock { itemRevisionBase &+= 1 }
+        itemRevisionLock.withLock { itemRevisionBase &+= 1; itemWriteGeneration &+= 1 }
     }
 
     public func quarantinedRecordCount() throws -> Int {
@@ -316,7 +320,13 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
 
     public func saveItem(_ item: Item) throws {
         defer { noteItemWritten(item.id) }
-        try save(kind: "item", id: item.id, sessionId: nil, itemId: item.id, value: item)
+        try withConnectionLock {
+            try save(kind: "item", id: item.id, sessionId: nil, itemId: item.id, value: item)
+            // What was derived from the old row no longer describes it (#2506). Same lock hold, so no reader's
+            // stale write can land between the save and the delete.
+            try forgetDerivedRecords(ofItem: item.id)
+            itemRevisionLock.withLock { itemWriteGeneration &+= 1 }
+        }
     }
 
     /// Moves whenever `saveItem`, `deleteItem(s)` or `reset` touched the item through this store, so
@@ -336,7 +346,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     }
 
     private func bumpItemRevision(_ id: String) {
-        itemRevisionLock.withLock { itemRevisions[id, default: 0] &+= 1 }
+        itemRevisionLock.withLock { itemRevisions[id, default: 0] &+= 1; itemWriteGeneration &+= 1 }
     }
 
     public func loadListeningMap(itemId: String) throws -> ListeningMap? {
@@ -1456,14 +1466,13 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return items.first.map { $0.deletedAt == nil } ?? false
     }
 
-    /// How much of an item's text the summary read looks at to tell whether there is any besides whitespace.
-    private static let summaryTextHeadLength = 512
-
     /// The Library list's read (#2102): every item in `listItems`' order, without its `text` or `documentStructure`.
     /// SQLite cuts those two out of each payload, so the several MB of an article or book are never copied or decoded.
     /// The text's length is counted in Unicode scalars, which is how SQLite counts; it differs from Swift's character
     /// count only for text with combining marks or joined emoji, and only feeds the listening-time estimate. A payload
     /// that can't be cut or decoded sends the whole read the full way, which sets the broken record aside as before.
+    /// The cut is kept beside each item (`ItemDerivedRecords.swift`), so a later read of an item that hasn't changed
+    /// reads that small record and leaves the payload alone (#2506).
     public func listItemSummaries(includeDeleted: Bool = false) throws -> [LibraryItemSummary] {
         try itemSummaries(onlyId: nil, includeDeleted: includeDeleted, method: #function)
     }
@@ -1475,52 +1484,10 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     }
 
     private func itemSummaries(onlyId: String?, includeDeleted: Bool, method: String) throws -> [LibraryItemSummary] {
-        var rows: [(payload: String, head: String?, length: Int?)] = []
-        var needsFullRead = false
-        let timer = StoreReadTimer(readMeter, method: method)
-        defer { timer?.finish(rows: rows.count, bytes: rows.reduce(0) { $0 + $1.payload.utf8.count + ($1.head?.utf8.count ?? 0) }) }
-        try withReadConnection { connection in
-            var statement: OpaquePointer?
-            let sql = """
-                SELECT CASE WHEN json_valid(payload) THEN json_remove(payload, '$.text', '$.documentStructure') END,
-                       substr(CASE WHEN json_valid(payload) THEN json_extract(payload, '$.text') END, 1, \(Self.summaryTextHeadLength)),
-                       CASE WHEN json_valid(payload) THEN length(json_extract(payload, '$.text')) END
-                FROM records WHERE kind = 'item'\(onlyId == nil ? "" : " AND id = ?") ORDER BY updated_at DESC, id;
-                """
-            guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
-                throw SessionKitError.persistenceFailed("prepare_item_summaries")
-            }
-            defer { sqlite3_finalize(statement) }
-            if let onlyId { bind(statement, index: 1, value: onlyId) }
-            while true {
-                let step = sqlite3_step(statement)
-                if step == SQLITE_DONE { return }
-                guard step == SQLITE_ROW else { throw SessionKitError.persistenceFailed("step_item_summaries") }
-                guard let raw = sqlite3_column_text(statement, 0) else { needsFullRead = true; continue }
-                let head = sqlite3_column_text(statement, 1).map { String(cString: $0) }
-                let length = sqlite3_column_type(statement, 2) == SQLITE_NULL ? nil : Int(sqlite3_column_int64(statement, 2))
-                rows.append((payload: String(cString: raw), head: head, length: length))
-            }
-        }
-        var summaries: [LibraryItemSummary] = []
-        for row in rows {
-            guard !needsFullRead, let data = row.payload.data(using: .utf8),
-                  let item = try? decoder.decode(Item.self, from: data) else { needsFullRead = true; break }
-            var hasText = row.head?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            if !hasText, (row.length ?? 0) > Self.summaryTextHeadLength {
-                // Whitespace for the first stretch, then maybe words: only this rare item is read whole.
-                hasText = (try? loadItem(id: item.id))?.hasListenableText ?? false
-            }
-            summaries.append(LibraryItemSummary(
-                id: item.id, title: item.title, mediaType: item.mediaType, status: item.status,
-                externalReference: item.externalReference, externalReferenceType: item.externalReferenceType,
-                media: item.media, deletedAt: item.deletedAt, author: item.author, sourceTitle: item.sourceTitle,
-                sourceURL: item.sourceURL, createdAt: item.createdAt, publishedAt: item.publishedAt,
-                sourceCompletedAt: item.sourceCompletedAt, hasListenableText: hasText, textCharacterCount: row.length))
-        }
-        if needsFullRead {
+        guard let slices = try itemSlices(onlyId: onlyId, method: method) else {
             return try listItems(includeDeleted: includeDeleted).filter { onlyId == nil || $0.id == onlyId }.map(LibraryItemSummary.init)
         }
+        let summaries = librarySummaries(from: slices)
         return includeDeleted ? summaries : summaries.filter { $0.deletedAt == nil }
     }
 
@@ -1688,7 +1655,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         }
     }
 
-    private func save<T: Encodable>(kind: String, id: String, sessionId: String?, itemId: String?, value: T) throws {
+    func save<T: Encodable>(kind: String, id: String, sessionId: String?, itemId: String?, value: T) throws {
         try withConnectionLock {
             let data = try encoder.encode(value)
             guard let payload = String(data: data, encoding: .utf8) else {
@@ -1968,7 +1935,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try withTransaction(operation)
     }
 
-    private func withTransaction<T>(_ operation: () throws -> T) throws -> T {
+    func withTransaction<T>(_ operation: () throws -> T) throws -> T {
         try withConnectionLock {
             guard transactionDepth == 0 else { return try operation() }
             try execute("BEGIN IMMEDIATE TRANSACTION;")
@@ -2032,7 +1999,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     /// Runs a read on a connection of its own, so it waits for neither the writer's lock nor another read (#2103).
     /// WAL gives such a connection the last committed state, as of when each statement starts. A thread with a
     /// transaction open reads on the writer's connection instead, to see what it has written and not yet committed.
-    private func withReadConnection<T>(_ operation: (OpaquePointer?) throws -> T) rethrows -> T {
+    func withReadConnection<T>(_ operation: (OpaquePointer?) throws -> T) rethrows -> T {
         if let readConnections, !currentThreadHasTransactionOpen(), let reader = readConnections.checkOut() {
             defer { readConnections.checkIn(reader) }
             return try operation(reader)
@@ -2044,13 +2011,13 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         transactionOwnerLock.withLock { transactionOwner.map { pthread_equal($0, pthread_self()) != 0 } ?? false }
     }
 
-    private func withConnectionLock<T>(_ operation: () throws -> T) rethrows -> T {
+    func withConnectionLock<T>(_ operation: () throws -> T) rethrows -> T {
         connectionLock.lock()
         defer { connectionLock.unlock() }
         return try operation()
     }
 
-    private func bind(_ statement: OpaquePointer?, index: Int32, value: String?) {
+    func bind(_ statement: OpaquePointer?, index: Int32, value: String?) {
         guard let value else {
             sqlite3_bind_null(statement, index)
             return
