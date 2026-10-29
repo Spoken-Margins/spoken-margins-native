@@ -116,6 +116,7 @@ private struct TermsSummaryView: View {
                 .font(.body)
             NavigationLink("Read the complete Terms") {
                 SpokenMarginsTermsView(allowsAcceptance: false)
+                    .miniPlayerKeepOut()
             }
             .accessibilityIdentifier("terms.readComplete.link")
             Spacer(minLength: 0)
