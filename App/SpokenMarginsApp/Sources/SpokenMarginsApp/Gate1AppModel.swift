@@ -1582,7 +1582,7 @@ final class Gate1AppModel: ObservableObject {
         streamingSpeechQueue.relinquishToCanonicalPlayback()
         run { engine in
             snapshot = try engine.resumePlayback()
-            refreshSelectedItem()
+            refreshSelectedItemInBackground() // like pause(): the icon flips without waiting for the item reload (#2098)
             reportSuccess("Resumed.")
         }
     }
