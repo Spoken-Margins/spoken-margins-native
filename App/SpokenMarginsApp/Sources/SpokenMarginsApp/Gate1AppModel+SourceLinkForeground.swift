@@ -135,7 +135,7 @@ extension Gate1AppModel {
             snapshot = shouldStartSession && imported.linkResolutionStatus == LinkResolutionStatus.playable.rawValue
                 ? try applyPreferredPlaybackRate(to: imported, engine: engine)
                 : imported
-            libraryItems = try loadLibraryRows(store: store)
+            refreshLibraryRowsInBackground(mustPublish: true) // the new row; a whole-Library read on main hung each add (#2505)
             if let itemId = snapshot.itemId {
                 activeItemId = itemId
                 selectedItem = try loadItemDetail(id: itemId, store: store)
@@ -210,7 +210,7 @@ extension Gate1AppModel {
             snapshot = startSession && imported.linkResolutionStatus == LinkResolutionStatus.playable.rawValue
                 ? try applyPreferredPlaybackRate(to: imported, engine: engine)
                 : imported
-            libraryItems = try loadLibraryRows(store: store)
+            refreshLibraryRowsInBackground(mustPublish: true) // the new row; a whole-Library read on main hung each add (#2505)
             if let itemId = snapshot.itemId {
                 activeItemId = itemId
                 selectedItem = try loadItemDetail(id: itemId, store: store)
