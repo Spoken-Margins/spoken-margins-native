@@ -118,7 +118,7 @@ final class AudioPreparationQueueProjectionTests: XCTestCase {
         var limited = job("a", policy: .demandWindow, limit: 2)
         limited.nextChunkIndex = 1
         let withManifest = AudioPreparationQueueProjection.queueRows(
-            jobs: [limited], manifestsById: ["manifest-a": manifest("a", state: .preparing, planned: 9, committed: 5)],
+            jobs: [limited], manifestsById: ["manifest-a": manifest("a", state: .preparing, planned: 9, committed: 5).summary],
             titlesByItemId: ["a": "Article A"], activeItemId: nil)
         let row = try XCTUnwrap(withManifest.first)
         XCTAssertEqual(row.title, "Article A")
@@ -140,13 +140,13 @@ final class AudioPreparationQueueProjectionTests: XCTestCase {
         var broken = manifest("a", state: .failed, updatedAt: 40)
         broken.failureCode = "manifest_failure"
         let both = try XCTUnwrap(AudioPreparationQueueProjection.queueRows(
-            jobs: [failed], manifestsById: ["manifest-a": broken], titlesByItemId: [:], activeItemId: nil).first)
+            jobs: [failed], manifestsById: ["manifest-a": broken.summary], titlesByItemId: [:], activeItemId: nil).first)
         XCTAssertEqual(both.failureCode, "job_failure")
         XCTAssertEqual(both.updatedAt, date(40))
 
         failed.lastFailureCode = nil
         let manifestOnly = try XCTUnwrap(AudioPreparationQueueProjection.queueRows(
-            jobs: [failed], manifestsById: ["manifest-a": broken], titlesByItemId: [:], activeItemId: nil).first)
+            jobs: [failed], manifestsById: ["manifest-a": broken.summary], titlesByItemId: [:], activeItemId: nil).first)
         XCTAssertEqual(manifestOnly.failureCode, "manifest_failure")
 
         let neither = try XCTUnwrap(AudioPreparationQueueProjection.queueRows(
@@ -267,7 +267,7 @@ final class AudioPreparationQueueProjectionTests: XCTestCase {
                 manifest("a", updatedAt: 10, id: "a-old"),
                 manifest("b", updatedAt: 30),
                 manifest("a", updatedAt: 20, id: "a-new"),
-            ],
+            ].map(\.summary),
             titlesByItemId: ["a": "Alpha", "b": "Beta"])
         XCTAssertEqual(list.map(\.id), ["manifest-b", "a-new"])
         XCTAssertEqual(list.map(\.title), ["Beta", "Alpha"])
@@ -282,14 +282,14 @@ final class AudioPreparationQueueProjectionTests: XCTestCase {
                 manifest("no-artifact", withArtifact: false),
                 manifest("failed", state: .failed),
                 manifest("done"),
-            ],
+            ].map(\.summary),
             titlesByItemId: [:])
         XCTAssertEqual(list.map(\.itemId), ["done"])
         XCTAssertEqual(list.first?.title, "done", "a missing item shows its id")
     }
 
     func testRecentlyPreparedStopsAtTen() {
-        let manifests = (0..<14).map { manifest("item-\($0)", updatedAt: Double($0)) }
+        let manifests = (0..<14).map { manifest("item-\($0)", updatedAt: Double($0)).summary }
         let list = AudioPreparationQueueProjection.recentlyPrepared(manifests: manifests, titlesByItemId: [:])
         XCTAssertEqual(list.count, 10)
         XCTAssertEqual(list.first?.itemId, "item-13")

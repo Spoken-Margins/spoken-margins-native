@@ -5,7 +5,7 @@ import Foundation
 public struct LibraryReadSnapshot: Sendable {
     public let items: [LibraryItemSummary]
     public let sessions: [Session]
-    public let manifests: [PreparedAudioManifest]
+    public let manifests: [PreparedAudioManifestSummary]
     public let jobs: [AudioPreparationJob]
     public let downloads: [PodcastDownloadRecord]
     public var structuredDocumentItemIds: Set<String> = []
@@ -17,7 +17,7 @@ public struct LibraryReadSnapshot: Sendable {
     public init(
         items: [LibraryItemSummary],
         sessions: [Session],
-        manifests: [PreparedAudioManifest],
+        manifests: [PreparedAudioManifestSummary],
         jobs: [AudioPreparationJob],
         downloads: [PodcastDownloadRecord],
         structuredDocumentItemIds: Set<String> = [],
@@ -37,7 +37,7 @@ public struct LibraryReadSnapshot: Sendable {
     public init(
         items: [Item],
         sessions: [Session],
-        manifests: [PreparedAudioManifest],
+        manifests: [PreparedAudioManifestSummary],
         jobs: [AudioPreparationJob],
         downloads: [PodcastDownloadRecord],
         structuredDocumentItemIds: Set<String> = [],
