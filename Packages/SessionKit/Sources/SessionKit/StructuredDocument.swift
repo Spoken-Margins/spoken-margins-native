@@ -518,8 +518,9 @@ public enum StructuredDocumentBuilder {
     }
 
     /// A number opening a line ("46 In the CD16+ NK cells, the expression rose") is a wrapped superscript
-    /// only inside running prose: not a heading ("2 Materials and Methods"), and not a numbered list,
-    /// whose lines before and after open with the numbers either side of it ("1 Mix…", "2 Heat…").
+    /// only inside running prose: not a heading ("2 Materials and Methods", or "2 Study design" with a
+    /// new sentence on the next line), and not a numbered list, whose nearby lines open with the numbers
+    /// either side of it ("1 Mix…", "2 Heat…"), even when an item wraps.
     private static func continuesAParagraph(_ text: NSString, digits: NSRange) -> Bool {
         let numbers = text.substring(with: digits).split { !$0.isNumber }.compactMap { Int($0) }
         guard let first = numbers.first, let last = numbers.last else { return false }
@@ -531,12 +532,25 @@ public enum StructuredDocumentBuilder {
         guard words.count >= 3,
               words.dropFirst().contains(where: { $0.first?.isLowercase == true && !headingConnectives.contains($0.lowercased()) })
         else { return false }
+        func lines(from start: Int, backwards: Bool) -> [NSRange] {
+            var result: [NSRange] = [], location = start
+            while result.count < 4, backwards ? location > 0 : location < text.length {
+                let range = text.lineRange(for: NSRange(location: backwards ? location - 1 : location, length: 0))
+                result.append(range)
+                location = backwards ? range.location : range.location + range.length
+            }
+            return result
+        }
+        let before = lines(from: line.location, backwards: true), after = lines(from: line.location + line.length, backwards: false)
+        // "2 Study design and participants" with no stop, then "We enrolled…": a heading in sentence case (#1189).
+        if rest.trimmingCharacters(in: .whitespacesAndNewlines).last.map({ !".,;:?!".contains($0) }) ?? false,
+           let next = after.first, text.substring(with: next).first(where: { !$0.isWhitespace })?.isUppercase == true {
+            return false
+        }
         func opens(_ range: NSRange, with number: Int) -> Bool {
             text.substring(with: range).range(of: "^\\s*\(number)[ .)]", options: .regularExpression) != nil
         }
-        if line.location > 0, opens(text.lineRange(for: NSRange(location: line.location - 1, length: 0)), with: first - 1) { return false }
-        let after = line.location + line.length
-        return !(after < text.length && opens(text.lineRange(for: NSRange(location: after, length: 0)), with: last + 1))
+        return !before.contains { opens($0, with: first - 1) } && !after.contains { opens($0, with: last + 1) }
     }
 
     private static let headingConnectives: Set<String> = ["a", "an", "and", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "with"]

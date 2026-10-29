@@ -438,6 +438,9 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(opening("Ten were excluded.", "2 Results"), [])
         XCTAssertEqual(opening("The steps were as follows.", "1 Mix the reagents in a tube.", "2 Heat the tube to 90 C."), [])
         XCTAssertEqual(opening("Then heat it.", "3 Cool the tube on ice for a while.", "4 Spin the tube down."), [])
+        XCTAssertEqual(opening("Ten were excluded.", "2 Study design and participants", "We enrolled adults."), [], "a heading in sentence case")
+        XCTAssertEqual(opening("1 Mix the reagents in a tube and", "vortex for a while.", "2 Heat the tube to 90 C."), [], "a list item that wraps")
+        XCTAssertEqual(opening("as reported before.", "3 Spin the tube down at once and", "then cool it.", "4 Store it cold."), [])
     }
 
     func testASuperscriptAfterABracketedSampleSizeIsACitation() {
