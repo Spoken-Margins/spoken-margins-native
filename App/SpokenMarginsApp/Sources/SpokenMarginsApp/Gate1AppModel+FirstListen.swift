@@ -11,7 +11,9 @@ extension Gate1AppModel {
             reportConfirmation("Getting your first listen ready.")
             var entry = await firstListenEntry(pickedSourceIds: pickedSourceIds)
             if entry == nil {
-                // A follow whose refresh was skipped (one was already running) has no entries yet.
+                // A follow whose refresh was skipped (one was already running) has no entries yet. A refresh
+                // asked for while another runs does nothing, so let the running one finish first.
+                for _ in 0..<150 where isRefreshingFollowedSources { try? await Task.sleep(for: .milliseconds(100)) }
                 await performFollowedSourceRefresh(force: true)
                 entry = await firstListenEntry(pickedSourceIds: pickedSourceIds)
             }
