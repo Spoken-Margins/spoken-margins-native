@@ -4893,6 +4893,29 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.cancelInterjection()
     }
 
+    /// #2852: "Don't Allow" on iOS's first microphone prompt opens a written Margin instead of an error.
+    func testDecliningTheFirstMicrophonePromptOpensAWrittenMargin() async throws {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient(),
+            microphonePermissionRequest: { false },
+            microphonePermissionStatus: { .undetermined }
+        )
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        model.startItem(id: "item-pill")
+        model.pause()
+        model.addFirstMargin()
+        XCTAssertTrue(model.microphonePrimer.isShowing)
+        model.continueMicrophonePrimer()
+        for _ in 0..<200 where model.writtenMarginDraft == nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertNotNil(model.writtenMarginDraft, "falls back to a written Margin")
+        XCTAssertFalse(model.recordingPermissionDenied)
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertTrue(model.isOnboardingStepComplete(.sawFirstMarginPrompt), "the prompt does not come back")
+        model.cancelWrittenMargin()
+    }
+
     /// #1043 APM-02: every Margin after the first starts on the "already granted" path, and no test could reach
     /// it: a test recorder jumped straight to recording, and the path read iOS's answer rather than the test's.
     /// With the permission granted, Add Margin must record one turn after the tap, and never ask again.

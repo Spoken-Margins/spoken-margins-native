@@ -88,6 +88,7 @@ struct PlaybackScreen: View {
                                     }
                                     // Keep the promised Margin visible before the large source header (#1577).
                                     marginMomentControl
+                                    if model.isFirstMarginPromptShowing { FirstMarginPromptCard() }
                                     playbackHeader
                                     capturePermissionRecovery
                                     importedCommentaryControl
