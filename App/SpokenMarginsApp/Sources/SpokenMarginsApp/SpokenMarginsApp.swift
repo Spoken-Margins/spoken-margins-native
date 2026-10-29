@@ -134,7 +134,8 @@ struct SpokenMarginsApp: App {
                     didFollow: { model?.refreshFollowedSources(force: false) }
                 )
             },
-            searcher: CatalogDrawerModel.makeSearcher()
+            searcher: CatalogDrawerModel.makeSearcher(),
+            startFirstListen: { [weak model] sourceIds in await model?.startFirstListen(pickedSourceIds: sourceIds) }
         ))
     }
 

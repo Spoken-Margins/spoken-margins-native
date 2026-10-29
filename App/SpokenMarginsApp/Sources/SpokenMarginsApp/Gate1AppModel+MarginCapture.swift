@@ -229,15 +229,30 @@ extension Gate1AppModel {
     /// #783: Continue on the line before the microphone prompt goes on to iOS's request.
     func continueMicrophonePrimer() {
         guard let captureID = marginCapture.continuePrimer() else { return }
-        requestMicrophoneThenRecord(requestedAt: Date(), captureID: captureID)
+        requestMicrophoneThenRecord(requestedAt: Date(), captureID: captureID, fallsBackToWritten: true)
     }
 
-    private func requestMicrophoneThenRecord(requestedAt: Date, captureID voiceCaptureRequestID: UUID) {
+    /// `fallsBackToWritten`: the listener has just answered iOS's first microphone prompt. A "Don't Allow" opens a
+    /// written Margin at the same place instead of leaving them on an error (#2852). A permission denied earlier
+    /// keeps the recovery card (Write instead, Open Settings).
+    private func requestMicrophoneThenRecord(requestedAt: Date, captureID voiceCaptureRequestID: UUID, fallsBackToWritten: Bool = false) {
         Task {
             let granted = await requestMicrophonePermission()
             switch marginCapture.resolvePermission(for: voiceCaptureRequestID, granted: granted) {
             case .stale:
                 return
+            case .denied where fallsBackToWritten:
+                // As when the listener switches to writing before the recording starts: no recording is coming, so a held
+                // shared Margin is let go (a card up blocks writing) and the pencil's rules apply.
+                let heldShared = heldMarginVoice?.kind == .shared
+                marginVoiceHeldForRecording = nil
+                if heldShared { stopImportedCommentaryPlayback(resumeSource: false) }
+                beginWrittenMargin()
+                if writtenMarginDraft != nil {
+                    reportWarning("The microphone is off, so write your Margin instead. You can allow it later in Settings.")
+                } else {
+                    resumeSourcePausedOnTap()
+                }
             case .denied:
                 resumeHeldMarginVoice(heldMarginVoice) // no recording will come of it: the Margin it paused plays on (#1672)
                 reportFailure("Microphone access is required to record Margins. Enable microphone access in Settings and try again.")

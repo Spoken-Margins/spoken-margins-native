@@ -12,6 +12,9 @@ public enum OnboardingStep: String, CaseIterable, Identifiable, Hashable, Sendab
     case addedFromSafari = "added_from_safari"
     case addedFromFiles = "added_from_files"
     case addedPodcast = "added_podcast"
+    /// The listener tapped or dismissed the "Tap to add a Margin" prompt (#2852). Not a Help card step: it is
+    /// kept here so it is stored and published with the rest, and an older build drops the unknown name.
+    case sawFirstMarginPrompt = "saw_first_margin_prompt"
 
     public var id: String { rawValue }
 
@@ -103,6 +106,12 @@ public struct OnboardingProgress: Equatable, Sendable {
         !suppressed && !hasCompletedCore && !isCardDismissed
     }
 
+    /// #2852: once audio is on, one prompt to add a first Margin, until the listener has tapped or dismissed it
+    /// or has made a Margin. While it shows, the tour coach and the Library strip stay out of the way.
+    public func shouldShowFirstMarginPrompt(hasActiveSession: Bool, suppressed: Bool) -> Bool {
+        !suppressed && hasActiveSession && !isComplete(.firstInterjection) && !isComplete(.sawFirstMarginPrompt)
+    }
+
     public func shouldShowCoach(guidedItemIsSelected: Bool) -> Bool {
         stage != .inactive && guidedItemIsSelected
     }
@@ -177,6 +186,11 @@ public struct OnboardingProgress: Equatable, Sendable {
             change.formUnion(setStage(.complete))
         }
         return change
+    }
+
+    @discardableResult
+    public mutating func firstMarginPromptSeen() -> Change {
+        mark([.sawFirstMarginPrompt])
     }
 
     @discardableResult
