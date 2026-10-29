@@ -78,4 +78,12 @@ final class PlaybackTermsGateTests: XCTestCase {
     func testAnItemThatCantBeLoadedKeepsTheGate() {
         XCTAssertTrue(PlaybackTermsGate.requiresTerms(for: nil, termsAccepted: false, bundledVoicePending: true))
     }
+
+    /// #2853: a first Play gets the short screen; a voice the listener picks in Settings, and rereading, get the whole Terms.
+    func testAFirstPlayWaitingOnTheTermsGetsTheSummaryAndEverythingElseTheCompleteTerms() {
+        XCTAssertEqual(PlaybackTermsGate.presentation(playbackIsWaiting: true, termsAccepted: false), .summary)
+        XCTAssertEqual(PlaybackTermsGate.presentation(playbackIsWaiting: false, termsAccepted: false), .complete, "picked in Settings")
+        XCTAssertEqual(PlaybackTermsGate.presentation(playbackIsWaiting: true, termsAccepted: true), .complete)
+        XCTAssertEqual(PlaybackTermsGate.presentation(playbackIsWaiting: false, termsAccepted: true), .complete)
+    }
 }
