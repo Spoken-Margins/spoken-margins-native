@@ -167,13 +167,16 @@ extension Gate1AppModel {
                 sourceURL = url
             }
             let destination = directory.appending(path: "\(assetID).\(sourceURL.pathExtension.isEmpty ? "caf" : sourceURL.pathExtension)")
-            if sourceURL.standardizedFileURL != destination.standardizedFileURL {
-                if FileManager.default.fileExists(atPath: destination.path) {
-                    try FileManager.default.removeItem(at: destination)
+            // The copy of a rendered scene summary goes off the main actor (#2510); only its size comes back.
+            let bytes: Int64 = try await Task.detached(priority: .userInitiated) {
+                if sourceURL.standardizedFileURL != destination.standardizedFileURL {
+                    if FileManager.default.fileExists(atPath: destination.path) {
+                        try FileManager.default.removeItem(at: destination)
+                    }
+                    try FileManager.default.copyItem(at: sourceURL, to: destination)
                 }
-                try FileManager.default.copyItem(at: sourceURL, to: destination)
-            }
-            let bytes = (try destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+                return (try destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+            }.value
             let asset = OwnedOfflineAsset(
                 id: assetID,
                 itemId: itemId,
