@@ -117,16 +117,25 @@ public enum LiveSessionWatchSessions {
         return session
     }
 
-    /// Applies Resume, asked at `at` (the phone's clock). Returns the session to save, or none.
-    public static func resume(id: String, at: Date, sessions: [String: LiveSession]) -> LiveSession? {
-        guard var session = sessions[id], session.savedItemId == nil, session.isQuick != true,
+    /// When Resume stops being offered for `id`, or nil when it isn't offered: the session ended, is named and unsaved,
+    /// wasn't made from a Watch Margin that is still waiting for its start, and no other named session has started
+    /// since it ended. The window runs from when End was tapped, not from the earlier time the listener said it stopped.
+    /// The phone's Live Activity, the Live row and the session screen offer Resume exactly while this is in the future.
+    public static func resumableUntil(id: String, sessions: [String: LiveSession]) -> Date? {
+        guard let session = sessions[id], session.savedItemId == nil, session.isQuick != true,
               let end = session.endedAt, session.endReason != EndReason.placeholder.rawValue else { return nil }
-        // The Resume window runs from when End was tapped, not from the earlier time the listener said it stopped.
-        let since = at.timeIntervalSince(session.endHeardAt ?? end)
-        guard since >= -WatchContract.offsetMaxRoundTrip, since <= WatchContract.resumeWindow else { return nil }
         // Another named session started since it ended: that one is what the listener is doing.
         let startedSince = sessions.values.contains { $0.id != id && $0.isQuick != true && $0.savedItemId == nil && $0.startedAt >= end }
         guard !startedSince else { return nil }
+        return (session.endHeardAt ?? end).addingTimeInterval(WatchContract.resumeWindow)
+    }
+
+    /// Applies Resume, asked at `at` (the phone's clock). Returns the session to save, or none.
+    public static func resume(id: String, at: Date, sessions: [String: LiveSession]) -> LiveSession? {
+        guard var session = sessions[id], let end = session.endedAt,
+              let until = resumableUntil(id: id, sessions: sessions) else { return nil }
+        let since = at.timeIntervalSince(session.endHeardAt ?? end)
+        guard since >= -WatchContract.offsetMaxRoundTrip, at <= until else { return nil }
         session.endedAt = nil
         session.endTappedAt = nil
         session.endReason = nil

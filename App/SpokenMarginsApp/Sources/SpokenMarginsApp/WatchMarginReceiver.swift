@@ -31,6 +31,8 @@ final class WatchMarginReceiver: NSObject {
     var transcribe: @Sendable (String) async -> String? = { await LiveSessionSpokenMargins.transcribe(audioPath: $0) }
     /// Waiting Lock Screen Marks, removed as they are read.
     var drainMarks: () -> [Date] = { LiveSessionMarkQueue.drain() }
+    /// Waiting Resumes tapped on the Lock Screen card (#2883), removed as they are read.
+    var drainResumes: () -> [(sessionId: String, at: Date)] = { LiveSessionResumeQueue.drain() }
     /// What was last sent to the Watch as the session state, kept for the launch check and tests.
     private(set) var lastPublishedContext: [String: Any]?
     /// The last board sent, kept for tests.
@@ -39,6 +41,7 @@ final class WatchMarginReceiver: NSObject {
     private(set) var sentAnswers: [WatchMarginAnswer] = []
     /// Passes run one after another, so each Margin is filed once.
     private var lastPass: Task<Void, Never>?
+    private var resumeObserver: NSObjectProtocol?
 
     init(files: LiveSessionFileWorker) {
         self.files = files
@@ -53,6 +56,13 @@ final class WatchMarginReceiver: NSObject {
             WCSession.default.activate()
         }
         #endif
+        // A Resume tapped on the Lock Screen card is applied at once while the app is running (#2883); one tapped while
+        // it was not waits in the queue, which the pass below reads.
+        if resumeObserver == nil {
+            resumeObserver = NotificationCenter.default.addObserver(forName: LiveSessionResumeQueue.requested, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { WatchMarginReceiver.shared.processInbox() }
+            }
+        }
         processInbox()
     }
 
@@ -71,16 +81,29 @@ final class WatchMarginReceiver: NSObject {
 
     /// Files Lock Screen Marks now, if any are waiting. Cheap when none are.
     func fileWaitingMarks() {
+        let resumes = drainResumes()
         let marks = drainMarks()
-        guard !marks.isEmpty else { return }
+        guard !marks.isEmpty || !resumes.isEmpty else { return }
         let previous = lastPass
         let files = files
         let pass = Task { [weak self] in
             await previous?.value
+            // A Resume tapped before a Mark opens the session the Mark belongs in.
+            let resumed = await self?.apply(resumes) ?? false
             let result = await files.fileMarks(marks)
-            if result.changed { self?.announceChange() }
+            if result.changed || resumed { self?.announceChange() }
         }
         lastPass = pass
+    }
+
+    /// Applies Resumes the Lock Screen card noted, judged at the time of each tap. A Resume the rules refuse removes the
+    /// card that offered it. Returns true when a session ran again.
+    private func apply(_ requests: [(sessionId: String, at: Date)]) async -> Bool {
+        guard !requests.isEmpty else { return false }
+        let result = await files.applyResumes(requests.map { LiveSessionFileWorker.ResumeRequest(sessionId: $0.sessionId, at: $0.at) })
+        for session in result.resumed { await LiveSessionActivities.showRunning(session) }
+        for id in result.refused { await LiveSessionActivities.end(sessionId: id) }
+        return !result.resumed.isEmpty
     }
 
     private func runPass() async {
@@ -89,8 +112,8 @@ final class WatchMarginReceiver: NSObject {
 
     /// Files what is waiting and answers the Watch, without transcribing.
     private func fileWaiting() async -> [LiveSessionFileWorker.FiledMargin] {
+        var changed = await apply(drainResumes())
         let marks = drainMarks()
-        var changed = false
         if !marks.isEmpty {
             changed = await files.fileMarks(marks).changed || changed
         }

@@ -62,3 +62,34 @@ public struct LiveSessionMarkInbox {
         return times.sorted().map { Date(timeIntervalSince1970: $0) }
     }
 }
+
+/// Where a Resume tapped on the Lock Screen card waits for the app (#2883), one key per session so a second tap
+/// doesn't move the first. The tap time is kept because the Resume window is judged at the tap, not at the later
+/// moment the app reads it. Shares `LiveSessionMarkStore` and this file's reason to exist: the widget extension
+/// compiles it directly and doesn't link SessionKit.
+public struct LiveSessionResumeInbox {
+    public static let keyPrefix = "LiveSessionResume.v1."
+
+    private let store: LiveSessionMarkStore
+
+    public init(store: LiveSessionMarkStore) {
+        self.store = store
+    }
+
+    public func request(sessionId: String, at date: Date) {
+        let key = Self.keyPrefix + sessionId
+        guard store.markTime(forKey: key) == nil else { return }
+        store.setMarkTime(date.timeIntervalSince1970, forKey: key)
+    }
+
+    /// Returns the waiting requests, oldest first, and removes exactly those.
+    public func drain() -> [(sessionId: String, at: Date)] {
+        var requests: [(sessionId: String, at: Date)] = []
+        for key in store.markKeys(prefix: Self.keyPrefix) {
+            guard let time = store.markTime(forKey: key) else { continue }
+            requests.append((String(key.dropFirst(Self.keyPrefix.count)), Date(timeIntervalSince1970: time)))
+            store.removeMark(forKey: key)
+        }
+        return requests.sorted { ($0.at, $0.sessionId) < ($1.at, $1.sessionId) }
+    }
+}

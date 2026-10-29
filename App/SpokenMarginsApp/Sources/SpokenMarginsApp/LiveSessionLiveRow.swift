@@ -33,6 +33,7 @@ final class LiveSessionBoard: ObservableObject {
     /// Reads the rows now. A read that finishes after a newer read has been applied is dropped; one that is merely
     /// overtaken by a newer read still in flight is applied, so on return the rows are at least as fresh as this read.
     func refreshNow() async {
+        await LiveSessionActivities.endExpired() // an "Ended · Resume" card whose window closed while the app was away
         latest += 1
         let ticket = latest
         let summaries = await files.summaries()
@@ -59,9 +60,12 @@ struct LiveSessionLiveRows: View {
         if !board.rows.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(board.rows.prefix(Self.shownRows)) { row in
-                    Button { opened = Opened(id: row.id) } label: { line(row) }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("library.liveRow.\(row.id)")
+                    HStack(spacing: 8) {
+                        Button { opened = Opened(id: row.id) } label: { line(row) }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("library.liveRow.\(row.id)")
+                        if let until = row.resumableUntil { resumeButton(row, until: until) }
+                    }
                 }
                 if board.rows.count > Self.shownRows {
                     Text("\(board.rows.count - Self.shownRows) more not yet saved")
@@ -71,6 +75,26 @@ struct LiveSessionLiveRows: View {
             }
             .fullScreenCover(item: $opened) { opened in
                 LiveSessionView(sessionId: opened.id).environmentObject(model)
+            }
+        }
+    }
+
+    /// Resume for the 10 minutes after End (#2883): the same rules as the Watch's, and it goes when the window closes.
+    private func resumeButton(_ row: LiveSessionFileWorker.Summary, until: Date) -> some View {
+        TimelineView(.explicit([min(Date.now, until), until])) { context in
+            if context.date < until {
+                Button {
+                    Task {
+                        // A refusal leaves the row as it was; the refresh drops the button that offered it.
+                        if await LiveSessionResumer.resume(id: row.id) == nil {
+                            NotificationCenter.default.post(name: LiveSessionSpokenMargins.changedOnDisk, object: nil)
+                        }
+                    }
+                } label: {
+                    Label("Resume", systemImage: "play.circle").frame(minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("library.liveRow.resume.\(row.id)")
             }
         }
     }
