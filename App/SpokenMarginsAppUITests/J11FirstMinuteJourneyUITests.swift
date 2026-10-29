@@ -68,11 +68,16 @@ final class J11FirstMinuteJourneyUITests: XCTestCase {
             waitUntil("Recording clock did not reach 2 s", timeout: 15) { self.seconds(duration.label).map { $0 >= 2 } ?? false }
             tap("recording.finish.button")
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Did not return to Now Playing")
-            waitUntil("The saved Margin did not appear in the count", timeout: 10) {
-                self.element("playback.margins.count").label == "Margins: 1"
-            }
             XCTAssertFalse(element("playback.firstMargin.prompt").exists, "The prompt must not come back after a first Margin")
+            // The count lives in the Margins pane, which Now Playing doesn't open by itself. Opening it is
+            // checking, not listening, so it isn't counted in the taps.
+            let marginsPane = element("playback.margins.button")
+            XCTAssertTrue(marginsPane.waitForExistence(timeout: 8), "The Margins pane button is missing")
             note("first Margin saved, \(taps) taps")
+            marginsPane.tap()
+            waitUntil("The saved Margin did not appear in the count", timeout: 10) {
+                self.element("playback.margins.count").exists && self.element("playback.margins.count").label == "Margins: 1"
+            }
         }
     }
 
