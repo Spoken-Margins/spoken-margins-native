@@ -2131,6 +2131,32 @@ private struct ImportedWatchSyncEvent: Codable {
     var importedAt: Date
 }
 
+/// The counts the engine publishes on every playback tick, made in SQLite from the session index so no payload is
+/// copied or decoded (#2509). They match `loadInterjections(sessionId:)` and `loadAIJobs(sessionId:)` filtered the
+/// same way; a row that isn't valid JSON is left out, as those reads leave out a row they can't decode.
+extension SQLiteSessionStore: SessionRecordCounting {
+    public func activeInterjectionCount(sessionId: String) throws -> Int {
+        try sessionRecordCount(
+            "kind = 'interjection' AND json_extract(payload, '$.status') = 'active'", sessionId: sessionId,
+            name: "activeInterjectionCount")
+    }
+
+    public func unfinishedAIJobCount(sessionId: String) throws -> Int {
+        try sessionRecordCount(
+            "kind = 'ai_job' AND IFNULL(json_extract(payload, '$.status'), '') != 'complete'", sessionId: sessionId,
+            name: "unfinishedAIJobCount")
+    }
+
+    private func sessionRecordCount(_ condition: String, sessionId: String, name: String) throws -> Int {
+        var count = 0
+        try readTexts(
+            "SELECT count(*) FROM records WHERE session_id = ? AND json_valid(payload) AND \(condition);",
+            [sessionId], name: name
+        ) { count = Int($0) ?? 0 }
+        return count
+    }
+}
+
 extension SQLiteSessionStore: ItemRevisionReading {}
 extension SQLiteSessionStore: ItemAddressLookup {}
 

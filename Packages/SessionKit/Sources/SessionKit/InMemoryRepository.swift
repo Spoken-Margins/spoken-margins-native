@@ -482,6 +482,16 @@ extension InMemorySessionRepository: PublisherAudioRepository {
     public func loadPublisherAudio(itemId: String) throws -> PublisherAudio? { publisherAudio[itemId] }
 }
 
+extension InMemorySessionRepository: SessionRecordCounting {
+    public func activeInterjectionCount(sessionId: String) throws -> Int {
+        interjections.values.filter { $0.sessionId == sessionId && $0.status == "active" }.count
+    }
+
+    public func unfinishedAIJobCount(sessionId: String) throws -> Int {
+        aiJobs.values.filter { $0.sessionId == sessionId && $0.status != "complete" }.count
+    }
+}
+
 extension InMemorySessionRepository: ItemRevisionReading {
     public func itemRevision(id: String) -> Int { itemWrites }
 }
