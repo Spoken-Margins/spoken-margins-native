@@ -440,6 +440,16 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(opening("Then heat it.", "3 Cool the tube on ice for a while.", "4 Spin the tube down."), [])
     }
 
+    func testASuperscriptAfterABracketedSampleSizeIsACitation() {
+        // #1189, pmc-pmc11150781: "waves 5 and 6 (2015, n=68 186)21 of the Survey" read "twenty-one".
+        let listed = numberedReferences + (21...30).map { "\($0). Author \($0). Title. 2019." }
+        XCTAssertEqual(citationLabels(["Data were from wave 6 (2015, n=68 186)21 of the Survey of Health."], references: listed), ["21"])
+        XCTAssertEqual(citationLabels(["Most were women (N = 559)3 in the first wave."], references: listed), ["3"])
+        // Any other equals sign in the bracket is still a formula, and so is a sample size inside one.
+        XCTAssertEqual(citationLabels(["Then (x = 2)3 holds, and (p=0.03)4 and (n=k+1)2 too."], references: listed), [])
+        XCTAssertEqual(citationLabels(["The mean (mean=5)2 and (2015, n=68 186, r=0.4)21 stay."], references: listed), [])
+    }
+
     func testASuperscriptStuckToEtAlIsACitation() {
         // #1189, pmc-pmc10756882: "Cao et al.22 considered a block" read "twenty-two".
         XCTAssertEqual(citationLabels(["To exploit adjacent pixels, Cao et al.22 considered a block."], references: numberedReferences + (21...30).map { "\($0). Author \($0). Title. 2019." }), ["22"])

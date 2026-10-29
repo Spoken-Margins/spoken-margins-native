@@ -492,8 +492,10 @@ public enum StructuredDocumentBuilder {
                         let content = String(slice[slice.index(after: start)..<close.lowerBound])
                         let previous = start > slice.startIndex ? slice[slice.index(before: start)] : nil
                         let contentRange = NSRange(location: 0, length: (content as NSString).length)
+                        // A sample size is not a formula: "(2015, n=68 186)21 of the Survey" (#1189).
+                        let formula = content.replacingOccurrences(of: #"\b[nN]\s*=\s*[0-9][0-9 ,.]*"#, with: "", options: .regularExpression)
                         guard previous?.isLetter != true, previous?.isNumber != true, content.count > 2,
-                              math.firstMatch(in: content, range: contentRange) == nil,
+                              math.firstMatch(in: formula, range: NSRange(location: 0, length: (formula as NSString).length)) == nil,
                               letters.firstMatch(in: content, range: contentRange) == nil
                         else { continue }
                     }
