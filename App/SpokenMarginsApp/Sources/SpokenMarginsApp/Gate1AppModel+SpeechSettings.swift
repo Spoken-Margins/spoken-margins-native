@@ -19,9 +19,14 @@ import PDFKit
 
 /// Speech settings, voice previews and rate wording (#961), moved out of the central model.
 extension Gate1AppModel {
+    /// The Text Navigation picker's change: keep the choice for the next launch (it was never saved before).
+    func skipUnitChanged() {
+        UserDefaults.standard.set(skipUnit, forKey: "skipUnit")
+        settingsValueChanged()
+    }
+
     func saveSpeechSettings() {
         sanitizeTTSMode()
-        UserDefaults.standard.set(skipUnit, forKey: "skipUnit")
         UserDefaults.standard.set(speechRate, forKey: "speechRate")
         UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
         UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")

@@ -48,7 +48,6 @@ Runtime profiles exercised: phone-tablet-online, phone-tablet-offline
 
 - Signed device installation still requires local team/provisioning configuration.
 - AVFoundation recording and Speech transcription need attached-device evidence before product-owner validation.
-- Real OpenAI-compatible provider calls are wired in app settings but still need device/provider evidence.
 
 Product-owner result:
 - Pass

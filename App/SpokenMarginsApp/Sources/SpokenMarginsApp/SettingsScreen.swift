@@ -157,8 +157,7 @@ struct SettingsScreen: View {
                     }
                     .accessibilityIdentifier("settings.skipUnit.picker")
                     .onCompatibleChange(of: model.skipUnit) { _ in
-                        model.settingsValueChanged()
-                        model.saveSpeechSettings()
+                        model.skipUnitChanged()
                     }
                     Picker("Native Audio Back", selection: $model.mediaSkipBackSeconds) {
                         ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
