@@ -29,7 +29,7 @@ extension Gate1AppModel {
 
     var shouldShowOnboardingCard: Bool {
         onboardingProgress.shouldShowCard(
-            suppressed: Self.isRunningUnitTests || UITestingHooks.suppressesFirstRun
+            suppressed: Self.isRunningUnitTests || UITestingHooks.isActive
         )
     }
 
