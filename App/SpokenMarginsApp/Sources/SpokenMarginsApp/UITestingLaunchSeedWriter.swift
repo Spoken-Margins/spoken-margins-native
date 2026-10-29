@@ -10,6 +10,7 @@ extension Gate1AppModel {
     /// records a generated tone and gets a fixed Margin transcript, so it never
     /// meets a microphone or Speech Recognition prompt.
     static func makeApplicationModel() -> Gate1AppModel {
+        UITestingHooks.prepareFirstRunIfRequested()
         guard UITestingHooks.usesStandInAudioServices, let support = try? FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
         ) else { return Gate1AppModel() }

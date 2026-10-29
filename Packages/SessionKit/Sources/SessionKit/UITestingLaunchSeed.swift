@@ -21,6 +21,9 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
     /// The fixture article plus a generated multi-page PDF, imported through the
     /// app's own Files import so PDF extraction and the reader run (J7).
     case importedPDF
+    /// A fresh install (#2854): the Library is emptied and the app's defaults wiped, then nothing is seeded, so the
+    /// first-run flow (Welcome sample, drawer, Terms, first Margin prompt) runs as a new listener meets it.
+    case firstRun
 
     public static let textItemId = "item-ui-text-regression"
     public static let podcastItemId = "item-ui-podcast"
@@ -55,6 +58,8 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
         } else if environment["SPOKEN_MARGINS_UI_TEST_PODCAST"] == "1" {
             let seconds = environment["SPOKEN_MARGINS_UI_TEST_PODCAST_SECONDS"].flatMap(Int.init) ?? 1_500
             self = .offlinePodcast(title: title ?? "UI Test Episode", durationSeconds: min(max(seconds, 10), 3_600))
+        } else if environment["SPOKEN_MARGINS_UI_TEST_FIRST_RUN"] == "1" {
+            self = .firstRun
         } else if environment["SPOKEN_MARGINS_UI_TEST_PDF"] == "1" {
             self = .importedPDF
         } else {
@@ -68,14 +73,14 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
     public var writesLibrary: Bool {
         switch self {
         case .none, .keepLibrary: return false
-        case .fixture, .text, .offlinePodcast, .importedPDF: return true
+        case .fixture, .text, .offlinePodcast, .importedPDF, .firstRun: return true
         }
     }
 
     /// The single Item this seed adds, when it adds one of its own.
     public var item: Item? {
         switch self {
-        case .none, .keepLibrary, .fixture, .importedPDF:
+        case .none, .keepLibrary, .fixture, .importedPDF, .firstRun:
             return nil
         case let .text(title, text, reference):
             return Item(
