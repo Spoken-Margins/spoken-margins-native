@@ -1113,15 +1113,15 @@ enum PDFStructuredTextExtractor {
     }
 
     /// The first line of a bibliography entry in the common styles: numbered
-    /// ("[12] …", "12. …"), author first ("Agarwal A, …", "Abdul-Hay, S. O., …"), or
-    /// any line carrying a parenthesised year or a DOI.
+    /// ("[12] …", "12. …"), author first ("Agarwal A, …", "Abdul-Hay, S. O., …", or BMJ's
+    /// numbered "12 Agarwal A, …"), or any line carrying a parenthesised year or a DOI.
     static func looksLikeBibliographyEntry(_ text: String) -> Bool {
         // "Appendix B. Analysis ..." has the shape of "Agarwal A. ..." but isn't one.
         guard !startsAppendixOrFloat(text) else { return false }
         return text.range(of: #"^\s*(?:\[\^?[0-9]{1,4}\]:?|[0-9]{1,4}[.)])\s+\S"#, options: .regularExpression) != nil
             // ACL/natbib: "Marah Abdin, Sam Ade Jacobs, et al. 2024." (names, then the year)
             || text.range(of: #"^(?:\p{Lu}[\p{L}'’\-]*\.?\s?){2,4}(?:,\s(?:\p{Lu}[\p{L}'’\-]*\.?\s?){1,4})*(?:,?\sand\s(?:\p{Lu}[\p{L}'’\-]*\.?\s?){1,4})?(?:,?\set al\.)?\s*(?:19|20)[0-9]{2}[a-z]?\."#, options: .regularExpression) != nil
-            || text.range(of: #"^\p{Lu}[\p{L}'’\-]+(?: [\p{Lu}][\p{L}'’\-]+)?,? (?:\p{Lu}\.?[ -]?){1,3}[,.(]"#, options: .regularExpression) != nil
+            || text.range(of: #"^(?:[0-9]{1,4} )?\p{Lu}[\p{L}'’\-]+(?: [\p{Lu}][\p{L}'’\-]+)?,? (?:\p{Lu}\.?[ -]?){1,3}[,.(]"#, options: .regularExpression) != nil
             || text.range(of: #"\((?:19|20)[0-9]{2}[a-z]?\)|\bdoi[:.]|\b10\.[0-9]{4,}/"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
