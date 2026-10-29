@@ -183,9 +183,11 @@ extension Gate1AppModel {
                 }
             }
             guard let self else { return }
-            // The writes stay on the main actor under their hang label; the reads after them do not (#2505).
+            // The rows are written off the main actor (#2509), and so are the reads after them (#2505). Only the
+            // engine's one-time install is left here, under its hang label.
+            let written = await self.writeObsidianMarkdownImport(batch)
             let saved = self.hangTelemetry.labels.scoped("obsidianImportFinish") {
-                Result { try self.completeObsidianMarkdownImport(batch) }
+                Result { try self.completeObsidianMarkdownImport(try written.get()) }
             }
             await self.finishObsidianMarkdownImport(
                 saved,
@@ -241,7 +243,7 @@ extension Gate1AppModel {
         #endif
     }
 
-    /// What `completeObsidianMarkdownImport` leaves for the finish: the saved items, the failures, and where the listener was.
+    /// What the import leaves for the finish: the saved items, the failures, and where the listener was.
     private struct SavedObsidianBatch {
         var imported: [Item]
         var failures: [String]
@@ -251,12 +253,38 @@ extension Gate1AppModel {
         var preservedSelectedItemId: String
     }
 
-    private func completeObsidianMarkdownImport(_ batch: ObsidianImportBatch) throws -> SavedObsidianBatch {
-        let store = try requireStore()
-        var saved = SavedObsidianBatch(
-            imported: [], failures: batch.failures, rawFailures: batch.rawFailures,
-            preservesActiveSession: hasActiveSession && engine != nil,
-            preservedActiveItemId: activeItemId, preservedSelectedItemId: selectedItem.id)
+    /// Writes the batch off the main actor and reads where the listener was before it starts.
+    private func writeObsidianMarkdownImport(_ batch: ObsidianImportBatch) async -> Result<SavedObsidianBatch, Error> {
+        let store: SQLiteSessionStore
+        do { store = try requireStore() } catch { return .failure(error) }
+        let preservesActiveSession = hasActiveSession && engine != nil
+        let preservedActiveItemId = activeItemId
+        let preservedSelectedItemId = selectedItem.id
+        let written = await Task.detached(priority: .userInitiated) {
+            Self.writeObsidianBatch(batch, store: store)
+        }.value
+        return .success(SavedObsidianBatch(
+            imported: written.imported, failures: written.failures, rawFailures: written.rawFailures,
+            preservesActiveSession: preservesActiveSession,
+            preservedActiveItemId: preservedActiveItemId, preservedSelectedItemId: preservedSelectedItemId))
+    }
+
+    /// The one thing left for the main actor: the engine, when the first import is what makes it.
+    private func completeObsidianMarkdownImport(_ saved: SavedObsidianBatch) throws -> SavedObsidianBatch {
+        if !saved.imported.isEmpty, engine == nil {
+            installEngine(try makeEngine(store: try requireStore()))
+        }
+        return saved
+    }
+
+    /// Each prepared file's item, map and document, one file at a time: a file whose write fails is reported and the
+    /// rest still import. Runs off the main actor; it holds the store and values only.
+    private nonisolated static func writeObsidianBatch(
+        _ batch: ObsidianImportBatch, store: SQLiteSessionStore
+    ) -> (imported: [Item], failures: [String], rawFailures: [String]) {
+        var imported: [Item] = []
+        var failures = batch.failures
+        var rawFailures = batch.rawFailures
         for prepared in batch.prepared {
             do {
                 try store.saveItem(prepared.item)
@@ -266,16 +294,13 @@ extension Gate1AppModel {
                 if let document = prepared.structuredDocument {
                     try store.saveStructuredDocument(document, itemId: prepared.item.id)
                 }
-                saved.imported.append(prepared.item)
+                imported.append(prepared.item)
             } catch {
-                saved.failures.append("\(prepared.item.title)\n\(ListenerErrorText.message(for: error))")
-                saved.rawFailures.append("\(prepared.item.title): \(error)")
+                failures.append("\(prepared.item.title)\n\(ListenerErrorText.message(for: error))")
+                rawFailures.append("\(prepared.item.title): \(error)")
             }
         }
-        if !saved.imported.isEmpty, engine == nil {
-            installEngine(try makeEngine(store: store))
-        }
-        return saved
+        return (imported, failures, rawFailures)
     }
 
     private func finishObsidianMarkdownImport(
