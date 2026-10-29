@@ -43,6 +43,7 @@ class WhatCountsAsMainThread(unittest.TestCase):
         cases = {
             'task detached': MODEL % '    func f() { Task.detached { _ = try? store?.listItems() } }',
             'offMain helper': MODEL % '    func f() async throws { _ = try await Self.offMain { try store?.listItems() } }',
+            'onRowQueue helper': MODEL % '    func f() async throws { _ = try await onRowQueue { try store?.listItems() } }',
             'StoreReader read': MODEL % '    func f() async throws { _ = try await StoreReader(store!).read { store in try store.listItems() } }',
             'StoreReader readLatest on a reader': MODEL % '    func f() async throws { _ = try await reader.readLatest("k") { store in try store.listItems() } }',
             'detached with priority': MODEL % '    func f() { Task.detached(priority: .utility) { _ = try? store?.listItems() } }',

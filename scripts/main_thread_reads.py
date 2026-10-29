@@ -21,7 +21,7 @@ whose every mention (strings included; `@objc` and `override` functions never) s
 How it decides what runs on the main thread (a heuristic over source text, no compiler; misses are listed below):
 - A scope is main when its type or function is `@MainActor`, the type conforms to View/App/Scene/UIKit classes, or it is
   an extension of such a type in any file (`Gate1AppModel+*.swift`), or its closure is `Task { @MainActor in`,
-  `MainActor.run` or `DispatchQueue.main`. It is off the main thread in `Task.detached` (or `Self.offMain { }`), `nonisolated async`
+  `MainActor.run` or `DispatchQueue.main`. It is off the main thread in `Task.detached` (or `Self.offMain { }`, or `onRowQueue { }`), `nonisolated async`
   functions, actors, `DispatchQueue.global()`, a queue the file made with `DispatchQueue(label:…)` (`writer.async { }`)
   and `addTask`. A `Task { }` and every other closure keep their
   surroundings' isolation.
@@ -358,8 +358,8 @@ def classify(header: str, after: str) -> Scope:
         scope.loop = bool(re.match(r'^(?:\w+:\s*)?(for|while|repeat)\b', h))
         return scope
     # closures and everything else
-    # `offMain` is the app's wrapper around Task.detached; `StoreReader(store).read { }` is SessionKit's (#2507)
-    if re.search(r'\bTask\s*\.\s*detached\b|\boffMain\b|\bStoreReader\b|\b\w*[rR]eader\s*\.\s*(?:read|readLatest)\b', h):
+    # `offMain` is the app's wrapper around Task.detached, `onRowQueue` the podcast coordinator's wrapper around its row queue; `StoreReader(store).read { }` is SessionKit's (#2507)
+    if re.search(r'\bTask\s*\.\s*detached\b|\b(?:offMain|onRowQueue)\b|\bStoreReader\b|\b\w*[rR]eader\s*\.\s*(?:read|readLatest)\b', h):
         scope.kind, scope.iso = 'task', 'off'
     elif TASK_HEADER.search(h):
         scope.kind = 'task'
