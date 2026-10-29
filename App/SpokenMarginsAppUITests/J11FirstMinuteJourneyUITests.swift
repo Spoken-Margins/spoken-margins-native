@@ -54,7 +54,7 @@ final class J11FirstMinuteJourneyUITests: XCTestCase {
 
         XCTContext.runActivity(named: "J11 step 4: Audio starts (owner to confirm it is audible)") { _ in
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 15), "Now Playing did not open")
-            XCTAssertTrue(app.buttons["playback.title"].firstMatch.waitForExistence(timeout: 5), "Playing item's title is missing")
+            XCTAssertTrue(app.buttons["playback.itemTitle.button"].waitForExistence(timeout: 5), "Playing item's title is missing")
             note("audio started, \(taps) taps")
         }
 

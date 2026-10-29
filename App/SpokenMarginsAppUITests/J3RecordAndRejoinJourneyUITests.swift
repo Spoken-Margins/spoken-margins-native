@@ -41,7 +41,7 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
             XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8), "Library did not open")
             tap("queue.start.\(itemId)")
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
-            XCTAssertEqual(app.buttons["playback.title"].firstMatch.label, episodeTitle, "A different item is playing")
+            XCTAssertEqual(app.buttons["playback.itemTitle.button"].label, episodeTitle, "A different item is playing")
             try waitUntilPlaying("Podcast never reached the playing state")
             try waitUntilAdvancing("Podcast clock did not move before recording")
             assertDockStaysFixedWhileSwitching()
