@@ -1083,9 +1083,14 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         }
     }
 
+    /// Waits up to 10 s (the first test in a fresh simulator process took about 7 s on a hosted runner) and stops the
+    /// test when the downloads did not start, so a later `started[1]` can't crash the whole test process.
     private func waitForStarts(_ count: Int, starts: () -> Int) async throws {
-        for _ in 0..<100 where starts() < count { try await Task.sleep(for: .milliseconds(10)) }
-        XCTAssertEqual(starts(), count)
+        for _ in 0..<1000 where starts() < count { try await Task.sleep(for: .milliseconds(10)) }
+        guard starts() == count else {
+            XCTFail("expected \(count) download start(s), saw \(starts())")
+            throw CancellationError()
+        }
     }
 
     // Keep SQLite files until the test process exits: URLSession callbacks may
