@@ -33,6 +33,8 @@ final class VoiceDownloadsModel: ObservableObject {
     @Published private(set) var source: VoiceCatalogSource = .none
 
     let coordinator: VoiceCatalogCoordinator
+    /// Starts a new listener's Phonon download (#2858); created by `Gate1AppModel.startFirstRunVoiceDownloadIfDue()`.
+    var firstRunDownloader: FirstRunVoiceDownloader?
     /// Runs after a voice is installed or removed: Storage and the voice picker read the disk again.
     var onInstalledVoicesChanged: (@MainActor () -> Void)?
     private var downloads: [String: Task<Void, Never>] = [:]
@@ -41,6 +43,9 @@ final class VoiceDownloadsModel: ObservableObject {
     /// Voices the listener started downloading and that haven't finished, cancelled or failed. Kept so a
     /// download iOS ended in the background carries on when the app is woken or Voices is opened again.
     private static let pendingKey = "voiceDownloads.pending"
+    /// The pending voices the app started by itself (#2858). They are restarted Wi-Fi only; one the listener
+    /// started in Voices is not, so a restart never spends more mobile data than the listener agreed to.
+    private static let automaticKey = "voiceDownloads.automatic"
     private let defaults: UserDefaults
 
     init(coordinator: VoiceCatalogCoordinator, defaults: UserDefaults = .standard) {
@@ -53,6 +58,14 @@ final class VoiceDownloadsModel: ObservableObject {
         set { defaults.set(newValue.sorted(), forKey: Self.pendingKey) }
     }
 
+    /// The app started this voice's pending download by itself (#2858), so it waits for Wi-Fi.
+    func isAutomatic(_ voiceId: String) -> Bool { automatic.contains(voiceId) }
+
+    private var automatic: Set<String> {
+        get { Set(defaults.stringArray(forKey: Self.automaticKey) ?? []) }
+        set { defaults.set(newValue.sorted(), forKey: Self.automaticKey) }
+    }
+
     /// Continues downloads the listener started that didn't finish. Never starts one they didn't tap.
     func resumePending() async {
         guard !pending.isEmpty else { return }
@@ -63,7 +76,7 @@ final class VoiceDownloadsModel: ObservableObject {
                 pending.remove(voiceId)
                 continue
             }
-            download(voiceId)
+            download(voiceId, automatic: automatic.contains(voiceId))
         }
     }
 
@@ -121,8 +134,13 @@ final class VoiceDownloadsModel: ObservableObject {
         }
     }
 
-    func download(_ voiceId: String) {
+    /// `automatic` is for the download the app starts by itself: it waits for Wi-Fi and is restarted that way. It never
+    /// takes over a pending download the listener started, which may be using mobile data by their own say-so; that one
+    /// resumes as theirs when Voices opens.
+    func download(_ voiceId: String, automatic isAutomatic: Bool = false) {
         guard downloads[voiceId] == nil else { return }
+        if isAutomatic, pending.contains(voiceId), !automatic.contains(voiceId) { return }
+        if isAutomatic { automatic.insert(voiceId) } else { automatic.remove(voiceId) }
         let total = rows.first { $0.id == voiceId }.map { Int64($0.entry.downloadByteCount) } ?? 0
         activity[voiceId] = .downloading(bytes: 0, total: total)
         progressBase[voiceId] = 0
@@ -132,7 +150,9 @@ final class VoiceDownloadsModel: ObservableObject {
         }
         downloads[voiceId] = Task { [weak self, coordinator] in
             do {
-                try await coordinator.install(voiceId: voiceId, progress: report)
+                try await BackgroundVoiceModelTransport.$wifiOnly.withValue(isAutomatic) {
+                    try await coordinator.install(voiceId: voiceId, progress: report)
+                }
                 await self?.finish(voiceId, failure: nil)
             } catch is CancellationError {
                 await self?.finish(voiceId, failure: nil)
@@ -144,6 +164,8 @@ final class VoiceDownloadsModel: ObservableObject {
 
     /// Stops the download and keeps the files that finished, so Download continues from there.
     func cancel(_ voiceId: String) {
+        // The listener said no: a new listener's Phonon is not started again at the next launch (#2858).
+        if voiceId == ReadingVoiceChoice.phononVoiceId { defaults.removeObject(forKey: FirstRunVoiceDefault.downloadDueKey) }
         downloads[voiceId]?.cancel()
     }
 
@@ -164,6 +186,7 @@ final class VoiceDownloadsModel: ObservableObject {
     private func finish(_ voiceId: String, failure: String?) async {
         downloads[voiceId] = nil
         pending.remove(voiceId)
+        automatic.remove(voiceId)
         progressBase[voiceId] = nil
         activity[voiceId] = failure.map(Activity.failed) ?? .idle
         await reload()

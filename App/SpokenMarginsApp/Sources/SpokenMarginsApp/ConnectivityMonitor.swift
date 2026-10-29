@@ -14,11 +14,15 @@ final class ConnectivityMonitor: ObservableObject, ConnectivityProviding {
     /// True only when the path is unsatisfied (Airplane Mode, no signal). Until the first update the state is
     /// unknown and counts as online, so nothing is blocked on a guess.
     @Published private(set) var isOffline = false
+    /// Mobile data or a personal hotspot, and Low Data Mode. Unknown counts as neither until the first update.
+    @Published private(set) var isExpensive = false
+    @Published private(set) var isConstrained = false
 
     private let monitor = NWPathMonitor()
     private let queue = DispatchQueue(label: "com.spokenmargins.connectivity")
     private var isStarted = false
-    private var hasReported = false
+    /// False until the first path update, so a caller that must not act on a guess can wait for it.
+    private(set) var hasReported = false
     private var observers: [UUID: (PodcastNetworkTransport) -> Void] = [:]
 
     func start() {
@@ -27,7 +31,10 @@ final class ConnectivityMonitor: ObservableObject, ConnectivityProviding {
         monitor.pathUpdateHandler = { [weak self] path in
             let transport = Self.transport(for: path)
             let isOffline = path.status == .unsatisfied
-            Task { @MainActor [weak self] in self?.update(transport: transport, isOffline: isOffline) }
+            let isExpensive = path.isExpensive, isConstrained = path.isConstrained
+            Task { @MainActor [weak self] in
+                self?.update(transport: transport, isOffline: isOffline, isExpensive: isExpensive, isConstrained: isConstrained)
+            }
         }
         monitor.start(queue: queue)
     }
@@ -46,10 +53,12 @@ final class ConnectivityMonitor: ObservableObject, ConnectivityProviding {
     }
 
     /// Path updates land here; tests call it directly to inject a network state.
-    func update(transport: PodcastNetworkTransport, isOffline: Bool) {
+    func update(transport: PodcastNetworkTransport, isOffline: Bool, isExpensive: Bool = false, isConstrained: Bool = false) {
         hasReported = true
         self.transport = transport
         self.isOffline = isOffline
+        self.isExpensive = isExpensive
+        self.isConstrained = isConstrained
         for handler in Array(observers.values) { handler(transport) }
     }
 

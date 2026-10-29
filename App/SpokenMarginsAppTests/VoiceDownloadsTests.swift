@@ -100,6 +100,59 @@ final class VoiceDownloadsTests: XCTestCase {
         try await waitUntil { voices.activity[entry.id] == .idle && voices.rows.first?.state != .notInstalled }
     }
 
+    /// #2858 audit: a new listener's Phonon download is owed until it is installed or the listener says no. Cancel in
+    /// Voices is the no, so the next launch must not start the download again. Another voice's Cancel changes nothing.
+    func testCancellingPhononInVoicesClearsTheDownloadOwedToANewListener() throws {
+        let coordinator = VoiceCatalogCoordinator(
+            supportDirectory: root,
+            configuration: .init(catalogURL: nil, trustedKeys: [], playableVoiceIds: [], bundledSnapshot: nil),
+            transport: FixtureTransport(files: [:]),
+            installerConfiguration: .init(marginBytes: 0, attemptsPerSource: 1, retryDelay: .zero, availableCapacity: { _ in nil }),
+            repository: nil
+        )
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "voice-downloads-\(UUID().uuidString)"))
+        let voices = VoiceDownloadsModel(coordinator: coordinator, defaults: defaults)
+
+        defaults.set(true, forKey: FirstRunVoiceDefault.downloadDueKey)
+        voices.cancel("kokoro-82m")
+        XCTAssertTrue(defaults.bool(forKey: FirstRunVoiceDefault.downloadDueKey), "another voice's Cancel leaves it owed")
+        voices.cancel(ReadingVoiceChoice.phononVoiceId)
+        XCTAssertFalse(defaults.bool(forKey: FirstRunVoiceDefault.downloadDueKey), "Phonon's Cancel is the listener saying no")
+    }
+
+    /// #2858 audit: after a relaunch the app's own start must not take over a pending download the listener started,
+    /// which may be on mobile data by their say-so. It would turn their download Wi-Fi only and fetch the file twice.
+    func testTheAutomaticStartLeavesAPendingDownloadTheListenerStarted() throws {
+        let coordinator = VoiceCatalogCoordinator(
+            supportDirectory: root,
+            configuration: .init(catalogURL: nil, trustedKeys: [], playableVoiceIds: [], bundledSnapshot: nil),
+            transport: FixtureTransport(files: [:]),
+            installerConfiguration: .init(marginBytes: 0, attemptsPerSource: 1, retryDelay: .zero, availableCapacity: { _ in nil }),
+            repository: nil
+        )
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "voice-downloads-\(UUID().uuidString)"))
+        defaults.set([ReadingVoiceChoice.phononVoiceId], forKey: "voiceDownloads.pending")
+        let voices = VoiceDownloadsModel(coordinator: coordinator, defaults: defaults)
+
+        voices.download(ReadingVoiceChoice.phononVoiceId, automatic: true)
+        XCTAssertFalse(voices.isAutomatic(ReadingVoiceChoice.phononVoiceId), "the listener's pending download stays theirs")
+    }
+
+    /// #2858 audit: a Wi-Fi-only task is told apart from one the listener started by its own request, which is what
+    /// keeps its resume data (it carries the request) and its running task out of a mobile-data download.
+    func testAWiFiOnlyTaskIsToldApartFromOneTheListenerStarted() {
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let url = URL(string: "https://fixture.invalid/model.bin")!
+        var wifiOnly = URLRequest(url: url)
+        wifiOnly.allowsCellularAccess = false
+        wifiOnly.allowsExpensiveNetworkAccess = false
+        wifiOnly.allowsConstrainedNetworkAccess = false
+
+        XCTAssertTrue(BackgroundVoiceModelTransport.isWiFiOnly(session.downloadTask(with: wifiOnly)))
+        XCTAssertFalse(BackgroundVoiceModelTransport.isWiFiOnly(session.downloadTask(with: URLRequest(url: url))))
+    }
+
     func testTheDeviceProbeReadsAModelTheChipTableKnows() {
         // The simulator reports the simulated iPhone; every one iOS 26 runs on is in the table.
         XCTAssertNotNil(VoiceDeviceProbe.chipGeneration(), VoiceDeviceProbe.machineIdentifier())

@@ -747,9 +747,9 @@ final class Gate1AppModel: ObservableObject {
         }
 
         // This is intentionally a one-way pre-1.0 migration. Legacy experimental
-        // and system-only modes all move to the bundled default voice;
+        // and system-only modes all move to the default voice (James; Phonon on a fresh install, #2858);
         // the prior Apple voice identifier remains available for fallback.
-        ttsVoiceSelection = .james
+        ttsVoiceSelection = AppTTSVoiceSelection(choice: chooseFirstRunVoice(defaults: defaults))
         ttsMode = "supertonic"
         defaults.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
         defaults.set(ttsMode, forKey: "ttsMode")
@@ -819,7 +819,7 @@ final class Gate1AppModel: ObservableObject {
         }
         _ = rebuildEngineForCurrentSettings()
         diagnostics["termsAcceptedVersion"] = SpokenMarginsTerms.currentVersion
-        reportConfirmation("Terms accepted. \(ttsVoiceSelection.displayName) is enabled.")
+        confirmTermsAccepted()
         continuePlaybackAfterTerms(pendingPlayback)
     }
 
