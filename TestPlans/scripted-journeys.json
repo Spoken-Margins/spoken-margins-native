@@ -1,14 +1,23 @@
 {
   "version": 1,
-  "gating": [],
+  "gating": [
+    {
+      "test": "SpokenMarginsAppUITests/J1TextChaptersJourneyUITests",
+      "journey": "J1 step 4"
+    },
+    {
+      "test": "SpokenMarginsAppUITests/J8CollectionsJourneyUITests",
+      "journey": "J8"
+    },
+    {
+      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testWrittenMarginEditorStaysUsableAtAccessibilitySizesWithTheKeyboardUp",
+      "journey": "J3 written Margin: the editor keeps a usable height at AX5 with the keyboard up (#1942)"
+    }
+  ],
   "probation": [
     {
       "test": "SpokenMarginsAppUITests/J1ListenToAnArticleJourneyUITests",
       "journey": "J1"
-    },
-    {
-      "test": "SpokenMarginsAppUITests/J1TextChaptersJourneyUITests",
-      "journey": "J1 step 4"
     },
     {
       "test": "SpokenMarginsAppUITests/J2PodcastSurvivesRelaunchJourneyUITests",
@@ -21,10 +30,6 @@
     {
       "test": "SpokenMarginsAppUITests/J7PDFJourneyUITests",
       "journey": "J7"
-    },
-    {
-      "test": "SpokenMarginsAppUITests/J8CollectionsJourneyUITests",
-      "journey": "J8"
     },
     {
       "test": "SpokenMarginsAppUITests/J9HearNewMarginsJourneyUITests",
@@ -45,10 +50,6 @@
     {
       "test": "SpokenMarginsAppUITests/J11FirstMinuteJourneyUITests",
       "journey": "J11"
-    },
-    {
-      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testWrittenMarginEditorStaysUsableAtAccessibilitySizesWithTheKeyboardUp",
-      "journey": "J3 written Margin: the editor keeps a usable height at AX5 with the keyboard up (#1942)"
     }
   ]
 }
