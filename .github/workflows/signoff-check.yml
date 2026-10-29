@@ -41,9 +41,10 @@ jobs:
         env:
           PR: ${{ github.event.pull_request.number }}
         run: git fetch --no-tags --filter=blob:none origin "+refs/pull/${PR}/head:refs/pr/head"
+      # --base HEAD: the checkout is the base branch's current tip, so commits merged into the PR from main (an
+      # "Update branch" or a `git merge origin/main`) are never counted, even if the event's base.sha is older.
       - name: Check for Signed-off-by
         env:
-          BASE: ${{ github.event.pull_request.base.sha }}
           ASSOCIATION: ${{ github.event.pull_request.author_association }}
           LOGIN: ${{ github.event.pull_request.user.login }}
-        run: python3 scripts/signoff_check.py --base "$BASE" --head refs/pr/head --association "$ASSOCIATION" --login "$LOGIN"
+        run: python3 scripts/signoff_check.py --base HEAD --head refs/pr/head --association "$ASSOCIATION" --login "$LOGIN"
