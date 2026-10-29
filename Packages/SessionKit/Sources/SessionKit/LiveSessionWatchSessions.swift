@@ -95,11 +95,23 @@ public enum LiveSessionWatchSessions {
     }
 
     /// Applies an End from the Watch, at `endedAt` by its clock. Returns the session to save, or none.
-    public static func end(id: String, endedAt: Date, clock: WatchClockStamp?, sessions: [String: LiveSession]) -> LiveSession? {
+    /// `stoppedAt`, when the listener said it stopped earlier (#2709), becomes the session's end and the tap time is kept
+    /// beside it, as on the phone; a time before the start or after the tap is brought back inside them.
+    public static func end(
+        id: String, endedAt: Date, stoppedAt: Date? = nil, clock: WatchClockStamp?, sessions: [String: LiveSession]
+    ) -> LiveSession? {
         guard var session = sessions[id], session.savedItemId == nil, session.isQuick != true, session.endedAt == nil else { return nil }
         let end = max(session.startedAt, phoneTime(endedAt, clock: clock).time)
         if let resumed = session.resumedAt, resumed > end { return nil } // an End from before a later Resume
         session.endedAt = end
+        if let stoppedAt {
+            let stopped = min(end, max(session.startedAt, phoneTime(stoppedAt, clock: clock).time))
+            if end.timeIntervalSince(stopped) > LiveSessionEnd.sameInstant {
+                session.endedAt = stopped
+                session.endTappedAt = end
+                LiveSessionEnd.noteLateMargins(in: &session, after: stopped)
+            }
+        }
         session.endReason = EndReason.watch.rawValue
         session.endNote = nil
         return session
@@ -119,6 +131,10 @@ public enum LiveSessionWatchSessions {
         session.endTappedAt = nil
         session.endReason = nil
         session.endNote = nil
+        // Running again, the Margins of the gap are inside the session (#2709).
+        for index in session.margins.indices where session.margins[index].filingNote == LiveSessionFiling.afterEndNote {
+            session.margins[index].filingNote = nil
+        }
         session.resumedAt = at
         return session
     }
@@ -148,12 +164,13 @@ public enum LiveSessionWatchSessions {
     }
 
     /// The Watch counts its Resume window from `endedAt`, so it is sent when the phone heard the End (`endHeardAt`),
-    /// not the earlier time the listener said it stopped. The Watch shows the stopped time in a later slice (#2709).
+    /// not the earlier time the listener said it stopped; that goes in `stoppedAt`, which the Watch shows (#2709).
     public static func info(_ session: LiveSession) -> WatchSessionInfo {
         WatchSessionInfo(
             id: session.id, kind: WatchSessionKind(rawValue: session.kind.rawValue) ?? .other, title: session.title,
             owner: session.ownerDevice == WatchDevice.watch.rawValue ? .watch : .phone,
-            startedAt: session.startedAt, startPositionMs: session.startPositionMs, endedAt: session.endHeardAt
+            startedAt: session.startedAt, startPositionMs: session.startPositionMs, endedAt: session.endHeardAt,
+            stoppedAt: session.endTappedAt == nil ? nil : session.endedAt
         )
     }
 

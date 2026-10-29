@@ -286,6 +286,7 @@ public struct WatchSessionModel: Codable, Equatable, Sendable {
         var converted = info
         converted.startedAt = watchTime(info.startedAt)
         converted.endedAt = info.endedAt.map(watchTime)
+        converted.stoppedAt = info.stoppedAt.map(watchTime)
         return converted
     }
 
@@ -348,16 +349,21 @@ public struct WatchSessionModel: Codable, Equatable, Sendable {
         return info
     }
 
-    /// End: whichever session runs, on either device. Returns its id and end, to send.
-    public mutating func end(now: Date) -> (id: String, endedAt: Date)? {
+    /// End: whichever session runs, on either device. Returns its id and end, to send. `stoppedAt` is when the listener
+    /// said it stopped (#2709), kept only when it is earlier than now; one before the start is brought back to the start.
+    /// The Resume window runs from `now`, the tap, and the "Ended 14:05" line shows the stopped time.
+    public mutating func end(now: Date, stoppedAt: Date? = nil) -> (id: String, endedAt: Date, stoppedAt: Date?)? {
         guard let (session, _) = running(now: now) else { return nil }
+        let stopped = stoppedAt.map { min(now, max(session.startedAt, $0)) }
+            .flatMap { now.timeIntervalSince($0) > WatchEndChoice.sameInstant ? $0 : nil }
         endedHere[session.id] = now
         var ended = session
         ended.endedAt = now
+        ended.stoppedAt = stopped
         lastEnded = ended
         if local?.id == session.id { local = nil }
         endNote = nil
-        return (session.id, now)
+        return (session.id, now, stopped)
     }
 
     /// Resume, within ten minutes of an End: the same session runs again. Returns its id, to send.
@@ -365,6 +371,7 @@ public struct WatchSessionModel: Codable, Equatable, Sendable {
         guard running(now: now) == nil, var session = resumable(now: now) else { return nil }
         endedHere[session.id] = nil
         session.endedAt = nil
+        session.stoppedAt = nil
         local = session // shown running until the phone's board agrees
         lastEnded = nil
         endNote = nil

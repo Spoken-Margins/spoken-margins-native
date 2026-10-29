@@ -144,6 +144,8 @@ final class WatchMarginReceiver: NSObject {
             guard let self else { return (reply, filed) }
             self.send(reply.answers)
             self.publish(board: reply.board)
+            // A reminder set for "it's still going" must not arrive for a session the Watch has ended (#2709).
+            if case .sessionEnd = envelope.message { LiveSessionStillGoingReminder.cancel() }
             switch envelope.message {
             case .sessionStart, .sessionEnd, .sessionResume, .withdraw:
                 self.announceChange()

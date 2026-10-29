@@ -401,6 +401,9 @@ struct LiveSessionView: View {
             if controller.end(when: when, endPositionMs: endPosition, endWhere: endWhere) { showsEndCard = false }
         } onCancel: {
             showsEndCard = false
+        } onStillGoing: {
+            showsEndCard = false
+            Task { await controller.remindStillGoing() }
         }
     }
 
@@ -483,6 +486,8 @@ private struct LiveSessionEndCard: View {
     let startedAt: Date
     let onEnd: (LiveSessionEnd.When, Int?, String?) -> Void
     let onCancel: () -> Void
+    /// "It's still going": keep the session running and remind the listener later (#2709).
+    let onStillGoing: () -> Void
     @State private var endPosition = ""
     @State private var endWhere = ""
     /// Index into the quick choices; one past the last is "At a time".
@@ -539,6 +544,10 @@ private struct LiveSessionEndCard: View {
             }
             .filledActionButton()
             .accessibilityIdentifier("liveSession.confirmEnd")
+            Button("It's still going. Remind me in 15 minutes", action: onStillGoing)
+                .buttonStyle(.bordered)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .accessibilityIdentifier("liveSession.stillGoing")
             Button("Cancel", action: onCancel)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .accessibilityIdentifier("liveSession.cancelEnd")
