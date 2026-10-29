@@ -1019,24 +1019,28 @@ public final class SessionEngine {
 
     /// The same import, except it never reads or writes the store on the main actor, so a long page, a long PDF or
     /// a Library of many Margins never freezes the app (#556, #2509). Reading what is already there, working out the
-    /// item and its map, and writing the item, map and document all run in detached steps that hold the store and
-    /// values, never the engine; the engine's state is read once at the start of each step and the result is
-    /// published back here. A re-imported PDF's move to the new extraction is planned the same way, and its one
-    /// short write stays on the main actor, together with the "is the listener in this item?" check: a write off
-    /// the main actor could not be made atomic with the engine's state (a paused item opened, or played, between
-    /// the plan and the write would keep the old text and write its old position over the moved one). If the item
-    /// was opened or anything the plan read changed (the store re-checks inside the transaction), nothing is
-    /// written and the new text becomes its own edition, as it does for a PDF that can't move.
+    /// item and its map, and writing the item, map and document run together in one detached step that holds the
+    /// store and values, never the engine; the engine's state (which items are open, whether playback runs) is read
+    /// once on the main actor just before it. A re-imported PDF's move to the new extraction is planned the same
+    /// way, and its one short write stays on the main actor, together with the "is the listener in this item?" check:
+    /// a write off the main actor could not be made atomic with the engine's state (a paused item opened, or
+    /// played, between the plan and the write would keep the old text and write its old position over the moved
+    /// one). If the item was opened or anything the plan read changed (the store re-checks inside the transaction),
+    /// nothing is written and the new text becomes its own edition, as it does for a PDF that can't move.
     ///
-    /// A plain write needs none of that: a new item is not in the Library until it is saved, and a row saved for
-    /// an existing item is never one the listener holds open (that case gets an edition of its own).
+    /// The one window left is the milliseconds between reading the open items and the detached step's own write; an
+    /// item opened in it is rewritten with the same text and a new document, which the reader does not notice.
+    /// Imports run one at a time (`importGate`), so two shares of one address cannot both find nothing and write
+    /// over each other.
     @MainActor
     @discardableResult
     public func importBrowserTextInBackgroundOffMain(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) async throws -> Item {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
+        await enterImportGate()
+        defer { leaveImportGate() }
         let firstImporter = browserTextImporter()
         var outcome = try await Task.detached(priority: .userInitiated) {
-            try firstImporter.outcome(handoff, structuredDocument: structuredDocument, upgrade: .deferred)
+            try firstImporter.outcomeAndPersist(handoff, structuredDocument: structuredDocument, upgrade: .deferred)
         }.value
         if case .upgradeCandidate(let job) = outcome {
             let whilePlanned = whileStructuredUpgradeIsPlannedForTesting
@@ -1054,19 +1058,32 @@ public final class SessionEngine {
             }
             let skipImporter = browserTextImporter()
             outcome = try await Task.detached(priority: .userInitiated) {
-                try skipImporter.outcome(handoff, structuredDocument: structuredDocument, upgrade: .skip)
+                try skipImporter.outcomeAndPersist(handoff, structuredDocument: structuredDocument, upgrade: .skip)
             }.value
         }
-        guard case .records(let item, let deterministicMap, let document, _) = outcome else {
+        guard case .records(let item, _, _, _) = outcome else {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
-        let stored = publisherPlayback[item.id]?.stored(item) ?? item
-        let writer = browserTextImporter()
-        try await Task.detached(priority: .userInitiated) {
-            try writer.persist(stored, map: deterministicMap, document: document)
-        }.value
         forgetDocumentCaches(itemId: item.id)
         return item
+    }
+
+    private var importGateBusy = false
+    private var importGateWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// Waits for any earlier off-main import to finish, in the order they asked.
+    @MainActor
+    private func enterImportGate() async {
+        if importGateBusy {
+            await withCheckedContinuation { importGateWaiters.append($0) }
+        } else {
+            importGateBusy = true
+        }
+    }
+
+    @MainActor
+    private func leaveImportGate() {
+        if importGateWaiters.isEmpty { importGateBusy = false } else { importGateWaiters.removeFirst().resume() }
     }
 
     private func saveStructuredDocument(_ document: StructuredDocument?, itemId: String) throws {
@@ -4532,7 +4549,8 @@ public final class SessionEngine {
         BrowserTextImporter(
             repository: repository,
             openItemIds: Set([currentSession?.itemId, currentItem?.id].compactMap { $0 }),
-            isPlaybackActive: snapshot.status.isPlaybackActive
+            isPlaybackActive: snapshot.status.isPlaybackActive,
+            publisherPlayback: publisherPlayback
         )
     }
 

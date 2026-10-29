@@ -49,6 +49,8 @@ struct BrowserTextImporter: Sendable {
     /// The ids of the item and session the engine holds open. A held item is never rewritten in place.
     let openItemIds: Set<String>
     let isPlaybackActive: Bool
+    /// The publisher recordings the engine holds, so a saved item never keeps one as its audio.
+    let publisherPlayback: [String: PublisherAudioPlayback]
 
     func outcome(
         _ handoff: BrowserTextHandoff,
@@ -209,10 +211,22 @@ struct BrowserTextImporter: Sendable {
         return "item-browser-\(collapsed.prefix(48))"
     }
 
-    /// The three writes of an import, in the order the engine always made them. `item` is already in the form the
-    /// Library stores (never the publisher's recording as its audio).
+    /// The outcome, and, when it is records (not an upgrade for the caller to run), their writes: read and write in
+    /// one step, so what was read is what the write replaces.
+    func outcomeAndPersist(
+        _ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument?, upgrade mode: StructuredUpgradeMode
+    ) throws -> BrowserTextImportOutcome {
+        let result = try outcome(handoff, structuredDocument: structuredDocument, upgrade: mode)
+        if case .records(let item, let map, let document, _) = result {
+            try persist(item, map: map, document: document)
+        }
+        return result
+    }
+
+    /// The three writes of an import, in the order the engine always made them. The item is saved as the Library
+    /// stores it: never with the publisher's recording as its audio.
     func persist(_ item: Item, map: ListeningMap?, document: StructuredDocument?) throws {
-        try repository.saveItem(item)
+        try repository.saveItem(publisherPlayback[item.id]?.stored(item) ?? item)
         if let map { try repository.saveListeningMap(map) }
         guard let document, let store = repository as? any StructuredDocumentRepository else { return }
         if let store = store as? any (SessionRepository & StructuredDocumentRepository) {

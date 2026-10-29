@@ -121,4 +121,33 @@ final class BrowserTextImportOffMainTests: XCTestCase {
         XCTAssertEqual(try store.loadItem(id: first.id).text, "One paragraph of the post.")
         XCTAssertEqual(try store.listItems().count, 2)
     }
+
+    /// Two shares of one PDF address at once end as they would one after the other: the second finds the first and
+    /// moves it to its extraction (one row), rather than both finding nothing and racing their writes (#2509: the
+    /// import's steps run off main, so imports are queued).
+    @MainActor
+    func testTwoImportsOfOneAddressAtOnceEndAsIfOneAfterTheOther() async throws {
+        let source = BrowserTextSource(url: "shared-file://Paper.pdf", title: "Paper")
+        func make(_ text: String) -> (BrowserTextHandoff, StructuredDocument) {
+            let document = StructuredDocumentBuilder.build(
+                lines: [.init(text: text, role: .body, pageIndex: 0)], engine: "pdfkit_baseline", version: 2, pageCount: 1
+            )
+            return (BrowserTextHandoff(captureMode: .markdownFile, source: source, text: document.text, contentFormat: .plainText), document)
+        }
+        let (firstHandoff, firstDocument) = make("The first extraction of the paper.")
+        let (secondHandoff, secondDocument) = make("A different extraction of the paper.")
+
+        let (sequentialStore, sequentialEngine) = makeEngine()
+        _ = try await sequentialEngine.importBrowserTextInBackgroundOffMain(firstHandoff, structuredDocument: firstDocument)
+        _ = try await sequentialEngine.importBrowserTextInBackgroundOffMain(secondHandoff, structuredDocument: secondDocument)
+
+        let (store, engine) = makeEngine()
+        let first = Task { @MainActor in try await engine.importBrowserTextInBackgroundOffMain(firstHandoff, structuredDocument: firstDocument) }
+        let second = Task { @MainActor in try await engine.importBrowserTextInBackgroundOffMain(secondHandoff, structuredDocument: secondDocument) }
+        _ = try await first.value
+        _ = try await second.value
+
+        XCTAssertEqual(try store.listItems().count, try sequentialStore.listItems().count)
+        XCTAssertEqual(try store.listItems().map(\.id), try sequentialStore.listItems().map(\.id))
+    }
 }
