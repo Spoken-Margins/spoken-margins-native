@@ -160,6 +160,64 @@ public struct PreparedAudioManifest: Codable, Equatable, Sendable, Identifiable 
     public var advertisesCompleteDuration: Bool { state == .readyOffline && artifact != nil }
 }
 
+/// What the Library and the Preparing Audio lists read of a prepared-audio manifest: its state, plan and artifact,
+/// and how many chunks are committed, without the chunk list itself (#2506). A manifest of a long article holds a
+/// chunk record per paragraph run (paths, checksums, source ranges); the Library reloads on every playback change and
+/// needs none of them, only how many of the first few exist. `SQLiteSessionStore.loadPreparedAudioManifestSummaries()`
+/// cuts the chunks out in SQL, so they are never copied or decoded.
+public struct PreparedAudioManifestSummary: Equatable, Sendable, Identifiable {
+    public var id: String
+    public var itemId: String
+    public var signature: TTSRenderSignature
+    public var state: PreparedAudioState
+    public var plannedChunkCount: Int
+    public var artifact: PreparedAudioArtifact?
+    public var failureCode: String?
+    public var updatedAt: Date
+    /// The `index` of every committed chunk, in stored order.
+    public var chunkIndexes: [Int]
+
+    public init(
+        id: String,
+        itemId: String,
+        signature: TTSRenderSignature,
+        state: PreparedAudioState,
+        plannedChunkCount: Int,
+        artifact: PreparedAudioArtifact?,
+        failureCode: String?,
+        updatedAt: Date,
+        chunkIndexes: [Int]
+    ) {
+        self.id = id
+        self.itemId = itemId
+        self.signature = signature
+        self.state = state
+        self.plannedChunkCount = plannedChunkCount
+        self.artifact = artifact
+        self.failureCode = failureCode
+        self.updatedAt = updatedAt
+        self.chunkIndexes = chunkIndexes
+    }
+
+    public init(_ manifest: PreparedAudioManifest) {
+        self.init(
+            id: manifest.id, itemId: manifest.itemId, signature: manifest.signature, state: manifest.state,
+            plannedChunkCount: manifest.plannedChunkCount, artifact: manifest.artifact,
+            failureCode: manifest.failureCode, updatedAt: manifest.updatedAt,
+            chunkIndexes: manifest.chunks.map(\.index))
+    }
+
+    /// `PreparedAudioManifest.committedChunkCount`.
+    public var committedChunkCount: Int { chunkIndexes.count }
+
+    /// How many committed chunks sit before chunk `target`: the opening buffer's progress.
+    public func committedChunkCount(before target: Int) -> Int { chunkIndexes.filter { $0 < target }.count }
+}
+
+extension PreparedAudioManifest {
+    public var summary: PreparedAudioManifestSummary { PreparedAudioManifestSummary(self) }
+}
+
 public enum PreparedAudioLocatorMapper {
     public static func mediaTimeMs(for locator: SourceLocator, chunks: [PreparedAudioChunk]) -> Int? {
         var elapsed = 0

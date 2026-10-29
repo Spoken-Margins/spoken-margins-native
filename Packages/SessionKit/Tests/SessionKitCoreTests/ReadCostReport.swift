@@ -49,6 +49,7 @@ struct ReadCostReport {
             ("loadSharedMarginTallies()", { _ = try store.loadSharedMarginTallies() }),
             ("loadPodcastDownloads()", { _ = try store.loadPodcastDownloads() }),
             ("loadPreparedAudioManifests()", { _ = try store.loadPreparedAudioManifests() }),
+            ("loadPreparedAudioManifestSummaries()", { _ = try store.loadPreparedAudioManifestSummaries() }),
             ("loadAudioPreparationJobs()", { _ = try store.loadAudioPreparationJobs() }),
             ("loadEpisodeMapPreparationJobs()", { _ = try store.loadEpisodeMapPreparationJobs() }),
             ("loadOwnedOfflineAssets()", { _ = try store.loadOwnedOfflineAssets() }),

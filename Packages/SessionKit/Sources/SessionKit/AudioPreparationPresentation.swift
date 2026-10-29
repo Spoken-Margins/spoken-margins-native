@@ -17,7 +17,7 @@ public struct AudioPreparationPresentation: Sendable, Equatable {
     public init<Item: LibraryItemFields>(
         items: [Item],
         sessions: [Session],
-        manifests: [PreparedAudioManifest],
+        manifests: [PreparedAudioManifestSummary],
         jobs: [AudioPreparationJob],
         activeItemId: String?
     ) {

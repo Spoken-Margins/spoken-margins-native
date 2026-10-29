@@ -202,7 +202,7 @@ extension Gate1AppModel {
         manifest: PreparedAudioManifest?,
         job: AudioPreparationJob?
     ) -> (state: NativeTextStartupAudioState, completed: Int, target: Int) {
-        LibraryRowBuilder.startupAudioPresentation(item: item, manifest: manifest, job: job, context: startupAudioContext)
+        LibraryRowBuilder.startupAudioPresentation(item: item, manifest: manifest?.summary, job: job, context: startupAudioContext)
     }
 
     func applyPreparedChunkProgress(item: Item, manifest: PreparedAudioManifest, remainingJobs: [AudioPreparationJob]) {
@@ -250,7 +250,7 @@ extension Gate1AppModel {
     ) throws {
         let presentation = AudioPreparationPresentation(
             items: try store.listItemSummaries(), sessions: try store.loadSessions(),
-            manifests: try store.loadPreparedAudioManifests(), jobs: try store.loadAudioPreparationJobs(),
+            manifests: try store.loadPreparedAudioManifestSummaries(), jobs: try store.loadAudioPreparationJobs(),
             activeItemId: activePlaybackItemId)
         try applyAudioPreparationPresentation(presentation, store: store, announceNewCompletions: announceNewCompletions, now: now)
     }

@@ -54,7 +54,7 @@ final class AudioPreparationPresentationTests: XCTestCase {
     func testTitlesComeFromLiveItemsAndTheActiveItemIsPinnedFirst() {
         let presentation = AudioPreparationPresentation(
             items: [summary("a", title: "Alpha"), summary("b", title: "Beta")], sessions: [],
-            manifests: [manifest("a", updatedAt: 9)], jobs: [job("a", at: 5), job("b", at: 1)], activeItemId: "b")
+            manifests: [manifest("a", updatedAt: 9).summary], jobs: [job("a", at: 5), job("b", at: 1)], activeItemId: "b")
         XCTAssertEqual(presentation.queue.map(\.title), ["Beta", "Alpha"])
         XCTAssertEqual(presentation.queue.first?.isActivePlaybackItem, true)
         XCTAssertEqual(presentation.recentlyPrepared.map(\.title), ["Alpha"])
@@ -63,7 +63,7 @@ final class AudioPreparationPresentationTests: XCTestCase {
     func testSnapshotAndLooseRowsGiveTheSameAnswer() {
         let items = [summary("a"), summary("b", trashed: true)]
         let jobs = [job("a", at: 2), job("b", at: 1)]
-        let manifests = [manifest("a", updatedAt: 3), manifest("b", updatedAt: 4)]
+        let manifests = [manifest("a", updatedAt: 3), manifest("b", updatedAt: 4)].map(\.summary)
         let snapshot = LibraryReadSnapshot(
             items: items, sessions: [], manifests: manifests, jobs: jobs, downloads: [])
         XCTAssertEqual(
@@ -114,7 +114,7 @@ final class AudioPreparationPresentationTests: XCTestCase {
             let fromSnapshot = AudioPreparationPresentation(snapshot: try LibraryReadSnapshot.read(store: store), activeItemId: active)
             let fromReads = AudioPreparationPresentation(
                 items: try store.listItemSummaries(), sessions: try store.loadSessions(),
-                manifests: try store.loadPreparedAudioManifests(), jobs: try store.loadAudioPreparationJobs(), activeItemId: active)
+                manifests: try store.loadPreparedAudioManifestSummaries(), jobs: try store.loadAudioPreparationJobs(), activeItemId: active)
             XCTAssertEqual(fromSnapshot, fromReads)
             XCTAssertEqual(fromSnapshot.staleJobIds, ["job-trashed"])
             XCTAssertEqual(Set(fromSnapshot.queue.map(\.itemId)), ["live", "second"])

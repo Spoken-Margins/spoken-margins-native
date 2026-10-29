@@ -35,7 +35,7 @@ public enum AudioPreparationQueueProjection {
     /// One row per job in `jobs` (already ordered). A job whose manifest is gone shows as failed.
     public static func queueRows(
         jobs: [AudioPreparationJob],
-        manifestsById: [String: PreparedAudioManifest],
+        manifestsById: [String: PreparedAudioManifestSummary],
         titlesByItemId: [String: String],
         activeItemId: String?
     ) -> [AudioPreparationQueueRow] {
@@ -71,7 +71,7 @@ public enum AudioPreparationQueueProjection {
     /// The "recently prepared" list: finished offline audio, one row per item (the newest), newest
     /// first, at most `recentlyPreparedLimit`.
     public static func recentlyPrepared(
-        manifests: [PreparedAudioManifest],
+        manifests: [PreparedAudioManifestSummary],
         titlesByItemId: [String: String]
     ) -> [RecentlyPreparedAudioRow] {
         var seenItemIds = Set<String>()
