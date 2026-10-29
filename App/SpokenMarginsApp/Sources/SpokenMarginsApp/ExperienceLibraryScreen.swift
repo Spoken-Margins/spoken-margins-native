@@ -283,8 +283,9 @@ struct ExperienceLibraryScreen: View {
                     .accessibilityIdentifier("library.filter.summary")
                 Spacer()
                 if hasActiveFilters {
-                    Button(action: model.resetLibraryFilters) { Text("Reset filters").minimumTapTarget() }
+                    Button("Reset filters", action: model.resetLibraryFilters)
                         .font(.caption)
+                        .expandedHitArea(horizontal: 8, vertical: 14)
                         .accessibilityIdentifier("library.filters.reset")
                 }
             }
@@ -308,14 +309,15 @@ struct ExperienceLibraryScreen: View {
         .onChange(of: model.libraryQuery) { _, _ in model.libraryQueryChanged() }
     }
 
-    /// The text alone is shorter than 44 pt, and a text-only button's hit area is only its text, so it gets the room
-    /// to tap (#2899).
+    /// The text alone is about 20 pt tall, and a text-only button's hit area is only its text, so its hit area grows to
+    /// 44 pt without moving the row's layout (#2899).
     private var completedVisibilityButton: some View {
         Button {
             if model.libraryQuery.query.isEmpty { model.showCompletedLibraryItems() }
             else { model.libraryQuery.listeningState = .all }
         } label: {
-            Text(model.libraryQuery.query.isEmpty ? "Show completed" : "Include in search").minimumTapTarget()
+            Text(model.libraryQuery.query.isEmpty ? "Show completed" : "Include in search")
+                .expandedHitArea(horizontal: 8, vertical: 12)
         }
     }
 
