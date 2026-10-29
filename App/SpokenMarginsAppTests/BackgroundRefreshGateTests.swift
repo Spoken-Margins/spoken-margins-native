@@ -459,4 +459,23 @@ final class BackgroundRefreshGateTests: XCTestCase {
         let shown = try XCTUnwrap(model.selectedItem.sessions.last)
         XCTAssertEqual(shown.completionPercent, 100, "Resume and Play read the finished session off the item at once, not after a background read")
     }
+
+    /// #2098: Resume rebuilt the whole item screen from SQLite on the main thread before the tap returned, so the
+    /// play icon waited for it; Pause already reloaded in the background. The sentinel title is replaced only by a reload.
+    func testResumingReloadsTheItemInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.pause()
+        await model.settleItemReload()
+        let storedTitle = model.selectedItem.title
+        model.selectedItem.title = "Not reloaded yet"
+
+        model.resumePlayback()
+        XCTAssertTrue(model.snapshot.status.isPlaybackActive)
+        XCTAssertEqual(model.selectedItem.title, "Not reloaded yet", "Resume must not read the item before it returns")
+
+        await model.settleItemReload()
+        XCTAssertEqual(model.selectedItem.title, storedTitle, "the background reload publishes the stored item")
+    }
 }
