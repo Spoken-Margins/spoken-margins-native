@@ -1,0 +1,50 @@
+# Fail a pull request from an outside contributor when a commit lacks `Signed-off-by:` (#2114).
+#
+# CONTRIBUTING.md makes the sign-off the contributor's agreement to the DCO and to the licence grant that keeps the
+# move to MPL-2.0 possible. Only collaborators open PRs today, so this finds nothing yet; it matters the day PRs open.
+#
+# `pull_request_target`, so the workflow and scripts/signoff_check.py come from the base branch, never from the PR:
+# a PR cannot edit the check to pass itself. The PR's commits are fetched as git data and only read with `git log`;
+# nothing from the PR is built or run. No secrets are used and the token is read-only. Collaborators and bots are
+# skipped inside the script (by the PR author's author_association). The PR number, SHAs and login reach the shell
+# through env, not interpolation.
+#
+# Cost and catch: one short Linux job per PR event (about 20 s, no Mac minutes, no tokens). It catches an unsigned
+# outside commit, which would block the MPL-2.0 switch for the files it touches. Waste signal: green on every PR
+# for a year with PRs open to outsiders, or red runs that a contributor fixes by adding a line to an agreed commit.
+name: signoff-check
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: signoff-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  signoff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # The base branch (the default for pull_request_target), commits and trees only: no blobs, no LFS.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          lfs: false
+          persist-credentials: false
+      - name: Fetch the PR's commits as data
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: git fetch --no-tags --filter=blob:none origin "+refs/pull/${PR}/head:refs/pr/head"
+      # --base HEAD: the checkout is the base branch's current tip, so commits merged into the PR from main (an
+      # "Update branch" or a `git merge origin/main`) are never counted, even if the event's base.sha is older.
+      - name: Check for Signed-off-by
+        env:
+          ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          LOGIN: ${{ github.event.pull_request.user.login }}
+        run: python3 scripts/signoff_check.py --base HEAD --head refs/pr/head --association "$ASSOCIATION" --login "$LOGIN"
