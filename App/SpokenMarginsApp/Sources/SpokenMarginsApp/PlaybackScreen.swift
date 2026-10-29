@@ -1513,6 +1513,7 @@ struct PlaybackScreen: View {
             }
         }
         .disabled(model.snapshot.isRecording)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("timeline.section")
         .id("playback.timeline")
     }

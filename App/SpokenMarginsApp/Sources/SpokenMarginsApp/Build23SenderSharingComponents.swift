@@ -715,6 +715,7 @@ struct Build23VerifiedRecipientPreviewPanel: View {
                 }
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("build23.sender.recipient.verified-preview")
     }
 }

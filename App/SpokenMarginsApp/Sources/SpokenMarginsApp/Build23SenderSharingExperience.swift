@@ -183,6 +183,7 @@ struct Build23SenderSharingExperience: View {
             }
 
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("build23.sender.stage.select")
     }
 
