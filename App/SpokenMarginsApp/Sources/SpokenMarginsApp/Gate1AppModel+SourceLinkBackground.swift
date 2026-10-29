@@ -53,7 +53,8 @@ extension Gate1AppModel {
                 throw SessionKitError.persistenceFailed("The shared PDF is no longer available to import.")
             }
             let itemId = try await importLocalSharedPDFInBackground(url: fileURL)
-            handoffStore.deleteManagedPDF(at: fileURL)
+            // The handed-off folder is removed off the main actor (#2510).
+            await Task.detached(priority: .utility) { handoffStore.deleteManagedPDF(at: fileURL) }.value
             return itemId
         }
         guard let url = URL(string: trimmed),
