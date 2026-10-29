@@ -144,6 +144,7 @@ extension Gate1AppModel {
         sharedMarginRows = entries.sharedRows.map(sharedRow)
         marginRows = entries.privateRows.map(privateRow)
         marginOutput.deliverSoon() // A Margin or its transcript may be new (#171).
+        noteCompactTimelineChanged()
     }
 
     private func applyMarginEntries(_ fresh: MarginCollection.Entries, forItem itemId: String) {
@@ -162,6 +163,7 @@ extension Gate1AppModel {
         if rows != marginRows { marginRows = rows }
         if shared != sharedMarginRows { sharedMarginRows = shared }
         marginOutput.deliverSoon() // A Margin or its transcript may be new (#171).
+        noteCompactTimelineChanged()
     }
 
     private func privateRow(_ entry: MarginCollection.PrivateEntry) -> MarginRow {
