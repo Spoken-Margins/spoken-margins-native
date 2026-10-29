@@ -374,6 +374,22 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(opening(after: open, "3.5 mg was given."), ["19,34–"])
         XCTAssertEqual(opening(after: open, "Then we tested."), ["19,34–"])
         XCTAssertEqual(opening(after: open, "38 mg doses.", role: .reference), ["19,34–"], "only body lines continue")
+        // A comma after the number ends the run; a run cut again goes on to the third line.
+        XCTAssertEqual(opening(after: open, "38, and 40 followed."), ["19,34–", "38,"])
+        XCTAssertEqual(labels(document([open,
+                                        StructuredDocumentLine(text: "38,40–", role: .body, pageIndex: 0),
+                                        StructuredDocumentLine(text: "42 and so on.", role: .body, pageIndex: 0)])),
+                       ["19,34–", "38,40–", "42"])
+        // Not entries of a numbered reference list, or a thousands figure.
+        func withReferences(_ second: String) -> [String] {
+            labels(document([open, StructuredDocumentLine(text: second, role: .body, pageIndex: 0),
+                             StructuredDocumentLine(text: "References", role: .heading, pageIndex: 1, level: 2)]
+                            + numberedReferences.map { StructuredDocumentLine(text: $0, role: .reference, pageIndex: 1) }))
+        }
+        XCTAssertEqual(withReferences("18 and 19 were used."), ["19,34–", "18"])
+        XCTAssertEqual(withReferences("50 patients were enrolled."), ["19,34–"])
+        XCTAssertEqual(withReferences("12,000 patients were enrolled."), ["19,34–"])
+        XCTAssertEqual(opening(after: open, "12,000 patients were enrolled."), ["19,34–"])
     }
 
     func testSuperscriptCitationsSetApartAfterAFullStopAreCitationsInASuperscriptPaper() {
@@ -392,6 +408,9 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(spaced("Samples were taken in Table 2. 7 Of these were kept."), [])
         XCTAssertEqual(spaced("Counts rose; see Fig. 7 Of these, none were."), [])
         XCTAssertEqual(spaced("The cones were green and blue, respectively. 19,18 Of these, some were."), [], "out of order")
+        XCTAssertEqual(spaced("As noted by Smith et al. 12 Of the samples failed."), [])
+        XCTAssertEqual(spaced("Cells were counted at 10 min. 12 Of these died."), [])
+        XCTAssertEqual(spaced("These are shown in Supp. 5 Of the data."), [])
     }
 
     func testNeighbouringSuperscriptNumbersBeforeALowercaseWordAreOneCitation() {
@@ -402,6 +421,8 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(citationLabels(["It took a dose,3 12 more."], references: listed), ["3"], "numbers that are not neighbours are not both entries")
         XCTAssertEqual(citationLabels(["It took a dose,3 5 more."], references: listed), ["3"])
         XCTAssertEqual(citationLabels(["It took a dose,4 3 more."], references: listed), ["4"])
+        XCTAssertEqual(citationLabels(["It took a dose,3 4 mg daily.", "Mice received the drug,2 3 days before surgery."], references: listed), ["3", "2"],
+                       "neighbouring numbers join only across a line break")
     }
 
     func testSquareBracketCitationsWithALocatorAreCitations() {

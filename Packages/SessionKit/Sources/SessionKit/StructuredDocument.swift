@@ -202,12 +202,15 @@ public enum StructuredDocumentBuilder {
         var pendingOutline: [StructuredDocumentLine.OutlineEntry] = []
         // The previous body line ended in a superscript run that is not finished ("19,34–").
         var superscriptContinues = false
+        var continuedMarkers: [StructuredDocument.TextRange] = []
 
         for line in lines {
             pendingOutline += line.outlineEntries
             var superscripts = line.superscripts
+            var continuation: Range<Int>?
             if superscriptContinues, line.role == .body, let rest = continuedSuperscript(in: line.text) {
                 superscripts.append(rest)
+                continuation = rest
             }
             superscriptContinues = line.role == .body && superscriptRunIsOpen(in: line.text, superscripts: superscripts)
             let cleaned = SpeechTextNormalizer.normalizeImportedTextWithSourceOffsets(line.text)
@@ -250,14 +253,28 @@ public enum StructuredDocumentBuilder {
                 let kept = cleaned.sourceOffsets.indices.filter { superscript.contains(cleaned.sourceOffsets[$0]) }
                 guard let first = kept.first, let last = kept.last else { continue }
                 let label = String(cleanedCharacters[first...last])
+                let range = StructuredDocument.TextRange(start: start + first, length: last - first + 1)
                 markers.append(StructuredDocument.Marker(
                     kind: label.allSatisfy { $0.isNumber || ",–-".contains($0) } ? .citation : .footnote,
-                    range: StructuredDocument.TextRange(start: start + first, length: last - first + 1),
+                    range: range,
                     label: label
                 ))
+                if superscript == continuation { continuedMarkers.append(range) }
             }
         }
 
+        // A number opening a line is a cut run's end only if it is an entry of the reference list ("12,000
+        // patients" and "50 patients" are not), or, with no numbered list, not a thousands figure.
+        if !continuedMarkers.isEmpty {
+            let references = numberedReferenceCount(characters: Array(text), segments: segments)
+            markers.removeAll { marker in
+                guard marker.kind == .citation, continuedMarkers.contains(marker.range), let label = marker.label else { return false }
+                let numbers = label.split { !$0.isNumber }.compactMap { Int($0) }
+                return references > 0
+                    ? !numbers.allSatisfy { 1...references ~= $0 }
+                    : label.range(of: #",[0-9]{3}\b"#, options: .regularExpression) != nil
+            }
+        }
         markers += printedCitationMarkers(in: text, segments: segments, excluding: markers)
         markers.sort { $0.range.start < $1.range.start }
         return StructuredDocument(
@@ -292,9 +309,14 @@ public enum StructuredDocumentBuilder {
         while end < characters.count, ",–-".contains(characters[end]) {
             let separator = end
             end += 1
-            guard digits() else { end = separator; break }
+            if !digits() {
+                // "38, and 40": a separator that ends the run belongs to it and keeps a cut run open.
+                end = characters.count > separator + 1 && !characters[separator + 1].isWhitespace ? separator : separator + 1
+                break
+            }
         }
-        // A number that is the start of a sentence or a list item ("14. Next", "2020 was") is not one.
+        // A number that is the start of a sentence or a list item ("14. Next", "2020 was") is not one,
+        // nor is "12,000" or a decimal.
         guard end == characters.count || characters[end].isWhitespace else { return nil }
         return start..<end
     }
@@ -441,7 +463,10 @@ public enum StructuredDocumentBuilder {
                 let space = (nsSlice.substring(with: digits) as NSString).range(of: "[0-9] [0-9]", options: .regularExpression)
                 // "the dose,3 12 Gy" stops at the 3; "function,35 36 although" is a pair of neighbouring entries.
                 let entries = nsSlice.substring(with: digits).split(separator: " ").map { Int($0) }
+                // Only across a line break, which a unit or noun ("3 4 mg") does not follow with a lowercase word.
+                let afterDigits = nsSlice.substring(with: NSRange(location: digits.location + digits.length, length: min(8, nsSlice.length - digits.location - digits.length)))
                 let neighbours = !entries.contains(nil) && zip(entries, entries.dropFirst()).allSatisfy { $1 == $0! + 1 }
+                    && afterDigits.prefix { $0.isWhitespace }.contains("\n")
                 if space.location != NSNotFound, !neighbours, following().map({ !$0.isUppercase }) ?? false {
                     digits.length = space.location + 1
                 }
@@ -488,7 +513,8 @@ public enum StructuredDocumentBuilder {
     private static let nonCitationAbbreviations: Set<String> = [
         "no", "nos", "vol", "vols", "ref", "refs", "p", "pp", "v", "ver", "version", "ch", "chap", "art", "para",
         "approx", "ca", "vs", "op", "pt", "pts", "ex", "exp", "suppl", "doi", "pmid", "isbn", "tab", "thm", "eqn",
-        "lem", "cor", "prop", "def", "sect", "chr", "nr", "fn",
+        "lem", "cor", "prop", "def", "sect", "chr", "nr", "fn", "al", "supp", "sup", "min", "mins", "sec", "hrs", "mg", "kg",
+        "ml", "mm", "cm", "nm", "ng", "ug",
     ]
 
     /// The highest entry number of a numbered reference list ("17. Smith J, …", "[17] Smith …"),

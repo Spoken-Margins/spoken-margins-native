@@ -295,7 +295,7 @@ def residue_is_math(spoken: Spoken, i: int) -> bool:
     return len(raw) <= 2 or any(ch.isdigit() for ch in raw) or any(0x370 <= ord(ch) <= 0x3FF for ch in raw)
 
 
-REFERENCE_WORDS = {"ref", "refs", "reference", "references"}
+REFERENCE_WORDS = {"ref", "refs"}  # what the app keeps as words (nonCitationAbbreviations)
 
 
 def starts_list_item(spoken: Spoken, index: int) -> bool:
@@ -303,7 +303,7 @@ def starts_list_item(spoken: Spoken, index: int) -> bool:
     list's own number. After a line that stops mid-sentence it is a wrapped citation, "RCC" then "21. Our"."""
     if index > 0 and spoken.line_of[index - 1] == spoken.line_of[index]:
         return False
-    if index == 0 or re.search(r"[.?!:;)\]”\"’]\s*$", spoken.lines[spoken.line_of[index - 1]]) is None:
+    if index == 0 or re.search(r"[.?!][)\]”\"’]*\s*$", spoken.lines[spoken.line_of[index - 1]]) is None:
         return False
     return re.match(r"\s*\d{1,3}[.)](?:\s|$)", spoken.lines[spoken.line_of[index]]) is not None
 

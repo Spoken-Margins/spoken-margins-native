@@ -94,6 +94,17 @@ class ScoreTests(unittest.TestCase):
         segments[1] = {"role": "body", "text": unfinished, "markers": [{"kind": "citation", "label": "21", "at": len(unfinished)}]}
         result = score.score(score.Truth(segments), unfinished + "\n21. Our data showed it.\n" + BODY_2)
         self.assertEqual(result["citations"], {"number_read": 1})
+        # A line that wraps after a bracket or a colon has not finished its sentence either.
+        wrapped = BODY_1.rstrip(".") + " (Smith)"
+        segments[1] = {"role": "body", "text": wrapped, "markers": [{"kind": "citation", "label": "21", "at": len(wrapped)}]}
+        result = score.score(score.Truth(segments), wrapped + "\n21. Our data showed it.\n" + BODY_2)
+        self.assertEqual(result["citations"], {"number_read": 1})
+        # "the references 12" is a read number: only "ref" and "refs" are words the app keeps.
+        named = ("Spoken margins let a listener record a thought exactly where it happened, as described in the references"
+                 " and the recording stays attached to that passage when the paper is shared with a friend.")
+        segments[1] = {"role": "body", "text": named, "markers": [{"kind": "citation", "label": "12", "at": named.index(" and the")}]}
+        result = score.score(score.Truth(segments), named.replace("references and", "references 12 and") + "\n" + BODY_2)
+        self.assertEqual(result["citations"], {"number_read": 1})
         # A bare number after the same words is still a number read.
         before, after = BODY_1.split(" and the recording")
         result = score.score(truth(*BASE), before + " 12 and the recording" + after + "\n" + BODY_2)
