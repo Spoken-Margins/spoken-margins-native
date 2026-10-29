@@ -1121,7 +1121,11 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     }
 
     /// A manifest's stored fields but its chunks, which `loadPreparedAudioManifestSummaries` cuts out in SQL.
+    /// It requires the fields the whole manifest requires but the summary drops, so a record missing one is still set aside.
     private struct CutManifest: Decodable {
+        var schemaVersion: String
+        var sourcePackageId: String
+        var createdAt: Date
         var id: String
         var itemId: String
         var signature: TTSRenderSignature

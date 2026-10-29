@@ -116,6 +116,16 @@ final class PreparedAudioManifestSummaryReadTests: XCTestCase {
         XCTAssertEqual(try store.quarantinedRecordCount(), 1, "set aside as the full read would")
     }
 
+    func testAManifestMissingAFieldOnlyTheWholeReadNeedsIsStillSetAside() throws {
+        let store = try SQLiteSessionStore(path: path)
+        try store.savePreparedAudioManifest(manifest("good"))
+        try store.savePreparedAudioManifest(manifest("headless", updatedAt: 1))
+        try StoreRawSQL.execute(
+            "UPDATE records SET payload = json_remove(payload, '$.sourcePackageId') WHERE id = 'manifest-headless';", bindings: [], at: path)
+        XCTAssertEqual(try store.loadPreparedAudioManifestSummaries().map(\.itemId), ["good"])
+        XCTAssertEqual(try store.quarantinedRecordCount(), 1)
+    }
+
     func testAManifestWhoseChunkListIsNotAnArrayFallsBackToTheFullRead() throws {
         let store = try SQLiteSessionStore(path: path)
         try store.savePreparedAudioManifest(manifest("good"))
