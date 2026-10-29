@@ -150,7 +150,7 @@ final class GuidedOnboardingCoordinatorTests: XCTestCase {
         XCTAssertEqual(GuidedTourServerStub.requests, 0)
     }
 
-    func testAManifestNamingAnotherHostForTheAudioIsRefused() async throws {
+    func testAManifestNamingAnInsecureAudioAddressIsRefused() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         GuidedTourServerStub.manifest = try JSONEncoder().encode(manifest(audioURL: "http://\(ProductServer.host)/tour.m4a"))

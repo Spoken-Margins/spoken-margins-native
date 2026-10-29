@@ -22,7 +22,7 @@ This section is read from the code on `next`. Paths are under `App/SpokenMargins
 
 1. **Launch.** The app seeds two items into an empty Library, then puts a sheet over it.
    - The seeds are "Welcome to Spoken Margins", a text item, and "Guided Tour: Add and Prepare Sources" (`Gate1AppModel.swift:1838-1858`).
-   - The tour's audio comes from a remote manifest on Cole's site (`GuidedOnboardingCoordinator.swift:30`). The quality-of-life notes say release was blocked on deploying it.
+   - The tour's audio comes from a remote manifest on Cole's site (`GuidedOnboardingCoordinator.swift:42`). The quality-of-life notes say release was blocked on deploying it.
    - The sheet is "Follow a few favourites", the first-run podcast drawer (`CatalogDrawer.swift`, opened at `Gate1RootView.swift:74-78`).
 2. **Behind the sheet, the Library.** It shows the two items and a "Start with a two-minute tour" card.
    - The card is the last row in the list, after the items and the "Offline rendering" summary, so on a phone it can sit below the fold (`ExperienceLibraryScreen.swift:84-87`).
