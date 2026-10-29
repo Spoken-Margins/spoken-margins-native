@@ -1418,8 +1418,8 @@ final class Gate1AppModel: ObservableObject {
         }
         stopSpeechPreviews()
         streamingSpeechQueue.stopAndClear()
-        scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
-        narrationStartupProtection.protectUpcomingStart(eligible: narrationRendersOnDevice(itemId: activeItemId))
+        let playsRecording = prewarmTextAudioForPlayStart(itemId: activeItemId)
+        narrationStartupProtection.protectUpcomingStart(eligible: narrationRendersOnDevice(itemId: activeItemId, playsRecording: playsRecording))
         run { engine in
             try prepareSourceMediaPlayback(itemId: activeItemId)
             let started = try engine.startSession(itemId: activeItemId)
@@ -1446,9 +1446,9 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    /// Supertonic renders the narration on the phone, so its start has no audio keeping a backgrounded app alive.
-    private func narrationRendersOnDevice(itemId: String) -> Bool {
-        ttsVoiceSelection.isOnDeviceVoice && engine?.playsPublisherAudio(itemId: itemId) != true
+    /// Supertonic renders the narration on the phone, so its start has no audio keeping a backgrounded app alive. A play start passes `playsRecording`: the engine has no session for the item yet.
+    private func narrationRendersOnDevice(itemId: String, playsRecording: Bool? = nil) -> Bool {
+        ttsVoiceSelection.isOnDeviceVoice && !(playsRecording ?? (engine?.playsPublisherAudio(itemId: itemId) == true))
             && (try? store?.loadItem(id: itemId))?.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
