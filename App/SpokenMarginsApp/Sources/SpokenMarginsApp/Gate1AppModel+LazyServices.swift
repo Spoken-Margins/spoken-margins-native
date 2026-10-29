@@ -26,6 +26,7 @@ extension Gate1AppModel {
             self.tryRefreshOfflineStorageUsage()
             self.supertonicModel.retireIfReplaced()
             self.refreshSupertonicSessionDiagnostics()
+            self.startFirstRunVoiceDownloadIfDue() // settles a new listener's Phonon download once it is installed (#2858)
             self.objectWillChange.send()
         }
         voiceDownloadsModel = model

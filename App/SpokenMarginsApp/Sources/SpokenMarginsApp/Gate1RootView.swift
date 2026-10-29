@@ -90,6 +90,7 @@ struct Gate1RootView: View {
                 .environmentObject(catalogDrawer)
         }
         .modifier(SupertonicDownloadNoticePresentation(notice: supertonicNotice))
+        .task { model.startFirstRunVoiceDownloadIfDue() } // a new listener's Phonon download, when owed (#2858)
         .sheet(isPresented: $model.isHelpPresented) {
             HelpScreen()
                 .environmentObject(model)

@@ -82,6 +82,13 @@ struct SettingsScreen: View {
                     Text(model.ttsVoiceSelection.detail)
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
+                    // A new listener starts on Phonon; the backup voice reads until it has downloaded (#2858).
+                    if let line = model.phononStatusLine(voices: model.requireVoiceDownloads()) {
+                        Text(line)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .accessibilityIdentifier("settings.ttsVoice.phononStatus")
+                    }
                     Text("Voice synthesized on-device. Spoken text comes from your selected source.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)

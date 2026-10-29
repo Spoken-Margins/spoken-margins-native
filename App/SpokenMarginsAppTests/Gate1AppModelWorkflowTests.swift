@@ -26,6 +26,7 @@ struct VoicePreferencesSnapshot {
         "renderedSpeechCacheLimitMB",
         "supertonicTTSMigrationV1",
         "supertonicVoicePendingTermsV1",
+        FirstRunVoiceDefault.downloadDueKey,
         SpokenMarginsTerms.acceptanceVersionKey,
         SpokenMarginsTerms.acceptanceDateKey
     ]
@@ -5182,30 +5183,13 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsVoiceSelection"), "supertonic:M2")
     }
 
-    func testPreOnePointZeroTTSMigrationDefaultsToJamesAndRetainsAppleFallbackVoice() {
+    func testPreOnePointZeroTTSMigrationKeepsJamesForASavedVoiceAndRetainsAppleFallbackVoice() {
+        let voicePreferences = VoicePreferencesSnapshot.capture()
+        addTeardownBlock { voicePreferences.restore() }
         let defaults = UserDefaults.standard
-        let keys = [
-            "supertonicTTSMigrationV1",
-            "ttsMode",
-            "ttsVoiceSelection",
-            "speechVoiceIdentifier",
-            SpokenMarginsTerms.acceptanceVersionKey,
-            SpokenMarginsTerms.acceptanceDateKey
-        ]
-        let prior = keys.reduce(into: [String: Any]()) { values, key in
-            values[key] = defaults.object(forKey: key)
-        }
-        defer {
-            for key in keys {
-                if let value = prior[key] {
-                    defaults.set(value, forKey: key)
-                } else {
-                    defaults.removeObject(forKey: key)
-                }
-            }
-        }
-        defaults.removeObject(forKey: "supertonicTTSMigrationV1")
-        defaults.removeObject(forKey: "ttsVoiceSelection")
+        for key in VoicePreferencesSnapshot.keys { defaults.removeObject(forKey: key) }
+        // An earlier build saved a (now unknown) voice choice: not a fresh install, so no Phonon (#2858).
+        defaults.set("piper", forKey: "ttsVoiceSelection")
         defaults.set("piper", forKey: "ttsMode")
         defaults.set("com.apple.ttsbundle.Samantha-compact", forKey: "speechVoiceIdentifier")
         SpokenMarginsTerms.recordAcceptance(in: defaults)
@@ -5215,6 +5199,29 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.ttsVoiceSelection, .james)
         XCTAssertEqual(model.ttsMode, "supertonic")
         XCTAssertEqual(model.speechVoiceIdentifier, "com.apple.ttsbundle.Samantha-compact")
+        XCTAssertTrue(defaults.bool(forKey: "supertonicTTSMigrationV1"))
+        XCTAssertFalse(defaults.bool(forKey: FirstRunVoiceDefault.downloadDueKey), "no download is owed to a listener with a saved voice")
+    }
+
+    /// #2858: a fresh install is given Phonon, shown as the chosen voice once the Terms are accepted, and owes its
+    /// download. The Terms come first, so until then the iOS voice is the saved one and Phonon waits as the pending choice.
+    func testAFreshInstallStartsOnPhononAndOwesItsDownloadUntilTheTermsAreAccepted() {
+        let voicePreferences = VoicePreferencesSnapshot.capture()
+        addTeardownBlock { voicePreferences.restore() }
+        let defaults = UserDefaults.standard
+        for key in VoicePreferencesSnapshot.keys { defaults.removeObject(forKey: key) }
+
+        let model = Gate1AppModel(audioPlaybackClient: WorkflowRecordingAudioClient())
+
+        if model.phononFitsThisDevice() {
+            XCTAssertEqual(model.pendingTermsVoiceSelection, .phonon)
+            XCTAssertEqual(defaults.string(forKey: "supertonicVoicePendingTermsV1"), AppTTSVoiceSelection.phonon.rawValue)
+            XCTAssertTrue(defaults.bool(forKey: FirstRunVoiceDefault.downloadDueKey))
+        } else {
+            XCTAssertEqual(model.pendingTermsVoiceSelection, .james)
+            XCTAssertFalse(defaults.bool(forKey: FirstRunVoiceDefault.downloadDueKey))
+        }
+        XCTAssertEqual(model.ttsVoiceSelection, .system, "the iOS voice reads until the Terms are accepted")
         XCTAssertTrue(defaults.bool(forKey: "supertonicTTSMigrationV1"))
     }
 
