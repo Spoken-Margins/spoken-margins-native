@@ -18,6 +18,7 @@ import XCTest
 /// - #1936 (PR #2017): a Following inbox title wraps fully at accessibility sizes.
 /// - #1937 (PR #2018): the Library row's play circle grows with the text.
 /// - #1969 (PR #2013): a Library this build can't open says so, never "Your Library is ready".
+/// - #2900: the Margins pane's unselected filter chips and a Margin's play button take a tap over 44 × 44 pt.
 ///
 /// SwiftUI builds its accessibility tree only when an assistive client is running, and an app-hosted test has none:
 /// an earlier mounted test found the tree empty (PlaybackDockLayoutTests, #1666) and UIKit's own traits missing
@@ -208,6 +209,26 @@ final class AccessibilityFixProofTests: XCTestCase {
         XCTAssertEqual(standard.height, TapTarget.minimum, accuracy: 0.5, "The default circle keeps its 44 pt hit area")
         XCTAssertGreaterThan(largest.height, standard.height + 10, "At the largest size the circle stayed \(largest.height) pt")
         XCTAssertLessThanOrEqual(largest.height, 80.5, "The circle grows at most to twice its size")
+    }
+
+    // MARK: - #2900 Margins pane tap targets
+
+    func testMarginsFilterChipsAndPlayButtonTakeAFullTapTarget() async throws {
+        let tray = try mount(AnyView(PlaybackMarginsFilterView(selection: .constant(.all))))
+        defer { tray.close() }
+        // "Mine" and "Shared" are the unselected chips, drawn with a clear background: the audit found only their text.
+        for filter in ["mine", "shared"] {
+            let chip = try await tray.waitForNode("the \(filter) chip") { $0.identifier == "playback.margins.filter.\(filter)" }
+            XCTAssertGreaterThanOrEqual(chip.frame.height, TapTarget.minimum - 0.5, "The \(filter) chip is \(chip.frame.height) pt tall")
+            XCTAssertGreaterThanOrEqual(chip.frame.width, TapTarget.minimum - 0.5, "The \(filter) chip is \(chip.frame.width) pt wide")
+        }
+
+        let row = try mount(AnyView(PlaybackMarginRowView(title: "A Margin", detail: "00:01", isShared: false, identifier: "margins.row.x",
+                                                          showDetails: {}, play: {})))
+        defer { row.close() }
+        let play = try await row.waitForNode("the play button") { $0.identifier == "margins.row.x.play" }
+        XCTAssertGreaterThanOrEqual(play.frame.height, TapTarget.minimum - 0.5, "Play is \(play.frame.height) pt tall")
+        XCTAssertGreaterThanOrEqual(play.frame.width, TapTarget.minimum - 0.5, "Play is \(play.frame.width) pt wide")
     }
 
     // MARK: - #1969 a Library this build can't open

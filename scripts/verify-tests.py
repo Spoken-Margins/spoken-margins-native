@@ -108,7 +108,12 @@ MINIMUM_IOS_MAJOR = 26
 
 
 def select_simulator(devices, device=None, ios=None):
-    """Reject unsupported destinations; prefer a booted phone, then newest OS."""
+    """Reject unsupported destinations; prefer a booted phone, then a plain iPhone, then newest OS.
+
+    A plain iPhone (`iPhone-N`) wins over a newer OS whose only phone is a Duo, Fold or Air: the hosted xcode-27
+    image's iOS 27.1 offers only iPhone-Duo, and its 386 x 678 pt window failed the dock's coordinate taps (#2894).
+    lane_sim.pick_runtime makes the same choice for the lane.
+    """
     candidates = []
     for runtime, group in devices.items():
         match = re.fullmatch(r'com\.apple\.CoreSimulator\.SimRuntime\.iOS-(\d+)(?:-(\d+))?(?:-(\d+))?', runtime)
@@ -125,12 +130,13 @@ def select_simulator(devices, device=None, ios=None):
                     continue
             elif '.iPhone-' not in entry.get('deviceTypeIdentifier', ''):
                 continue
-            candidates.append((entry['state'] == 'Booted', version, entry['udid'],
+            plain = lane_sim.PLAIN_IPHONE.fullmatch(entry.get('deviceTypeIdentifier', '')) is not None
+            candidates.append((entry['state'] == 'Booted', plain, version, entry['udid'],
                                dict(entry, runtime=runtime)))
     if not candidates:
         raise RuntimeError(f'No matching supported simulator (iOS {MINIMUM_IOS_MAJOR}+). '
                            'Supply --ios or --device with an available supported destination.')
-    return sorted(candidates, key=lambda candidate: candidate[:3], reverse=True)[0][3]
+    return sorted(candidates, key=lambda candidate: candidate[:4], reverse=True)[0][4]
 
 
 TEST_RUNNER_NAME = 'SpokenMargins Test Runner'
@@ -576,7 +582,9 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        # The article-entry inventory reads App/ Swift files (#2363).
                        'test_article_entry_followups',
                        # The task-cost map checks its controls against App/ Swift files (#2396).
-                       'test_task_cost_map')
+                       'test_task_cost_map',
+                       # The container-identifier guard scans App/ Swift files (#2898).
+                       'test_container_identifiers')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
                       'docs/sharing-test-kit/', 'docs/task-cost-map.json', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
                       # test_third_party_notices reads the dependency manifests and its own list (#1823).

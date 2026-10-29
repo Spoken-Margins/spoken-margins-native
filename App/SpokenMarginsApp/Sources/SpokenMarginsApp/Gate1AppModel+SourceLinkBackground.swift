@@ -21,7 +21,8 @@ import PDFKit
 extension Gate1AppModel {
     func persistResolvedSourceLinkInBackground(
         request: LinkResolutionRequest,
-        result: LinkResolutionResult
+        result: LinkResolutionResult,
+        readsLibraryOffMain: Bool = false
     ) throws -> Item? {
         let store = try requireStore()
         if engine == nil {
@@ -31,7 +32,11 @@ extension Gate1AppModel {
               let item = try engine.importResolvedSourceLinkInBackground(request, result: result) else {
             return nil
         }
-        libraryItems = try loadLibraryRows(store: store)
+        if readsLibraryOffMain {
+            refreshLibraryRowsInBackground(mustPublish: true) // adding a link: a whole-Library read on main hung each add (#2505)
+        } else {
+            libraryItems = try loadLibraryRows(store: store)
+        }
         diagnostics["lastBackgroundSourceLinkImport"] = item.id
         markOnboardingSteps([.addedOwnSource, .addedPodcast])
         schedulePodcastDownloadIfNeeded(itemId: item.id)

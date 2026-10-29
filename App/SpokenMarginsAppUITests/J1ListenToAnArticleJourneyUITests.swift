@@ -53,7 +53,7 @@ final class J1ListenToAnArticleJourneyUITests: XCTestCase {
             XCTAssertTrue(start.isEnabled, "Article cannot be started")
             start.tap()
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
-            let title = app.buttons["playback.title"].firstMatch
+            let title = app.buttons["playback.itemTitle.button"]
             XCTAssertTrue(title.waitForExistence(timeout: 5), "Playing item's title is missing")
             XCTAssertEqual(title.label, articleTitle, "A different item is playing")
 

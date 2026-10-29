@@ -50,6 +50,12 @@ public protocol SessionRecordCounting: AnyObject {
     func unfinishedAIJobCount(sessionId: String) throws -> Int
 }
 
+/// A repository that can read one Margin of a session by its id (#2509). A transcription or source-window result
+/// updates one Margin; without this the engine decodes every Margin of the session, transcripts included, to find it.
+public protocol InterjectionByIdReading: AnyObject {
+    func loadInterjection(id: String, sessionId: String) throws -> Interjection?
+}
+
 public protocol ListeningSessionRepository {
     func saveSession(_ session: Session) throws
     func loadSession(id: String) throws -> Session?

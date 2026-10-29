@@ -60,7 +60,7 @@ All of these default to off and are set in Settings.
 
 Share links are designed so the server never holds readable content. The packet and its preview are sealed with AES-256-GCM, and the 32-byte key lives in the link's `#` fragment, which a browser or app does not send to a server (`{kit}/SessionKit/ShareLinkSealing.swift`; server side in `research/B4/server/internal/links/`). The app today can open such a link but has no screen that creates one, so this is the design the sealing code and server implement, and it is tested, not a feature a listener can use yet.
 
-The requests to the project's server for configuration and community maps use ephemeral sessions with no cookies, cache or credentials, and only the project's own host (`{kit}/SessionKit/BridgePublicTransport.swift`). The first-run tour and the starter catalog use ordinary URL sessions to the same host (`{app}/GuidedOnboardingCoordinator.swift`, `{app}/CatalogDrawer.swift`).
+The requests to the project's server for configuration and community maps use ephemeral sessions with no cookies, cache or credentials, and only the project's own host (`{kit}/SessionKit/BridgePublicTransport.swift`). The first-run tour and the starter catalog use ordinary URL sessions to the same host (`{kit}/SessionKit/GuidedOnboardingCoordinator.swift`, `{app}/CatalogDrawer.swift`).
 
 ## How the server stays out of the way
 

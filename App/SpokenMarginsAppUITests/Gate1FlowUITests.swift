@@ -962,7 +962,7 @@ final class Gate1FlowUITests: XCTestCase {
         captureScreen(named: "second-edition-written-margin-detail")
         element("marginDetail.playMoment.button").tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["playback.title"].label.contains("A walk with room to think"))
+        XCTAssertTrue(app.buttons["playback.itemTitle.button"].label.contains("A walk with room to think"))
         pausePlaybackIfNeeded()
         element("playback.write.button").tap()
         XCTAssertTrue(element("writtenMargin.screen").waitForExistence(timeout: 4))
