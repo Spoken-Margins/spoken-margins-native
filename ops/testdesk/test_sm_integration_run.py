@@ -1289,6 +1289,23 @@ class HostedRunTests(unittest.TestCase):
         self.assertEqual(bundles, [])
         self.assertFalse(state_written)
 
+    def test_a_second_hosted_pass_names_the_journey_that_earned_gating(self):
+        # #2894: the hosted run has no state.json, so its streaks come from the earlier reports on #184.
+        passing = manifest({}, probation={f'{JOURNEY}/testOpen': 'passed'})
+        passing['status'] = 'verified'
+        listing = {'gating': [], 'probation': [{'test': JOURNEY, 'journey': 'J1'}]}
+        first = report_comment(OLD[:7], 'PASS') + \
+            f'\n  scripted journeys (only those on gating are verdict input): {JOURNEY.rsplit("/", 1)[-1]} passed\n'
+        for earlier, due in ((first, True), (report_comment(OLD[:7], 'PASS'), False)):
+            with self.subTest(earlier_pass=due), tempfile.TemporaryDirectory() as tmp:
+                ops = HostedOps(tmp, [manifest({TEST: 'passed'}), passing], bodies=[earlier])
+                (ops.repo_root / 'TestPlans').mkdir(parents=True)
+                (ops.repo_root / 'TestPlans' / 'scripted-journeys.json').write_text(json.dumps(listing))
+                with recording_slot(ops.events), patch.dict(os.environ, {'GITHUB_RUN_ID': '42'}):
+                    self.assertEqual(run.hosted_run(ops, SHA), 'PASS')
+                self.assertEqual('journeys due to move: J1ListenToAnArticleJourneyUITests passed twice running'
+                                 in ops.posted[0], due)
+
     def test_a_pass_names_the_hosted_runner_and_the_candidate(self):
         with tempfile.TemporaryDirectory() as tmp:
             ops, verdict = self.hosted_run(tmp, [manifest({TEST: 'passed'})])
