@@ -283,7 +283,7 @@ struct ExperienceLibraryScreen: View {
                     .accessibilityIdentifier("library.filter.summary")
                 Spacer()
                 if hasActiveFilters {
-                    Button("Reset filters", action: model.resetLibraryFilters)
+                    Button(action: model.resetLibraryFilters) { Text("Reset filters").minimumTapTarget() }
                         .font(.caption)
                         .accessibilityIdentifier("library.filters.reset")
                 }
@@ -292,17 +292,11 @@ struct ExperienceLibraryScreen: View {
                 ViewThatFits(in: .horizontal) {
                     HStack {
                         Text("Completed items hidden")
-                        Button(model.libraryQuery.query.isEmpty ? "Show completed" : "Include in search") {
-                            if model.libraryQuery.query.isEmpty { model.showCompletedLibraryItems() }
-                            else { model.libraryQuery.listeningState = .all }
-                        }
+                        completedVisibilityButton
                     }
                     VStack(alignment: .leading) {
                         Text("Completed items hidden")
-                        Button(model.libraryQuery.query.isEmpty ? "Show completed" : "Include in search") {
-                            if model.libraryQuery.query.isEmpty { model.showCompletedLibraryItems() }
-                            else { model.libraryQuery.listeningState = .all }
-                        }
+                        completedVisibilityButton
                     }
                 }
                 .font(.subheadline)
@@ -312,6 +306,17 @@ struct ExperienceLibraryScreen: View {
             }
         }
         .onChange(of: model.libraryQuery) { _, _ in model.libraryQueryChanged() }
+    }
+
+    /// The text alone is shorter than 44 pt, and a text-only button's hit area is only its text, so it gets the room
+    /// to tap (#2899).
+    private var completedVisibilityButton: some View {
+        Button {
+            if model.libraryQuery.query.isEmpty { model.showCompletedLibraryItems() }
+            else { model.libraryQuery.listeningState = .all }
+        } label: {
+            Text(model.libraryQuery.query.isEmpty ? "Show completed" : "Include in search").minimumTapTarget()
+        }
     }
 
     private var libraryFiltersMenu: some View {

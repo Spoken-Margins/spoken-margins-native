@@ -23,6 +23,9 @@ struct PlaybackMarginsFilterView: View {
                     .frame(maxWidth: .infinity, minHeight: 44)
                     .background(selection == option ? .white.opacity(0.40) : .clear,
                                 in: RoundedRectangle(cornerRadius: 10))
+                    // A clear chip has nothing to hit-test but its text, so the unselected chips were as small as
+                    // their words. The shape gives every chip its whole 44 pt frame to tap (#2900).
+                    .contentShape(RoundedRectangle(cornerRadius: 10))
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.white)
