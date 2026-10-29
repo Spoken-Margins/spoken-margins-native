@@ -463,9 +463,27 @@ struct LiveSessionView: View {
         .accessibilityIdentifier("liveSession.endSession")
     }
 
+    /// Resume for the 10 minutes after End (#2883), the same as the Watch's and the Lock Screen card's. It goes when the
+    /// window closes, without the screen needing to redraw for any other reason.
+    @ViewBuilder
+    private var resumeButton: some View {
+        if let until = controller.resumeUntil {
+            TimelineView(.explicit([min(Date.now, until), until])) { context in
+                if context.date < until {
+                    Button { controller.resume() } label: {
+                        Label("Resume Session", systemImage: "play.circle").frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .filledActionButton()
+                    .accessibilityIdentifier("liveSession.resume")
+                }
+            }
+        }
+    }
+
     private func finishCard(_ session: LiveSession) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(session.isQuick == true ? "Quick session" : "Session ended").font(.headline)
+            resumeButton
             ForEach(Array(LiveSessionPlaceMap.conflicts(in: session).enumerated()), id: \.offset) { _, conflict in
                 Text(conflict.description()).font(.caption).foregroundStyle(AppColors.secondaryText)
             }

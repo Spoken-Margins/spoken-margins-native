@@ -60,6 +60,8 @@ public actor LiveSessionFileWorker {
         public var startedAt: Date
         public var endedAt: Date?
         public var marginCount: Int
+        /// When Resume stops being offered, while it is (#2883).
+        public var resumableUntil: Date?
     }
 
     /// Application Support: the store is `LiveSession/…` under it, and recording paths ("SpokenMargins/interjections/…")
@@ -176,13 +178,15 @@ public actor LiveSessionFileWorker {
 
     /// The sessions not yet saved, for the Library's Live row: the running one first, then the most recent.
     public func summaries(now: Date = Date()) -> [Summary] {
-        sessions().values
+        let all = sessions()
+        return all.values
             .filter { $0.savedItemId == nil }
             .map { session in
                 Summary(
                     id: session.id, title: Self.title(of: session), kind: session.kind, isQuick: session.isQuick == true,
                     isRunning: session.isQuick != true && session.endedAt == nil,
-                    startedAt: session.startedAt, endedAt: session.endedAt, marginCount: session.margins.count
+                    startedAt: session.startedAt, endedAt: session.endedAt, marginCount: session.margins.count,
+                    resumableUntil: LiveSessionWatchSessions.resumableUntil(id: session.id, sessions: all).flatMap { $0 > now ? $0 : nil }
                 )
             }
             .sorted { lhs, rhs in

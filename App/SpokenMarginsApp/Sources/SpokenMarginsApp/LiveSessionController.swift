@@ -1,4 +1,3 @@
-import ActivityKit
 import Foundation
 import SessionKit
 
@@ -27,6 +26,8 @@ final class LiveSessionController: ObservableObject {
     private var spokenStart: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
     private var clockStartTask: Task<Void, Never>?
+    /// Removes the "Ended · Resume" card when its window closes (#2883), if the app is still running then.
+    private var endedCardExpiry: Task<Void, Never>?
     private let phoneRecorder = LiveSessionPhoneRecorder()
     private var diskObserver: NSObjectProtocol?
 
@@ -51,6 +52,7 @@ final class LiveSessionController: ObservableObject {
             startPolling()
             observeDisk()
             sessionChanged()
+            await LiveSessionActivities.endExpired()
             await LiveSessionSpokenMargins.transcribeMissing()
         }
     }
@@ -84,7 +86,7 @@ final class LiveSessionController: ObservableObject {
         started.startPlace = startPlace
         session = started
         save()
-        startActivity(for: started)
+        LiveSessionActivities.start(for: started)
         sessionChanged()
     }
 
@@ -101,9 +103,31 @@ final class LiveSessionController: ObservableObject {
         WatchMarginReceiver.shared.fileWaitingMarks()
         session = ending
         save()
-        endActivities()
+        showEndedActivity(for: ending)
         sessionChanged()
         return true
+    }
+
+    /// Reopens the session just ended, within the Resume window (#2883), by the same rules as the Watch's Resume. The
+    /// Lock Screen card, the Library's Live row and the Watch follow.
+    func resume() {
+        guard hasEnded, let id = session?.id else { return }
+        let written = lastWrite
+        Task { [weak self] in
+            await written?.value // the store has this screen's End before the Resume reads it
+            guard let resumed = await LiveSessionResumer.resume(id: id) else {
+                self?.errorMessage = LiveSessionResumer.refusedWords
+                return
+            }
+            self?.takeIn(resumed)
+        }
+    }
+
+    /// When Resume stops being offered for the ended session on screen, so the button can go at that moment. Nil when
+    /// it isn't offered. The window runs from the tap on End.
+    var resumeUntil: Date? {
+        guard let session else { return nil }
+        return LiveSessionWatchSessions.resumableUntil(id: session.id, sessions: [session.id: session])
     }
 
     // MARK: Editing while it runs (#2832)
@@ -326,7 +350,12 @@ final class LiveSessionController: ObservableObject {
             }
             session = updated
         }
-        if endedByWatch { endActivities() }
+        if endedByWatch, let ended = session { showEndedActivity(for: ended) }
+        if resumedByWatch, let resumed = session {
+            endedCardExpiry?.cancel()
+            endedCardExpiry = nil
+            Task { await LiveSessionActivities.showRunning(resumed) } // the card turns back into the running one
+        }
         return true
     }
 
@@ -380,26 +409,9 @@ final class LiveSessionController: ObservableObject {
         return saveGeneration
     }
 
-    private func startActivity(for session: LiveSession) {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-        // The Lock Screen Mark is a convenience; the session works without it.
-        _ = try? Activity<LiveSessionActivityAttributes>.request(
-            attributes: LiveSessionActivityAttributes(sessionStartedAt: session.startedAt),
-            content: ActivityContent(state: Self.activityState(for: session, markCount: 0, lastMarkAt: nil), staleDate: nil),
-            pushType: nil
-        )
-    }
-
-    private static func activityState(for session: LiveSession, markCount: Int, lastMarkAt: Date?) -> LiveSessionActivityAttributes.ContentState {
-        .init(
-            markCount: markCount, lastMarkAt: lastMarkAt,
-            clockOrigin: LiveSessionClock.origin(of: session, now: Date()), clockTitle: LiveSessionClock.title(for: session.kind)
-        )
-    }
-
     /// The Lock Screen shows the source's clock (#2834), so a change to the kind or the clock reaches it.
     private func refreshActivities() {
-        guard let session else { return }
+        guard isRunning, let session else { return } // a timer that fires after End must not bring the running card back
         // A clock that has not begun yet (Start tapped in the lobby) shows on the Lock Screen when it does.
         clockStartTask?.cancel()
         if let begins = LiveSessionClock.beginsAt(session, now: Date()) {
@@ -409,13 +421,7 @@ final class LiveSessionController: ObservableObject {
                 self?.refreshActivities()
             }
         }
-        Task {
-            for activity in Activity<LiveSessionActivityAttributes>.activities {
-                let current = activity.content.state
-                let state = Self.activityState(for: session, markCount: current.markCount, lastMarkAt: current.lastMarkAt)
-                await activity.update(ActivityContent(state: state, staleDate: nil))
-            }
-        }
+        Task { await LiveSessionActivities.showRunning(session) }
     }
 
     /// The meeting is still going: leave it running and remind the listener once, if they have allowed notifications.
@@ -429,12 +435,29 @@ final class LiveSessionController: ObservableObject {
         errorMessage = "Notifications aren't allowed for Spoken Margins, so it can't remind you. The session keeps running."
     }
 
+    /// Removes the Lock Screen card now.
     private func endActivities() {
         LiveSessionStillGoingReminder.cancel()
-        Task {
-            for activity in Activity<LiveSessionActivityAttributes>.activities {
-                await activity.end(nil, dismissalPolicy: .immediate)
-            }
+        endedCardExpiry?.cancel()
+        endedCardExpiry = nil
+        Task { await LiveSessionActivities.endAll() }
+    }
+
+    /// After End the card stays as "Ended 14:05 · Resume" for the Resume window (#2883), then goes. With nothing to
+    /// resume (a quick session, one already saved) it goes at once.
+    private func showEndedActivity(for ended: LiveSession) {
+        guard let plan = LiveSessionEndedActivity.plan(for: ended, now: Date()) else {
+            endActivities()
+            return
+        }
+        LiveSessionStillGoingReminder.cancel()
+        clockStartTask?.cancel()
+        endedCardExpiry?.cancel()
+        Task { await LiveSessionActivities.showEnded(plan) }
+        endedCardExpiry = Task {
+            try? await Task.sleep(for: .seconds(max(0, plan.resumeUntil.timeIntervalSinceNow) + 1))
+            guard !Task.isCancelled else { return }
+            await LiveSessionActivities.endExpired()
         }
     }
 }
