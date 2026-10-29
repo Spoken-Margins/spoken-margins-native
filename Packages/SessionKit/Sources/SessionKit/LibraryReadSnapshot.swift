@@ -14,6 +14,10 @@ public struct LibraryReadSnapshot: Sendable {
     /// The listener's own active Margins, counted per item (#2394). Items with none are absent.
     public var marginCountsByItemId: [String: Int] = [:]
 
+    /// The items not in Recently Deleted, in the snapshot's order: what `listItemSummaries()` returns. A caller that
+    /// already holds the snapshot asks this instead of reading the item table again (#2507).
+    public var liveItems: [LibraryItemSummary] { items.filter { $0.deletedAt == nil } }
+
     public init(
         items: [LibraryItemSummary],
         sessions: [Session],

@@ -89,8 +89,8 @@ extension Gate1AppModel {
         }
     }
 
-    func reconcileOnboardingEvidence(store: SQLiteSessionStore) throws {
-        let items = try store.listItemSummaries()
+    /// `items` are the Library's live items, taken from the read the caller already made (#2507).
+    func reconcileOnboardingEvidence(items: [LibraryItemSummary], store: SQLiteSessionStore) throws {
         var evidence = OnboardingEvidenceClassifier.sourceSteps(items: items)
         if try store.hasActiveInterjection() {
             evidence.insert(.firstInterjection)

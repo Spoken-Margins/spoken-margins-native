@@ -89,13 +89,13 @@ extension Gate1AppModel {
             let launchData = try LibraryReadSnapshot.read(store: store)
             rows = LibraryRowBuilder.rows(from: launchData, context: startupAudioContext)
             let deletedRows = Self.recentlyDeletedRows(from: launchData)
-            try reconcileOnboardingEvidence(store: store)
+            try reconcileOnboardingEvidence(items: launchData.liveItems, store: store)
             try recoverInterruptedAIJobs(store: store, rows: rows); settleOrphanedTranscriptions(store: store)
             libraryItems = rows
             recentlyDeletedItems = deletedRows
             let availableItemIDs = Set(rows.map(\.id))
             var writtenMarginNotice: String?
-            if let restoredSession = try store.loadSessions().first(where: {
+            if let restoredSession = launchData.sessions.first(where: {
                 Self.isResumableSession($0) && availableItemIDs.contains($0.itemId)
             }), let engine {
                 activeItemId = restoredSession.itemId
