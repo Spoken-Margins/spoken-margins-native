@@ -33,6 +33,8 @@ final class VoiceDownloadsModel: ObservableObject {
     @Published private(set) var source: VoiceCatalogSource = .none
 
     let coordinator: VoiceCatalogCoordinator
+    /// Starts a new listener's Phonon download (#2858); created by `Gate1AppModel.startFirstRunVoiceDownloadIfDue()`.
+    var firstRunDownloader: FirstRunVoiceDownloader?
     /// Runs after a voice is installed or removed: Storage and the voice picker read the disk again.
     var onInstalledVoicesChanged: (@MainActor () -> Void)?
     private var downloads: [String: Task<Void, Never>] = [:]

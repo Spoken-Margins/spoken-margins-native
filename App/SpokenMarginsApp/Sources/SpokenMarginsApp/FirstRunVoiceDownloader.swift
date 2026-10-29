@@ -8,7 +8,7 @@ import SessionKit
 @MainActor
 final class FirstRunVoiceDownloader {
     private let defaults: UserDefaults
-    private let voices: VoiceDownloadsModel
+    private weak var voices: VoiceDownloadsModel? // the model owns this downloader
     private let connectivity: ConnectivityMonitor
     /// The Terms state and the voice the listener chose, or the one waiting on the Terms.
     private let context: () -> (termsAccepted: Bool, choice: ReadingVoiceChoice)
@@ -33,6 +33,7 @@ final class FirstRunVoiceDownloader {
     /// installing, and when the network changes while a download waits for Wi-Fi.
     func evaluate() async {
         guard isDue else { return stopWatching() }
+        guard let voices else { return }
         let (termsAccepted, choice) = context()
         await voices.reload()
         let row = voices.rows.first { $0.id == ReadingVoiceChoice.phononVoiceId }

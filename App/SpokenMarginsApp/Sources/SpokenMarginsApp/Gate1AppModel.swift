@@ -502,8 +502,6 @@ final class Gate1AppModel: ObservableObject {
     var offlineStorageLedger: OfflineStorageLedger?
     /// Settings › Voices (#1819); created on first use by `requireVoiceDownloads()`.
     var voiceDownloadsModel: VoiceDownloadsModel?
-    /// Starts a new listener's Phonon download (#2858); created by `startFirstRunVoiceDownloadIfDue()`.
-    var firstRunVoiceDownloader: FirstRunVoiceDownloader?
     private var localSourceImporter: LocalSourceImporter?
     var followedSourceCoordinator: FollowedSourceCoordinator?
     /// A fresh install: the Library was empty before the welcome sample was added (B1 drawer).
@@ -821,8 +819,7 @@ final class Gate1AppModel: ObservableObject {
         }
         _ = rebuildEngineForCurrentSettings()
         diagnostics["termsAcceptedVersion"] = SpokenMarginsTerms.currentVersion
-        reportConfirmation(termsAcceptedMessage())
-        startFirstRunVoiceDownloadIfDue()
+        confirmTermsAccepted()
         continuePlaybackAfterTerms(pendingPlayback)
     }
 

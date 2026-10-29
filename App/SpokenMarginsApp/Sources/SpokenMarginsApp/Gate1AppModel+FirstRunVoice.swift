@@ -29,15 +29,22 @@ extension Gate1AppModel {
     func startFirstRunVoiceDownloadIfDue() {
         guard UserDefaults.standard.bool(forKey: FirstRunVoiceDefault.downloadDueKey),
               !UITestingHooks.isActive, !Self.isRunningUnitTests else { return }
-        let downloader = firstRunVoiceDownloader ?? FirstRunVoiceDownloader(
-            voices: requireVoiceDownloads(),
+        let voices = requireVoiceDownloads()
+        let downloader = voices.firstRunDownloader ?? FirstRunVoiceDownloader(
+            voices: voices,
             connectivity: connectivity,
             context: { [weak self] in
                 guard let self else { return (false, .system) }
                 return (self.hasAcceptedCurrentTerms, (self.pendingTermsVoiceSelection ?? self.ttsVoiceSelection).choice)
             })
-        firstRunVoiceDownloader = downloader
+        voices.firstRunDownloader = downloader
         Task { await downloader.evaluate() }
+    }
+
+    /// Confirms the Terms and, for a new listener on Phonon, starts the download that was waiting on them.
+    func confirmTermsAccepted() {
+        reportConfirmation(termsAcceptedMessage())
+        startFirstRunVoiceDownloadIfDue()
     }
 
     /// What the Terms confirmation says. A listener who just accepted with Phonon chosen and not on the phone is told
