@@ -20,7 +20,7 @@ extension Gate1AppModel {
         diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(failure)"
         run { engine in
             snapshot = try engine.transcriptionRetryFailed(interjectionId: interjection.id, sessionId: interjection.sessionId, error: failure)
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
             refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
         }
     }

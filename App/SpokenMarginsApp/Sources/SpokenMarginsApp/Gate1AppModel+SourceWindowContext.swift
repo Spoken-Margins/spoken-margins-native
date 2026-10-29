@@ -130,7 +130,7 @@ extension Gate1AppModel {
                         self.diagnostics[transcriptionKey] = "complete:heard_audio:\(timeline.segments.count)_segments"
                         if reportsResult { self.reportConfirmation("Source context recovered.") }
                     }
-                    self.refreshSelectedItem()
+                    self.refreshSelectedItemInBackground()
                     self.refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
                 }
             }
@@ -170,7 +170,7 @@ extension Gate1AppModel {
             run { engine in
                 snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjection.id, sessionId: interjection.sessionId, timeline: window)
                 heardSourceWindows.discardInBackground(Self.marginIdentity(interjection)) // #652: the context is ready without it
-                refreshSelectedItem()
+                refreshSelectedItemInBackground()
                 refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
                 if reportsResult { reportConfirmation("Source context recovered.") }
                 diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "complete:stored_transcript"
@@ -203,7 +203,7 @@ extension Gate1AppModel {
         pendingSourceContextInterjectionIds.insert(Self.marginIdentity(interjection))
         run { engine in
             snapshot = try engine.sourceWindowContextPending(interjectionId: interjection.id, sessionId: interjection.sessionId)
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
         }
         // #871: at most two of these run at once, nearest the playhead first. A finished download used to start
         // one per Margin, all together.
@@ -252,7 +252,7 @@ extension Gate1AppModel {
                             sourceExactEditionSHA256: nil
                         )
                     }
-                    self.refreshSelectedItem()
+                    self.refreshSelectedItemInBackground()
                     self.refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjectionId)
                     self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "complete:speech_window"
                     self.diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", sessionId: interjection.sessionId, interjectionId: interjectionId)] = provenance
@@ -268,7 +268,7 @@ extension Gate1AppModel {
                 self.pendingSourceContextInterjectionIds.remove(identity)
                 self.run { engine in
                     self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjectionId, sessionId: interjection.sessionId)
-                    self.refreshSelectedItem()
+                    self.refreshSelectedItemInBackground()
                     self.refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjectionId)
                 }
                 if reportsResult {
@@ -344,7 +344,7 @@ extension Gate1AppModel {
                                 transcript: transcript
                             )
                         }
-                        refreshSelectedItem()
+                        refreshSelectedItemInBackground()
                         refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
                         diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "complete"
                         withdrawRetryOffer(Self.transcriptionRetryKey(interjection))
@@ -363,7 +363,7 @@ extension Gate1AppModel {
                     } else {
                         run { engine in
                             snapshot = try engine.transcriptionFailed(interjectionId: interjection.id, sessionId: interjection.sessionId, error: failure)
-                            refreshSelectedItem()
+                            refreshSelectedItemInBackground()
                             refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
                             diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "failed:\(failure)"
                             diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(failure)"
