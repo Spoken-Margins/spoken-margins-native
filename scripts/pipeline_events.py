@@ -12,13 +12,18 @@ collect reads, from `Spoken-Margins/spoken-margins-native` (SM_STATUS_REPO), wit
   `lane_event.collect`: the report's hidden lane-event line when it has one (#2378), else the prose;
 - Actions runs and their jobs (`--no-jobs` skips the per-run job calls);
 - `test-catches.jsonl` from the lane state folder (`--catches`, default `$SM_LANE_STATE_DIR` or the Mac's cache
-  folder) when it exists. It lives on the owner's Mac, so a collect elsewhere reports without it, and says so.
+  folder) when it exists. It lives on the owner's Mac, so a collect elsewhere reports without it, and says so;
+- revert commits on the trunk and issues labelled `regression` or `found-on-phone` (`--no-escapes` skips them): what
+  got past the pipeline, the denominator for "the pipeline is enough" (#2380).
 
 Events (kind): `lane` (one per lane report), `test-failure` (one per failing test named in a failing report),
-`run` and `job` (Actions), `catch` (one per line of test-catches.jsonl). Every event has an `id`, so collecting
-again replaces an event instead of adding a second one, and the events are written sorted: the same inputs give the
-same file. An event holds only ids, enums and numbers: every string passes a short pattern or is dropped, so no
+`run` and `job` (Actions), `catch` (one per line of test-catches.jsonl), `escape` (a revert or a regression
+issue). Every event has an `id`, so collecting again replaces an event instead of adding a second one, and the
+events are written sorted: the same inputs give the same file. An event holds only ids, enums and numbers: every string passes a short pattern or is dropped, so no
 failure message, log text or local path can get in (the same rule as lane_event.py).
+
+An escape is never given a step by the heuristic: which step should have caught it is a human label event. Put
+`"label": {"by": "human", "step": "<lane step or job name>"}` on the event in the file; collect keeps it.
 
 Classes are labels, `{"class", "by": "heuristic", "signal"}`, so they can be re-derived or overridden: collect
 re-derives every heuristic label from all events in the file and keeps one whose `by` is anything else.
@@ -307,6 +312,48 @@ def catch_events(lines: list[str]) -> list[dict]:
     return events
 
 
+ESCAPE_LABELS = ('regression', 'found-on-phone')
+REVERT_TITLE = re.compile(r'Revert "')
+REVERTS_COMMIT = re.compile(r'This reverts commit ([0-9a-f]{7,40})')
+PR_IN_TITLE = re.compile(r'\(#(\d{1,6})\)')
+PR_IN_BODY = re.compile(r'(?:\bPRs?\s+#|\bpull request\s+#|\bSpoken-Margins/spoken-margins-native/pull/)(\d{1,6})(?!\d)', re.I)
+
+
+def escape_events(commits: list[dict], issues: list[dict]) -> list[dict]:
+    """`escape` events: what got past the pipeline. commits: the trunk's commits as the REST list gives them; a revert
+    is a commit (not a merge commit, which would count the same revert twice) whose title starts `Revert "`. issues:
+    the issues labelled `regression` or `found-on-phone`; their `pr` is the PR the issue names, only when it names
+    exactly one and a collaborator wrote it (an outsider's text is data, #1822), else None. Only ids, enums and numbers are kept."""
+    found = []
+    for item in commits:
+        message = (item.get('commit') or {}).get('message') or ''
+        title = message.split('\n', 1)[0]
+        if len(item.get('parents') or []) > 1 or not REVERT_TITLE.match(title) or title.startswith('Revert "Revert "'):
+            continue  # a merge commit would count the same revert twice; a revert of a revert puts the change back
+        sha = _head(item.get('sha'))
+        reverted = REVERTS_COMMIT.search(message)
+        quoted = PR_IN_TITLE.findall(title)
+        found.append({'kind': 'escape', 'id': f'escape:revert:{sha}', 'source': 'revert', 'sha': sha,
+                      'reverts': _head(reverted.group(1)) if reverted else '',
+                      'pr': int(quoted[0]) if quoted else None, 'issue': None,  # [0]: the reverted PR, not the revert's
+                      'at': _iso(((item.get('commit') or {}).get('committer') or {}).get('date'))})
+    for issue in issues:
+        names = {(l.get('name') if isinstance(l, dict) else l) for l in issue.get('labels') or []}
+        source = next((name for name in ESCAPE_LABELS if name in names), None)
+        if not source or issue.get('pull_request') or not isinstance(issue.get('number'), int):
+            continue
+        named = set(PR_IN_BODY.findall(issue.get('body') or '')) if comment_trust.trusted(issue) else set()
+        found.append({'kind': 'escape', 'id': f'escape:issue:{issue["number"]}', 'source': source, 'sha': '',
+                      'reverts': '', 'pr': int(next(iter(named))) if len(named) == 1 else None,  # two PRs named: which one broke it is a guess
+                      'issue': issue['number'],
+                      'at': _iso(issue.get('created_at'))})
+    return [e for e in found if e['at']]
+
+
+def _iso(text) -> str:
+    return text if isinstance(text, str) and re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', text) else ''
+
+
 # ---- Labelling across events ----------------------------------------------------------------------
 
 def _same(a: str, b: str) -> bool:
@@ -490,9 +537,10 @@ def write_events(path: Path, events: list[dict]) -> None:
 
 
 def collect_events(comments: list[dict], runs: list[tuple], catches: list[str], since: str, existing: list[dict],
-                   trunk: str) -> list[dict]:
-    """The event list after a collect. runs: [(run, [job, ...])] as the Actions API gives them. Everything older than
-    `since` (an ISO date or time) is left out of the new events; the events already in the file stay."""
+                   trunk: str, escapes: tuple[list[dict], list[dict]] = ([], [])) -> list[dict]:
+    """The event list after a collect. runs: [(run, [job, ...])] as the Actions API gives them. escapes: (trunk
+    commits, labelled issues) as the REST lists give them. Everything older than `since` (an ISO date or time) is
+    left out of the new events; the events already in the file stay."""
     fresh = [e for e in lane_events(comments) if e['at'] >= since]
     for run, jobs in runs:
         summary = run_event(run, trunk)
@@ -500,6 +548,7 @@ def collect_events(comments: list[dict], runs: list[tuple], catches: list[str], 
             fresh.append(summary)
             fresh += [job_event(job, summary) for job in jobs]
     fresh += [e for e in catch_events(catches) if e['at'] >= since]
+    fresh += [e for e in escape_events(*escapes) if e['at'] >= since]
     return label(merge(existing, fresh))
 
 
@@ -542,6 +591,17 @@ def fetch_runs(github, since: str, jobs: bool, trunk: str, log=lambda text: None
         return list(zip(found, pool.map(listing, found)))
 
 
+def fetch_escapes(github, since: str, trunk: str) -> tuple[list[dict], list[dict]]:
+    """(the trunk's commits since <since>, the issues labelled regression or found-on-phone). GitHub's `since` on
+    issues means updated since, so `escape_events` and collect keep only those created in the window."""
+    commits = github.pages(f'commits?sha={trunk}&since={since}', limit=30, partial=True)
+    issues = {}
+    for name in ESCAPE_LABELS:
+        for issue in github.pages(f'issues?state=all&labels={name}&since={since}', limit=30, partial=True):
+            issues.setdefault(issue.get('number'), issue)
+    return commits, list(issues.values())
+
+
 def default_catches() -> Path:
     return Path(os.environ.get('SM_LANE_STATE_DIR') or Path.home() / 'Library/Caches/SpokenMarginsLane') \
         / 'test-catches.jsonl'
@@ -559,6 +619,7 @@ def normalise_since(text: str) -> str:
 def command_collect(args) -> int:
     since, out = normalise_since(args.since), Path(args.out) / EVENTS
     runs: list[tuple] = []
+    escapes: tuple[list[dict], list[dict]] = ([], [])
     if args.comments_file:
         comments = json.loads(Path(args.comments_file).read_text())
     else:
@@ -567,11 +628,13 @@ def command_collect(args) -> int:
         comments = fetch_comments(github, since)
         if not args.no_runs:
             runs = fetch_runs(github, since, not args.no_jobs, trunk_branch(), lambda text: print(text, file=sys.stderr))
+        if not args.no_escapes:
+            escapes = fetch_escapes(github, since, trunk_branch())
     catches_path = Path(args.catches) if args.catches else default_catches()
     catches = catches_path.read_text().splitlines() if catches_path.is_file() else []
     if not catches:
         print(f'note: no test-catches.jsonl at {catches_path}; per-test catches are left out', file=sys.stderr)
-    events = collect_events(comments, runs, catches, since, read_events(out), trunk_branch())
+    events = collect_events(comments, runs, catches, since, read_events(out), trunk_branch(), escapes)
     write_events(out, events)
     counts = collections.Counter(e['kind'] for e in events)
     print(f'{out}: {len(events)} events ({", ".join(f"{n} {k}" for k, n in sorted(counts.items()))})')
@@ -624,18 +687,19 @@ def report(events: list[dict]) -> str:
     jobs = [e for e in events if e['kind'] == 'job']
     runs = [e for e in events if e['kind'] == 'run']
     catches = [e for e in events if e['kind'] == 'catch']
+    escapes = [e for e in events if e['kind'] == 'escape']
     out = ['# Pipeline report', '']
     stamps = sorted(e['at'] for e in events if e.get('at'))
     out.append(f'Window: {stamps[0][:10]} to {stamps[-1][:10]} (UTC), {len(events)} events: {len(lanes)} lane reports '
                f'({sum(l["source"] == "line" for l in lanes)} with a lane-event line, '
                f'{sum(l["source"] == "prose" for l in lanes)} from prose only), {len(failures)} test failures, '
-               f'{len(runs)} runs, {len(jobs)} jobs, {len(catches)} ledger catches.' if stamps else 'No events.')
+               f'{len(runs)} runs, {len(jobs)} jobs, {len(catches)} ledger catches, {len(escapes)} escapes.' if stamps else 'No events.')
     out += ['', '**Caveats.** Reports from before #2378 have no step seconds, queue wait or test counts, so those '
             'columns count only the reports that carry them (shown in each cell). Classes are heuristic labels '
             '(`by: heuristic`), re-derived on every collect. Reports whose PR is still open, or that nothing passed '
             'after, read `unresolved`.', '']
     if not lanes and not jobs:
-        return '\n'.join(out)
+        return '\n'.join(out + weekly_escapes(events))
 
     # lane reports by tier
     out += ['## Lane reports by tier', '']
@@ -738,7 +802,47 @@ def report(events: list[dict]) -> str:
         out += table(['class', 'episodes'], [[c, n] for c, n in count.most_common()])
     else:
         out += ['', 'No test-catches.jsonl was read, so there is no ledger section: the ledger lives on the owner\'s Mac.']
-    return '\n'.join(out) + '\n'
+    return '\n'.join(out + weekly_escapes(events)) + '\n'
+
+
+def week_of(stamp: str) -> str:
+    """The Monday (UTC) of the week an ISO time falls in."""
+    day = dt.datetime.strptime(stamp[:10], '%Y-%m-%d')
+    return (day - dt.timedelta(days=day.weekday())).strftime('%Y-%m-%d')
+
+
+def weekly_escapes(events: list[dict]) -> list[str]:
+    """What got past the pipeline each week, beside what the pipeline stopped: lane FAILs a later head of the same PR
+    fixed (class `code`) and the ledger's catches, which exist only where the owner's Mac collected them (#2380)."""
+    escapes = [e for e in events if e['kind'] == 'escape']
+    if not events:
+        return []
+    if not escapes:
+        return ['', '## Escapes and catches by week', '', 'No escapes were collected: run `collect` without --no-escapes.']
+    weeks = collections.defaultdict(lambda: collections.Counter())
+    failures = collections.defaultdict(set)  # week -> escapes that are one failure: a revert and an issue naming one PR
+    for event in events:
+        if not event.get('at'):
+            continue
+        week = weeks[week_of(event['at'])]
+        if event['kind'] == 'escape':
+            week[event['source']] += 1
+            failures[week_of(event['at'])].add(('pr', event['pr']) if event['pr'] else event['id'])
+        elif event['kind'] == 'lane' and event.get('verdict') == 'FAIL' and (event.get('label') or {}).get('class') == 'code':
+            week['lane catch'] += 1
+        elif event['kind'] == 'catch' and event.get('class') == 'catch':
+            week['ledger catch'] += 1
+    rows = [[week, c['revert'], c['regression'], c['found-on-phone'], len(failures[week]),
+             c['lane catch'], c['ledger catch']] for week, c in sorted(weeks.items())]
+    mapped = sum(bool((e.get('label') or {}).get('step')) for e in escapes)
+    unattributed = sum(e['pr'] is None for e in escapes)
+    return ['', '## Escapes and catches by week (weeks start Monday, UTC)', ''] + table(
+        ['week', 'reverts', 'regression issues', 'found-on-phone issues', 'escapes', 'lane catches', 'ledger catches'],
+        rows) + ['', f'{len(escapes)} escape events: {unattributed} name no PR, {mapped} mapped by hand to the step that should '
+                 f'have caught them (a human `label` with a `step`; the collector never guesses). A lane catch is a '
+                 f'FAIL that a later head of the same PR passed; the escapes column counts a revert and an issue naming the same PR '
+                 f'once; ledger catches need the owner\'s Mac. An issue counts '
+                 f'in the week it was filed, not the week it got its label.']
 
 
 def command_report(args) -> int:
@@ -761,6 +865,7 @@ def main(argv=None) -> int:
     gather.add_argument('--out', default=str(OUT), help='folder for events.jsonl (default artifacts/pipeline)')
     gather.add_argument('--catches', help='test-catches.jsonl (default: the lane state folder)')
     gather.add_argument('--no-runs', action='store_true', help='skip the Actions runs and jobs')
+    gather.add_argument('--no-escapes', action='store_true', help='skip the reverts and regression issues')
     gather.add_argument('--no-jobs', action='store_true', help='read the runs but not each run\'s jobs')
     gather.add_argument('--comments-file', help='read lane comments from this JSON file instead of GitHub (replay)')
     gather.set_defaults(run=command_collect)
