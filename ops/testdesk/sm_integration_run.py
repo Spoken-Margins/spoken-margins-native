@@ -1440,7 +1440,8 @@ def hosted_run(ops: Ops, sha: str, *, post: bool = True) -> str:
 
     The same tests and report as a Mac tick, with less around it: no culprit search, revert, issues or Claude
     (a PR opened with the job's token starts no workflows, and there is no Claude token here; the Mac handles a
-    confirmed FAIL, defer_to_hosted), no state, and no .xcresult bundles in the evidence the workflow uploads.
+    confirmed FAIL, defer_to_hosted), no state, and no .xcresult bundles in the evidence the workflow uploads. Journey streaks are counted from
+    the earlier reports on #184 instead of a state file, so hosted passes can earn `gating` (#2894).
     The tip's simulator app is zipped for the workflow's `sim-app-<sha>` artifact instead of kept on disk.
     post=False (a proof run dispatched from a branch, --no-report) posts nothing to #184: a report for a commit that
     is not the trunk's tip would become the next tip's "previous" and its last PASS. The report is only logged."""
@@ -1467,6 +1468,14 @@ def hosted_run(ops: Ops, sha: str, *, post: bool = True) -> str:
     ops.log('simulator build ' + (pack_sim_build(ops.repo_root, evidence / 'app' / 'manifest.json', sha) if post
                                    else 'not packed: this run is not the trunk\'s tip'))
     suspects = ops.suspects(sha, green) if result['verdict'] == 'FAIL' else []
+    if result.get('journeys'):  # streaks from #184's earlier reports, since this run keeps no state (#2894); never blocks
+        try:
+            listing = json.loads((ops.repo_root / 'TestPlans' / 'scripted-journeys.json').read_text())
+            streaks = journey_promotion.update(
+                journey_promotion.streaks_from_reports([c['body'] for c in comments], listing), result['journeys'])
+            result['journeys_due'] = journey_promotion.report_line(journey_promotion.due(listing, streaks))
+        except Exception as error:  # noqa: BLE001
+            ops.log('journey streaks failed: ' + str(error)[:300])
     drop_bundles(evidence)
     run_url = ''
     if os.environ.get('GITHUB_RUN_ID'):
