@@ -4056,8 +4056,12 @@ public final class SessionEngine {
         snapshot.preparedTextAudioStatus = preparedTextAudioStatus(for: currentItem)
         snapshot.sourceTranscriptStatus = sourceTranscriptStatus(for: session, item: currentItem)
         snapshot.chapterTitle = progress.chapterTitle ?? currentItem?.title
-        snapshot.activeInterjectionCount = (try? repository.loadInterjections(sessionId: session.id).filter { $0.status == "active" }.count) ?? snapshot.activeInterjectionCount
-        snapshot.pendingAiJobCount = (try? repository.loadAIJobs(sessionId: session.id).filter { $0.status != "complete" }.count) ?? snapshot.pendingAiJobCount
+        // Counted, not decoded, where the store can (#2509): this runs on every playback tick.
+        let counter = repository as? SessionRecordCounting
+        snapshot.activeInterjectionCount = (try? counter?.activeInterjectionCount(sessionId: session.id)
+            ?? repository.loadInterjections(sessionId: session.id).filter { $0.status == "active" }.count) ?? snapshot.activeInterjectionCount
+        snapshot.pendingAiJobCount = (try? counter?.unfinishedAIJobCount(sessionId: session.id)
+            ?? repository.loadAIJobs(sessionId: session.id).filter { $0.status != "complete" }.count) ?? snapshot.pendingAiJobCount
     }
 
     /// A chapter jump that starts playback (from a pause or stop, or onto another target such as a saved answer's

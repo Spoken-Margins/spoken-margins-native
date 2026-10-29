@@ -42,6 +42,14 @@ public protocol ItemRevisionReading: AnyObject {
     func itemRevision(id: String) -> Int
 }
 
+/// A repository that can count a session's active Margins and unfinished AI jobs without decoding them (#2509).
+/// The engine publishes both counts on every playback tick (about twice a second); without this it decodes every
+/// Margin and every job of the session each time. A repository without it is simply read each time.
+public protocol SessionRecordCounting: AnyObject {
+    func activeInterjectionCount(sessionId: String) throws -> Int
+    func unfinishedAIJobCount(sessionId: String) throws -> Int
+}
+
 /// A repository that can read one Margin of a session by its id (#2509). A transcription or source-window result
 /// updates one Margin; without this the engine decodes every Margin of the session, transcripts included, to find it.
 public protocol InterjectionByIdReading: AnyObject {
