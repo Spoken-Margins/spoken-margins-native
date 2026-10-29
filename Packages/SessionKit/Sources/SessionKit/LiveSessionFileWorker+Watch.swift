@@ -17,8 +17,8 @@ extension LiveSessionFileWorker {
             if let answer = answerForHeld(id: transfer.id) { answers = [answer] }
         case .sessionStart(let info):
             changed = LiveSessionWatchSessions.start(info, clock: envelope.clock, sessions: all, deletions: deletions, now: now)
-        case let .sessionEnd(id, endedAt):
-            if let ended = LiveSessionWatchSessions.end(id: id, endedAt: endedAt, clock: envelope.clock, sessions: all) {
+        case let .sessionEnd(id, endedAt, stoppedAt):
+            if let ended = LiveSessionWatchSessions.end(id: id, endedAt: endedAt, stoppedAt: stoppedAt, clock: envelope.clock, sessions: all) {
                 changed = [ended]
             }
         case .sessionResume(let id):

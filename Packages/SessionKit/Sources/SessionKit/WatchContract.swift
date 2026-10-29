@@ -74,6 +74,36 @@ public enum WatchDevice: String, Codable, Sendable {
     case watch
 }
 
+/// The Watch's quick choices for "when did it end?" (#2709): the same as the phone's `LiveSessionEnd.quickChoices`, kept
+/// here because the Watch target compiles only this file and `WatchContractState.swift`.
+public enum WatchEndChoice: Equatable, Sendable {
+    case now
+    case minutesAgo(Int)
+
+    /// A stopped time within this many seconds of the tap is "now": no second time is kept.
+    public static let sameInstant: TimeInterval = 1
+
+    public var label: String {
+        switch self {
+        case .now: "Now"
+        case .minutesAgo(60): "1 hour ago"
+        case let .minutesAgo(minutes): "\(minutes) minutes ago"
+        }
+    }
+
+    public func date(tappedAt: Date) -> Date {
+        switch self {
+        case .now: tappedAt
+        case let .minutesAgo(minutes): tappedAt.addingTimeInterval(-Double(max(0, minutes)) * 60)
+        }
+    }
+
+    /// Now, 5, 15 and 30 minutes and an hour ago, leaving out any that fall before the session began.
+    public static func choices(startedAt: Date, tappedAt: Date) -> [WatchEndChoice] {
+        [.now, .minutesAgo(5), .minutesAgo(15), .minutesAgo(30), .minutesAgo(60)].filter { $0.date(tappedAt: tappedAt) >= startedAt }
+    }
+}
+
 /// A session as the two devices describe it to each other: id, kind, title, owner device and start
 /// (DESIGN section 9, changes point 11). Times are by the clock of the device that sent it.
 public struct WatchSessionInfo: Codable, Equatable, Sendable {
@@ -83,9 +113,20 @@ public struct WatchSessionInfo: Codable, Equatable, Sendable {
     public var owner: WatchDevice
     public var startedAt: Date
     public var startPositionMs: Int?
+    /// When the session ended as far as the Resume window is concerned: when the End was heard.
     public var endedAt: Date?
+    /// When the listener said it stopped, when that was earlier than `endedAt` (#2709): "I stopped 15 minutes ago". Nil
+    /// when they ended it at once. Optional, so a message from an earlier build still decodes.
+    public var stoppedAt: Date?
 
-    public init(id: String, kind: WatchSessionKind, title: String, owner: WatchDevice, startedAt: Date, startPositionMs: Int? = nil, endedAt: Date? = nil) {
+    /// The end the listener sees: "Ended 14:05" is when it stopped, not when End was tapped.
+    public var shownEnd: Date? { stoppedAt ?? endedAt }
+
+    public init(
+        id: String, kind: WatchSessionKind, title: String, owner: WatchDevice, startedAt: Date, startPositionMs: Int? = nil,
+        endedAt: Date? = nil, stoppedAt: Date? = nil
+    ) {
+        self.stoppedAt = stoppedAt
         self.id = id
         self.kind = kind
         self.title = title
@@ -352,7 +393,8 @@ public enum WatchMessage: Codable, Equatable, Sendable {
     case hello(holding: [String])
     case sessionStart(WatchSessionInfo)
     /// The Watch ended a session, by its clock. When the phone owns the session this is a request to end it.
-    case sessionEnd(id: String, endedAt: Date)
+    /// `stoppedAt` is when the listener said it stopped, if earlier than `endedAt` (#2709).
+    case sessionEnd(id: String, endedAt: Date, stoppedAt: Date? = nil)
     /// Resume within `resumeWindow` of an End: the same session runs again.
     case sessionResume(id: String)
     /// A Margin's details on the fast lane, ahead of its file.

@@ -96,6 +96,11 @@ public enum LiveSessionEnd {
         session.endWhere = endWhere
         session.endPlace = endPlace
         guard late else { return }
+        noteLateMargins(in: &session, after: stoppedAt)
+    }
+
+    /// Margins taken after the session stopped but before the listener said so are kept and noted "after the session ended".
+    public static func noteLateMargins(in session: inout LiveSession, after stoppedAt: Date) {
         for index in session.margins.indices where session.margins[index].markedAt > stoppedAt {
             session.margins[index].filingNote = session.margins[index].filingNote ?? LiveSessionFiling.afterEndNote
         }

@@ -314,6 +314,18 @@ final class LiveSessionController: ObservableObject {
         session?.endNote = stored.endNote
         session?.resumedAt = stored.resumedAt
         session?.startedAt = stored.startedAt
+        if var updated = session {
+            for index in updated.margins.indices {
+                let stored = stored.margins.first { $0.id == updated.margins[index].id }?.filingNote
+                if endedByWatch {
+                    // Margins taken between the stopped time and the tap were noted "after the session ended" by the store (#2709).
+                    if updated.margins[index].filingNote == nil { updated.margins[index].filingNote = stored }
+                } else if updated.margins[index].filingNote == LiveSessionFiling.afterEndNote, stored == nil {
+                    updated.margins[index].filingNote = nil // resumed, so the gap's Margins are inside the session again
+                }
+            }
+            session = updated
+        }
         if endedByWatch { endActivities() }
         return true
     }
@@ -406,7 +418,19 @@ final class LiveSessionController: ObservableObject {
         }
     }
 
+    /// The meeting is still going: leave it running and remind the listener once, if they have allowed notifications.
+    func remindStillGoing() async {
+        guard isRunning else { return }
+        if await LiveSessionStillGoingReminder.schedule() {
+            // Ended or discarded while the reminder was being set up: it must not arrive for a session that is over.
+            if !isRunning { LiveSessionStillGoingReminder.cancel() }
+            return
+        }
+        errorMessage = "Notifications aren't allowed for Spoken Margins, so it can't remind you. The session keeps running."
+    }
+
     private func endActivities() {
+        LiveSessionStillGoingReminder.cancel()
         Task {
             for activity in Activity<LiveSessionActivityAttributes>.activities {
                 await activity.end(nil, dismissalPolicy: .immediate)
