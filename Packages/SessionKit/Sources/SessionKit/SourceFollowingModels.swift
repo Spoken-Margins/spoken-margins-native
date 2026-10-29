@@ -227,7 +227,7 @@ public enum ManualFollowPolicy {
     }
 
     /// The link to discover a feed from, or nil when the item isn't worth a lookup.
-    public static func discoveryURL(for item: Item) -> URL? {
+    public static func discoveryURL(for item: some LibraryItemFields) -> URL? {
         guard shouldDiscoverFeed(
             itemId: item.id, mediaType: item.mediaType, sourceURL: item.sourceURL,
             sourceReference: item.externalReference, sourceReferenceType: item.externalReferenceType
