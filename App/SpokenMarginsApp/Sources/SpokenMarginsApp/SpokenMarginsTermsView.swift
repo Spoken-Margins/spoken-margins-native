@@ -104,6 +104,9 @@ private struct TermsSummaryView: View {
         .padding()
         .navigationTitle("Terms of Use")
         .navigationBarTitleDisplayMode(.inline)
+        // When the summary fits there is no scroll view to carry the identifier, and a plain stack copies it onto
+        // every child, hiding Agree and Use iOS Voice behind "terms.screen" (#2894).
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("terms.screen")
     }
 

@@ -42,7 +42,7 @@ final class J7PDFJourneyUITests: XCTestCase {
             XCTAssertTrue(start.waitForExistence(timeout: 5), "The PDF's start control is missing")
             start.tap()
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
-            let title = app.buttons["playback.title"].firstMatch.label
+            let title = app.buttons["playback.itemTitle.button"].label
             XCTAssertTrue(title.contains("Walking Notes"), "A different item is playing: \(title)")
             try waitUntilPlaying("The PDF never reached the playing state")
             XCTAssertTrue(element("playback.now.passage").waitForExistence(timeout: 5), "The PDF live passage is missing")

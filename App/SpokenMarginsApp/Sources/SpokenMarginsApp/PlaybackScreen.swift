@@ -732,6 +732,9 @@ struct PlaybackScreen: View {
             // The chapter title is not repeated here: the dock's chapter row, right above the bar, already shows it
             // and opens the same item details (#1475).
         }
+        // A container, so the Library chevron and the title button keep their own identifiers: an identifier on a
+        // plain stack is copied onto every child, which made the chevron the first "playback.title" button (#2894).
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("playback.title")
     }
 
