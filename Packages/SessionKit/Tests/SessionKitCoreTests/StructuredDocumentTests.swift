@@ -413,6 +413,37 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(spaced("These are shown in Supp. 5 Of the data."), [])
     }
 
+    func testASuperscriptThatOpensTheLineAfterAFullStopIsACitationInASuperscriptPaper() {
+        // #1189, pmc-pmc7619014 and pmc-pmc13305550: the superscript after "IFN-γ." wrapped to the
+        // next line, "46 In the CD16+ NK cells", and was read "forty-six".
+        let superscripts = (1...5).map { superscripted("Cells divide here\($0) and then stop.", "\($0)") }
+        let numbered = (1...50).map { StructuredDocumentLine(text: "\($0). Author \($0). Title. 2019.", role: .reference, pageIndex: 1) }
+        func opening(_ first: String, _ rest: String..., with context: [StructuredDocumentLine] = superscripts) -> [String] {
+            let lines = ([first] + rest).map { StructuredDocumentLine(text: $0, role: .body, pageIndex: 0) }
+            return labels(document(context + lines + numbered)).dropFirst(context.count).map { $0 }
+        }
+        XCTAssertEqual(opening("cytokines such as IFN-γ.", "46 In the CD16+ NK cells, expression rose."), ["46"])
+        XCTAssertEqual(opening("in one or another direction”", ".", "12 He published his findings."), ["12"])
+        XCTAssertEqual(opening("as reported before.", "14,15 Essential definitions followed."), ["14,15"])
+        // Prose keeps its numbers: no superscripts elsewhere, no such entry, a lowercase word, a number before the stop.
+        XCTAssertEqual(opening("cytokines such as IFN-γ.", "46 In the CD16+ NK cells, expression rose.", with: []), [])
+        XCTAssertEqual(opening("cytokines such as IFN-γ.", "60 In the CD16+ NK cells, expression rose."), [])
+        XCTAssertEqual(opening("cytokines such as IFN-γ.", "46 patients were enrolled."), [])
+        XCTAssertEqual(opening("Samples are in Table 2.", "7 Of these were kept."), [])
+        XCTAssertEqual(opening("Counts rose; see Fig.", "7 Of these, none were."), [])
+        XCTAssertEqual(opening("cytokines such as IFN-γ", "46 In the CD16+ NK cells, expression rose."), [], "no full stop before the line break")
+    }
+
+    func testASuperscriptStuckToEtAlIsACitation() {
+        // #1189, pmc-pmc10756882: "Cao et al.22 considered a block" read "twenty-two".
+        XCTAssertEqual(citationLabels(["To exploit adjacent pixels, Cao et al.22 considered a block."], references: numberedReferences + (21...30).map { "\($0). Author \($0). Title. 2019." }), ["22"])
+        XCTAssertEqual(citationLabels(["Cao et al.3,4 considered a block."], references: numberedReferences), ["3,4"])
+        // A spaced number after "et al." stays read, and so does a number no entry has.
+        XCTAssertEqual(citationLabels(["As noted by Cao et al. 12 of the samples failed."], references: numberedReferences), [])
+        XCTAssertEqual(citationLabels(["Cao et al.45 considered a block."], references: numberedReferences), [])
+        XCTAssertEqual(citationLabels(["The metal.3 considered a block."], references: numberedReferences), [], "only after et al.")
+    }
+
     func testNeighbouringSuperscriptNumbersBeforeALowercaseWordAreOneCitation() {
         // #1189, pmc-pmc11150781: "motor function,35 36" then "although" on the next line.
         let listed = numberedReferences

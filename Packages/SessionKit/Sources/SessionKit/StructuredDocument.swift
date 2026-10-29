@@ -434,9 +434,10 @@ public enum StructuredDocumentBuilder {
         setsSuperscripts: Bool
     ) -> [StructuredDocument.Marker] {
         let group = #"([0-9]{1,3}(?:\s*[,–-]\s*[0-9]{1,3}|[ ][0-9]{1,3})*)(?=\s|$|[;:,.](?:\s|$))"#
-        // The last form is a number set apart after a full stop and ahead of a new sentence: "respectively. 18,19 Of these".
+        // The last form is a number set apart after a full stop and ahead of a new sentence: "respectively. 18,19 Of these",
+        // or opening the next line: "such as IFN-γ." then "46 In the CD16+" (#1189).
         guard let regex = try? NSRegularExpression(pattern: #"(?<=\p{L}\p{L})([.,;])"# + group + #"|([)\]”"])[.,;:]?"# + group
-                                                    + #"|(?<=\p{L}\p{L})(\.)[ ]"# + group + #"(?= \p{Lu})"#),
+                                                    + #"|(\.)(?:(?<=\p{L}\p{L}\.)[ ]|(?<=[\p{L}”’"]\n?\.)\n)"# + group + #"(?= \p{Lu})"#),
               let math = try? NSRegularExpression(pattern: #"[+−×÷^=<>/*|]|(?:^|[^\p{L}])[\p{L}0-9]\s*-\s*[\p{L}0-9](?:[^\p{L}]|$)"#),
               let lostSpace = try? NSRegularExpression(pattern: #"\p{Ll}{2}[,;]\p{Ll}{2}"#),
               // "(a, b)2", "(x, y)2": a pair of variables, squared.
@@ -477,8 +478,10 @@ public enum StructuredDocumentBuilder {
                     let before = nsSlice.substring(with: NSRange(location: start, length: match.range.location - start))
                     let word = String(before.reversed().prefix { $0.isLetter }.reversed()).lowercased()
                     let punctuation = nsSlice.substring(with: match.range(at: spaced ? 5 : 1))
-                    guard !nonCitationWords.contains(word), !nonCitationAbbreviations.contains(word),
-                          sentenceFollows || (punctuation != "." && !dropsSpaces) else { continue }
+                    // "Cao et al.22 considered": a superscript stuck to "et al." is a citation, whatever follows (#1189).
+                    let afterEtAl = !spaced && punctuation == "." && before.range(of: #"(?:^|\s)et al$"#, options: .regularExpression) != nil
+                    guard afterEtAl || (!nonCitationWords.contains(word) && !nonCitationAbbreviations.contains(word)
+                          && (sentenceFollows || (punctuation != "." && !dropsSpaces))) else { continue }
                 } else if let close = Range(match.range(at: 3), in: slice), "])".contains(slice[close]) {
                     // What the closing bracket closes, when it opens in this segment.
                     let open: Character = slice[close] == ")" ? "(" : "["
