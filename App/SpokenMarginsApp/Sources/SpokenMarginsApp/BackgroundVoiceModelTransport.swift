@@ -14,6 +14,12 @@ final class BackgroundVoiceModelTransport: NSObject, VoiceModelTransport, URLSes
     static let sessionIdentifier = "com.spokenmargins.voice-downloads"
     static let shared = BackgroundVoiceModelTransport()
 
+    /// True around an install the app starts by itself for a new listener (#2858): its requests wait for Wi-Fi
+    /// instead of using mobile data, a hotspot or Low Data Mode, including after the app has left the foreground,
+    /// where the app can no longer watch the network. Read when a file's task is made; installs the listener starts
+    /// in Voices leave it false and keep the ask they were given.
+    @TaskLocal static var wifiOnly = false
+
     /// Bytes of the file in flight, for a progress bar that moves inside a large file.
     var onBytesWritten: (@Sendable (_ url: URL, _ bytesWritten: Int64) -> Void)? {
         get { lock.withLock { bytesWrittenHandler } }
@@ -110,10 +116,17 @@ final class BackgroundVoiceModelTransport: NSObject, VoiceModelTransport, URLSes
 
     private func newTask(for url: URL, offset: Int) -> URLSessionDownloadTask {
         let task: URLSessionDownloadTask
-        if offset == 0, let resumeData = takeResumeData(for: url) {
+        // Resume data carries the request it was made from, which may allow mobile data, so a Wi-Fi-only file
+        // starts over and leaves the saved data for a download the listener starts themselves.
+        if offset == 0, !Self.wifiOnly, let resumeData = takeResumeData(for: url) {
             task = session.downloadTask(withResumeData: resumeData)
         } else {
             var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 60)
+            if Self.wifiOnly {
+                request.allowsCellularAccess = false
+                request.allowsExpensiveNetworkAccess = false
+                request.allowsConstrainedNetworkAccess = false
+            }
             request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
             if offset > 0 { request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range") }
             task = session.downloadTask(with: request)

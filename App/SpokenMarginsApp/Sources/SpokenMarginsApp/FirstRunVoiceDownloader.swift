@@ -61,7 +61,7 @@ final class FirstRunVoiceDownloader {
         case .start:
             triedThisLaunch = true
             stopWatching()
-            voices.download(ReadingVoiceChoice.phononVoiceId)
+            voices.download(ReadingVoiceChoice.phononVoiceId, automatic: true)
         }
     }
 

@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SwiftUI
 
 /// A new listener starts on Phonon and hears the app's backup voice until it has downloaded (#2858). The rules are
 /// `FirstRunVoiceDefault` in SessionKit and the download is `FirstRunVoiceDownloader`; this is only the model's side.
@@ -41,6 +42,12 @@ extension Gate1AppModel {
         Task { await downloader.evaluate() }
     }
 
+    /// The first network check has come back and the phone is online on Wi-Fi, not mobile data, a hotspot or Low
+    /// Data Mode. Until then the download has not started, so nothing may say it is downloading.
+    private var onWiFiNow: Bool {
+        connectivity.hasReported && !connectivity.isOffline && !connectivity.isExpensive && !connectivity.isConstrained
+    }
+
     /// Confirms the Terms and, for a new listener on Phonon, starts the download that was waiting on them.
     func confirmTermsAccepted() {
         reportConfirmation(termsAcceptedMessage())
@@ -55,7 +62,7 @@ extension Gate1AppModel {
               VoiceCatalogCoordinator.installedFolder(voiceId: ReadingVoiceChoice.phononVoiceId, supportDirectory: support) == nil,
               let line = FirstRunVoiceDefault.statusLine(
                   choice: .phonon, state: .notInstalled,
-                  progress: connectivity.isExpensive || connectivity.isConstrained ? .waitingForWiFi : .downloading(fraction: nil))
+                  progress: onWiFiNow ? .downloading(fraction: nil) : .waitingForWiFi)
         else { return message }
         return "\(message) \(line)"
     }
@@ -73,9 +80,27 @@ extension Gate1AppModel {
             progress = .failed
         case .idle, .removing:
             let isDue = UserDefaults.standard.bool(forKey: FirstRunVoiceDefault.downloadDueKey)
-            progress = isDue && (connectivity.isExpensive || connectivity.isConstrained) ? .waitingForWiFi : .notDownloaded
+            progress = isDue && !onWiFiNow ? .waitingForWiFi : .notDownloaded
         }
         return FirstRunVoiceDefault.statusLine(
             choice: ttsVoiceSelection.choice, state: voices.rows.first { $0.id == voiceId }?.state, progress: progress)
+    }
+}
+
+/// The line under Settings' voice picker while Phonon is chosen and not yet on the phone (#2858). Its own view, so it
+/// redraws with the download's progress: Settings itself watches the app model, not the Voices model.
+struct PhononStatusLine: View {
+    let model: Gate1AppModel
+    /// The chosen voice, passed in so a change of voice redraws this view.
+    let choice: AppTTSVoiceSelection
+    @ObservedObject var voices: VoiceDownloadsModel
+
+    var body: some View {
+        if let line = model.phononStatusLine(voices: voices) {
+            Text(line)
+                .font(.caption)
+                .foregroundStyle(AppColors.secondaryText)
+                .accessibilityIdentifier("settings.ttsVoice.phononStatus")
+        }
     }
 }

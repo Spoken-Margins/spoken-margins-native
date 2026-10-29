@@ -100,6 +100,26 @@ final class VoiceDownloadsTests: XCTestCase {
         try await waitUntil { voices.activity[entry.id] == .idle && voices.rows.first?.state != .notInstalled }
     }
 
+    /// #2858 audit: a new listener's Phonon download is owed until it is installed or the listener says no. Cancel in
+    /// Voices is the no, so the next launch must not start the download again. Another voice's Cancel changes nothing.
+    func testCancellingPhononInVoicesClearsTheDownloadOwedToANewListener() throws {
+        let coordinator = VoiceCatalogCoordinator(
+            supportDirectory: root,
+            configuration: .init(catalogURL: nil, trustedKeys: [], playableVoiceIds: [], bundledSnapshot: nil),
+            transport: FixtureTransport(files: [:]),
+            installerConfiguration: .init(marginBytes: 0, attemptsPerSource: 1, retryDelay: .zero, availableCapacity: { _ in nil }),
+            repository: nil
+        )
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "voice-downloads-\(UUID().uuidString)"))
+        let voices = VoiceDownloadsModel(coordinator: coordinator, defaults: defaults)
+
+        defaults.set(true, forKey: FirstRunVoiceDefault.downloadDueKey)
+        voices.cancel("kokoro-82m")
+        XCTAssertTrue(defaults.bool(forKey: FirstRunVoiceDefault.downloadDueKey), "another voice's Cancel leaves it owed")
+        voices.cancel(ReadingVoiceChoice.phononVoiceId)
+        XCTAssertFalse(defaults.bool(forKey: FirstRunVoiceDefault.downloadDueKey), "Phonon's Cancel is the listener saying no")
+    }
+
     func testTheDeviceProbeReadsAModelTheChipTableKnows() {
         // The simulator reports the simulated iPhone; every one iOS 26 runs on is in the table.
         XCTAssertNotNil(VoiceDeviceProbe.chipGeneration(), VoiceDeviceProbe.machineIdentifier())
