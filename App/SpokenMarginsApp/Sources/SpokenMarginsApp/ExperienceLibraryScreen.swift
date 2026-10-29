@@ -285,6 +285,7 @@ struct ExperienceLibraryScreen: View {
                 if hasActiveFilters {
                     Button("Reset filters", action: model.resetLibraryFilters)
                         .font(.caption)
+                        .expandedHitArea(horizontal: 8, vertical: 14)
                         .accessibilityIdentifier("library.filters.reset")
                 }
             }
@@ -292,17 +293,11 @@ struct ExperienceLibraryScreen: View {
                 ViewThatFits(in: .horizontal) {
                     HStack {
                         Text("Completed items hidden")
-                        Button(model.libraryQuery.query.isEmpty ? "Show completed" : "Include in search") {
-                            if model.libraryQuery.query.isEmpty { model.showCompletedLibraryItems() }
-                            else { model.libraryQuery.listeningState = .all }
-                        }
+                        completedVisibilityButton
                     }
                     VStack(alignment: .leading) {
                         Text("Completed items hidden")
-                        Button(model.libraryQuery.query.isEmpty ? "Show completed" : "Include in search") {
-                            if model.libraryQuery.query.isEmpty { model.showCompletedLibraryItems() }
-                            else { model.libraryQuery.listeningState = .all }
-                        }
+                        completedVisibilityButton
                     }
                 }
                 .font(.subheadline)
@@ -312,6 +307,18 @@ struct ExperienceLibraryScreen: View {
             }
         }
         .onChange(of: model.libraryQuery) { _, _ in model.libraryQueryChanged() }
+    }
+
+    /// The text alone is about 20 pt tall, and a text-only button's hit area is only its text, so its hit area grows to
+    /// 44 pt without moving the row's layout (#2899).
+    private var completedVisibilityButton: some View {
+        Button {
+            if model.libraryQuery.query.isEmpty { model.showCompletedLibraryItems() }
+            else { model.libraryQuery.listeningState = .all }
+        } label: {
+            Text(model.libraryQuery.query.isEmpty ? "Show completed" : "Include in search")
+                .expandedHitArea(horizontal: 8, vertical: 12)
+        }
     }
 
     private var libraryFiltersMenu: some View {
