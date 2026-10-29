@@ -589,34 +589,41 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
 
     /// Adopts only the current attempt. Staging filenames are unique, so a late
     /// callback never removes or overwrites a newer rendition's file.
+    ///
+    /// The file check and move and the two row saves run on the row queue (#2507, #2509, #2510), so a big episode
+    /// finishing never holds the main actor. The ledger commit and the protection settle stay here, between the
+    /// two, because the settle must read what is playing at that moment (#541). Ownership is checked again after
+    /// each wait: a removal or a newer download that arrived meanwhile wins, and the moved file and its rows are rolled back.
     func finishDownload(_ attempt: PodcastDownloadAttempt, stagedURL: URL?, responseOK: Bool) async {
-        defer { if let stagedURL { try? FileManager.default.removeItem(at: stagedURL) } }
         guard owns(attempt) || restoreAttempt(attempt) else {
+            await removeFileOffMain(stagedURL)
             try? await ledger.release(reservationId: attempt.reservationId)
             return
         }
-        guard var record = recordsByItemId[attempt.itemId] else { return }
+        guard let record = recordsByItemId[attempt.itemId] else {
+            await removeFileOffMain(stagedURL)
+            return
+        }
         do {
-            guard responseOK, let stagedURL,
-                  let size = try stagedURL.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 else {
-                throw CocoaError(.fileReadCorruptFile)
-            }
+            let destination = directory.appending(path: "\(attempt.generation).\(stagedURL?.pathExtension ?? "audio")")
             // A 200 can carry a sign-in page or an error message. Neither may replace a working episode (#919).
-            guard !DownloadedAudioSniffer.looksLikeText(fileAt: stagedURL) else {
-                throw PodcastDownloadFailure.notAudio
+            let size = try await onRowQueue {
+                try PodcastDownloadAdoption.adopt(stagedURL: stagedURL, responseOK: responseOK, to: destination)
             }
-            let destination = directory.appending(path: "\(attempt.generation).\(stagedURL.pathExtension)")
-            try FileManager.default.moveItem(at: stagedURL, to: destination)
+            guard owns(attempt) else {
+                await removeAdoptedFile(destination, itemId: attempt.itemId)
+                return
+            }
             do {
                 // Playback can start while the commit waits on the ledger, so the row is committed
                 // protected and the protection is settled once this actor resumes (#541). Other
                 // ledgers on this store can't evict the new file in between.
                 try await ledger.commit(reservationId: attempt.reservationId, asset: OwnedOfflineAsset(
                     id: "podcast-offline-\(attempt.itemId)", itemId: attempt.itemId, category: .podcast,
-                    relativePath: "PodcastAudio/\(destination.lastPathComponent)", byteCount: Int64(size),
+                    relativePath: "PodcastAudio/\(destination.lastPathComponent)", byteCount: size,
                     isReproducible: true, protections: [.activePlayback]))
                 guard owns(attempt) else {
-                    removeAdoptedFile(destination, itemId: attempt.itemId)
+                    await removeAdoptedFile(destination, itemId: attempt.itemId)
                     return
                 }
                 let isActive = activeItemId == attempt.itemId
@@ -627,42 +634,83 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
                     // Evicted or reconciled away already: don't publish a file that may be gone.
                     throw CocoaError(.fileNoSuchFile)
                 }
-                // Save the asset before publishing availability.
-                try store.saveAudioAsset(AudioAsset(id: "podcast-local-\(attempt.itemId)", itemId: attempt.itemId,
-                    audioSourceType: .nativeMediaFile, availability: .localPhone, filePath: destination.lastPathComponent))
-                let previousFile = localURL(for: record)
-                record.state = .availableOffline
-                record.localRelativePath = destination.lastPathComponent
-                record.bytesWritten = Int64(size)
-                record.expectedBytes = Int64(size)
-                record.failureReason = nil
-                record.updatedAt = Date()
-                // Synchronous and throwing, as before: a failed save rolls the new file back instead of leaving
-                // memory and the row disagreeing. Queued older rows are drained first so none lands after this one.
-                rowWriter.sync {}
-                try store.savePodcastDownload(record)
-                recordsByItemId[record.itemId] = record
-                onRecordChanged?(record)
+                // The memory record as it is now, not as it was before the waits: playback may have touched it.
+                let before = recordsByItemId[attempt.itemId] ?? record
+                var published = before
+                let previousFile = localURL(for: before)
+                published.state = .availableOffline
+                published.localRelativePath = destination.lastPathComponent
+                published.bytesWritten = size
+                published.expectedBytes = size
+                published.failureReason = nil
+                published.updatedAt = Date()
+                let asset = AudioAsset(id: "podcast-local-\(attempt.itemId)", itemId: attempt.itemId,
+                    audioSourceType: .nativeMediaFile, availability: .localPhone, filePath: destination.lastPathComponent)
+                let row = published
+                // Throwing, as before: a failed save rolls the new file back instead of leaving memory and the
+                // row disagreeing. It runs behind every queued older row, so none lands after this one. The asset
+                // is saved before availability is published.
+                try await onRowQueue { [store] in
+                    try PodcastDownloadAdoption.publish(asset: asset, record: row, in: store)
+                }
+                guard owns(attempt) else {
+                    await removeAdoptedFile(destination, itemId: attempt.itemId)
+                    return
+                }
+                if recordsByItemId[attempt.itemId] == before {
+                    recordsByItemId[attempt.itemId] = published
+                    onRecordChanged?(published)
+                } else if var current = recordsByItemId[attempt.itemId] {
+                    // Something saved a newer row while ours was queued (the listener started the episode): it
+                    // may have landed after ours, so state the finished download on top of it.
+                    current.state = published.state
+                    current.localRelativePath = published.localRelativePath
+                    current.bytesWritten = size
+                    current.expectedBytes = size
+                    current.failureReason = nil
+                    persist(current)
+                }
                 invalidateAttempt(itemId: attempt.itemId)
                 // The old file goes only after the new row is saved.
-                if let previousFile, previousFile != destination { try? FileManager.default.removeItem(at: previousFile) }
                 onLocalAssetReady?(attempt.itemId, destination)
+                if let previousFile, previousFile != destination { await removeFileOffMain(previousFile) }
             } catch {
-                removeAdoptedFile(destination, itemId: attempt.itemId)
+                await removeAdoptedFile(destination, itemId: attempt.itemId)
                 throw error
             }
         } catch {
             guard owns(attempt) else { return }
             invalidateAttempt(itemId: attempt.itemId)
-            fail(record, reason: error.localizedDescription)
+            fail(recordsByItemId[attempt.itemId] ?? record, reason: error.localizedDescription)
         }
     }
 
-    private func removeAdoptedFile(_ url: URL, itemId: String) {
-        try? FileManager.default.removeItem(at: url)
+    /// Runs `work` on the row queue, behind every save and delete queued before it, and resumes here with its
+    /// result. The main actor is free while it runs.
+    private func onRowQueue<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            rowWriter.async { continuation.resume(with: Result { try work() }) }
+        }
+    }
+
+    /// Unlinks a file on the row queue and returns once it is gone.
+    private func removeFileOffMain(_ url: URL?) async {
+        guard let url else { return }
+        _ = try? await onRowQueue { try? FileManager.default.removeItem(at: url) }
+    }
+
+    private func removeAdoptedFile(_ url: URL, itemId: String) async {
         // Only a row that names this file: a newer attempt's row for the same item stays. One row, one transaction.
         let relativePath = "PodcastAudio/\(url.lastPathComponent)"
-        _ = try? store.deleteOwnedOfflineAsset(id: "podcast-offline-\(itemId)") { $0.relativePath == relativePath }
+        _ = try? await onRowQueue { [store] in
+            try? FileManager.default.removeItem(at: url)
+            _ = try? store.deleteOwnedOfflineAsset(id: "podcast-offline-\(itemId)") { $0.relativePath == relativePath }
+            // The audio asset `publish` may already have saved for this file, and no other attempt's.
+            if (try? store.loadAudioAssets(itemId: itemId))?.contains(where: {
+                $0.id == "podcast-local-\(itemId)" && $0.filePath == url.lastPathComponent }) == true {
+                try? store.deleteAudioAsset(id: "podcast-local-\(itemId)")
+            }
+        }
     }
 
     func completeDownload(_ attempt: PodcastDownloadAttempt, error: Error?) {
