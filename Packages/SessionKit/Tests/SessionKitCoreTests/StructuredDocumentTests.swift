@@ -327,6 +327,83 @@ final class StructuredDocumentTests: XCTestCase {
                        "a paper that cites in square brackets numbers its equations in round ones")
     }
 
+    /// A body line whose `marker` is printed as a superscript.
+    private func superscripted(_ text: String, _ marker: String) -> StructuredDocumentLine {
+        let characters = Array(text)
+        let start = text.range(of: marker).map { characters.count - text[$0.lowerBound...].count } ?? 0
+        return StructuredDocumentLine(text: text, role: .body, pageIndex: 0, superscripts: [start..<(start + marker.count)])
+    }
+
+    private func labels(_ doc: StructuredDocument) -> [String] {
+        let characters = Array(doc.text)
+        return doc.markers.map { String(characters[$0.range.start..<$0.range.end]) }
+    }
+
+    func testSuperscriptRunCutByTheLineEndIsOneCitation() {
+        // #1189, pmc-pmc7619013: "prey capture,19,34–" ends a line and "38" opens the next one,
+        // so "38" was read aloud: "thirty-eight and two the peripheral".
+        let doc = document([
+            superscripted("surveys upper frontal visual space, including prey capture,19,34–", "19,34–"),
+            StructuredDocumentLine(text: "38 and (2) the peripheral nasal retina, which surveys the horizon.", role: .body, pageIndex: 0),
+            superscripted("circuits?12–", "12–"),
+            StructuredDocumentLine(text: "14 All of the processing channels involve amacrine cells.", role: .body, pageIndex: 0),
+        ])
+        XCTAssertEqual(labels(doc), ["19,34–", "38", "12–", "14"])
+        XCTAssertEqual(StructuredDocumentSpeech.spokenLines(doc), [
+            "surveys upper frontal visual space, including prey capture,",
+            "and (2) the peripheral nasal retina, which surveys the horizon.",
+            "circuits?",
+            "All of the processing channels involve amacrine cells.",
+        ])
+    }
+
+    func testNumbersThatOpenALineAreReadUnlessASuperscriptRunWasCutThere() {
+        func opening(after first: StructuredDocumentLine, _ second: String, role: StructuredDocument.Role = .body) -> [String] {
+            labels(document([first, StructuredDocumentLine(text: second, role: role, pageIndex: 0)]))
+        }
+        let open = superscripted("capture,19,34–", "19,34–")
+        XCTAssertEqual(opening(after: open, "38"), ["19,34–", "38"], "the whole line is the end of the run")
+        XCTAssertEqual(opening(after: open, "38–40 and later"), ["19,34–", "38–40"])
+        // The previous run is finished, or is not a citation's.
+        XCTAssertEqual(opening(after: superscripted("capture,19,34 and more", "19,34"), "38 patients stayed."), ["19,34"])
+        XCTAssertEqual(opening(after: superscripted("capture,19,34 and", "19,34"), "38 patients stayed."), ["19,34"])
+        XCTAssertEqual(opening(after: StructuredDocumentLine(text: "From 2019 to 2024–", role: .body, pageIndex: 0), "38 patients stayed."), [])
+        // A year, a list number, a decimal or a word is not a continuation.
+        XCTAssertEqual(opening(after: open, "2020 was the year."), ["19,34–"])
+        XCTAssertEqual(opening(after: open, "14. Next, we tested."), ["19,34–"])
+        XCTAssertEqual(opening(after: open, "3.5 mg was given."), ["19,34–"])
+        XCTAssertEqual(opening(after: open, "Then we tested."), ["19,34–"])
+        XCTAssertEqual(opening(after: open, "38 mg doses.", role: .reference), ["19,34–"], "only body lines continue")
+    }
+
+    func testSuperscriptCitationsSetApartAfterAFullStopAreCitationsInASuperscriptPaper() {
+        // #1189, pmc-pmc7619013: "respectively. 18,19 Of these" had a space before the superscript.
+        let superscripts = (1...5).map { superscripted("Cells divide here\($0) and then stop.", "\($0)") }
+        let numbered = (1...20).map { StructuredDocumentLine(text: "\($0). Author \($0). Title. 2019.", role: .reference, pageIndex: 1) }
+        func spaced(_ line: String, with context: [StructuredDocumentLine] = superscripts) -> [String] {
+            labels(document(context + [StructuredDocumentLine(text: line, role: .body, pageIndex: 0)] + numbered)).dropFirst(context.count).map { $0 }
+        }
+        XCTAssertEqual(spaced("The cones were green and blue, respectively. 18,19 Of these, long wavelength opponency is encoded."), ["18,19"])
+        XCTAssertEqual(spaced("The cones were green and blue, respectively. 7 Of these, long wavelength opponency is encoded."), ["7"])
+        // Prose keeps its numbers: no superscripts elsewhere, no such entry, a decimal, a lowercase word.
+        XCTAssertEqual(spaced("The cones were green and blue, respectively. 18,19 Of these, some were.", with: []), [])
+        XCTAssertEqual(spaced("The cones were green and blue, respectively. 45 Of these, some were."), [])
+        XCTAssertEqual(spaced("The cones were green and blue, respectively. 7 of these were."), [])
+        XCTAssertEqual(spaced("Samples were taken in Table 2. 7 Of these were kept."), [])
+        XCTAssertEqual(spaced("Counts rose; see Fig. 7 Of these, none were."), [])
+        XCTAssertEqual(spaced("The cones were green and blue, respectively. 19,18 Of these, some were."), [], "out of order")
+    }
+
+    func testNeighbouringSuperscriptNumbersBeforeALowercaseWordAreOneCitation() {
+        // #1189, pmc-pmc11150781: "motor function,35 36" then "although" on the next line.
+        let listed = numberedReferences
+        XCTAssertEqual(citationLabels(["Worsening of neuropsychiatric symptoms and motor function,35 36", "although these effects are not restricted."],
+                                      references: listed.prefix(40) + (21...40).map { "\($0). Author \($0). Title. 2019." }), ["35 36"])
+        XCTAssertEqual(citationLabels(["It took a dose,3 12 more."], references: listed), ["3"], "numbers that are not neighbours are not both entries")
+        XCTAssertEqual(citationLabels(["It took a dose,3 5 more."], references: listed), ["3"])
+        XCTAssertEqual(citationLabels(["It took a dose,4 3 more."], references: listed), ["4"])
+    }
+
     func testSquareBracketCitationsWithALocatorAreCitations() {
         // #138: "[7, Lemma A.1]" read "seven, Lemma A one" in maths papers.
         let body = [

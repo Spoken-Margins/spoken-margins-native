@@ -200,9 +200,16 @@ public enum StructuredDocumentBuilder {
         var outline: [StructuredDocument.OutlineAnchor] = []
         // An anchor on a line with no text left after cleaning moves to the next line.
         var pendingOutline: [StructuredDocumentLine.OutlineEntry] = []
+        // The previous body line ended in a superscript run that is not finished ("19,34–").
+        var superscriptContinues = false
 
         for line in lines {
             pendingOutline += line.outlineEntries
+            var superscripts = line.superscripts
+            if superscriptContinues, line.role == .body, let rest = continuedSuperscript(in: line.text) {
+                superscripts.append(rest)
+            }
+            superscriptContinues = line.role == .body && superscriptRunIsOpen(in: line.text, superscripts: superscripts)
             let cleaned = SpeechTextNormalizer.normalizeImportedTextWithSourceOffsets(line.text)
             guard !cleaned.text.isEmpty else { continue }
             let current = segments.last
@@ -238,7 +245,7 @@ public enum StructuredDocumentBuilder {
                     label: nil
                 ))
             }
-            for superscript in line.superscripts {
+            for superscript in superscripts {
                 // The cleaned characters that came from the superscript run.
                 let kept = cleaned.sourceOffsets.indices.filter { superscript.contains(cleaned.sourceOffsets[$0]) }
                 guard let first = kept.first, let last = kept.last else { continue }
@@ -266,6 +273,39 @@ public enum StructuredDocumentBuilder {
             markers: markers,
             outline: outline.isEmpty ? nil : outline
         )
+    }
+
+    /// A superscript run cut by the line end, "prey capture,19,34–" then "38 and (2) the": the
+    /// digits that open the next line finish it. The extractor reads fonts per line, so it does
+    /// not see them as small type, and the number was read aloud (#1189).
+    static func continuedSuperscript(in text: String) -> Range<Int>? {
+        let characters = Array(text)
+        var start = 0
+        while start < characters.count, characters[start].isWhitespace { start += 1 }
+        var end = start
+        func digits() -> Bool {
+            let begin = end
+            while end < characters.count, characters[end].isASCII, characters[end].isNumber { end += 1 }
+            return (1...3).contains(end - begin)
+        }
+        guard digits() else { return nil }
+        while end < characters.count, ",–-".contains(characters[end]) {
+            let separator = end
+            end += 1
+            guard digits() else { end = separator; break }
+        }
+        // A number that is the start of a sentence or a list item ("14. Next", "2020 was") is not one.
+        guard end == characters.count || characters[end].isWhitespace else { return nil }
+        return start..<end
+    }
+
+    private static func superscriptRunIsOpen(in text: String, superscripts: [Range<Int>]) -> Bool {
+        let characters = Array(text)
+        var end = characters.count
+        while end > 0, characters[end - 1].isWhitespace { end -= 1 }
+        guard let last = superscripts.max(by: { $0.upperBound < $1.upperBound }),
+              last.upperBound == end, last.upperBound <= characters.count, last.count > 0 else { return false }
+        return ",–-".contains(characters[last.upperBound - 1])
     }
 
     /// Numeric `[12]`, `[3–5, 8]` and parenthetical author–year `(Smith et al., 2020; Lee, 2019)`
@@ -345,7 +385,10 @@ public enum StructuredDocumentBuilder {
             read: read,
             slices: slices,
             references: references,
-            taken: taken + result.map { $0.range.start..<$0.range.end }
+            taken: taken + result.map { $0.range.start..<$0.range.end },
+            // A paper that sets its citations as superscripts, so a number set apart after a full stop
+            // is one more of them.
+            setsSuperscripts: existing.filter { $0.kind == .citation }.count >= 5
         )
     }
 
@@ -365,10 +408,13 @@ public enum StructuredDocumentBuilder {
         read: [StructuredDocument.Segment],
         slices: [String],
         references: Int,
-        taken: [Range<Int>]
+        taken: [Range<Int>],
+        setsSuperscripts: Bool
     ) -> [StructuredDocument.Marker] {
         let group = #"([0-9]{1,3}(?:\s*[,–-]\s*[0-9]{1,3}|[ ][0-9]{1,3})*)(?=\s|$|[;:,.](?:\s|$))"#
-        guard let regex = try? NSRegularExpression(pattern: #"(?<=\p{L}\p{L})([.,;])"# + group + #"|([)\]”"])[.,;:]?"# + group),
+        // The last form is a number set apart after a full stop and ahead of a new sentence: "respectively. 18,19 Of these".
+        guard let regex = try? NSRegularExpression(pattern: #"(?<=\p{L}\p{L})([.,;])"# + group + #"|([)\]”"])[.,;:]?"# + group
+                                                    + #"|(?<=\p{L}\p{L})(\.)[ ]"# + group + #"(?= \p{Lu})"#),
               let math = try? NSRegularExpression(pattern: #"[+−×÷^=<>/*|]|(?:^|[^\p{L}])[\p{L}0-9]\s*-\s*[\p{L}0-9](?:[^\p{L}]|$)"#),
               let lostSpace = try? NSRegularExpression(pattern: #"\p{Ll}{2}[,;]\p{Ll}{2}"#),
               // "(a, b)2", "(x, y)2": a pair of variables, squared.
@@ -382,8 +428,10 @@ public enum StructuredDocumentBuilder {
             // it, and offsets advance from the previous match: a book-length segment stays linear.
             var cursor = (index: slice.startIndex, offset: 0)
             for match in regex.matches(in: slice, range: NSRange(location: 0, length: nsSlice.length)) {
-                let afterWord = match.range(at: 1).location != NSNotFound
-                var digits = match.range(at: afterWord ? 2 : 4)
+                let spaced = match.range(at: 5).location != NSNotFound
+                if spaced, !setsSuperscripts { continue }
+                let afterWord = match.range(at: 1).location != NSNotFound || spaced
+                var digits = match.range(at: spaced ? 6 : afterWord ? 2 : 4)
                 func following() -> Character? {
                     let end = digits.location + digits.length
                     return nsSlice.substring(with: NSRange(location: end, length: min(64, nsSlice.length - end)))
@@ -391,7 +439,10 @@ public enum StructuredDocumentBuilder {
                 }
                 // "the dose,3 12 Gy": a number after a bare space joins only if a new sentence follows.
                 let space = (nsSlice.substring(with: digits) as NSString).range(of: "[0-9] [0-9]", options: .regularExpression)
-                if space.location != NSNotFound, following().map({ !$0.isUppercase }) ?? false {
+                // "the dose,3 12 Gy" stops at the 3; "function,35 36 although" is a pair of neighbouring entries.
+                let entries = nsSlice.substring(with: digits).split(separator: " ").map { Int($0) }
+                let neighbours = !entries.contains(nil) && zip(entries, entries.dropFirst()).allSatisfy { $1 == $0! + 1 }
+                if space.location != NSNotFound, !neighbours, following().map({ !$0.isUppercase }) ?? false {
                     digits.length = space.location + 1
                 }
                 let next = following()
@@ -400,7 +451,7 @@ public enum StructuredDocumentBuilder {
                     let start = max(0, match.range.location - 32)
                     let before = nsSlice.substring(with: NSRange(location: start, length: match.range.location - start))
                     let word = String(before.reversed().prefix { $0.isLetter }.reversed()).lowercased()
-                    let punctuation = nsSlice.substring(with: match.range(at: 1))
+                    let punctuation = nsSlice.substring(with: match.range(at: spaced ? 5 : 1))
                     guard !nonCitationWords.contains(word), !nonCitationAbbreviations.contains(word),
                           sentenceFollows || (punctuation != "." && !dropsSpaces) else { continue }
                 } else if let close = Range(match.range(at: 3), in: slice), "])".contains(slice[close]) {

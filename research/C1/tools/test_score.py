@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import groundtruth  # noqa: E402
+import number_read_sites  # noqa: E402
 import score  # noqa: E402
 
 BODY_1 = ("Spoken margins let a listener record a thought exactly where it happened in the paper, "
@@ -66,6 +67,44 @@ class ScoreTests(unittest.TestCase):
             with self.subTest(expected):
                 result = score.score(truth(*BASE), body + "\n" + BODY_2)
                 self.assertEqual(result["citations"], {expected: 1})
+
+    def test_numbers_that_are_not_the_citation_are_not_number_reads(self):
+        # #1189: three things the scorer counted as a citation read aloud as a bare number.
+        named = ("Spoken margins let a listener record a thought exactly where it happened, as described in ref"
+                 " and the recording stays attached to that passage when the paper is shared with a friend.")
+        cases = {
+            # "described in ref. 12, using": the sentence names the reference, so the number is its grammar.
+            "named_read": (named, named.replace("ref and", "ref. 12 and"), "12"),
+            # "Smith et al. (2020) showed": the name stays, so does the year.
+            "label_read": (BODY_1, BODY_1.replace(" and the recording", " 2020 and the recording"), "2020"),
+            # The paper's own numbered list opens the next line.
+            "silent": (BODY_1, BODY_1 + "\n2. Which questions came first?", "12"),
+        }
+        for expected, (text, spoken, label) in cases.items():
+            with self.subTest(expected):
+                at = (text.index(" ref and") + 4 if expected == "named_read"
+                      else len(text) if expected == "silent" else text.index(" and the recording"))
+                segments = [dict(s) for s in BASE]
+                segments[1] = {"role": "body", "text": text, "markers": [{"kind": "citation", "label": label, "at": at}]}
+                result = score.score(score.Truth(segments), spoken + "\n" + BODY_2)
+                self.assertEqual(result["citations"], {expected: 1})
+        # The same number opening a line after a sentence that has not ended is a wrapped citation.
+        segments = [dict(s) for s in BASE]
+        unfinished = BODY_1.rstrip(".")
+        segments[1] = {"role": "body", "text": unfinished, "markers": [{"kind": "citation", "label": "21", "at": len(unfinished)}]}
+        result = score.score(score.Truth(segments), unfinished + "\n21. Our data showed it.\n" + BODY_2)
+        self.assertEqual(result["citations"], {"number_read": 1})
+        # A bare number after the same words is still a number read.
+        before, after = BODY_1.split(" and the recording")
+        result = score.score(truth(*BASE), before + " 12 and the recording" + after + "\n" + BODY_2)
+        self.assertEqual(result["citations"], {"number_read": 1})
+
+    def test_number_read_sites_lists_what_was_read_and_where(self):
+        before, after = BODY_1.split(" and the recording")
+        sites = number_read_sites.number_read_sites(truth(*BASE), before + " 12 and the recording" + after + "\n" + BODY_2)
+        self.assertEqual([(s["label"], s["spoken"]) for s in sites], [("12", "12")])
+        self.assertTrue(sites[0]["before"].endswith("in the paper"))
+        self.assertEqual(number_read_sites.number_read_sites(truth(*BASE), BODY_1 + "\n" + BODY_2), [])
 
     def test_line_end_hyphenation_is_counted_not_missing(self):
         broken = BODY_1.replace("recording", "record-\ning")
