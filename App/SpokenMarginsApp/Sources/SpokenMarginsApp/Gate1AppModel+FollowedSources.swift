@@ -33,11 +33,20 @@ extension Gate1AppModel {
         return try await reader.feedSubscriptions()
     }
 
+    /// After a follow, unfollow or feed setting changes, publishes the list at once (#2508). The refresh that
+    /// follows skips while another runs, so without this `feedSubscriptions` lagged the change (#463), and
+    /// callers read the store on main instead of trusting it.
+    func publishFeedSubscriptionsAfterChange() async {
+        guard let store else { return }
+        _ = try? await publishFeedSubscriptions(store: store)
+    }
+
     func toggleMuteSource(id: String) {
         guard let coordinator = followedSourceCoordinator,
               let subscription = feedSubscriptions.first(where: { $0.id == id }) else { return }
         Task { [weak self] in
             try? await coordinator.setMuted(subscriptionId: id, muted: subscription.state != .muted)
+            await self?.publishFeedSubscriptionsAfterChange()
             self?.refreshFollowedSources(force: false)
         }
     }
@@ -48,6 +57,7 @@ extension Gate1AppModel {
         guard let coordinator = followedSourceCoordinator else { return }
         Task { [weak self] in
             try? await coordinator.setNewItemPolicy(subscriptionId: id, policy: policy)
+            await self?.publishFeedSubscriptionsAfterChange()
             self?.refreshFollowedSources(force: false)
         }
     }
@@ -68,6 +78,7 @@ extension Gate1AppModel {
                     return
                 }
                 _ = try await coordinator.follow(candidate: candidate)
+                await self.publishFeedSubscriptionsAfterChange()
                 self.followedSourceCandidates = []
                 self.followedSourceURL = ""
                 await self.performFollowedSourceRefresh(force: true)
@@ -94,13 +105,11 @@ extension Gate1AppModel {
         let store = try requireStore()
         let coordinator = requireFollowedSourceCoordinator(store: store)
         let sourceId = try await coordinator.followFeed(urlString: feedURL).source.id
+        await publishFeedSubscriptionsAfterChange()
         diagnostics["followSourceFailure"] = nil
         if refreshAfter { await performFollowedSourceRefresh(force: false) }
         return sourceId
     }
-
-    /// Read from the store: `feedSubscriptions` lags a follow until its refresh lands (#463).
-    func storedFeedSubscriptions() -> [FeedSubscription] { (try? store?.loadFeedSubscriptions()) ?? feedSubscriptions }
 
     func followSourceCandidate(_ candidate: SourceCandidateEvidence) {
         Task { [weak self] in
@@ -109,6 +118,7 @@ extension Gate1AppModel {
                 let store = try self.requireStore()
                 let coordinator = self.requireFollowedSourceCoordinator(store: store)
                 _ = try await coordinator.follow(candidate: candidate)
+                await self.publishFeedSubscriptionsAfterChange()
                 self.followedSourceCandidates = []
                 self.followedSourceURL = ""
                 await self.performFollowedSourceRefresh(force: true)
@@ -474,6 +484,7 @@ extension Gate1AppModel {
         guard let coordinator = followedSourceCoordinator else { return }
         Task { [weak self] in
             try? await coordinator.unfollow(subscriptionId: id)
+            await self?.publishFeedSubscriptionsAfterChange()
             await self?.performFollowedSourceRefresh(force: false)
         }
     }

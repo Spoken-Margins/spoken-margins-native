@@ -1985,7 +1985,8 @@ public final class SessionEngine {
                       mediaTimeMs >= 0 else {
                     throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
                 }
-                let durableDurationMs = try (publisher?.timeline ?? repository.loadTranscriptTimeline(itemId: item.id)?.timeline)?.durationMs
+                // The stamped copy, not a fresh decode of the whole transcript on every Margin play tap (#2508).
+                let durableDurationMs = (publisher?.timeline ?? storedTranscriptTimeline(itemId: item.id))?.durationMs
                     ?? playingItem.media?.durationMs
                 // A stored length is truncated to whole seconds (#2189), so it can sit up to 999 ms under the file's
                 // real length; a Margin made in that last second is still the listener's place, not a bad anchor.
@@ -3692,6 +3693,11 @@ public final class SessionEngine {
 
     private func sourceTranscriptTimeline(itemId: String) -> TranscriptTimeline? {
         if let publisher = publisherPlayback[itemId] { return publisher.timeline }
+        return storedTranscriptTimeline(itemId: itemId)
+    }
+
+    /// The item's stored transcript timeline, decoded again only when its stamp moves.
+    private func storedTranscriptTimeline(itemId: String) -> TranscriptTimeline? {
         // The stamp is read first: a save between the two reads leaves a newer timeline under an older stamp, which
         // the next call reads again; it can never leave an older timeline under a newer stamp.
         guard let stamp = (try? repository.transcriptTimelineStamp(itemId: itemId)) ?? nil else {
@@ -4148,6 +4154,12 @@ public final class SessionEngine {
         }
         snapshot.lastFailure = "prepared_audio_unavailable:file_missing"
         return try readText(instead: session, item: item)
+    }
+
+    /// True when the current session is `itemId` and it plays, or is starting, its publisher's recording (#547). The
+    /// app asks this at each play start instead of reading the item and its record again on main (#2508).
+    public func playsPublisherAudio(itemId: String) -> Bool {
+        currentSession?.itemId == itemId && publisherPlayback[itemId] != nil
     }
 
     /// True when `session` plays the publisher recording of its article (#547).

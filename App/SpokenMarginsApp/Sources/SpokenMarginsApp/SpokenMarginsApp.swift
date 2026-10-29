@@ -126,7 +126,7 @@ struct SpokenMarginsApp: App {
             },
             makeOPMLImport: { [weak model] in
                 OPMLImportModel(
-                    subscriptions: { model?.storedFeedSubscriptions() ?? [] },
+                    subscriptions: { model?.feedSubscriptions ?? [] },
                     follow: { feedURL in
                         guard let model else { throw CancellationError() }
                         _ = try await model.followCatalogFeed(feedURL, refreshAfter: false)
@@ -157,7 +157,10 @@ struct SpokenMarginsApp: App {
                     } else if phase == .inactive || phase == .background {
                         model.handleAppBecameInactiveOrBackground(entersBackground: phase == .background)
                         #if canImport(BackgroundTasks) && canImport(UIKit)
-                        if phase == .background { FollowedSourceBackgroundRefreshController.shared.schedule(enabled: !model.storedFeedSubscriptions().isEmpty) }
+                        if phase == .background {
+                            // Read off main (#2508): the published list can predate the launch refresh.
+                            Task { await model.publishFeedSubscriptionsAfterChange(); FollowedSourceBackgroundRefreshController.shared.schedule(enabled: !model.feedSubscriptions.isEmpty) }
+                        }
                         #endif
                     }
                 }

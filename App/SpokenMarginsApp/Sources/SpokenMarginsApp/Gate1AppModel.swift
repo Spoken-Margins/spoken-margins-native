@@ -1448,7 +1448,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Supertonic renders the narration on the phone, so its start has no audio keeping a backgrounded app alive.
     private func narrationRendersOnDevice(itemId: String) -> Bool {
-        ttsVoiceSelection.isOnDeviceVoice && !playsPublisherAudio(itemId: itemId)
+        ttsVoiceSelection.isOnDeviceVoice && engine?.playsPublisherAudio(itemId: itemId) != true
             && (try? store?.loadItem(id: itemId))?.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
@@ -3182,7 +3182,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Re-reads the inbox without a refresh, which skips while another one runs (#477).
     func reloadFollowedSourceEntries() async {
-        if let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() { feedSubscriptions = storedFeedSubscriptions(); followedSourceEntries = entries } // subscriptions first: New hides a back catalogue by them (#1589)
+        if let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() { await publishFeedSubscriptionsAfterChange(); followedSourceEntries = entries } // subscriptions first: New hides a back catalogue by them (#1589)
     }
 
     func requireLocalSourceImporter() throws -> LocalSourceImporter {
