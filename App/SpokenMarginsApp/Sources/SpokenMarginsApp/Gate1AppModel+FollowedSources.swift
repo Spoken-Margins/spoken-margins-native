@@ -169,12 +169,14 @@ extension Gate1AppModel {
     /// Starts feed discovery when an item opens. Follow appears when a feed is found, and never
     /// for a file, a PDF, a Listening Edition or a site with no feed (#280).
     func discoverFollowOfferIfEligible(itemId: String, store: SQLiteSessionStore) {
-        guard followOffers[itemId] == nil,
-              let item = try? store.loadItem(id: itemId),
-              let url = ManualFollowPolicy.discoveryURL(for: item),
-              !FollowedSourceMatching.isItemAlreadyFollowed(item, subscriptions: feedSubscriptions) else { return }
+        guard followOffers[itemId] == nil else { return }
         Task { [weak self] in
             guard let self else { return }
+            // The summary answers what the checks ask (link, media type, source title) without the article's text (#2506).
+            guard self.followOffers[itemId] == nil,
+                  let item = try? await StoreReader(store).read({ try $0.loadItemSummary(id: itemId) }),
+                  let url = ManualFollowPolicy.discoveryURL(for: item),
+                  !FollowedSourceMatching.isItemAlreadyFollowed(item, subscriptions: self.feedSubscriptions) else { return }
             let coordinator = self.requireFollowedSourceCoordinator(store: store)
             var candidates: [SourceCandidateEvidence]?, failure = "none:empty"
             do { candidates = try await self.sharedFollowDiscovery(item: item, preferredURL: url, coordinator: coordinator) } catch { failure = "none:" + FollowedSourceCoordinator.diagnosticCode(for: error) }
@@ -192,7 +194,7 @@ extension Gate1AppModel {
     /// tap, so all three show the same feeds and the same name. "No feed" is kept for the session;
     /// other failures (offline, timeouts) are retried after a growing cooldown, not on every open.
     private func sharedFollowDiscovery(
-        item: Item,
+        item: LibraryItemSummary,
         preferredURL: URL,
         coordinator: FollowedSourceCoordinator,
         listenerTapped: Bool = false
@@ -229,8 +231,8 @@ extension Gate1AppModel {
             guard let self else { return }
             defer { self.isFollowingSelectedSource = false }
             do {
-                let item = try store.loadItem(id: itemId)
-                guard let preferredURL = ManualFollowPolicy.discoveryURL(for: item) else { throw FollowedSourceError.invalidURL }
+                guard let item = try await StoreReader(store).read({ try $0.loadItemSummary(id: itemId) }),
+                      let preferredURL = ManualFollowPolicy.discoveryURL(for: item) else { throw FollowedSourceError.invalidURL }
                 let coordinator = self.requireFollowedSourceCoordinator(store: store)
                 let candidates = try await self.sharedFollowDiscovery(
                     item: item,
@@ -249,11 +251,7 @@ extension Gate1AppModel {
                 } else {
                     try await coordinator.follow(candidate: candidate)
                 }
-                var updated = item
-                updated.sourceURL = subscription.source.canonicalURL
-                updated.sourceTitle = updated.sourceTitle ?? subscription.source.title
-                if updated != item {
-                    try store.saveItem(updated)
+                if try await self.recordFollowedSource(subscription.source, onItem: itemId, store: store) {
                     self.refreshLibraryRowsInBackground(mustPublish: true)
                 }
                 try await self.publishFeedSubscriptions(store: store)
@@ -268,10 +266,7 @@ extension Gate1AppModel {
     }
 
     func offerFollowSuggestionIfEligible(itemId: String, store: SQLiteSessionStore) {
-        guard !sourceSuggestionChecks.contains(itemId),
-              sourceFollowSuggestionCandidates.isEmpty,
-              // Files, PDFs and Listening Editions get no suggestion card either (#280).
-              let item = try? store.loadItem(id: itemId), let url = ManualFollowPolicy.discoveryURL(for: item) else { return }
+        guard !sourceSuggestionChecks.contains(itemId), sourceFollowSuggestionCandidates.isEmpty else { return }
         // Opening Item loads its sessions synchronously; Home's display cache
         // may still be awaiting refresh or may have been superseded by navigation.
         let persistedProgress = selectedItem.id == itemId
@@ -287,6 +282,10 @@ extension Gate1AppModel {
         Task { [weak self] in
             guard let self else { return }
             defer { self.sourceSuggestionChecks.remove(itemId) }
+            // Files, PDFs and Listening Editions get no suggestion card either (#280). The summary has the link, the
+            // media type and the source title, so the article's text is never read for this (#2506).
+            guard let item = try? await StoreReader(store).read({ try $0.loadItemSummary(id: itemId) }),
+                  let url = ManualFollowPolicy.discoveryURL(for: item) else { return }
             do {
                 let coordinator = self.requireFollowedSourceCoordinator(store: store)
                 let known = try await StoreReader(store).feedSubscriptions()
@@ -298,7 +297,7 @@ extension Gate1AppModel {
                 )
                 guard self.selectedItem.id == itemId,
                       self.screen != .playback || self.snapshot.itemId == itemId,
-                      let current = try? store.loadItem(id: itemId),
+                      let current = try? await StoreReader(store).read({ try $0.loadItemSummary(id: itemId) }),
                       SourceFollowSuggestionPolicy.hasSameOrigin(item, current) else {
                     self.diagnostics["sourceFollowSuggestion"] = FollowedSourceMatching.stampedDiagnostic("discarded_stale_origin")
                     return
@@ -331,7 +330,7 @@ extension Gate1AppModel {
     }
 
     private func discoverFollowCandidates(
-        item: Item,
+        item: LibraryItemSummary,
         preferredURL: URL,
         coordinator: FollowedSourceCoordinator
     ) async throws -> [SourceCandidateEvidence] {
@@ -351,6 +350,21 @@ extension Gate1AppModel {
         }
     }
 
+    /// Names the followed feed on the item it was followed from, and says whether the item changed (false too when
+    /// it is gone). The read and the save run together off the main actor, from the stored row, not from an earlier
+    /// copy (#2506).
+    private func recordFollowedSource(_ source: SourceIdentity, onItem itemId: String, store: SQLiteSessionStore) async throws -> Bool {
+        try await StoreReader(store).read { store in
+            guard let item = try? store.loadItem(id: itemId) else { return false }
+            var updated = item
+            updated.sourceURL = source.canonicalURL
+            updated.sourceTitle = updated.sourceTitle ?? source.title
+            guard updated != item else { return false }
+            try store.saveItem(updated)
+            return true
+        }
+    }
+
     func acceptSourceFollowSuggestion(_ candidate: SourceCandidateEvidence) {
         guard sourceFollowSuggestionCandidates.contains(where: { $0.id == candidate.id }) else { return }
         let itemId = sourceFollowSuggestionItemId
@@ -360,10 +374,7 @@ extension Gate1AppModel {
                 let store = try self.requireStore()
                 let coordinator = self.requireFollowedSourceCoordinator(store: store)
                 let subscription = try await coordinator.follow(candidate: candidate)
-                if let itemId, var item = try? store.loadItem(id: itemId) {
-                    item.sourceURL = subscription.source.canonicalURL
-                    item.sourceTitle = item.sourceTitle ?? subscription.source.title
-                    try store.saveItem(item)
+                if let itemId, try await self.recordFollowedSource(subscription.source, onItem: itemId, store: store) {
                     self.refreshLibraryRowsInBackground(mustPublish: true)
                 }
                 try await self.publishFeedSubscriptions(store: store)

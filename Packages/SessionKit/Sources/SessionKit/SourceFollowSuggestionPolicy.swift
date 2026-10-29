@@ -57,7 +57,7 @@ public enum SourceFollowSuggestionPolicy {
 
     /// Whether the item still names the same origin it did when discovery began. Discovery is
     /// slow, and a result for an origin that changed meanwhile belongs to nothing the listener sees.
-    public static func hasSameOrigin(_ original: Item, _ current: Item) -> Bool {
+    public static func hasSameOrigin(_ original: some LibraryItemFields, _ current: some LibraryItemFields) -> Bool {
         current.sourceURL == original.sourceURL
             && current.externalReference == original.externalReference
             && current.media?.url == original.media?.url

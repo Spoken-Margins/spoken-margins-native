@@ -28,7 +28,7 @@ public enum FollowedSourceMatching {
         }
     }
 
-    public static func isItemAlreadyFollowed(_ item: Item, subscriptions: [FeedSubscription]) -> Bool {
+    public static func isItemAlreadyFollowed(_ item: some LibraryItemFields, subscriptions: [FeedSubscription]) -> Bool {
         isSourceAlreadyFollowed(
             sourceURL: item.sourceURL, sourceTitle: item.sourceTitle,
             sourceReference: item.externalReference, subscriptions: subscriptions
@@ -49,7 +49,7 @@ public enum FollowedSourceMatching {
     /// `none:no_feed_candidates`) when it threw. A source followed by now is not a failure: it
     /// says `already_followed`.
     public static func discoveryDiagnostic(
-        item: Item, candidates: [SourceCandidateEvidence]?, failure: String,
+        item: some LibraryItemFields, candidates: [SourceCandidateEvidence]?, failure: String,
         subscriptions: [FeedSubscription], at date: Date = Date()
     ) -> String {
         let value = if let candidates {

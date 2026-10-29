@@ -3178,7 +3178,7 @@ final class Gate1AppModel: ObservableObject {
         startOfflineServices(store: store, ledger: ledger)
     }
 
-    var followCandidateDiscoveryHandler: ((Item, URL) async throws -> [SourceCandidateEvidence])?
+    var followCandidateDiscoveryHandler: ((LibraryItemSummary, URL) async throws -> [SourceCandidateEvidence])?
 
     /// Re-reads the inbox without a refresh, which skips while another one runs (#477).
     func reloadFollowedSourceEntries() async {
