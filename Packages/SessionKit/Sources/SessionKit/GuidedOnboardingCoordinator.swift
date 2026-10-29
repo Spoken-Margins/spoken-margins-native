@@ -1,21 +1,33 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
-import SessionKit
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
-struct GuidedOnboardingPayload: Sendable {
-    var manifest: GuidedOnboardingManifest
-    var audioURL: URL
-    var audioChanged: Bool
+public struct GuidedOnboardingPayload: Sendable {
+    public var manifest: GuidedOnboardingManifest
+    public var audioURL: URL
+    public var audioChanged: Bool
+
+    public init(manifest: GuidedOnboardingManifest, audioURL: URL, audioChanged: Bool) {
+        self.manifest = manifest
+        self.audioURL = audioURL
+        self.audioChanged = audioChanged
+    }
 }
 
-enum GuidedOnboardingError: Error, LocalizedError {
+public enum GuidedOnboardingError: Error, LocalizedError {
     case invalidEndpoint
     case oversizedManifest
     case invalidManifest
     case oversizedAudio
     case checksumMismatch
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .invalidEndpoint: "The guided tour endpoint is not trusted."
         case .oversizedManifest: "The guided tour manifest is too large."
@@ -26,8 +38,8 @@ enum GuidedOnboardingError: Error, LocalizedError {
     }
 }
 
-actor GuidedOnboardingCoordinator {
-    static let productionManifestURL = ProductServer.url(path: "/onboarding/v1/manifest.json")
+public actor GuidedOnboardingCoordinator {
+    public static let productionManifestURL = ProductServer.url(path: "/onboarding/v1/manifest.json")
     private static let expectedHost = ProductServer.host
     private static let maximumManifestBytes = 128 * 1_024
     private static let maximumAudioBytes: Int64 = 64 * 1_024 * 1_024
@@ -38,7 +50,7 @@ actor GuidedOnboardingCoordinator {
     private let ledger: OfflineStorageLedger
     private let fileManager: FileManager
 
-    init(manifestURL: URL = productionManifestURL, session: URLSession = .shared, directory: URL, ledger: OfflineStorageLedger, fileManager: FileManager = .default) {
+    public init(manifestURL: URL = productionManifestURL, session: URLSession = .shared, directory: URL, ledger: OfflineStorageLedger, fileManager: FileManager = .default) {
         self.manifestURL = manifestURL
         self.session = session
         self.directory = directory
@@ -46,7 +58,7 @@ actor GuidedOnboardingCoordinator {
         self.fileManager = fileManager
     }
 
-    func refresh() async throws -> GuidedOnboardingPayload {
+    public func refresh() async throws -> GuidedOnboardingPayload {
         try validate(url: manifestURL)
         do {
             let (data, response) = try await session.data(from: manifestURL)

@@ -958,7 +958,7 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertTrue(try store.failedHandoffs().isEmpty)
     }
 
-    func testIncomingSourceLinkURLImportsAndStartsPlayableItem() {
+    func testIncomingSourceLinkURLImportsAndStartsPlayableItem() async {
         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
             requestId: "ignored",
             status: .playable,
@@ -990,6 +990,7 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.snapshot.targetType, TargetType.transcriptBackedMedia.rawValue)
         XCTAssertEqual(model.snapshot.targetId, "https://cdn.example.com/episode.mp3")
         XCTAssertEqual(model.selectedItem.externalReference, "https://example.com/episode")
+        await model.settleLibraryReload() // the Library row arrives from a background read (#2505)
         XCTAssertEqual(model.libraryItems.first(where: { $0.id == model.snapshot.itemId })?.status, "Audio ready")
         XCTAssertEqual(model.diagnostics["lastSourceLinkStatus"], LinkResolutionStatus.playable.rawValue)
 
@@ -1005,7 +1006,38 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertNil(model.lastError)
     }
 
-    func testIncomingSourceLinkAddsToLibraryWithoutReplacingPlaybackFromLibraryRoot() throws {
+    /// Adding a link read the whole Library on the main thread before the tap returned; on the owner's Library that
+    /// read was the top named hang (#2259, #2505). The new row now comes from the background reload.
+    func testAddingALinkReadsTheLibraryOffTheMainThread() async throws {
+        let url = "https://example.com/added-off-main"
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: url, provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: url, provider: "direct_audio", role: "audio_file"),
+                title: "Added Off Main",
+                durationMs: 240_000,
+                audioURL: "https://cdn.example.com/added-off-main.mp3",
+                confidence: 1
+            )
+        ))
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            sourceTranscriptionClient: ThrowingSourceTranscriptionClient()
+        )
+        model.resetAndSeed()
+        await model.settleLibraryReload()
+
+        XCTAssertTrue(model.importSourceLink(urlString: url, sourceSurface: "paste", startSession: false))
+        XCTAssertFalse(model.libraryItems.contains { $0.title == "Added Off Main" }, "the add must not read the Library before it returns")
+
+        await model.settleLibraryReload()
+        XCTAssertTrue(model.libraryItems.contains { $0.title == "Added Off Main" }, "the background read shows the new row")
+    }
+
+    func testIncomingSourceLinkAddsToLibraryWithoutReplacingPlaybackFromLibraryRoot() async throws {
         let sharedURL = "https://example.com/shared-during-playback"
         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
             requestId: "ignored",
@@ -1042,6 +1074,7 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.snapshot.itemId, snapshotBeforeImport.itemId)
         XCTAssertEqual(model.snapshot.targetId, snapshotBeforeImport.targetId)
         XCTAssertEqual(model.snapshot.currentTextStart, snapshotBeforeImport.currentTextStart)
+        await model.settleLibraryReload() // the Library row arrives from a background read (#2505)
         XCTAssertTrue(model.libraryItems.contains { $0.title == "Shared During Playback" })
         XCTAssertEqual(
             model.statusMessage,

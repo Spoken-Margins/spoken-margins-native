@@ -2209,7 +2209,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.title, "Scratch Item")
     }
 
-    func testSchemaFiveLibraryRemainsVisibleAcrossEveryReportedIngestionRoute() throws {
+    func testSchemaFiveLibraryRemainsVisibleAcrossEveryReportedIngestionRoute() async throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "schema-five-ingestion-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -2271,6 +2271,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             sourceSurface: "share_sheet",
             startSession: false
         )))
+        await model.settleLibraryReload() // the Library row arrives from a background read (#2505)
         XCTAssertTrue(model.libraryItems.contains { $0.title == "Shared Podcast Episode" })
         XCTAssertTrue(model.libraryItems.contains { $0.id == "item-existing-v5" })
 

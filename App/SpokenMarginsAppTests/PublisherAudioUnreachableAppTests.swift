@@ -1,8 +1,10 @@
 import AVFoundation
 import Foundation
+import SessionKitPersistence
 import XCTest
 @testable import SessionKit
 @testable import SessionKitAudio
+@testable import SpokenMarginsApp
 
 /// #547, run in the app on the iOS audio session (the macOS twin is `PublisherAudioUnreachableTests`): the
 /// publisher's recording is at an address nothing answers. Through the real `AVPlayer` client and
@@ -58,6 +60,38 @@ final class PublisherAudioUnreachableAppTests: XCTestCase {
         let offset = try XCTUnwrap(engine.currentSession?.position.charOffset)
         XCTAssertLessThanOrEqual(abs(offset - (secondSentence + 8)), 2, "from the place it was left")
         XCTAssertNil(try repository.loadItem(id: item.id).media)
+    }
+
+    /// #2508 audit: a play start asks whether the item plays its recording before the engine has a session for it,
+    /// so the stored plan has to answer. An article that plays its publisher's recording renders nothing on the
+    /// phone and is given no background time for on-device speech; one without a record still is.
+    func testAPlayStartGivesNoStartupProtectionToAnArticleThatPlaysItsRecording() throws {
+        let text = "The harbour shelters fishing boats. Gulls circle the old pier at dawn."
+        func startupProtection(withRecording: Bool) throws -> String? {
+            let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+            model.resetAndSeed()
+            model.ttsVoiceSelection = .lily
+            model.acceptCurrentTermsAndEnableOnDeviceVoice()
+            let store = try XCTUnwrap(model.store)
+            try store.saveItem(Item(id: "item-post", title: "A harbour", mediaType: "text", text: text,
+                                    externalReference: "https://example.com/harbour", status: "ready"))
+            if withRecording {
+                try store.savePublisherAudio(PublisherAudio(
+                    itemId: "item-post", audioURL: "https://publisher.example/post/voiceover.mp3", durationMs: 9_000,
+                    detectedFrom: "feed_enclosure",
+                    textMap: TranscriptTimeline(segments: [
+                        MediaTimelineSegment(id: "publisher-audio-0001", startMs: 500, endMs: 4_000, startChar: 0, endChar: 35, text: "The harbour shelters fishing boats."),
+                        MediaTimelineSegment(id: "publisher-audio-0002", startMs: 4_500, endMs: 8_500, startChar: 36, endChar: text.count, text: "Gulls circle the old pier at dawn.")
+                    ], chapters: [], durationMs: 9_000),
+                    textMapStatus: "aligned(2 of 2 sentences)"))
+            }
+            model.diagnostics["textAudioBackgroundStartup"] = nil
+            model.activeItemId = "item-post"
+            model.start()
+            return model.diagnostics["textAudioBackgroundStartup"]
+        }
+        XCTAssertNotNil(try startupProtection(withRecording: false), "on-device speech renders on the phone, so its start is protected")
+        XCTAssertNil(try startupProtection(withRecording: true), "the publisher's recording plays; nothing renders on the phone")
     }
 }
 

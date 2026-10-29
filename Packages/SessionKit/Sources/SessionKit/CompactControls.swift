@@ -191,6 +191,35 @@ public final class CompactControlDispatcher {
     public private(set) var surfaceProfile: RuntimeCapabilityProfile
     private let canonicalRuntime: SessionEngine
     private let defaultSkipUnit: String
+    /// The timeline and the summary check read the session's Margins and turns from the store. The card is rebuilt on
+    /// every playback tick, so they are kept until something they show changes (#2505).
+    private var timelineCache: TimelineCache?
+    private var contentRevision = 0
+
+    private struct TimelineKey: Equatable {
+        var sessionId: String?
+        var itemId: String?
+        var targetType: TargetType?
+        var targetId: String?
+        var chapterId: String?
+        var itemTitle: String?
+        var map: ListeningMap?
+        var snapshotTargetType: String?
+        var snapshotTargetId: String?
+        var isRecording: Bool
+        var activeInterjectionCount: Int
+        var pendingAiJobCount: Int
+        var pendingAiJobStatus: String?
+        var turnStatus: String?
+        var lastUserTurnType: String?
+        var revision: Int
+    }
+
+    private struct TimelineCache {
+        var key: TimelineKey
+        var entries: [CompactTimelineEntry]
+        var hasSummaryCandidates: Bool?
+    }
 
     public init(
         surfaceProfile: RuntimeCapabilityProfile,
@@ -208,6 +237,41 @@ public final class CompactControlDispatcher {
 
     public func snapshot() -> CompactControlSnapshot {
         compactSnapshot(from: canonicalRuntime.snapshot)
+    }
+
+    /// A Margin or a turn changed outside the engine (saved, deleted, transcribed in the app): the next card reads them again.
+    public func noteContentChanged() {
+        contentRevision &+= 1
+    }
+
+    private func timelineKey(_ snapshot: SessionSnapshot) -> TimelineKey {
+        let session = canonicalRuntime.currentSession
+        return TimelineKey(
+            sessionId: session?.id, itemId: session?.itemId, targetType: session?.currentTargetType,
+            targetId: session?.currentTargetId, chapterId: session?.position.chapterId,
+            itemTitle: canonicalRuntime.currentItem?.title, map: canonicalRuntime.currentMap,
+            snapshotTargetType: snapshot.targetType, snapshotTargetId: snapshot.targetId, isRecording: snapshot.isRecording,
+            activeInterjectionCount: snapshot.activeInterjectionCount, pendingAiJobCount: snapshot.pendingAiJobCount,
+            pendingAiJobStatus: snapshot.pendingAiJobStatus, turnStatus: snapshot.turnStatus,
+            lastUserTurnType: snapshot.lastUserTurnType, revision: contentRevision)
+    }
+
+    /// The cache for this snapshot, emptied when its key moved.
+    private func currentTimelineCache(_ snapshot: SessionSnapshot) -> TimelineCache {
+        let key = timelineKey(snapshot)
+        if let cached = timelineCache, cached.key == key { return cached }
+        let fresh = TimelineCache(key: key, entries: canonicalRuntime.compactTimelineEntries())
+        timelineCache = fresh
+        return fresh
+    }
+
+    private func hasSummaryCandidates(_ snapshot: SessionSnapshot) -> Bool {
+        var cache = currentTimelineCache(snapshot)
+        if let known = cache.hasSummaryCandidates { return known }
+        let answer = canonicalRuntime.hasSummaryCandidates(scope: defaultSummaryScope())
+        cache.hasSummaryCandidates = answer
+        timelineCache = cache
+        return answer
     }
 
     @discardableResult
@@ -274,6 +338,7 @@ public final class CompactControlDispatcher {
         case .submitFollowup:
             updated = try canonicalRuntime.submitFollowup(text: normalizedFollowUpText(followUpText))
         }
+        noteContentChanged() // a command may have saved a Margin or a turn the snapshot doesn't count
         return CompactControlResult(snapshot: compactSnapshot(from: updated), delegatedToCanonicalRuntime: true)
     }
 
@@ -355,7 +420,7 @@ public final class CompactControlDispatcher {
             lastUserTurnType: snapshot.lastUserTurnType,
             exposedCommands: exposedCommands,
             availableCommands: availableCommands,
-            timeline: canonicalRuntime.compactTimelineEntries(),
+            timeline: currentTimelineCache(snapshot).entries,
             compactSurfaceReady: compactSurfaceReady,
             surfaceProfileId: surfaceProfile.id,
             skimBridgeState: snapshot.skimBridgeState,
@@ -407,7 +472,7 @@ public final class CompactControlDispatcher {
             return !snapshot.isRecording
                 && surfaceProfile.has("remoteControl", "send_ai_commands")
                 && surfaceProfile.has("ai", "summarize_interjections")
-                && canonicalRuntime.hasSummaryCandidates(scope: defaultSummaryScope())
+                && hasSummaryCandidates(snapshot)
         case .submitFollowup:
             return !snapshot.isRecording
                 && surfaceProfile.has("remoteControl", "send_ai_commands")

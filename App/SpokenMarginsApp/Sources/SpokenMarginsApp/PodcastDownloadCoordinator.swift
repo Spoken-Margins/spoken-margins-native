@@ -141,7 +141,9 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         lastProgressPublishDateByItemId[itemId] = nil
         progressWriteGate.forget(key: itemId)
         if let attempt = attempts.removeValue(forKey: itemId) {
-            try? store.deleteOfflineStorageReservation(id: attempt.reservationId)
+            // On the row queue, not the main actor (#2507): `beginDownload` drains it before the ledger counts, and
+            // `shutdown` waits for it, so the reservation is gone before anything reads the budget again.
+            rowWriter.async { [store] in try? store.deleteOfflineStorageReservation(id: attempt.reservationId) }
         }
         session.getAllTasks { tasks in
             for task in tasks {
@@ -425,7 +427,10 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
                 await self.drainRowWrites()
                 guard self.generations[record.itemId] == generation else { return }
                 var budgetLimitBytes: Int64 = 0
-                if announced == nil { budgetLimitBytes = try self.store.loadOfflineStorageBudget().limitBytes }
+                if announced == nil {
+                    // Off the main actor: the budget read starts every download with no announced size (#2507).
+                    budgetLimitBytes = try await StoreReader(self.store).read { try $0.loadOfflineStorageBudget().limitBytes }
+                }
                 let reservation = try await self.ledger.reserve(
                     ownerId: "podcast-download-\(record.itemId):\(generation)",
                     byteCount: PodcastDownloadSizeProbe.reservationBytes(

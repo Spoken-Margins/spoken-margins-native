@@ -28,8 +28,16 @@ extension Gate1AppModel {
     }
 
     func scheduleTextAudioPrewarmIfNeeded(itemId: String) {
-        guard !playsPublisherAudio(itemId: itemId) else { return }
-        prewarmTextAudioForOnDeviceVoice(itemId: itemId)
+        _ = prewarmTextAudioForPlayStart(itemId: itemId)
+    }
+
+    /// Prewarms unless the item plays its publisher's recording, and returns whether it does. A play start reads the
+    /// stored plan once and uses the answer for the prewarm and for the startup protection: the engine has no
+    /// session for the item yet, so it can't answer (#2508).
+    func prewarmTextAudioForPlayStart(itemId: String) -> Bool {
+        let playsRecording = playsPublisherAudio(itemId: itemId)
+        if !playsRecording { prewarmTextAudioForOnDeviceVoice(itemId: itemId) }
+        return playsRecording
     }
 
     /// A page clipped from Safari imports from the text it carries, with no network, so clipping works in airplane

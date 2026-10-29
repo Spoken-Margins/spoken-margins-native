@@ -65,6 +65,43 @@ class DueTests(unittest.TestCase):
         self.assertFalse(line.startswith('scripted journeys'), 'phone-build reads the first line starting so')
 
 
+class ReportTests(unittest.TestCase):
+    """The hosted run keeps no state file, so it counts streaks from the journey lines of #184's earlier reports (#2894)."""
+
+    def body(self, line):
+        return ('```text\nLane report integration-abc1234 — PASS\nran:\n  1. --plan app: 3 passed\n'
+                + (f'  scripted journeys (only those on gating are verdict input): {line}\n' if line else '')
+                + 'outcome: ok\n```\n')
+
+    def test_a_report_line_is_matched_back_to_the_listing_by_last_path_part(self):
+        listing = {'gating': [{'test': 'AppUITests/Gate1FlowUITests/testEditor', 'journey': 'x'}],
+                   'probation': [{'test': J1, 'journey': 'J1'}, {'test': J2 + '()', 'journey': 'J2'}]}
+        body = self.body('testEditor passed, J1Tests failed, J2Tests not_run, GoneTests passed')
+        self.assertEqual(jp.results_from_report(body, listing),
+                         {'AppUITests/Gate1FlowUITests/testEditor': 'passed', J1: 'failed', J2: 'not_run'})
+
+    def test_two_scripts_that_share_a_last_path_part_are_not_credited(self):
+        listing = {'gating': [], 'probation': [{'test': 'A/AClass/testFoo', 'journey': 'a'},
+                                               {'test': 'A/BClass/testFoo', 'journey': 'b'}, {'test': J1, 'journey': 'J1'}]}
+        self.assertEqual(jp.results_from_report(self.body('testFoo passed, J1Tests passed'), listing), {J1: 'passed'})
+
+    def test_a_report_with_no_journey_line_says_nothing(self):
+        self.assertEqual(jp.results_from_report(self.body(''), LISTING), {})
+        self.assertEqual(jp.results_from_report('', LISTING), {})
+
+    def test_two_passing_reports_in_a_row_are_due_and_a_failure_in_between_is_not(self):
+        passing, failing = self.body('J1Tests passed, J2Tests passed'), self.body('J1Tests failed, J2Tests passed')
+        streaks = jp.streaks_from_reports([passing, passing], LISTING)
+        self.assertEqual(jp.due(LISTING, streaks)['promote'], [J1, J2])
+        streaks = jp.streaks_from_reports([passing, failing, passing], LISTING)
+        self.assertEqual((streaks[J1], streaks[J2]), ({'passes': 1, 'bad': 0}, {'passes': 3, 'bad': 0}))
+        self.assertEqual(jp.due(LISTING, streaks)['promote'], [J2])
+
+    def test_a_report_the_script_cannot_read_is_skipped_not_fatal(self):
+        streaks = jp.streaks_from_reports(['Lane report journeys-1', None, self.body('J1Tests passed')], LISTING)
+        self.assertEqual(streaks[J1], {'passes': 1, 'bad': 0})
+
+
 class CommandTests(unittest.TestCase):
     def test_apply_rewrites_the_listing_from_the_saved_streaks(self):
         with tempfile.TemporaryDirectory() as tmp:
