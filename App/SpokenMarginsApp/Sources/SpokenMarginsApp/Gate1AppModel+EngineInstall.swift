@@ -86,6 +86,12 @@ extension Gate1AppModel {
         }
     }
 
+    /// Margins changed on the app's side: the Lock Screen card's timeline reads them again, not on every tick (#2505).
+    func noteCompactTimelineChanged() {
+        gate2CompactControls.noteMarginsChanged()
+        updateGate2CompactState()
+    }
+
     private func liveActivitySharedMarginNavigationEntries() -> [Gate2LiveActivityNavigationEntry] {
         let currentPercent = snapshot.sourceProgressPercent
         let mediaDurationMs = snapshot.currentPlaybackDurationMs ?? selectedItem.mediaDurationMs

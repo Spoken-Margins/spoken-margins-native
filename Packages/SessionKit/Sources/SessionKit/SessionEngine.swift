@@ -1017,20 +1017,31 @@ public final class SessionEngine {
         return item
     }
 
-    /// The same import, except a re-imported PDF's upgrade is planned off the main actor, so a long PDF with many
-    /// Margins never freezes the app while the plan runs (#556). Only the plan (reading every session and Margin,
-    /// placing each anchor in the new text) leaves the main actor, and it holds the store and values, never the
-    /// engine. The write is one short transaction back on the main actor, together with the "is the listener
-    /// in this item?" check, as before: a write off the main actor could not be made atomic with the engine's
-    /// state (a paused item opened, or played, between the plan and the write would keep the old text and
-    /// write its old position over the moved one). If the item was opened or anything the plan read changed
-    /// (the store re-checks inside the transaction), nothing is written and the new text becomes its own
-    /// edition, as it does for a PDF that can't move.
+    /// The same import, except it never reads or writes the store on the main actor, so a long page, a long PDF or
+    /// a Library of many Margins never freezes the app (#556, #2509). Reading what is already there, working out the
+    /// item and its map, and writing the item, map and document run together in one detached step that holds the
+    /// store and values, never the engine; the engine's state (which items are open, whether playback runs) is read
+    /// once on the main actor just before it. A re-imported PDF's move to the new extraction is planned the same
+    /// way, and its one short write stays on the main actor, together with the "is the listener in this item?" check:
+    /// a write off the main actor could not be made atomic with the engine's state (a paused item opened, or
+    /// played, between the plan and the write would keep the old text and write its old position over the moved
+    /// one). If the item was opened or anything the plan read changed (the store re-checks inside the transaction),
+    /// nothing is written and the new text becomes its own edition, as it does for a PDF that can't move.
+    ///
+    /// The one window left is the milliseconds between reading the open items and the detached step's own write; an
+    /// item opened in it is rewritten with the same text and a new document, which the reader does not notice.
+    /// Imports run one at a time (`importGate`), so two shares of one address cannot both find nothing and write
+    /// over each other.
     @MainActor
     @discardableResult
     public func importBrowserTextInBackgroundOffMain(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) async throws -> Item {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
-        var outcome = try browserTextImportOutcome(handoff, structuredDocument: structuredDocument, upgrade: .deferred)
+        await enterImportGate()
+        defer { leaveImportGate() }
+        let firstImporter = browserTextImporter()
+        var outcome = try await Task.detached(priority: .userInitiated) {
+            try firstImporter.outcomeAndPersist(handoff, structuredDocument: structuredDocument, upgrade: .deferred)
+        }.value
         if case .upgradeCandidate(let job) = outcome {
             let whilePlanned = whileStructuredUpgradeIsPlannedForTesting
             let planned = await Task.detached(priority: .userInitiated) {
@@ -1045,17 +1056,34 @@ public final class SessionEngine {
                     return upgrade.item
                 } catch StructuredDocumentUpgradeError.changedSincePlanned {}
             }
-            outcome = try browserTextImportOutcome(handoff, structuredDocument: structuredDocument, upgrade: .skip)
+            let skipImporter = browserTextImporter()
+            outcome = try await Task.detached(priority: .userInitiated) {
+                try skipImporter.outcomeAndPersist(handoff, structuredDocument: structuredDocument, upgrade: .skip)
+            }.value
         }
-        guard case .records(let item, let deterministicMap, let document, _) = outcome else {
+        guard case .records(let item, _, _, _) = outcome else {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
-        try saveItem(item)
-        if let deterministicMap {
-            try repository.saveListeningMap(deterministicMap)
-        }
-        try saveStructuredDocument(document, itemId: item.id)
+        forgetDocumentCaches(itemId: item.id)
         return item
+    }
+
+    private var importGateBusy = false
+    private var importGateWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// Waits for any earlier off-main import to finish, in the order they asked.
+    @MainActor
+    private func enterImportGate() async {
+        if importGateBusy {
+            await withCheckedContinuation { importGateWaiters.append($0) }
+        } else {
+            importGateBusy = true
+        }
+    }
+
+    @MainActor
+    private func leaveImportGate() {
+        if importGateWaiters.isEmpty { importGateBusy = false } else { importGateWaiters.removeFirst().resume() }
     }
 
     private func saveStructuredDocument(_ document: StructuredDocument?, itemId: String) throws {
@@ -2927,7 +2955,7 @@ public final class SessionEngine {
     @discardableResult
     public func transcriptionRetryFailed(interjectionId: String, sessionId: String? = nil, error: String) throws -> SessionSnapshot {
         if let sessionId,
-           let stored = try repository.loadInterjections(sessionId: sessionId).first(where: { $0.id == interjectionId }),
+           let stored = try loadInterjection(interjectionId, inSession: sessionId),
            stored.transcriptionStatus != "pending" {
             return snapshot
         }
@@ -4511,206 +4539,21 @@ public final class SessionEngine {
         _ handoff: BrowserTextHandoff,
         structuredDocument: StructuredDocument? = nil
     ) throws -> (Item, ListeningMap?, StructuredDocument?, Bool) {
-        guard case .records(let item, let map, let document, let persisted) = try browserTextImportOutcome(handoff, structuredDocument: structuredDocument, upgrade: .inline) else {
+        guard case .records(let item, let map, let document, let persisted) = try browserTextImporter().outcome(handoff, structuredDocument: structuredDocument, upgrade: .inline) else {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
         return (item, map, document, persisted)
     }
 
-    /// Where a re-imported PDF's move to the new extraction (C1 M3 step 5) is planned and written.
-    private enum StructuredUpgradeMode {
-        /// Here and now, as the synchronous imports do.
-        case inline
-        /// Hand it back as an `upgradeCandidate` for the caller to run off the main actor.
-        case deferred
-        /// Don't try; the new text becomes its own edition.
-        case skip
-    }
-
-    private enum BrowserTextImportOutcome {
-        case records(Item, ListeningMap?, StructuredDocument?, persisted: Bool = false)
-        case upgradeCandidate(StructuredUpgradeJob)
-    }
-
-    /// Everything the upgrade needs, and nothing of the engine's, so the plan can run on any thread. The store is
-    /// `Sendable` (SQLite serializes on its connection lock), and the rest is values.
-    private struct StructuredUpgradeJob: Sendable {
-        let repository: any (SessionRepository & StructuredDocumentRepository)
-        let existing: Item
-        let document: StructuredDocument
-
-        func plan() throws -> Result<StructuredDocumentUpgrade, StructuredDocumentUpgrader.StaysBecause> {
-            try StructuredDocumentUpgrader.plan(
-                existing: existing,
-                document: document,
-                listeningMap: StructuredDocumentImport.listeningMap(for: document, title: existing.title, itemId: existing.id),
-                repository: repository
-            )
-        }
-
-        func apply(_ upgrade: StructuredDocumentUpgrade) throws {
-            try repository.applyStructuredDocumentUpgrade(upgrade)
-        }
-    }
-
-    private func browserTextImportOutcome(
-        _ handoff: BrowserTextHandoff,
-        structuredDocument: StructuredDocument? = nil,
-        upgrade mode: StructuredUpgradeMode
-    ) throws -> BrowserTextImportOutcome {
-        let fallbackTitle = cleanedBrowserTextTitle(handoff.source.title, url: handoff.source.url)
-        let sourceExtension = URL(string: handoff.source.url)?.pathExtension.lowercased()
-        // A v2 document only comes from a PDF, whatever its URL looks like
-        // (https://arxiv.org/pdf/2607.28282v1 has no ".pdf").
-        let isPDF = handoff.captureMode == .markdownFile && (sourceExtension == "pdf" || structuredDocument != nil)
-        // A v2 PDF's canonical text is the document's; it isn't parsed as Markdown,
-        // so every I13 range indexes Item.text exactly.
-        let document = isPDF ? structuredDocument.flatMap { $0.text.isEmpty ? nil : $0 } : nil
-        let rawText = (document?.text ?? handoff.text).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !rawText.isEmpty else {
-            throw SessionKitError.invalidCommandForState("importBrowserText")
-        }
-
-        let parsedMarkdown: ParsedObsidianMarkdown?
-        if document == nil, handoff.contentFormat == .markdown {
-            parsedMarkdown = try? ObsidianMarkdownParser.parse(fileName: fallbackTitle, contents: rawText, fallbackTitle: fallbackTitle)
-        } else {
-            parsedMarkdown = nil
-        }
-        let title = parsedMarkdown?.title ?? fallbackTitle
-        // The id keeps the title this importer gave before page titles stopped being read as file
-        // names (#1059), so a page already in the Library is found again on re-import.
-        let idTitle = parsedMarkdown.map { $0.titleIsFallback ? ObsidianMarkdownParser.fileNameTitle(fallbackTitle) : $0.title } ?? fallbackTitle
-        // A front-matter title or a title heading beats the page title. Body sections do not.
-        // Resolve the display title separately from the legacy title used for item identity (#885).
-        let titleCameFromPage = document == nil && (parsedMarkdown?.titleIsFallback ?? true)
-        let postTitle = titleCameFromPage
-            ? BrowserTextTitle.postTitle(pageTitle: fallbackTitle, url: handoff.source.url)
-            : nil
-        let displayTitle = postTitle ?? title
-        let text = document?.text ?? (parsedMarkdown?.text ?? rawText).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else {
-            throw SessionKitError.invalidCommandForState("importBrowserText")
-        }
-        var itemId = handoff.itemId ?? browserTextItemId(title: idTitle, url: handoff.source.url)
-        // A web or share-sheet PDF's id is a slug of its title and address. When a better title is read from
-        // the same PDF (#2062), re-importing it must still find the item it already made (#556).
-        var matchedByAddress = false
-        if handoff.itemId == nil, isPDF, try existingItem(id: itemId) == nil,
-           let sameAddress = try existingPDFItemId(atHTTPSAddress: handoff.source.url) {
-            itemId = sameAddress
-            matchedByAddress = true
-        }
-        if handoff.itemId == nil, handoff.captureMode == .readablePage || isPDF {
-            // A corrected extraction (or a new PDF extractor) must not move existing
-            // Margin anchors. Retain the original edition and give changed text its
-            // own identity.
-            if let existing = try existingItem(id: itemId), existing.text != text ||
-                (document.map({ (try? (repository as? any StructuredDocumentRepository)?.loadStructuredDocument(itemId: itemId)) != $0 }) == true
-                 && !(existing.text == text && (currentSession?.itemId == existing.id || currentItem?.id == existing.id)
-                      && !snapshot.status.isPlaybackActive && existing.media?.sourceType != .generatedTTSPrerendered)) {
-                // C1 M3 step 5: a PDF re-imported with a newer extraction moves the
-                // existing item to it when every Margin and position lands on the same
-                // words (I13 rule 1d). Otherwise it stays, and the new text becomes
-                // its own edition as before. An item found only by its address may be a different PDF now
-                // served there (a newsletter's "current.pdf"), so its text is never replaced in place.
-                if mode != .skip, !matchedByAddress, let document, existing.deletedAt == nil, currentSession?.itemId != existing.id, currentItem?.id != existing.id,
-                   let store = repository as? any (SessionRepository & StructuredDocumentRepository) {
-                    let job = StructuredUpgradeJob(repository: store, existing: existing, document: document)
-                    if mode == .deferred { return .upgradeCandidate(job) }
-                    if case .success(let upgrade)? = try? job.plan() {
-                        do {
-                            try job.apply(upgrade)
-                            return .records(upgrade.item, upgrade.listeningMap, document, persisted: true)
-                        } catch StructuredDocumentUpgradeError.changedSincePlanned {}
-                    }
-                }
-                // Unchanged text has nothing to move: unless the open reader is playing or holds
-                // prerendered narration, the one row takes the new document below, which also
-                // brings a deleted paper back and keeps imported Margins on a single item.
-                let heldReader = currentSession?.itemId == existing.id || currentItem?.id == existing.id
-                if existing.text != text || heldReader {
-                    let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
-                    itemId += "-edition-\(digest)"
-                }
-            }
-            if var existing = try existingItem(id: itemId) {
-                // Repair an old automatic title on re-import, retaining the item and its anchors.
-                // Match both raw and legacy filename titles, even if the capture format changed.
-                // A title the listener changed to something else remains theirs.
-                if let postTitle, existing.title == fallbackTitle || existing.title == ObsidianMarkdownParser.fileNameTitle(fallbackTitle) {
-                    existing.title = postTitle
-                }
-                existing.deletedAt = nil
-                return .records(existing, try repository.loadListeningMap(itemId: itemId), document)
-            }
-        }
-        let mapPolicy: DeterministicListeningMapPolicy = isPDF ? .canonicalHeadings : .authoredSections
-        let deterministicMap = document.map { StructuredDocumentImport.listeningMap(for: $0, title: title, itemId: itemId) }
-            ?? parsedMarkdown?.deterministicListeningMap(
-                itemId: itemId,
-                policy: mapPolicy
-            )
-        let source = parsedMarkdown?.source ?? handoff.source.url
-        let item = Item(
-            id: itemId,
-            title: displayTitle,
-            mediaType: isPDF || sourceExtension == "pdf" ? "pdf" : "text",
-            text: text,
-            externalReference: source,
-            status: deterministicMap == nil ? "needs_listening_map" : "ready",
-            externalReferenceType: handoff.captureMode == .markdownFile || handoff.captureMode == .plainTextFile ? "file" : "url",
-            createdAt: Date(),
-            documentStructure: handoff.documentStructure
+    private func browserTextImporter() -> BrowserTextImporter {
+        BrowserTextImporter(
+            repository: repository,
+            openItemIds: Set([currentSession?.itemId, currentItem?.id].compactMap { $0 }),
+            isPlaybackActive: snapshot.status.isPlaybackActive,
+            publisherPlayback: publisherPlayback
         )
-        return .records(item, deterministicMap, document)
     }
 
-    /// The id of the PDF already imported from this https address. A listener's own copy comes before one in Recently
-    /// Deleted, and the oldest before a newer one. A later edition has `-edition-` and a SHA-256 at the end of its id;
-    /// editions are made from the original, never from each other, so only an original is a match.
-    private func existingPDFItemId(atHTTPSAddress address: String) throws -> String? {
-        guard URLComponents(string: address)?.scheme?.lowercased() == "https" else { return nil }
-        let sameAddress: [Item]
-        if let lookup = repository as? any ItemAddressLookup {
-            sameAddress = try lookup.listItems(withExternalReference: address)
-        } else {
-            sameAddress = try repository.listItems(includeDeleted: true).filter { $0.externalReference == address }
-        }
-        return sameAddress
-            .filter { $0.mediaType == "pdf" && $0.id.hasPrefix("item-browser-") && $0.id.range(of: #"-edition-[0-9a-f]{64}$"#, options: .regularExpression) == nil }
-            .min { lhs, rhs in
-                if (lhs.deletedAt == nil) != (rhs.deletedAt == nil) { return lhs.deletedAt == nil }
-                let (l, r) = (lhs.createdAt ?? .distantFuture, rhs.createdAt ?? .distantFuture)
-                return l != r ? l < r : lhs.id < rhs.id
-            }?.id
-    }
-
-    private func existingItem(id: String) throws -> Item? {
-        do { return try repository.loadItem(id: id) }
-        catch SessionKitError.missingFixture(let key) where key == "item:\(id)" || key == id { return nil }
-    }
-
-    private func cleanedBrowserTextTitle(_ title: String, url: String) -> String {
-        let cleaned = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cleaned.isEmpty {
-            return cleaned
-        }
-        guard let host = URLComponents(string: url)?.host, !host.isEmpty else {
-            return "Browser Text"
-        }
-        return host
-    }
-
-    private func browserTextItemId(title: String, url: String) -> String {
-        let base = [title, url].joined(separator: "-").lowercased()
-        let allowed = CharacterSet.alphanumerics
-        let slug = base.unicodeScalars.map { scalar -> Character in
-            allowed.contains(scalar) ? Character(scalar) : "-"
-        }
-        let collapsed = String(slug).split(separator: "-").joined(separator: "-")
-        return "item-browser-\(collapsed.prefix(48))"
-    }
 
     private func resolveSession(_ sessionId: String?) throws -> Session {
         if let sessionId, let session = try repository.loadSession(id: sessionId) {
@@ -5023,9 +4866,7 @@ public final class SessionEngine {
     ) throws {
         if let sessionId {
             guard (try repository.loadSession(id: sessionId)) != nil,
-                  var interjection = try repository.loadInterjections(sessionId: sessionId).first(where: {
-                      $0.id == id && $0.sessionId == sessionId
-                  }) else {
+                  var interjection = try loadInterjection(id, inSession: sessionId) else {
                 throw SessionKitError.invalidCommandForState("updateInterjection")
             }
             mutate(&interjection)
@@ -5040,10 +4881,9 @@ public final class SessionEngine {
             return
         }
         guard let session = currentSession else { throw SessionKitError.invalidCommandForState("updateInterjection") }
-        var all = try repository.loadInterjections(sessionId: session.id)
-        guard var interjection = all.first(where: { $0.id == id }) else {
+        guard var interjection = try loadInterjection(id, inSession: session.id) else {
             // Fixtures may use a mapless session while the current runtime session differs; preserve trace intent.
-            all = try repository.loadInterjections(sessionId: "session-pill-mapless")
+            let all = try repository.loadInterjections(sessionId: "session-pill-mapless")
             guard var fallback = all.first(where: { $0.id == id }) else { throw SessionKitError.invalidCommandForState("updateInterjection") }
             mutate(&fallback)
             try repository.saveInterjection(fallback)
@@ -5053,6 +4893,15 @@ public final class SessionEngine {
         mutate(&interjection)
         try repository.saveInterjection(interjection)
         lastMediaPercentageRepair = nil
+    }
+
+    /// One Margin of a session, read by id where the store can (#2509) instead of decoding every Margin of the session.
+    private func loadInterjection(_ id: String, inSession sessionId: String) throws -> Interjection? {
+        if let reader = repository as? InterjectionByIdReading,
+           let found = try reader.loadInterjection(id: id, sessionId: sessionId) {
+            return found
+        }
+        return try repository.loadInterjections(sessionId: sessionId).first { $0.id == id && $0.sessionId == sessionId }
     }
 
     private func ensureWatchPackageRecords(_ package: WatchAudioPackage) throws {

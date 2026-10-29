@@ -215,14 +215,42 @@ final class OrphanedTranscriptionTests: XCTestCase {
 
     // MARK: Fixtures
 
+    // MARK: Finding the one Margin a result is for
+
+    /// #2509: a transcription or source-window result used to decode every Margin of its session, transcripts
+    /// included, on the main thread to find the one it updates. It reads that Margin by id.
+    func testAResultReadsOnlyItsOwnMarginNotTheWholeSession() throws {
+        let meter = StoreReadMeter()
+        let (store, engine) = try makeEngine(path: makePath(), readMeter: meter)
+        for index in 0..<30 {
+            try store.saveInterjection(margin(id: "m\(index)", status: "pending", words: String(repeating: "words ", count: 300)))
+        }
+        meter.reset()
+
+        _ = try engine.transcriptionCompleted(interjectionId: "m7", sessionId: "session-A", transcript: "Heard")
+        _ = try engine.sourceWindowContextPending(interjectionId: "m8", sessionId: "session-A")
+        _ = try engine.transcriptionRetryFailed(interjectionId: "m9", sessionId: "session-A", error: "boom")
+
+        XCTAssertNil(meter.totals()["loadInterjections(sessionId:)"], "no result decodes the session's other Margins")
+        let stored = Dictionary(uniqueKeysWithValues: try store.loadInterjections(sessionId: "session-A").map { ($0.id, $0) })
+        XCTAssertEqual(stored["m7"]?.transcript, "Heard")
+        XCTAssertEqual(stored["m7"]?.transcriptionStatus, "transcribed")
+        XCTAssertEqual(stored["m8"]?.anchorContextStatus, .pending)
+        XCTAssertEqual(stored["m9"]?.transcriptionStatus, "failed", "a pending Margin whose retry failed is settled")
+        XCTAssertEqual(stored["m6"]?.transcriptionStatus, "pending", "the others are untouched")
+        XCTAssertThrowsError(
+            try engine.transcriptionCompleted(interjectionId: "m7", sessionId: "session-B", transcript: "Wrong"),
+            "a Margin is found only in its own session")
+    }
+
     private func makePath() -> String {
         let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-orphaned-transcription-\(UUID().uuidString).sqlite").path
         paths.append(path)
         return path
     }
 
-    private func makeEngine(path: String) throws -> (SQLiteSessionStore, SessionEngine) {
-        let store = try SQLiteSessionStore(path: path)
+    private func makeEngine(path: String, readMeter: StoreReadMeter? = nil) throws -> (SQLiteSessionStore, SessionEngine) {
+        let store = try SQLiteSessionStore(path: path, readMeter: readMeter)
         let item = Item(id: "item-text", title: "Text", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
         try store.saveItem(item)
         for id in ["session-A", "session-B"] {

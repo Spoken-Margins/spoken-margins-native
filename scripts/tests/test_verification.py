@@ -1274,6 +1274,21 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(verification.select_simulator(devices)['udid'], '26')
         self.assertEqual(verification.select_simulator(devices, device='27')['udid'], '27')
 
+    def test_a_plain_iphone_wins_over_a_newer_os_that_offers_only_a_duo(self):
+        # The hosted xcode-27 image: iOS 27.1 accepts only iPhone-Duo, 27.0 also has iPhone-17 (#2894).
+        duo = 'com.apple.CoreSimulator.SimDeviceType.iPhone-Duo'
+        plain = 'com.apple.CoreSimulator.SimDeviceType.iPhone-17'
+        def phone(udid, kind):
+            return {'udid': udid, 'name': udid, 'state': 'Shutdown', 'isAvailable': True, 'deviceTypeIdentifier': kind}
+        devices = {'com.apple.CoreSimulator.SimRuntime.iOS-27-1': [phone('duo-27.1', duo)],
+                   'com.apple.CoreSimulator.SimRuntime.iOS-27-0': [phone('duo-27.0', duo), phone('17-27.0', plain)]}
+        runner, template = verification.dedicated_simulator(devices, ios=27)
+        self.assertIsNone(runner)
+        self.assertEqual(template['udid'], '17-27.0')
+        devices['com.apple.CoreSimulator.SimRuntime.iOS-27-0'].pop()
+        self.assertEqual(verification.select_simulator(devices, ios=27)['udid'], 'duo-27.1',
+                         'with no plain iPhone, the newest phone is still used')
+
     def test_non_ios_runtime_is_not_a_supported_destination(self):
         devices = self.simulator_inventory()
         devices['com.apple.CoreSimulator.SimRuntime.tvOS-27'] = devices.pop(

@@ -384,6 +384,11 @@ final class Gate2CompactControlController {
         lastResult = "configured"
     }
 
+    /// A Margin or turn changed in the app, not through a command here: the card's timeline is read again (#2505).
+    func noteMarginsChanged() {
+        dispatcher?.noteContentChanged()
+    }
+
     /// The capture watcher found the microphone starting, capturing or stopped. The card says REC only
     /// for capturing, and is republished at once while a Margin records.
     func setMicrophone(_ state: Gate2LiveActivityMicrophone) {

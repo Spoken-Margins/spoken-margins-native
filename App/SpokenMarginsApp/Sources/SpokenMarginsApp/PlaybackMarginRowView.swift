@@ -40,7 +40,7 @@ struct PlaybackMarginRowView: View {
             .accessibilityIdentifier(identifier)
             Button(action: play) {
                 Image(systemName: "play.fill")
-                    .frame(minWidth: 44, minHeight: 44)
+                    .minimumTapTarget()
             }
             .disabled(!canPlay)
             .accessibilityLabel("Play this moment: \(title)")

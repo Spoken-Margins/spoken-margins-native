@@ -183,9 +183,16 @@ extension Gate1AppModel {
                 }
             }
             guard let self else { return }
-            // The writes stay on the main actor under their hang label; the reads after them do not (#2505).
-            let saved = self.hangTelemetry.labels.scoped("obsidianImportFinish") {
-                Result { try self.completeObsidianMarkdownImport(batch) }
+            // The item, map and document saves run off the main actor (#2509), as the reads after them do (#2505).
+            let saved: Result<SavedObsidianBatch, Error>
+            do {
+                let store = try self.requireStore()
+                let written = try await Self.offMain { Self.saveObsidianImports(batch.prepared, store: store) }
+                saved = self.hangTelemetry.labels.scoped("obsidianImportFinish") {
+                    Result { try self.completeObsidianMarkdownImport(batch, written: written, store: store) }
+                }
+            } catch {
+                saved = .failure(error)
             }
             await self.finishObsidianMarkdownImport(
                 saved,
@@ -251,13 +258,33 @@ extension Gate1AppModel {
         var preservedSelectedItemId: String
     }
 
-    private func completeObsidianMarkdownImport(_ batch: ObsidianImportBatch) throws -> SavedObsidianBatch {
-        let store = try requireStore()
-        var saved = SavedObsidianBatch(
-            imported: [], failures: batch.failures, rawFailures: batch.rawFailures,
+    /// What the import leaves once its files are saved: where the listener was, and an engine if there was none.
+    private func completeObsidianMarkdownImport(
+        _ batch: ObsidianImportBatch, written: SavedObsidianImports, store: SQLiteSessionStore
+    ) throws -> SavedObsidianBatch {
+        let saved = SavedObsidianBatch(
+            imported: written.imported, failures: batch.failures + written.failures,
+            rawFailures: batch.rawFailures + written.rawFailures,
             preservesActiveSession: hasActiveSession && engine != nil,
             preservedActiveItemId: activeItemId, preservedSelectedItemId: selectedItem.id)
-        for prepared in batch.prepared {
+        if !saved.imported.isEmpty, engine == nil {
+            installEngine(try makeEngine(store: store))
+        }
+        return saved
+    }
+
+    struct SavedObsidianImports: Sendable {
+        var imported: [Item] = []
+        var failures: [String] = []
+        var rawFailures: [String] = []
+    }
+
+    /// Saves each prepared file's item, map and document off the main actor (#2509): the text can be megabytes.
+    private nonisolated static func saveObsidianImports(
+        _ prepared: [PreparedObsidianImport], store: SQLiteSessionStore
+    ) -> SavedObsidianImports {
+        var result = SavedObsidianImports()
+        for prepared in prepared {
             do {
                 try store.saveItem(prepared.item)
                 if let listeningMap = prepared.listeningMap {
@@ -266,16 +293,13 @@ extension Gate1AppModel {
                 if let document = prepared.structuredDocument {
                     try store.saveStructuredDocument(document, itemId: prepared.item.id)
                 }
-                saved.imported.append(prepared.item)
+                result.imported.append(prepared.item)
             } catch {
-                saved.failures.append("\(prepared.item.title)\n\(ListenerErrorText.message(for: error))")
-                saved.rawFailures.append("\(prepared.item.title): \(error)")
+                result.failures.append("\(prepared.item.title)\n\(ListenerErrorText.message(for: error))")
+                result.rawFailures.append("\(prepared.item.title): \(error)")
             }
         }
-        if !saved.imported.isEmpty, engine == nil {
-            installEngine(try makeEngine(store: store))
-        }
-        return saved
+        return result
     }
 
     private func finishObsidianMarkdownImport(
