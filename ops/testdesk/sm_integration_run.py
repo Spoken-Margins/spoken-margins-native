@@ -1472,7 +1472,8 @@ def hosted_run(ops: Ops, sha: str, *, post: bool = True) -> str:
         try:
             listing = json.loads((ops.repo_root / 'TestPlans' / 'scripted-journeys.json').read_text())
             streaks = journey_promotion.update(
-                journey_promotion.streaks_from_reports([c['body'] for c in comments], listing), result['journeys'])
+                journey_promotion.streaks_from_reports(
+                    [c['body'] for c in comments if reported([c['body']])], listing), result['journeys'])
             result['journeys_due'] = journey_promotion.report_line(journey_promotion.due(listing, streaks))
         except Exception as error:  # noqa: BLE001
             ops.log('journey streaks failed: ' + str(error)[:300])

@@ -52,15 +52,19 @@ def results_from_report(body: str, listing: dict) -> dict:
     """The per-script outcomes one integration report on #184 lists, as {test selector: status}.
 
     The report names each script by its last path part (`J1ListenToAnArticleJourneyUITests`, or the method of a
-    single test), so they are matched back to the selectors in `listing`. A name the listing no longer has is ignored."""
+    single test), so they are matched back to the selectors in `listing`. A name the listing no longer has, or that two listed scripts share, is ignored."""
     match = JOURNEY_LINE.search(body or '')
     if not match:
         return {}
-    selectors = {}
+    selectors, clashing = {}, set()
     for status in ('gating', 'probation'):
         for entry in listing.get(status, []):
             selector = entry['test'].removesuffix('()')
-            selectors[selector.rsplit('/', 1)[-1]] = selector
+            name = selector.rsplit('/', 1)[-1]
+            if name in selectors and selectors[name] != selector:
+                clashing.add(name)  # the report can't tell these apart, so neither is credited
+            selectors[name] = selector
+    selectors = {name: selector for name, selector in selectors.items() if name not in clashing}
     found = {}
     for chunk in match.group(1).split(', '):
         pair = JOURNEY_RESULT.fullmatch(chunk.strip())

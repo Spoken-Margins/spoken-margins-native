@@ -80,6 +80,11 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(jp.results_from_report(body, listing),
                          {'AppUITests/Gate1FlowUITests/testEditor': 'passed', J1: 'failed', J2: 'not_run'})
 
+    def test_two_scripts_that_share_a_last_path_part_are_not_credited(self):
+        listing = {'gating': [], 'probation': [{'test': 'A/AClass/testFoo', 'journey': 'a'},
+                                               {'test': 'A/BClass/testFoo', 'journey': 'b'}, {'test': J1, 'journey': 'J1'}]}
+        self.assertEqual(jp.results_from_report(self.body('testFoo passed, J1Tests passed'), listing), {J1: 'passed'})
+
     def test_a_report_with_no_journey_line_says_nothing(self):
         self.assertEqual(jp.results_from_report(self.body(''), LISTING), {})
         self.assertEqual(jp.results_from_report('', LISTING), {})
