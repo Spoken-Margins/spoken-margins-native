@@ -43,6 +43,10 @@
       "journey": "J10"
     },
     {
+      "test": "SpokenMarginsAppUITests/J11FirstMinuteJourneyUITests",
+      "journey": "J11"
+    },
+    {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testWrittenMarginEditorStaysUsableAtAccessibilitySizesWithTheKeyboardUp",
       "journey": "J3 written Margin: the editor keeps a usable height at AX5 with the keyboard up (#1942)"
     }

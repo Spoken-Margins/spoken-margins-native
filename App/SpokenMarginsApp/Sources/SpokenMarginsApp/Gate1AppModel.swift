@@ -695,7 +695,7 @@ final class Gate1AppModel: ObservableObject {
         }
         localFoundationModelAvailability = localFoundationModelClient.availability()
         migrateTTSSettingsIfNeeded()
-        if UITestingHooks.isActive {
+        if UITestingHooks.suppressesFirstRun {
             speechVoiceIdentifier = ""
             UserDefaults.standard.removeObject(forKey: "speechVoiceIdentifier")
             if let testRate = UITestingHooks.speechRate {

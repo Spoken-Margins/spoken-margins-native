@@ -29,7 +29,7 @@ extension Gate1AppModel {
 
     var shouldShowOnboardingCard: Bool {
         onboardingProgress.shouldShowCard(
-            suppressed: Self.isRunningUnitTests || UITestingHooks.isActive
+            suppressed: Self.isRunningUnitTests || UITestingHooks.suppressesFirstRun
         )
     }
 
@@ -42,7 +42,7 @@ extension Gate1AppModel {
     /// coach waits for the prompt. The Library strip is on another screen and is never up with the prompt.
     var isFirstMarginPromptShowing: Bool {
         onboardingProgress.shouldShowFirstMarginPrompt(
-            hasActiveSession: hasActiveSession, suppressed: Self.isRunningUnitTests || UITestingHooks.isActive
+            hasActiveSession: hasActiveSession, suppressed: Self.isRunningUnitTests || UITestingHooks.suppressesFirstRun
         )
     }
 
