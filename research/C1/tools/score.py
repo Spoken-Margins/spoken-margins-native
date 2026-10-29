@@ -295,6 +295,26 @@ def residue_is_math(spoken: Spoken, i: int) -> bool:
     return len(raw) <= 2 or any(ch.isdigit() for ch in raw) or any(0x370 <= ord(ch) <= 0x3FF for ch in raw)
 
 
+REFERENCE_WORDS = {"ref", "refs"}  # what the app keeps as words (nonCitationAbbreviations)
+
+
+def starts_list_item(spoken: Spoken, index: int) -> bool:
+    """The spoken token opens a line that begins "12." or "12)" after a finished sentence: an ordered
+    list's own number. After a line that stops mid-sentence it is a wrapped citation, "RCC" then "21. Our"."""
+    if index > 0 and spoken.line_of[index - 1] == spoken.line_of[index]:
+        return False
+    if index == 0 or re.search(r"[.?!][)\]”\"’]*\s*$", spoken.lines[spoken.line_of[index - 1]]) is None:
+        return False
+    return re.match(r"\s*\d{1,3}[.)](?:\s|$)", spoken.lines[spoken.line_of[index]]) is not None
+
+
+def names_a_reference(spoken: Spoken, index: int) -> bool:
+    """The word at `index`, or the one before the numbers and "and" ending at it, is "ref" or "refs"."""
+    while index >= 0 and (spoken.tokens[index].isdigit() or spoken.tokens[index] in ("and", "to")):
+        index -= 1
+    return index >= 0 and spoken.tokens[index] in REFERENCE_WORDS
+
+
 def render_marker(truth: Truth, spoken: Spoken, pos, first_at: dict[int, int], marker: dict, claimed: dict):
     """How was this marker spoken? Claims the spoken tokens that rendered it."""
     k = marker["before"]
@@ -322,7 +342,9 @@ def render_marker(truth: Truth, spoken: Spoken, pos, first_at: dict[int, int], m
             claimed[g] = kind
         return "spoken_label"
     label = tokens_of(marker["label"])
-    if label and words[0] == label[0] and not all(t.isdigit() for t in label):
+    # "Smith et al. (2020) showed": the app keeps the name in the sentence and so keeps its year.
+    narrative_year = len(label) == 1 and re.fullmatch(r"(?:19|20)\d\d[a-z]?", label[0]) is not None
+    if label and words[0] == label[0] and (narrative_year or not all(t.isdigit() for t in label)):
         # Author-year groups like "(Wang, Vinocur & Altman, 2003; Li et al., 2023)".
         allowed = set(label) | {"and", "et", "al", "e", "g", "see", "also"}
         n = 0
@@ -331,6 +353,17 @@ def render_marker(truth: Truth, spoken: Spoken, pos, first_at: dict[int, int], m
         for g in gap[:n]:
             claimed[g] = kind
         return "label_read"
+    if words[0].isdigit() and starts_list_item(spoken, gap[0]):
+        # "2." opening the next line: the paper's own numbered list, not the citation (#1189).
+        return "silent"
+    if words[0].isdigit() and names_a_reference(spoken, a):
+        # "described in ref. 70, using": the sentence names the reference, so the number is its grammar.
+        n = 0
+        while n < len(words) and (words[n].isdigit() or words[n] in ("and", "to")):
+            n += 1
+        for g in gap[:max(1, n)]:
+            claimed[g] = kind
+        return "named_read"
     if words[0].isdigit() or (len(words[0]) == 1 and marker["kind"] == "footnote"):
         n = 0
         while n < len(words) and (words[n].isdigit() or (n > 0 and words[n] in ("and",))):
@@ -339,6 +372,24 @@ def render_marker(truth: Truth, spoken: Spoken, pos, first_at: dict[int, int], m
             claimed[g] = kind
         return "number_read"
     return "silent"
+
+
+def marker_sites(truth: Truth, spoken: Spoken, pos, first_at: dict[int, int], claimed: dict):
+    """Every body marker site with how it was spoken: (site, outcome) pairs.
+
+    Markers with nothing but punctuation between them, like [3, 4] or
+    (Li, 2020; Wu, 2021), are one site with the labels joined."""
+    sites: dict[tuple, dict] = {}
+    for marker in truth.markers:
+        if marker["role"] not in BODY_ROLES:
+            continue
+        site = (marker["kind"], marker["before"])
+        if site in sites:
+            sites[site]["label"] += " " + marker["label"]
+        else:
+            sites[site] = dict(marker)
+    for marker in sites.values():
+        yield marker, render_marker(truth, spoken, pos, first_at, marker, claimed)
 
 
 def categorize(truth: Truth, text: str):
@@ -363,19 +414,8 @@ def _categorize(truth: Truth, text: str):
 
     claimed: dict[int, str] = {}
     marker_outcomes = {"citation": Counter(), "footnote": Counter()}
-    # Markers with nothing but punctuation between them, like [3, 4] or
-    # (Li, 2020; Wu, 2021), are one site with the labels joined.
-    sites: dict[tuple, dict] = {}
-    for marker in truth.markers:
-        if marker["role"] not in BODY_ROLES:
-            continue
-        site = (marker["kind"], marker["before"])
-        if site in sites:
-            sites[site]["label"] += " " + marker["label"]
-        else:
-            sites[site] = dict(marker)
-    for site, marker in sites.items():
-        marker_outcomes[marker["kind"]][render_marker(truth, spoken, pos, first_at, marker, claimed)] += 1
+    for marker, outcome in marker_sites(truth, spoken, pos, first_at, claimed):
+        marker_outcomes[marker["kind"]][outcome] += 1
 
     line_class = classify_lines(spoken)
     aligned_share = line_alignment(spoken, pos)
