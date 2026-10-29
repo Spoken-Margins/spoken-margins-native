@@ -56,8 +56,7 @@ final class Gate1ChapterNavigationMessagesTests: XCTestCase {
 
     func testOnDeviceMapGenerationSaysGeneratedListeningMap() {
         let model = Gate1AppModel(
-            audioPlaybackClient: NoopAudioPlaybackClient(),
-            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false)
+            audioPlaybackClient: NoopAudioPlaybackClient()
         )
         model.resetAndSeed()
         importPlainText(into: model)
@@ -75,7 +74,6 @@ final class Gate1ChapterNavigationMessagesTests: XCTestCase {
     func testMapGenerationOnADeviceWithoutTheOnDeviceModelSaysGeneratedListeningMap() {
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
-            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
             localFoundationModelClient: NoModelFoundationModelClient()
         )
         model.resetAndSeed()
@@ -90,22 +88,6 @@ final class Gate1ChapterNavigationMessagesTests: XCTestCase {
         XCTAssertFalse(model.selectedItem.chapters.isEmpty)
     }
 
-    func testMapGenerationWithoutProviderKeySaysGeneratedLocalListeningMap() {
-        let model = Gate1AppModel(
-            audioPlaybackClient: NoopAudioPlaybackClient(),
-            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: true)
-        )
-        model.resetAndSeed()
-        model.providerAPIKey = ""
-        importPlainText(into: model)
-
-        model.generateListeningMap()
-
-        XCTAssertNil(model.lastError)
-        XCTAssertEqual(model.statusMessage, "Generated local Listening Map.")
-        XCTAssertEqual(model.diagnostics["lastListeningMapMode"], "local_deterministic")
-        XCTAssertFalse(model.isGeneratingListeningMap)
-    }
 
     private func importPlainText(into model: Gate1AppModel) {
         model.importTitle = "Plain Notes"

@@ -114,13 +114,6 @@ extension Gate1AppModel {
         changeOnboardingProgress { $0.continuePastAI() }
     }
 
-    func openAISettingsFromOnboarding() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_ai_settings_from_onboarding") else { return }
-        continueGuidedOnboardingPastAI()
-        isHelpPresented = false
-        showSettingsTab()
-    }
-
     func finishGuidedOnboarding() {
         setGuidedOnboardingStage(.inactive)
     }

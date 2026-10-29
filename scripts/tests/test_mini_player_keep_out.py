@@ -27,7 +27,6 @@ NO_PILL = {
     ("ExperienceTimelineRailScreen.swift", "*"): "the Timeline places its own mini player",
     ("HelpScreen.swift", "*"): "a sheet",
     ("Gate1RootView.swift", "Gate1RootView"): "the terms sheet",
-    ("Gate1RootView.swift", "AIDataSharingConsentView"): "a sheet",
     ("Gate1RootView.swift", "InterjectionDetailView"): "pushed inside the Margin detail sheet",
     ("ItemCollectionSheet.swift", "*"): "a sheet",
     ("PlaybackNativeTextPeekView.swift", "*"): "inside Now Playing, which hides the mini player",

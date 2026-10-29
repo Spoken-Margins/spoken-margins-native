@@ -10,8 +10,6 @@ struct SettingsScreen: View {
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @AppStorage(HeadphoneDoublePressAction.storageKey) private var headphoneDoublePress = HeadphoneDoublePressAction.default.rawValue
-    @FocusState private var focusedField: Field?
-    @State private var showsAdvancedAISettings = false
     @State private var showsDeveloperTools = false
     @State private var showsImportInbox = false
     @State private var showsAboutAndLegal = false
@@ -34,13 +32,6 @@ struct SettingsScreen: View {
 
     init(supertonicNotice: SupertonicDownloadNotice) {
         _supertonicNotice = ObservedObject(wrappedValue: supertonicNotice)
-    }
-
-    private enum Field {
-        case mapModel
-        case summaryModel
-        case conversationModel
-        case apiKey
     }
 
     var body: some View {
@@ -166,8 +157,7 @@ struct SettingsScreen: View {
                     }
                     .accessibilityIdentifier("settings.skipUnit.picker")
                     .onCompatibleChange(of: model.skipUnit) { _ in
-                        model.settingsValueChanged()
-                        model.saveProviderSettings()
+                        model.skipUnitChanged()
                     }
                     Picker("Native Audio Back", selection: $model.mediaSkipBackSeconds) {
                         ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
@@ -408,54 +398,13 @@ struct SettingsScreen: View {
                 }
                 Section {
                     DisclosureGroup("About & Legal", isExpanded: $showsAboutAndLegal) {
-                        if model.remoteProviderExperienceEnabled {
-                            LabeledContent("Provider", value: "OpenAI")
-                                .accessibilityIdentifier("provider.name")
-                            LabeledContent("Data Sharing", value: model.aiDataSharingConsentDescription)
-                            if model.aiDataSharingConsent == .grantedV1 {
-                                Button("Revoke OpenAI Data Sharing", role: .destructive, action: model.revokeAIDataSharingConsent)
-                                    .accessibilityIdentifier("provider.revokeConsent.button")
-                            }
-                            SecureField("API Key", text: $model.providerAPIKey)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .focused($focusedField, equals: .apiKey)
-                                .accessibilityIdentifier("provider.apiKey.field")
-                            Button("Save Provider Settings", action: model.saveProviderSettings)
-                                .accessibilityIdentifier("provider.save.button")
-                            Button("Delete API Key", role: .destructive, action: model.deleteProviderAPIKey)
-                                .disabled(model.providerAPIKey.isEmpty)
-                                .accessibilityIdentifier("provider.deleteAPIKey.button")
-                            Button("Probe Provider", action: model.probeProvider)
-                                .accessibilityIdentifier("provider.probe.button")
-                            LabeledContent("Probe", value: model.providerProbeStatus)
-                            DisclosureGroup("Advanced model settings", isExpanded: $showsAdvancedAISettings) {
-                                TextField("Listening Map Model", text: $model.listeningMapModel)
-                                    .textInputAutocapitalization(.never)
-                                    .autocorrectionDisabled()
-                                    .focused($focusedField, equals: .mapModel)
-                                    .accessibilityIdentifier("provider.mapModel.field")
-                                TextField("Summary Model", text: $model.summaryModel)
-                                    .textInputAutocapitalization(.never)
-                                    .autocorrectionDisabled()
-                                    .focused($focusedField, equals: .summaryModel)
-                                    .accessibilityIdentifier("provider.summaryModel.field")
-                                TextField("Conversation Model", text: $model.conversationModel)
-                                    .textInputAutocapitalization(.never)
-                                    .autocorrectionDisabled()
-                                    .focused($focusedField, equals: .conversationModel)
-                                    .accessibilityIdentifier("provider.conversationModel.field")
-                            }
-                            .accessibilityIdentifier("provider.advanced.disclosure")
-                        } else {
-                            LabeledContent("Processing", value: "On device")
-                                .accessibilityIdentifier("settings.ai.processing")
-                            LabeledContent("Apple Foundation Model", value: model.localFoundationModelAvailabilityDescription)
-                            Text("Margin summaries stay on this device. Publisher podcast chapters and deterministic native-text Listening Maps do not require AI. AI-generated Listening Maps, remote providers, and API keys are disabled in this release.")
-                                .font(.caption)
-                                .foregroundStyle(AppColors.secondaryText)
-                                .accessibilityIdentifier("settings.ai.releaseBoundary")
-                        }
+                        LabeledContent("Processing", value: "On device")
+                            .accessibilityIdentifier("settings.ai.processing")
+                        LabeledContent("Apple Foundation Model", value: model.localFoundationModelAvailabilityDescription)
+                        Text("Margin summaries are made on this device. Publisher podcast chapters and deterministic native-text Listening Maps do not require AI. Spoken Margins has no third-party AI provider or API key setting. If you turn on Help make listening maps, podcast transcripts go to the Spoken Margins server, which uses an AI service to draft maps.")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .accessibilityIdentifier("settings.ai.releaseBoundary")
                         NavigationLink("Terms of Use") {
                             SpokenMarginsTermsView(allowsAcceptance: !model.hasAcceptedCurrentTerms)
                                 .miniPlayerKeepOut()
@@ -476,9 +425,6 @@ struct SettingsScreen: View {
                         LabeledContent("Version", value: AppLinks.versionDescription)
                     }
                 }
-                .onCompatibleChange(of: model.listeningMapModel) { _ in model.settingsValueChanged() }
-                .onCompatibleChange(of: model.summaryModel) { _ in model.settingsValueChanged() }
-                .onCompatibleChange(of: model.conversationModel) { _ in model.settingsValueChanged() }
                 #if DEBUG
                 Section("Developer") {
                     DisclosureGroup("Developer tools", isExpanded: $showsDeveloperTools) {
@@ -547,12 +493,6 @@ struct SettingsScreen: View {
             }
             .navigationDestination(isPresented: $showsVoices) {
                 VoicesSettingsScreen(voices: model.requireVoiceDownloads()).miniPlayerKeepOut()
-            }
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { focusedField = nil }
-                }
             }
             .alert(
                 "Delete Permanently?",

@@ -12,9 +12,6 @@ final class Gate1ValueTypeContractTests: XCTestCase {
         XCTAssertEqual(AppTTSVoiceSelection.allCases.map(\.rawValue), ["supertonic:M2", "supertonic:F2", "kitten:jasper", "system", "phonon:en", "kokoro:af_heart"])
         XCTAssertEqual(AppTTSVoiceSelection.allCases.map(\.rawValue), ReadingVoiceChoice.allCases.map(\.rawValue),
                        "the app's list and SessionKit's host-tested one are the same list")
-        XCTAssertEqual(AIDataSharingConsent(rawValue: "unknown"), .unknown)
-        XCTAssertEqual(AIDataSharingConsent(rawValue: "grantedV1"), .grantedV1)
-        XCTAssertEqual(AIDataSharingConsent(rawValue: "declined"), .declined)
         XCTAssertEqual(BatchSessionExportFilter.withInterjections.rawValue, "with_interjections")
         XCTAssertEqual(BatchSessionExportFilter.all.rawValue, "all")
         XCTAssertEqual(

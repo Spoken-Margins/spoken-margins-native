@@ -138,7 +138,7 @@ extension Gate1AppModel {
                 reportFailure("Discuss is unavailable for the current compact surface state.")
                 return false
             }
-            discuss(followUp: "")
+            reportFailure("Discuss is disabled in this release. Copy your notes to another chatbot and paste its response back here instead.")
             return true
         case Gate2CompactApplicationCommand.listenToSharedMargin:
             guard pendingImportedCommentary != nil else { return false }

@@ -293,7 +293,6 @@ final class FeedbackBannerTests: XCTestCase {
         let summarizer = PendingFailingSummaryClient()
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
-            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
             localFoundationModelClient: summarizer
         )
         model.resetAndSeed()

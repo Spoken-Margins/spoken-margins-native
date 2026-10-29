@@ -677,6 +677,7 @@
         "Gate1ProviderRequestFactoryTests.testConversationPromptMakesCurrentFollowupPrimary"
       ],
       "negativeEvidence": [
+        "Removed in #2845: the provider settings, the model routing and the tests cited above no longer exist; the app uses only the on-device model.",
         "No live provider integration evidence is attached.",
         "Listening Map generation does not yet persist an AIJob record for provider attempts."
       ],

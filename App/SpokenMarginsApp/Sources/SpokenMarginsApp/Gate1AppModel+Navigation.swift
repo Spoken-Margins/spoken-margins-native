@@ -77,12 +77,6 @@ extension Gate1AppModel {
         isHelpPresented = true
     }
 
-    func openAISettingsFromSummaryPrompt() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_ai_settings") else { return }
-        isAISetupNeededPresented = false
-        showSettingsTab()
-    }
-
     func openPlayback() {
         guard !isRequestingRecordingPermission else { return }
         guard hasActiveSession else { return }
