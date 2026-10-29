@@ -242,9 +242,17 @@ extension Gate1AppModel {
             case .stale:
                 return
             case .denied where fallsBackToWritten:
-                // The held voice stays where it is, as when the listener switches to a written Margin (#1669).
+                // As when the listener switches to writing before the recording starts: no recording is coming, so a held
+                // shared Margin is let go (a card up blocks writing) and the pencil's rules apply.
+                let heldShared = heldMarginVoice?.kind == .shared
+                marginVoiceHeldForRecording = nil
+                if heldShared { stopImportedCommentaryPlayback(resumeSource: false) }
                 beginWrittenMargin()
-                reportWarning("The microphone is off, so write your Margin instead. You can allow it later in Settings.")
+                if writtenMarginDraft != nil {
+                    reportWarning("The microphone is off, so write your Margin instead. You can allow it later in Settings.")
+                } else {
+                    resumeSourcePausedOnTap()
+                }
             case .denied:
                 resumeHeldMarginVoice(heldMarginVoice) // no recording will come of it: the Margin it paused plays on (#1672)
                 reportFailure("Microphone access is required to record Margins. Enable microphone access in Settings and try again.")
