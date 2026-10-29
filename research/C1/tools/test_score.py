@@ -110,6 +110,27 @@ class ScoreTests(unittest.TestCase):
         result = score.score(truth(*BASE), before + " 12 and the recording" + after + "\n" + BODY_2)
         self.assertEqual(result["citations"], {"number_read": 1})
 
+    def test_a_number_read_at_a_citation_counts_only_if_it_is_the_citations_own(self):
+        # #1189: arXiv "up to 5×" beside (Wang et al., 2023), "0.2%–3%" beside [106], and a printed
+        # "(Weber & Davis 1987)" where LaTeXML numbers it [71].
+        before, after = BODY_1.split(" and the recording")
+        at = len(before)
+        cases = [
+            ("106", " 0.2%–3%", "silent"),
+            ("(Wang et al., 2023; Lau et al., 2024)", " 5", "silent"),
+            ("39, Section 15.7", " 2", "silent"),
+            ("71", " (& 1987)", "label_read"),
+            ("7 27–29", " 7 27–29", "number_read"),
+            ("13", " [1 3]", "number_read"),
+            ("12", " 12", "number_read"),
+        ]
+        for label, read, expected in cases:
+            with self.subTest(label):
+                segments = [dict(s) for s in BASE]
+                segments[1] = {"role": "body", "text": BODY_1, "markers": [{"kind": "citation", "label": label, "at": at}]}
+                result = score.score(score.Truth(segments), before + read + " and the recording" + after + "\n" + BODY_2)
+                self.assertEqual(result["citations"], {expected: 1})
+
     def test_number_read_sites_lists_what_was_read_and_where(self):
         before, after = BODY_1.split(" and the recording")
         sites = number_read_sites.number_read_sites(truth(*BASE), before + " 12 and the recording" + after + "\n" + BODY_2)

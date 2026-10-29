@@ -315,6 +315,27 @@ def names_a_reference(spoken: Spoken, index: int) -> bool:
     return index >= 0 and spoken.tokens[index] in REFERENCE_WORDS
 
 
+def label_numbers(label: str) -> set[int]:
+    """The entry numbers a printed citation names, ranges filled in: "7 27–29" is {7, 27, 28, 29}."""
+    numbers = {int(n) for n in re.findall(r"\d+", label)}
+    for a, b in re.findall(r"(\d+)\s*[–-]\s*(\d+)", label):
+        if 0 < int(b) - int(a) <= 50:
+            numbers.update(range(int(a), int(b) + 1))
+    return numbers
+
+
+def reads_the_label(words: list[str], label: str) -> bool:
+    """The numbers spoken at the site are the citation's own: "7 27 29" for [7, 27–29], or "1 3" for an
+    OCR'd [13]. A "5" from "5×", an equation's "2" or "0.2%" next to [106] is the sentence's, not the citation's (#1189)."""
+    digits = []
+    for w in words:
+        if not w.isdigit():
+            break
+        digits.append(w)
+    numbers = label_numbers(label)
+    return any(int(d) in numbers for d in digits) or (len(digits) > 1 and int("".join(digits)) in numbers)
+
+
 def render_marker(truth: Truth, spoken: Spoken, pos, first_at: dict[int, int], marker: dict, claimed: dict):
     """How was this marker spoken? Claims the spoken tokens that rendered it."""
     k = marker["before"]
@@ -364,6 +385,13 @@ def render_marker(truth: Truth, spoken: Spoken, pos, first_at: dict[int, int], m
         for g in gap[:max(1, n)]:
             claimed[g] = kind
         return "named_read"
+    if words[0].isdigit() and marker["kind"] == "citation" and re.fullmatch(r"(?:19|20)\d\d", words[0]) \
+            and not reads_the_label(words, marker["label"]):
+        # "(Weber & Davis 1987)" printed where the ground truth numbers it [71]: the printed year was read.
+        claimed[gap[0]] = kind
+        return "label_read"
+    if words[0].isdigit() and marker["kind"] == "citation" and not reads_the_label(words, marker["label"]):
+        return "silent"
     if words[0].isdigit() or (len(words[0]) == 1 and marker["kind"] == "footnote"):
         n = 0
         while n < len(words) and (words[n].isdigit() or (n > 0 and words[n] in ("and",))):
