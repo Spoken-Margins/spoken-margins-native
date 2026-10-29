@@ -231,7 +231,7 @@ public enum PreparedNarrationFallback {
     }
 
     /// True for an item whose audio is the source itself, so reading its text isn't a substitute.
-    static func isAudioFirst(_ item: Item) -> Bool { audioFirstMediaTypes.contains(item.mediaType) }
+    static func isAudioFirst(_ item: some LibraryItemFields) -> Bool { audioFirstMediaTypes.contains(item.mediaType) }
 
     /// Items whose audio is the source itself, so reading their text isn't a substitute.
     private static let audioFirstMediaTypes: Set<String> = [

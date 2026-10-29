@@ -93,6 +93,37 @@ final class PublisherAudioPlaybackTests: XCTestCase {
         }
     }
 
+    /// #2508: the app asks "does this plan the recording?" of an item's summary, which carries no article text. A summary
+    /// read from a real file must answer as the whole item does, over the neighbouring items the rules turn on.
+    func testAStoredItemsSummaryAnswersWhatTheWholeItemAnswered() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "publisher-plan-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try SQLiteSessionStore(path: directory.appending(path: "library.sqlite").path)
+        var blank = article(); blank.text = " \n\u{00A0}"
+        var none = article(); none.text = nil
+        var gone = article(); gone.deletedAt = Date(timeIntervalSince1970: 1)
+        let items = [
+            article(), blank, none, gone, article(mediaType: "audiobook"), article(mediaType: TargetType.transcriptBackedMedia.rawValue),
+            article(media: ItemMedia(sourceType: .generatedTTSRealtime)),
+            article(media: ItemMedia(sourceType: .generatedTTSPrerendered, url: "file:///tmp/n.caf")),
+            article(media: ItemMedia(sourceType: .nativeMediaFile, url: "file:///a.m4a")),
+            article(media: ItemMedia(sourceType: .remoteStream, url: "https://x.example/a.mp3")),
+            article(media: ItemMedia(sourceType: .browserOwnedMedia, url: "https://x.example/p"))
+        ]
+        var planned = 0
+        for item in items {
+            try store.saveItem(item)
+            let summary = try XCTUnwrap(try store.loadItemSummary(id: item.id))
+            for record in [record(map: map()), record(map: nil, status: nil), nil] as [PublisherAudio?] {
+                let fromItem = PublisherAudioPlayback.plan(for: item, record: record)
+                XCTAssertEqual(PublisherAudioPlayback.plan(for: summary, record: record), fromItem, "\(item.mediaType) \(String(describing: item.media)) \(String(describing: item.text))")
+                if fromItem != nil { planned += 1 }
+            }
+        }
+        XCTAssertEqual(planned, 3, "the plain article and the two generated-narration ones plan the recording")
+    }
+
     func testThePlayingCopyHasTheRecordingAndTheStoredCopyGetsItsOwnAudioBack() throws {
         let narration = ItemMedia(sourceType: .generatedTTSPrerendered, url: "file:///tmp/n.caf", nativeMediaId: "file:///tmp/n.caf")
         for original in [nil, narration] as [ItemMedia?] {

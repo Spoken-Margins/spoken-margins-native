@@ -8,8 +8,15 @@ import SessionKitPersistence
 /// its size ceiling (scripts/hot_file_ratchet.py).
 extension Gate1AppModel {
     func playsPublisherAudio(itemId: String) -> Bool {
-        guard let store, let item = try? store.loadItem(id: itemId) else { return false }
-        return PublisherAudioPlayback.plan(for: item, record: try? store.loadPublisherAudio(itemId: itemId)) != nil
+        guard let store, let item = try? store.loadItemSummary(id: itemId) else { return false }
+        return playsPublisherAudio(item)
+    }
+
+    /// For a caller that already holds the item's summary, so it is read once. The answer needs no article text, so
+    /// it reads the summary and the one publisher-audio row, on an item start or a prewarm and not on a tick (#2508).
+    func playsPublisherAudio(_ item: LibraryItemSummary) -> Bool {
+        guard let store else { return false }
+        return PublisherAudioPlayback.plan(for: item, record: try? store.loadPublisherAudio(itemId: item.id)) != nil
     }
 
     /// Why a post added from Following kept, or didn't keep, its publisher's voice (#2024): the item it was added as,

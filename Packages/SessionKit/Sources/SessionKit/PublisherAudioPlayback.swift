@@ -22,8 +22,9 @@ public struct PublisherAudioPlayback: Equatable, Sendable {
 
     /// The recording `item` plays instead of on-device speech, or nil when it plays as it always did:
     /// the record needs a usable map and a web address, and the item must be an article with text
-    /// whose own audio (if any) is generated narration, never a recording the listener owns.
-    public static func plan(for item: Item, record: PublisherAudio?) -> PublisherAudioPlayback? {
+    /// whose own audio (if any) is generated narration, never a recording the listener owns. A summary answers as the
+    /// whole item does, so a caller that only asks whether the recording plays need not decode the article (#2508).
+    public static func plan(for item: some LibraryItemFields, record: PublisherAudio?) -> PublisherAudioPlayback? {
         guard let record, record.itemId == item.id,
               let timeline = record.textMap,
               timeline.segments.contains(where: { $0.startChar != nil && $0.endChar != nil }),
@@ -31,7 +32,7 @@ public struct PublisherAudioPlayback: Equatable, Sendable {
               ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
               item.deletedAt == nil,
               !PreparedNarrationFallback.isAudioFirst(item),
-              item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return nil }
+              item.hasListenableText else { return nil }
         switch item.media?.sourceType {
         case .none, .some(.generatedTTSRealtime), .some(.generatedTTSPrerendered):
             break

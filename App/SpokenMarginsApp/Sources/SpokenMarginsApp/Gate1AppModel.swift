@@ -1448,8 +1448,8 @@ final class Gate1AppModel: ObservableObject {
 
     /// Supertonic renders the narration on the phone, so its start has no audio keeping a backgrounded app alive.
     private func narrationRendersOnDevice(itemId: String) -> Bool {
-        ttsVoiceSelection.isOnDeviceVoice && !playsPublisherAudio(itemId: itemId)
-            && (try? store?.loadItem(id: itemId))?.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        guard ttsVoiceSelection.isOnDeviceVoice, let item = try? store?.loadItemSummary(id: itemId), item.hasListenableText else { return false }
+        return !playsPublisherAudio(item)
     }
 
     func playPause() {
@@ -3182,7 +3182,12 @@ final class Gate1AppModel: ObservableObject {
 
     /// Re-reads the inbox without a refresh, which skips while another one runs (#477).
     func reloadFollowedSourceEntries() async {
-        if let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() { feedSubscriptions = storedFeedSubscriptions(); followedSourceEntries = entries } // subscriptions first: New hides a back catalogue by them (#1589)
+        guard let coordinator = followedSourceCoordinator else { return }
+        // Subscriptions first: New hides a back catalogue by them (#1589). Read off the main thread (#2508); a failed read keeps the list.
+        // Before the entries are fetched, so no suspension sits between that fetch and its assignment and an overlapping
+        // reload cannot land older entries over newer ones.
+        if let store { _ = try? await publishFeedSubscriptions(store: store) }
+        if let entries = try? await coordinator.entries() { followedSourceEntries = entries }
     }
 
     func requireLocalSourceImporter() throws -> LocalSourceImporter {
