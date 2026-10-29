@@ -126,11 +126,20 @@ struct WatchHomeView: View {
                 Label("\(link.ledger.waitingCount) waiting", systemImage: "hourglass")
             }
         }
-        if home.session != nil {
-            Button {
-                link.endSession()
-            } label: {
-                Label("End", systemImage: "stop.circle")
+        if let session = home.session {
+            // A meeting ends in one tap; the kinds that ask where you stopped also ask when (#2709).
+            if session.kind == .meeting {
+                Button {
+                    link.endSession()
+                } label: {
+                    Label("End", systemImage: "stop.circle")
+                }
+            } else {
+                NavigationLink {
+                    WatchEndSessionView(startedAt: session.startedAt)
+                } label: {
+                    Label("End", systemImage: "stop.circle")
+                }
             }
         } else {
             if let note = home.endNote {
@@ -140,7 +149,7 @@ struct WatchHomeView: View {
                 Button {
                     link.resumeSession()
                 } label: {
-                    Label("Ended \(WatchContractFormat.timeOfDay(ended)) · Resume", systemImage: "arrow.uturn.backward.circle")
+                    Label("Ended \(WatchContractFormat.timeOfDay(resumable.shownEnd ?? ended)) · Resume", systemImage: "arrow.uturn.backward.circle")
                 }
             }
             NavigationLink {
@@ -154,6 +163,26 @@ struct WatchHomeView: View {
         } label: {
             Label("Microphone test", systemImage: "waveform")
         }
+    }
+}
+
+/// End session: when did it stop? Now, 5, 15 or 30 minutes or an hour ago; only the choices that fall inside the session
+/// are offered (#2709). Tapping one ends the session at that time.
+struct WatchEndSessionView: View {
+    @EnvironmentObject private var link: WatchLink
+    @Environment(\.dismiss) private var dismiss
+    let startedAt: Date
+    /// Fixed when the screen opens, so the choices don't shift under the crown.
+    @State private var openedAt = Date()
+
+    var body: some View {
+        List(Array(WatchEndChoice.choices(startedAt: startedAt, tappedAt: openedAt).enumerated()), id: \.offset) { _, choice in
+            Button(choice.label) {
+                link.endSession(stoppedAt: choice.date(tappedAt: Date()))
+                dismiss()
+            }
+        }
+        .navigationTitle("When did it end?")
     }
 }
 

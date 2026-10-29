@@ -135,7 +135,7 @@ public enum LibraryRowBuilder {
     /// hot), failed, or not required, with the chunks done and the target.
     public static func startupAudioPresentation<Fields: LibraryItemFields>(
         item: Fields,
-        manifest: PreparedAudioManifest?,
+        manifest: PreparedAudioManifestSummary?,
         job: AudioPreparationJob?,
         context: StartupAudioContext
     ) -> (state: NativeTextStartupAudioState, completed: Int, target: Int) {
@@ -159,7 +159,7 @@ public enum LibraryRowBuilder {
                 : (inTurn, 0, context.startupChunkCount)
         }
         let target = min(context.startupChunkCount, max(1, manifest.plannedChunkCount))
-        let completed = min(target, manifest.chunks.filter { $0.index < target }.count)
+        let completed = min(target, manifest.committedChunkCount(before: target))
         if manifest.state == .readyOffline || completed >= target {
             return (.ready, completed, target)
         }

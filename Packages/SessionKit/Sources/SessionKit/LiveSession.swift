@@ -39,6 +39,11 @@ public struct LiveSession: Codable, Equatable, Sendable {
     /// "Where I am" as a chapter or page (#1989), the only option for a paper book.
     public var startWhere: String?
     public var endWhere: String?
+    /// The same "where I am" read as a page, percent or chapter (#2707), when the words were readable as one. The
+    /// clock stays in `startPositionMs`, so these hold only the other units. Optional, so a session from an earlier
+    /// build reads unchanged and an earlier build reading one ignores them (it still has `startWhere`).
+    public var startPlace: LiveSessionPlace?
+    public var endPlace: LiveSessionPlace?
     public var margins: [LiveSessionMargin]
     /// True for a quick session (#2487 slice 1a): one the phone made for a Margin taken with no session running.
     /// Its span runs from its first Margin to its last. Optional, so `current.json` from an earlier build still
@@ -149,6 +154,11 @@ public struct LiveSessionMargin: Codable, Equatable, Sendable, Identifiable {
     /// How it came to be filed here, when not simply during the session (#2487 slice 1a): "after the session
     /// ended" or "moved from a quick session". Evidence for the listener and the export; never used to place it.
     public var filingNote: String?
+    /// Where the listener said they were, in the unit they used (#2707): "page 118" typed in the Margin, or said in it
+    /// and kept with one tap. Never converted to another unit. Optional, so an earlier build ignores it.
+    public var place: LiveSessionPlace?
+    /// True once the listener turned down the place heard in this Margin's words, so it isn't offered again.
+    public var declinedHeardPlace: Bool?
     /// When the recording device's own clock said it was taken, before correcting for that clock (#2487 slice 1b;
     /// DESIGN section 4 point 8). `markedAt` is the corrected time. Nil for a Margin taken on the phone.
     public var deviceMarkedAt: Date?

@@ -267,10 +267,18 @@ public enum LiveSessionText {
             text += "\n\n"
             let offset = text.count
             var line = "\(clock(margin.sessionOffsetMs)) into the session"
-            let estimate = LiveSessionPositionMap.position(at: margin.markedAt, in: session)
-            if let estimate { line += ", at \(estimate.label)" }
+            // A session placed by page, percent or chapter says where in that unit, never a time (#2707).
+            let located = session.usesPlaces ? LiveSessionPlaceMap.located(margin, in: session) : nil
+            let estimate = session.usesPlaces ? nil : LiveSessionPositionMap.position(at: margin.markedAt, in: session)
+            if let located {
+                line += located.basis == .said ? ", at \(located.place.label)" : ", at \(located.label)"
+            } else if let estimate {
+                line += ", at \(estimate.label)"
+            }
             if let listener = margin.listenerPositionMs { line += ", you set \(clock(listener))" }
-            if let note = margin.whereNote?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+            if let place = margin.place {
+                if located?.basis != .said { line += ", you said \(place.label)" }
+            } else if let note = margin.whereNote?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
                 line += ", \(note) or so"
             }
             text += line + "."

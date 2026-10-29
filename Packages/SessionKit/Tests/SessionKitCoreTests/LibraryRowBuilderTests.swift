@@ -61,7 +61,7 @@ final class LibraryRowBuilderTests: XCTestCase {
 
     private func startup(_ item: Item, manifest: PreparedAudioManifest? = nil, job: AudioPreparationJob? = nil,
                          _ context: StartupAudioContext) -> (state: NativeTextStartupAudioState, completed: Int, target: Int) {
-        LibraryRowBuilder.startupAudioPresentation(item: item, manifest: manifest, job: job, context: context)
+        LibraryRowBuilder.startupAudioPresentation(item: item, manifest: manifest?.summary, job: job, context: context)
     }
 
     // MARK: Startup audio state
@@ -340,7 +340,7 @@ final class LibraryRowBuilderTests: XCTestCase {
         let item = article("a")
         func state(_ manifests: [PreparedAudioManifest], jobs: [AudioPreparationJob] = [], downloads: [PodcastDownloadRecord] = [],
                    signature: TTSRenderSignature? = ours) throws -> LibraryOfflineStateFilter {
-            let snapshot = LibraryReadSnapshot(items: [item], sessions: [], manifests: manifests, jobs: jobs, downloads: downloads)
+            let snapshot = LibraryReadSnapshot(items: [item], sessions: [], manifests: manifests.map(\.summary), jobs: jobs, downloads: downloads)
             return try XCTUnwrap(LibraryRowBuilder.rows(from: snapshot, context: context(signature: signature)).first).offlineState
         }
         XCTAssertEqual(try state([]), .onlineOnly)
@@ -386,14 +386,14 @@ final class LibraryRowBuilderTests: XCTestCase {
         let partial = manifest("a", state: .preparing, planned: 6, committed: 1, signature: ours)
         var job = AudioPreparationJob(id: "j", itemId: "a", manifestId: partial.id, policy: .explicit)
         let waiting = try XCTUnwrap(LibraryRowBuilder.rows(
-            from: LibraryReadSnapshot(items: [item], sessions: [], manifests: [partial], jobs: [job], downloads: []),
+            from: LibraryReadSnapshot(items: [item], sessions: [], manifests: [partial.summary], jobs: [job], downloads: []),
             context: context(signature: ours)).first)
         XCTAssertEqual(waiting.startupAudioState, .waiting)
         XCTAssertEqual(waiting.startupAudioCompletedChunkCount, 1)
         XCTAssertEqual(waiting.startupAudioTargetChunkCount, 2)
         job.lastFailureCode = "boom"
         let failed = try XCTUnwrap(LibraryRowBuilder.rows(
-            from: LibraryReadSnapshot(items: [item], sessions: [], manifests: [partial], jobs: [job], downloads: []),
+            from: LibraryReadSnapshot(items: [item], sessions: [], manifests: [partial.summary], jobs: [job], downloads: []),
             context: context(signature: ours)).first)
         XCTAssertEqual(failed.startupAudioState, .failed)
     }

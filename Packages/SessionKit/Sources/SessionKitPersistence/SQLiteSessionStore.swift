@@ -1072,6 +1072,70 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         )
     }
 
+    /// `loadPreparedAudioManifests()` without the chunk lists, in the same order: what the Library rows and the
+    /// Preparing Audio lists read (#2506). A finished article's manifest carries a record per chunk (path, checksum,
+    /// source range), about 15 KB each at the Library fixture's size; the rows need only the manifest's state and plan and
+    /// the chunks' indexes, so SQLite cuts the chunks out and the app copies and decodes a few hundred bytes per manifest.
+    /// A payload SQLite can't cut, or that doesn't decode, sends the whole read the full way, which sets the broken
+    /// record aside as before.
+    public func loadPreparedAudioManifestSummaries() throws -> [PreparedAudioManifestSummary] {
+        var rows: [(payload: String, indexes: String)] = []
+        var needsFullRead = false
+        let timer = StoreReadTimer(readMeter, method: #function)
+        defer { timer?.finish(rows: rows.count, bytes: rows.reduce(0) { $0 + $1.payload.utf8.count + $1.indexes.utf8.count }) }
+        try withReadConnection { connection in
+            var statement: OpaquePointer?
+            let sql = """
+                SELECT CASE WHEN json_valid(payload) THEN json_remove(payload, '$.chunks') END,
+                       CASE WHEN json_valid(payload) AND json_type(payload, '$.chunks') = 'array'
+                            THEN (SELECT json_group_array(json_extract(chunk.value, '$.index')) FROM json_each(payload, '$.chunks') AS chunk) END
+                FROM records WHERE kind = 'prepared_audio_manifest' ORDER BY updated_at, id;
+                """
+            guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_manifest_summaries")
+            }
+            defer { sqlite3_finalize(statement) }
+            while true {
+                let step = sqlite3_step(statement)
+                if step == SQLITE_DONE { return }
+                guard step == SQLITE_ROW else { throw SessionKitError.persistenceFailed("step_manifest_summaries") }
+                guard let payload = sqlite3_column_text(statement, 0), let indexes = sqlite3_column_text(statement, 1) else {
+                    needsFullRead = true
+                    continue
+                }
+                rows.append((payload: String(cString: payload), indexes: String(cString: indexes)))
+            }
+        }
+        var summaries: [PreparedAudioManifestSummary] = []
+        for row in rows {
+            guard !needsFullRead, let payload = row.payload.data(using: .utf8), let indexes = row.indexes.data(using: .utf8),
+                  let cut = try? decoder.decode(CutManifest.self, from: payload),
+                  let chunkIndexes = try? decoder.decode([Int].self, from: indexes) else { needsFullRead = true; break }
+            summaries.append(PreparedAudioManifestSummary(
+                id: cut.id, itemId: cut.itemId, signature: cut.signature, state: cut.state,
+                plannedChunkCount: cut.plannedChunkCount, artifact: cut.artifact, failureCode: cut.failureCode,
+                updatedAt: cut.updatedAt, chunkIndexes: chunkIndexes))
+        }
+        if needsFullRead { return try loadPreparedAudioManifests().map(PreparedAudioManifestSummary.init) }
+        return summaries
+    }
+
+    /// A manifest's stored fields but its chunks, which `loadPreparedAudioManifestSummaries` cuts out in SQL.
+    /// It requires the fields the whole manifest requires but the summary drops, so a record missing one is still set aside.
+    private struct CutManifest: Decodable {
+        var schemaVersion: String
+        var sourcePackageId: String
+        var createdAt: Date
+        var id: String
+        var itemId: String
+        var signature: TTSRenderSignature
+        var state: PreparedAudioState
+        var plannedChunkCount: Int
+        var artifact: PreparedAudioArtifact?
+        var failureCode: String?
+        var updatedAt: Date
+    }
+
     public func deletePreparedAudioManifest(id: String) throws {
         try deleteRecord(kind: "prepared_audio_manifest", id: id)
         PreparedAudioChangeSignal.shared.bump()

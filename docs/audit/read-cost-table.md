@@ -29,6 +29,7 @@ Written by `SESSIONKIT_READ_COST_TABLE=<file> swift test --filter testReadCostTa
 | `loadSharedMarginTallies()` | 0.11 | 1 | 0 | 0.23 | 6 | 0 | 0.57 | 19 | 0 |
 | `loadPodcastDownloads()` | 0.07 | 2 | 627 | 0.38 | 26 | 7.8 KB | 1.37 | 79 | 23.8 KB |
 | `loadPreparedAudioManifests()` | 2.63 | 8 | 85.4 KB | 36 | 74 | 1.1 MB | 102 | 220 | 3.1 MB |
+| `loadPreparedAudioManifestSummaries()` | 0.99 | 8 | 8.8 KB | 12 | 74 | 84.4 KB | 38 | 220 | 250.0 KB |
 | `loadAudioPreparationJobs()` | 0.03 | 2 | 447 | 0.14 | 12 | 2.7 KB | 0.35 | 38 | 8.5 KB |
 | `loadEpisodeMapPreparationJobs()` | 0.02 | 1 | 206 | 0.04 | 3 | 618 | 0.09 | 9 | 1.9 KB |
 | `loadOwnedOfflineAssets()` | 0.14 | 9 | 3.4 KB | 1.41 | 91 | 34.3 KB | 3.78 | 272 | 102.5 KB |

@@ -163,13 +163,16 @@ struct LiveSessionView: View {
                         .font(.caption).foregroundStyle(AppColors.secondaryText)
                 }
             }
-            TextField(kind == .paper ? "Chapter or page" : "Chapter or page (optional)", text: $startWhere)
-                .textFieldStyle(.roundedBorder)
+            LiveSessionPlaceField(
+                prompt: kind == .paper ? "Page, chapter or percent" : "Page, chapter or percent (optional)",
+                defaultUnit: LiveSessionPlace.defaultUnit(for: kind), text: $startWhere
+            )
             Button {
+                let read = LiveSessionWhere.interpret(clockText: startPosition, whereText: startWhere, kind: kind)
                 controller.start(
                     kind: kind, title: title,
-                    startPositionMs: kind == .paper ? nil : (LiveSessionPositionMap.parse(startPosition) ?? (kind == .meeting ? 0 : nil)),
-                    startWhere: startWhere.isEmpty ? nil : startWhere
+                    startPositionMs: read.positionMs ?? (kind == .meeting ? 0 : nil),
+                    startWhere: read.text, startPlace: read.place
                 )
             } label: {
                 Label("Start Session", systemImage: "record.circle").frame(maxWidth: .infinity, minHeight: 44)
@@ -289,9 +292,11 @@ struct LiveSessionView: View {
                         .font(.caption).foregroundStyle(AppColors.secondaryText)
                 }
             }
-            TextField(session.kind == .paper ? "Chapter or page" : "Chapter or page (optional)", text: $whereDraft)
-                .textFieldStyle(.roundedBorder)
-                .onSubmit { commitDrafts() }
+            LiveSessionPlaceField(
+                prompt: session.kind == .paper ? "Page, chapter or percent" : "Page, chapter or percent (optional)",
+                defaultUnit: LiveSessionPlace.defaultUnit(for: session.kind), text: $whereDraft
+            )
+            .onSubmit { commitDrafts() }
         }
         .padding(16)
         .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -311,8 +316,11 @@ struct LiveSessionView: View {
                 .lineLimit(2...5)
                 .textFieldStyle(.roundedBorder)
                 .focused($marginFieldFocused)
-            if session.kind == .paper {
-                TextField("Page (optional)", text: $marginWhere).textFieldStyle(.roundedBorder)
+            if session.kind != .meeting {
+                LiveSessionPlaceField(
+                    prompt: session.kind == .paper ? "Page (optional)" : "Page, chapter or percent (optional)",
+                    defaultUnit: LiveSessionPlace.defaultUnit(for: session.kind), text: $marginWhere
+                )
             }
             TimelineView(.periodic(from: .now, by: 0.5)) { context in
                 if let position = controller.predictedPosition(at: context.date, adjustmentMs: adjustmentMs) {
@@ -359,8 +367,7 @@ struct LiveSessionView: View {
             ForEach(session.margins) { margin in
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .firstTextBaseline) {
-                        Text(LiveSessionPositionMap.position(of: margin, in: session).map { $0.isListenerSet ? "you set \(LiveSessionPositionMap.clock($0.ms))" : $0.label }
-                             ?? "\(LiveSessionPositionMap.clock(margin.sessionOffsetMs)) in")
+                        Text(positionText(for: margin, in: session))
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(AppColors.secondaryText)
                         Spacer()
@@ -386,9 +393,44 @@ struct LiveSessionView: View {
                     if let note = margin.filingNote {
                         Text("Filed \(note)").font(.caption).foregroundStyle(AppColors.secondaryText)
                     }
+                    if let heard = margin.heardPlace {
+                        heardPlaceOffer(heard, margin: margin)
+                    }
                 }
                 .padding(.vertical, 4)
             }
+        }
+    }
+
+    /// Where a Margin is, in the unit the session uses: a page, percent or chapter is never shown as a time (#2707).
+    private func positionText(for margin: LiveSessionMargin, in session: LiveSession) -> String {
+        var text: String
+        if let label = LiveSessionPlaceMap.label(for: margin, in: session) {
+            text = label
+        } else if session.usesPlaces {
+            text = "\(LiveSessionPositionMap.clock(margin.sessionOffsetMs)) in"
+        } else {
+            text = LiveSessionPositionMap.position(of: margin, in: session).map { $0.isListenerSet ? "you set \(LiveSessionPositionMap.clock($0.ms))" : $0.label }
+                ?? "\(LiveSessionPositionMap.clock(margin.sessionOffsetMs)) in"
+        }
+        // A place in another unit than the session's is kept beside it, not converted.
+        if let place = margin.place, !text.hasSuffix(place.label) { text += " · \(place.label)" }
+        return text
+    }
+
+    /// A page, percent or chapter said in the Margin, offered as a checkpoint: one tap to keep it, never automatic.
+    private func heardPlaceOffer(_ heard: LiveSessionPlace, margin: LiveSessionMargin) -> some View {
+        HStack(spacing: 8) {
+            Text("Heard \u{201C}\(heard.label)\u{201D}. Keep it as a checkpoint?")
+                .font(.caption).foregroundStyle(AppColors.secondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Keep") { controller.keepHeardPlace(id: margin.id) }
+                .buttonStyle(.bordered)
+                .frame(minHeight: 44)
+                .accessibilityHint("Uses \(heard.label) to place the Margins around this one.")
+            Button("No") { controller.declineHeardPlace(id: margin.id) }
+                .buttonStyle(.borderless)
+                .frame(minHeight: 44)
         }
     }
 
@@ -397,10 +439,16 @@ struct LiveSessionView: View {
     /// Ending asks "when did it end?" on the screen itself, not in a sheet (#2831): the sheet closed by itself before
     /// the listener could answer, and nothing on the screen can close this card but its own End and Cancel.
     private func endCard(_ session: LiveSession) -> some View {
-        LiveSessionEndCard(kind: session.kind, startedAt: session.startedAt) { when, endPosition, endWhere in
-            if controller.end(when: when, endPositionMs: endPosition, endWhere: endWhere) { showsEndCard = false }
+        LiveSessionEndCard(
+            kind: session.kind, startedAt: session.startedAt,
+            placeUnit: session.startPlace?.unit ?? LiveSessionPlace.defaultUnit(for: session.kind)
+        ) { when, read in
+            if controller.end(when: when, endPositionMs: read.positionMs, endWhere: read.text, endPlace: read.place) { showsEndCard = false }
         } onCancel: {
             showsEndCard = false
+        } onStillGoing: {
+            showsEndCard = false
+            Task { await controller.remindStillGoing() }
         }
     }
 
@@ -418,6 +466,15 @@ struct LiveSessionView: View {
     private func finishCard(_ session: LiveSession) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(session.isQuick == true ? "Quick session" : "Session ended").font(.headline)
+            ForEach(Array(LiveSessionPlaceMap.conflicts(in: session).enumerated()), id: \.offset) { _, conflict in
+                Text(conflict.description()).font(.caption).foregroundStyle(AppColors.secondaryText)
+            }
+            if let check = LiveSessionPlaceMap.clockCheck(for: session) {
+                Text(check.note).font(.caption).foregroundStyle(AppColors.secondaryText)
+                Button("Use the start the clock shows") { controller.useImpliedStart() }
+                    .buttonStyle(.bordered)
+                    .frame(minHeight: 44)
+            }
             if session.kind == .meeting {
                 Text("Line it up with the meeting's transcript (.vtt, .srt, .docx or .txt) to place your Margins on what was said. You can add the recording too.")
                     .font(.caption).foregroundStyle(AppColors.secondaryText)
@@ -481,8 +538,12 @@ struct PositionNudgeRow: View {
 private struct LiveSessionEndCard: View {
     let kind: ElsewhereKind
     let startedAt: Date
-    let onEnd: (LiveSessionEnd.When, Int?, String?) -> Void
+    /// What a bare number means in the place field: the unit the session started in.
+    let placeUnit: LiveSessionPlace.Unit
+    let onEnd: (LiveSessionEnd.When, LiveSessionWhere) -> Void
     let onCancel: () -> Void
+    /// "It's still going": keep the session running and remind the listener later (#2709).
+    let onStillGoing: () -> Void
     @State private var endPosition = ""
     @State private var endWhere = ""
     /// Index into the quick choices; one past the last is "At a time".
@@ -530,20 +591,48 @@ private struct LiveSessionEndCard: View {
                         .font(.caption).foregroundStyle(AppColors.secondaryText)
                 }
             }
-            TextField("Chapter or page (optional)", text: $endWhere)
-                .textFieldStyle(.roundedBorder)
+            LiveSessionPlaceField(prompt: "Where did you stop? Page, chapter or percent (optional)", defaultUnit: placeUnit, text: $endWhere)
             Button {
-                onEnd(when, LiveSessionPositionMap.parse(endPosition), endWhere.isEmpty ? nil : endWhere)
+                onEnd(when, LiveSessionWhere.interpret(clockText: endPosition, whereText: endWhere, kind: kind, defaultUnit: placeUnit))
             } label: {
                 Label("End Session", systemImage: "stop.circle.fill").frame(maxWidth: .infinity, minHeight: 44)
             }
             .filledActionButton()
             .accessibilityIdentifier("liveSession.confirmEnd")
+            Button("It's still going. Remind me in 15 minutes", action: onStillGoing)
+                .buttonStyle(.bordered)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .accessibilityIdentifier("liveSession.stillGoing")
             Button("Cancel", action: onCancel)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .accessibilityIdentifier("liveSession.cancelEnd")
         }
         .padding(16)
         .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+}
+
+/// A field for "where are you?" as a page, chapter or percent (#2707). It says how it reads what was typed, so the
+/// listener sees the unit before they keep it; a bare number means `defaultUnit`.
+struct LiveSessionPlaceField: View {
+    let prompt: String
+    let defaultUnit: LiveSessionPlace.Unit
+    @Binding var text: String
+
+    private var read: LiveSessionPlace? {
+        LiveSessionPlace.parseWhole(text, defaultUnit: defaultUnit, allowsTime: false)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            TextField(prompt, text: $text)
+                .textFieldStyle(.roundedBorder)
+            if let read {
+                Text("Reads as \(read.label)").font(.caption).foregroundStyle(AppColors.secondaryText)
+            } else if text.isEmpty {
+                Text("Like \u{201C}page 118\u{201D}, \u{201C}ch 7\u{201D} or \u{201C}40%\u{201D}. A bare number is a \(defaultUnit.noun).")
+                    .font(.caption).foregroundStyle(AppColors.secondaryText)
+            }
+        }
     }
 }

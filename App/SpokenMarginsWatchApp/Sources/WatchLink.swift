@@ -131,14 +131,15 @@ final class WatchLink: NSObject, ObservableObject {
         send(.sessionStart(info))
     }
 
-    func endSession() {
-        whenLoaded { self.endSessionNow() }
+    /// Ends the session. `stoppedAt` is when the listener said it stopped, if earlier than now (#2709).
+    func endSession(stoppedAt: Date? = nil) {
+        whenLoaded { self.endSessionNow(stoppedAt: stoppedAt) }
     }
 
-    private func endSessionNow() {
-        guard let ended = model.end(now: Date()) else { return }
+    private func endSessionNow(stoppedAt: Date?) {
+        guard let ended = model.end(now: Date(), stoppedAt: stoppedAt) else { return }
         saveState()
-        send(.sessionEnd(id: ended.id, endedAt: ended.endedAt))
+        send(.sessionEnd(id: ended.id, endedAt: ended.endedAt, stoppedAt: ended.stoppedAt))
     }
 
     func resumeSession() {

@@ -397,6 +397,128 @@ class CatchTests(unittest.TestCase):
         self.assertEqual([(e['step'], e['test'], e['pr'], e['class']) for e in found], [('other', 'other', None, 'other')])
 
 
+class EscapeTests(unittest.TestCase):
+    def commit(self, title, sha='1' * 40, parents=1, date='2026-10-21T10:00:00Z', body=''):
+        return {'sha': sha, 'parents': [{}] * parents, 'commit': {'message': title + body, 'committer': {'date': date}}}
+
+    def issue(self, number, labels, body='', association='MEMBER', at='2026-10-22T09:00:00Z', **more):
+        return {'number': number, 'labels': [{'name': name} for name in labels], 'body': body, 'created_at': at,
+                'author_association': association, 'user': {'login': 'someone'}, **more}
+
+    def test_a_revert_commit_is_an_escape_and_a_merge_of_its_pull_request_is_not_a_second_one(self):
+        found = events.escape_events([
+            self.commit('Revert "Library reloads read summaries (#2878)"', body='\n\nThis reverts commit ' + 'a' * 40 + '.'),
+            self.commit('Merge pull request #2900 from Spoken-Margins/revert-2878', sha='2' * 40, parents=2,
+                        body='\n\nRevert "Library reloads read summaries (#2878)"'),
+            self.commit('Add a thing (#2901)', sha='3' * 40)], [])
+        self.assertEqual([(e['source'], e['pr'], e['reverts'], e['at']) for e in found],
+                         [('revert', 2878, 'a' * 12, '2026-10-21T10:00:00Z')])
+
+    def test_a_squash_merged_revert_names_the_reverted_pr_not_its_own(self):
+        found = events.escape_events([self.commit('Revert "Fix thing (#2878)" (#2900)')], [])
+        self.assertEqual(found[0]['pr'], 2878)
+
+    def test_a_revert_of_a_revert_puts_the_change_back_and_is_not_an_escape(self):
+        self.assertEqual(events.escape_events([self.commit('Revert "Revert "Fix (#5)"" (#9)')], []), [])
+
+    def test_a_commit_without_a_committer_does_not_stop_a_collect(self):
+        bare = {'sha': '5' * 40, 'parents': [{}], 'commit': {'message': 'Revert "x"', 'committer': None}}
+        self.assertEqual(events.escape_events([bare], []), [])
+
+    def test_a_revert_of_a_merge_commit_title_has_no_pr(self):
+        found = events.escape_events([self.commit('Revert "Plain title"')], [])
+        self.assertEqual((found[0]['pr'], found[0]['reverts']), (None, ''))
+
+    def test_regression_and_found_on_phone_issues_count_once_each_and_pull_requests_are_skipped(self):
+        found = events.escape_events([], [
+            self.issue(10, ['regression', 'found-on-phone'], 'Broken by PR #9 on main'),
+            self.issue(11, ['found-on-phone']),
+            self.issue(12, ['bug']),
+            self.issue(13, ['regression'], pull_request={'url': 'x'})])
+        self.assertEqual([(e['issue'], e['source'], e['pr']) for e in found],
+                         [(10, 'regression', 9), (11, 'found-on-phone', None)])
+
+    def test_a_strangers_issue_text_never_names_a_pr(self):
+        found = events.escape_events([], [self.issue(20, ['regression'], 'caused by PR #7', association='NONE')])
+        self.assertEqual((found[0]['issue'], found[0]['pr']), (20, None))
+
+    def test_a_neighbouring_table_of_pr_mentions(self):
+        for body, expected in [('PR #118', 118), ('pr #118', 118), ('pull request #7', 7), ('https://github.com/Spoken-Margins/spoken-margins-native/pull/55', 55),
+                               ('https://github.com/other/repo/pull/55', None), ('see /pull/55', None),
+                               ('PR 118', None), ('issue #118', None), ('', None), ('PR #' + '9' * 40, None),
+                               ('PR #12 and PR #13', None), ('PR #12, again PR #12', 12),
+                               ('Fixed by PR #99; broke in PR #5', None)]:
+            found = events.escape_events([], [self.issue(1, ['regression'], body)])
+            self.assertEqual(found[0]['pr'], expected, body)
+
+    def test_events_hold_only_ids_enums_and_numbers(self):
+        found = events.escape_events([self.commit('Revert "x; rm -rf /"', sha='/Users/x/secret')], [])
+        self.assertEqual(found[0]['sha'], '')
+        self.assertTrue(all(isinstance(v, (int, type(None))) or len(v) <= 40 for v in found[0].values()))
+
+    def test_collecting_again_does_not_double_count_and_since_applies(self):
+        escapes = ([self.commit('Revert "A (#1)"'), self.commit('Revert "Old (#2)"', sha='4' * 40, date='2026-09-01T00:00:00Z')],
+                   [self.issue(30, ['regression'])])
+        first = events.collect_events([], [], [], '2026-10-01T00:00:00Z', [], 'main', escapes)
+        again = events.collect_events([], [], [], '2026-10-01T00:00:00Z', first, 'main', escapes)
+        self.assertEqual(first, again)
+        self.assertEqual(sorted(e['id'] for e in first), ['escape:issue:30', 'escape:revert:' + '1' * 12])
+
+    def test_a_hand_label_mapping_an_escape_to_a_step_survives_a_collect(self):
+        escapes = ([], [self.issue(30, ['regression'])])
+        first = events.collect_events([], [], [], '2026-10-01T00:00:00Z', [], 'main', escapes)
+        first[0]['label'] = {'by': 'human', 'step': 'host tests'}
+        again = events.collect_events([], [], [], '2026-10-01T00:00:00Z', first, 'main', escapes)
+        self.assertEqual(again[0]['label'], {'by': 'human', 'step': 'host tests'})
+
+    def test_fetch_reads_the_trunk_and_both_labels_and_keeps_an_issue_with_both_once(self):
+        class Fake:
+            paths = []
+
+            def pages(self, path, limit=30, partial=False):
+                self.paths.append(path)
+                if path.startswith('commits'):
+                    return [{'sha': 'x'}]
+                return [{'number': 1}, {'number': 2 if 'found' in path else 3}]
+        fake = Fake()
+        commits, issues = events.fetch_escapes(fake, '2026-10-01T00:00:00Z', 'main')
+        self.assertEqual(len(commits), 1)
+        self.assertEqual(sorted(i['number'] for i in issues), [1, 2, 3])
+        self.assertTrue(fake.paths[0].startswith('commits?sha=main&since='))
+
+    def test_the_report_counts_escapes_beside_catches_by_week(self):
+        found = events.collect_events(
+            [comment(report_body('pr1-r1', 'FAIL', extra='Failed: SessionKitCoreTests/AThingTests/testOne\n'), pr=1,
+                     at='2026-10-20T10:00:00Z'),
+             comment(report_body('pr1-r2', 'PASS', head='d' * 40), pr=1, at='2026-10-20T11:00:00Z')],
+            [], [CatchTests.LINE], '2026-10-01T00:00:00Z', [], 'main',
+            ([self.commit('Revert "A (#1)"', date='2026-10-21T10:00:00Z')],
+             [self.issue(30, ['regression'], at='2026-10-27T10:00:00Z'),
+              self.issue(31, ['found-on-phone'], at='2026-10-28T10:00:00Z')]))
+        text = events.report(found)
+        self.assertIn('| 2026-10-19 | 1 | 0 | 0 | 1 | 1 | 0 |', text)
+        self.assertIn('| 2026-10-12 | 0 | 0 | 0 | 0 | 0 | 1 |', text)
+        self.assertIn('| 2026-10-26 | 0 | 1 | 1 | 2 | 0 | 0 |', text)
+        self.assertIn('3 escape events: 2 name no PR, 0 mapped by hand', text)
+
+    def test_a_revert_and_an_issue_naming_the_same_pr_are_one_escape_in_the_week(self):
+        found = events.collect_events([], [], [], '2026-10-01T00:00:00Z', [], 'main',
+                                      ([self.commit('Revert "A (#1)"', date='2026-10-21T10:00:00Z')],
+                                       [self.issue(30, ['regression'], 'Broken by PR #1', at='2026-10-22T10:00:00Z')]))
+        self.assertIn('| 2026-10-19 | 1 | 1 | 0 | 1 | 0 | 0 |', events.report(found))
+
+    def test_a_report_with_no_escapes_says_how_to_collect_them(self):
+        found = events.collect_events([comment(report_body('pr1-r1', 'PASS'), pr=1)], [], [], '2026-10-01T00:00:00Z',
+                                      [], 'main')
+        self.assertIn('No escapes were collected', events.report(found))
+        self.assertNotIn('Escapes', events.report([]))
+
+    def test_weeks_start_on_monday(self):
+        self.assertEqual([events.week_of(day) for day in ('2026-10-19T00:00:00Z', '2026-10-25T23:59:59Z',
+                                                         '2026-10-26T00:00:00Z')],
+                         ['2026-10-19', '2026-10-19', '2026-10-26'])
+
+
 class FileTests(unittest.TestCase):
     def comments(self):
         return [comment(EXIT_15, pr=1, at='2026-10-20T10:00:00Z'), comment(NAMED_FAILURE, pr=2),
