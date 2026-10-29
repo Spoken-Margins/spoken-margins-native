@@ -264,6 +264,11 @@ jobs:
       - name: Package
         run: |
           ditto -c -k --keepParent "$APP" "$OUT/$APP_NAME.zip"
+          # The dSYM the archive wrote, so MetricKit and crash frames from this build can be symbolicated (#2718).
+          # scripts/phone-build keeps it next to the app and checks its UUID against the binary's.
+          dsym="$OUT/SpokenMargins.xcarchive/dSYMs/$APP_NAME.dSYM"
+          if [ -d "$dsym" ]; then ditto -c -k --keepParent "$dsym" "$OUT/$APP_NAME.dSYM.zip"
+          else echo "::warning::The archive has no $APP_NAME.dSYM; this build's crash frames cannot be symbolicated."; fi
           cat "$OUT/export.log" >> "$OUT/build.log"
           python3 - <<'PY'
           import datetime, json, os, plistlib, subprocess
@@ -290,6 +295,7 @@ jobs:
           name: phone-build-${{ github.sha }}
           path: |
             .build/phone-out/SpokenMarginsApp.app.zip
+            .build/phone-out/SpokenMarginsApp.app.dSYM.zip
             .build/phone-out/build.json
             .build/phone-out/build.log
           if-no-files-found: error
