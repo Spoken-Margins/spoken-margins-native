@@ -135,7 +135,7 @@ extension Gate1AppModel {
             snapshot = shouldStartSession && imported.linkResolutionStatus == LinkResolutionStatus.playable.rawValue
                 ? try applyPreferredPlaybackRate(to: imported, engine: engine)
                 : imported
-            libraryItems = try loadLibraryRows(store: store)
+            refreshLibraryRowsInBackground(mustPublish: true) // the new row; a whole-Library read on main hung each add (#2505)
             if let itemId = snapshot.itemId {
                 activeItemId = itemId
                 selectedItem = try loadItemDetail(id: itemId, store: store)
@@ -190,7 +190,8 @@ extension Gate1AppModel {
                 return false
             }
             if !startSession {
-                guard let item = try persistResolvedSourceLinkInBackground(request: request, result: result) else {
+                guard let item = try persistResolvedSourceLinkInBackground(
+                    request: request, result: result, readsLibraryOffMain: true) else {
                     reportFailure(SourceLinkFailureMessage.text(
                         status: result.status.rawValue,
                         reason: result.failureReason,
@@ -210,7 +211,7 @@ extension Gate1AppModel {
             snapshot = startSession && imported.linkResolutionStatus == LinkResolutionStatus.playable.rawValue
                 ? try applyPreferredPlaybackRate(to: imported, engine: engine)
                 : imported
-            libraryItems = try loadLibraryRows(store: store)
+            refreshLibraryRowsInBackground(mustPublish: true) // the new row; a whole-Library read on main hung each add (#2505)
             if let itemId = snapshot.itemId {
                 activeItemId = itemId
                 selectedItem = try loadItemDetail(id: itemId, store: store)
