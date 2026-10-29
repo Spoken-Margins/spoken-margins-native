@@ -121,7 +121,7 @@ final class J10OfflineJourneyUITests: XCTestCase {
             let itemId = String(row.identifier.dropFirst("library.row.".count))
             tap("queue.start.\(itemId)")
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
-            let title = app.buttons["playback.title"].firstMatch.label
+            let title = app.buttons["playback.itemTitle.button"].label
             XCTAssertTrue(title.contains("Walking Notes"), "A different item is playing: \(title)")
             try waitUntilPlaying("The PDF never reached the playing state")
             let first = try percent()
@@ -179,7 +179,7 @@ final class J10OfflineJourneyUITests: XCTestCase {
     private func startArticle() throws {
         tap("queue.start.\(articleId)")
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
-        XCTAssertEqual(app.buttons["playback.title"].firstMatch.label, articleTitle, "A different item is playing")
+        XCTAssertEqual(app.buttons["playback.itemTitle.button"].label, articleTitle, "A different item is playing")
         try waitUntilPlaying("The article never reached the playing state")
         try waitUntilAdvancing("The article's position did not advance while playing")
         screenshot("J10 article playing offline")
