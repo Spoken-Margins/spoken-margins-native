@@ -28,13 +28,33 @@ extension Gate1AppModel {
     var hasCompletedCoreOnboarding: Bool { onboardingProgress.hasCompletedCore }
 
     var shouldShowOnboardingCard: Bool {
-        onboardingProgress.shouldShowCard(
+        !isFirstMarginPromptShowing && onboardingProgress.shouldShowCard(
             suppressed: Self.isRunningUnitTests || UITestingHooks.isActive
         )
     }
 
     var shouldShowGuidedOnboardingCoach: Bool {
-        onboardingProgress.shouldShowCoach(guidedItemIsSelected: selectedItem.id == Self.guidedOnboardingItemId)
+        !isFirstMarginPromptShowing
+            && onboardingProgress.shouldShowCoach(guidedItemIsSelected: selectedItem.id == Self.guidedOnboardingItemId)
+    }
+
+    /// One thing asks for attention at a time (#2852): the first Margin prompt goes ahead of the card and the coach.
+    var isFirstMarginPromptShowing: Bool {
+        onboardingProgress.shouldShowFirstMarginPrompt(
+            hasActiveSession: hasActiveSession, suppressed: Self.isRunningUnitTests || UITestingHooks.isActive
+        )
+    }
+
+    /// Either way the prompt has been seen: it does not come back.
+    func dismissFirstMarginPrompt() {
+        changeOnboardingProgress { $0.firstMarginPromptSeen() }
+    }
+
+    /// The prompt's tap: the same Add a Margin as the button below; the microphone line and the written fallback
+    /// are that flow's.
+    func addFirstMargin() {
+        dismissFirstMarginPrompt()
+        beginInterjection()
     }
 
     func isOnboardingStepComplete(_ step: OnboardingStep) -> Bool {

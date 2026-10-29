@@ -28,7 +28,8 @@ final class OnboardingProgressTests: XCTestCase {
     func testStoredNamesAreTheOnesEarlierBuildsWrote() {
         XCTAssertEqual(OnboardingStep.allCases.map(\.rawValue), [
             "first_interjection", "reviewed_timeline", "exported_session",
-            "added_own_source", "added_from_safari", "added_from_files", "added_podcast"
+            "added_own_source", "added_from_safari", "added_from_files", "added_podcast",
+            "saw_first_margin_prompt" // added by #2852; earlier builds drop the name
         ])
         XCTAssertEqual(OnboardingStep.core, [.firstInterjection, .reviewedTimeline, .exportedSession])
         XCTAssertEqual(OnboardingStep.sourceExploration, [.addedOwnSource, .addedFromSafari, .addedFromFiles, .addedPodcast])
@@ -298,5 +299,29 @@ final class OnboardingProgressTests: XCTestCase {
             status: "ready",
             externalReferenceType: externalReferenceType
         )
+    }
+
+    // MARK: The first Margin prompt (#2852)
+
+    func testThePromptShowsOnceAudioIsOnAndUntilItIsSeenOrAFirstMarginExists() {
+        var value = progress()
+        XCTAssertFalse(value.shouldShowFirstMarginPrompt(hasActiveSession: false, suppressed: false), "no audio yet")
+        XCTAssertTrue(value.shouldShowFirstMarginPrompt(hasActiveSession: true, suppressed: false))
+        XCTAssertFalse(value.shouldShowFirstMarginPrompt(hasActiveSession: true, suppressed: true), "tests")
+
+        value.firstMarginPromptSeen()
+        XCTAssertFalse(value.shouldShowFirstMarginPrompt(hasActiveSession: true, suppressed: false), "tapped or dismissed once")
+        let reloaded = progress(steps: value.storedSteps)
+        XCTAssertFalse(reloaded.shouldShowFirstMarginPrompt(hasActiveSession: true, suppressed: false), "and it stays seen")
+
+        XCTAssertFalse(progress(steps: ["first_interjection"]).shouldShowFirstMarginPrompt(hasActiveSession: true, suppressed: false), "a Margin exists")
+    }
+
+    func testSeeingThePromptIsNotACoreStepAndDoesNotMoveTheTour() {
+        var value = progress(stage: .practiceInterjection)
+        value.firstMarginPromptSeen()
+        XCTAssertEqual(value.stage, .practiceInterjection)
+        XCTAssertEqual(value.coreCompletedCount, 0)
+        XCTAssertFalse(value.hasCompletedCore)
     }
 }
