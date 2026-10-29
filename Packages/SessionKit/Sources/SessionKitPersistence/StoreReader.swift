@@ -50,6 +50,51 @@ public struct StoreReader: Sendable {
         let value = try await read(priority: priority, body)
         return LatestRequests.shared.isCurrent(ticket, store: storeKey, key: key) ? value : nil
     }
+
+    /// Requests with the same key on the same store run one at a time, in the order they were asked. It is for a
+    /// read-modify-write that two quick taps could otherwise run at once, each reading the rows before the other's
+    /// save (the audio-preparation queue's Move and Prioritize). A request still runs when its caller is cancelled:
+    /// an edit the listener asked for is not dropped, and the next request in line waits for it.
+    public func readInOrder<Value: Sendable>(
+        _ key: String,
+        priority: TaskPriority = .utility,
+        _ body: @escaping @Sendable (SQLiteSessionStore) throws -> Value
+    ) async throws -> Value {
+        let store = store
+        let task: Task<Value, Error> = OrderedRequests.shared.append(store: ObjectIdentifier(store), key: key) { previous in
+            Task.detached(priority: priority) {
+                await previous?.value
+                return try body(store)
+            }
+        }
+        return try await task.value
+    }
+}
+
+private struct RequestKey: Hashable {
+    let store: ObjectIdentifier
+    let name: String
+}
+
+/// The last request in line per (store, key). A finished task lets go of the one before it, so the line holds only
+/// what is still waiting, plus one finished task per key.
+private final class OrderedRequests: @unchecked Sendable {
+    static let shared = OrderedRequests()
+
+    private let lock = NSLock()
+    private var tails: [RequestKey: Task<Void, Never>] = [:]
+
+    func append<Value: Sendable>(
+        store: ObjectIdentifier,
+        key: String,
+        _ make: (Task<Void, Never>?) -> Task<Value, Error>
+    ) -> Task<Value, Error> {
+        lock.lock(); defer { lock.unlock() }
+        let id = RequestKey(store: store, name: key)
+        let task = make(tails[id])
+        tails[id] = Task { _ = try? await task.value }
+        return task
+    }
 }
 
 /// One counter per (store, key). A store that is gone leaves its counters behind; they are a few bytes each, and a
@@ -57,17 +102,12 @@ public struct StoreReader: Sendable {
 private final class LatestRequests: @unchecked Sendable {
     static let shared = LatestRequests()
 
-    private struct Key: Hashable {
-        let store: ObjectIdentifier
-        let name: String
-    }
-
     private let lock = NSLock()
-    private var counters: [Key: Int] = [:]
+    private var counters: [RequestKey: Int] = [:]
 
     func next(store: ObjectIdentifier, key: String) -> Int {
         lock.lock(); defer { lock.unlock() }
-        let id = Key(store: store, name: key)
+        let id = RequestKey(store: store, name: key)
         let value = (counters[id] ?? 0) + 1
         counters[id] = value
         return value
@@ -75,6 +115,6 @@ private final class LatestRequests: @unchecked Sendable {
 
     func isCurrent(_ ticket: Int, store: ObjectIdentifier, key: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        return counters[Key(store: store, name: key)] == ticket
+        return counters[RequestKey(store: store, name: key)] == ticket
     }
 }

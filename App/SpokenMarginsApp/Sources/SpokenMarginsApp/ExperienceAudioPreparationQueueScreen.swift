@@ -13,13 +13,13 @@ struct ExperienceAudioPreparationQueueScreen: View {
                 model.automaticAudioPreparationPolicy = policy
                 model.automaticAudioPreparationPolicyChanged()
             },
-            prioritize: model.prioritizeAudioPreparationJob,
-            moveEarlier: model.moveAudioPreparationJobEarlier,
-            moveLater: model.moveAudioPreparationJobLater,
+            prioritize: { id in Task { await model.prioritizeAudioPreparationJob(id: id) } },
+            moveEarlier: { id in Task { await model.moveAudioPreparationJobEarlier(id: id) } },
+            moveLater: { id in Task { await model.moveAudioPreparationJobLater(id: id) } },
             renderNow: model.prioritizeOfflinePreparation,
-            skip: model.skipAudioPreparationJob,
-            clear: model.clearAudioPreparationQueue,
-            refresh: model.refreshAudioPreparationPresentation,
+            skip: { id in Task { await model.skipAudioPreparationJob(id: id) } },
+            clear: { Task { await model.clearAudioPreparationQueue() } },
+            refresh: { Task { await model.refreshAudioPreparationPresentation() } },
             openItem: model.openItem
         )
         .equatable()

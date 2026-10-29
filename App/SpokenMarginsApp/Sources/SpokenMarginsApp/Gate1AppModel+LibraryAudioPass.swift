@@ -323,7 +323,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                         if try store.loadAudioPreparationJob(id: job.id) != nil { try store.saveAudioPreparationJob(job) }
                     }
                 }
-                try? refreshAudioPreparationPresentation(store: store)
+                await refreshAudioPreparationPresentation()
             }
             diagnostics["backgroundAudioPreparation"] = "expired"
             return !foregroundDemandOnly
