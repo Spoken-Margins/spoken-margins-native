@@ -36,6 +36,16 @@ final class CatalogDrawerModel: ObservableObject {
     private let subscriptions: @MainActor () -> [FeedSubscription]
     private let defaults: UserDefaults
     private var hasLoaded = false
+    /// What Done plays on a fresh install (#2851): the first pick's newest episode or latest post, else the
+    /// Welcome sample. Gets the picked sources' ids in tap order. Nil in tests and previews.
+    private let startFirstListen: (@MainActor ([String]) async -> Void)?
+    /// Shows tapped in this opening, in tap order. A pick's `sourceId` arrives when its follow lands and is
+    /// dropped when the follow fails.
+    private var picks: [(key: String, sourceId: String?)] = []
+    private var followTasks: [Task<Void, Never>] = []
+    /// Set by the first-run opening; Done then plays. Opened from Following, Done only closes.
+    private var isFirstRunOpening = false
+    private var playsOnDismiss = false
     /// Makes a fresh OPML import (#463) for the drawer and Following; nil hides the entry.
     let makeOPMLImport: (@MainActor () -> OPMLImportModel)?
 
@@ -45,8 +55,10 @@ final class CatalogDrawerModel: ObservableObject {
         subscriptions: @escaping @MainActor () -> [FeedSubscription],
         follow: @escaping @MainActor (String) async throws -> String,
         makeOPMLImport: (@MainActor () -> OPMLImportModel)? = nil,
-        searcher: PodcastNameSearch? = nil
+        searcher: PodcastNameSearch? = nil,
+        startFirstListen: (@MainActor ([String]) async -> Void)? = nil
     ) {
+        self.startFirstListen = startFirstListen
         self.searcher = searcher
         self.store = store
         self.defaults = defaults
@@ -107,13 +119,34 @@ final class CatalogDrawerModel: ObservableObject {
             followedSourceCount: followedSourceCount
         ) else { return }
         present()
+        isFirstRunOpening = true
     }
 
     /// The drawer model lives for the whole app run, so each opening drops the follows it
     /// confirmed before: the listener may have unfollowed one in Following since (#646).
     func present() {
         followStates = FollowState.keptOnReopening(followStates)
+        picks = []
+        followTasks = []
+        isFirstRunOpening = false
+        playsOnDismiss = false
         isPresented = true
+    }
+
+    /// Done. On the first-run opening the sheet closes and the listener's first pick starts playing as it
+    /// goes (#2851). A swipe down closes it without playing.
+    func finish() {
+        playsOnDismiss = isFirstRunOpening && startFirstListen != nil
+        isPresented = false
+    }
+
+    /// Run after the sheet has closed, so a Terms sheet the play needs has nothing to collide with. Waits for
+    /// follows still in flight, which Done doesn't have to.
+    func playFirstListenIfRequested() async {
+        guard playsOnDismiss, let startFirstListen else { return }
+        playsOnDismiss = false
+        for task in followTasks { await task.value }
+        await startFirstListen(picks.compactMap { $0.sourceId })
     }
 
     /// Called when the sheet closes, however it closes.
@@ -199,15 +232,18 @@ final class CatalogDrawerModel: ObservableObject {
             break
         }
         followStates[show.id] = .following
-        Task { [weak self] in
+        picks.append((show.id, nil))
+        followTasks.append(Task { [weak self] in
             guard let self else { return }
             do {
-                _ = try await self.follow(feedURL)
+                let sourceId = try await self.follow(feedURL)
+                self.settlePick(key: show.id, sourceId: sourceId)
                 self.followStates[show.id] = .followed
             } catch {
+                self.settlePick(key: show.id, sourceId: nil)
                 self.followStates[show.id] = .failed(error.localizedDescription)
             }
-        }
+        })
     }
 
     private func refreshEntries() {
@@ -245,16 +281,26 @@ final class CatalogDrawerModel: ObservableObject {
             break
         }
         followStates[entry.id] = .following
-        Task { [weak self] in
+        picks.append((entry.id, nil))
+        followTasks.append(Task { [weak self] in
             guard let self else { return }
             do {
                 let sourceId = try await self.follow(entry.feedURL)
                 self.recordFollowedSource(sourceId, for: entry)
+                self.settlePick(key: entry.id, sourceId: sourceId)
                 self.followStates[entry.id] = .followed
             } catch {
+                self.settlePick(key: entry.id, sourceId: nil)
                 self.followStates[entry.id] = .failed(error.localizedDescription)
             }
-        }
+        })
+    }
+
+    /// A finished follow fills in its pick, keeping the tap order; a failed one is removed. A retry of a
+    /// failed row picks again at the time of the retry.
+    private func settlePick(key: String, sourceId: String?) {
+        guard let index = picks.firstIndex(where: { $0.key == key && $0.sourceId == nil }) else { return }
+        if let sourceId { picks[index].sourceId = sourceId } else { picks.remove(at: index) }
     }
 }
 
@@ -279,7 +325,7 @@ struct CatalogDrawerView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { drawer.isPresented = false }
+                    Button("Done") { drawer.finish() }
                         .accessibilityIdentifier("catalog.drawer.done")
                 }
             }

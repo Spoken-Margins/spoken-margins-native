@@ -85,6 +85,7 @@ struct Gate1RootView: View {
         .sheet(isPresented: $catalogDrawer.isPresented, onDismiss: {
             catalogDrawer.markSeen()
             model.refreshFollowedSources(force: false)
+            Task { await catalogDrawer.playFirstListenIfRequested() }
         }) {
             CatalogDrawerView()
                 .environmentObject(catalogDrawer)
