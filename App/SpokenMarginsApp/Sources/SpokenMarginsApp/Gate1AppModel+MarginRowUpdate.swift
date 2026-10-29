@@ -24,5 +24,6 @@ extension Gate1AppModel {
             return refreshMarginRows()
         }
         marginOutput.deliverSoon() // The Margin's text or place in the list changed (#171).
+        noteCompactTimelineChanged()
     }
 }
