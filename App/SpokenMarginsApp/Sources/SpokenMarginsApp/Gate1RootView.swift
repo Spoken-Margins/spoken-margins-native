@@ -83,9 +83,8 @@ struct Gate1RootView: View {
             .interactiveDismissDisabled(!model.hasAcceptedCurrentTerms)
         }
         .sheet(isPresented: $catalogDrawer.isPresented, onDismiss: {
-            catalogDrawer.markSeen()
+            catalogDrawer.didDismiss()
             model.refreshFollowedSources(force: false)
-            Task { await catalogDrawer.playFirstListenIfRequested() }
         }) {
             CatalogDrawerView()
                 .environmentObject(catalogDrawer)

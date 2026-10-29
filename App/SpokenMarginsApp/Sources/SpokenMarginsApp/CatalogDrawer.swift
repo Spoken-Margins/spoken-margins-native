@@ -140,6 +140,12 @@ final class CatalogDrawerModel: ObservableObject {
         isPresented = false
     }
 
+    /// The sheet closed, however it closed.
+    func didDismiss() {
+        markSeen()
+        Task { await playFirstListenIfRequested() }
+    }
+
     /// Run after the sheet has closed, so a Terms sheet the play needs has nothing to collide with. Waits for
     /// follows still in flight, which Done doesn't have to.
     func playFirstListenIfRequested() async {
