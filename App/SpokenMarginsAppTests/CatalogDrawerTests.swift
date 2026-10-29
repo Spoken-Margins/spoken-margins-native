@@ -16,7 +16,10 @@ final class CatalogDrawerTests: XCTestCase {
         var subscriptionReads = 0
     }
 
-    private func makeDrawer(defaults: UserDefaults, log: FollowLog, searcher: PodcastNameSearch? = nil) throws -> CatalogDrawerModel {
+    private func makeDrawer(
+        defaults: UserDefaults, log: FollowLog, searcher: PodcastNameSearch? = nil,
+        startFirstListen: (@MainActor ([String]) async -> Void)? = nil
+    ) throws -> CatalogDrawerModel {
         let bundled = try XCTUnwrap(Bundle.main.url(forResource: "catalog", withExtension: "json"), "catalog snapshot is bundled")
         let cache = FileManager.default.temporaryDirectory.appending(path: "catalog-drawer-\(UUID().uuidString)")
         addTeardownBlock { try? FileManager.default.removeItem(at: cache) }
@@ -42,7 +45,8 @@ final class CatalogDrawerTests: XCTestCase {
                 ))
                 return sourceId
             },
-            searcher: searcher
+            searcher: searcher,
+            startFirstListen: startFirstListen
         )
     }
 
@@ -50,6 +54,60 @@ final class CatalogDrawerTests: XCTestCase {
         let name = "CatalogDrawerTests-\(UUID().uuidString)"
         addTeardownBlock { UserDefaults().removePersistentDomain(forName: name) }
         return try XCTUnwrap(UserDefaults(suiteName: name))
+    }
+
+    /// #2851: Done on the first-run opening plays the first pick, by tap order, once its follow has landed.
+    func testDoneOnTheFirstRunOpeningStartsTheFirstListenWithPicksInTapOrder() async throws {
+        let log = FollowLog()
+        var started: [[String]] = []
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: log) { started.append($0) }
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        await drawer.load()
+        let picks = Array(drawer.entries.prefix(2))
+        drawer.toggleFollow(picks[1])
+        drawer.toggleFollow(picks[0])
+
+        drawer.finish()
+        XCTAssertFalse(drawer.isPresented)
+        await drawer.playFirstListenIfRequested()
+
+        XCTAssertEqual(started.count, 1)
+        XCTAssertEqual(started.first?.count, 2)
+        XCTAssertEqual(started.first, ["source-1", "source-2"], "waits for both follows, in the order tapped")
+        XCTAssertEqual(log.feeds, [picks[1].feedURL, picks[0].feedURL])
+
+        await drawer.playFirstListenIfRequested()
+        XCTAssertEqual(started.count, 1, "plays once")
+    }
+
+    func testDoneWithNothingFollowedStartsTheFirstListenWithNoPicksSoTheWelcomeSamplePlays() async throws {
+        var started: [[String]] = []
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog()) { started.append($0) }
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.finish()
+        await drawer.playFirstListenIfRequested()
+        XCTAssertEqual(started, [[]])
+    }
+
+    func testAFailedFollowIsNotAPickAndASwipeOrAFollowingOpeningDoesNotPlay() async throws {
+        let log = FollowLog()
+        var started: [[String]] = []
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: log) { started.append($0) }
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        await drawer.load()
+        log.failing = true
+        drawer.toggleFollow(try XCTUnwrap(drawer.entries.first))
+        drawer.finish()
+        await drawer.playFirstListenIfRequested()
+        XCTAssertEqual(started, [[]], "the failed follow is dropped from the picks")
+
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.isPresented = false // swiped away
+        await drawer.playFirstListenIfRequested()
+        drawer.present() // from Following
+        drawer.finish()
+        await drawer.playFirstListenIfRequested()
+        XCTAssertEqual(started.count, 1)
     }
 
     func testFreshInstallOpensOnceOfflineAndFollowsFiveInFiveTaps() async throws {
