@@ -5,17 +5,24 @@ import SessionKitPersistence
 /// The Terms sheet before the first playback read by James or Lily (#781).
 extension Gate1AppModel {
     func requireTermsDecisionBeforePlayback(_ action: PendingPlaybackAfterTerms) -> Bool {
+        // Almost every Play lands here with the Terms answered, so the item is read only when they could matter.
+        let bundledVoicePending = pendingTermsVoiceSelection?.isOnDeviceVoice == true
+        guard PlaybackTermsGate.mayRequireTerms(
+            termsAccepted: hasAcceptedCurrentTerms, bundledVoicePending: bundledVoicePending
+        ) else {
+            return false
+        }
         // The item the action plays: chapter jumps and play-from-start go through ensureSessionForSelectedItem,
         // which plays activeItemId, like start().
         let itemId: String? = switch action {
         case .startCurrentItem, .jumpToChapter, .playSourceFromBeginning: activeItemId
         case .resumeSession(let sessionId): (try? store?.loadSession(id: sessionId))?.itemId
         }
-        let item = itemId.flatMap { id in try? store?.loadItem(id: id) }
+        // The summary carries the source type the gate looks at, without the item's text.
+        let item = itemId.flatMap { id in try? store?.loadItemSummary(id: id) }
         // Only text read by James or Lily needs the Terms; a podcast never does (#781).
         guard PlaybackTermsGate.requiresTerms(
-            for: item, termsAccepted: hasAcceptedCurrentTerms,
-            bundledVoicePending: pendingTermsVoiceSelection?.isOnDeviceVoice == true
+            for: item, termsAccepted: hasAcceptedCurrentTerms, bundledVoicePending: bundledVoicePending
         ) else {
             return false
         }

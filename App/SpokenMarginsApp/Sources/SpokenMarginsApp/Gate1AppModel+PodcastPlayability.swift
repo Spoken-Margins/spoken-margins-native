@@ -19,7 +19,7 @@ extension Gate1AppModel {
     /// Returns true when it reported that and the caller must not start playback.
     func blockOfflineEpisodeStart(itemId: String) -> Bool {
         guard connectivity.isOffline,
-              let item = try? store?.loadItem(id: itemId),
+              let item = try? store?.loadItemSummary(id: itemId),
               item.media?.sourceType == .remoteStream,
               let message = OfflinePlayability.episodeStartBlockedMessage(
                   hasSavedAudio: podcastDownloadCoordinator?.validatedLocalURL(for: itemId) != nil,

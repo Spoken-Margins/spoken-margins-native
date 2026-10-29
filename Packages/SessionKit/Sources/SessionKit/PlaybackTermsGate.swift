@@ -22,17 +22,25 @@ public enum PlaybackTermsGate {
         playbackIsWaiting && !termsAccepted ? .summary : .complete
     }
 
+    /// Whether the Terms can matter at all: the listener has not accepted them and chose James or Lily. A caller asks
+    /// this first and reads the item only when it is true, so a Play tap after the Terms were answered reads nothing
+    /// (#2506).
+    public static func mayRequireTerms(termsAccepted: Bool, bundledVoicePending: Bool) -> Bool {
+        !termsAccepted && bundledVoicePending
+    }
+
     /// - Parameters:
-    ///   - item: what is about to play. Nil when it can't be loaded, which keeps the gate, as before.
+    ///   - item: what is about to play; a Library summary is enough. Nil when it can't be loaded, which keeps the
+    ///     gate, as before.
     ///   - bundledVoicePending: the listener chose James or Lily, waiting on the Terms.
-    public static func requiresTerms(for item: Item?, termsAccepted: Bool, bundledVoicePending: Bool) -> Bool {
-        guard !termsAccepted, bundledVoicePending else { return false }
+    public static func requiresTerms(for item: (any LibraryItemFields)?, termsAccepted: Bool, bundledVoicePending: Bool) -> Bool {
+        guard mayRequireTerms(termsAccepted: termsAccepted, bundledVoicePending: bundledVoicePending) else { return false }
         guard let item else { return true }
         return !playsRecordedAudio(item)
     }
 
     /// True when the item plays recorded audio rather than text read by a voice.
-    public static func playsRecordedAudio(_ item: Item) -> Bool {
+    public static func playsRecordedAudio(_ item: any LibraryItemFields) -> Bool {
         switch item.media?.sourceType {
         case .nativeMediaFile, .remoteStream, .browserOwnedMedia: true
         case .generatedTTSRealtime, .generatedTTSPrerendered, nil: false

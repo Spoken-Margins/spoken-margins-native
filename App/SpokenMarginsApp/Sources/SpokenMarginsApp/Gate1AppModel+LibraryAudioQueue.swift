@@ -360,7 +360,7 @@ extension Gate1AppModel {
     }
 
     private func itemsTitle(itemId: String, store: SQLiteSessionStore) -> String {
-        (try? store.loadItem(id: itemId).title) ?? "this item"
+        (try? store.loadItemSummary(id: itemId)?.title) ?? "this item"
     }
 
     func prioritizeAudioPreparationJob(id: String) {

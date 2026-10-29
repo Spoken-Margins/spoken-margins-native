@@ -13,7 +13,7 @@ extension Gate1AppModel {
         if let state = selectedPodcastDownloadRecord?.state { return state }
         let id = selectedItem.id
         let isRemoteStream = selectedItemStreamFlag.value(itemID: id) {
-            (try? store?.loadItem(id: id))?.media?.sourceType == .remoteStream
+            (try? store?.loadItemSummary(id: id))?.media?.sourceType == .remoteStream
         }
         return isRemoteStream ? .streamingOnly : nil
     }
