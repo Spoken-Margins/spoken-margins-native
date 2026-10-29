@@ -404,6 +404,25 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.id, "item-pill")
     }
 
+    /// A transcript job ending (here a failed retry) used to read the whole item on the main thread (#2505). The
+    /// Margin's row is patched at once; the item screen follows from the background read.
+    func testAFinishedTranscriptionJobRefreshesTheItemInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        await model.settleLibraryReload()
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "A thought to transcribe")
+        let margin = try XCTUnwrap(model.selectedItem.interjections.first)
+        model.selectedItem.interjections = []
+
+        model.recordFailedRetry(of: margin, failure: "no speech")
+        XCTAssertTrue(model.selectedItem.interjections.isEmpty, "the job's end must not read the item before it returns")
+
+        await model.settleItemReload()
+        XCTAssertEqual(model.selectedItem.interjections.map(\.id), [margin.id], "the background read shows the Margin")
+    }
+
     func testATranscriptForAnotherItemNeverRetargetsThePlaybackScreen() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()

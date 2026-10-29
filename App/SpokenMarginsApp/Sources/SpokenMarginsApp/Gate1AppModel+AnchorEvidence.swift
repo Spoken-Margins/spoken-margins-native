@@ -236,7 +236,7 @@ extension Gate1AppModel {
             into: interjection
         ))
         if activeItemId == request.itemId {
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
         }
     }
 
@@ -255,7 +255,7 @@ extension Gate1AppModel {
         let interjection = PodcastAnchorEvidenceRecord.markingUnavailable(stored, reason: reason)
         try? store.saveInterjection(interjection)
         if activeItemId == request.itemId {
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
         }
         diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", request)] =
             "unavailable:\(interjection.podcastAnchorEvidenceFailureReason ?? reason)"
@@ -270,7 +270,7 @@ extension Gate1AppModel {
               }) else { return }
         try? store.saveInterjection(PodcastAnchorEvidenceRecord.markingPendingLocalCapture(stored))
         if activeItemId == request.itemId {
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
         }
     }
 

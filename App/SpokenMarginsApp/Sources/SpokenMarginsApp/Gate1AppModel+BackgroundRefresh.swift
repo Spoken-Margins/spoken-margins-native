@@ -68,6 +68,15 @@ final class BackgroundRefreshGate {
         }
     }
 
+    /// Returns once the newest item reload has published or been dropped. For tests that tap, then read the item.
+    func settledItem() async {
+        while true {
+            let generation = itemGeneration
+            await itemTask?.value
+            if generation == itemGeneration { return }
+        }
+    }
+
     func holdItem(_ task: Task<Void, Never>) { itemTask = task }
     func holdLibrary(_ task: Task<Void, Never>) { libraryTask = task }
     func isCurrentItem(_ generation: Int) -> Bool { itemGeneration == generation && !isPublishingItem }
@@ -114,6 +123,9 @@ extension Gate1AppModel {
 
     /// Waits for the Library reload a tap started in the background. Production code never waits; tests do.
     func settleLibraryReload() async { await backgroundRefresh.settledLibrary() }
+
+    /// Waits for the item reload a tap or a finished job started in the background. Production code never waits; tests do.
+    func settleItemReload() async { await backgroundRefresh.settledItem() }
 
     /// A transport tap (skip, seek, rate) that finishes the item reloads on the spot: the next tap, Play or Resume reads
     /// the finished session off `selectedItem`, and a stale one would resume it instead of offering to restart. Rare,
