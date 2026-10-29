@@ -19,9 +19,10 @@ with `hidden` 0 hides nothing today; the baseline holds those too, so adding an 
 instead of on a hosted journey.
 
 A heuristic over source text, no compiler. It strips comments and string literals, walks back from the identifier
-over the modifier chain to the view that starts it, and reads forward over the modifiers after it. It misses an
-identifier set through a helper, a ternary, `@ViewBuilder` composition or a container returned by another function
-(a miss is a container this does not know is one). Stdlib only, Python 3.9-compatible.
+over the modifier chain to the view that starts it, and reads forward over the modifiers after it. A constant or ternary argument is a row too, named by its expression
+after `=`. It misses an identifier set through a helper function, `@ViewBuilder` composition, a wrapper view or a
+container returned by another function (a miss is a container this does not know is one), and a raw string
+(`#"…"#`) can throw off the walk. Stdlib only, Python 3.9-compatible.
 """
 from __future__ import annotations
 
@@ -35,7 +36,7 @@ BASELINE = ROOT / 'scripts' / 'container_identifiers_baseline.json'
 SCAN_DIRS = ('App',)
 SKIP_PARTS = ('Tests', 'UITests')  # test targets; their views are fixtures, not the app's screens
 CONTAINERS = {'VStack', 'HStack', 'ZStack', 'Group', 'ViewThatFits', 'LazyVStack', 'LazyHStack', 'Section',
-              'Grid', 'GridRow', 'LazyVGrid', 'LazyHGrid'}
+              'Grid', 'GridRow', 'LazyVGrid', 'LazyHGrid', 'ForEach', 'GeometryReader'}
 IDENTIFIER = '.accessibilityIdentifier'
 ELEMENT = '.accessibilityElement'
 CLOSERS = {')': '(', '}': '{', ']': '['}
@@ -240,7 +241,8 @@ def identifier_at(original: str, code: str, dot: int):
     argument = original[open_paren + 1:close].strip()
     if len(argument) >= 2 and argument[0] == '"' and argument[-1] == '"':
         return argument[1:-1]
-    return None
+    # A constant or a ternary (`Self.sheetIdentifier`, `flag ? "a" : "b"`): the expression stands in for the name.
+    return '=' + ' '.join(argument.split()) if argument else None
 
 
 def scan_source(path: str, original: str):
@@ -265,8 +267,9 @@ def scan_source(path: str, original: str):
             continue
         close = match_forward(code, brace)
         hidden = code.count(IDENTIFIER + '(', brace, close) if close > brace else 0
+        same = sum(1 for row in rows if row['identifier'] == identifier)
         rows.append({'file': path, 'line': original.count('\n', 0, dot) + 1, 'container': base,
-                     'identifier': identifier, 'hidden': hidden})
+                     'identifier': identifier, 'hidden': hidden, 'n': same + 1})
 
 
 def scan_tree(root: Path = ROOT):
@@ -281,7 +284,9 @@ def scan_tree(root: Path = ROOT):
 
 
 def key(row) -> str:
-    return f"{row['file']}::{row['identifier']}"
+    """File and identifier, plus `#2`, `#3` for a second container in the same file with the same identifier (an
+    if/else pair), so a new twin is not waved through on its sibling's baseline entry."""
+    return f"{row['file']}::{row['identifier']}" + (f"#{row['n']}" if row.get('n', 1) > 1 else '')
 
 
 def load_baseline(path: Path = BASELINE) -> dict:

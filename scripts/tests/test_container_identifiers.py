@@ -92,9 +92,13 @@ class WhatIsABareContainerIdentifier(unittest.TestCase):
     def test_a_commented_out_identifier_is_ignored(self):
         self.assertEqual(ids('VStack { }\n// .accessibilityIdentifier("x")'), [])
 
-    def test_an_identifier_built_by_a_helper_is_not_seen(self):
-        # The known blind spot: nothing here knows `id(...)` returns a string.
-        self.assertEqual(ids('VStack { }\n.accessibilityIdentifier(ids.header)'), [])
+    def test_a_constant_or_ternary_identifier_is_a_row_named_by_its_expression(self):
+        self.assertEqual(ids('VStack { }\n.accessibilityIdentifier(Self.sheetIdentifier)'), ['=Self.sheetIdentifier'])
+        self.assertEqual(ids('VStack { }\n.accessibilityIdentifier(flag ? "a" : "b")'), ['=flag ? "a" : "b"'])
+
+    def test_foreach_and_geometry_reader_are_containers(self):
+        self.assertEqual(ids('ForEach(xs) { x in Text(x) }\n.accessibilityIdentifier("x")'), ['x'])
+        self.assertEqual(ids('GeometryReader { _ in Text("a") }\n.accessibilityIdentifier("x")'), ['x'])
 
 
 class TheGuard(unittest.TestCase):
@@ -109,6 +113,11 @@ class TheGuard(unittest.TestCase):
         self.assertEqual(ci.problems(rows('VStack { Text("a") }\n.accessibilityIdentifier("x")'), baseline), [])
         grown = rows('VStack { Button("a") { }.accessibilityIdentifier("child") }\n.accessibilityIdentifier("x")')
         self.assertEqual(len(ci.problems(grown, baseline)), 1)
+
+    def test_a_twin_with_the_same_identifier_in_one_file_is_a_new_row(self):
+        twins = rows('VStack { }\n.accessibilityIdentifier("x")\nHStack { }\n.accessibilityIdentifier("x")')
+        self.assertEqual([ci.key(r) for r in twins], ['App/X/Sources/X.swift::x', 'App/X/Sources/X.swift::x#2'])
+        self.assertEqual(len(ci.problems(twins, {'App/X/Sources/X.swift::x': {'hidden': 0}})), 1)
 
     def test_the_app_has_no_bare_container_identifier_outside_the_baseline(self):
         found = ci.problems(ci.scan_tree(), ci.load_baseline())
