@@ -24,8 +24,10 @@ provision in a legal agreement governing use or distribution of the model.
 Spoken Margins therefore:
 
 - uses the iOS system voice until the current Terms version is accepted;
-- presents the complete Terms when the user selects James or Lily;
-- provides explicit Agree and Enable On-Device Voice and Not Now actions;
+- presents the complete Terms when the user selects James or Lily in Settings;
+- at a first Play, before the listener has chosen anything, presents one short screen instead: a summary, a link to
+  the complete Terms, and the same two actions in view without scrolling (#2853);
+- provides explicit Agree and Enable On-Device Voice and Not Now (shown as "Use iOS Voice") actions;
 - stores the accepted Terms version and acceptance date locally;
 - checks acceptance again at the Supertonic renderer boundary; and
 - bundles the complete OpenRAIL-M license and third-party notices.
