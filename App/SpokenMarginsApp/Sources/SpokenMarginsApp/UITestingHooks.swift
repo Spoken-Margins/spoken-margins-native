@@ -16,6 +16,20 @@ enum UITestingHooks {
     /// The app was launched by a UI test.
     static var isActive: Bool { CommandLine.arguments.contains("--ui-testing") }
 
+    /// A fresh-install launch (#2854): the first-run flow runs as shipped, instead of being kept out of the way.
+    static var keepsFirstRun: Bool { isActive && seed == .firstRun }
+
+    /// A UI-test launch that keeps the first-run elements (Welcome sample, guided item, drawer, Terms, prompts, the
+    /// voice download notice) away from the screens it drives. False for a fresh-install launch.
+    static var suppressesFirstRun: Bool { isActive && !keepsFirstRun }
+
+    /// Wipes the app's defaults before the model reads them, so a fresh-install launch starts as a new install does.
+    /// Launch arguments live in another domain and survive.
+    static func prepareFirstRunIfRequested() {
+        guard keepsFirstRun, let domain = Bundle.main.bundleIdentifier else { return }
+        UserDefaults.standard.removePersistentDomain(forName: domain)
+    }
+
     /// What this launch puts in the Library before it loads.
     static let seed = UITestingLaunchSeed(
         arguments: CommandLine.arguments,
@@ -71,6 +85,9 @@ enum UITestingHooks {
     }
     #else
     static var isActive: Bool { false }
+    static var keepsFirstRun: Bool { false }
+    static var suppressesFirstRun: Bool { false }
+    static func prepareFirstRunIfRequested() {}
     static let seed = UITestingLaunchSeed.none
     static var usesStandInAudioServices: Bool { false }
     static var importsCoopLayer: Bool { false }

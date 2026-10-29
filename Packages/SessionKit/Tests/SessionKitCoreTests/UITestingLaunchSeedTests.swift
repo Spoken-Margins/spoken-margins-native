@@ -108,12 +108,31 @@ final class UITestingLaunchSeedTests: XCTestCase {
         )
     }
 
+    /// #2854: the fresh-install seed adds no item of its own and needs a UI-test launch to be asked for.
+    func testTheFirstRunSeedSeedsNothingAndNeedsAUITestLaunch() {
+        let seed = UITestingLaunchSeed(arguments: ["--ui-testing"], environment: ["SPOKEN_MARGINS_UI_TEST_FIRST_RUN": "1"])
+        XCTAssertEqual(seed, .firstRun)
+        XCTAssertNil(seed.item)
+        XCTAssertNil(seed.podcastDownload(bytesWritten: 1))
+        XCTAssertFalse(seed.seedsGeneratedTimeline)
+        XCTAssertEqual(
+            UITestingLaunchSeed(arguments: ["SpokenMarginsApp"], environment: ["SPOKEN_MARGINS_UI_TEST_FIRST_RUN": "1"]), .none,
+            "a normal launch ignores the switch"
+        )
+        XCTAssertEqual(
+            UITestingLaunchSeed(arguments: ["--ui-testing"], environment: [
+                "SPOKEN_MARGINS_UI_TEST_FIRST_RUN": "1", "SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY": "1",
+            ]), .keepLibrary, "a kept Library wins, as before"
+        )
+    }
+
     func testOnlyTheSeedsThatReplaceTheLibraryWriteToIt() {
         // #1175: the app writes a seed that replaces the Library even when something opened the store first.
         XCTAssertFalse(UITestingLaunchSeed.none.writesLibrary)
         XCTAssertFalse(UITestingLaunchSeed.keepLibrary.writesLibrary)
         XCTAssertTrue(UITestingLaunchSeed.fixture.writesLibrary)
         XCTAssertTrue(UITestingLaunchSeed.importedPDF.writesLibrary)
+        XCTAssertTrue(UITestingLaunchSeed.firstRun.writesLibrary)
         XCTAssertTrue(UITestingLaunchSeed.text(title: "t", text: "x", reference: "r").writesLibrary)
         XCTAssertTrue(UITestingLaunchSeed.offlinePodcast(title: "t", durationSeconds: 10).writesLibrary)
         XCTAssertFalse(UITestingLaunchSeed(arguments: ["SpokenMarginsApp"], environment: everySeedVariable).writesLibrary)

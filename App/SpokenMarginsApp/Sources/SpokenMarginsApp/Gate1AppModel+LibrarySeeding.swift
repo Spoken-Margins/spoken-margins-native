@@ -38,6 +38,7 @@ extension Gate1AppModel {
             switch seed {
             case .none: break
             case .keepLibrary: try UITestingLaunchSeedWriter.importCoopLayerIfRequested(into: store)
+            case .firstRun: try store.reset() // then the launch goes on as a new install's does
             case .fixture: resetAndSeed(); return
             case .importedPDF: resetAndSeed(); try importObsidianMarkdownFiles(urls: [UITestingLaunchSeedWriter.writePDF()]); return
             case .text, .offlinePodcast:
@@ -51,7 +52,7 @@ extension Gate1AppModel {
             if Self.shouldSeedWelcomeSample(
                 libraryIsEmpty: rows.isEmpty,
                 storedVersion: storedWelcomeSampleVersion,
-                isUITesting: UITestingHooks.isActive
+                isUITesting: UITestingHooks.suppressesFirstRun
             ) {
                 let (item, map) = try makeAppOverviewSample()
                 try store.saveItem(item)
@@ -59,7 +60,7 @@ extension Gate1AppModel {
                 rows = try loadLibraryRows(store: store)
                 diagnostics["welcomeSample"] = "seeded:v\(Self.welcomeSampleSeedVersion)"
             }
-            if !UITestingHooks.isActive,
+            if !UITestingHooks.suppressesFirstRun,
                !UserDefaults.standard.bool(forKey: Self.guidedOnboardingTombstoneKey),
                UserDefaults.standard.integer(forKey: Self.guidedOnboardingSeedVersionKey) < 1,
                !(try store.hasLiveItem(id: Self.guidedOnboardingItemId)) {
@@ -69,7 +70,7 @@ extension Gate1AppModel {
                 rows = try loadLibraryRows(store: store)
                 diagnostics["guidedOnboardingItem"] = "bundled_fallback_seeded"
             }
-            if !UITestingHooks.isActive,
+            if !UITestingHooks.suppressesFirstRun,
                storedWelcomeSampleVersion < Self.welcomeSampleSeedVersion {
                 UserDefaults.standard.set(
                     Self.welcomeSampleSeedVersion,

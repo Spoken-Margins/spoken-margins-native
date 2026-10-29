@@ -61,7 +61,7 @@ struct SupertonicDownloadNoticePresentation: ViewModifier {
         content
             .task {
                 // Scripted UI routes drive their own screens; the card would sit over them.
-                guard !UITestingHooks.isActive else { return }
+                guard !UITestingHooks.suppressesFirstRun else { return }
                 notice.presentIfNeeded(
                     savedVoiceIsSupertonic: model.ttsVoiceSelection.supertonicVoice != nil,
                     anotherSheetShowing: catalogDrawer.isPresented || model.isTermsOfUsePresented

@@ -143,6 +143,25 @@ Every server feature (server config, share links, Listening Maps, the bridge and
 
 The script `J10OfflineJourneyUITests` runs part of this with the host swapped: it plays a seeded article and an imported PDF with the iOS voice, records a spoken and a written Margin on the article, builds and verifies the packet up to the import review, and opens step 4's share link. Importing an article yourself, Kitten, the second simulator and the Listening Map stay with this agent run, and a script pass never stands in for it.
 
+## J11 — A new listener reaches a first Margin
+
+The first minute (#2855, #2854). Start from a fresh install: delete the app from the simulator (not just a relaunch), install the candidate, and launch it. Write each step as what the listener wants; the buttons are only where they find it.
+
+Measure while you go. Start a stopwatch at the first launch, and count every tap from that moment. Report, for each of the two finish lines below, the seconds and the taps, next to the previous candidate's numbers from the last J11 report (the Test Desk keeps them in its journey notes). A candidate that needs more taps than the previous one, or more than 6 to the first Margin, is a failure of this journey even if every step passes.
+
+1. Open the app for the first time and pick something to hear: follow one show or a Substack from the drawer that opens, then tap Done.
+   - Pass: the newest episode (or the Substack's latest post) of the first thing picked starts, without a visit to the Library. If the Terms screen comes first, it is one short screen with both buttons in view, and accepting or choosing the iOS voice starts the play.
+   - Finish line 1: audio is playing. Record seconds and taps from launch. Whether it is audible is "owner to confirm".
+2. Open the app for the first time again and tap Done without picking anything.
+   - Pass: the Welcome sample plays.
+3. While audio plays, add your first Margin.
+   - Pass: exactly one prompt, "Tap to add a Margin", asks for it. The tour coach and the checklist strip are not on screen with it. Tapping it explains the microphone in a sentence, then iOS asks. Allow it (a test simulator always allows, per AGENTS.md): the recording starts, and saving it puts the Margin on the item. The prompt does not come back.
+   - Finish line 2: the first Margin is saved. Record seconds and taps from launch. Microphone behaviour on a real phone is "owner to confirm".
+4. Repeat step 3 from a fresh install, and answer "Don't Allow" to the microphone.
+   - Pass: a written Margin opens at the same place, with a line saying the microphone is off.
+
+The script `J11FirstMinuteJourneyUITests` runs steps 2 and 3 with stand-in microphone and speech services (`SPOKEN_MARGINS_UI_TEST_FIRST_RUN=1` wipes the defaults and the Library, then seeds nothing), asserts the Terms buttons are reachable, and attaches the seconds and taps. Picking a show or a Substack needs the network, so step 1, the real microphone prompt and the "Don't Allow" fallback stay with this agent run, and a script pass never stands in for them.
+
 ## Writing scripted journeys
 
 The Test Desk keeps this guide. Threads writing a first pass follow it, and the desk corrects it when a script teaches it something.
@@ -150,6 +169,6 @@ The Test Desk keeps this guide. Threads writing a first pass follow it, and the 
 - **One script per journey.** Name the class after the journey (for example `J3RecordAndRejoinJourneyUITests`) and follow the journey's steps in order, one `XCTContext.runActivity` per step, so a failure names the step.
 - **Find controls by identifier.** Use the app's `accessibilityIdentifier`s (`home.screen`, `playback.screen`, `playback.play.button`, and so on, dot-separated with the area first), never visible text, which changes with copy edits. If a control has no identifier, add one in the same PR.
 - **Wait, don't sleep.** Use `waitForExistence(timeout:)` or an `XCTNSPredicateExpectation` on the state you need, with a timeout of a few seconds and a message that says what didn't appear. No fixed `sleep` except to prove that something does *not* change, such as a paused clock.
-- **Starting state.** The hooks exist only in Debug builds; a Release build ignores `--ui-testing` (#517). A script launched with `--ui-testing` resets the app's library and seeds its own, so the desk runs scripts before building the journey library. Seed only through the `SPOKEN_MARGINS_UI_TEST_*` hooks, which `UITestingLaunchSeed` in SessionKit lists: `SOURCE_TEXT` for an article, `PODCAST=1` for a downloaded 25-minute episode, `PDF=1` for a generated PDF imported through the Files import, `RECORDING=1` for a recorder that saves a real tone file and a fixed transcript, `KEEP_LIBRARY=1` on a relaunch that must keep what the first launch left, and `COOP=1` on that relaunch to import one new Margin from a friend ("Sam", five minutes in) onto the seeded podcast.
+- **Starting state.** The hooks exist only in Debug builds; a Release build ignores `--ui-testing` (#517). A script launched with `--ui-testing` resets the app's library and seeds its own, so the desk runs scripts before building the journey library. Seed only through the `SPOKEN_MARGINS_UI_TEST_*` hooks, which `UITestingLaunchSeed` in SessionKit lists: `SOURCE_TEXT` for an article, `PODCAST=1` for a downloaded 25-minute episode, `PDF=1` for a generated PDF imported through the Files import, `RECORDING=1` for a recorder that saves a real tone file and a fixed transcript, `KEEP_LIBRARY=1` on a relaunch that must keep what the first launch left, and `COOP=1` on that relaunch to import one new Margin from a friend ("Sam", five minutes in) onto the seeded podcast, and `FIRST_RUN=1` for a fresh install that seeds nothing: the app's defaults and the Library are wiped, and the first-run flow (Welcome sample, drawer, Terms, first Margin prompt) runs as shipped instead of being kept out of the way (J11).
 - **What to assert.** What a listener could see: the screen, the item or Margin that is playing, a clock that advances or holds, a control that is there and enabled. Not audio, not exact times or percentages, not layout pixels, and not anything that "looks wrong" but isn't a state; those stay with the agent run and the owner.
 - **Keep it short.** A script should finish in a few minutes. A long soak test is not a journey script.
