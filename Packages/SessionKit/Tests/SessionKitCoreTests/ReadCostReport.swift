@@ -79,6 +79,12 @@ struct ReadCostReport {
         return [
             ("listItemSummaries()", { _ = try store.listItemSummaries() }),
             ("listItemSummaries(includeDeleted)", { _ = try store.listItemSummaries(includeDeleted: true) }),
+            ("listItemsForMatching()", {
+                // The shared packet matcher's read (#2506), with a stand-in for the hashing it asks for.
+                _ = try store.listItemsForMatching(
+                    format: "cost-table", needsDigests: { _ in true },
+                    digests: { ItemTextDigests(normalizedContentSHA256: "n\($0.count)", exactEditionSHA256: "e\($0.count)") })
+            }),
             ("itemRevision(article)", { _ = store.itemRevision(id: article) }),
             ("loadPodcastDownload(itemId: mapped)", { _ = try store.loadPodcastDownload(itemId: mapped) }),
             ("loadPreparedAudioManifest(id:)", { _ = try store.loadPreparedAudioManifest(id: manifest) }),

@@ -59,13 +59,25 @@ public enum ListeningMapPacketItemMatcher {
         }
     }
 
+    /// The one document the packet's identity names, judged without reading any item's text when `textDigests` are
+    /// given (#2506). `match` begins with this; placing the chapters on a PDF's or EPUB's text comes after it, and is the
+    /// only step that needs the text.
+    public static func identityMatch(
+        packetItem: SharedItemIdentity,
+        among items: [Item],
+        textDigests: (Item) -> ItemTextDigests? = { _ in nil }
+    ) -> String? {
+        let candidates = items.filter { $0.deletedAt == nil && readableDocumentTypes.contains($0.mediaType) }
+        return SharedPacketItemMatcher.matchingItemId(for: packetItem, among: candidates, textDigests: textDigests)
+    }
+
     public static func match(
         packetItem: SharedItemIdentity,
         proposal: PortableListeningMapProposalArtifact,
         among items: [Item]
     ) -> Match {
         let candidates = items.filter { $0.deletedAt == nil && readableDocumentTypes.contains($0.mediaType) }
-        if let identityMatch = SharedPacketItemMatcher.matchingItemId(for: packetItem, among: candidates) {
+        if let identityMatch = identityMatch(packetItem: packetItem, among: candidates) {
             return .item(identityMatch)
         }
         guard packetItem.itemType == .pdf || packetItem.itemType == .epub else { return .none }

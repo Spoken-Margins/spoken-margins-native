@@ -9,7 +9,13 @@ import SessionKit
 public enum SharedItemIdentityBuilder {
     /// The recipient side: what `ImportedItemResolver.canRepresentSameWork` compares a packet against.
     /// `localAudioDigest` is the checksum of a valid local audiobook file, when there is one.
-    public static func localIdentity(for item: Item, localAudioDigest: String? = nil) -> SharedItemIdentity {
+    /// `textDigests` stand in for hashing `item.text` when the caller has them already (#2506); an item read without
+    /// its text needs them.
+    public static func localIdentity(
+        for item: Item,
+        localAudioDigest: String? = nil,
+        textDigests: ItemTextDigests? = nil
+    ) -> SharedItemIdentity {
         if let linked = linkedFileIdentity(for: item, localAudioDigest: localAudioDigest) { return linked }
         let isPodcast = isPodcast(item)
         let external = item.externalReference.flatMap { normalizedSharingURL($0) == nil ? nil : $0 }
@@ -24,9 +30,17 @@ public enum SharedItemIdentityBuilder {
             enclosureURL: enclosure,
             publishedAt: isPodcast ? bounded(item.publishedAt, 100) : nil,
             durationMs: item.media?.durationMs,
-            normalizedContentSHA256: isPodcast ? nil : PortableArticleAnchorResolver.normalizedContentSHA256(item.text ?? ""),
-            exactEditionSHA256: localAudioDigest ?? (isPodcast ? nil : PortableArticleAnchorResolver.exactEditionSHA256(item.text ?? ""))
+            normalizedContentSHA256: isPodcast ? nil
+                : (textDigests?.normalizedContentSHA256 ?? PortableArticleAnchorResolver.normalizedContentSHA256(item.text ?? "")),
+            exactEditionSHA256: localAudioDigest ?? (isPodcast ? nil
+                : (textDigests?.exactEditionSHA256 ?? PortableArticleAnchorResolver.exactEditionSHA256(item.text ?? "")))
         )
+    }
+
+    /// Whether the item is matched by the digests of its text, so a caller reading items without their text knows
+    /// whose digests to ask for. An episode of a podcast is matched by its address and GUID instead.
+    public static func isMatchedByItsText(_ item: Item) -> Bool {
+        !isPodcast(item)
     }
 
     /// An imported audio file the listener linked to a podcast episode (#755). It stays an audio file

@@ -576,8 +576,10 @@ final class SpokenMarginsPackageImportCoordinator {
         }
     }
 
-    /// The Library item a packet is about, and whether a map packet would replace the map that item has. Reading
-    /// every item and hashing its text to compare runs off the main actor (#2507).
+    /// The Library item a packet is about, and whether a map packet would replace the map that item has. Matching
+    /// runs off the main actor (#2507), and reads each item without its text: the digests of the text the packet is
+    /// compared by are kept beside the item, and hashed once for an item that has none yet (#2506). Only a PDF or EPUB
+    /// map packet that no item's identity names reads the documents whole, to place its chapters on their text.
     private func lookUpSourceMatch(
         for contents: VerifiedSpokenMarginsPackage,
         store: SQLiteSessionStore
@@ -587,13 +589,30 @@ final class SpokenMarginsPackageImportCoordinator {
             return PackageSourceMatch()
         }
         let found = try await StoreReader(store).read { store -> PackageSourceMatch in
-            let items = try store.listItems()
+            let rows = try store.listItemsForMatching(
+                format: PortableArticleAnchorResolver.itemTextDigestFormat,
+                needsDigests: SharedItemIdentityBuilder.isMatchedByItsText,
+                digests: PortableArticleAnchorResolver.itemTextDigests)
+            let items = rows.map(\.item)
+            let digestsById = Dictionary(rows.compactMap { row in row.textDigests.map { (row.item.id, $0) } },
+                                         uniquingKeysWith: { first, _ in first })
             guard let proposal = ListeningMapPacket.proposal(in: contents) else {
                 return PackageSourceMatch(itemId: SharedPacketItemMatcher.matchingItemId(
                     for: contents.manifest.item, among: items,
-                    ownedAudiobookDigest: { Self.ownedAudiobookDigest(for: $0, store: store) }))
+                    ownedAudiobookDigest: { Self.ownedAudiobookDigest(for: $0, store: store) },
+                    textDigests: { digestsById[$0.id] }))
             }
-            switch ListeningMapPacketItemMatcher.match(packetItem: contents.manifest.item, proposal: proposal, among: items) {
+            let packetItem = contents.manifest.item
+            let match: ListeningMapPacketItemMatcher.Match
+            if let id = ListeningMapPacketItemMatcher.identityMatch(
+                packetItem: packetItem, among: items, textDigests: { digestsById[$0.id] }) {
+                match = .item(id)
+            } else if packetItem.itemType == .pdf || packetItem.itemType == .epub {
+                match = ListeningMapPacketItemMatcher.match(packetItem: packetItem, proposal: proposal, among: try store.listItems())
+            } else {
+                match = .none
+            }
+            switch match {
             case .item(let id):
                 let replaces = try SharedTextListeningMapImporter.existing(
                     for: proposal, itemId: id, repository: store

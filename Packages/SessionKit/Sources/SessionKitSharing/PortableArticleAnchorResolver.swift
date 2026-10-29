@@ -20,6 +20,18 @@ public enum PortableArticleAnchorResolver {
             .joined()
     }
 
+    /// Both digests of a text, for the store to keep beside an item (#2506).
+    public static func itemTextDigests(_ text: String) -> ItemTextDigests {
+        ItemTextDigests(normalizedContentSHA256: normalizedContentSHA256(text), exactEditionSHA256: exactEditionSHA256(text))
+    }
+
+    /// Names how `itemTextDigests` hashes, for the store to tell a digest it kept from one this build would make.
+    /// Change the number whenever `normalizedText` or either hash changes. The system's major version is part of it
+    /// because the folding and the letter classes come from the system's text libraries, which an update can change.
+    public static var itemTextDigestFormat: String {
+        "1-\(ProcessInfo.processInfo.operatingSystemVersion.majorVersion)"
+    }
+
     public static func resolve(
         anchor: PortableAnchorEvidence,
         in sourceText: String,
