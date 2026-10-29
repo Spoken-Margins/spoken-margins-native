@@ -317,9 +317,9 @@ extension Gate1AppModel {
     }
 
     func skipAudioPreparationJob(id: String) async {
-        // Nothing is queued before the store is open, so there is nothing to edit without one.
-        guard let store else { return }
         do {
+            // Opened if need be: jobs saved by an earlier launch are in the file before this model opens it.
+            let store = try requireStore()
             // The jobs go first, in one transaction; the item is suppressed once we know which it is. A job the
             // automatic pass adds in that moment for the same item stays queued, and Skip removes it again.
             let skipped = try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey) {
@@ -339,9 +339,8 @@ extension Gate1AppModel {
     }
 
     func clearAudioPreparationQueue() async {
-        // Nothing is queued before the store is open, so there is nothing to edit without one.
-        guard let store else { return }
         do {
+            let store = try requireStore()
             libraryAudioLoop.stopAndInvalidate()
             let cleared = try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey) {
                 try AudioPreparationQueueEdits.clear(in: $0)
@@ -380,9 +379,8 @@ extension Gate1AppModel {
     }
 
     func prioritizeAudioPreparationJob(id: String) async {
-        // Nothing is queued before the store is open, so there is nothing to edit without one.
-        guard let store else { return }
         do {
+            let store = try requireStore()
             let pinned = try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey) {
                 try AudioPreparationQueueEdits.prioritize(id: id, in: $0)
             }
@@ -396,9 +394,10 @@ extension Gate1AppModel {
     }
 
     private func moveAudioPreparationJob(id: String, offset: Int) async {
-        guard offset == -1 || offset == 1, let store else { return }
+        guard offset == -1 || offset == 1 else { return }
         let activeItemId = activePlaybackItemId
         do {
+            let store = try requireStore()
             let moved = try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey) {
                 try AudioPreparationQueueEdits.move(id: id, by: offset, activeItemId: activeItemId, in: $0)
             }
@@ -464,9 +463,9 @@ extension Gate1AppModel {
     func enqueueAutomaticAudioPreparationJobs() async {
         guard automaticAudioPreparationPolicy == .whileCharging,
               hasAcceptedCurrentTerms,
-              let voice = ttsVoiceSelection.supertonicVoice,
-              let store else { return } // the queue is filled from Library rows, which come from an open store
+              let voice = ttsVoiceSelection.supertonicVoice else { return }
         do {
+            let store = try requireStore()
             let support = try applicationSupportDirectory()
             guard let assets = SupertonicAssetResolver.location() else { return }
             let signature = try await Task.detached(priority: .utility) {

@@ -2996,7 +2996,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(Set(defaults.stringArray(forKey: suppressionKey) ?? []), ["item-pill", "item-essay"])
     }
 
-    func testCompletedItemIsLabeledCompleteAndPurgedFromPreparationQueue() throws {
+    func testCompletedItemIsLabeledCompleteAndPurgedFromPreparationQueue() async throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "completed-queue-purge-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -3033,6 +3033,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         reloadedModel.bootstrapLibraryIfNeeded()
 
         XCTAssertEqual(reloadedModel.libraryItems.first(where: { $0.id == "item-pill" })?.isCompleted, true)
+        // Launch refreshes the queue off the main actor (#2507), so its purge lands a moment after bootstrap returns.
+        try await waitFor("the launch refresh to purge the completed item's job") {
+            (try? store.loadAudioPreparationJobs().contains(where: { $0.itemId == "item-pill" })) == false
+        }
         XCTAssertFalse(reloadedModel.audioPreparationQueue.contains(where: { $0.itemId == "item-pill" }))
         XCTAssertFalse(try store.loadAudioPreparationJobs().contains(where: { $0.itemId == "item-pill" }))
     }
