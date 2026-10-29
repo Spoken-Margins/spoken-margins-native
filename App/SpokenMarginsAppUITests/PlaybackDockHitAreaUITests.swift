@@ -183,7 +183,8 @@ final class PlaybackDockHitAreaUITests: XCTestCase {
 
         XCTContext.runActivity(named: "The chapter title opens the item from the far end of its row") { _ in
             let chapter = app.buttons["playback.dock.chapter.button"]
-            let frame = chapter.frame
+            // The dock re-lays out after a chapter change; a frame read mid-move tapped where the row used to be (#2884).
+            let frame = settledFrame(of: chapter)
             tap(CGPoint(x: frame.maxX - 4, y: frame.midY))
             XCTAssertTrue(element("item.screen").waitForExistence(timeout: 5)
                           && waitFor(element("playback.screen"), "exists == false"),
@@ -211,11 +212,25 @@ final class PlaybackDockHitAreaUITests: XCTestCase {
     /// Near each edge of the larger of the control's frame and a 44 pt square around its centre: leading, trailing,
     /// top, bottom. Two points in from the edge, so rounding never lands a tap on a neighbour.
     private func edgePoints(of element: XCUIElement) -> [CGPoint] {
-        let frame = element.frame
+        let frame = settledFrame(of: element)
         let halfWidth = max(frame.width, 44) / 2 - 2
         let halfHeight = max(frame.height, 44) / 2 - 2
         return [CGPoint(x: frame.midX - halfWidth, y: frame.midY), CGPoint(x: frame.midX + halfWidth, y: frame.midY),
                 CGPoint(x: frame.midX, y: frame.midY - halfHeight), CGPoint(x: frame.midX, y: frame.midY + halfHeight)]
+    }
+
+    /// The element's frame once two reads 0.3 s apart agree. After a chapter change the dock moves a moment later, and
+    /// a coordinate tap at the old position misses (#2884). Falls back to the last read if it never settles.
+    private func settledFrame(of element: XCUIElement, timeout: TimeInterval = 5) -> CGRect {
+        let deadline = Date().addingTimeInterval(timeout)
+        var frame = element.frame
+        while Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.3)
+            let next = element.frame
+            if next == frame { return next }
+            frame = next
+        }
+        return frame
     }
 
     private func tap(_ point: CGPoint) {
