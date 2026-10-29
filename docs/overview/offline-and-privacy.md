@@ -47,7 +47,7 @@ All of these default to off and are set in Settings.
 
 - The app can open a share link but has no screen that creates one or uploads a packet. The sealing code exists and is tested (`{kit}/SessionKit/ShareLinkSealing.swift`); a feature that uses it would come with its own opt-in.
 - There is no club mailbox, relay, SharePlay, CloudKit or push-notification code. The app does post local notifications from the phone itself (`{app}/ListeningReadyNotifications.swift`); they send nothing.
-- There is no remote AI-provider code: the OpenAI client and its settings were removed (#2845), so no request to a third-party model can be made. Summaries use Apple's on-device model.
+- There is no remote AI-provider code: the OpenAI client and its settings were removed (#2845), so the app itself makes no request to a third-party model. Summaries use Apple's on-device model. The one AI service in the picture is the opt-in "Help make listening maps" upload, described above, where the Spoken Margins server drafts a map.
 - The Safari extension, the share extension, the Live Activity extension and the Watch code make no network requests of their own. The Safari and share extensions write what you shared to a container the app reads (`App/SpokenMarginsBrowserTextExtension/Sources/SafariWebExtensionHandler.swift`, `App/SpokenMarginsShareExtension/Sources/SourceLinkShareViewController.swift`).
 
 ## What stays on the phone

@@ -401,7 +401,7 @@ struct SettingsScreen: View {
                         LabeledContent("Processing", value: "On device")
                             .accessibilityIdentifier("settings.ai.processing")
                         LabeledContent("Apple Foundation Model", value: model.localFoundationModelAvailabilityDescription)
-                        Text("Margin summaries stay on this device. Publisher podcast chapters and deterministic native-text Listening Maps do not require AI. Nothing you read or record is sent to an AI service.")
+                        Text("Margin summaries are made on this device. Publisher podcast chapters and deterministic native-text Listening Maps do not require AI. Spoken Margins has no third-party AI provider or API key setting. If you turn on Help make listening maps, podcast transcripts go to the Spoken Margins server, which uses an AI service to draft maps.")
                             .font(.caption)
                             .foregroundStyle(AppColors.secondaryText)
                             .accessibilityIdentifier("settings.ai.releaseBoundary")
