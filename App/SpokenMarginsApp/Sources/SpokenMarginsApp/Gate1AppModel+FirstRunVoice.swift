@@ -72,6 +72,9 @@ extension Gate1AppModel {
         let voiceId = ReadingVoiceChoice.phononVoiceId
         let progress: FirstRunVoiceDefault.Progress
         switch voices.activity[voiceId] ?? .idle {
+        case .downloading where voices.isAutomatic(voiceId) && !onWiFiNow:
+            // Wi-Fi only: iOS holds the task until Wi-Fi returns, so a percentage that doesn't move would mislead.
+            progress = .waitingForWiFi
         case .downloading(let bytes, let total):
             progress = .downloading(fraction: total > 0 ? Double(bytes) / Double(total) : nil)
         case .preparing:
@@ -94,6 +97,8 @@ struct PhononStatusLine: View {
     /// The chosen voice, passed in so a change of voice redraws this view.
     let choice: AppTTSVoiceSelection
     @ObservedObject var voices: VoiceDownloadsModel
+    /// Watched so the line changes when the phone joins or leaves Wi-Fi.
+    @ObservedObject var connectivity: ConnectivityMonitor
 
     var body: some View {
         if let line = model.phononStatusLine(voices: voices) {

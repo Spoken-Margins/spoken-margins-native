@@ -120,6 +120,21 @@ final class VoiceDownloadsTests: XCTestCase {
         XCTAssertFalse(defaults.bool(forKey: FirstRunVoiceDefault.downloadDueKey), "Phonon's Cancel is the listener saying no")
     }
 
+    /// #2858 audit: a Wi-Fi-only task is told apart from one the listener started by its own request, which is what
+    /// keeps its resume data (it carries the request) and its running task out of a mobile-data download.
+    func testAWiFiOnlyTaskIsToldApartFromOneTheListenerStarted() {
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let url = URL(string: "https://fixture.invalid/model.bin")!
+        var wifiOnly = URLRequest(url: url)
+        wifiOnly.allowsCellularAccess = false
+        wifiOnly.allowsExpensiveNetworkAccess = false
+        wifiOnly.allowsConstrainedNetworkAccess = false
+
+        XCTAssertTrue(BackgroundVoiceModelTransport.isWiFiOnly(session.downloadTask(with: wifiOnly)))
+        XCTAssertFalse(BackgroundVoiceModelTransport.isWiFiOnly(session.downloadTask(with: URLRequest(url: url))))
+    }
+
     func testTheDeviceProbeReadsAModelTheChipTableKnows() {
         // The simulator reports the simulated iPhone; every one iOS 26 runs on is in the table.
         XCTAssertNotNil(VoiceDeviceProbe.chipGeneration(), VoiceDeviceProbe.machineIdentifier())

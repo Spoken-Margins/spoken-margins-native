@@ -15,8 +15,8 @@ final class ConnectivityMonitor: ObservableObject, ConnectivityProviding {
     /// unknown and counts as online, so nothing is blocked on a guess.
     @Published private(set) var isOffline = false
     /// Mobile data or a personal hotspot, and Low Data Mode. Unknown counts as neither until the first update.
-    private(set) var isExpensive = false
-    private(set) var isConstrained = false
+    @Published private(set) var isExpensive = false
+    @Published private(set) var isConstrained = false
 
     private let monitor = NWPathMonitor()
     private let queue = DispatchQueue(label: "com.spokenmargins.connectivity")

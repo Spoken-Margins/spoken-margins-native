@@ -58,6 +58,9 @@ final class VoiceDownloadsModel: ObservableObject {
         set { defaults.set(newValue.sorted(), forKey: Self.pendingKey) }
     }
 
+    /// The app started this voice's pending download by itself (#2858), so it waits for Wi-Fi.
+    func isAutomatic(_ voiceId: String) -> Bool { automatic.contains(voiceId) }
+
     private var automatic: Set<String> {
         get { Set(defaults.stringArray(forKey: Self.automaticKey) ?? []) }
         set { defaults.set(newValue.sorted(), forKey: Self.automaticKey) }

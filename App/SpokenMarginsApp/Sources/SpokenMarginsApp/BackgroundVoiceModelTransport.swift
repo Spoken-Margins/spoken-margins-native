@@ -109,7 +109,9 @@ final class BackgroundVoiceModelTransport: NSObject, VoiceModelTransport, URLSes
         } onCancel: {
             self.lock.withLock { self.waiters[task.taskIdentifier]?.cancelledByCaller = true }
             task.cancel { [weak self] data in
-                if let data { self?.saveResumeData(data, for: url) }
+                // Resume data carries the request it came from, so a Wi-Fi-only file's would hold a later download the
+                // listener starts themselves to Wi-Fi too (#2858 audit). Those files start over instead.
+                if let data, !Self.isWiFiOnly(task) { self?.saveResumeData(data, for: url) }
             }
         }
     }
@@ -117,7 +119,8 @@ final class BackgroundVoiceModelTransport: NSObject, VoiceModelTransport, URLSes
     private func newTask(for url: URL, offset: Int) -> URLSessionDownloadTask {
         let task: URLSessionDownloadTask
         // Resume data carries the request it was made from, which may allow mobile data, so a Wi-Fi-only file
-        // starts over and leaves the saved data for a download the listener starts themselves.
+        // starts over and leaves the saved data for a download the listener starts themselves. Wi-Fi-only
+        // files save none (`isWiFiOnly`), so what is saved always came from a download the listener started.
         if offset == 0, !Self.wifiOnly, let resumeData = takeResumeData(for: url) {
             task = session.downloadTask(withResumeData: resumeData)
         } else {
@@ -139,8 +142,11 @@ final class BackgroundVoiceModelTransport: NSObject, VoiceModelTransport, URLSes
     private func existingTask(for url: URL, offset: Int) async -> URLSessionDownloadTask? {
         let tasks = await session.allTasks
         let waiting = lock.withLock { Set(waiters.keys) }
+        // Only a task made under the same rule: a download the listener starts is never handed a Wi-Fi-only one.
+        let wifiOnly = Self.wifiOnly
         return tasks.first {
-            $0.taskDescription == Self.describe(url: url, offset: offset) && $0.state != .completed && !waiting.contains($0.taskIdentifier)
+            $0.taskDescription == Self.describe(url: url, offset: offset) && $0.state != .completed
+                && !waiting.contains($0.taskIdentifier) && Self.isWiFiOnly($0) == wifiOnly
         } as? URLSessionDownloadTask
     }
 
@@ -163,7 +169,8 @@ final class BackgroundVoiceModelTransport: NSObject, VoiceModelTransport, URLSes
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         let (waiter, file) = lock.withLock { (waiters.removeValue(forKey: task.taskIdentifier), finishedFiles.removeValue(forKey: task.taskIdentifier)) }
         let url = task.originalRequest?.url ?? Self.url(fromDescription: task.taskDescription)
-        if let error, let url, let data = (error as NSError).userInfo[NSURLSessionDownloadTaskResumeData] as? Data {
+        if let error, let url, !Self.isWiFiOnly(task),
+           let data = (error as NSError).userInfo[NSURLSessionDownloadTaskResumeData] as? Data {
             saveResumeData(data, for: url)
         }
         guard let waiter else {
@@ -249,6 +256,11 @@ final class BackgroundVoiceModelTransport: NSObject, VoiceModelTransport, URLSes
         let file = folder.appending(path: "resume-\(name(for: url))")
         defer { try? FileManager.default.removeItem(at: file) }
         return try? Data(contentsOf: file)
+    }
+
+    /// Made by an install the app started by itself (`wifiOnly`): its request refuses mobile data.
+    static func isWiFiOnly(_ task: URLSessionTask) -> Bool {
+        task.originalRequest?.allowsCellularAccess == false
     }
 
     private static func describe(url: URL, offset: Int) -> String { "\(offset) \(url.absoluteString)" }
