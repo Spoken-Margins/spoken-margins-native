@@ -34,7 +34,29 @@ extension Gate1AppModel {
     }
 
     var shouldShowGuidedOnboardingCoach: Bool {
-        onboardingProgress.shouldShowCoach(guidedItemIsSelected: selectedItem.id == Self.guidedOnboardingItemId)
+        !isFirstMarginPromptShowing
+            && onboardingProgress.shouldShowCoach(guidedItemIsSelected: selectedItem.id == Self.guidedOnboardingItemId)
+    }
+
+    /// One thing asks for attention at a time (#2852): the prompt and the coach share the Now Playing screen, so the
+    /// coach waits for the prompt. The Library strip is on another screen and is never up with the prompt.
+    var isFirstMarginPromptShowing: Bool {
+        onboardingProgress.shouldShowFirstMarginPrompt(
+            hasActiveSession: hasActiveSession, suppressed: Self.isRunningUnitTests || UITestingHooks.isActive
+        )
+    }
+
+    /// Either way the prompt has been seen: it does not come back.
+    func dismissFirstMarginPrompt() {
+        changeOnboardingProgress { $0.firstMarginPromptSeen() }
+    }
+
+    /// The prompt's tap: the same Add a Margin as the button below; the microphone line and the written fallback
+    /// are that flow's.
+    func addFirstMargin() {
+        beginInterjection()
+        // A tap Add a Margin refused (a save under way, a skim) leaves the prompt for the next try.
+        if isRequestingRecordingPermission || snapshot.isRecording { dismissFirstMarginPrompt() }
     }
 
     func isOnboardingStepComplete(_ step: OnboardingStep) -> Bool {
