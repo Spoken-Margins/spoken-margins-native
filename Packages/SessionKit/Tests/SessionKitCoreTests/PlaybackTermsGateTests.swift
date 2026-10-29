@@ -86,4 +86,25 @@ final class PlaybackTermsGateTests: XCTestCase {
         XCTAssertEqual(PlaybackTermsGate.presentation(playbackIsWaiting: true, termsAccepted: true), .complete)
         XCTAssertEqual(PlaybackTermsGate.presentation(playbackIsWaiting: false, termsAccepted: true), .complete)
     }
+
+    /// #2506: the Play tap reads the item's summary, not the item, so the gate must answer the same for both.
+    func testASummaryIsGatedExactlyLikeTheItemItCameFrom() {
+        for item in [podcast, downloaded, article, spokenArticle] {
+            let summary = LibraryItemSummary(item)
+            for (accepted, pending) in [(false, true), (false, false), (true, true), (true, false)] {
+                XCTAssertEqual(
+                    PlaybackTermsGate.requiresTerms(for: summary, termsAccepted: accepted, bundledVoicePending: pending),
+                    PlaybackTermsGate.requiresTerms(for: item, termsAccepted: accepted, bundledVoicePending: pending),
+                    "\(item.id) accepted=\(accepted) pending=\(pending)")
+            }
+            XCTAssertEqual(PlaybackTermsGate.playsRecordedAudio(summary), PlaybackTermsGate.playsRecordedAudio(item), item.id)
+        }
+    }
+
+    func testTheItemIsOnlyWorthReadingWhileTheTermsAreOpenAndAVoiceIsWaiting() {
+        XCTAssertTrue(PlaybackTermsGate.mayRequireTerms(termsAccepted: false, bundledVoicePending: true))
+        XCTAssertFalse(PlaybackTermsGate.mayRequireTerms(termsAccepted: true, bundledVoicePending: true))
+        XCTAssertFalse(PlaybackTermsGate.mayRequireTerms(termsAccepted: false, bundledVoicePending: false))
+        XCTAssertFalse(PlaybackTermsGate.mayRequireTerms(termsAccepted: true, bundledVoicePending: false))
+    }
 }

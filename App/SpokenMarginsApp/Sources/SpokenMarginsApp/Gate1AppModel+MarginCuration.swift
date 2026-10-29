@@ -66,7 +66,7 @@ extension Gate1AppModel {
     func currentMargin(matching interjection: Interjection) -> (margin: Interjection?, verdict: MarginTranscriptionRetry.Verdict) {
         let store = try? requireStore()
         let current = (try? store?.loadInterjections(sessionId: interjection.sessionId))?.first { $0.id == interjection.id }
-        let itemDeletedAt = (try? store?.loadItem(id: interjection.itemId))?.deletedAt
+        let itemDeletedAt = (try? store?.loadItemSummary(id: interjection.itemId))?.deletedAt
         return (current, MarginTranscriptionRetry.verdict(current: current, itemDeletedAt: itemDeletedAt))
     }
 
