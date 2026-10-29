@@ -386,8 +386,10 @@ def render_marker(truth: Truth, spoken: Spoken, pos, first_at: dict[int, int], m
             claimed[g] = kind
         return "named_read"
     if words[0].isdigit() and marker["kind"] == "citation" and re.fullmatch(r"(?:19|20)\d\d", words[0]) \
-            and not reads_the_label(words, marker["label"]):
+            and not reads_the_label(words, marker["label"]) \
+            and re.search(rf"\b{words[0]}[a-z]?\s*[);]", spoken.lines[spoken.line_of[gap[0]]]):
         # "(Weber & Davis 1987)" printed where the ground truth numbers it [71]: the printed year was read.
+        # A year in the next sentence ("[12]. 2020 was") is not in a bracket and is the sentence's.
         claimed[gap[0]] = kind
         return "label_read"
     if words[0].isdigit() and marker["kind"] == "citation" and not reads_the_label(words, marker["label"]):

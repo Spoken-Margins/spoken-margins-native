@@ -453,6 +453,8 @@ public enum StructuredDocumentBuilder {
             for match in regex.matches(in: slice, range: NSRange(location: 0, length: nsSlice.length)) {
                 let spaced = match.range(at: 5).location != NSNotFound
                 if spaced, !setsSuperscripts { continue }
+                if spaced, nsSlice.character(at: match.range(at: 5).location + 1) == 0x0A,
+                   !continuesAParagraph(nsSlice, digits: match.range(at: 6)) { continue }
                 let afterWord = match.range(at: 1).location != NSNotFound || spaced
                 var digits = match.range(at: spaced ? 6 : afterWord ? 2 : 4)
                 func following() -> Character? {
@@ -511,6 +513,24 @@ public enum StructuredDocumentBuilder {
             }
         }
         return result
+    }
+
+    /// A number opening a line ("46 In the CD16+ NK cells, the expression rose") is a wrapped superscript
+    /// only inside running prose: not a heading stub ("2 Materials and Methods"), and not a numbered list,
+    /// whose lines before and after open with the numbers either side of it ("1 Mix…", "2 Heat…").
+    private static func continuesAParagraph(_ text: NSString, digits: NSRange) -> Bool {
+        let numbers = text.substring(with: digits).split { !$0.isNumber }.compactMap { Int($0) }
+        guard let first = numbers.first, let last = numbers.last else { return false }
+        let line = text.lineRange(for: digits)
+        let end = digits.location + digits.length
+        let rest = text.substring(with: NSRange(location: end, length: line.location + line.length - end))
+        guard rest.split(whereSeparator: \.isWhitespace).count >= 4 else { return false }
+        func opens(_ range: NSRange, with number: Int) -> Bool {
+            text.substring(with: range).range(of: "^\\s*\(number)[ .)]", options: .regularExpression) != nil
+        }
+        if line.location > 0, opens(text.lineRange(for: NSRange(location: line.location - 1, length: 0)), with: first - 1) { return false }
+        let after = line.location + line.length
+        return !(after < text.length && opens(text.lineRange(for: NSRange(location: after, length: 0)), with: last + 1))
     }
 
     private static let nonCitationAbbreviations: Set<String> = [

@@ -424,7 +424,7 @@ final class StructuredDocumentTests: XCTestCase {
         }
         XCTAssertEqual(opening("cytokines such as IFN-γ.", "46 In the CD16+ NK cells, expression rose."), ["46"])
         XCTAssertEqual(opening("in one or another direction”", ".", "12 He published his findings."), ["12"])
-        XCTAssertEqual(opening("as reported before.", "14,15 Essential definitions followed."), ["14,15"])
+        XCTAssertEqual(opening("as reported before.", "14,15 Essential definitions of the term followed."), ["14,15"])
         // Prose keeps its numbers: no superscripts elsewhere, no such entry, a lowercase word, a number before the stop.
         XCTAssertEqual(opening("cytokines such as IFN-γ.", "46 In the CD16+ NK cells, expression rose.", with: []), [])
         XCTAssertEqual(opening("cytokines such as IFN-γ.", "60 In the CD16+ NK cells, expression rose."), [])
@@ -432,6 +432,10 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(opening("Samples are in Table 2.", "7 Of these were kept."), [])
         XCTAssertEqual(opening("Counts rose; see Fig.", "7 Of these, none were."), [])
         XCTAssertEqual(opening("cytokines such as IFN-γ", "46 In the CD16+ NK cells, expression rose."), [], "no full stop before the line break")
+        // A heading stub or a numbered list that opens the line keeps its number.
+        XCTAssertEqual(opening("Ten were excluded.", "2 Materials and Methods"), [])
+        XCTAssertEqual(opening("The steps were as follows.", "1 Mix the reagents in a tube.", "2 Heat the tube to 90 C."), [])
+        XCTAssertEqual(opening("Then heat it.", "3 Cool the tube on ice for a while.", "4 Spin the tube down."), [])
     }
 
     func testASuperscriptStuckToEtAlIsACitation() {
@@ -441,7 +445,7 @@ final class StructuredDocumentTests: XCTestCase {
         // A spaced number after "et al." stays read, and so does a number no entry has.
         XCTAssertEqual(citationLabels(["As noted by Cao et al. 12 of the samples failed."], references: numberedReferences), [])
         XCTAssertEqual(citationLabels(["Cao et al.45 considered a block."], references: numberedReferences), [])
-        XCTAssertEqual(citationLabels(["The metal.3 considered a block."], references: numberedReferences), [], "only after et al.")
+        XCTAssertEqual(citationLabels(["The Bet al.3 considered a block."], references: numberedReferences), [], "only after the words et al.")
     }
 
     func testNeighbouringSuperscriptNumbersBeforeALowercaseWordAreOneCitation() {

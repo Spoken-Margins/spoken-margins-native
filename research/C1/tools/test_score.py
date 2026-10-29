@@ -120,6 +120,7 @@ class ScoreTests(unittest.TestCase):
             ("(Wang et al., 2023; Lau et al., 2024)", " 5", "silent"),
             ("39, Section 15.7", " 2", "silent"),
             ("71", " (& 1987)", "label_read"),
+            ("71", " 1987", "silent"),
             ("7 27–29", " 7 27–29", "number_read"),
             ("13", " [1 3]", "number_read"),
             ("12", " 12", "number_read"),
