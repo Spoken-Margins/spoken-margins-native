@@ -26,7 +26,7 @@ Publishers: BMC (Springer Nature); BMJ; Cell Press (Elsevier); Elsevier; F1000 (
 - Median clutter rate: **24.2%** of spoken words
 - Median missing body text: **0.9%**
 - Median reading-order breaks: 2.38 per 1000 body words
-- Median extraction time: 948 ms
+- Median extraction time: 984 ms
 
 ### Failure categories ranked by listener cost
 
@@ -448,7 +448,7 @@ Ranked by listener cost per minute of real body text.
 - Median clutter rate: **10.3%** of spoken words
 - Median missing body text: **1.0%**
 - Median reading-order breaks: 1.00 per 1000 body words
-- Median extraction time: 1176 ms
+- Median extraction time: 1381 ms
 
 ### Failure categories ranked by listener cost
 
@@ -478,18 +478,18 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 | Category | Words | Share of spoken |
 | --- | ---: | ---: |
-| body | 415749 | 75.8% |
-| math | 28909 | 5.3% |
+| body | 415750 | 75.8% |
+| math | 28916 | 5.3% |
 | caption | 26924 | 4.9% |
 | table | 12473 | 2.3% |
-| unattributed_prose | 10713 | 2.0% |
+| unattributed_prose | 10716 | 2.0% |
 | back_matter | 9351 | 1.7% |
 | reference | 8102 | 1.5% |
 | announcement | 7542 | 1.4% |
-| equation | 6578 | 1.2% |
+| equation | 6575 | 1.2% |
 | front_matter | 4504 | 0.8% |
 | repeated | 4376 | 0.8% |
-| furniture | 4134 | 0.8% |
+| furniture | 4129 | 0.8% |
 | inline_residue | 3972 | 0.7% |
 | fragment | 1760 | 0.3% |
 | footnote | 1627 | 0.3% |
@@ -506,7 +506,7 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 - Footnote markers (95 sites): label read 43 (45%), silent 35 (37%), number read 9 (9%), context missing 6 (6%), glued number 2 (2%)
 - Figure and table captions: 511 of 544 read aloud (≥ half their words spoken)
 - Tables: 48 of 203 had their cells read aloud (≥ 30% of cell words)
-- Mid-sentence interruptions by what interrupted: {'unattributed_prose': 259, 'announcement': 203, 'caption': 138, 'furniture': 38, 'repeated': 33, 'table': 20, 'front_matter': 13, 'equation': 7, 'stamp_link': 7, 'fragment': 6, 'reference': 6, 'footnote': 3}
+- Mid-sentence interruptions by what interrupted: {'unattributed_prose': 260, 'announcement': 203, 'caption': 138, 'furniture': 38, 'repeated': 33, 'table': 20, 'front_matter': 13, 'equation': 7, 'stamp_link': 7, 'fragment': 6, 'reference': 6, 'footnote': 3}
 - Line-end hyphenation left unrepaired: 19 words
 
 Marker outcomes: *silent* (nothing spoken between the words around it), *spoken label* ("citation 12", the app's normalizer), *number read* ("cells 12 divide"), *glued number* ("cells12"), *label read* (the author-year text read in full), *context missing* (the neighbouring words weren't spoken, so the marker can't be judged).
