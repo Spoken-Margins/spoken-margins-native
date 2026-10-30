@@ -921,6 +921,51 @@ button:disabled {
   font-size: 1rem;
 }
 
+.composer-hint {
+  margin-top: -4px;
+  font-size: 0.9375rem;
+}
+
+.composer textarea#voice-words {
+  min-height: 64px;
+}
+
+/* Sharing an episode's Margins as a file. */
+.share-margins {
+  display: grid;
+  gap: 10px;
+  padding-top: 6px;
+}
+
+.share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* A `.spokenmargins` file dragged over the app. Pointer events stay on, so the drop lands here. */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: var(--gutter);
+  background: rgb(15 25 45 / 0.55);
+}
+
+.drop-overlay p {
+  max-width: 22em;
+  padding: 20px 24px;
+  border-radius: 14px;
+  border: 2px dashed var(--blue);
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 650;
+  text-align: center;
+  pointer-events: none;
+}
+
 /* ---------- Dialogs, sheets, toasts ---------- */
 
 .dialog,

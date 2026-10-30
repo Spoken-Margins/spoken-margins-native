@@ -94,3 +94,15 @@ export const CloseIcon = () => (
     <path d="M6 6l12 12M18 6L6 18" />
   </Icon>
 );
+export const DownloadIcon = () => (
+  <Icon>
+    <path d="M12 4v11M7.5 10.5L12 15l4.5-4.5" />
+    <path d="M5 19h14" />
+  </Icon>
+);
+export const ShareIcon = () => (
+  <Icon>
+    <path d="M12 15V4M8 7.5L12 4l4 3.5" />
+    <path d="M7 11H5.5v9h13v-9H17" />
+  </Icon>
+);

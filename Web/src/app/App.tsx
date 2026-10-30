@@ -1,8 +1,9 @@
 // The app's frame: Four tabs (Library, Following, Margins, Settings; Design/proposals/four-tabs.md), the
 // mini player above the tab bar, and Now Playing over everything.
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type DragEvent, type ReactNode } from 'react';
 import { DataProvider } from './data.tsx';
 import { FollowingIcon, LibraryIcon, MarginsIcon, SettingsIcon } from './icons.tsx';
+import { openFiles, useOpenMarginFile } from './import.tsx';
 import { PlayerProvider } from './player.tsx';
 import { Following } from './screens/Following.tsx';
 import { Library } from './screens/Library.tsx';
@@ -29,7 +30,7 @@ function Shell() {
   const [tab, setTabState] = useState<Tab>(tabFromHash);
   const [nowPlaying, setNowPlaying] = useState(false);
   const [followOpen, setFollowOpen] = useState(false);
-  useSharedFiles();
+  const [dropping, setDropping] = useState(false);
 
   const setTab = useCallback((next: Tab) => {
     setTabState(next);
@@ -43,9 +44,34 @@ function Shell() {
   }, []);
 
   const openPlayer = useCallback(() => setNowPlaying(true), []);
+  const openMarginFile = useOpenMarginFile(openPlayer);
+  useSharedFiles(openMarginFile);
+
+  // A `.spokenmargins` file dropped anywhere on the app opens like a picked one.
+  const carriesFiles = (event: DragEvent) => Array.from(event.dataTransfer.types).includes('Files');
+  const onDragOver = (event: DragEvent) => {
+    if (!carriesFiles(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    setDropping(true);
+  };
+  const onDrop = (event: DragEvent) => {
+    if (!carriesFiles(event)) return;
+    event.preventDefault();
+    setDropping(false);
+    void openFiles(Array.from(event.dataTransfer.files), openMarginFile);
+  };
 
   return (
-    <div className="app">
+    <div
+      className="app"
+      onDragOver={onDragOver}
+      onDragLeave={(event) => {
+        // Once shown, the overlay covers the app, so a drag leaving it has left the window.
+        if ((event.target as HTMLElement).classList.contains('drop-overlay')) setDropping(false);
+      }}
+      onDrop={onDrop}
+    >
       <nav className="tabbar" aria-label="Sections" inert={nowPlaying}>
         <span className="brand" aria-hidden="true">
           <img src="./icons/icon.svg" alt="" width="28" height="28" />
@@ -69,11 +95,16 @@ function Shell() {
           />
         )}
         {tab === 'following' && <Following onPlay={openPlayer} followOpen={followOpen} setFollowOpen={setFollowOpen} />}
-        {tab === 'margins' && <Margins onPlay={openPlayer} />}
+        {tab === 'margins' && <Margins onPlay={openPlayer} onOpenFile={openMarginFile} />}
         {tab === 'settings' && <Settings />}
       </main>
       {!nowPlaying && <MiniPlayer onOpen={openPlayer} />}
       {nowPlaying && <NowPlaying onClose={() => setNowPlaying(false)} />}
+      {dropping && (
+        <div className="drop-overlay" aria-hidden="true">
+          <p>Drop a .spokenmargins file to open its Margins</p>
+        </div>
+      )}
     </div>
   );
 }

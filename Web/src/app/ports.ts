@@ -1,23 +1,23 @@
-// The UI's view of the logic modules other threads are building (#2977, wave 1):
-// - `src/sources/` (#2983): podcast search, feed reading, Substack voice, the relay path;
-// - `src/packet/` (#2984): `.spokenmargins` read and write, and voice recording to AAC.
-// The UI talks only to these interfaces. Until those modules merge, `stubs/` implements them well enough
-// to use the app; wave 2 (#2979) swaps in the real ones in `services.ts` and nothing else changes.
+// The UI's view of the logic modules: `src/sources/` (#2983: podcast search, feed reading, Substack voice, the
+// relay path) and `src/packet/` (#2984: `.spokenmargins` read and write, voice recording to AAC). The UI talks only
+// to these interfaces; `services.ts` binds them to the real modules (#2979).
 import type { AudioOrigin, Episode, Margin, Show } from '../shared/model.ts';
 
-/** Thrown when a feed can't be read straight from the browser and the listener hasn't allowed the relay. */
-export class NeedsRelayConsent extends Error {
-  readonly url: string;
-  constructor(url: string) {
-    super('This feed needs the Spoken Margins server to read it.');
-    this.name = 'NeedsRelayConsent';
-    this.url = url;
-  }
-}
+/**
+ * Thrown when a feed can't be read straight from the browser and the listener hasn't allowed the relay. It is the
+ * sources module's own class, so `instanceof` works on what the real module throws.
+ */
+export { NeedsRelayConsent } from '../sources/read.ts';
 
 export interface FeedRead {
   show: Show;
   episodes: Episode[];
+}
+
+export interface PostVoice {
+  audioUrl: string;
+  audioOrigin: AudioOrigin;
+  durationSeconds?: number;
 }
 
 export interface SourcesPort {
@@ -29,10 +29,7 @@ export interface SourcesPort {
    * Finds a Substack post's own voice. Called only when the listener taps the post (owner, 2026-10-21),
    * which is why the reason is part of the call.
    */
-  findPostVoice(
-    pageUrl: string,
-    options: { relayAllowed: boolean; reason: 'listener-tap' },
-  ): Promise<{ audioUrl: string; audioOrigin: AudioOrigin } | null>;
+  findPostVoice(pageUrl: string, options: { relayAllowed: boolean; reason: 'listener-tap' }): Promise<PostVoice | null>;
 }
 
 export interface RecordedVoice {
@@ -53,14 +50,35 @@ export interface RecorderPort {
   start(): Promise<VoiceRecording>;
 }
 
+/** The episode a packet is about, as far as the packet says. */
+export type PacketEpisode = Omit<Episode, 'id' | 'showId'> & { showTitle?: string; publisher?: string };
+
 export interface PacketRead {
-  /** What the packet says about the episode it belongs to, for matching against the Library. */
-  episode: Partial<Episode> & { title?: string };
+  contentDigest: string;
+  /** The sender's name, when they gave one. */
+  sender?: string;
+  episode: PacketEpisode;
+  /** Margins placed by time. Their `episodeId` is a placeholder until the importer places them. */
   margins: Margin[];
+  /** Margins on an article's text, which the web app can't place yet. */
+  textMarginCount: number;
+}
+
+export interface PacketWritten {
+  bytes: Uint8Array;
+  fileName: string;
+  mimeType: string;
+  /** Ids of the Margins in the file. */
+  included: string[];
+  /** The app's words for Margins left out (no words to share), when any were. */
+  notice?: string;
 }
 
 export interface PacketPort {
-  readPacket(bytes: Uint8Array): Promise<PacketRead>;
+  /** Opens a `.spokenmargins` file. Throws a `PacketError` with a plain message when it can't. */
+  readPacket(bytes: Uint8Array, fileName?: string): Promise<PacketRead>;
+  /** Writes one episode's Margins as a `.spokenmargins` file the iPhone app imports. */
+  writePacket(episode: Episode, margins: readonly Margin[], show?: Show): Promise<PacketWritten>;
 }
 
 export interface Services {

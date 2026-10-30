@@ -531,7 +531,7 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
     if (voiceAsset) {
       const data = entries.get(voiceAsset.path) as Uint8Array;
       margin.voice = {
-        blob: new Blob([data], { type: 'audio/mp4' }),
+        blob: new Blob([data as BlobPart], { type: 'audio/mp4' }),
         mimeType: 'audio/mp4',
         durationSeconds: (voiceDurations.get(canon(voiceAsset.id)) ?? voiceAsset.durationMs ?? 0) / 1000,
       };
