@@ -32,3 +32,16 @@ One writer per folder while the first wave runs in parallel.
   it through the Spoken Margins server, which keeps nothing. A Substack post page is read only when the
   listener taps that post (owner, 2026-10-21).
 - **Packets stay importable by Build 32 and Build 34.** Voice Margins are AAC in `.m4a`.
+
+## Android wrapper (#2981)
+
+`android/` is a Capacitor project that serves the same Vite build in an Android WebView. Inside it, feeds,
+Substack pages and podcast search are read with Android's own HTTP stack (`src/sources/native-http.ts`), so no
+site blocks the read and there is no relay and no consent question. The read path picks that transport itself;
+every rule about what is read and when stays in `read.ts` and `search.ts`.
+
+- `npm run android:sync` builds the web app and copies it into `android/`.
+- `npm run android:build` also runs Gradle and writes `android/app/build/outputs/apk/debug/app-debug.apk`.
+  It needs JDK 21 (`JAVA_HOME`) and an Android SDK whose licences are already accepted (`ANDROID_HOME`, or
+  `sdk.dir` in the git-ignored `android/local.properties`). Gradle fetches the missing SDK platform itself.
+- Nothing here is verified on a device until someone installs the APK.
