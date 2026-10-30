@@ -22,6 +22,10 @@ Anonymous tokens (#737, DESIGN.md §11) stay off until the owner runs `smserver 
 
 Map uploads can require one of those tokens (#743, DESIGN.md §10): `smserver switch ... mapUploadToken on`, with `tokens` also on. Leave it off until an app build sends tokens with its uploads; until then it would refuse every upload.
 
+## Feed relay (#2985)
+
+`GET /api/v1/relay?url=<http(s) URL>` fetches one feed or page for the web app when the publisher sends no CORS header, and keeps nothing: no URL in any log (the request log names the route only), no cache, and no cookies or listener headers in either direction. It answers the upstream body with its content type, or `{"error": code}`. It needs both `serve -relay-origins https://<web app origin>[,…]` (the origins that get `Access-Control-Allow-Origin`; any other `Origin` is refused) and `smserver switch ... relay on`; with either missing it answers 503 `disabled`. Limits, all in `internal/relay`: ports 80 and 443, public addresses only after resolution (the checked address is the one dialed, and every redirect is re-checked, at most 5), 10 s, 5 MB, feed and HTML types only, 4 fetches in flight, and 120 per client per hour. Caddy already proxies `/api/*`, so deploying needs no Caddy change.
+
 ## Share links (#486)
 
 The `links` service is off by default. Deployment and enabling it stay with the

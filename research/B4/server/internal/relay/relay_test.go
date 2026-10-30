@@ -156,6 +156,19 @@ func TestPublicAddr(t *testing.T) {
 	}
 }
 
+func TestValidOrigin(t *testing.T) {
+	for _, s := range []string{"https://web.spokenmargins.app", "https://example.com:8443", "http://localhost:5173", "http://127.0.0.1:5173"} {
+		if !relay.ValidOrigin(s) {
+			t.Errorf("%s should be valid", s)
+		}
+	}
+	for _, s := range []string{"", "*", "https://*.example.com", "http://example.com", "https://example.com/", "https://example.com/app", "https://u@example.com", "https://example.com?x=1", "null", "ftp://example.com", "HTTPS://example.com"} {
+		if relay.ValidOrigin(s) {
+			t.Errorf("%q should be refused", s)
+		}
+	}
+}
+
 func TestDefaults(t *testing.T) {
 	if relay.DefaultTimeout != 10*time.Second || relay.DefaultMaxBytes != 5<<20 || relay.DefaultMaxRedirects != 5 {
 		t.Fatalf("defaults changed: %v %d %d", relay.DefaultTimeout, relay.DefaultMaxBytes, relay.DefaultMaxRedirects)

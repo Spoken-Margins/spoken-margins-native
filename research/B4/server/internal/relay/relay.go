@@ -161,6 +161,26 @@ func (r *Relay) init() {
 	})
 }
 
+// ValidOrigin reports whether s is a browser origin the relay may be
+// configured with: https://host[:port], or http on localhost for a dev
+// server. No path, query, credentials or wildcard.
+func ValidOrigin(s string) bool {
+	u, err := url.Parse(s)
+	if err != nil || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Hostname() == "" || strings.Contains(s, "*") {
+		return false
+	}
+	if u.Scheme+"://"+u.Host != s {
+		return false
+	}
+	switch u.Scheme {
+	case "https":
+		return true
+	case "http":
+		return u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1"
+	}
+	return false
+}
+
 // AllowedOrigin reports whether a browser origin may read relayed responses.
 func (r *Relay) AllowedOrigin(origin string) bool {
 	for _, o := range r.Origins {
