@@ -523,6 +523,14 @@ private actor PlacementPassProbe {
     }
 }
 
+/// What `resolveReplacingThePass`'s diagnostic hook captured.
+@MainActor
+private final class PlacementPassHook {
+    var realPass: Task<Void, Never>?
+    var probe: PlacementPassProbe?
+    var failure: (any Error)?
+}
+
 /// Everything the coordinator's dependencies reported, in the order it happened.
 @MainActor
 private final class PlacementSpies {
@@ -693,25 +701,23 @@ private final class PlacementCoordinatorHarness {
         probe: PodcastPlacementPassCoordinator.Context,
         realPass: Task<Void, Never>
     ) {
-        var realPass: Task<Void, Never>?
-        var probe: PlacementPassProbe?
-        var failure: (any Error)?
+        let hook = PlacementPassHook()
         spies.onDiagnostic = { [unowned self] key, value in
             guard key == "importedPodcastAnchorResolution:\(self.itemId)", value.hasPrefix("scheduled:") else { return }
             do {
                 let submission = self.coordinator.matching.schedule(try self.identicalRequest(url: url)) { _ in }
                 // An identical request is kept, not replaced: this must be the pass `resolve` just started.
                 guard submission.joined else { throw PlacementTestFailure() }
-                realPass = submission.completion
-                probe = try self.scheduleProbePass(url: url)
+                hook.realPass = submission.completion
+                hook.probe = try self.scheduleProbePass(url: url)
             } catch {
-                failure = error
+                hook.failure = error
             }
         }
         defer { spies.onDiagnostic = nil }
         let outcome = await coordinator.resolveAndWait(itemId: itemId, localURL: url)
-        if let failure { throw failure }
-        guard let realPass, let probe else { throw PlacementTestFailure() }
+        if let failure = hook.failure { throw failure }
+        guard let realPass = hook.realPass, let probe = hook.probe else { throw PlacementTestFailure() }
         return (outcome, try await startedContext(of: probe), realPass)
     }
 
