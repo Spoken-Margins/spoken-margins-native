@@ -73,37 +73,12 @@ final class Gate1AppModel: ObservableObject {
     var snapshot = SessionSnapshot() {
         willSet { publishSnapshotChange(to: newValue) }
         didSet {
-            recordPlaybackEventState(previous: oldValue)
-            if oldValue.sessionId != snapshot.sessionId { resumeDeferredPodcastPlacements() }
-            if oldValue.isRecording, !snapshot.isRecording { endCaptureWatch() }
-            if !oldValue.isRecording, snapshot.isRecording { startCaptureWatch() }
-            settleSpeechInterruptionResume()
-            listeningSignals.snapshotChanged(from: oldValue, to: snapshot); playQueueSnapshotChanged(from: oldValue, to: snapshot)
-            updateNarrationVoiceNotice()
-            if playingImportedCommentary != nil,
-               oldValue.sessionId != snapshot.sessionId || oldValue.itemId != snapshot.itemId
-                || oldValue.targetId != snapshot.targetId || snapshot.status.isPlaybackActive {
-                stopImportedCommentaryPlayback(resumeSource: false)
-            }
-            if snapshot.status.isPlaybackActive { releaseOwnMarginReturn(); libraryAudioLoop.renderPolicy.noteListenerEngaged() }
-            if let status = snapshot.preparedTextAudioStatus, status != preparedTextAudioStatus { preparedTextAudioStatus = status } // an equal write still publishes
-            if let snapshotSourceTranscriptStatus = snapshot.sourceTranscriptStatus, snapshotSourceTranscriptStatus != sourceTranscriptStatus,
-               !(sourceTranscriptStatus == "transcribing" && snapshotSourceTranscriptStatus == "not_started") {
-                sourceTranscriptStatus = snapshotSourceTranscriptStatus
-            }
-            if oldValue.status.isPlaybackActive != snapshot.status.isPlaybackActive || oldValue.itemId != snapshot.itemId {
-                if !canPrepareLibraryAudio {
-                    libraryAudioLoop.cancelOnly()
-                } else {
-                    startForegroundAudioPreparationIfNeeded()
-                }
-            }
-            reconcilePlaybackProgressTicker()
-            reconcileNarrationStartupProtection()
-            updateSkimAvailability(refreshResources: false)
-            updateGate2CompactState()
+            // Every status change runs this chain, from a tap or from an audio callback alike. Named, a hang in one of
+            // the callbacks reads `snapshotChanged` instead of `none` (#2967).
+            hangTelemetry.labels.scoped("snapshotChanged") { snapshotDidChange(from: oldValue) }
         }
     }
+
     @Published var narrationVoiceNotice = NarrationVoiceNotice() // written by updateNarrationVoiceNotice() only
     var gate2CompactSnapshot: CompactControlSnapshot?
     let runtimeDiagnostics = RuntimeDiagnostics()
@@ -909,7 +884,7 @@ final class Gate1AppModel: ObservableObject {
         offlineServicesStartupTasks.forEach { $0.cancel() }
     }
 
-    private func reconcilePlaybackProgressTicker() {
+    func reconcilePlaybackProgressTicker() {
         if snapshot.status.isPlaybackActive {
             startPlaybackProgressTicker()
         } else {
@@ -1439,7 +1414,7 @@ final class Gate1AppModel: ObservableObject {
         reconcileNarrationStartupProtection()
     }
 
-    private func reconcileNarrationStartupProtection() {
+    func reconcileNarrationStartupProtection() {
         let itemId = snapshot.itemId
         narrationStartupProtection.statusChanged(to: snapshot.status, itemId: itemId) {
             itemId.map { narrationRendersOnDevice(itemId: $0) } ?? false
@@ -2241,6 +2216,7 @@ final class Gate1AppModel: ObservableObject {
             "requestedMediaTimeMs": String(mediaTimeMs ?? -1)
         ])
         if command.movesPlaybackPosition { marginMomentConductor?.sourceMoved() } // before any return below (#1656)
+        if command == .beginInterjection { gate2CompactControls.recordingWillTakeAudioSession() } // #2967
         if command == .beginInterjection, !snapshot.isRecording, snapshot.skimBridgeState == nil,
            !handOffPlayingMarginToRecording() { return }
         if snapshot.isRecording, heldMarginVoice != nil, command == .finishInterjection || command == .cancelInterjection { // the model plays the held voice on (#1672)
@@ -2530,8 +2506,10 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    /// `caller` names the function that asked, so a hang inside the engine reads `engine.run:finishInterjection` and
+    /// not a bare `engine.run` shared by about 200 call sites (#2967).
     @discardableResult
-    func run(_ operation: (SessionEngine) throws -> Void) -> Bool {
+    func run(caller: StaticString = #function, _ operation: (SessionEngine) throws -> Void) -> Bool {
         if engine == nil {
             do {
                 let store = try requireStore()
@@ -2542,7 +2520,7 @@ final class Gate1AppModel: ObservableObject {
         }
         guard let engine else { return false }
         do {
-            try hangTelemetry.labels.scoped("engine.run") { try operation(engine) }
+            try hangTelemetry.labels.scoped(Self.engineRunLabel(caller: caller)) { try operation(engine) }
             return true
         } catch {
             reportFailure(error)

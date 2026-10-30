@@ -224,6 +224,7 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
         } else if compact { model.dispatchGate2CompactCommand(.finishInterjection) }
         else { model.finishInterjection() }
         XCTAssertFalse(model.snapshot.isRecording)
+        await model.settleItemReload() // the item detail reloads off the main thread after a save (#2967)
         XCTAssertEqual(model.selectedItem.interjections.count, 1)
         let exported = await coordinator.exportFileURL()
         XCTAssertNotNil(exported, "the first explicit export includes the saved spoken Margin")

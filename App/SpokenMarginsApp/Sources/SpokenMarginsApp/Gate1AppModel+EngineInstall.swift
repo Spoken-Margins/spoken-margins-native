@@ -72,10 +72,12 @@ extension Gate1AppModel {
                 senderLabel: $0.senderLabel
             )
         }
-        gate2CompactControls.update(
-            snapshot: snapshot, sharedMarginPrompt: sharedMarginPrompt, upcomingSharedMargins: liveActivitySharedMarginNavigationEntries(),
-            skimForwardDestinationMs: skimForwardDestinationMs, skimBackwardDestinationMs: skimBackwardDestinationMs // #115
-        )
+        hangTelemetry.labels.scoped("compactControls.update") {
+            gate2CompactControls.update(
+                snapshot: snapshot, sharedMarginPrompt: sharedMarginPrompt, upcomingSharedMargins: liveActivitySharedMarginNavigationEntries(),
+                skimForwardDestinationMs: skimForwardDestinationMs, skimBackwardDestinationMs: skimBackwardDestinationMs // #115
+            )
+        }
         let compactSnapshot = gate2CompactControls.snapshot
         if gate2CompactSnapshot != compactSnapshot {
             gate2CompactSnapshot = compactSnapshot
