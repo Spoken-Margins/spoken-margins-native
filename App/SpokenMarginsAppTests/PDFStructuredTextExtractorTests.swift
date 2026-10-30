@@ -1023,6 +1023,24 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertEqual(lines.map(\.role), [.reference, .reference, .reference, .reference])
     }
 
+    func testV2SkipsABMJReferenceListNumberedWithoutAFullStop() {
+        // #1189, pmc-pmc11150781 and pmc-pmc11148707: "1 Chapuis S, Ouchchane L, …" has no full
+        // stop after the number, so the list was read aloud and its citations with it.
+        var lines = [
+            StructuredDocumentLine(text: "REFERENCES", role: .heading, level: 2),
+            StructuredDocumentLine(text: "1 Chapuis S, Ouchchane L, Metz O, et al. Impact of the motor", role: .body),
+            StructuredDocumentLine(text: "complications of Parkinson’s disease on the quality of life. Mov", role: .body),
+            StructuredDocumentLine(text: "Disord 2005;20:224–30.", role: .body),
+            StructuredDocumentLine(text: "2 Guo B, Harstall C, Louie T, et al. Systematic review: faecal", role: .body),
+            StructuredDocumentLine(text: "3 Salazar RD, Weizenbaum E, Ellis TD, et al. Predictors of self-perceived", role: .body),
+        ]
+        PDFStructuredTextExtractor.labelReferenceLists(&lines)
+        XCTAssertEqual(lines.map(\.role), Array(repeating: .reference, count: 6))
+        XCTAssertTrue(PDFStructuredTextExtractor.looksLikeBibliographyEntry("12 Agarwal A, Bose K. A title."))
+        XCTAssertFalse(PDFStructuredTextExtractor.looksLikeBibliographyEntry("12 Patients were enrolled, and 3 left."))
+        XCTAssertFalse(PDFStructuredTextExtractor.looksLikeBibliographyEntry("2 Methods"))
+    }
+
     func testV2DoesNotTakeAProseMentionOfReferencesForAList() {
         var lines = [
             StructuredDocumentLine(text: "References", role: .body),

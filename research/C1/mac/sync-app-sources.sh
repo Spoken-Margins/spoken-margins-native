@@ -22,6 +22,7 @@ structured="$repo/Packages/SessionKit/Sources/SessionKit/StructuredDocument.swif
 bibliography="$repo/Packages/SessionKit/Sources/SessionKit/BibliographicReferenceExtractor.swift"
 wrappedHeading="$repo/Packages/SessionKit/Sources/SessionKit/PDFWrappedHeading.swift"
 wordSpacing="$repo/Packages/SessionKit/Sources/SessionKit/PDFWordSpacing.swift"
+itemTitle="$repo/Packages/SessionKit/Sources/SessionKit/PDFItemTitle.swift"
 
 sed -e 's/^import UIKit$/import AppKit/' -e '/^import SessionKit$/d' "$extractor" > "$out/PDFStructuredTextExtractor.swift"
 cp "$normalizer" "$out/SpeechTextNormalizer.swift"
@@ -29,6 +30,7 @@ cp "$structured" "$out/StructuredDocument.swift"
 cp "$bibliography" "$out/BibliographicReferenceExtractor.swift"
 cp "$wrappedHeading" "$out/PDFWrappedHeading.swift"
 cp "$wordSpacing" "$out/PDFWordSpacing.swift"
+cp "$itemTitle" "$out/PDFItemTitle.swift"
 
 # Fingerprint what was copied, so every output says which extractor made it.
 commit=$(git -C "$repo" rev-parse --short HEAD)

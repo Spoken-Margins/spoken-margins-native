@@ -83,7 +83,7 @@
     "journal",
     "single-column"
    ],
-   "elapsed_ms": 383
+   "elapsed_ms": 518
   },
   "pmc-pmc10817199": {
    "spoken_words": 15251,
@@ -161,7 +161,7 @@
     "journal",
     "single-column"
    ],
-   "elapsed_ms": 697
+   "elapsed_ms": 763
   },
   "pmc-pmc10756530": {
    "spoken_words": 3742,
@@ -229,7 +229,7 @@
     "journal",
     "single-column"
    ],
-   "elapsed_ms": 217
+   "elapsed_ms": 238
   },
   "pmc-pmc10756544": {
    "spoken_words": 6266,
@@ -300,7 +300,7 @@
     "journal",
     "single-column"
    ],
-   "elapsed_ms": 356
+   "elapsed_ms": 387
   },
   "pmc-pmc12629593": {
    "spoken_words": 8420,
@@ -376,7 +376,7 @@
     "single-column",
     "math-heavy"
    ],
-   "elapsed_ms": 1056
+   "elapsed_ms": 1168
   },
   "pmc-pmc10928513": {
    "spoken_words": 20648,
@@ -456,7 +456,7 @@
     "single-column",
     "math-heavy"
    ],
-   "elapsed_ms": 4833
+   "elapsed_ms": 5492
   },
   "pmc-pmc10784378": {
    "spoken_words": 4551,
@@ -493,9 +493,8 @@
    },
    "hyphen_breaks": 0,
    "citations": {
-    "label_read": 26,
-    "silent": 1,
-    "number_read": 1
+    "label_read": 27,
+    "silent": 1
    },
    "markers_silent_share": 0.0357,
    "footnote_markers": {},
@@ -522,14 +521,14 @@
     "missing_body": 3.1,
     "reading_order": 170.0,
     "mid_sentence_interruptions": 12.0,
-    "markers_read_aloud": 57.2,
+    "markers_read_aloud": 55.7,
     "hyphen_breaks": 0.0
    },
    "tags": [
     "journal",
     "two-column"
    ],
-   "elapsed_ms": 352
+   "elapsed_ms": 383
   },
   "pmc-pmc10777729": {
    "spoken_words": 11681,
@@ -602,7 +601,7 @@
     "journal",
     "two-column"
    ],
-   "elapsed_ms": 894
+   "elapsed_ms": 1017
   },
   "pmc-pmc11843480": {
    "spoken_words": 12018,
@@ -684,7 +683,7 @@
     "journal",
     "single-column"
    ],
-   "elapsed_ms": 469
+   "elapsed_ms": 516
   },
   "pmc-pmc10950207": {
    "spoken_words": 11046,
@@ -760,7 +759,7 @@
     "journal",
     "single-column"
    ],
-   "elapsed_ms": 420
+   "elapsed_ms": 453
   },
   "pmc-pmc10740247": {
    "spoken_words": 5595,
@@ -833,7 +832,7 @@
     "journal",
     "single-column"
    ],
-   "elapsed_ms": 1281
+   "elapsed_ms": 1413
   },
   "pmc-pmc10740312": {
    "spoken_words": 9909,
@@ -910,7 +909,7 @@
     "journal",
     "single-column"
    ],
-   "elapsed_ms": 901
+   "elapsed_ms": 984
   },
   "pmc-pmc10775890": {
    "spoken_words": 15852,
@@ -949,9 +948,10 @@
    "hyphen_breaks": 139,
    "citations": {
     "glued_number": 80,
-    "number_read": 12,
+    "number_read": 11,
     "context_missing": 7,
-    "silent": 4
+    "silent": 4,
+    "named_read": 1
    },
    "markers_silent_share": 0.0417,
    "footnote_markers": {},
@@ -978,14 +978,14 @@
     "missing_body": 95.2,
     "reading_order": 260.0,
     "mid_sentence_interruptions": 28.0,
-    "markers_read_aloud": 214.8,
+    "markers_read_aloud": 213.3,
     "hyphen_breaks": 139.0
    },
    "tags": [
     "journal",
     "two-column"
    ],
-   "elapsed_ms": 3206
+   "elapsed_ms": 3477
   },
   "pmc-pmc10756881": {
    "spoken_words": 10600,
@@ -1056,7 +1056,7 @@
     "journal",
     "two-column"
    ],
-   "elapsed_ms": 1274
+   "elapsed_ms": 1387
   },
   "pmc-pmc10756882": {
    "spoken_words": 8793,
@@ -1132,7 +1132,7 @@
     "journal",
     "single-column"
    ],
-   "elapsed_ms": 728
+   "elapsed_ms": 876
   },
   "pmc-pmc10756880": {
    "spoken_words": 6418,
@@ -1203,7 +1203,7 @@
     "journal",
     "single-column"
    ],
-   "elapsed_ms": 975
+   "elapsed_ms": 1039
   },
   "pmc-pmc11314421": {
    "spoken_words": 9226,
@@ -1276,7 +1276,7 @@
     "journal",
     "two-column"
    ],
-   "elapsed_ms": 808
+   "elapsed_ms": 879
   },
   "pmc-pmc10711437": {
    "spoken_words": 8526,
@@ -1352,7 +1352,7 @@
     "journal",
     "two-column"
    ],
-   "elapsed_ms": 670
+   "elapsed_ms": 730
   },
   "pmc-pmc11326079": {
    "spoken_words": 8930,
@@ -1426,7 +1426,7 @@
     "journal",
     "single-column"
    ],
-   "elapsed_ms": 774
+   "elapsed_ms": 848
   },
   "pmc-pmc11154291": {
    "spoken_words": 16455,
@@ -1499,7 +1499,7 @@
     "journal",
     "single-column"
    ],
-   "elapsed_ms": 2022
+   "elapsed_ms": 2172
   },
   "pmc-pmc11150781": {
    "spoken_words": 7706,
@@ -1572,7 +1572,7 @@
     "journal",
     "two-column"
    ],
-   "elapsed_ms": 698
+   "elapsed_ms": 719
   },
   "pmc-pmc11148707": {
    "spoken_words": 6926,
@@ -1647,16 +1647,16 @@
     "journal",
     "two-column"
    ],
-   "elapsed_ms": 823
+   "elapsed_ms": 856
   },
   "pmc-pmc11334374": {
-   "spoken_words": 2814,
+   "spoken_words": 2813,
    "body_words_truth": 2369,
-   "clutter_rate": 0.1304,
+   "clutter_rate": 0.1301,
    "missing_body_rate": 0.0008,
-   "body_share_of_spoken": 0.8412,
+   "body_share_of_spoken": 0.8415,
    "words_by_category": {
-    "front_matter": 159,
+    "front_matter": 158,
     "body": 2367,
     "repeated": 21,
     "stamp_link": 9,
@@ -1697,7 +1697,7 @@
     "reference": 3.1,
     "table": 0.0,
     "footnote": 36.0,
-    "front_matter": 61.5,
+    "front_matter": 61.2,
     "back_matter": 19.4,
     "repeated": 8.1,
     "furniture": 7.0,
@@ -1715,16 +1715,16 @@
     "journal",
     "two-column"
    ],
-   "elapsed_ms": 169
+   "elapsed_ms": 183
   },
   "pmc-pmc10787326": {
-   "spoken_words": 4328,
+   "spoken_words": 4327,
    "body_words_truth": 3685,
-   "clutter_rate": 0.1232,
+   "clutter_rate": 0.1229,
    "missing_body_rate": 0.0008,
-   "body_share_of_spoken": 0.8507,
+   "body_share_of_spoken": 0.8509,
    "words_by_category": {
-    "front_matter": 72,
+    "front_matter": 71,
     "body": 3682,
     "authors": 27,
     "stamp_link": 13,
@@ -1765,7 +1765,7 @@
     "reference": 0.0,
     "table": 109.2,
     "footnote": 1.9,
-    "front_matter": 27.9,
+    "front_matter": 27.5,
     "back_matter": 24.8,
     "repeated": 0.0,
     "furniture": 34.8,
@@ -1783,22 +1783,22 @@
     "journal",
     "two-column"
    ],
-   "elapsed_ms": 222
+   "elapsed_ms": 237
   },
   "pmc-pmc10731326": {
-   "spoken_words": 9657,
+   "spoken_words": 9656,
    "body_words_truth": 7937,
-   "clutter_rate": 0.1218,
+   "clutter_rate": 0.1217,
    "missing_body_rate": 0.0003,
-   "body_share_of_spoken": 0.8217,
+   "body_share_of_spoken": 0.8218,
    "words_by_category": {
-    "front_matter": 72,
     "body": 7935,
     "unattributed_prose": 73,
     "math": 50,
     "reference": 14,
     "stamp_link": 14,
     "fragment": 45,
+    "front_matter": 71,
     "repeated": 196,
     "inline_residue": 15,
     "citation_markers": 261,
@@ -1841,7 +1841,7 @@
     "reference": 5.4,
     "table": 173.4,
     "footnote": 0.0,
-    "front_matter": 27.9,
+    "front_matter": 27.5,
     "back_matter": 79.7,
     "repeated": 75.9,
     "furniture": 50.3,
@@ -1859,17 +1859,17 @@
     "journal",
     "single-column"
    ],
-   "elapsed_ms": 1150
+   "elapsed_ms": 1244
   },
   "pmc-pmc10731324": {
-   "spoken_words": 13068,
+   "spoken_words": 13067,
    "body_words_truth": 7259,
-   "clutter_rate": 0.3596,
+   "clutter_rate": 0.3595,
    "missing_body_rate": 0.0011,
    "body_share_of_spoken": 0.5549,
    "words_by_category": {
-    "front_matter": 186,
     "body": 7251,
+    "front_matter": 185,
     "inline_residue": 93,
     "reference": 2769,
     "math": 126,
@@ -1914,7 +1914,7 @@
     "reference": 1071.9,
     "table": 406.5,
     "footnote": 0.0,
-    "front_matter": 72.0,
+    "front_matter": 71.6,
     "back_matter": 112.6,
     "repeated": 86.7,
     "furniture": 4.3,
@@ -1932,7 +1932,7 @@
     "journal",
     "single-column"
    ],
-   "elapsed_ms": 1133
+   "elapsed_ms": 1192
   },
   "pmc-pmc7619014": {
    "spoken_words": 10134,
@@ -2005,7 +2005,7 @@
     "author-manuscript",
     "single-column"
    ],
-   "elapsed_ms": 1365
+   "elapsed_ms": 1444
   },
   "pmc-pmc7619013": {
    "spoken_words": 12544,
@@ -2045,9 +2045,10 @@
    },
    "hyphen_breaks": 0,
    "citations": {
-    "number_read": 80,
+    "number_read": 74,
     "glued_number": 22,
     "context_missing": 1,
+    "named_read": 6,
     "silent": 1
    },
    "markers_silent_share": 0.0068,
@@ -2077,7 +2078,7 @@
     "missing_body": 19.0,
     "reading_order": 110.0,
     "mid_sentence_interruptions": 52.0,
-    "markers_read_aloud": 263.5,
+    "markers_read_aloud": 254.5,
     "hyphen_breaks": 0.0
    },
    "tags": [
@@ -2085,7 +2086,7 @@
     "author-manuscript",
     "single-column"
    ],
-   "elapsed_ms": 1479
+   "elapsed_ms": 1613
   },
   "pmc-pmc11731475": {
    "spoken_words": 5122,
@@ -2152,7 +2153,7 @@
     "journal",
     "single-column"
    ],
-   "elapsed_ms": 513
+   "elapsed_ms": 573
   },
   "pmc-pmc11639692": {
    "spoken_words": 12600,
@@ -2222,7 +2223,7 @@
     "journal",
     "single-column"
    ],
-   "elapsed_ms": 1212
+   "elapsed_ms": 1328
   },
   "pmc-pmc13305550": {
    "spoken_words": 13301,
@@ -2294,7 +2295,7 @@
     "journal",
     "single-column"
    ],
-   "elapsed_ms": 538
+   "elapsed_ms": 594
   },
   "pmc-pmc10755640": {
    "spoken_words": 11555,
@@ -2371,7 +2372,7 @@
     "journal",
     "two-column"
    ],
-   "elapsed_ms": 1027
+   "elapsed_ms": 1127
   },
   "pmc-pmc10755645": {
    "spoken_words": 11594,
@@ -2447,7 +2448,7 @@
     "journal",
     "two-column"
    ],
-   "elapsed_ms": 1073
+   "elapsed_ms": 1227
   },
   "pmc-pmc13612741": {
    "spoken_words": 5444,
@@ -2519,7 +2520,7 @@
     "author-manuscript",
     "single-column"
    ],
-   "elapsed_ms": 442
+   "elapsed_ms": 488
   },
   "pmc-pmc13585476": {
    "spoken_words": 2222,
@@ -2587,7 +2588,7 @@
     "author-manuscript",
     "single-column"
    ],
-   "elapsed_ms": 96
+   "elapsed_ms": 105
   },
   "pmc-pmc13577200": {
    "spoken_words": 7825,
@@ -2661,7 +2662,7 @@
     "author-manuscript",
     "single-column"
    ],
-   "elapsed_ms": 402
+   "elapsed_ms": 440
   },
   "pmc-pmc5315336": {
    "spoken_words": 2947,
@@ -2736,7 +2737,7 @@
     "ocr-text-layer",
     "two-column"
    ],
-   "elapsed_ms": 257
+   "elapsed_ms": 291
   },
   "pmc-pmc5315337": {
    "spoken_words": 3542,
@@ -2809,7 +2810,7 @@
     "ocr-text-layer",
     "two-column"
    ],
-   "elapsed_ms": 560
+   "elapsed_ms": 624
   },
   "pmc-pmc5315332": {
    "spoken_words": 6004,
@@ -2887,7 +2888,7 @@
     "ocr-text-layer",
     "two-column"
    ],
-   "elapsed_ms": 394
+   "elapsed_ms": 436
   },
   "arxiv-2608.09666v1": {
    "spoken_words": 9022,
@@ -2961,7 +2962,7 @@
     "conference",
     "two-column"
    ],
-   "elapsed_ms": 1079
+   "elapsed_ms": 1163
   },
   "arxiv-2607.28282v1": {
    "spoken_words": 9640,
@@ -3032,7 +3033,7 @@
     "conference",
     "two-column"
    ],
-   "elapsed_ms": 1166
+   "elapsed_ms": 1276
   },
   "arxiv-2607.10715v1": {
    "spoken_words": 10874,
@@ -3107,7 +3108,7 @@
     "conference",
     "two-column"
    ],
-   "elapsed_ms": 1044
+   "elapsed_ms": 1141
   },
   "arxiv-2609.07965v1": {
    "spoken_words": 9118,
@@ -3180,7 +3181,7 @@
     "conference",
     "two-column"
    ],
-   "elapsed_ms": 619
+   "elapsed_ms": 796
   },
   "arxiv-2607.07895v1": {
    "spoken_words": 10415,
@@ -3255,7 +3256,7 @@
     "conference",
     "two-column"
    ],
-   "elapsed_ms": 1320
+   "elapsed_ms": 1676
   },
   "arxiv-2606.21736v1": {
    "spoken_words": 9455,
@@ -3333,7 +3334,7 @@
     "two-column",
     "math-heavy"
    ],
-   "elapsed_ms": 854
+   "elapsed_ms": 977
   },
   "arxiv-2605.10717v1": {
    "spoken_words": 10057,
@@ -3412,7 +3413,7 @@
     "two-column",
     "math-heavy"
    ],
-   "elapsed_ms": 639
+   "elapsed_ms": 787
   },
   "arxiv-2605.07149v1": {
    "spoken_words": 8463,
@@ -3489,12 +3490,12 @@
     "two-column",
     "math-heavy"
    ],
-   "elapsed_ms": 845
+   "elapsed_ms": 1219
   },
   "arxiv-2609.21554v1": {
    "spoken_words": 8463,
    "body_words_truth": 5462,
-   "clutter_rate": 0.2607,
+   "clutter_rate": 0.2608,
    "missing_body_rate": 0.0075,
    "body_share_of_spoken": 0.6406,
    "words_by_category": {
@@ -3502,8 +3503,8 @@
     "stamp_link": 15,
     "repeated": 60,
     "authors": 8,
-    "math": 337,
-    "citation_markers": 263,
+    "math": 338,
+    "citation_markers": 262,
     "reference": 1405,
     "front_matter": 5,
     "inline_residue": 20,
@@ -3534,11 +3535,10 @@
    "hyphen_breaks": 125,
    "citations": {
     "label_read": 68,
-    "number_read": 1,
-    "context_missing": 2,
-    "silent": 1
+    "silent": 2,
+    "context_missing": 2
    },
-   "markers_silent_share": 0.0143,
+   "markers_silent_share": 0.0286,
    "footnote_markers": {},
    "captions": {
     "total": 12,
@@ -3557,20 +3557,20 @@
     "repeated": 23.2,
     "furniture": 9.7,
     "stamp_link": 5.8,
-    "math": 130.5,
+    "math": 130.8,
     "equation": 5.0,
     "fragment": 8.9,
     "missing_body": 15.9,
     "reading_order": 80.0,
     "mid_sentence_interruptions": 16.0,
-    "markers_read_aloud": 103.3,
+    "markers_read_aloud": 101.4,
     "hyphen_breaks": 125.0
    },
    "tags": [
     "conference",
     "two-column"
    ],
-   "elapsed_ms": 402
+   "elapsed_ms": 462
   },
   "arxiv-2609.06489v1": {
    "spoken_words": 16044,
@@ -3653,7 +3653,7 @@
     "single-column",
     "math-heavy"
    ],
-   "elapsed_ms": 2181
+   "elapsed_ms": 2404
   },
   "arxiv-2609.29509v1": {
    "spoken_words": 4811,
@@ -3722,7 +3722,7 @@
     "single-column",
     "math-heavy"
    ],
-   "elapsed_ms": 316
+   "elapsed_ms": 348
   },
   "arxiv-2609.21432v1": {
    "spoken_words": 8891,
@@ -3804,7 +3804,7 @@
     "two-column",
     "math-heavy"
    ],
-   "elapsed_ms": 1114
+   "elapsed_ms": 1259
   },
   "arxiv-2609.31301v1": {
    "spoken_words": 11198,
@@ -3885,7 +3885,7 @@
     "journal",
     "two-column"
    ],
-   "elapsed_ms": 2442
+   "elapsed_ms": 4004
   },
   "arxiv-2609.31218v1": {
    "spoken_words": 12368,
@@ -3974,7 +3974,7 @@
     "two-column",
     "math-heavy"
    ],
-   "elapsed_ms": 1433
+   "elapsed_ms": 2890
   },
   "arxiv-2609.22558v1": {
    "spoken_words": 3143,
@@ -3990,9 +3990,9 @@
     "math": 297,
     "fragment": 173,
     "inline_residue": 105,
-    "citation_markers": 108,
+    "citation_markers": 107,
     "caption": 65,
-    "unattributed_prose": 194,
+    "unattributed_prose": 195,
     "equation": 15,
     "furniture": 156,
     "table": 4,
@@ -4013,9 +4013,10 @@
    "citations": {
     "spoken_label": 42,
     "context_missing": 25,
-    "number_read": 2
+    "number_read": 1,
+    "silent": 1
    },
-   "markers_silent_share": 0.0,
+   "markers_silent_share": 0.0227,
    "footnote_markers": {},
    "captions": {
     "total": 18,
@@ -4040,7 +4041,7 @@
     "missing_body": 1219.0,
     "reading_order": 60.0,
     "mid_sentence_interruptions": 12.0,
-    "markers_read_aloud": 44.8,
+    "markers_read_aloud": 42.9,
     "hyphen_breaks": 20.0
    },
    "tags": [
@@ -4048,12 +4049,12 @@
     "two-column",
     "math-heavy"
    ],
-   "elapsed_ms": 670
+   "elapsed_ms": 2378
   },
   "arxiv-2609.19108v1": {
    "spoken_words": 5426,
    "body_words_truth": 3229,
-   "clutter_rate": 0.3323,
+   "clutter_rate": 0.3327,
    "missing_body_rate": 0.0093,
    "body_share_of_spoken": 0.5896,
    "words_by_category": {
@@ -4062,9 +4063,9 @@
     "repeated": 29,
     "authors": 7,
     "front_matter": 11,
-    "citation_markers": 48,
+    "citation_markers": 46,
+    "math": 364,
     "inline_residue": 101,
-    "math": 362,
     "equation": 149,
     "fragment": 20,
     "footnote_markers": 2,
@@ -4092,9 +4093,9 @@
    "hyphen_breaks": 130,
    "citations": {
     "spoken_label": 13,
-    "number_read": 1
+    "silent": 1
    },
-   "markers_silent_share": 0.0,
+   "markers_silent_share": 0.0667,
    "footnote_markers": {
     "spoken_label": 1
    },
@@ -4115,13 +4116,13 @@
     "repeated": 11.2,
     "furniture": 15.1,
     "stamp_link": 17.0,
-    "math": 140.1,
+    "math": 140.9,
     "equation": 57.7,
     "fragment": 7.7,
     "missing_body": 11.6,
     "reading_order": 60.0,
     "mid_sentence_interruptions": 48.0,
-    "markers_read_aloud": 20.9,
+    "markers_read_aloud": 18.6,
     "hyphen_breaks": 130.0
    },
    "tags": [
@@ -4129,12 +4130,12 @@
     "two-column",
     "math-heavy"
    ],
-   "elapsed_ms": 275
+   "elapsed_ms": 942
   },
   "arxiv-2609.31565v1": {
    "spoken_words": 12211,
    "body_words_truth": 10007,
-   "clutter_rate": 0.2859,
+   "clutter_rate": 0.286,
    "missing_body_rate": 0.2964,
    "body_share_of_spoken": 0.5766,
    "words_by_category": {
@@ -4143,12 +4144,12 @@
     "front_matter": 107,
     "repeated": 63,
     "authors": 2,
-    "math": 938,
+    "math": 939,
     "fragment": 457,
     "inline_residue": 166,
     "unattributed_prose": 561,
     "reference": 657,
-    "citation_markers": 9,
+    "citation_markers": 8,
     "furniture": 590,
     "caption": 941,
     "table": 88,
@@ -4176,12 +4177,11 @@
    },
    "hyphen_breaks": 88,
    "citations": {
-    "silent": 47,
+    "silent": 48,
     "context_missing": 19,
-    "number_read": 5,
-    "label_read": 1
+    "label_read": 5
    },
-   "markers_silent_share": 0.8868,
+   "markers_silent_share": 0.9057,
    "footnote_markers": {},
    "captions": {
     "total": 25,
@@ -4200,20 +4200,20 @@
     "repeated": 24.4,
     "furniture": 228.4,
     "stamp_link": 130.8,
-    "math": 363.1,
+    "math": 363.5,
     "equation": 4.6,
     "fragment": 176.9,
     "missing_body": 1148.1,
     "reading_order": 270.0,
     "mid_sentence_interruptions": 60.0,
-    "markers_read_aloud": 11.0,
+    "markers_read_aloud": 3.1,
     "hyphen_breaks": 88.0
    },
    "tags": [
     "journal",
     "two-column"
    ],
-   "elapsed_ms": 1867
+   "elapsed_ms": 5564
   },
   "arxiv-2609.31457v1": {
    "spoken_words": 16286,
@@ -4298,7 +4298,7 @@
     "two-column",
     "math-heavy"
    ],
-   "elapsed_ms": 1188
+   "elapsed_ms": 3607
   },
   "arxiv-2609.27549v1": {
    "spoken_words": 27245,
@@ -4375,7 +4375,7 @@
     "single-column",
     "math-heavy"
    ],
-   "elapsed_ms": 1883
+   "elapsed_ms": 5969
   },
   "arxiv-2609.25172v1": {
    "spoken_words": 33170,
@@ -4388,10 +4388,10 @@
     "stamp_link": 17,
     "repeated": 296,
     "authors": 2,
-    "math": 8358,
+    "math": 8359,
     "inline_residue": 343,
     "unattributed_prose": 1044,
-    "citation_markers": 193,
+    "citation_markers": 192,
     "equation": 4718,
     "fragment": 139,
     "furniture": 936
@@ -4415,11 +4415,10 @@
    "hyphen_breaks": 18,
    "citations": {
     "spoken_label": 96,
-    "silent": 16,
-    "number_read": 1,
+    "silent": 17,
     "context_missing": 1
    },
-   "markers_silent_share": 0.1416,
+   "markers_silent_share": 0.1504,
    "footnote_markers": {},
    "captions": {
     "total": 0,
@@ -4438,13 +4437,13 @@
     "repeated": 114.6,
     "furniture": 362.3,
     "stamp_link": 6.6,
-    "math": 3235.4,
+    "math": 3235.7,
     "equation": 1826.3,
     "fragment": 53.8,
     "missing_body": 182.7,
     "reading_order": 770.0,
     "mid_sentence_interruptions": 624.0,
-    "markers_read_aloud": 76.2,
+    "markers_read_aloud": 74.3,
     "hyphen_breaks": 18.0
    },
    "tags": [
@@ -4452,26 +4451,26 @@
     "single-column",
     "math-heavy"
    ],
-   "elapsed_ms": 2553
+   "elapsed_ms": 7598
   },
   "arxiv-2609.20536v1": {
    "spoken_words": 24252,
    "body_words_truth": 17171,
-   "clutter_rate": 0.2345,
+   "clutter_rate": 0.2347,
    "missing_body_rate": 0.0045,
    "body_share_of_spoken": 0.7048,
    "words_by_category": {
     "body": 17093,
     "stamp_link": 8,
     "repeated": 737,
-    "math": 1460,
+    "math": 1463,
     "inline_residue": 103,
     "caption": 918,
     "fragment": 101,
     "unattributed_prose": 257,
     "furniture": 1434,
     "equation": 1049,
-    "citation_markers": 189,
+    "citation_markers": 186,
     "footnote_markers": 4,
     "footnote": 92,
     "table": 807
@@ -4492,11 +4491,10 @@
    "hyphen_breaks": 221,
    "citations": {
     "spoken_label": 73,
-    "silent": 1,
-    "context_missing": 1,
-    "number_read": 1
+    "silent": 2,
+    "context_missing": 1
    },
-   "markers_silent_share": 0.0127,
+   "markers_silent_share": 0.0253,
    "footnote_markers": {
     "number_read": 1,
     "glued_number": 3
@@ -4518,13 +4516,13 @@
     "repeated": 285.3,
     "furniture": 555.1,
     "stamp_link": 3.1,
-    "math": 565.2,
+    "math": 566.3,
     "equation": 406.1,
     "fragment": 39.1,
     "missing_body": 30.2,
     "reading_order": 470.0,
     "mid_sentence_interruptions": 32.0,
-    "markers_read_aloud": 83.7,
+    "markers_read_aloud": 81.0,
     "hyphen_breaks": 221.0
    },
    "tags": [
@@ -4532,12 +4530,12 @@
     "single-column",
     "math-heavy"
    ],
-   "elapsed_ms": 3607
+   "elapsed_ms": 11191
   },
   "arxiv-2506.00268v2": {
    "spoken_words": 3961,
    "body_words_truth": 2241,
-   "clutter_rate": 0.3938,
+   "clutter_rate": 0.3948,
    "missing_body_rate": 0.0241,
    "body_share_of_spoken": 0.5521,
    "words_by_category": {
@@ -4545,12 +4543,12 @@
     "stamp_link": 6,
     "repeated": 85,
     "authors": 7,
-    "math": 868,
+    "math": 872,
     "equation": 489,
     "furniture": 101,
     "inline_residue": 25,
-    "citation_markers": 48,
-    "unattributed_prose": 134,
+    "citation_markers": 43,
+    "unattributed_prose": 135,
     "fragment": 11
    },
    "order_breaks": 6,
@@ -4564,10 +4562,11 @@
    "hyphen_breaks": 10,
    "citations": {
     "spoken_label": 18,
-    "number_read": 7,
+    "silent": 5,
+    "number_read": 2,
     "context_missing": 1
    },
-   "markers_silent_share": 0.0,
+   "markers_silent_share": 0.2,
    "footnote_markers": {},
    "captions": {
     "total": 0,
@@ -4586,13 +4585,13 @@
     "repeated": 32.9,
     "furniture": 39.1,
     "stamp_link": 2.3,
-    "math": 336.0,
+    "math": 337.5,
     "equation": 189.3,
     "fragment": 4.3,
     "missing_body": 20.9,
     "reading_order": 60.0,
     "mid_sentence_interruptions": 24.0,
-    "markers_read_aloud": 29.1,
+    "markers_read_aloud": 19.6,
     "hyphen_breaks": 10.0
    },
    "tags": [
@@ -4600,43 +4599,44 @@
     "single-column",
     "math-heavy"
    ],
-   "elapsed_ms": 250
+   "elapsed_ms": 681
   },
   "arxiv-2506.00390v1": {
    "spoken_words": 8705,
    "body_words_truth": 4519,
-   "clutter_rate": 0.4522,
+   "clutter_rate": 0.4525,
    "missing_body_rate": 0.0266,
    "body_share_of_spoken": 0.5053,
    "words_by_category": {
     "body": 4399,
-    "math": 1671,
+    "math": 1674,
     "stamp_link": 24,
     "repeated": 84,
     "authors": 6,
     "fragment": 17,
     "reference": 4,
-    "citation_markers": 91,
+    "citation_markers": 87,
     "inline_residue": 89,
     "equation": 1739,
     "furniture": 349,
-    "unattributed_prose": 184,
+    "unattributed_prose": 185,
     "back_matter": 48
    },
    "order_breaks": 12,
    "order_breaks_per_1000_body_words": 2.73,
    "interruptions": {
-    "unattributed_prose": 16
+    "unattributed_prose": 17
    },
    "mid_sentence_interruptions": {
-    "unattributed_prose": 12
+    "unattributed_prose": 13
    },
    "hyphen_breaks": 20,
    "citations": {
     "spoken_label": 28,
-    "number_read": 5
+    "silent": 4,
+    "number_read": 1
    },
-   "markers_silent_share": 0.0,
+   "markers_silent_share": 0.1212,
    "footnote_markers": {},
    "captions": {
     "total": 0,
@@ -4655,13 +4655,13 @@
     "repeated": 32.5,
     "furniture": 135.1,
     "stamp_link": 9.3,
-    "math": 646.8,
+    "math": 648.0,
     "equation": 673.2,
     "fragment": 6.6,
     "missing_body": 46.5,
     "reading_order": 120.0,
-    "mid_sentence_interruptions": 48.0,
-    "markers_read_aloud": 42.7,
+    "mid_sentence_interruptions": 52.0,
+    "markers_read_aloud": 35.2,
     "hyphen_breaks": 20.0
    },
    "tags": [
@@ -4669,7 +4669,7 @@
     "single-column",
     "math-heavy"
    ],
-   "elapsed_ms": 476
+   "elapsed_ms": 1555
   },
   "arxiv-2506.00547v1": {
    "spoken_words": 5550,
@@ -4744,7 +4744,7 @@
     "single-column",
     "math-heavy"
    ],
-   "elapsed_ms": 386
+   "elapsed_ms": 872
   },
   "arxiv-2506.00266v2": {
    "spoken_words": 9182,
@@ -4818,7 +4818,7 @@
     "single-column",
     "math-heavy"
    ],
-   "elapsed_ms": 676
+   "elapsed_ms": 1415
   },
   "pmc-pmc11960816-imageonly": {
    "spoken_words": 0,
@@ -4835,7 +4835,7 @@
     "image-only",
     "derived"
    ],
-   "elapsed_ms": 1
+   "elapsed_ms": 5
   }
  }
 }
