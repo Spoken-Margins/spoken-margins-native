@@ -22,7 +22,15 @@ var (
 	ErrNotFound = errors.New("links: not found")
 	ErrGone     = errors.New("links: gone")
 	ErrTooLarge = errors.New("links: too large")
+	ErrUnsealed = errors.New("links: not a sealed part")
 )
+
+// previewFile holds the sealed preview. Before #805 reached the server it was "preview.json", a
+// readable preview; no shipped build ever uploaded one, but takedown and the sweep still delete
+// that name so no readable copy outlives its link.
+const previewFile = "preview"
+
+var contentFiles = []string{"packet", previewFile, "preview.json"}
 
 // Only expiry metadata survives deletion, so previously issued links still
 // answer 410 after a sweep or takedown. No content or client address survives.
@@ -54,6 +62,7 @@ func ValidID(id string) bool {
 }
 
 // Put publishes a complete directory atomically. A failed upload leaves no link.
+// Both parts must be sealed (#805); their bytes are stored as they came.
 func (s *Store) Put(packet []byte, preview []byte, now time.Time) (string, time.Time, error) {
 	if len(packet) == 0 {
 		return "", time.Time{}, errors.New("links: empty packet")
@@ -61,8 +70,8 @@ func (s *Store) Put(packet []byte, preview []byte, now time.Time) (string, time.
 	if len(packet) > MaxPacketBytes || len(preview) > MaxPreviewBytes {
 		return "", time.Time{}, ErrTooLarge
 	}
-	if _, err := ParsePreview(preview); err != nil {
-		return "", time.Time{}, err
+	if !Sealed(preview, PartPreview) || !Sealed(packet, PartPacket) {
+		return "", time.Time{}, ErrUnsealed
 	}
 	idBytes := make([]byte, 16)
 	if _, err := rand.Read(idBytes); err != nil {
@@ -76,7 +85,7 @@ func (s *Store) Put(packet []byte, preview []byte, now time.Time) (string, time.
 	}
 	defer os.RemoveAll(dir)
 	meta, _ := json.Marshal(metadata{ExpiresAt: expires})
-	for name, data := range map[string][]byte{"meta.json": meta, "packet": packet, "preview.json": preview} {
+	for name, data := range map[string][]byte{"meta.json": meta, "packet": packet, previewFile: preview} {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0o600); err != nil {
 			return "", time.Time{}, err
 		}
@@ -115,20 +124,33 @@ func (s *Store) live(id string, now time.Time) error {
 	return nil
 }
 
-func (s *Store) Preview(id string, now time.Time) (Preview, error) {
+// Live answers nil while the link can be opened, ErrNotFound or ErrGone otherwise.
+func (s *Store) Live(id string, now time.Time) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if err := s.live(id, now); err != nil {
-		return Preview{}, err
+		return err
 	}
-	data, err := os.ReadFile(filepath.Join(s.dir, id, "preview.json"))
+	if _, err := os.Stat(filepath.Join(s.dir, id, previewFile)); errors.Is(err, os.ErrNotExist) {
+		return ErrGone
+	} else if err != nil {
+		return err
+	}
+	return nil
+}
+
+// Preview returns the sealed preview bytes unchanged. Only the browser, with the key, can open them.
+func (s *Store) Preview(id string, now time.Time) ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if err := s.live(id, now); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(filepath.Join(s.dir, id, previewFile))
 	if errors.Is(err, os.ErrNotExist) {
-		return Preview{}, ErrGone
+		return nil, ErrGone
 	}
-	if err != nil {
-		return Preview{}, err
-	}
-	return ParsePreview(data)
+	return data, err
 }
 
 // Packet opens a real file so serving a download does not buffer another 20 MB.
@@ -146,7 +168,7 @@ func (s *Store) Packet(id string, now time.Time) (*os.File, error) {
 }
 
 func (s *Store) deleteContent(id string) error {
-	for _, name := range []string{"packet", "preview.json"} {
+	for _, name := range contentFiles {
 		if err := os.Remove(filepath.Join(s.dir, id, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -175,12 +197,16 @@ func (s *Store) Sweep(now time.Time) (int, error) {
 			continue
 		}
 		if err := s.live(e.Name(), now); errors.Is(err, ErrGone) {
-			_, packetErr := os.Stat(filepath.Join(s.dir, e.Name(), "packet"))
-			_, previewErr := os.Stat(filepath.Join(s.dir, e.Name(), "preview.json"))
+			stored := false
+			for _, name := range contentFiles {
+				if _, err := os.Stat(filepath.Join(s.dir, e.Name(), name)); err == nil {
+					stored = true
+				}
+			}
 			if err := s.deleteContent(e.Name()); err != nil {
 				return n, err
 			}
-			if packetErr == nil || previewErr == nil {
+			if stored {
 				n++
 			}
 		} else if err != nil {
