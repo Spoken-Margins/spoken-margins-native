@@ -225,6 +225,45 @@ final class SourceLinkImportTests: XCTestCase {
         model.endSession()
     }
 
+    /// #2929: a swipe on a Following show row saves the episode the row previews, not an older one and not the
+    /// whole show. A second swipe while the first is still fetching adds nothing, and nothing starts playing.
+    func testSwipeAddOnAFollowingRowSavesThePreviewedEpisodeOnceAndStartsNothing() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        temporaryDirectories.append(root)
+        let database = root.appendingPathComponent("swipe-add.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: database)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: database.path)
+        let subscription = FeedSubscription(id: "s", source: SourceIdentity(id: "publication", kind: .articleFeed,
+            canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Publisher"), lastRefreshAt: Date())
+        let older = FeedEntry(id: "older-entry", subscriptionId: subscription.id,
+            canonicalURL: "https://publisher.example/older-post", title: "An older post", publishedAt: Date(timeIntervalSinceNow: -86_400))
+        let newest = FeedEntry(id: "newest-entry", subscriptionId: subscription.id,
+            canonicalURL: "https://publisher.example/newest-post", title: "The newest post", publishedAt: Date(timeIntervalSinceNow: -3_600))
+        try store.saveFeedSubscription(subscription)
+        try store.saveFeedEntry(older)
+        try store.saveFeedEntry(newest)
+        let extractor = GatedFeedArticleExtractor(capture: BrowserTextHandoff(captureMode: .readablePage,
+            source: BrowserTextSource(url: newest.canonicalURL, title: newest.title),
+            text: "The newest post's body."))
+        model.readablePageExtractor = extractor
+        model.followingShowEntries = [older, newest]
+        let row = try XCTUnwrap(FollowingShowRows.build(subscriptions: [subscription], entries: [older, newest]).rows.first)
+        XCTAssertEqual(row.addEntryID, newest.id)
+
+        model.addPreviewedEpisode(of: row)
+        model.addPreviewedEpisode(of: row)
+        try await waitFor("the swipe's fetch to start") { extractor.callCount > 0 }
+        extractor.open()
+        try await waitFor("the swipe's import to finish") { !model.importingFollowedSourceEntryIds.contains(newest.id) }
+
+        XCTAssertEqual(model.libraryItems.filter { $0.title == newest.title }.count, 1, "the previewed episode lands in the Library once")
+        XCTAssertFalse(model.libraryItems.contains { $0.title == older.title }, "only the previewed episode is saved")
+        XCTAssertEqual(extractor.callCount, 1, "the second swipe found the first still fetching and did nothing")
+        XCTAssertNil(model.snapshot.sessionId, "adding from Following starts nothing")
+    }
+
     func testRedirectedFollowedArticleAddAndOpenKeepTheirSignalEntry() async throws {
         for openWhenFinished in [false, true] {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

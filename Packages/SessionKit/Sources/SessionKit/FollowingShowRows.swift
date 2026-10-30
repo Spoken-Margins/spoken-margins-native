@@ -17,8 +17,16 @@ public struct FollowingShowRow: Equatable, Identifiable, Sendable {
     public var dateLabel: String?
     /// The entry the row's play button plays: the show's newest episode not yet played or dismissed.
     public var playEntryID: String?
+    /// The episode the row previews (`newestEpisodeTitle`): the show's newest one, played or not. The swipe's Add (#2929) saves
+    /// this one, so it is exactly what the listener sees on the row and finds at the top of the show.
+    public var newestEntryID: String?
+    /// The previewed episode is in the Library already, so there is nothing for the swipe to add.
+    public var isNewestInLibrary: Bool = false
     public var isQuiet: Bool
     public var accessibilityLabel: String
+
+    /// What the row's swipe Add saves: the previewed episode, nil when the show has none or it is in the Library already.
+    public var addEntryID: String? { isNewestInLibrary ? nil : newestEntryID }
 
     /// "3 new", nil when nothing is new (the row then shows no badge).
     public var newLabel: String? { newCount > 0 ? "\(newCount) new" : nil }
@@ -83,6 +91,7 @@ public enum FollowingShowRows {
                 title,
                 count > 0 ? "\(count) new" : nil,
                 newestTitle.map { "Newest: \($0)" },
+                newest?.state == .imported ? "In your Library" : nil,
                 spokenDate.map { "Published \($0)" },
                 isQuiet ? "Quiet" : nil,
             ].compactMap { $0 }.map { $0.hasSuffix(".") ? $0 : "\($0)." }.joined(separator: " ")
@@ -90,6 +99,7 @@ public enum FollowingShowRows {
                 id: subscription.id, title: title, newCount: count,
                 newestEpisodeTitle: newestTitle, newestEpisodeDate: newestDate, dateLabel: dateLabel,
                 playEntryID: shown.filter(isUnplayed).min(by: newestFirst)?.id,
+                newestEntryID: newest?.id, isNewestInLibrary: newest?.state == .imported,
                 isQuiet: isQuiet, accessibilityLabel: label
             )
             built.append((row, newestDate ?? .distantPast, subscription.createdAt))

@@ -113,6 +113,15 @@ extension Gate1AppModel {
         importFollowedSourceEntry(entry, playWhenFinished: true)
     }
 
+    /// Swipe on a row (#2929): saves the episode the row previews, without opening the show or playing it. Nothing
+    /// happens when the show has none or it is in the Library already, and a second swipe while the first is still
+    /// fetching is ignored by `importFollowedSourceEntry`, so the item lands in the Library once.
+    func addPreviewedEpisode(of row: FollowingShowRow) {
+        guard let id = row.addEntryID,
+              let entry = followingShowEntries.first(where: { $0.id == id }), entry.state != .imported else { return }
+        importFollowedSourceEntry(entry)
+    }
+
     /// Unfollow from the Show screen: the show goes at once and the banner offers Undo, which follows the
     /// same feed again, so the button takes one tap (Following > show row > Unfollow). Episodes already in the
     /// Library are kept either way. Undo brings back the show and its newest episodes, not its Quiet or

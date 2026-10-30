@@ -143,8 +143,28 @@ struct ExperienceSourcesScreen: View {
             artworkURL: artwork.artworkURL(for: row.id),
             open: { path.append(row.id) },
             play: { model.playNewestEpisode(of: row) },
-            isPlayStarting: row.playEntryID.map { model.importingFollowedSourceEntryIds.contains($0) } ?? false
+            add: { model.addPreviewedEpisode(of: row) },
+            isPlayStarting: row.playEntryID.map { model.importingFollowedSourceEntryIds.contains($0) } ?? false,
+            isAdding: row.newestEntryID.map { model.importingFollowedSourceEntryIds.contains($0) } ?? false
         )
+        // Add the episode the row previews without opening the show (#2929). Once it is in the Library the
+        // button says so and does nothing; a show with no episode offers no swipe.
+        .swipeActions(edge: .leading, allowsFullSwipe: row.addEntryID != nil) {
+            if row.addEntryID != nil {
+                Button { model.addPreviewedEpisode(of: row) } label: {
+                    Label("Add", systemImage: "plus.circle.fill")
+                }
+                .tint(AppColors.evergreen)
+                .accessibilityIdentifier("sources.show.\(row.id).add")
+            } else if row.isNewestInLibrary {
+                Button {} label: {
+                    Label("In Library", systemImage: "checkmark.circle")
+                }
+                .disabled(true)
+                .tint(AppColors.secondaryText)
+                .accessibilityIdentifier("sources.show.\(row.id).inLibrary")
+            }
+        }
         .listRowInsets(EdgeInsets(
             top: 0,
             leading: horizontalSizeClass == .regular ? 28 : 16,
@@ -234,7 +254,10 @@ private struct FollowingShowRowView: View {
     let artworkURL: URL?
     let open: () -> Void
     let play: () -> Void
+    let add: () -> Void
     let isPlayStarting: Bool
+    /// The previewed episode is being fetched into the Library after a swipe (#2929).
+    let isAdding: Bool
 
     var body: some View {
         HStack(spacing: 0) {
@@ -268,6 +291,20 @@ private struct FollowingShowRowView: View {
                                     .font(.caption)
                                     .foregroundStyle(AppColors.secondaryText)
                             }
+                            if isAdding && !isPlayStarting { // ▶ on the same episode shows its own spinner
+                                HStack(spacing: 4) {
+                                    ProgressView().controlSize(.mini)
+                                    Text("Adding…")
+                                        .font(.caption)
+                                        .foregroundStyle(AppColors.secondaryText)
+                                }
+                                .accessibilityElement(children: .combine)
+                                .accessibilityIdentifier("sources.show.\(row.id).adding")
+                            } else if row.isNewestInLibrary {
+                                Label("In Library", systemImage: "checkmark.circle")
+                                    .font(.caption)
+                                    .foregroundStyle(AppColors.secondaryText)
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -277,6 +314,7 @@ private struct FollowingShowRowView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(row.accessibilityLabel)
             .accessibilityHint("Opens the show.")
+            .accessibilityAction(named: "Add newest episode to Library") { if row.addEntryID != nil { add() } }
             .accessibilityIdentifier("sources.show.\(row.id)")
             if row.playEntryID != nil {
                 Button(action: play) {

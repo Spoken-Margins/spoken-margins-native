@@ -60,6 +60,51 @@ final class FollowingShowRowsTests: XCTestCase {
         XCTAssertEqual(list.rows.map(\.id), ["a", "z"])
     }
 
+    // MARK: Swipe Add (#2929)
+
+    func testSwipeAddTargetsThePreviewedEpisodeNotThePlayButtonsOne() {
+        // The newest episode is in the Library: the row previews it, ▶ plays the next unplayed one, and Add has nothing to add.
+        let list = build(
+            [show("a")],
+            [entry("a3", in: "a", day: 6, state: .imported), entry("a2", in: "a", day: 4), entry("a1", in: "a", day: 2)]
+        )
+        let row = list.rows[0]
+        XCTAssertEqual(row.newestEpisodeTitle, "Episode a3")
+        XCTAssertEqual(row.newestEntryID, "a3")
+        XCTAssertTrue(row.isNewestInLibrary)
+        XCTAssertNil(row.addEntryID)
+        XCTAssertEqual(row.playEntryID, "a2")
+        XCTAssertTrue(row.accessibilityLabel.contains("In your Library."))
+    }
+
+    func testSwipeAddSavesExactlyTheNewestOfSeveralNewEpisodes() {
+        let list = build(
+            [show("a")],
+            [entry("a1", in: "a", day: 2), entry("a3", in: "a", day: 6), entry("a2", in: "a", day: 4)]
+        )
+        XCTAssertEqual(list.rows[0].newCount, 3)
+        XCTAssertEqual(list.rows[0].addEntryID, "a3")
+        XCTAssertEqual(list.rows[0].newestEpisodeTitle, "Episode a3")
+        XCTAssertFalse(list.rows[0].accessibilityLabel.contains("In your Library"))
+    }
+
+    func testSwipeAddSkipsADismissedNewestAndHasNothingForAnEmptyShow() {
+        let list = build(
+            [show("a"), show("b")],
+            [entry("a2", in: "a", day: 6, state: .dismissed), entry("a1", in: "a", day: 2)]
+        )
+        XCTAssertEqual(list.rows.first { $0.id == "a" }?.addEntryID, "a1")
+        XCTAssertNil(list.rows.first { $0.id == "b" }?.addEntryID)
+        XCTAssertNil(list.rows.first { $0.id == "b" }?.newestEntryID)
+    }
+
+    func testSwipeAddIsGoneOnceTheEpisodeIsInTheLibraryAndIsStillOfferedForASeenOne() {
+        let seen = build([show("a")], [entry("a1", in: "a", day: 2, state: .seen)])
+        XCTAssertEqual(seen.rows[0].addEntryID, "a1")
+        let added = build([show("a")], [entry("a1", in: "a", day: 2, state: .imported)])
+        XCTAssertNil(added.rows[0].addEntryID)
+    }
+
     // MARK: Counts
 
     func testCountIsEpisodesWaitingAfterTheFollowBaseline() {
