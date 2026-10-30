@@ -97,7 +97,7 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         XCTAssertNotNil(h.coordinator.passes.pass(itemId: item.id), "the .transcript display begins with the pass")
 
         h.transcriber.open()
-        let released = try await h.waitUntil { h.coordinator.admission[item.id] == nil }
+        let released = try await h.waitForTransientPassToFinish()
         XCTAssertTrue(released)
 
         XCTAssertEqual(h.coordinator.lastTransientStart[item.id], start)
@@ -118,7 +118,7 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
 
         let failure = PlacementTestFailure()
         h.transcriber.open(failingWith: failure)
-        let released = try await h.waitUntil { h.coordinator.admission[item.id] == nil }
+        let released = try await h.waitForTransientPassToFinish()
         XCTAssertTrue(released)
 
         XCTAssertEqual(h.coordinator.lastTransientStart[item.id], start)
@@ -348,7 +348,7 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         XCTAssertEqual(h.coordinator.admission[h.itemId], .transient(try PodcastPlacementFile(url: file)))
 
         h.transcriber.open()
-        let finished = try await h.waitUntil { h.spies.transientDiagnostics(h.itemId).contains("consumed_and_deleted") }
+        let finished = try await h.waitForTransientPassToFinish()
         XCTAssertTrue(finished)
 
         XCTAssertEqual(h.spies.deferCalls.count, 2, "the finished transcript asked for exactly one stronger pass")
@@ -376,7 +376,7 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         XCTAssertEqual(h.spies.deferCalls.count, 2)
 
         h.transcriber.open()
-        let finished = try await h.waitUntil { h.coordinator.admission[h.itemId] == nil }
+        let finished = try await h.waitForTransientPassToFinish()
         XCTAssertTrue(finished)
 
         XCTAssertEqual(h.spies.deferCalls.count, 2, "no matching was requested for the stale transcript")
@@ -404,7 +404,7 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         XCTAssertEqual(h.coordinator.requestedURL[h.itemId], file, "only the file identity differs")
 
         h.transcriber.open()
-        let finished = try await h.waitUntil { h.coordinator.admission[h.itemId] == nil }
+        let finished = try await h.waitForTransientPassToFinish()
         XCTAssertTrue(finished)
 
         XCTAssertEqual(h.spies.deferCalls.count, 1, "no matching was requested for the stale transcript")
@@ -700,6 +700,18 @@ private final class PlacementCoordinatorHarness {
         var passes = SharedMarginPlacementPasses()
         for work in works { passes.begin(work, itemId: itemId) }
         return passes
+    }
+
+    /// Waits for the transient transcript to record its last diagnostic (consumed or failed, which come after the slot
+    /// is released and the caches are purged), then for the placement request a finished transcript queued. Returns
+    /// whether the diagnostic arrived in time.
+    func waitForTransientPassToFinish() async throws -> Bool {
+        let finished = try await waitUntil {
+            guard let last = self.spies.transientDiagnostics(self.itemId).last else { return false }
+            return last == "consumed_and_deleted" || last.hasPrefix("failed_and_deleted")
+        }
+        await coordinator.waitForQueuedResolves()
+        return finished
     }
 
     /// Polls for up to five seconds. The coordinator's tasks run on the main actor, so the condition is read between

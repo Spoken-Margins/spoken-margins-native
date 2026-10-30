@@ -175,6 +175,12 @@ final class ImportedPodcastPlacementCoordinator {
         await enqueueResolve(itemId: itemId, localURL: localURL, recipientTranscriptOverride: recipientTranscriptOverride).value
     }
 
+    /// Returns once every request made so far has finished. The app never waits on this; a test uses it to look at what
+    /// a request did, since a transient transcript that finishes queues its stronger pass without awaiting it.
+    func waitForQueuedResolves() async {
+        await lastResolve?.value
+    }
+
     private func enqueueResolve(
         itemId: String,
         localURL: URL,
