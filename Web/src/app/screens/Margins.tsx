@@ -1,16 +1,20 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { formatClock } from '../../shared/clock.ts';
 import type { Margin } from '../../shared/model.ts';
 import { useData } from '../data.tsx';
 import { shortDate } from '../format.ts';
-import { openFiles, type OpenMarginFile } from '../import.tsx';
+import { openFiles, type OpenMarginFile, type OpenShareLink } from '../import.tsx';
+import { parseShareLink } from '../logic/share-link.ts';
 import { marginGroups, newestMarginId } from '../logic/library.ts';
 import { usePlayer } from '../player.tsx';
 import { VoiceButton } from '../voice.tsx';
 
-export function Margins({ onPlay, onOpenFile }: { onPlay: () => void; onOpenFile: OpenMarginFile }) {
+export function Margins({ onPlay, onOpenFile, onOpenLink }: { onPlay: () => void; onOpenFile: OpenMarginFile; onOpenLink: OpenShareLink }) {
   const data = useData();
   const picker = useRef<HTMLInputElement>(null);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkText, setLinkText] = useState('');
+  const [opening, setOpening] = useState(false);
   const groups = marginGroups(data.margins, data.episodes);
   const newestId = newestMarginId(data.margins);
   const showTitle = (showId: string | undefined) => data.shows.find((s) => s.id === showId)?.title;
@@ -19,9 +23,14 @@ export function Margins({ onPlay, onOpenFile }: { onPlay: () => void; onOpenFile
     <section className="screen" aria-labelledby="margins-title">
       <header className="screen-header">
         <h1 id="margins-title">Margins</h1>
-        <button type="button" className="button" onClick={() => picker.current?.click()}>
-          Open a Margin file
-        </button>
+        <div className="header-actions">
+          <button type="button" className="button" onClick={() => picker.current?.click()}>
+            Open a Margin file
+          </button>
+          <button type="button" className="button" aria-expanded={linkOpen} aria-controls="open-link" onClick={() => setLinkOpen((open) => !open)}>
+            Open a link
+          </button>
+        </div>
         <input
           ref={picker}
           type="file"
@@ -35,6 +44,38 @@ export function Margins({ onPlay, onOpenFile }: { onPlay: () => void; onOpenFile
           }}
         />
       </header>
+      {linkOpen && (
+        <form
+          id="open-link"
+          className="open-link"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setOpening(true);
+            void onOpenLink(parseShareLink(linkText, window.location.href)).finally(() => {
+              setOpening(false);
+              setLinkText('');
+              setLinkOpen(false);
+            });
+          }}
+        >
+          <label htmlFor="share-link-text">A friend’s Spoken Margins link</label>
+          <div className="open-link-row">
+            <input
+              id="share-link-text"
+              type="text"
+              inputMode="url"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="https://…/l/…"
+              value={linkText}
+              onChange={(event) => setLinkText(event.target.value)}
+            />
+            <button type="submit" className="button button-primary" disabled={opening || !linkText.trim()}>
+              {opening ? 'Opening…' : 'Open'}
+            </button>
+          </div>
+        </form>
+      )}
       {data.ready && groups.length === 0 ? (
         <div className="empty">
           <p>Margins you write or record while listening appear here, the newest at the top. Tap one to hear its moment.</p>

@@ -930,6 +930,45 @@ button:disabled {
   min-height: 64px;
 }
 
+/* The Margins tab's two ways in: a file, or a friend's link (#3003). */
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.open-link {
+  display: grid;
+  gap: 8px;
+  padding: 4px 0 16px;
+}
+
+.open-link label {
+  font-weight: 650;
+}
+
+.open-link-row {
+  display: flex;
+  gap: 8px;
+}
+
+.open-link input,
+.share-link-row input {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1.5px solid var(--rule);
+  background: var(--surface);
+}
+
+.share-link-row {
+  display: grid;
+  gap: 6px;
+}
+
 /* Sharing an episode's Margins as a file. */
 .share-margins {
   display: grid;
