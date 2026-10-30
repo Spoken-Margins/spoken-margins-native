@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { formatClock } from '../../shared/clock.ts';
 import type { Episode, Margin, Show } from '../../shared/model.ts';
+import { capacitorBridge } from '../../sources/native-http.ts';
 import { useData } from '../data.tsx';
 import { BackIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenIcon, PlayIcon, ShareIcon, StopIcon } from '../icons.tsx';
 import { nextSpeed, timelineFraction } from '../logic/library.ts';
 import { plainError } from '../logic/messages.ts';
+import { shareNativePacket } from '../logic/native-packets.ts';
 import { SKIP_SECONDS, usePlayer } from '../player.tsx';
 import type { RecordedVoice, VoiceRecording } from '../ports.ts';
 import { services } from '../services.ts';
@@ -166,11 +168,19 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   const { toast } = useUi();
   const [busy, setBusy] = useState(false);
   const [sendable] = useState(canSendFiles);
+  // Inside the Android app (#3009) one button writes the file and opens Android's share sheet, which can also save it.
+  const [bridge] = useState(() => capacitorBridge());
 
   const share = async (how: 'save' | 'send') => {
     setBusy(true);
     try {
       const written = await services.packets.writePacket(episode, margins, show);
+      if (bridge) {
+        if ((await shareNativePacket(bridge, written.bytes, written.fileName, episode.title)) === 'cancelled') return;
+        const count = written.included.length === 1 ? '1 Margin' : `${written.included.length} Margins`;
+        toast(`Shared ${count} as ${written.fileName}.${written.notice ? ` ${written.notice}` : ''}`);
+        return;
+      }
       const file = new File([written.bytes as BlobPart], written.fileName, { type: written.mimeType });
       if (how === 'send') {
         try {
@@ -202,11 +212,18 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
     <div className="share-margins">
       <p className="muted">Share them as a .spokenmargins file. A friend opens it in Spoken Margins and hears each one at its moment.</p>
       <div className="share-actions">
-        <button type="button" className="button" disabled={busy} onClick={() => void share('save')}>
-          <DownloadIcon />
-          Save as a file
-        </button>
-        {sendable && (
+        {bridge ? (
+          <button type="button" className="button" disabled={busy} onClick={() => void share('send')}>
+            <ShareIcon />
+            Save or send
+          </button>
+        ) : (
+          <button type="button" className="button" disabled={busy} onClick={() => void share('save')}>
+            <DownloadIcon />
+            Save as a file
+          </button>
+        )}
+        {!bridge && sendable && (
           <button type="button" className="button" disabled={busy} onClick={() => void share('send')}>
             <ShareIcon />
             Send

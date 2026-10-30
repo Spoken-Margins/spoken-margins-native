@@ -44,4 +44,9 @@ every rule about what is read and when stays in `read.ts` and `search.ts`.
 - `npm run android:build` also runs Gradle and writes `android/app/build/outputs/apk/debug/app-debug.apk`.
   It needs JDK 21 (`JAVA_HOME`) and an Android SDK whose licences are already accepted (`ANDROID_HOME`, or
   `sdk.dir` in the git-ignored `android/local.properties`). Gradle fetches the missing SDK platform itself.
+- **Packets in the app (#3009).** The WebView has no Web Share and ignores a blob download, so "Save or send"
+  writes the file to the app's cache (Filesystem plugin) and opens Android's share sheet (Share plugin). A packet
+  opened with or shared to the app arrives through the App plugin and is read with Filesystem; the file picker
+  shows every file there, because Android reports `.spokenmargins` as `application/octet-stream`. The choice is
+  `src/app/logic/native-packets.ts`; the browser keeps its download link and Web Share.
 - Nothing here is verified on a device until someone installs the APK.

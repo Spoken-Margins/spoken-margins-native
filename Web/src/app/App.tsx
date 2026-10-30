@@ -10,6 +10,7 @@ import { Library } from './screens/Library.tsx';
 import { Margins } from './screens/Margins.tsx';
 import { MiniPlayer, NowPlaying } from './screens/NowPlaying.tsx';
 import { Settings } from './screens/Settings.tsx';
+import { useNativeOpenedFiles } from './native-files.ts';
 import { useSharedFiles } from './shared-files.ts';
 import { UiProvider } from './ui.tsx';
 
@@ -46,6 +47,7 @@ function Shell() {
   const openPlayer = useCallback(() => setNowPlaying(true), []);
   const openMarginFile = useOpenMarginFile(openPlayer);
   useSharedFiles(openMarginFile);
+  useNativeOpenedFiles(openMarginFile);
 
   // A `.spokenmargins` file dropped anywhere on the app opens like a picked one.
   const carriesFiles = (event: DragEvent) => Array.from(event.dataTransfer.types).includes('Files');

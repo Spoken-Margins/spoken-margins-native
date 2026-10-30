@@ -22,6 +22,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Open with, or share to, Spoken Margins: a .spokenmargins file (#3009). Android knows no such type,
+                 so files from Downloads, Messages or mail usually come as octet-stream or zip; a file that isn't a
+                 packet gets the app's plain message. MainActivity hands a share on as a view. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/vnd.spokenmargins.package+zip" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/zip" />
+            </intent-filter>
+
         </activity>
 
         <provider

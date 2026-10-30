@@ -5,6 +5,7 @@ import { useData } from '../data.tsx';
 import { shortDate } from '../format.ts';
 import { openFiles, type OpenMarginFile } from '../import.tsx';
 import { marginGroups, newestMarginId } from '../logic/library.ts';
+import { packetPickerAccept, packetRoute } from '../logic/native-packets.ts';
 import { usePlayer } from '../player.tsx';
 import { VoiceButton } from '../voice.tsx';
 
@@ -25,7 +26,7 @@ export function Margins({ onPlay, onOpenFile }: { onPlay: () => void; onOpenFile
         <input
           ref={picker}
           type="file"
-          accept=".spokenmargins,application/vnd.spokenmargins.package+zip"
+          accept={packetPickerAccept(packetRoute())}
           hidden
           data-testid="margin-file"
           onChange={(event) => {
