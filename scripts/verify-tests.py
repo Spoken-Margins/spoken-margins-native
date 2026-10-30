@@ -86,6 +86,43 @@ def step_env(environ=None):
     return env
 
 
+def node_version(text):
+    """(major, minor, patch) from a Node version such as "v24.22.1", or None."""
+    match = re.fullmatch(r'v?(\d+)\.(\d+)\.(\d+)', text.strip())
+    return tuple(int(part) for part in match.groups()) if match else None
+
+
+def node_for_nvmrc(root=None, environ=None):
+    """The folder of a `node` that meets `.nvmrc`'s major version: the PATH one when it is new enough, else nvm's.
+
+    The web suite's `node --test 'Web/src/**/*.test.ts'` needs Node 22.6 for the glob and 23.6 for type stripping.
+    The Mac runners' PATH puts Node 20 first, where the glob is read as a file name and no test runs (#3006).
+    Raises RuntimeError naming the version needed when neither is installed: a step that can't run fails."""
+    environ = os.environ if environ is None else environ
+    nvmrc = (root or ROOT) / '.nvmrc'
+    needed = int(nvmrc.read_text().strip().lstrip('v').split('.')[0])
+    on_path = shutil.which('node', path=environ.get('PATH', os.defpath))
+    have = None
+    if on_path:
+        try:
+            have = node_version(subprocess.run([on_path, '--version'], capture_output=True, text=True,
+                                               timeout=30).stdout)
+        except (OSError, subprocess.TimeoutExpired):
+            have = None
+        if have and have[0] >= needed:
+            return Path(on_path).parent
+    versions = Path(environ.get('NVM_DIR') or Path(environ.get('HOME') or Path.home()) / '.nvm') / 'versions/node'
+    installed = [(version, node) for node in versions.glob('v*/bin/node')
+                 if (version := node_version(node.parent.parent.name)) and version[0] >= needed
+                 and os.access(node, os.X_OK)]
+    if installed:
+        # The major .nvmrc names first, then the newest of it; a newer major only when that one isn't installed.
+        return max(installed, key=lambda pair: (pair[0][0] == needed, pair[0]))[1].parent
+    found = f'Node {".".join(map(str, have))} at {on_path}' if have else (on_path or 'no node')
+    raise RuntimeError(f'Node {needed} or later is needed (.nvmrc says {needed}); PATH has {found}, and {versions} '
+                       f'holds no Node {needed}. Install it with: nvm install {needed}')
+
+
 def compilation_cache_settings(root=None):
     """The build settings that turn on Xcode's compilation cache, in the lane's state folder."""
     root = root or ROOT
@@ -1394,9 +1431,10 @@ class Run:
         return False
 
     def command(self, name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=None,
-                startup=None, record_source=None, ceiling=None, stall_seconds=None):
+                startup=None, record_source=None, ceiling=None, stall_seconds=None, node=False):
         """Run one step. `timeout` is its time budget. With `ceiling` and `stall_seconds`, a step that has written to
-        its log within the last `stall_seconds` when the budget runs out goes on, until `ceiling` seconds in all (#1767)."""
+        its log within the last `stall_seconds` when the budget runs out goes on, until `ceiling` seconds in all (#1767).
+        With `node`, the step runs with a Node that meets `.nvmrc` first on its PATH (#3006)."""
         entry = {'name': name, 'command': args, 'timeout_seconds': timeout,
                  'expected_tests': sorted(expected) if expected is not None else None}
         if ceiling:
@@ -1405,6 +1443,17 @@ class Run:
         self.manifest['steps'].append(entry)
         self.save()
         print(f'{name} …', flush=True)
+        env = step_env()
+        if node:
+            try:
+                folder = node_for_nvmrc(environ=env)
+            except RuntimeError as missing:
+                entry['errors'] = [str(missing)]
+                self.save()
+                print(f'{name}: FAILED — {missing}', flush=True)
+                raise RuntimeError(f'{missing} (the {name} step did not run)') from None
+            entry['node'] = str(folder)
+            env['PATH'] = f'{folder}{os.pathsep}{env.get("PATH", "")}'
         device = self.manifest.get('destination', {}).get('udid')
         reports = Path.home() / 'Library/Logs/DiagnosticReports'
         if device and self.crash_baseline is None:
@@ -1446,7 +1495,7 @@ class Run:
             finish = xcodebuild_finish.FinishWatch() if tests and args[0] == 'xcodebuild' else None
             finish_offset = 0
             process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
-                                       start_new_session=True, env=step_env())
+                                       start_new_session=True, env=env)
             try:
                 while True:
                     if device and (report := new_crash(reports, self.crash_baseline, device)):
@@ -1520,7 +1569,7 @@ class Run:
                         if finish is not None:
                             finish = xcodebuild_finish.FinishWatch()
                         process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
-                                                   start_new_session=True, env=step_env())
+                                                   start_new_session=True, env=env)
             except (subprocess.TimeoutExpired, KeyboardInterrupt, InterruptedError, StartupStall) as stopped:
                 # A startup stall is reported as its own reason below, not as the step running out of budget.
                 entry['interrupted'] = not isinstance(stopped, StartupStall)
@@ -1830,7 +1879,8 @@ class Run:
                 raise RuntimeError(f'{failure}; {node_modules_drift.message(stale_modules)}') from failure
             raise
         self.command('share-link', ['npm', 'run', 'test:share-link'])
-        self.command('web', ['npm', 'run', 'test:web'])
+        # `node --test` with a glob and .ts files needs Node 23.6 or later; the Mac runners' PATH starts at 20 (#3006).
+        self.command('web', ['npm', 'run', 'test:web'], node=True)
         # The Go server, the research Python tests and the Caddy script (#1033); a suite that can't run
         # here is reported as skipped with its reason, not passed.
         self.command('research', [sys.executable, 'scripts/research_tests.py'], timeout=300)
