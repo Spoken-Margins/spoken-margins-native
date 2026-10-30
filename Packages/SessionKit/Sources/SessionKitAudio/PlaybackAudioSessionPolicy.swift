@@ -14,6 +14,13 @@ public struct AudioSessionConfiguration: Equatable, Sendable {
         self.optionsRawValue = optionsRawValue
     }
 
+    /// The session is set up to capture audio: a Margin is recording, or about to. Playback code that runs off the main
+    /// thread must leave such a session alone, because switching it back to `.playback` removes the input route under
+    /// a live recorder, and the Margin saves silent or cut short (#2967, the #937 class).
+    public var isCapturing: Bool {
+        category == "AVAudioSessionCategoryPlayAndRecord" || category == "AVAudioSessionCategoryRecord"
+    }
+
     /// `setCategory` is a synchronous round trip to the audio server (tens to hundreds of ms on a Bluetooth
     /// route). When the session already holds the wanted configuration the call changes nothing, so skip it (#2511).
     /// A session whose configuration can't be read (`current` is nil) is always set.

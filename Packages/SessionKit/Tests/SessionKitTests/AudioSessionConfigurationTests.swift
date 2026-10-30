@@ -13,6 +13,15 @@ final class AudioSessionConfigurationTests: XCTestCase {
         AudioSessionConfiguration(category: category, mode: mode, optionsRawValue: options)
     }
 
+    /// #2967: the live-speech Now Playing job runs off the main thread, so it can start after the recorder has
+    /// switched the session. It must leave a capturing session alone, or the Margin records nothing.
+    func testRecordingCategoriesAreCapturingAndPlaybackIsNot() {
+        XCTAssertTrue(config(category: "AVAudioSessionCategoryPlayAndRecord").isCapturing)
+        XCTAssertTrue(config(category: "AVAudioSessionCategoryRecord").isCapturing)
+        XCTAssertFalse(config().isCapturing)
+        XCTAssertFalse(config(category: "AVAudioSessionCategoryAmbient").isCapturing)
+    }
+
     func testSameConfigurationSkipsTheCall() {
         XCTAssertFalse(AudioSessionConfiguration.needsCategoryChange(current: config(), wanted: config()))
     }

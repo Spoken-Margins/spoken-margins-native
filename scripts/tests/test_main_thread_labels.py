@@ -97,6 +97,19 @@ class SystemDaemonCallsStayOffTheMainThread(unittest.TestCase):
         self.assertLess(body.index('audioSessionActivation.submit'), body.index('setActive(true)'),
                         'setActive(true) sits inside the submitted closure')
 
+    def test_the_background_activation_leaves_a_recording_session_alone(self):
+        source = (SOURCES / 'Gate2CompactControlController.swift').read_text()
+        body = source[source.index('audioSessionActivation.submit'):]
+        body = body[:body.index('Task { @MainActor')]
+        self.assertIn('guard !current.isCapturing else { return }', body)
+        self.assertLess(body.index('isCapturing'), body.index('ensurePlaybackCategory'))
+        # A queued job is dropped before a recording, in-app or from a compact command, takes the session.
+        capture = (SOURCES / 'Gate1AppModel+MarginCapture.swift').read_text()
+        start = capture[capture.index('private func startInterjectionRecording'):]
+        self.assertLess(start.index('recordingWillTakeAudioSession()'), start.index('engine.beginInterjection'))
+        model = (SOURCES / 'Gate1AppModel.swift').read_text()
+        self.assertRegex(model, r'if command == \.beginInterjection \{ gate2CompactControls\.recordingWillTakeAudioSession\(\) \}')
+
     def test_the_live_activity_permission_is_read_through_the_refreshed_flag(self):
         source = (SOURCES / 'Gate2CompactControlController.swift').read_text()
         self.assertRegex(source, r'areActivitiesEnabled: \{ activitiesEnabledFlag\.value \}')

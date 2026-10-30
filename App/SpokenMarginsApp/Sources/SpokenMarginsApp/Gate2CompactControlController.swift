@@ -543,6 +543,11 @@ final class Gate2CompactControlController {
         endWatchBackgroundTask = nil
     }
 
+    /// Call before a recording takes the audio session (#2967).
+    func recordingWillTakeAudioSession() {
+        liveSpeechNowPlaying.cancelAudioSessionActivation()
+    }
+
     func setNowPlayingEnabled(_ enabled: Bool) {
         guard nowPlayingEnabled != enabled else { return }
         nowPlayingEnabled = enabled
@@ -1331,6 +1336,11 @@ private final class Gate2LiveSpeechNowPlayingController {
             let failure: String?
             do {
                 let session = AVAudioSession.sharedInstance()
+                // A Margin may have started recording while this job waited: its category is the recorder's now.
+                let current = AudioSessionConfiguration(
+                    category: session.category.rawValue, mode: session.mode.rawValue, optionsRawValue: session.categoryOptions.rawValue
+                )
+                guard !current.isCapturing else { return }
                 try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: [], session: session)
                 try session.setActive(true)
                 failure = nil
@@ -1340,6 +1350,11 @@ private final class Gate2LiveSpeechNowPlayingController {
             Task { @MainActor [weak self] in self?.noteAudioSessionActivation(failure: failure) }
         }
         #endif
+    }
+
+    /// A recording is about to take the audio session: a job still waiting to activate it for speech must not run.
+    func cancelAudioSessionActivation() {
+        audioSessionActivation.cancelPending()
     }
 
     private func noteAudioSessionActivation(failure: String?) {

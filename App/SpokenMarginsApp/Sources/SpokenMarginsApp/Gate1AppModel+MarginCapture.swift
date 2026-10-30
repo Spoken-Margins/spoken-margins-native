@@ -267,6 +267,7 @@ extension Gate1AppModel {
         defer { marginCapture.releaseStart() }
         synchronizeStreamingSpeechAnchorIfNeeded()
         streamingSpeechQueue.pauseForInterjection()
+        gate2CompactControls.recordingWillTakeAudioSession()
         run { engine in
             snapshot = try engine.beginInterjection(request: .tapped(at: requestedAt).replying(to: marginCapture.pendingReply?.link))
             if snapshot.isRecording {

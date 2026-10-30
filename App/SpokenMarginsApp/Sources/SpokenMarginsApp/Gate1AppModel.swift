@@ -2216,6 +2216,7 @@ final class Gate1AppModel: ObservableObject {
             "requestedMediaTimeMs": String(mediaTimeMs ?? -1)
         ])
         if command.movesPlaybackPosition { marginMomentConductor?.sourceMoved() } // before any return below (#1656)
+        if command == .beginInterjection { gate2CompactControls.recordingWillTakeAudioSession() } // #2967
         if command == .beginInterjection, !snapshot.isRecording, snapshot.skimBridgeState == nil,
            !handOffPlayingMarginToRecording() { return }
         if snapshot.isRecording, heldMarginVoice != nil, command == .finishInterjection || command == .cancelInterjection { // the model plays the held voice on (#1672)
