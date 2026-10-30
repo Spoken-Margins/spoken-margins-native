@@ -79,7 +79,8 @@ final class J2PodcastSurvivesRelaunchJourneyUITests: XCTestCase {
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not reopen")
             XCTAssertTrue(playPause.waitForExistence(timeout: 5), "Playback control is missing after relaunch")
             XCTAssertEqual(playPause.label, "Play", "Episode started playing by itself after relaunch")
-            try waitForPosition(in: max(0, pausedSeconds - 30)...(pausedSeconds + 30),
+            // A few seconds, not 30: a pause that saved only its last periodic tick would reopen well short of the label.
+            try waitForPosition(in: max(0, pausedSeconds - 5)...(pausedSeconds + 5),
                                 "Episode did not reopen where it was paused (\(pausedSeconds) s)")
         }
 

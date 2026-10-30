@@ -29,6 +29,7 @@ final class J7PDFJourneyUITests: XCTestCase {
 
     func testListenToAPDFAndReopenAMargin() throws {
         var marginPercent = 0
+        var marginPassageID = ""
         var firstPassageID = ""
 
         try XCTContext.runActivity(named: "J7 step 1: The imported PDF is in the Library and plays") { _ in
@@ -70,6 +71,11 @@ final class J7PDFJourneyUITests: XCTestCase {
                 self.currentPassage.exists && self.currentPassage.identifier != firstPassageID
             }
             screenshot("J7 PDF passage, later moment")
+            // Pause first, so the passage read here is the one the Margin is saved at, not a sentence earlier.
+            if playPause.label == "Pause" { playPause.tap() }
+            waitUntil("The PDF did not pause before the Margin was written") { self.playPause.label == "Play" }
+            XCTAssertTrue(currentPassage.waitForExistence(timeout: 5), "The PDF has no highlighted current sentence once paused")
+            marginPassageID = currentPassage.identifier
             tap("playback.write.button")
             XCTAssertTrue(element("writtenMargin.screen").waitForExistence(timeout: 5), "Write a Margin did not open")
             let anchor = element("writtenMargin.anchor")
@@ -106,6 +112,10 @@ final class J7PDFJourneyUITests: XCTestCase {
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Play this moment did not open Now Playing")
             waitUntil("The Margin did not open at its passage (\(marginPercent)%)", timeout: 10) {
                 self.currentPercent().map { abs($0 - marginPercent) <= 3 } ?? false
+            }
+            // Percent alone allows a neighbouring sentence; the passage id is the sentence the Margin was written at.
+            waitUntil("The Margin did not reopen at its passage (\(marginPassageID))", timeout: 10) {
+                self.currentPassage.exists && self.currentPassage.identifier == marginPassageID
             }
         }
     }
