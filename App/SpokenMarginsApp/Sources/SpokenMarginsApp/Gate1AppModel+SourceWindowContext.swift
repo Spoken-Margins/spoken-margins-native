@@ -111,8 +111,11 @@ extension Gate1AppModel {
                 } catch {
                     failure = error.localizedDescription
                 }
-                if let caches = try? FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: false) {
-                    try? SourceTranscriptionCaches.remove(.windows, itemId: scratchID, cachesDirectory: caches)
+                // The scratch folder holds a whole exported window; clear it off the main actor (#2510).
+                _ = try? await Self.offMain {
+                    if let caches = try? FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: false) {
+                        try? SourceTranscriptionCaches.remove(.windows, itemId: scratchID, cachesDirectory: caches)
+                    }
                 }
             }
             HeardSourceWindowFiles.deleteInBackground(files)
@@ -143,7 +146,7 @@ extension Gate1AppModel {
               interjection.targetType == .item,
               let anchorMediaTimeMs = interjection.anchor.mediaTimeMs,
               let store,
-              let item = try? store.loadItem(id: interjection.itemId),
+              let item = try? store.loadItemSummary(id: interjection.itemId), // media and id only: not the item's text (#2506)
               let sourceURLString = item.media?.url,
               let canonicalSourceURL = URL(string: sourceURLString) else {
             return false
