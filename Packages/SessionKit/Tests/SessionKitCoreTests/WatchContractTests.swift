@@ -187,14 +187,15 @@ final class WatchContractTests: XCTestCase {
         XCTAssertEqual(WatchContract.milliseconds(seconds: 1e300), Int(Int32.max))
     }
 
-    func testTheHomeLineSurvivesASessionStartedLongAgo() {
-        var model = WatchSessionModel()
-        let started = model.start(kind: .meeting, id: "live-1", now: t0)
-        XCTAssertEqual(started.id, "live-1")
-        _ = model.home(now: t0.addingTimeInterval(60), phoneReachable: true).line(now: t0.addingTimeInterval(60))
-        // Far past the point where a session ends itself, and past the 32-bit millisecond range.
-        let home = model.home(now: t0.addingTimeInterval(40 * 24 * 3_600), phoneReachable: true)
-        XCTAssertEqual(home.line(now: t0.addingTimeInterval(40 * 24 * 3_600)), "No session")
+    func testTheHomeLineSurvivesAnAbsurdStartPositionAndAge() {
+        var info = WatchSessionInfo(id: "live-1", kind: .meeting, title: "Meeting", owner: .phone, startedAt: .distantPast)
+        let home = { (position: Int) -> WatchSessionModel.Home in
+            info.startPositionMs = position
+            return WatchSessionModel.Home(place: .onPhone, session: info, asOf: nil, resumable: nil, endNote: nil)
+        }
+        for position in [0, Int(Int32.max), Int.max] {
+            XCTAssertTrue(home(position).line(now: t0).contains("about"), "a position of \(position) must not trap")
+        }
     }
 
     // MARK: The clock

@@ -278,7 +278,7 @@ public struct WatchSessionModel: Codable, Equatable, Sendable {
             var parts = [session.displayTitle, place == .onWatch ? "on Watch" : "on iPhone"]
             if let start = session.startPositionMs {
                 let elapsed = WatchContract.milliseconds(seconds: now.timeIntervalSince(session.startedAt))
-                parts.append("about \(WatchContractFormat.clock(ms: Int(clamping: Int64(start) + Int64(elapsed))))")
+                parts.append("about \(WatchContractFormat.clock(ms: start.addingReportingOverflow(elapsed).overflow ? Int.max : start + elapsed))")
             } else {
                 parts.append(WatchContractFormat.timeOfDay(session.startedAt))
             }
