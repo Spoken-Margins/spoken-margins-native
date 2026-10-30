@@ -38,6 +38,7 @@ import (
 	"spokenmargins.dev/bridge/internal/config"
 	"spokenmargins.dev/bridge/internal/links"
 	"spokenmargins.dev/bridge/internal/maps"
+	"spokenmargins.dev/bridge/internal/relay"
 	"spokenmargins.dev/bridge/internal/store"
 	"spokenmargins.dev/bridge/internal/tokens"
 )
@@ -105,10 +106,15 @@ type Server struct {
 	Links          *links.Store
 	LinkInstallURL string
 
+	// Relay fetches feeds and pages for the web app (#2985). Nil, or no
+	// origins, answers 503 like the switch being off.
+	Relay *relay.Relay
+
 	// Per-hour limits. Zero means the defaults below.
 	ChallengesPerIPPerHour  int
 	RequestsPerInstallPerHr int
 	MapUploadsPerIPPerHour  int
+	RelayPerIPPerHour       int
 
 	once             sync.Once
 	ipSecret         []byte
@@ -117,6 +123,7 @@ type Server struct {
 	ipWindow         window
 	mapWindow        window
 	linkWindow       window
+	relayWindow      window
 	linkReportWindow window
 	linkSlots        chan struct{}
 	linkReports      map[linkReportKey]int
@@ -146,6 +153,9 @@ func (s *Server) init() {
 		}
 		if s.MapUploadsPerIPPerHour == 0 {
 			s.MapUploadsPerIPPerHour = 30
+		}
+		if s.RelayPerIPPerHour == 0 {
+			s.RelayPerIPPerHour = 120
 		}
 		s.uploadSlots = make(chan struct{}, maxConcurrentUploads)
 		s.linkSlots = make(chan struct{}, 1)
@@ -187,6 +197,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /l/{id}", s.getLink)
 	mux.HandleFunc("GET /l/{id}/packet", s.getLinkPacket)
 	mux.HandleFunc("POST /l/{id}/report", s.reportLink)
+	mux.HandleFunc("GET "+PathRelay, s.relay)
 	return s.logRequests(mux)
 }
 
@@ -196,6 +207,7 @@ var loggedRoutes = map[string]bool{
 	"/api/v1/health": true, PathConfig: true, PathManifest: true,
 	"/api/v1/attest/challenge": true, "/api/v1/attest/register": true, "/api/v1/ping": true,
 	PathLinks: true, PathMapTranscripts: true, PathTokens: true, PathTokenKeys: true,
+	PathRelay: true,
 }
 
 // logRoute is the route name the request log may record for path.
