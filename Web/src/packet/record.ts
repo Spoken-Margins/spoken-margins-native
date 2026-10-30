@@ -9,7 +9,7 @@
 // Whatever records, the result goes through normalizeM4a, which refuses anything that isn't AAC and rewrites
 // fragmented MP4 (Chrome's MediaRecorder output) as one plain progressive `.m4a`. Opus or WebM never reaches a packet.
 
-import { NotAacError, muxM4a, normalizeM4a } from './m4a.ts';
+import { NotAacError, audioSpecificConfigFromDescription, muxM4a, normalizeM4a } from './m4a.ts';
 import type { AacTrack } from './m4a.ts';
 
 export type RecordingPath = 'media-recorder-aac' | 'media-recorder-mp4' | 'webcodecs-aac' | 'unsupported';
@@ -149,9 +149,11 @@ export class AacFrameCollector {
   add(chunk: { byteLength: number; copyTo(destination: Uint8Array): void }, metadata?: { decoderConfig?: { description?: AllowSharedBufferSource } }): void {
     const description = metadata?.decoderConfig?.description;
     if (description && !this.audioSpecificConfig) {
-      this.audioSpecificConfig = description instanceof ArrayBuffer
+      const bytes = description instanceof ArrayBuffer
         ? new Uint8Array(description.slice(0))
-        : new Uint8Array((description as ArrayBufferView).buffer.slice(0) as ArrayBuffer, (description as ArrayBufferView).byteOffset, (description as ArrayBufferView).byteLength).slice();
+        : new Uint8Array((description as ArrayBufferView).buffer as ArrayBuffer, (description as ArrayBufferView).byteOffset, (description as ArrayBufferView).byteLength).slice();
+      // Chrome describes the stream with a bare AudioSpecificConfig, WebKit with an ES_Descriptor around one.
+      this.audioSpecificConfig = audioSpecificConfigFromDescription(bytes);
     }
     const frame = new Uint8Array(chunk.byteLength);
     chunk.copyTo(frame);

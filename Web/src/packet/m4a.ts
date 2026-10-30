@@ -73,26 +73,68 @@ function descriptorLength(bytes: Uint8Array, at: number): { length: number; next
 }
 
 function parseEsds(bytes: Uint8Array, box: Box): Uint8Array {
-  let at = box.body + 4;
+  return checkAac(parseEsDescriptor(bytes, box.body + 4, box.end));
+}
+
+function checkAac(asc: Uint8Array): Uint8Array {
+  if (asc.length < 2) throw new NotAacError('AudioSpecificConfig is too short');
+  const aot = asc[0] >> 3;
+  if (![2, 5, 29].includes(aot)) throw new NotAacError(`audio object type ${aot} is not AAC`);
+  return asc;
+}
+
+/** The AudioSpecificConfig inside an MPEG-4 ES_Descriptor (tag 0x03) that starts at `at`. */
+function parseEsDescriptor(bytes: Uint8Array, at: number, end: number): Uint8Array {
   if (bytes[at] !== 0x03) throw new NotAacError('esds has no ES descriptor');
-  let d = descriptorLength(bytes, at + 1);
+  const d = descriptorLength(bytes, at + 1);
   at = d.next + 2;
   const flags = bytes[at];
   at += 1;
   if (flags & 0x80) at += 2;
   if (flags & 0x40) at += 1 + bytes[at];
   if (flags & 0x20) at += 2;
+  if (at >= end) throw new NotAacError('esds is truncated');
+  return parseDecoderConfig(bytes, at, end);
+}
+
+/** The AudioSpecificConfig inside a DecoderConfigDescriptor (tag 0x04) that starts at `at`. */
+function parseDecoderConfig(bytes: Uint8Array, at: number, end: number): Uint8Array {
   if (bytes[at] !== 0x04) throw new NotAacError('esds has no decoder config');
-  d = descriptorLength(bytes, at + 1);
+  let d = descriptorLength(bytes, at + 1);
   const objectType = bytes[d.next];
-  if (objectType !== 0x40) throw new NotAacError(`object type 0x${objectType.toString(16)} is not MPEG-4 audio`);
+  if (objectType !== 0x40) throw new NotAacError(`object type 0x${objectType?.toString(16)} is not MPEG-4 audio`);
   at = d.next + 13;
-  if (bytes[at] !== 0x05) throw new NotAacError('esds has no AudioSpecificConfig');
+  if (at >= end || bytes[at] !== 0x05) throw new NotAacError('esds has no AudioSpecificConfig');
   d = descriptorLength(bytes, at + 1);
-  const asc = bytes.slice(d.next, d.next + d.length);
-  const aot = asc[0] >> 3;
-  if (![2, 5, 29].includes(aot)) throw new NotAacError(`audio object type ${aot} is not AAC`);
-  return asc;
+  if (d.next + d.length > end) throw new NotAacError('AudioSpecificConfig runs past its descriptor');
+  return bytes.slice(d.next, d.next + d.length);
+}
+
+/**
+ * The AudioSpecificConfig in a WebCodecs AudioEncoder's `decoderConfig.description`. Browsers disagree on its form:
+ * Chrome gives the bare AudioSpecificConfig (`11 88` for 48 kHz mono), and WebKit gives an MPEG-4 ES_Descriptor
+ * (`03 80 80 80 22 …`, an esds box's payload) holding the config in its DecoderSpecificInfo (tag 0x05).
+ * A whole `esds` box, a DecoderConfigDescriptor (0x04) or a lone DecoderSpecificInfo (0x05) work too.
+ * A bare config can't be mistaken for a descriptor: a first byte of 0x03 to 0x05 would be audio object type 0.
+ */
+export function audioSpecificConfigFromDescription(bytes: Uint8Array): Uint8Array {
+  if (bytes.length >= 12 && String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]) === 'esds') {
+    const size = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0);
+    return parseEsds(bytes, { type: 'esds', start: 0, body: 8, end: Math.min(size || bytes.length, bytes.length) });
+  }
+  switch (bytes[0]) {
+    case 0x03:
+      return checkAac(parseEsDescriptor(bytes, 0, bytes.length));
+    case 0x04:
+      return checkAac(parseDecoderConfig(bytes, 0, bytes.length));
+    case 0x05: {
+      const d = descriptorLength(bytes, 1);
+      if (d.next + d.length > bytes.length) throw new NotAacError('AudioSpecificConfig runs past its descriptor');
+      return checkAac(bytes.slice(d.next, d.next + d.length));
+    }
+    default:
+      return checkAac(bytes.slice());
+  }
 }
 
 /** Reads the first sound track of an MP4 (progressive or fragmented) and returns its AAC frames. */
