@@ -35,7 +35,7 @@ extension Gate1AppModel {
     /// Margin is saved or discarded, however long ago it was typed.
     private func discardAbandonedWrittenMarginDrafts(_ drafts: [WrittenMarginDraftRecord], journal: WrittenMarginDraftJournal, store: SQLiteSessionStore) -> [WrittenMarginDraftRecord] {
         drafts.filter { draft in
-            guard (try? store.loadItem(id: draft.itemId)) == nil else { return true }
+            guard (try? store.loadItemSummary(id: draft.itemId)) == nil else { return true } // only whether the item exists (#2506)
             try? journal.remove(id: draft.id)
             return false
         }

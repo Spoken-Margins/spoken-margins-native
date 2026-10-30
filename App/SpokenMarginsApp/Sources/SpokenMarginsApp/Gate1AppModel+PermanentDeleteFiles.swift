@@ -38,7 +38,7 @@ extension Gate1AppModel {
     /// The prepared narration file goes off the main thread (#2510), like the recordings and the episode-map folder,
     /// so a permanent delete does not wait on the unlink. The path is checked here, where the support directory
     /// is known; only the removal runs in the background.
-    func removeDurableGeneratedAudio(for item: Item) {
+    func removeDurableGeneratedAudio(for item: some LibraryItemFields) {
         guard item.media?.sourceType == .generatedTTSPrerendered,
               let identifier = item.media?.nativeMediaId ?? item.media?.url,
               let url = URL(string: identifier),
