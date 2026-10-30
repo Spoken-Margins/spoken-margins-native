@@ -49,6 +49,8 @@ public enum SkimUnavailableReason: String, Equatable, Sendable {
     case noSceneSummary = "no_scene_summary"
     /// The package's recorded summary for this scene is missing.
     case suppliedSummaryMissing = "supplied_summary_missing"
+    /// The item's map and saved summaries are still being read from the store; Skim answers once they have landed (#2943).
+    case loading = "loading"
     /// Preparing the summary in the current voice produced no audio or threw.
     case preparationFailed = "preparation_failed"
     /// The summary was prepared, but by then the listener had moved on (another item, or a Skim already playing).
@@ -61,6 +63,7 @@ public enum SkimUnavailableReason: String, Equatable, Sendable {
         case .noMap: return "Skim needs a Listening Map for this episode."
         case .noSceneSummary: return "There's no scene summary to skim to from here."
         case .suppliedSummaryMissing: return "This scene's recorded summary is missing. Reimport the package to restore it."
+        case .loading: return "Skim is still loading this episode's map. Try again in a moment."
         case .preparationFailed: return "The scene summary couldn't be prepared, so Skim didn't move."
         case .movedOn: return "Skim stopped because playback moved on while the summary was being prepared."
         }

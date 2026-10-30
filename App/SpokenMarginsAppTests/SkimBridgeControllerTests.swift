@@ -69,8 +69,8 @@ final class SkimBridgeControllerTests: XCTestCase {
     // MARK: loaded resources
 
     /// #2184: every reload of the selected item dropped the loaded map, so the next snapshot tick re-read the projection,
-    /// proposals, layers and the owned-asset table on the main thread. They load once per item and map change now.
-    func testResourcesLoadOncePerItemAndMapChange() throws {
+    /// proposals, layers and the owned-asset table. They load once per item and map change now, off the main actor (#2943).
+    func testResourcesLoadOncePerItemAndMapChange() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "skim-resources-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -84,6 +84,7 @@ final class SkimBridgeControllerTests: XCTestCase {
         let key = SkimResourceKey(episode)
 
         controller.updateAvailability(refreshResources: false)
+        await controller.settleResources()
         XCTAssertEqual(controller.resourceLoadCount, 1)
 
         var reloaded = episode
@@ -93,16 +94,19 @@ final class SkimBridgeControllerTests: XCTestCase {
             controller.itemDetailChanged(from: key, to: SkimResourceKey(reloaded))
             controller.updateAvailability(refreshResources: false)
         }
+        await controller.settleResources()
         XCTAssertEqual(controller.resourceLoadCount, 1, "a reload that leaves the map alone keeps what was loaded")
 
         var other = ItemDetailState()
         other.id = "another"
         controller.itemDetailChanged(from: key, to: SkimResourceKey(other))
         controller.updateAvailability(refreshResources: false)
+        await controller.settleResources()
         XCTAssertEqual(controller.resourceLoadCount, 1, "browsing another item keeps the playing item's map")
 
         controller.itemDetailChanged(from: SkimResourceKey(other), to: key)
         controller.updateAvailability(refreshResources: false)
+        await controller.settleResources()
         XCTAssertEqual(controller.resourceLoadCount, 2, "arriving at the playing item reads it once")
 
         var remapped = episode
@@ -110,10 +114,48 @@ final class SkimBridgeControllerTests: XCTestCase {
         controller.itemDetailChanged(from: key, to: SkimResourceKey(remapped))
         controller.updateAvailability(refreshResources: false)
         controller.updateAvailability(refreshResources: false)
+        await controller.settleResources()
         XCTAssertEqual(controller.resourceLoadCount, 3, "a map change reads it once")
 
         controller.updateAvailability()
+        await controller.settleResources()
         XCTAssertEqual(controller.resourceLoadCount, 4, "an explicit refresh still reads it")
+    }
+
+    /// #2943: opening an item and the first play tick read the store on the main thread (hangs up to 2.5 s). Asking
+    /// for Skim now answers "still loading" at once, and the answer arrives with the loaded map.
+    func testAskingBeforeTheResourcesLoadAnswersLoadingAndDoesNotWait() async throws {
+        let host = try mappedHost(try temporaryDirectory())
+        let controller = makeController(host)
+        controller.updateAvailability()
+        XCTAssertEqual(controller.resolve(direction: .forward, at: 1_000).unavailableReason, .loading,
+                       "nothing is loaded yet, and nothing waited for the store")
+        XCTAssertFalse(controller.itemHasMap)
+        XCTAssertFalse(host.available.forward)
+
+        await controller.settleResources()
+        XCTAssertTrue(controller.itemHasMap, "the controls are refreshed when the load lands")
+        XCTAssertTrue(host.available.forward)
+        XCTAssertNil(controller.resolve(direction: .forward, at: 1_000).unavailableReason)
+    }
+
+    /// #2943: a reload keeps the last copy for the same item, so the controls don't flicker off while the store is read,
+    /// and a read that an invalidation overtook is never installed as current.
+    func testAReloadKeepsTheStaleCopyAndNeverInstallsAnOvertakenRead() async throws {
+        let host = try mappedHost(try temporaryDirectory())
+        let controller = makeController(host)
+        controller.updateAvailability()
+        await controller.settleResources()
+        XCTAssertTrue(host.available.forward)
+
+        controller.updateAvailability()
+        XCTAssertTrue(host.available.forward, "the stale copy answers while the reload runs")
+        XCTAssertNil(controller.resolve(direction: .forward, at: 1_000).unavailableReason)
+        controller.updateAvailability()
+        controller.updateAvailability()
+        await controller.settleResources()
+        XCTAssertTrue(host.available.forward)
+        XCTAssertGreaterThanOrEqual(controller.resourceLoadCount, 2)
     }
 
     // MARK: a second tap and an unavailable Skim
@@ -137,7 +179,7 @@ final class SkimBridgeControllerTests: XCTestCase {
     }
 
     /// #2185: an item with no Listening Map says so instead of doing nothing.
-    func testAnItemWithNoMapSaysSo() throws {
+    func testAnItemWithNoMapSaysSo() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "skim-reason-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -146,6 +188,7 @@ final class SkimBridgeControllerTests: XCTestCase {
         host.source = SkimSource(itemId: "episode", durationMs: 60_000)
         let controller = makeController(host)
         controller.updateAvailability()
+        await controller.settleResources()
         XCTAssertFalse(controller.itemHasMap)
         XCTAssertEqual(controller.forwardUnavailableReason, .noMap)
         controller.perform(direction: .forward)
@@ -199,6 +242,7 @@ final class SkimBridgeControllerTests: XCTestCase {
         let host = try mappedHost(try temporaryDirectory())
         let controller = makeController(host)
         controller.updateAvailability()
+        await controller.settleResources()
         XCTAssertTrue(host.available.forward, "Skim is offered before the summary's audio exists")
         XCTAssertTrue(controller.itemHasMap)
         XCTAssertNil(controller.forwardUnavailableReason)
@@ -216,6 +260,7 @@ final class SkimBridgeControllerTests: XCTestCase {
         host.prepareResult = false
         let controller = makeController(host)
         controller.updateAvailability()
+        await controller.settleResources()
         controller.perform(direction: .forward)
         try await waitForRecords(host, count: 2)
         XCTAssertEqual(host.records.last?["outcome"], "no_audio")
@@ -224,6 +269,7 @@ final class SkimBridgeControllerTests: XCTestCase {
         XCTAssertFalse(host.available.forward, "a summary that can't be prepared isn't offered again on every press")
         XCTAssertEqual(controller.forwardUnavailableReason, .preparationFailed)
         controller.updateAvailability()
+        await controller.settleResources()
         XCTAssertTrue(host.available.forward, "a refresh (the item reopened) tries it again")
     }
 
@@ -232,6 +278,7 @@ final class SkimBridgeControllerTests: XCTestCase {
         host.prepareDelay = .milliseconds(200)
         let controller = makeController(host)
         controller.updateAvailability()
+        await controller.settleResources()
         controller.perform(direction: .forward)
         controller.perform(direction: .forward)
         XCTAssertEqual(host.records.map { $0["outcome"] }, ["preparing_summary", "already_preparing"])
@@ -247,6 +294,7 @@ final class SkimBridgeControllerTests: XCTestCase {
         host.prepareDelay = .milliseconds(50)
         let controller = makeController(host)
         controller.updateAvailability()
+        await controller.settleResources()
         controller.perform(direction: .forward)
         host.mayStartSummary = false
         try await waitForRecords(host, count: 2)
@@ -262,6 +310,7 @@ final class SkimBridgeControllerTests: XCTestCase {
         host.prepareResult = true // the scripted host never has a file, so the summary still has no audio here
         let controller = makeController(host)
         controller.updateAvailability()
+        await controller.settleResources()
         controller.perform(direction: .forward)
         try await waitForRecords(host, count: 2)
         XCTAssertEqual(host.records.last?["detail"], "voice_changed")

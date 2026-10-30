@@ -18,6 +18,9 @@ extension Gate1AppModel {
 
     var skimResourceLoadCount: Int { skimBridge.resourceLoadCount }
 
+    /// Returns once Skim's map and asset read has landed, which a refresh no longer waits for (#2943).
+    func settleSkimResources() async { await skimBridge.settleResources() }
+
     func refreshSkimAvailabilityForTesting() { updateSkimAvailability() }
     #endif
 
