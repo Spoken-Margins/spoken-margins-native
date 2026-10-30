@@ -109,6 +109,45 @@ final class ResumeAfterRelaunchTests: XCTestCase {
         _ = try engine.seekMedia(toMediaTimeMs: 2_000_000)
         XCTAssertEqual(try storedMediaTimeMs(), 2_000_000)
     }
+
+    /// #2509: every tick publishes the session's Margin and AI-job counts. They used to decode every Margin and job of
+    /// the session on the main thread twice a second; the store now counts them without reading a payload.
+    func testATickCountsTheSessionsMarginsAndJobsWithoutDecodingThem() throws {
+        let store = try SQLiteSessionStore(path: path)
+        for index in 0..<40 {
+            try store.saveInterjection(Interjection(
+                id: "margin-\(index)", itemId: itemId, sessionId: sessionId, targetType: .item, targetId: itemId,
+                createdAt: now, roughPercent: 1, anchor: Anchor(anchorType: .text, startChar: index, endChar: index, anchorBefore: "a", anchorAfter: "b"),
+                audioPath: nil, audioStatus: "none", transcriptionStatus: "complete",
+                transcript: String(repeating: "spoken words ", count: 200), cleanedTranscript: nil, displayText: nil,
+                status: index % 4 == 0 ? "deleted" : "active"))
+        }
+        for (index, status) in ["complete", "queued", "running"].enumerated() {
+            try store.saveAIJob(AIJob(
+                id: "job-\(index)", kind: "summary", itemId: nil, sessionId: sessionId, turnId: "turn-\(index)",
+                providerType: "local", model: "on-device", status: status, attempts: 1, lastError: nil,
+                messages: [], playbackMode: nil))
+        }
+        let meter = StoreReadMeter()
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(
+                id: "phone", displayName: "Phone",
+                capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]),
+            repository: try SQLiteSessionStore(path: path, readMeter: meter), audio: RelaunchAudioClient(durationMs: durationMs),
+            playbackStartTimeout: 5, now: { [unowned self] in self.now })
+        _ = try engine.inspectSession(sessionId: sessionId)
+        meter.reset()
+
+        var snapshot = try engine.syncPlaybackProgress(coalescingWrites: true)
+        for _ in 0..<20 { snapshot = try engine.syncPlaybackProgress(coalescingWrites: true) }
+
+        XCTAssertEqual(snapshot.activeInterjectionCount, 30, "the ten deleted Margins don't count")
+        XCTAssertEqual(snapshot.pendingAiJobCount, 2, "the finished job doesn't count")
+        let totals = meter.totals()
+        XCTAssertNil(totals["loadInterjections(sessionId:)"], "no tick decodes the session's Margins")
+        XCTAssertNil(totals["loadAIJobs(sessionId:)"], "no tick decodes the session's AI jobs")
+        XCTAssertGreaterThan(totals["activeInterjectionCount"]?.calls ?? 0, 0, "the store counted them instead")
+    }
 }
 
 /// A media player that reports whatever place the test sets and confirms a start when told to.

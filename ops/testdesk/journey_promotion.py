@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import sys
 
 LISTING = Path(__file__).resolve().parents[2] / 'TestPlans' / 'scripted-journeys.json'
@@ -41,6 +42,46 @@ def update(streaks: dict, results: dict) -> dict:
             passes, bad = 0, bad + 1
         fresh[test] = {'passes': passes, 'bad': bad}
     return fresh
+
+
+JOURNEY_LINE = re.compile(r'^\s*scripted journeys \(only those on gating are verdict input\): (.+)$', re.M)
+JOURNEY_RESULT = re.compile(r'(\S+) (passed|failed|missing|skipped|not_run)(?:,|$)')
+
+
+def results_from_report(body: str, listing: dict) -> dict:
+    """The per-script outcomes one integration report on #184 lists, as {test selector: status}.
+
+    The report names each script by its last path part (`J1ListenToAnArticleJourneyUITests`, or the method of a
+    single test), so they are matched back to the selectors in `listing`. A name the listing no longer has, or that two listed scripts share, is ignored."""
+    match = JOURNEY_LINE.search(body or '')
+    if not match:
+        return {}
+    selectors, clashing = {}, set()
+    for status in ('gating', 'probation'):
+        for entry in listing.get(status, []):
+            selector = entry['test'].removesuffix('()')
+            name = selector.rsplit('/', 1)[-1]
+            if name in selectors and selectors[name] != selector:
+                clashing.add(name)  # the report can't tell these apart, so neither is credited
+            selectors[name] = selector
+    selectors = {name: selector for name, selector in selectors.items() if name not in clashing}
+    found = {}
+    for chunk in match.group(1).split(', '):
+        pair = JOURNEY_RESULT.fullmatch(chunk.strip())
+        if pair and pair.group(1) in selectors:
+            found[selectors[pair.group(1)]] = pair.group(2)
+    return found
+
+
+def streaks_from_reports(bodies: list, listing: dict) -> dict:
+    """Streaks folded from the journey lines of past reports, oldest first, so a run that keeps no state of its own
+    (the hosted integration run, #2894) still counts consecutive passes. Whoever ran a report, it counts."""
+    streaks: dict = {}
+    for body in bodies:
+        results = results_from_report(body, listing)
+        if results:
+            streaks = update(streaks, results)
+    return streaks
 
 
 def due(listing: dict, streaks: dict) -> dict:

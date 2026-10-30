@@ -266,7 +266,7 @@ extension Gate1AppModel {
               bulkSharePreparationGeneration == bulkGeneration,
               let current = sharingState.drafts.firstIndex(where: { $0.id == id }),
               sharingState.drafts[current].renderGeneration == renderGeneration else {
-            try? FileManager.default.removeItem(at: destination)
+            Task.detached(priority: .utility) { try? FileManager.default.removeItem(at: destination) } // off main (#2510)
             return false
         }
         sharingState.drafts[current].isPreparingCleanup = false

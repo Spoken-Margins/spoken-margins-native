@@ -35,7 +35,7 @@ While the variable is `on`, the Mac's tick tests no new tip (`hold: hosted integ
 
 The hosted run zips the tip's simulator app with `ditto` into `artifacts/sim-app/` under the same rule as the Mac (exactly that SHA, `bundle-contracts` passed), and the workflow uploads it as `sim-app-<full sha>` for 2 days. `scripts/sim-build-latest` downloads it with `gh` when no local build matches (`--for <sha>`, or `origin/main`'s tip as last fetched) and keeps it in `~/SpokenMarginsOps/sim-builds` like a local one, marked `built_by: hosted integration`.
 
-Lost while hosted is on: no journey streaks toward gating (`journey_promotion.py` reads only the Mac's `state.json`), and no catch-ledger rows for hosted tips.
+Lost while hosted is on: no catch-ledger rows for hosted tips. Journey streaks are kept: the hosted run has no `state.json`, so it folds the journey lines of the earlier reports on #184 (`journey_promotion.streaks_from_reports`) with its own results and prints `journeys due to move:` in its report (#2894); the Test Desk makes the move in `TestPlans/scripted-journeys.json` by hand from that line.
 
 The diagnosis is `claude -p` with only Read, Grep and Glob, `--permission-mode dontAsk`, structured JSON output and a $10 cap. Anything else is refused at once rather than waiting for a click. A missing token or a bad answer gives template text instead. A tip is tested at most once: a run cut off part-way is closed as INCONCLUSIVE, not repeated.
 

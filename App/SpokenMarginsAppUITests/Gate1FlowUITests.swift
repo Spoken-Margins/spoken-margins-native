@@ -1546,9 +1546,12 @@ final class Gate1FlowUITests: XCTestCase {
     /// the test ("Failed to determine hittability ... Activation point invalid"). That failed the first scroll after a
     /// launch at AX5 on the hosted Mac twice in a week (#2760). An element with no usable frame is not ready to tap,
     /// so the scroll loops go on and look again.
+    ///
+    /// The row can also go away between two reads when the list redraws after a launch: `exists`, then `frame`, are two
+    /// lookups, and `frame` fails the test ("Failed to get matching snapshot: No matches found") if the element left in
+    /// between (#2922). `snapshot()` is one lookup that throws instead, so a vanished element means "not ready".
     private func isReadyToTap(_ candidate: XCUIElement) -> Bool {
-        guard candidate.exists else { return false }
-        let frame = candidate.frame
+        guard let frame = (try? candidate.snapshot())?.frame else { return false }
         guard !frame.isNull, !frame.isInfinite, !frame.isEmpty else { return false }
         return candidate.isHittable
     }

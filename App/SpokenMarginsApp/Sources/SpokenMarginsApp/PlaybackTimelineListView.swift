@@ -22,6 +22,7 @@ struct PlaybackTimelineListView<Details: View>: View {
                     .accessibilityIdentifier(entry.accessibilityIdentifier)
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("timeline.rail")
     }
 }

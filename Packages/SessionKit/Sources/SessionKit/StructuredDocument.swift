@@ -434,9 +434,11 @@ public enum StructuredDocumentBuilder {
         setsSuperscripts: Bool
     ) -> [StructuredDocument.Marker] {
         let group = #"([0-9]{1,3}(?:\s*[,–-]\s*[0-9]{1,3}|[ ][0-9]{1,3})*)(?=\s|$|[;:,.](?:\s|$))"#
-        // The last form is a number set apart after a full stop and ahead of a new sentence: "respectively. 18,19 Of these".
+        // The last form is a number set apart after a full stop and ahead of a new sentence: "respectively. 18,19 Of these",
+        // or opening the next line: "such as IFN-γ." then "46 In the CD16+" (#1189). A letter standing alone
+        // before that stop is a unit or an initial ("for 24 h.", "from J."), not a cited term.
         guard let regex = try? NSRegularExpression(pattern: #"(?<=\p{L}\p{L})([.,;])"# + group + #"|([)\]”"])[.,;:]?"# + group
-                                                    + #"|(?<=\p{L}\p{L})(\.)[ ]"# + group + #"(?= \p{Lu})"#),
+                                                    + #"|(\.)(?:(?<=\p{L}\p{L}\.)[ ]|(?<=[\p{L}”’"]\n?\.)(?<!\s\p{L}\n?\.)\n)"# + group + #"(?= \p{Lu})"#),
               let math = try? NSRegularExpression(pattern: #"[+−×÷^=<>/*|]|(?:^|[^\p{L}])[\p{L}0-9]\s*-\s*[\p{L}0-9](?:[^\p{L}]|$)"#),
               let lostSpace = try? NSRegularExpression(pattern: #"\p{Ll}{2}[,;]\p{Ll}{2}"#),
               // "(a, b)2", "(x, y)2": a pair of variables, squared.
@@ -452,6 +454,8 @@ public enum StructuredDocumentBuilder {
             for match in regex.matches(in: slice, range: NSRange(location: 0, length: nsSlice.length)) {
                 let spaced = match.range(at: 5).location != NSNotFound
                 if spaced, !setsSuperscripts { continue }
+                if spaced, nsSlice.character(at: match.range(at: 5).location + 1) == 0x0A,
+                   !continuesAParagraph(nsSlice, digits: match.range(at: 6)) { continue }
                 let afterWord = match.range(at: 1).location != NSNotFound || spaced
                 var digits = match.range(at: spaced ? 6 : afterWord ? 2 : 4)
                 func following() -> Character? {
@@ -477,8 +481,10 @@ public enum StructuredDocumentBuilder {
                     let before = nsSlice.substring(with: NSRange(location: start, length: match.range.location - start))
                     let word = String(before.reversed().prefix { $0.isLetter }.reversed()).lowercased()
                     let punctuation = nsSlice.substring(with: match.range(at: spaced ? 5 : 1))
-                    guard !nonCitationWords.contains(word), !nonCitationAbbreviations.contains(word),
-                          sentenceFollows || (punctuation != "." && !dropsSpaces) else { continue }
+                    // "Cao et al.22 considered": a superscript stuck to "et al." is a citation, whatever follows (#1189).
+                    let afterEtAl = !spaced && punctuation == "." && before.range(of: #"(?:^|\s)et al$"#, options: .regularExpression) != nil
+                    guard afterEtAl || (!nonCitationWords.contains(word) && !nonCitationAbbreviations.contains(word)
+                          && (sentenceFollows || (punctuation != "." && !dropsSpaces))) else { continue }
                 } else if let close = Range(match.range(at: 3), in: slice), "])".contains(slice[close]) {
                     // What the closing bracket closes, when it opens in this segment.
                     let open: Character = slice[close] == ")" ? "(" : "["
@@ -487,8 +493,10 @@ public enum StructuredDocumentBuilder {
                         let content = String(slice[slice.index(after: start)..<close.lowerBound])
                         let previous = start > slice.startIndex ? slice[slice.index(before: start)] : nil
                         let contentRange = NSRange(location: 0, length: (content as NSString).length)
+                        // A sample size is not a formula: "(2015, n=68 186)21 of the Survey" (#1189).
+                        let formula = content.replacingOccurrences(of: #"\b[nN]\s*=\s*[0-9][0-9 ,.]*"#, with: "", options: .regularExpression)
                         guard previous?.isLetter != true, previous?.isNumber != true, content.count > 2,
-                              math.firstMatch(in: content, range: contentRange) == nil,
+                              math.firstMatch(in: formula, range: NSRange(location: 0, length: (formula as NSString).length)) == nil,
                               letters.firstMatch(in: content, range: contentRange) == nil
                         else { continue }
                     }
@@ -509,6 +517,44 @@ public enum StructuredDocumentBuilder {
         }
         return result
     }
+
+    /// A number opening a line ("46 In the CD16+ NK cells, the expression rose") is a wrapped superscript
+    /// only inside running prose: not a heading ("2 Materials and Methods", or "2 Study design" with a
+    /// new sentence on the next line), and not a numbered list, whose nearby lines open with the numbers
+    /// either side of it ("1 Mix…", "2 Heat…"), even when an item wraps.
+    private static func continuesAParagraph(_ text: NSString, digits: NSRange) -> Bool {
+        let numbers = text.substring(with: digits).split { !$0.isNumber }.compactMap { Int($0) }
+        guard let first = numbers.first, let last = numbers.last else { return false }
+        let line = text.lineRange(for: digits)
+        let end = digits.location + digits.length
+        let rest = text.substring(with: NSRange(location: end, length: line.location + line.length - end))
+        // "Recent studies have" runs on as a sentence; "Materials and Methods" is a heading in title case.
+        let words = rest.split(whereSeparator: \.isWhitespace)
+        guard words.count >= 3,
+              words.dropFirst().contains(where: { $0.first?.isLowercase == true && !headingConnectives.contains($0.lowercased()) })
+        else { return false }
+        func lines(from start: Int, backwards: Bool) -> [NSRange] {
+            var result: [NSRange] = [], location = start
+            while result.count < 4, backwards ? location > 0 : location < text.length {
+                let range = text.lineRange(for: NSRange(location: backwards ? location - 1 : location, length: 0))
+                result.append(range)
+                location = backwards ? range.location : range.location + range.length
+            }
+            return result
+        }
+        let before = lines(from: line.location, backwards: true), after = lines(from: line.location + line.length, backwards: false)
+        // "2 Study design and participants" with no stop, then "We enrolled…": a heading in sentence case (#1189).
+        if rest.trimmingCharacters(in: .whitespacesAndNewlines).last.map({ !".,;:?!".contains($0) }) ?? false,
+           let next = after.first, text.substring(with: next).first(where: { !$0.isWhitespace })?.isUppercase == true {
+            return false
+        }
+        func opens(_ range: NSRange, with number: Int) -> Bool {
+            text.substring(with: range).range(of: "^\\s*\(number)[ .)]", options: .regularExpression) != nil
+        }
+        return !before.contains { opens($0, with: first - 1) } && !after.contains { opens($0, with: last + 1) }
+    }
+
+    private static let headingConnectives: Set<String> = ["a", "an", "and", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "with"]
 
     private static let nonCitationAbbreviations: Set<String> = [
         "no", "nos", "vol", "vols", "ref", "refs", "p", "pp", "v", "ver", "version", "ch", "chap", "art", "para",

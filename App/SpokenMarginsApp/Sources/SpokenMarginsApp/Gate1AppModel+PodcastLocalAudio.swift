@@ -48,7 +48,7 @@ extension Gate1AppModel {
             return
         }
         guard pendingMapGenerationItemId == itemId,
-              (try? store.loadItem(id: itemId)) != nil else {
+              (try? store.loadItemSummary(id: itemId)) != nil else {
             diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "not_requested"
             return
         }
@@ -77,14 +77,14 @@ extension Gate1AppModel {
 
     func schedulePodcastDownloadIfNeeded(itemId: String) {
         guard let store,
-              let item = try? store.loadItem(id: itemId),
+              let item = try? store.loadItemSummary(id: itemId),
               item.media?.sourceType == .remoteStream,
               let rawURL = item.media?.url,
               let remoteURL = URL(string: rawURL) else { return }
         podcastDownloadCoordinator?.register(itemId: itemId, remoteURL: remoteURL)
     }
 
-    func resolvedOwnedAudiobookURL(for item: Item) -> URL? {
+    func resolvedOwnedAudiobookURL(for item: some LibraryItemFields) -> URL? {
         // iOS can relocate the data container during an update. The ledger path
         // is relative to today's Application Support directory; item URLs are not.
         if let assets = try? store?.loadOwnedOfflineAssets(itemId: item.id),
@@ -97,7 +97,12 @@ extension Gate1AppModel {
     }
 
     func prepareSourceMediaPlayback(itemId: String) throws {
-        if let item = try store?.loadItem(id: itemId), item.mediaType == "audiobook" {
+        // A missing item throws, as the whole-item read did.
+        let summary = try store.map { store -> LibraryItemSummary in
+            guard let summary = try store.loadItemSummary(id: itemId) else { throw SessionKitError.missingFixture("item:\(itemId)") }
+            return summary
+        }
+        if let item = summary, item.mediaType == "audiobook" {
             guard let url = resolvedOwnedAudiobookURL(for: item) else {
                 throw SessionKitError.invalidCommandForState("The imported audio file is unavailable. Restore the source audio to continue listening.")
             }

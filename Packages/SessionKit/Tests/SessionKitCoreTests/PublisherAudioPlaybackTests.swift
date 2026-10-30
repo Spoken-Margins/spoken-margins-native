@@ -248,6 +248,26 @@ final class PublisherAudioPlaybackTests: XCTestCase {
         XCTAssertEqual(audio.textPlays, ["item-post"])
     }
 
+    /// #2508: the app's play-start check asks the engine, which holds the plan, instead of re-reading the record.
+    func testTheEngineSaysWhetherTheStartingItemPlaysItsRecording() throws {
+        let withMap = SessionEngine(profile: profile(), repository: repository(map: map()), audio: FakePublisherAudioClient())
+        XCTAssertFalse(withMap.playsPublisherAudio(itemId: "item-post"), "nothing started yet")
+        _ = try withMap.startSession(itemId: "item-post")
+        XCTAssertTrue(withMap.playsPublisherAudio(itemId: "item-post"))
+        XCTAssertFalse(withMap.playsPublisherAudio(itemId: "another-item"), "only the current session's item")
+
+        let plain = SessionEngine(profile: profile(), repository: InMemorySessionRepository(items: ["item-post": article()]),
+                                  audio: FakePublisherAudioClient())
+        _ = try plain.startSession(itemId: "item-post")
+        XCTAssertFalse(plain.playsPublisherAudio(itemId: "item-post"), "no record: on-device speech")
+
+        let audio = FakePublisherAudioClient()
+        audio.startStatusByTarget[recordingURL] = .failed("HTTP 404")
+        let failing = SessionEngine(profile: profile(), repository: repository(map: map()), audio: audio)
+        _ = try failing.startSession(itemId: "item-post")
+        XCTAssertFalse(failing.playsPublisherAudio(itemId: "item-post"), "a recording that failed gave way to speech")
+    }
+
     // MARK: When the recording can't play
 
     private func halfwayThroughThirdSentence() -> Session {

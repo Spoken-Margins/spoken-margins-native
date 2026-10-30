@@ -72,7 +72,8 @@ extension Gate1AppModel {
     /// Removes a purged item's session record, which holds the meeting's transcript.
     func removeLiveSessionRecord(itemId: String) {
         guard let directory = Self.liveSessionDirectory else { return }
-        LiveSessionRecord.remove(itemId: itemId, from: directory)
+        // The record's folder walk and unlink go off the main actor (#2510).
+        Task.detached(priority: .utility) { LiveSessionRecord.remove(itemId: itemId, from: directory) }
     }
 
     private static func timeline(for transcript: ImportedTranscript) -> TranscriptTimeline {

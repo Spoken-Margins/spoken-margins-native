@@ -11,7 +11,7 @@ extension Gate1AppModel {
         guard !rejectNavigationOrSessionMutationWhileRecording("move_item_to_trash") else { return }
         do {
             let store = try requireStore()
-            let item = try store.loadItem(id: id)
+            guard let item = try store.loadItemSummary(id: id) else { throw SessionKitError.missingFixture("item:\(id)") } // the title is all it needs (#2506)
             if id == Self.guidedOnboardingItemId {
                 UserDefaults.standard.set(true, forKey: Self.guidedOnboardingTombstoneKey)
             }
@@ -94,7 +94,7 @@ extension Gate1AppModel {
     func restoreItem(id: String) {
         do {
             let store = try requireStore()
-            let item = try store.loadItem(id: id)
+            guard let item = try store.loadItemSummary(id: id) else { throw SessionKitError.missingFixture("item:\(id)") }
             try store.restoreItem(id: id)
             refreshMarginRowsInBackground(forItem: id) // and come back with it
             refreshLibraryRowsInBackground(mustPublish: true)
@@ -108,7 +108,7 @@ extension Gate1AppModel {
     func permanentlyDeleteItem(id: String) {
         do {
             let store = try requireStore()
-            let item = try store.loadItem(id: id)
+            guard let item = try store.loadItemSummary(id: id) else { throw SessionKitError.missingFixture("item:\(id)") }
             guard item.deletedAt != nil else {
                 reportFailure("Move the item to Recently Deleted before deleting it permanently.")
                 return
@@ -124,7 +124,7 @@ extension Gate1AppModel {
             try refreshLibraryRows(store: store)
             guard !libraryItems.contains(where: { $0.id == id }),
                   !recentlyDeletedItems.contains(where: { $0.id == id }),
-                  (try? store.loadItem(id: id)) == nil,
+                  (try? store.loadItemSummary(id: id)) == nil,
                   (try? store.loadSessions(itemId: id))?.isEmpty != false else {
                 throw SessionKitError.persistenceFailed("permanent_delete_verification_failed")
             }
@@ -146,7 +146,10 @@ extension Gate1AppModel {
                 reportSuccess("Recently Deleted is already empty.")
                 return
             }
-            let items = try ids.map { try store.loadItem(id: $0) }
+            let items = try ids.map { id in
+                guard let item = try store.loadItemSummary(id: id) else { throw SessionKitError.missingFixture("item:\(id)") }
+                return item
+            }
             for item in items {
                 guard item.deletedAt != nil else {
                     throw SessionKitError.persistenceFailed("bulk_delete_requires_trashed_items")
@@ -155,14 +158,14 @@ extension Gate1AppModel {
             let recordings = try ids.flatMap { try store.loadInterjections(itemId: $0) }
             let quarantinedRecordings = try ids.flatMap { try store.quarantinedMarginAudioPaths(itemId: $0) }
             ids.forEach { podcastDownloadCoordinator?.removeItem($0) }
-            items.forEach(removeDurableGeneratedAudio)
+            items.forEach { removeDurableGeneratedAudio(for: $0) }
             ids.forEach(removeEpisodeMapArtifacts)
             try store.deleteItems(ids: ids)
             ids.forEach(removeLiveSessionRecord)
             removeMarginRecordings(recordings, quarantinedAudioPaths: quarantinedRecordings, store: store)
             try refreshLibraryRows(store: store)
             guard recentlyDeletedItems.isEmpty,
-                  ids.allSatisfy({ (try? store.loadItem(id: $0)) == nil }) else {
+                  ids.allSatisfy({ (try? store.loadItemSummary(id: $0)) == nil }) else {
                 throw SessionKitError.persistenceFailed("bulk_permanent_delete_verification_failed")
             }
             if let undoItemId = trashUndo?.itemId, ids.contains(undoItemId) {

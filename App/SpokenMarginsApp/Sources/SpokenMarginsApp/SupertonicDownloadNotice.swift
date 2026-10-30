@@ -125,6 +125,7 @@ struct SupertonicDownloadNoticeCard: View {
         }
         .padding(24)
         .presentationDetents([.medium, .large])
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("supertonicNotice.card")
     }
 }

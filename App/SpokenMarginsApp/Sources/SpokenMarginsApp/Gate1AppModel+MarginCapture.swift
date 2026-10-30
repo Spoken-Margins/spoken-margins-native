@@ -391,7 +391,7 @@ extension Gate1AppModel {
         WrittenMarginDraft(
             capture: capture,
             text: "",
-            itemTitle: (try? store.loadItem(id: capture.itemId).title) ?? "Current item",
+            itemTitle: (try? store.loadItemSummary(id: capture.itemId))?.title ?? "Current item",
             targetDescription: capture.targetType == .item ? "Source" : (capture.targetType == .assistantTurn ? "Assistant response" : "Margin summary"),
             progressPercent: capture.roughPercent,
             replyChoice: replyChoice

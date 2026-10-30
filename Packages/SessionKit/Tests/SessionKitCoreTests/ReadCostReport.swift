@@ -65,6 +65,8 @@ struct ReadCostReport {
             ("listDeletedItemSummaries()", { _ = try store.listDeletedItemSummaries() }),
             ("loadActiveMarginCountsByItem()", { _ = try store.loadActiveMarginCountsByItem() }),
             ("activeInterjectionCountsBySession()", { _ = try store.activeInterjectionCountsBySession() }),
+            ("activeInterjectionCount(sessionId:)", { _ = try store.activeInterjectionCount(sessionId: "session-1") }),
+            ("unfinishedAIJobCount(sessionId:)", { _ = try store.unfinishedAIJobCount(sessionId: "session-0") }),
             ("loadInterjection(id:sessionId:)", { _ = try store.loadInterjection(id: "note-1", sessionId: "session-1") }),
             ("allMarginAudioPaths()", { _ = try store.allMarginAudioPaths() }),
             ("quarantinedRecordCount()", { _ = try store.quarantinedRecordCount() })

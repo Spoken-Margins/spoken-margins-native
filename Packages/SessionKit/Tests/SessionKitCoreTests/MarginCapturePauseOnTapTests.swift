@@ -304,6 +304,22 @@ final class MarginCapturePauseOnTapTests: XCTestCase {
         XCTAssertEqual(rig.engine.snapshot.sourceTranscriptStatus, "ready")
     }
 
+    /// #2508: playing a Margin checked its place against the transcript's length by decoding the whole transcript.
+    func testPlayingAMarginReadsTheStoredTimelineAlreadyHeld() throws {
+        let (rig, repository) = try stampedRig()
+        _ = try rig.engine.beginInterjection(request: MarginCaptureRequest())
+        _ = try rig.engine.finishInterjection(audioRef: "margin.m4a")
+        let sessionId = try XCTUnwrap(rig.engine.currentSession?.id)
+        let margin = try XCTUnwrap(try repository.loadInterjections(sessionId: sessionId).first)
+        _ = try rig.engine.syncPlaybackProgress()
+        repository.timelineLoads = 0
+
+        for _ in 0..<3 { _ = try rig.engine.playInterjectionAnchor(margin) }
+
+        XCTAssertEqual(repository.timelineLoads, 0, "three Margin plays read the timeline already held")
+        XCTAssertEqual(rig.engine.currentSession?.position.mediaTimeMs, margin.anchor.mediaTimeMs)
+    }
+
     func testAChangedStoredTimelineIsReadAgainAtTheNextCall() throws {
         let (rig, repository) = try stampedRig()
         _ = try rig.engine.syncPlaybackProgress()

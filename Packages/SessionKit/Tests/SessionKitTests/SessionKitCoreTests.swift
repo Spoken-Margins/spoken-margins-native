@@ -2993,12 +2993,13 @@ final class SessionKitCoreTests: XCTestCase {
                 audio.currentMediaTimeValue = tick * 500
                 _ = try engine.syncPlaybackProgress()
             }
-            // Publication reads note counts once; percentage repair must not add a second scan.
-            XCTAssertEqual(repo.noteLoads, 20, "Repeated repair with \(noteCount) notes")
+            // Ticks publish the note count without decoding notes (#2509), and stable media progress must not
+            // rerun the percentage repair, so steady ticks load no notes at all.
+            XCTAssertEqual(repo.noteLoads, 0, "Repeated repair with \(noteCount) notes")
             XCTAssertTrue(repo.interjections.values.allSatisfy { $0.roughPercent == 25 })
             audio.currentDurationMs = 450_000
             _ = try engine.syncPlaybackProgress()
-            XCTAssertEqual(repo.noteLoads, 22, "Changed duration must trigger one repair")
+            XCTAssertEqual(repo.noteLoads, 1, "Changed duration must trigger one repair")
             XCTAssertTrue(repo.interjections.values.allSatisfy { $0.roughPercent == 50 })
         }
     }

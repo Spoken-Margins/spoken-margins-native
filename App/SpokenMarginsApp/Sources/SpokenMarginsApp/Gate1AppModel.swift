@@ -874,7 +874,7 @@ final class Gate1AppModel: ObservableObject {
         if !selectedItem.chapters.isEmpty {
             return "This item already has a Listening Map."
         }
-        guard let item = try? store?.loadItem(id: activeItemId) else {
+        guard let item = try? store?.loadItemSummary(id: activeItemId) else {
             return "Listening Map generation is unavailable."
         }
         if item.media != nil {
@@ -1418,8 +1418,8 @@ final class Gate1AppModel: ObservableObject {
         }
         stopSpeechPreviews()
         streamingSpeechQueue.stopAndClear()
-        scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
-        narrationStartupProtection.protectUpcomingStart(eligible: narrationRendersOnDevice(itemId: activeItemId))
+        let playsRecording = prewarmTextAudioForPlayStart(itemId: activeItemId)
+        narrationStartupProtection.protectUpcomingStart(eligible: narrationRendersOnDevice(itemId: activeItemId, playsRecording: playsRecording))
         run { engine in
             try prepareSourceMediaPlayback(itemId: activeItemId)
             let started = try engine.startSession(itemId: activeItemId)
@@ -1446,10 +1446,10 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    /// Supertonic renders the narration on the phone, so its start has no audio keeping a backgrounded app alive.
-    private func narrationRendersOnDevice(itemId: String) -> Bool {
-        ttsVoiceSelection.isOnDeviceVoice && !playsPublisherAudio(itemId: itemId)
-            && (try? store?.loadItem(id: itemId))?.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    /// Supertonic renders the narration on the phone, so its start has no audio keeping a backgrounded app alive. A play start passes `playsRecording`: the engine has no session for the item yet.
+    private func narrationRendersOnDevice(itemId: String, playsRecording: Bool? = nil) -> Bool {
+        ttsVoiceSelection.isOnDeviceVoice && !(playsRecording ?? (engine?.playsPublisherAudio(itemId: itemId) == true))
+            && (try? store?.loadItemSummary(id: itemId))?.hasListenableText == true // a summary: this runs on every status change (#2506)
     }
 
     func playPause() {
@@ -1594,7 +1594,7 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         isGeneratingListeningMap = true
-        let selectedItemRecord = try? store?.loadItem(id: activeItemId)
+        let selectedItemRecord = try? store?.loadItemSummary(id: activeItemId)
         if let item = selectedItemRecord,
            item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream {
             isGeneratingListeningMap = false
@@ -1826,7 +1826,7 @@ final class Gate1AppModel: ObservableObject {
     func prioritizeOfflinePreparation(id: String) {
         do {
             let store = try requireStore()
-            let item = try store.loadItem(id: id)
+            guard let item = try store.loadItemSummary(id: id) else { throw SessionKitError.missingFixture("item:\(id)") }
             if libraryItems.first(where: { $0.id == id })?.offlineState == .readyOffline {
                 reportConfirmation("\(item.title) is already available offline.")
                 return
@@ -1847,7 +1847,7 @@ final class Gate1AppModel: ObservableObject {
             case .some(.browserOwnedMedia):
                 reportFailure("Browser-owned audio cannot be downloaded by Spoken Margins.")
             case .none, .some(.generatedTTSRealtime), .some(.generatedTTSPrerendered):
-                guard item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                guard item.hasListenableText else {
                     reportFailure("This item does not have text that can be prepared for offline listening.")
                     return
                 }
@@ -1855,8 +1855,8 @@ final class Gate1AppModel: ObservableObject {
                     reportWarning("Offline preparation needs James, Lily, Phonon or Kokoro, with the Terms accepted.")
                     return
                 }
-                Task { [weak self] in
-                    await self?.enqueueExplicitAudioPreparation(item: item)
+                Task { [weak self] in // the preparation needs the article text, so the whole item is read here, off the main actor (#2506)
+                    if let whole = try? await StoreReader(store).read({ try $0.loadItem(id: id) }) { await self?.enqueueExplicitAudioPreparation(item: whole) }
                 }
             }
         } catch {
@@ -3178,11 +3178,11 @@ final class Gate1AppModel: ObservableObject {
         startOfflineServices(store: store, ledger: ledger)
     }
 
-    var followCandidateDiscoveryHandler: ((Item, URL) async throws -> [SourceCandidateEvidence])?
+    var followCandidateDiscoveryHandler: ((LibraryItemSummary, URL) async throws -> [SourceCandidateEvidence])?
 
     /// Re-reads the inbox without a refresh, which skips while another one runs (#477).
     func reloadFollowedSourceEntries() async {
-        if let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() { feedSubscriptions = storedFeedSubscriptions(); followedSourceEntries = entries } // subscriptions first: New hides a back catalogue by them (#1589)
+        if let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() { await publishFeedSubscriptionsAfterChange(); followedSourceEntries = entries } // subscriptions first: New hides a back catalogue by them (#1589)
     }
 
     func requireLocalSourceImporter() throws -> LocalSourceImporter {

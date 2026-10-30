@@ -2,12 +2,6 @@
  "about": "Bare-container accessibility identifiers known when the guard landed (#2898). scripts/container_identifiers.py fails on a row not listed here or one that hides more child identifiers. --update only removes rows and lowers counts.",
  "rows": [
   {
-   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Build23SenderSharingComponents.swift::build23.sender.recipient.verified-preview",
-   "container": "VStack",
-   "hidden": 1,
-   "why": "replaces a child identifier today; fix in #2911"
-  },
-  {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Build23SenderSharingComponents.swift::build23.sender.stage.progress",
    "container": "LazyVGrid",
    "hidden": 0,
@@ -18,12 +12,6 @@
    "container": "HStack",
    "hidden": 0,
    "why": "no identified child in its braces today; a new one fails the guard"
-  },
-  {
-   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Build23SenderSharingExperience.swift::build23.sender.stage.select",
-   "container": "VStack",
-   "hidden": 2,
-   "why": "replaces a child identifier today; fix in #2911"
   },
   {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceItemDetailScreen.swift::item.podcastDownload.status",
@@ -54,42 +42,6 @@
    "container": "Group",
    "hidden": 0,
    "why": "no identified child in its braces today; a new one fails the guard"
-  },
-  {
-   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackNowView.swift::playback.now.margins",
-   "container": "VStack",
-   "hidden": 1,
-   "why": "replaces a child identifier today; fix in #2911"
-  },
-  {
-   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackScreen.swift::playback.title",
-   "container": "VStack",
-   "hidden": 1,
-   "why": "fixed by #2896 (accessibilityElement .contain); the row goes when it merges"
-  },
-  {
-   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackScreen.swift::timeline.section",
-   "container": "VStack",
-   "hidden": 9,
-   "why": "replaces a child identifier today; fix in #2911"
-  },
-  {
-   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackTimelineListView.swift::timeline.rail",
-   "container": "LazyVStack",
-   "hidden": 1,
-   "why": "replaces a child identifier today; fix in #2911"
-  },
-  {
-   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SpokenMarginsTermsView.swift::terms.screen",
-   "container": "ViewThatFits",
-   "hidden": 0,
-   "why": "fixed by #2896 (accessibilityElement .contain); the row goes when it merges"
-  },
-  {
-   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicDownloadNotice.swift::supertonicNotice.card",
-   "container": "VStack",
-   "hidden": 2,
-   "why": "replaces a child identifier today; fix in #2911"
   },
   {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/VoicesSettingsScreen.swift::settings.voices.row.\\(row.id)",
