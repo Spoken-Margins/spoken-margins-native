@@ -161,7 +161,7 @@ final class WatchLink: NSObject, ObservableObject {
 
     private func recordNow(_ finished: WatchMarginCapture.Finished, id: String, wallStart: Date) {
         let transfer = WatchMarginTransfer(
-            id: id, wallStart: wallStart, durationMs: max(0, Int((finished.duration * 1_000).rounded())),
+            id: id, wallStart: wallStart, durationMs: WatchContract.milliseconds(seconds: finished.duration),
             sessionId: model.sessionIdForMargin(now: wallStart),
             clock: model.clock.flatMap { $0.isFresh(at: wallStart) ? $0 : nil },
             sha256: finished.sha256
@@ -310,7 +310,7 @@ final class WatchLink: NSObject, ObservableObject {
             let id = orphan.url.deletingPathExtension().lastPathComponent
             guard ledger.held(id) == nil else { continue }
             let transfer = WatchMarginTransfer(
-                id: id, wallStart: orphan.createdAt, durationMs: Int((orphan.duration * 1_000).rounded()), sha256: orphan.sha256
+                id: id, wallStart: orphan.createdAt, durationMs: WatchContract.milliseconds(seconds: orphan.duration), sha256: orphan.sha256
             )
             ledger.record(transfer, fileName: orphan.url.lastPathComponent, now: Date())
         }

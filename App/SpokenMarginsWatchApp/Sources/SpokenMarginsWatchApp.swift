@@ -12,6 +12,16 @@ struct SpokenMarginsWatchApp: App {
         WindowGroup {
             NavigationStack {
                 WatchHomeView()
+                    // The screens are named here, outside Home's once-a-second redraw, so a push is never rebuilt
+                    // under the listener's finger (#2964).
+                    .navigationDestination(for: WatchRoute.self) { route in
+                        switch route {
+                        case .waiting: WatchWaitingList()
+                        case .end(let startedAt): WatchEndSessionView(startedAt: startedAt)
+                        case .start: WatchStartSessionView()
+                        case .microphoneTest: WatchMicrophoneTestView()
+                        }
+                    }
             }
             .environmentObject(WatchLink.shared)
         }
@@ -43,6 +53,14 @@ final class WatchAppDelegate: NSObject, WKApplicationDelegate {
             }
         }
     }
+}
+
+/// The screens Home opens.
+enum WatchRoute: Hashable {
+    case waiting
+    case end(startedAt: Date)
+    case start
+    case microphoneTest
 }
 
 /// Home: the state line and one big Record button. Below, reached with the crown: what's waiting, Start session or
@@ -97,7 +115,7 @@ struct WatchHomeView: View {
     private func statusLine(_ home: WatchSessionModel.Home, now: Date) -> some View {
         switch recorder.state {
         case .recording(let since):
-            let elapsed = Int(now.timeIntervalSince(since))
+            let elapsed = WatchContract.milliseconds(seconds: now.timeIntervalSince(since)) / 1_000
             VStack(spacing: 2) {
                 Label(String(format: "Recording %d:%02d", elapsed / 60, elapsed % 60), systemImage: "mic")
                     .font(.footnote.monospacedDigit())
@@ -120,9 +138,7 @@ struct WatchHomeView: View {
     @ViewBuilder
     private func below(_ home: WatchSessionModel.Home, now: Date) -> some View {
         if link.ledger.waitingCount > 0 {
-            NavigationLink {
-                WatchWaitingList()
-            } label: {
+            NavigationLink(value: WatchRoute.waiting) {
                 Label("\(link.ledger.waitingCount) waiting", systemImage: "hourglass")
             }
         }
@@ -135,9 +151,7 @@ struct WatchHomeView: View {
                     Label("End", systemImage: "stop.circle")
                 }
             } else {
-                NavigationLink {
-                    WatchEndSessionView(startedAt: session.startedAt)
-                } label: {
+                NavigationLink(value: WatchRoute.end(startedAt: session.startedAt)) {
                     Label("End", systemImage: "stop.circle")
                 }
             }
@@ -152,15 +166,11 @@ struct WatchHomeView: View {
                     Label("Ended \(WatchContractFormat.timeOfDay(resumable.shownEnd ?? ended)) · Resume", systemImage: "arrow.uturn.backward.circle")
                 }
             }
-            NavigationLink {
-                WatchStartSessionView()
-            } label: {
+            NavigationLink(value: WatchRoute.start) {
                 Label("Start session", systemImage: "play.circle")
             }
         }
-        NavigationLink {
-            WatchMicrophoneTestView()
-        } label: {
+        NavigationLink(value: WatchRoute.microphoneTest) {
             Label("Microphone test", systemImage: "waveform")
         }
     }
@@ -202,29 +212,45 @@ struct WatchStartSessionView: View {
     }
 }
 
-/// The Margins the Watch still holds, each with its state, Retry and Delete (DESIGN section 3).
+/// The Margins the Watch still holds, each with its state, Retry and Delete (DESIGN section 3). Only each row's words
+/// tick; the list itself is not redrawn every second, and the buttons are borderless so a tap on a row presses one
+/// button, not both Retry and Delete (#2964).
 struct WatchWaitingList: View {
     @EnvironmentObject private var link: WatchLink
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            List {
-                ForEach(link.ledger.held) { item in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(WatchContractFormat.timeOfDay(item.transfer.wallStart))
-                            .font(.headline.monospacedDigit())
-                        if let display = link.ledger.display(item.id, now: context.date) {
-                            Label(display.words, systemImage: display.symbol).font(.footnote)
-                        }
-                        HStack {
-                            Button("Retry") { link.retry(item.id) }
-                            Button("Delete", role: .destructive) { link.delete(item.id) }
-                        }
-                        .font(.footnote)
-                    }
+        List {
+            if link.ledger.held.isEmpty {
+                Text("Nothing waiting")
+                    .font(.footnote)
+            }
+            ForEach(link.ledger.held) { item in
+                WatchWaitingRow(item: item)
+            }
+        }
+        .navigationTitle("Waiting")
+    }
+}
+
+struct WatchWaitingRow: View {
+    @EnvironmentObject private var link: WatchLink
+    let item: WatchMarginLedger.Held
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(WatchContractFormat.timeOfDay(item.transfer.wallStart))
+                .font(.headline.monospacedDigit())
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                if let display = link.ledger.display(item.id, now: context.date) {
+                    Label(display.words, systemImage: display.symbol).font(.footnote)
                 }
             }
-            .navigationTitle("Waiting")
+            HStack {
+                Button("Retry") { link.retry(item.id) }
+                Button("Delete", role: .destructive) { link.delete(item.id) }
+            }
+            .buttonStyle(.borderless)
+            .font(.footnote)
         }
     }
 }
