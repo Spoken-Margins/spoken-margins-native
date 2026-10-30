@@ -154,8 +154,16 @@ func (r *Relay) init() {
 				if len(via) > r.MaxRedirects {
 					return ErrTooManyRedirects
 				}
-				_, err := r.checkURL(req.URL)
-				return err
+				if _, err := r.checkURL(req.URL); err != nil {
+					return err
+				}
+				// Go sets Referer to the previous hop's URL (except on an
+				// https→http hop). That URL may hold a private feed's token,
+				// so the next host never sees it. With no Jar and fixed
+				// request headers, this leaves the hop carrying only what
+				// the first request did.
+				req.Header.Del("Referer")
+				return nil
 			},
 		}
 	})
