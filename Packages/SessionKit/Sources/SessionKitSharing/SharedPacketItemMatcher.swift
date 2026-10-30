@@ -98,7 +98,7 @@ public enum SharedPacketItemMatcher {
         })?.checksumSHA256
     }
 
-    public static func itemType(for item: Item) -> SharedItemType {
+    public static func itemType<Fields: LibraryItemFields>(for item: Fields) -> SharedItemType {
         SharedItemIdentityBuilder.itemType(for: item)
     }
 }
