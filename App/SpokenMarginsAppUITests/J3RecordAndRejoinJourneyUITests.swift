@@ -94,11 +94,14 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
             tap("marginDetail.done.button")
             tap("timeline.nowPlaying.button")
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5), "Could not return to Now Playing")
-            if playPause.label == "Play" { playPause.tap() }
-            try waitUntilPlaying("Podcast stayed stopped after the Margin")
+            // The source was playing when the Margin opened, so it must play again by itself: no tap on Play here.
+            try waitUntilPlaying("Podcast stayed stopped after the Margin (it must play again by itself)")
             let now = try position()
-            XCTAssertTrue(abs(now - beforeOpeningMargin) < 20 || abs(now - marginPosition) < 20,
-                          "Podcast continued at \(now) s, not where you were (\(beforeOpeningMargin) s) or at the Margin (\(marginPosition) s)")
+            // "Where you were" is the position when the Margin opened, not the Margin's own place a minute or more earlier.
+            XCTAssertGreaterThanOrEqual(now, beforeOpeningMargin - 5,
+                                        "Podcast continued at \(now) s, before where you were (\(beforeOpeningMargin) s), perhaps at the Margin (\(marginPosition) s)")
+            XCTAssertLessThan(now - beforeOpeningMargin, 30,
+                              "Podcast continued at \(now) s, far past where you were (\(beforeOpeningMargin) s)")
             try waitUntilAdvancing("Podcast is stuck after the Margin played")
         }
 
@@ -118,9 +121,12 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
                 self.currentPosition().map { abs($0 - marginPosition) <= 10 } ?? false
             }
             // The Margin's voice plays with the source paused, then the source carries on; pause it for the force-quit.
-            _ = XCTWaiter().wait(for: [XCTNSPredicateExpectation(
-                predicate: NSPredicate { _, _ in self.playPause.label == "Pause" }, object: nil)], timeout: 30)
-            if playPause.label == "Pause" { playPause.tap() }
+            waitUntil("The source did not carry on after the Margin's voice", timeout: 30) { self.playPause.label == "Pause" }
+            let carryingOn = try position()
+            try waitUntilAdvancing("The source clock is stuck after the Margin's voice")
+            let later = try position()
+            XCTAssertGreaterThanOrEqual(later, carryingOn, "The source went back after the Margin's voice")
+            playPause.tap()
             waitUntil("Podcast did not pause before the force-quit") { self.playPause.label == "Play" }
         }
 

@@ -23,7 +23,7 @@ final class J1TextChaptersJourneyUITests: XCTestCase {
     }
 
     func testStepToAnotherChapterAndBackInTheTextReader() throws {
-        XCTContext.runActivity(named: "J1 step 4a: Start the chaptered article and open its text") { _ in
+        try XCTContext.runActivity(named: "J1 step 4a: Start the chaptered article and open its text") { _ in
             app.launch()
             let start = app.buttons["queue.start.item-pill"]
             XCTAssertTrue(start.waitForExistence(timeout: 8), "The fixture article's start control is missing")
@@ -32,17 +32,19 @@ final class J1TextChaptersJourneyUITests: XCTestCase {
             // Start paused, so "playback is unchanged" is a position that holds, not a clock that keeps moving.
             // The bundled fixture is not on the live-speech path the J1 text seed uses: on a fresh simulator it can
             // open Now Playing still reading "Play" while its audio is prepared (#1815: "Play" for the whole 10 s
-            // on Build 34, 7257db6 and a7ffe49). Starting playback is J1 step 2's claim, not this step's, so this
-            // waits like Gate1FlowUITests' pausePlaybackIfNeeded: pause if it starts, carry on paused if it doesn't.
+            // on Build 34, 7257db6 and a7ffe49). Starting playback is J1 step 2's claim, but "unchanged" means
+            // nothing about a player that never ran, so an article that does not start ends the test as skipped
+            // (INCONCLUSIVE): the hosted T3 check counts a skipped requested test as not passed, and a pass can
+            // never come from a paused-at-0:00 article.
             let playPause = app.buttons["playback.play.button"]
             XCTAssertTrue(playPause.waitForExistence(timeout: 8), "Playback control is missing")
             let started = XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "label == %@ AND enabled == true", "Pause"), object: playPause)
-            if XCTWaiter().wait(for: [started], timeout: 20) == .completed {
-                playPause.tap()
-            } else {
+            guard XCTWaiter().wait(for: [started], timeout: 20) == .completed else {
                 screenshot("J1 text chapters: the fixture article had not started after 20 s")
+                throw XCTSkip("INCONCLUSIVE: the fixture article had not started after 20 s (#1815), so \"playback unchanged\" cannot be judged")
             }
+            playPause.tap()
             let paused = XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "label == %@ AND enabled == true", "Play"), object: playPause)
             XCTAssertEqual(XCTWaiter().wait(for: [paused], timeout: 5), .completed, "Article is not paused")
