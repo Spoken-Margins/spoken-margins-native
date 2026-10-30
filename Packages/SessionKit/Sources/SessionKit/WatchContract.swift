@@ -36,6 +36,12 @@ public enum WatchContract {
     public static let offsetMaxRoundTrip: TimeInterval = 10
     /// An offset larger than this is shown in the evidence (WATCH.md 3.5 point 5).
     public static let offsetWorthShowing: TimeInterval = 2
+    /// Seconds as whole milliseconds that never trap: not-a-number and negative read as 0, and a huge value stops at
+    /// `Int32.max` (about 24 days), because `Int` on the Watch can be 32 bits wide (#2964).
+    public static func milliseconds(seconds: Double) -> Int {
+        guard seconds.isFinite, seconds > 0 else { return 0 }
+        return Int((min(seconds * 1_000, Double(Int32.max))).rounded())
+    }
     /// A named session nobody ends closes itself this long after its start (DESIGN section 2 point 8).
     public static let autoEndAfter: TimeInterval = 8 * 60 * 60
 }
@@ -271,7 +277,7 @@ public struct WatchMarginTransfer: Codable, Equatable, Sendable {
         self.init(
             id: id,
             wallStart: Date(timeIntervalSince1970: start),
-            durationMs: seconds.isFinite ? max(0, Int((seconds * 1_000).rounded())) : 0,
+            durationMs: WatchContract.milliseconds(seconds: seconds),
             sessionId: sessionId?.isEmpty == false ? sessionId : nil,
             clock: clock,
             sha256: (metadata[Key.sha256] as? String) ?? "",

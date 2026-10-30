@@ -91,6 +91,25 @@ public struct WatchMarginLedger: Codable, Equatable, Sendable {
 
     public init() {}
 
+    private enum CodingKeys: String, CodingKey {
+        case held, filed, deleted
+    }
+
+    /// Reads the saved ledger and drops what the Watch can't show: a Margin with no id, a second record of an id, a
+    /// filed record that repeats an id or one the Watch still holds. A list row needs a unique id, and a saved record
+    /// the Watch can't use must cost one row, not the app (#2964). A missing list reads as empty.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        var seen = Set<String>()
+        held = (try container.decodeIfPresent([Held].self, forKey: .held) ?? []).filter { item in
+            !item.id.isEmpty && seen.insert(item.id).inserted
+        }
+        filed = (try container.decodeIfPresent([Filed].self, forKey: .filed) ?? []).filter { item in
+            !item.id.isEmpty && seen.insert(item.id).inserted
+        }
+        deleted = Array((try container.decodeIfPresent([String].self, forKey: .deleted) ?? []).suffix(500))
+    }
+
     public func held(_ id: String) -> Held? { held.first { $0.id == id } }
 
     /// The ids the Watch still holds, for "hello".
@@ -258,7 +277,8 @@ public struct WatchSessionModel: Codable, Equatable, Sendable {
             guard let session else { return "No session" }
             var parts = [session.displayTitle, place == .onWatch ? "on Watch" : "on iPhone"]
             if let start = session.startPositionMs {
-                parts.append("about \(WatchContractFormat.clock(ms: start + Int(max(0, now.timeIntervalSince(session.startedAt)) * 1_000)))")
+                let elapsed = WatchContract.milliseconds(seconds: now.timeIntervalSince(session.startedAt))
+                parts.append("about \(WatchContractFormat.clock(ms: Int(clamping: Int64(start) + Int64(elapsed))))")
             } else {
                 parts.append(WatchContractFormat.timeOfDay(session.startedAt))
             }

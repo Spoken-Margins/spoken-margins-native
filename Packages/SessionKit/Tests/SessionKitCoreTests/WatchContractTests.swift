@@ -140,6 +140,63 @@ final class WatchContractTests: XCTestCase {
         XCTAssertEqual(try WatchContractCoding.decoder.decode(WatchMarginLedger.self, from: data), ledger)
     }
 
+    // MARK: #2964: a saved record the Watch can't use costs a row, not the app
+
+    func testASavedLedgerWithABlankOrRepeatedIdLoadsWithoutThem() throws {
+        var ledger = WatchMarginLedger()
+        ledger.record(transfer("m1"), fileName: "m1.m4a", now: t0)
+        ledger.record(transfer("m2"), fileName: "m2.m4a", now: t0)
+        _ = ledger.apply(answer("m2", .filed), now: t0)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: WatchContractCoding.encoder.encode(ledger)) as? [String: Any])
+        var held = try XCTUnwrap(json["held"] as? [[String: Any]])
+        var blank = held[0]
+        var blankTransfer = try XCTUnwrap(blank["transfer"] as? [String: Any])
+        blankTransfer["id"] = ""
+        blank["transfer"] = blankTransfer
+        held.append(held[0]) // the same Margin twice: a list row needs a unique id
+        held.append(blank)
+        json["held"] = held
+        var filed = try XCTUnwrap(json["filed"] as? [[String: Any]])
+        var stillHeld = filed[0]
+        stillHeld["id"] = "m1"
+        filed.append(contentsOf: [filed[0], stillHeld]) // a repeat, and one the Watch still holds
+        json["filed"] = filed
+        let data = try JSONSerialization.data(withJSONObject: json)
+        let loaded = try WatchContractCoding.decoder.decode(WatchMarginLedger.self, from: data)
+        XCTAssertEqual(loaded.holdingIds, ["m1"])
+        XCTAssertEqual(loaded.filed.map(\.id), ["m2"])
+    }
+
+    func testAnOlderLedgerFileMissingAListStillLoads() throws {
+        var ledger = WatchMarginLedger()
+        ledger.record(transfer("m1"), fileName: "m1.m4a", now: t0)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: WatchContractCoding.encoder.encode(ledger)) as? [String: Any])
+        json["filed"] = nil
+        json["deleted"] = nil
+        let loaded = try WatchContractCoding.decoder.decode(WatchMarginLedger.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(loaded.holdingIds, ["m1"], "the Margins the Watch holds are not lost to a missing list")
+    }
+
+    func testMillisecondsNeverTrapOnAnyDouble() {
+        // `Int` is 32 bits on some Watches: 25 days of milliseconds is past it, and Int(Double.nan) traps.
+        XCTAssertEqual(WatchContract.milliseconds(seconds: 1.5), 1_500)
+        XCTAssertEqual(WatchContract.milliseconds(seconds: .nan), 0)
+        XCTAssertEqual(WatchContract.milliseconds(seconds: .infinity), 0)
+        XCTAssertEqual(WatchContract.milliseconds(seconds: -5), 0)
+        XCTAssertEqual(WatchContract.milliseconds(seconds: 25 * 24 * 3_600), Int(Int32.max))
+        XCTAssertEqual(WatchContract.milliseconds(seconds: 1e300), Int(Int32.max))
+    }
+
+    func testTheHomeLineSurvivesASessionStartedLongAgo() {
+        var model = WatchSessionModel()
+        let started = model.start(kind: .meeting, id: "live-1", now: t0)
+        XCTAssertEqual(started.id, "live-1")
+        _ = model.home(now: t0.addingTimeInterval(60), phoneReachable: true).line(now: t0.addingTimeInterval(60))
+        // Far past the point where a session ends itself, and past the 32-bit millisecond range.
+        let home = model.home(now: t0.addingTimeInterval(40 * 24 * 3_600), phoneReachable: true)
+        XCTAssertEqual(home.line(now: t0.addingTimeInterval(40 * 24 * 3_600)), "No session")
+    }
+
     // MARK: The clock
 
     func testTheOffsetIsTheWatchMidpointMinusThePhoneTime() throws {
