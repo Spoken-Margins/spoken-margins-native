@@ -15,14 +15,14 @@ export function feedFixture(name: string): string {
 
 /** A `fetch` stand-in that answers from a table of URL to response, and fails like a blocked browser read otherwise. */
 export function stubFetch(
-  routes: Record<string, { body: string; status?: number; url?: string }>,
+  routes: Record<string, { body: string; status?: number; url?: string; headers?: Record<string, string> }>,
   calls: string[] = [],
 ): (input: string, init?: RequestInit) => Promise<Response> {
   return async (input) => {
     calls.push(input);
     const route = routes[input];
     if (!route) throw new TypeError('Failed to fetch');
-    const response = new Response(route.body, { status: route.status ?? 200 });
+    const response = new Response(route.body, { status: route.status ?? 200, headers: route.headers ?? {} });
     if (route.url) Object.defineProperty(response, 'url', { value: route.url });
     return response;
   };
