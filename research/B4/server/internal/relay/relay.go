@@ -296,7 +296,10 @@ func numericLooking(host string) bool {
 // refusedPrefixes are special-purpose ranges netip's predicates don't cover:
 // shared address space (often a VPN such as Tailscale on the server),
 // benchmarking, reserved, documentation, and IPv6 ranges that embed an IPv4
-// address and could reach a private one through a translator.
+// address and could reach a private one through a translator. The source is
+// IANA's two special-purpose address registries: every block not marked
+// globally reachable, and the deprecated ones. A feed or page never lives in
+// any of them, so the few anycast services inside 2001::/23 are refused too.
 var refusedPrefixes = func() []netip.Prefix {
 	var out []netip.Prefix
 	for _, s := range []string{
@@ -304,17 +307,23 @@ var refusedPrefixes = func() []netip.Prefix {
 		"100.64.0.0/10",   // shared address space, carrier NAT, Tailscale
 		"192.0.0.0/24",    // IETF protocol assignments
 		"192.0.2.0/24",    // documentation
+		"192.88.99.0/24",  // 6to4 relay anycast (deprecated)
 		"198.18.0.0/15",   // benchmarking
 		"198.51.100.0/24", // documentation
 		"203.0.113.0/24",  // documentation
 		"240.0.0.0/4",     // reserved, and 255.255.255.255
 		"::/96",           // IPv4-compatible (deprecated)
+		"::ffff:0:0:0/96", // SIIT, IPv4-translated
 		"64:ff9b::/96",    // NAT64
 		"64:ff9b:1::/48",  // local NAT64
 		"100::/64",        // discard
-		"2001::/32",       // Teredo
+		"100:0:0:1::/64",  // dummy prefix
+		"2001::/23",       // IETF protocol assignments: Teredo, benchmarking, ORCHID, ORCHIDv2, drone remote ID
 		"2001:db8::/32",   // documentation
 		"2002::/16",       // 6to4
+		"3fff::/20",       // documentation
+		"5f00::/16",       // segment routing (SRv6) SIDs
+		"fec0::/10",       // site-local (deprecated)
 	} {
 		out = append(out, netip.MustParsePrefix(s))
 	}
