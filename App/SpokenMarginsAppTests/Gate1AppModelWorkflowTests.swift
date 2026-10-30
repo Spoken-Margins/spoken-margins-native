@@ -1357,7 +1357,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(Gate1AppModel.startupPreparationCandidates([old, done, ready, new]), ["new", "old"])
     }
 
-    func testPrioritizePinsOnlySelectedJobAndLeavesFutureImportsOrderedByRecency() throws {
+    func testPrioritizePinsOnlySelectedJobAndLeavesFutureImportsOrderedByRecency() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "queue-priority-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1372,7 +1372,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         try store.saveAudioPreparationJob(old)
         try store.saveAudioPreparationJob(selected)
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
-        model.prioritizeAudioPreparationJob(id: selected.id)
+        await model.prioritizeAudioPreparationJob(id: selected.id)
         let new = AudioPreparationJob(id: "new", itemId: "new", manifestId: "new", policy: .demandWindow, requestedAt: Date(timeIntervalSince1970: 2), maximumChunkCount: 2)
         try store.saveAudioPreparationJob(new)
         let jobs = try store.loadAudioPreparationJobs()
@@ -2947,7 +2947,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         )
     }
 
-    func testClearAudioPreparationQueueKeepsLibraryItemsAndRemovesEveryJob() throws {
+    func testClearAudioPreparationQueueKeepsLibraryItemsAndRemovesEveryJob() async throws {
         let defaults = UserDefaults.standard
         let suppressionKey = "suppressedAudioPreparationItemIdsV1"
         let priorSuppression = defaults.array(forKey: suppressionKey)
@@ -2986,18 +2986,18 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             ))
         }
         try model.refreshLibraryRows(store: store)
-        model.refreshAudioPreparationPresentation()
+        await model.refreshAudioPreparationPresentation()
         let itemCount = model.libraryItems.count
         XCTAssertEqual(model.audioPreparationQueue.count, 200)
 
-        model.clearAudioPreparationQueue()
+        await model.clearAudioPreparationQueue()
 
         XCTAssertTrue(try store.loadAudioPreparationJobs().isEmpty)
         XCTAssertEqual(model.libraryItems.count, itemCount)
         XCTAssertEqual(Set(defaults.stringArray(forKey: suppressionKey) ?? []), ["item-pill", "item-essay"])
     }
 
-    func testCompletedItemIsLabeledCompleteAndPurgedFromPreparationQueue() throws {
+    func testCompletedItemIsLabeledCompleteAndPurgedFromPreparationQueue() async throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "completed-queue-purge-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -3034,11 +3034,15 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         reloadedModel.bootstrapLibraryIfNeeded()
 
         XCTAssertEqual(reloadedModel.libraryItems.first(where: { $0.id == "item-pill" })?.isCompleted, true)
+        // Launch refreshes the queue off the main actor (#2507), so its purge lands a moment after bootstrap returns.
+        try await waitFor("the launch refresh to purge the completed item's job") {
+            (try? store.loadAudioPreparationJobs().contains(where: { $0.itemId == "item-pill" })) == false
+        }
         XCTAssertFalse(reloadedModel.audioPreparationQueue.contains(where: { $0.itemId == "item-pill" }))
         XCTAssertFalse(try store.loadAudioPreparationJobs().contains(where: { $0.itemId == "item-pill" }))
     }
 
-    func testPreparationQueueDropsPodcastTranscriptsAndTrashedItemsButKeepsUnfinishedArticles() throws {
+    func testPreparationQueueDropsPodcastTranscriptsAndTrashedItemsButKeepsUnfinishedArticles() async throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "queue-admission-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -3078,7 +3082,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             ))
         }
 
-        model.refreshAudioPreparationPresentation()
+        await model.refreshAudioPreparationPresentation()
 
         XCTAssertEqual(model.audioPreparationQueue.map(\.id), ["pill-charging"])
         XCTAssertEqual(try store.loadAudioPreparationJobs().map(\.id), ["pill-charging"])

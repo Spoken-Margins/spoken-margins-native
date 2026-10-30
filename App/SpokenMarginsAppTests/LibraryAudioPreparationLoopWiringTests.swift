@@ -94,7 +94,7 @@ final class LibraryAudioPreparationLoopWiringTests: XCTestCase {
         XCTAssertEqual(model.libraryAudioLoop.generation, generation, "and does not invalidate it")
         memoryBackoff = false
 
-        model.clearAudioPreparationQueue()
+        await model.clearAudioPreparationQueue()
         XCTAssertFalse(model.isForegroundAudioPreparationRunning, "clearing the queue invalidates the run")
         XCTAssertGreaterThan(model.libraryAudioLoop.generation, generation)
 

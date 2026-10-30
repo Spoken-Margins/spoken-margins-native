@@ -75,12 +75,31 @@ extension Gate1AppModel {
 
     func scheduleAudioPreparationBackgroundTask() {
         #if canImport(BackgroundTasks) && canImport(UIKit)
-        AudioPreparationBackgroundController.shared.submitIfEnabled(OfflinePreparationRecovery.shouldSchedule(
-            jobs: (try? store?.loadAudioPreparationJobs()) ?? [],
-            automaticAudio: automaticAudioPreparationPolicy,
-            automaticEpisodeMaps: automaticEpisodeMapPreparationPolicy
-        ))
+        let automaticAudio = automaticAudioPreparationPolicy
+        let automaticEpisodeMaps = automaticEpisodeMapPreparationPolicy
+        guard let store else {
+            AudioPreparationBackgroundController.shared.submitIfEnabled(OfflinePreparationRecovery.shouldSchedule(
+                jobs: [], automaticAudio: automaticAudio, automaticEpisodeMaps: automaticEpisodeMaps))
+            return
+        }
+        // The job table is read off the main actor (#2507); asking iOS a moment later changes nothing.
+        Task { @MainActor in
+            let jobs = (try? await StoreReader(store).read { try $0.loadAudioPreparationJobs() }) ?? []
+            AudioPreparationBackgroundController.shared.submitIfEnabled(OfflinePreparationRecovery.shouldSchedule(
+                jobs: jobs, automaticAudio: automaticAudio, automaticEpisodeMaps: automaticEpisodeMaps))
+        }
         #endif
+    }
+
+    /// Queues or updates `manifest`'s job off the main actor, in line with the queue's edits (#2507).
+    @discardableResult
+    func configurePreparationJob(
+        manifest: PreparedAudioManifest, sourceText: String, store: SQLiteSessionStore,
+        request: PreparedAudioEnqueue.Request
+    ) async throws -> AudioPreparationJob? {
+        try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey) {
+            try PreparedAudioEnqueue.configureJob(manifest: manifest, sourceText: sourceText, repository: $0, request: request)
+        }
     }
 
     func scheduleStartupAudioPreparationIfNeeded(itemId: String) {
@@ -157,8 +176,8 @@ extension Gate1AppModel {
                 plan: plan
             )
             let targetChunkCount = min(Self.startupAudioChunkCount, plan.count)
-            _ = try PreparedAudioEnqueue.configureJob(
-                manifest: manifest, sourceText: sourceText, repository: store,
+            try await configurePreparationJob(
+                manifest: manifest, sourceText: sourceText, store: store,
                 request: .startup(maximumChunkCount: targetChunkCount, requestedAt: item.createdAt)
             )
             if manifest.chunks.count < targetChunkCount {
@@ -234,31 +253,27 @@ extension Gate1AppModel {
         if audioPreparationQueue != rows { audioPreparationQueue = rows }
     }
 
-    func refreshAudioPreparationPresentation() {
+    /// Reads the items, sessions, manifests and jobs off the main actor (#2507), in line behind any queue edit, so the
+    /// rows show what the last edit left.
+    func refreshAudioPreparationPresentation(announceNewCompletions: Bool = false) async {
         guard let store else { return }
+        let activeItemId = activePlaybackItemId
         do {
-            try refreshAudioPreparationPresentation(store: store)
+            let presentation = try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey) {
+                try AudioPreparationPresentation.readDeletingStaleJobs(from: $0, activeItemId: activeItemId)
+            }
+            audioPreparationQueue = presentation.queue
+            recentlyPreparedAudio = presentation.recentlyPrepared
+            if announceNewCompletions { announcePreparedAudioIfNeeded() }
         } catch {
             diagnostics["audioPreparationPresentation"] = "failed:\(String(describing: type(of: error)))"
         }
     }
 
-    func refreshAudioPreparationPresentation(
-        store: SQLiteSessionStore,
-        announceNewCompletions: Bool = false,
-        now: Date = Date()
-    ) throws {
-        let presentation = AudioPreparationPresentation(
-            items: try store.listItemSummaries(), sessions: try store.loadSessions(),
-            manifests: try store.loadPreparedAudioManifestSummaries(), jobs: try store.loadAudioPreparationJobs(),
-            activeItemId: activePlaybackItemId)
-        try applyAudioPreparationPresentation(presentation, store: store, announceNewCompletions: announceNewCompletions, now: now)
-    }
-
     /// The same refresh from a Library read the caller has just made, so it costs no second pass over the items,
     /// sessions, manifests and jobs (#2507). Call it only with a snapshot read in this same main-actor step: an older one
     /// would list jobs that were since moved or finished.
-    func refreshAudioPreparationPresentation(
+    func applyAudioPreparationPresentation(
         from data: LibraryReadSnapshot,
         store: SQLiteSessionStore,
         announceNewCompletions: Bool = false,
@@ -293,47 +308,51 @@ extension Gate1AppModel {
         reportConfirmation(notice.message)
     }
 
-    func moveAudioPreparationJobEarlier(id: String) {
-        moveAudioPreparationJob(id: id, offset: -1)
+    func moveAudioPreparationJobEarlier(id: String) async {
+        await moveAudioPreparationJob(id: id, offset: -1)
     }
 
-    func moveAudioPreparationJobLater(id: String) {
-        moveAudioPreparationJob(id: id, offset: 1)
+    func moveAudioPreparationJobLater(id: String) async {
+        await moveAudioPreparationJob(id: id, offset: 1)
     }
 
-    func skipAudioPreparationJob(id: String) {
+    func skipAudioPreparationJob(id: String) async {
         do {
+            // Opened if need be: jobs saved by an earlier launch are in the file before this model opens it.
             let store = try requireStore()
-            guard let selected = try store.loadAudioPreparationJob(id: id) else { return }
-            suppressAudioPreparation(itemId: selected.itemId)
-            try store.deleteAudioPreparationJobs(
-                ids: try store.loadAudioPreparationJobs(itemId: selected.itemId).map(\.id)
-            )
-            cancelStartupAudioPreparation(itemIds: [selected.itemId])
-            failedStartupAudioPreparationItemIds.remove(selected.itemId)
-            startupAudioPreparationCooldown.clear(Self.startupAudioCooldownKeys([selected.itemId]))
+            // The jobs go first, in one transaction; the item is suppressed once we know which it is. A job the
+            // automatic pass adds in that moment for the same item stays queued, and Skip removes it again.
+            let skipped = try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey) {
+                try AudioPreparationQueueEdits.skipItem(ofJob: id, in: $0)
+            }
+            guard let skipped else { return }
+            suppressAudioPreparation(itemId: skipped.itemId)
+            cancelStartupAudioPreparation(itemIds: [skipped.itemId])
+            failedStartupAudioPreparationItemIds.remove(skipped.itemId)
+            startupAudioPreparationCooldown.clear(Self.startupAudioCooldownKeys([skipped.itemId]))
             refreshLibraryRowsInBackground(mustPublish: true)
-            diagnostics["audioPreparationSuppressed:\(selected.itemId)"] = "user"
-            reportConfirmation("Removed \(itemsTitle(itemId: selected.itemId, store: store)) from audio preparation.")
+            diagnostics["audioPreparationSuppressed:\(skipped.itemId)"] = "user"
+            reportConfirmation("Removed \(skipped.title ?? "this item") from audio preparation.")
         } catch {
             reportFailure(error, context: "Removing the item from audio preparation failed")
         }
     }
 
-    func clearAudioPreparationQueue() {
+    func clearAudioPreparationQueue() async {
         do {
             let store = try requireStore()
-            let jobs = try store.loadAudioPreparationJobs().filter { !$0.isCancelled }
-            let itemIds = Set(jobs.map(\.itemId))
             libraryAudioLoop.stopAndInvalidate()
+            let cleared = try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey) {
+                try AudioPreparationQueueEdits.clear(in: $0)
+            }
+            let itemIds = cleared.itemIds
             suppressAudioPreparation(itemIds: itemIds)
-            try store.deleteAudioPreparationJobs(ids: jobs.map(\.id))
             cancelStartupAudioPreparation(itemIds: itemIds)
             failedStartupAudioPreparationItemIds.subtract(itemIds)
             startupAudioPreparationCooldown.clear(Self.startupAudioCooldownKeys(itemIds))
             refreshLibraryRowsInBackground(mustPublish: true)
-            diagnostics["audioPreparationQueueCleared"] = "\(jobs.count)"
-            reportConfirmation("Cleared \(jobs.count) audio preparation job\(jobs.count == 1 ? "" : "s"). Existing audio and Library items were kept.")
+            diagnostics["audioPreparationQueueCleared"] = "\(cleared.count)"
+            reportConfirmation("Cleared \(cleared.count) audio preparation job\(cleared.count == 1 ? "" : "s"). Existing audio and Library items were kept.")
         } catch {
             reportFailure(error, context: "Clearing the audio preparation queue failed")
         }
@@ -359,37 +378,31 @@ extension Gate1AppModel {
         )
     }
 
-    private func itemsTitle(itemId: String, store: SQLiteSessionStore) -> String {
-        (try? store.loadItemSummary(id: itemId)?.title) ?? "this item"
-    }
-
-    func prioritizeAudioPreparationJob(id: String) {
+    func prioritizeAudioPreparationJob(id: String) async {
         do {
             let store = try requireStore()
-            let jobs = try store.loadAudioPreparationJobs().filter { !$0.isCancelled }
-            guard var selected = jobs.first(where: { $0.id == id }) else { return }
-            // Pin only the selected job. Assigning ranks to the whole queue
-            // would demote every future import behind all existing work.
-            selected.userPriority = AudioPreparationQueueProjection.nextUserPriority(among: jobs)
+            let pinned = try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey) {
+                try AudioPreparationQueueEdits.prioritize(id: id, in: $0)
+            }
+            guard pinned else { return }
             libraryAudioLoop.renderPolicy.noteListenerEngaged()
-            try store.saveAudioPreparationJob(selected)
-            try refreshAudioPreparationPresentation(store: store)
+            await refreshAudioPreparationPresentation()
             startForegroundAudioPreparationIfNeeded()
         } catch {
             reportFailure(error, context: "Unable to prepare this item next")
         }
     }
 
-    private func moveAudioPreparationJob(id: String, offset: Int) {
+    private func moveAudioPreparationJob(id: String, offset: Int) async {
         guard offset == -1 || offset == 1 else { return }
+        let activeItemId = activePlaybackItemId
         do {
             let store = try requireStore()
-            let allJobs = try store.loadAudioPreparationJobs().filter { !$0.isCancelled }
-            guard let reordered = AudioPreparationQueueProjection.reorderedTier(
-                of: allJobs, moving: id, by: offset, activeItemId: activePlaybackItemId
-            ) else { return }
-            for job in reordered { try store.saveAudioPreparationJob(job) }
-            try refreshAudioPreparationPresentation(store: store)
+            let moved = try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey) {
+                try AudioPreparationQueueEdits.move(id: id, by: offset, activeItemId: activeItemId, in: $0)
+            }
+            guard moved else { return }
+            await refreshAudioPreparationPresentation()
             reportConfirmation("Updated the audio preparation order.")
         } catch {
             reportFailure(error, context: "Updating the audio preparation queue failed")
@@ -431,8 +444,8 @@ extension Gate1AppModel {
                 reportConfirmation("\(item.title) is already available offline.")
                 return
             }
-            try hangTelemetry.labels.scoped("explicitAudioPreparationQueued") {
-                _ = try PreparedAudioEnqueue.configureJob(manifest: manifest, sourceText: sourceText, repository: store, request: .explicit)
+            try await configurePreparationJob(manifest: manifest, sourceText: sourceText, store: store, request: .explicit)
+            hangTelemetry.labels.scoped("explicitAudioPreparationQueued") {
                 refreshLibraryRowsInBackground()
                 diagnostics["explicitAudioPreparation:\(item.id)"] = "queued"
                 reportConfirmation("Prioritized \(item.title) for audio preparation.")
@@ -460,13 +473,20 @@ extension Gate1AppModel {
             }.value
             let coordinator = requirePreparedAudioCoordinator(store: store, supportDirectory: support)
             currentSupertonicRenderSignature = signature
-            let sessionsByItemId = Dictionary(grouping: try store.loadSessions(), by: \.itemId)
-            for row in libraryItems {
-                guard let item = try? store.loadItem(id: row.id),
-                      !LibraryAudioPreparationAdmission.playsItsOwnAudio(item),
-                      let text = PreparedSpeechHooks.preparedText(of: item, in: store),
-                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      !suppressedAutomaticAudioPreparationItemIds.contains(item.id) else { continue }
+            let sessions = try await StoreReader(store).read { try $0.loadSessions() }
+            let sessionsByItemId = Dictionary(grouping: sessions, by: \.itemId)
+            for row in libraryItems where !suppressedAutomaticAudioPreparationItemIds.contains(row.id) {
+                // The whole item and its prepared text are decoded off the main actor, one row at a time (#2507).
+                let rowId = row.id
+                let candidate = try? await StoreReader(store).read { store -> (item: Item, text: String)? in
+                    let item = try store.loadItem(id: rowId)
+                    guard !LibraryAudioPreparationAdmission.playsItsOwnAudio(item),
+                          let text = PreparedSpeechHooks.preparedText(of: item, in: store),
+                          !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+                    return (item, text)
+                }
+                guard let candidate else { continue }
+                let (item, text) = candidate
                 guard LibraryAudioPreparationAdmission.admitsAutomatically(item, sessions: sessionsByItemId[item.id] ?? []) else {
                     diagnostics["automaticAudioPreparation:\(item.id)"] = "skipped_existing_progress"
                     continue
@@ -481,11 +501,11 @@ extension Gate1AppModel {
                 } catch PreparedAudioEnqueue.Rejection.staleSource { continue }
                 guard manifest.state != .readyOffline else { continue }
                 do {
-                    _ = try PreparedAudioEnqueue.configureJob(manifest: manifest, sourceText: text, repository: store,
-                                                             request: .automatic(requestedAt: item.createdAt))
+                    try await configurePreparationJob(manifest: manifest, sourceText: text, store: store,
+                                                      request: .automatic(requestedAt: item.createdAt))
                 } catch PreparedAudioEnqueue.Rejection.staleSource { continue }
             }
-            try refreshAudioPreparationPresentation(store: store)
+            await refreshAudioPreparationPresentation()
             diagnostics["automaticAudioPreparationQueue"] = "queued"
         } catch {
             diagnostics["automaticAudioPreparationQueue"] = "failed:\(error.localizedDescription)"

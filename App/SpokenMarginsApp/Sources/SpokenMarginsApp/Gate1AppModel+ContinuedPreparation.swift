@@ -107,7 +107,7 @@ extension Gate1AppModel {
             for job in OfflinePreparationRecovery.interruptedJobs(jobs, requests: requests) {
                 try? store.saveAudioPreparationJob(job)
             }
-            try? refreshAudioPreparationPresentation(store: store)
+            Task { @MainActor [weak self] in await self?.refreshAudioPreparationPresentation() }
         }
         scheduleAudioPreparationBackgroundTask()
     }

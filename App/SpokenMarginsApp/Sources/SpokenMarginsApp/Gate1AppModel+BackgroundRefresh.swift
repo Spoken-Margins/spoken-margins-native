@@ -231,6 +231,6 @@ extension Gate1AppModel {
         let data = try hangTelemetry.labels.scoped("loadLibraryRows") { try LibraryReadSnapshot.read(store: store) }
         libraryItems = LibraryRowBuilder.rows(from: data, context: startupAudioContext)
         recentlyDeletedItems = Self.recentlyDeletedRows(from: data)
-        try refreshAudioPreparationPresentation(from: data, store: store)
+        try applyAudioPreparationPresentation(from: data, store: store)
     }
 }
