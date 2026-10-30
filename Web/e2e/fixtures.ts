@@ -32,19 +32,12 @@ export function wav(seconds: number): Buffer {
 
 const audio = wav(180);
 
-export async function serveFixtures(page: Page): Promise<void> {
-  await page.route(`${FEED_ORIGIN}/**`, async (route) => {
-    const name = new URL(route.request().url()).pathname.replace(/^\//, '');
-    if (!/^[\w.-]+$/.test(name)) return route.fulfill({ status: 404 });
-    try {
-      const body = readFileSync(`${repoRoot}Contracts/fixtures/feeds/${name}`);
-      await route.fulfill({ status: 200, body, headers: { 'content-type': 'application/rss+xml', 'access-control-allow-origin': '*' } });
-    } catch {
-      await route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' } });
-    }
-  });
-  // Served with byte ranges, as podcast hosts do: without them Chrome can't seek in the audio at all.
-  await page.route('https://media.example.com/**', (route) => {
+/**
+ * Answers every request matching `pattern` with the generated WAV, with byte ranges as podcast hosts do: without
+ * them Chrome can't seek in the audio at all.
+ */
+export async function serveAudio(page: Page, pattern: string): Promise<void> {
+  await page.route(pattern, (route) => {
     const range = /bytes=(\d+)-(\d*)/.exec(route.request().headers()['range'] ?? '');
     if (!range) {
       return route.fulfill({ status: 200, body: audio, headers: { 'content-type': 'audio/wav', 'accept-ranges': 'bytes' } });
@@ -57,6 +50,23 @@ export async function serveFixtures(page: Page): Promise<void> {
       headers: { 'content-type': 'audio/wav', 'accept-ranges': 'bytes', 'content-range': `bytes ${start}-${end}/${audio.length}` },
     });
   });
+}
+
+/** A fixture from `Contracts/fixtures/feeds/`. */
+export const feedFixture = (name: string): Buffer => readFileSync(`${repoRoot}Contracts/fixtures/feeds/${name}`);
+
+export async function serveFixtures(page: Page): Promise<void> {
+  await page.route(`${FEED_ORIGIN}/**`, async (route) => {
+    const name = new URL(route.request().url()).pathname.replace(/^\//, '');
+    if (!/^[\w.-]+$/.test(name)) return route.fulfill({ status: 404 });
+    try {
+      const body = feedFixture(name);
+      await route.fulfill({ status: 200, body, headers: { 'content-type': 'application/rss+xml', 'access-control-allow-origin': '*' } });
+    } catch {
+      await route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' } });
+    }
+  });
+  await serveAudio(page, 'https://media.example.com/**');
   // A feed whose host refuses browsers, to exercise the relay pop-up. Playwright's fulfilled responses
   // skip the CORS check, so the refusal is simulated as the failed fetch a CORS refusal produces.
   await page.route('https://blocked.test/**', (route) => route.abort('failed'));

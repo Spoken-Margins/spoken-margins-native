@@ -122,8 +122,10 @@ test('record a voice Margin with the microphone', async ({ page }, info) => {
   await expect(nowPlaying.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
   await shot(page, info, '10-recording');
   await page.waitForTimeout(1200);
-  await nowPlaying.getByRole('button', { name: 'Stop and save' }).click();
-  await expect(page.getByText(/Voice Margin saved at/)).toBeVisible();
+  await nowPlaying.getByRole('button', { name: 'Stop', exact: true }).click();
+  // Words are optional; without them the Margin stays out of shared files, and the listener is told so.
+  await nowPlaying.getByRole('button', { name: 'Save Margin' }).click();
+  await expect(page.getByText(/Voice Margin saved at .* It has no words/)).toBeVisible();
   // And resumes afterwards.
   await expect(nowPlaying.getByRole('button', { name: 'Pause' })).toBeVisible();
 
@@ -145,7 +147,8 @@ test('record a voice Margin with the microphone', async ({ page }, info) => {
       }),
   );
   expect(recorded.size).toBeGreaterThan(0);
-  info.annotations.push({ type: 'recorded-format', description: recorded.type });
+  // The real recorder (#2984) keeps only AAC in .m4a, the one voice format a packet carries.
+  expect(recorded.type).toBe('audio/mp4');
   await shot(page, info, '11-voice-margin');
 });
 
