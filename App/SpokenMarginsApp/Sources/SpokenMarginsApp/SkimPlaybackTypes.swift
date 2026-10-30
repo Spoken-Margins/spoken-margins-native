@@ -21,7 +21,7 @@ struct ResolvedSkimPlaybackPlan {
     }
 }
 
-struct SkimResourceContext {
+struct SkimResourceContext: Sendable {
     let itemId: String
     let projection: ResolvedListeningMapProjection?
     let proposal: PortableListeningMapProposalArtifact?

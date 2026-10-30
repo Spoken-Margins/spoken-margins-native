@@ -91,11 +91,19 @@ final class SkimBridgeController {
     #endif
 
     private weak var host: (any SkimBridgeHost)?
+    /// What Skim last loaded for an item. After a change to what it resolves against it stays, stale, until the
+    /// reload lands, so the controls don't flicker off while the store is read (#2943).
     private var resourceContext: SkimResourceContext?
+    private var resourcesAreStale = false
+    /// Bumped by every invalidation, so a read that started before one is never installed as current.
+    private var resourceGeneration = 0
+    private var resourceLoad: (token: UUID, itemId: String, task: Task<Void, Never>)?
     private var isUpdatingAvailability = false
     /// A summary being prepared for a press (#2185). A press for the same summary meanwhile is told to wait; a press
     /// for another one replaces it, and the replaced result is ignored.
     private var summaryPreparation: (id: UUID, assetID: String, direction: SkimDirection, task: Task<Void, Never>)?
+    /// The preparation whose audio is saved and whose resources are being reloaded: its timeout no longer applies (#2943).
+    private var savedPreparationID: UUID?
     /// Summaries whose preparation failed in this voice: offered no more until the resources are refreshed, so a
     /// render that can't succeed isn't retried and re-advertised on every press (#2185).
     private var failedSummaryAssetIDs: Set<String> = []
@@ -114,12 +122,22 @@ final class SkimBridgeController {
     var audioTransportRate: Float? { player?.rate }
     #endif
 
-    /// The selected item was reassigned. Only a change to what Skim resolves against, on the item it loaded for, drops
-    /// the loaded map and asset metadata (#2184): every reload used to, so each tap re-read them on the main thread.
-    /// Arriving at the loaded item counts as a change, so opening it reads them once. Explicit refreshes still drop them (#954).
+    /// The selected item was reassigned. Only a change to what Skim resolves against, on the item it loaded for,
+    /// reloads the map and asset metadata (#2184): every reload used to, so each tap re-read them. Arriving at the
+    /// loaded item counts as a change, so opening it reads them once. Explicit refreshes still reload them (#954).
     func itemDetailChanged(from old: SkimResourceKey, to new: SkimResourceKey) {
-        guard old != new, resourceContext?.itemId == new.itemId else { return }
-        resourceContext = nil
+        guard old != new, resourceContext?.itemId == new.itemId || resourceLoad?.itemId == new.itemId else { return }
+        invalidateResources()
+    }
+
+    private func invalidateResources() {
+        resourceGeneration += 1
+        resourcesAreStale = true
+    }
+
+    /// Returns once the resources being loaded have landed; for tests, which press right after a refresh.
+    func settleResources() async {
+        while let load = resourceLoad { await load.task.value }
     }
 
     /// A summary pass over `itemId` found these summary assets saved. Skim reloads its map and assets only when what it
@@ -129,13 +147,15 @@ final class SkimBridgeController {
         failedSummaryAssetIDs = []
         if let context = resourceContext, context.itemId == itemId,
            !assetIDs.isSubset(of: Set(context.assets.lazy.filter { $0.integrity == .valid }.map(\.id))) {
-            resourceContext = nil
+            invalidateResources()
+        } else if resourceLoad?.itemId == itemId {
+            invalidateResources() // the first read may have started before these were saved (#2943)
         }
         updateAvailability(refreshResources: false)
     }
 
     func updateAvailability(refreshResources: Bool = true) {
-        if refreshResources { resourceContext = nil; failedSummaryAssetIDs = [] }
+        if refreshResources { invalidateResources(); failedSummaryAssetIDs = [] }
         guard !isUpdatingAvailability, let host else { return }
         let bridge = host.skimBridgeState
         let effectiveTime = bridge?.destinationMediaTimeMs ?? host.skimCurrentMediaTimeMs
@@ -171,32 +191,62 @@ final class SkimBridgeController {
         return nil
     }
 
-    /// The map, proposal and owned assets of the playing item, read once per item and map change (#2184).
+    /// The map, proposal and owned assets of the playing item, read once per item and map change (#2184). The read
+    /// runs off the main actor (#2943): until it lands this is nil for an item not yet loaded, and the stale copy for
+    /// one being reloaded. The controls and the press path ask on every tick and tap, so none of them may wait on the store.
     private func loadedResources(for source: SkimSource) -> SkimResourceContext? {
-        guard let store = host?.skimStore else { return nil }
-        if resourceContext?.itemId != source.itemId {
-            #if DEBUG
-            resourceLoadCount += 1
-            #endif
-            resourceContext = MainThreadOperationLabels.shared.scoped("skim.loadResources") {
-                let projection = try? store.loadResolvedListeningMapProjection(itemId: source.itemId)
-                return SkimResourceContext(
-                    itemId: source.itemId,
-                    projection: projection,
-                    proposal: SharedListeningMapPlacement.proposal(
-                        for: projection, committed: (try? store.loadPortableListeningMapProposals(itemId: source.itemId)) ?? [],
-                        layers: (try? store.loadImportedCommentaryLayers(itemId: source.itemId)) ?? []),
-                    assets: (try? store.loadOwnedOfflineAssets()) ?? []
-                )
+        guard host?.skimStore != nil else { return nil }
+        if resourceContext?.itemId != source.itemId || resourcesAreStale { loadResources(itemId: source.itemId) }
+        guard let context = resourceContext, context.itemId == source.itemId else { return nil }
+        return context
+    }
+
+    /// Reads `itemId`'s resources off the main actor, installs them unless something invalidated them meanwhile
+    /// (then reads again), and asks for another availability pass. One load runs per item at a time.
+    private func loadResources(itemId: String) {
+        if let load = resourceLoad, load.itemId == itemId { return }
+        guard let store = host?.skimStore else { return }
+        resourceLoad?.task.cancel()
+        let token = UUID()
+        let task = Task { @MainActor [weak self] in
+            while true {
+                guard let self else { return }
+                let generation = self.resourceGeneration
+                #if DEBUG
+                self.resourceLoadCount += 1
+                #endif
+                let context = await Task.detached(priority: .userInitiated) {
+                    Self.readResources(store: store, itemId: itemId)
+                }.value
+                guard self.resourceLoad?.token == token else { return }
+                guard generation == self.resourceGeneration else { continue }
+                self.resourceContext = context
+                self.resourcesAreStale = false
+                self.resourceLoad = nil
+                self.updateAvailability(refreshResources: false)
+                return
             }
         }
-        return resourceContext
+        resourceLoad = (token, itemId, task)
+    }
+
+    nonisolated private static func readResources(store: SQLiteSessionStore, itemId: String) -> SkimResourceContext {
+        let projection = try? store.loadResolvedListeningMapProjection(itemId: itemId)
+        return SkimResourceContext(
+            itemId: itemId,
+            projection: projection,
+            proposal: SharedListeningMapPlacement.proposal(
+                for: projection, committed: (try? store.loadPortableListeningMapProposals(itemId: itemId)) ?? [],
+                layers: (try? store.loadImportedCommentaryLayers(itemId: itemId)) ?? []),
+            assets: (try? store.loadOwnedOfflineAssets(itemId: itemId)) ?? []
+        )
     }
 
     /// What a Skim from here does: play saved summary audio, prepare the summary first, or nothing, and why (#2185).
     func resolve(direction: SkimDirection, at recipientMediaTimeMs: Int) -> SkimResolution {
-        guard let host, let source = host.skimSource, let resources = loadedResources(for: source) else {
-            return .unavailable(.noSource)
+        guard let host, let source = host.skimSource else { return .unavailable(.noSource) }
+        guard let resources = loadedResources(for: source) else {
+            return .unavailable(host.skimStore == nil ? .noSource : .loading)
         }
         guard let projection = resources.projection, let proposal = resources.proposal else { return .unavailable(.noMap) }
         let plan = SceneStarts(scenes: proposal.scenes, projection: projection).skimPlan(
@@ -311,17 +361,34 @@ final class SkimBridgeController {
                 detail = String(describing: error)
             }
             guard let self, self.summaryPreparation?.id == id else { return } // replaced or timed out: already logged
+            // The new asset is in the store, not in what was loaded. The preparation stays registered while that is read,
+            // so a press meanwhile is told to wait instead of preparing the same summary again.
+            if prepared {
+                self.savedPreparationID = id
+                await self.reloadResources(itemId: request.itemId)
+            }
+            guard self.summaryPreparation?.id == id else { return }
             self.summaryPreparation = nil
             self.finishPreparation(request, direction: direction, wasPlaying: wasPlaying, prepared: prepared, detail: detail)
         }
         summaryPreparation = (id, request.assetID, direction, task)
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: Self.summaryPreparationTimeout)
-            guard let self, let pending = self.summaryPreparation, pending.id == id else { return }
+            guard let self, let pending = self.summaryPreparation, pending.id == id, self.savedPreparationID != id else { return }
             pending.task.cancel()
             self.summaryPreparation = nil
             self.preparationFailed(request, direction: direction, detail: "timeout")
         }
+    }
+
+    /// Marks `itemId`'s resources stale, and reloads them and returns when they have landed (#2943) if it is the
+    /// playing item. When it isn't (a recording is in progress, or another item plays), they are read when Skim next
+    /// asks for that item; the audit found a summary saved meanwhile was otherwise never picked up.
+    private func reloadResources(itemId: String) async {
+        if resourceContext?.itemId == itemId || resourceLoad?.itemId == itemId { invalidateResources() }
+        guard host?.skimSource?.itemId == itemId else { return }
+        loadResources(itemId: itemId)
+        await settleResources()
     }
 
     private func preparationFailed(_ request: SkimSummaryRequest, direction: SkimDirection, detail: String?) {
@@ -339,7 +406,6 @@ final class SkimBridgeController {
             preparationFailed(request, direction: direction, detail: detail)
             return
         }
-        resourceContext = nil // the new asset is in the store, not in what was loaded
         let resolution = resolve(direction: direction, at: host.skimCurrentMediaTimeMs ?? 0)
         // Why a summary that was prepared doesn't start now; nil when it may.
         let movedOn: String? = {

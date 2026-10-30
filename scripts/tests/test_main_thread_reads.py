@@ -607,9 +607,9 @@ class TheRepository(unittest.TestCase):
         for name in (('Gate1AppModel.refreshMarginRows', 'via MarginRowsReading.all'),
                      # #2507 moved refreshAudioPreparationPresentation's summaries read off the main actor, so its
                      # row left the baseline as fixed.
-                     # #2184 cached Skim's reads once per item, but the cache fill is still a main-thread
-                     # whole-table read (it moved from resolvedPlan into loadedResources)
-                     ('SkimBridgeController.loadedResources', 'store.loadOwnedOfflineAssets')):
+                     # #2184 cached Skim's reads once per item, and #2943 moved the cache fill off the main
+                     # actor, so its four loadedResources rows left the baseline as fixed.
+                     ):
                 # #2255 moved prepareImportedLocalAudioBridges' and prepareSummaryBridgeAsset's reads into a
                 # Task.detached, so their rows left the baseline as fixed.
             with self.subTest(name):
