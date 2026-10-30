@@ -75,6 +75,11 @@ final class PasteAndGoTests: XCTestCase {
         try await waitFor("podcast link import") { model.sourceLinkImportState != "resolving" }
 
         XCTAssertEqual(model.sourceLinkImportState, "success", model.sourceLinkImportMessage ?? "")
+        // A podcast add publishes its Library row from an off-main read (#2505), which can land just after the state
+        // reads "success". Waiting for the row, not the state, is what made this test fail once in a few runs (#2951).
+        try await waitFor("the podcast episode in the Library") {
+            model.libraryItems.contains { $0.title == "Episode one of the recorded show" }
+        }
         let row = try XCTUnwrap(model.libraryItems.first { $0.title == "Episode one of the recorded show" })
         XCTAssertNotEqual(row.mediaType, "text")
         XCTAssertNil(model.sourceLinkSafariOffer)
