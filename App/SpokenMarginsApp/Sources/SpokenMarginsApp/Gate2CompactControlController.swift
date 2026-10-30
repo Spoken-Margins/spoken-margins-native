@@ -1171,6 +1171,7 @@ private final class Gate2LiveSpeechNowPlayingController {
             Gate2EndedSessionNowPlaying.clearPlayerCard(for: snapshot)
             uninstallRemoteCommandHandlers()
             audioSessionActivation.cancelPending()
+            lastAudioSessionFailure = nil
             ownsNowPlayingInfo = false
             status = "inactive"
             return
@@ -1182,6 +1183,7 @@ private final class Gate2LiveSpeechNowPlayingController {
             Gate2EndedSessionNowPlaying.clearPlayerCard(for: snapshot)
             uninstallRemoteCommandHandlers()
             audioSessionActivation.cancelPending()
+            lastAudioSessionFailure = nil
             ownsNowPlayingInfo = false
             status = "inactive"
             return
@@ -1341,6 +1343,7 @@ private final class Gate2LiveSpeechNowPlayingController {
     }
 
     private func noteAudioSessionActivation(failure: String?) {
+        guard status != "inactive" else { return } // the controller let go of the route while the call was out
         lastAudioSessionFailure = failure
         if let failure {
             status = "live_speech_audio_session_failed:\(failure)"
