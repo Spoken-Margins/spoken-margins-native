@@ -190,7 +190,11 @@ func ValidOrigin(s string) bool {
 }
 
 // AllowedOrigin reports whether a browser origin may read relayed responses.
+// A missing Origin is never allowed.
 func (r *Relay) AllowedOrigin(origin string) bool {
+	if origin == "" {
+		return false
+	}
 	for _, o := range r.Origins {
 		if o == origin {
 			return true
@@ -463,10 +467,16 @@ func classify(ctx context.Context, err error) error {
 	return ErrUpstream
 }
 
-// ServeHTTP answers GET ?url=… with the relayed body, or {"error": code}.
-// The API wraps it with the on switch and the per-client limit.
-func (r *Relay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	r.init()
+// Admit sets the response headers every relay answer carries and refuses a
+// caller that may not use the relay, before anything is fetched or counted:
+// a request with no Origin, or one not listed. A browser always sends
+// Origin on a cross-origin fetch(), and sends none for a cross-site <img>
+// or <script> (a no-cors request), so such a page can't make visitors'
+// browsers drive the relay. A same-origin GET sends no Origin either, so
+// the web app must be served from a listed origin other than this host.
+// It reports whether the request may go on; when it can't, the answer has
+// been written.
+func (r *Relay) Admit(w http.ResponseWriter, req *http.Request) bool {
 	h := w.Header()
 	h.Set("Cache-Control", "no-store")
 	h.Set("Referrer-Policy", "no-referrer")
@@ -475,14 +485,25 @@ func (r *Relay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// no sources means opening it directly runs nothing and reads nothing
 	// on the share-link host; fetch() from the web app is unaffected.
 	h.Set("Content-Security-Policy", "sandbox; default-src 'none'")
-	h.Add("Vary", "Origin")
-	if origin := req.Header.Get("Origin"); origin != "" {
-		if !r.AllowedOrigin(origin) {
-			writeError(w, ErrOriginRefused)
-			return
-		}
-		h.Set("Access-Control-Allow-Origin", origin)
+	h.Set("Vary", "Origin")
+	origin := req.Header.Get("Origin")
+	if !r.AllowedOrigin(origin) {
+		writeError(w, ErrOriginRefused)
+		return false
 	}
+	h.Set("Access-Control-Allow-Origin", origin)
+	return true
+}
+
+// ServeHTTP answers GET ?url=… with the relayed body, or {"error": code}.
+// The API wraps it with the on switch and the per-client limit, and calls
+// Admit before the limit; calling it again here is harmless.
+func (r *Relay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	r.init()
+	if !r.Admit(w, req) {
+		return
+	}
+	h := w.Header()
 	res, err := r.Fetch(req.Context(), req.URL.Query().Get("url"))
 	if err != nil {
 		var re *Error

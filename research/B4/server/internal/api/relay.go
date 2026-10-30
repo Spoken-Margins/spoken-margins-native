@@ -26,6 +26,12 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request) {
 	if !s.relayOn(w) {
 		return
 	}
+	// A caller the relay refuses (no listed Origin) is answered before the
+	// limit counts it, so a page on another site can't spend a visitor's
+	// budget by embedding the relay.
+	if !s.Relay.Admit(w, r) {
+		return
+	}
 	// Per client per hour, keyed through the HMAC like linkWindow, so the
 	// address itself is never held.
 	if !s.relayWindow.hit(s.clientKey(r), s.Now(), s.RelayPerIPPerHour) {

@@ -5,8 +5,12 @@ package relay_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
+	"net/url"
+	"sync/atomic"
 	"testing"
 
 	"spokenmargins.dev/bridge/internal/relay"
@@ -102,5 +106,57 @@ func TestPublicAddrRefusesSpecialPurposeRegistries(t *testing.T) {
 		if !relay.PublicAddr(netip.MustParseAddr(s)) {
 			t.Errorf("%s should be public", s)
 		}
+	}
+}
+
+func relayStatus(t *testing.T, target string, headers map[string]string) (int, map[string]string, http.Header) {
+	t.Helper()
+	req, _ := http.NewRequest("GET", target, nil)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body map[string]string
+	json.NewDecoder(resp.Body).Decode(&body)
+	return resp.StatusCode, body, resp.Header
+}
+
+func countingFeed(t *testing.T) (*httptest.Server, *relay.Relay, *atomic.Int32) {
+	var hits atomic.Int32
+	srv, r, _ := upstream(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/rss+xml")
+		w.Write([]byte("<rss/>"))
+	}))
+	return srv, r, &hits
+}
+
+// Finding 4: a cross-site <img> or <script> sends no Origin, so the origin
+// check never ran. Every request must name a listed origin.
+func TestRefusesRequestsWithNoListedOrigin(t *testing.T) {
+	feed, r, hits := countingFeed(t)
+	front := httptest.NewServer(r)
+	defer front.Close()
+	target := front.URL + "/?url=" + url.QueryEscape(feed.URL+"/feed.xml")
+	for _, h := range []map[string]string{
+		{"Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Dest": "image"},
+		{},
+		{"Origin": "null"},
+		{"Origin": "https://web.spokenmargins.test.evil.example"},
+	} {
+		code, body, hdr := relayStatus(t, target, h)
+		if code != 403 || body["error"] != "origin_refused" || hdr.Get("Access-Control-Allow-Origin") != "" {
+			t.Errorf("headers %v: got %d %v", h, code, body)
+		}
+		if hdr.Get("Cache-Control") != "no-store" || hdr.Get("Vary") != "Origin" {
+			t.Errorf("headers %v: refusal headers %v", h, hdr)
+		}
+	}
+	if hits.Load() != 0 {
+		t.Fatal("a request with no listed origin still fetched upstream")
 	}
 }
