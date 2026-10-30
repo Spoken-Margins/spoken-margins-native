@@ -240,9 +240,9 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         let store = try h.makeStore()
         try h.seedPodcastItem(in: store)
         let fileA = try h.writeAudio("a.mp3")
-        let scheduledOutcome = await h.coordinator.resolveAndWait(itemId: h.itemId, localURL: fileA)
-        XCTAssertEqual(scheduledOutcome, .scheduled(joined: false))
-        let running = try await h.installProbePass(url: fileA)
+        let scheduled = try await h.resolveReplacingThePass(url: fileA)
+        XCTAssertEqual(scheduled.outcome, .scheduled(joined: false))
+        let running = scheduled.probe
         let passesBefore = h.coordinator.passes
         XCTAssertNotNil(passesBefore.pass(itemId: h.itemId))
 
@@ -269,9 +269,9 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         let item = h.makeItem()
         XCTAssertTrue(h.coordinator.scheduleTransientTranscript(for: item, localSourceURL: fileA))
         let transientFile = try PodcastPlacementFile(url: fileA)
-        let scheduledOutcome = await h.coordinator.resolveAndWait(itemId: h.itemId, localURL: fileA)
-        XCTAssertEqual(scheduledOutcome, .scheduled(joined: false))
-        let running = try await h.installProbePass(url: fileA)
+        let scheduled = try await h.resolveReplacingThePass(url: fileA)
+        XCTAssertEqual(scheduled.outcome, .scheduled(joined: false))
+        let running = scheduled.probe
         XCTAssertTrue(h.coordinator.matching.isCurrent(running))
         XCTAssertEqual(h.coordinator.passes, h.expectedPasses(.transcript, .matching))
 
@@ -423,33 +423,19 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
 
     /// Mutation: letting a superseded operation end the `.matching` display (dropping the `isCurrent` / cancellation
     /// guards in the operation's cancellation path), which would show "placed" while the newer pass still runs.
+    /// Flaked when the test joined the pass after `resolveAndWait` returned (#2952): the pass had already ended.
     func testASupersededPassNeverEndsTheDisplay() async throws {
         let h = try PlacementCoordinatorHarness()
         defer { h.shutdown() }
         let store = try h.makeStore()
         try h.seedPodcastItem(in: store)
         let file = try h.writeAudio("episode.mp3")
-        let scheduledOutcome = await h.coordinator.resolveAndWait(itemId: h.itemId, localURL: file)
-        XCTAssertEqual(scheduledOutcome, .scheduled(joined: false))
-
-        // Join the pass `resolve` just started, to hold its completion handle. An identical request is kept, not replaced.
-        let layers = try store.loadImportedCommentaryLayers(itemId: h.itemId)
-        let work = ImportedPodcastPlacement.podcastLayerRecords(layers: layers) { layer in
-            try? store.loadImportedCommentaryInterjections(layerId: layer.id)
-        }
-        let identical = PodcastPlacementPassCoordinator.Request(
-            itemId: h.itemId,
-            file: try PodcastPlacementFile(url: file),
-            layers: work.map { PodcastPlacementPassCoordinator.LayerInput(layer: $0.0, records: $0.1) }
-        )
-        let joined = h.coordinator.matching.schedule(identical) { _ in }
-        guard joined.joined else {
-            return XCTFail("an identical request should have joined the running pass")
-        }
-
-        // Supersede it before it can run: the operation sees a cancelled task and a pass that is no longer current.
-        let newer = try await h.installProbePass(url: file)
-        await joined.completion.value
+        // The pass `resolve` starts is joined, to hold its completion handle, and superseded by a pass of the test's own,
+        // both before the main actor is released: that pass runs on a detached task and could otherwise end first.
+        let scheduled = try await h.resolveReplacingThePass(url: file)
+        XCTAssertEqual(scheduled.outcome, .scheduled(joined: false))
+        let newer = scheduled.probe
+        await scheduled.realPass.value
 
         XCTAssertTrue(h.coordinator.matching.isCurrent(newer))
         XCTAssertEqual(h.coordinator.passes, h.expectedPasses(.matching), "the newer pass is still displayed as placing")
@@ -537,6 +523,14 @@ private actor PlacementPassProbe {
     }
 }
 
+/// What `resolveReplacingThePass`'s diagnostic hook captured.
+@MainActor
+private final class PlacementPassHook {
+    var realPass: Task<Void, Never>?
+    var probe: PlacementPassProbe?
+    var failure: (any Error)?
+}
+
 /// Everything the coordinator's dependencies reported, in the order it happened.
 @MainActor
 private final class PlacementSpies {
@@ -552,10 +546,14 @@ private final class PlacementSpies {
     private(set) var refreshedAfterInvalidation: [String] = []
     private(set) var passesLog: [(old: SharedMarginPlacementPasses, new: SharedMarginPlacementPasses)] = []
     var slotWasFreeAtDeferral: [Bool] = []
+    /// Runs inside each reported diagnostic, on the main actor, so a test can act at a point `resolve` reaches
+    /// without having awaited anything since it scheduled its pass.
+    var onDiagnostic: (@MainActor (String, String) -> Void)?
 
     func recordDiagnostic(_ key: String, _ value: String) {
         diagnostics[key] = value
         diagnosticLog.append((key: key, value: value))
+        onDiagnostic?(key, value)
     }
 
     func recordDeferral(_ item: Item, _ url: URL) {
@@ -667,6 +665,10 @@ private final class PlacementCoordinatorHarness {
     /// Schedules a matching pass of the test's own for the item and returns its context. It replaces whatever pass was
     /// running (the request differs from any real one), and runs until it is cancelled.
     func installProbePass(url: URL) async throws -> PodcastPlacementPassCoordinator.Context {
+        try await startedContext(of: scheduleProbePass(url: url))
+    }
+
+    private func scheduleProbePass(url: URL) throws -> PlacementPassProbe {
         let probe = PlacementPassProbe()
         let request = PodcastPlacementPassCoordinator.Request(
             itemId: itemId, file: try PodcastPlacementFile(url: url), layers: [])
@@ -676,11 +678,61 @@ private final class PlacementCoordinatorHarness {
                 try? await Task.sleep(for: .milliseconds(10))
             }
         }
+        return probe
+    }
+
+    private func startedContext(of probe: PlacementPassProbe) async throws -> PodcastPlacementPassCoordinator.Context {
         for _ in 0..<500 {
             if let context = await probe.context { return context }
             try await Task.sleep(for: .milliseconds(10))
         }
         throw PlacementTestFailure()
+    }
+
+    /// `resolveAndWait`, with the pass it starts joined and then replaced by a probe pass of the test's own.
+    ///
+    /// `resolve`'s pass runs on a detached task and needs the main actor to finish, so once `resolveAndWait` returns it
+    /// may already have ended, with its `.matching` display, before the test's next line runs; a test that wanted to
+    /// join or replace it then found nothing running (#2951, #2952). `resolve` records its "scheduled" diagnostic
+    /// right after it schedules the pass with nothing awaited in between, so acting there happens before the pass can
+    /// take its first step. `realPass` is the real pass's completion handle, cancelled by the probe.
+    func resolveReplacingThePass(url: URL) async throws -> (
+        outcome: ImportedPodcastPlacementCoordinator.ResolveOutcome,
+        probe: PodcastPlacementPassCoordinator.Context,
+        realPass: Task<Void, Never>
+    ) {
+        let hook = PlacementPassHook()
+        spies.onDiagnostic = { [unowned self] key, value in
+            guard key == "importedPodcastAnchorResolution:\(self.itemId)", value.hasPrefix("scheduled:") else { return }
+            do {
+                let submission = self.coordinator.matching.schedule(try self.identicalRequest(url: url)) { _ in }
+                // An identical request is kept, not replaced: this must be the pass `resolve` just started.
+                guard submission.joined else { throw PlacementTestFailure() }
+                hook.realPass = submission.completion
+                hook.probe = try self.scheduleProbePass(url: url)
+            } catch {
+                hook.failure = error
+            }
+        }
+        defer { spies.onDiagnostic = nil }
+        let outcome = await coordinator.resolveAndWait(itemId: itemId, localURL: url)
+        if let failure = hook.failure { throw failure }
+        guard let realPass = hook.realPass, let probe = hook.probe else { throw PlacementTestFailure() }
+        return (outcome, try await startedContext(of: probe), realPass)
+    }
+
+    /// The request `resolve` makes for the item's current layers.
+    private func identicalRequest(url: URL) throws -> PodcastPlacementPassCoordinator.Request {
+        guard let store = spies.store else { throw PlacementTestFailure() }
+        let layers = try store.loadImportedCommentaryLayers(itemId: itemId)
+        let work = ImportedPodcastPlacement.podcastLayerRecords(layers: layers) { layer in
+            try? store.loadImportedCommentaryInterjections(layerId: layer.id)
+        }
+        return PodcastPlacementPassCoordinator.Request(
+            itemId: itemId,
+            file: try PodcastPlacementFile(url: url),
+            layers: work.map { PodcastPlacementPassCoordinator.LayerInput(layer: $0.0, records: $0.1) }
+        )
     }
 
     /// What `passes` holds when exactly this work is displayed for the item and no Margin had an earlier position.
