@@ -6093,6 +6093,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         try await waitFor("feed found") { model.canManuallyFollowSelectedSource }
         XCTAssertEqual(model.manualFollowButtonTitle, "Follow Astral Codex Ten")
         XCTAssertEqual(model.manualFollowButtonSymbol, "newspaper")
+        // The offer is set before the "followOffer" line is written, and every item's discovery writes that one line.
+        // Opening the next item first lets the article's late "found" overwrite the no-feed line, and the wait below never ends (#2913).
+        try await waitFor("found line") { model.diagnostics["followOffer"]?.hasPrefix("found:") == true }
 
         model.openItem(id: "no-feed")
         try await waitFor("no feed") { model.diagnostics["followOffer"]?.hasPrefix("none:") == true }
