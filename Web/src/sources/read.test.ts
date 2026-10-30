@@ -9,6 +9,7 @@ import {
   RelayNotConfigured,
   readFeed,
   readSubstackVoice,
+  RELAY_FINAL_URL_HEADER,
   readUrl,
   relayUrl,
 } from './read.ts';
@@ -42,7 +43,7 @@ test('with consent, a blocked direct read goes through the relay', async () => {
   const fetch = stubFetch({ [relayed]: { body: feedFixture('enclosure-only-episodes.rss') } }, calls);
   const result = await readUrl(FEED_URL, { fetch, relayBase: `${RELAY}/`, consent: true });
   assert.equal(result.via, 'relay');
-  assert.equal(result.finalUrl, undefined);
+  assert.equal(result.finalUrl, undefined, 'a relay that names no final address leaves it unset');
   assert.deepEqual(calls, [FEED_URL, relayed]);
   assert.equal(relayed, 'https://relay.example.org/api/v1/relay?url=https%3A%2F%2Fmedia.example.com%2Ffeed.xml');
 });
@@ -136,4 +137,55 @@ test('readSubstackVoice for a paid post is null, not an error', async () => {
 
 test('readSubstackVoice still asks consent before the relay', async () => {
   await assert.rejects(readSubstackVoice(POST_URL, { fetch: stubFetch({}), relayBase: RELAY }), NeedsRelayConsent);
+});
+
+// The relay names the address after redirects in X-Final-URL (#2979), so a relayed read keeps the checks a direct
+// read gets from Response.url.
+const RELATIVE_FEED = `<?xml version="1.0"?><rss version="2.0"><channel><title>Moved</title><link>/show</link>
+<item><title>One</title><guid>g1</guid><link>/p/one</link><enclosure url="audio/one.mp3" type="audio/mpeg"/></item>
+</channel></rss>`;
+
+test('through the relay, the final address comes from X-Final-URL and relative links resolve against it', async () => {
+  const asked = 'https://old.example/feed';
+  const final = 'https://new.example/podcast/feed.xml';
+  const fetch = stubFetch({ [relayUrl(RELAY, asked)]: { body: RELATIVE_FEED, headers: { [RELAY_FINAL_URL_HEADER]: final } } });
+  const read = await readUrl(asked, { fetch, relayBase: RELAY, consent: true });
+  assert.equal(read.finalUrl, final);
+  const feed = await readFeed(asked, { fetch, relayBase: RELAY, consent: true });
+  assert.equal(feed.show.feedUrl, asked, 'the show keeps the address the listener followed');
+  assert.equal(feed.show.siteUrl, 'https://new.example/show');
+  assert.equal(feed.episodes[0]?.audioUrl, 'https://new.example/podcast/audio/one.mp3');
+  assert.equal(feed.episodes[0]?.pageUrl, 'https://new.example/p/one');
+});
+
+test('a direct read that was redirected resolves relative links against where it landed', async () => {
+  const asked = 'https://old.example/feed';
+  const fetch = stubFetch({ [asked]: { body: RELATIVE_FEED, url: 'https://new.example/podcast/feed.xml' } });
+  const feed = await readFeed(asked, { fetch });
+  assert.equal(feed.episodes[0]?.audioUrl, 'https://new.example/podcast/audio/one.mp3');
+});
+
+test('a relayed read whose redirect landed on a post page is refused without a tap', async () => {
+  const asked = 'https://short.example/x';
+  const fetch = stubFetch({
+    [relayUrl(RELAY, asked)]: { body: 'html', headers: { [RELAY_FINAL_URL_HEADER]: 'https://thezvi.substack.com/p/some-post' } },
+  });
+  await assert.rejects(readUrl(asked, { fetch, relayBase: RELAY, consent: true, reason: 'feed-refresh' }), PostPageReadRefused);
+});
+
+test('through the relay, readSubstackVoice gives a voice only to the post the page is about', async () => {
+  const html = feedFixture('substack-voiceover-page.html');
+  const relayed = relayUrl(RELAY, POST_URL);
+  const same = stubFetch({ [relayed]: { body: html, headers: { [RELAY_FINAL_URL_HEADER]: POST_URL } } });
+  assert.equal((await readSubstackVoice(POST_URL, { fetch: same, relayBase: RELAY, consent: true }))?.origin, 'substack-voiceover');
+  const other = stubFetch({ [relayed]: { body: html, headers: { [RELAY_FINAL_URL_HEADER]: 'https://captured.example/p/something-else' } } });
+  assert.equal(await readSubstackVoice(POST_URL, { fetch: other, relayBase: RELAY, consent: true }), null);
+});
+
+test('an unusable X-Final-URL is ignored, not trusted', async () => {
+  for (const junk of ['javascript:alert(1)', 'not a url', '', 'file:///etc/passwd']) {
+    const fetch = stubFetch({ [relayUrl(RELAY, FEED_URL)]: { body: 'x', headers: { [RELAY_FINAL_URL_HEADER]: junk } } });
+    const read = await readUrl(FEED_URL, { fetch, relayBase: RELAY, consent: true });
+    assert.equal(read.finalUrl, undefined, junk);
+  }
 });

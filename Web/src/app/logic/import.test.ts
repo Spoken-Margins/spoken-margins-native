@@ -1,0 +1,79 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import type { Episode, Margin, Show } from '../../shared/model.ts';
+import type { PacketRead } from '../ports.ts';
+import { findEpisode, importSummary, placeImport, sharedShowFor } from './import.ts';
+
+const show: Show = { id: 'feed:https://feeds.test/show.rss', kind: 'podcast', title: 'Show', feedUrl: 'https://feeds.test/show.rss', followedAt: 'T0' };
+const mine: Episode = {
+  id: 'feed:https://feeds.test/show.rss#g-1',
+  showId: show.id,
+  title: 'Episode 1',
+  guid: 'g-1',
+  audioUrl: 'https://media.example.com/1.mp3',
+  pageUrl: 'https://example.com/show/episode-1',
+};
+
+function margin(id: string, at: number): Margin {
+  return { id: `packet:d:${id}`, episodeId: 'packet:d', atSeconds: at, createdAt: '2026-10-30T00:00:00Z', text: id };
+}
+
+function read(episode: PacketRead['episode'], extra: Partial<PacketRead> = {}): PacketRead {
+  return { contentDigest: 'd'.repeat(64), episode, margins: [margin('b', 40), margin('a', 12.5)], textMarginCount: 0, ...extra };
+}
+
+test('the listener’s own copy is found by guid, then audio address, then page', () => {
+  const others: Episode[] = [{ ...mine, id: 'x', guid: 'other', audioUrl: 'https://media.example.com/x.mp3', pageUrl: 'https://example.com/x' }];
+  const library = [...others, mine];
+  assert.equal(findEpisode(read({ title: 'T', guid: ' g-1 ' }), library), mine);
+  assert.equal(findEpisode(read({ title: 'T', guid: 'unknown', audioUrl: mine.audioUrl }), library), mine);
+  assert.equal(findEpisode(read({ title: 'T', pageUrl: 'https://EXAMPLE.com/show/episode-1/?utm=x' }), library), mine);
+  // Guid wins over a conflicting audio address: the app's order.
+  assert.equal(findEpisode(read({ title: 'T', guid: 'other', audioUrl: mine.audioUrl }), library), others[0]);
+  assert.equal(findEpisode(read({ title: 'T' }), library), undefined);
+  assert.equal(findEpisode(read({ title: 'T', guid: '', audioUrl: 'https://media.example.com/none.mp3' }), library), undefined);
+});
+
+test('Margins on an episode in the Library go to it, and play from the earliest', () => {
+  const placed = placeImport(read({ title: 'T', guid: 'g-1' }), [show], [mine]);
+  assert.equal(placed.newEpisode, false);
+  assert.equal(placed.show, undefined);
+  assert.equal(placed.episode, mine);
+  assert.deepEqual(placed.margins.map((m) => m.episodeId), [mine.id, mine.id]);
+  assert.equal(placed.landAt, 12.5);
+  assert.deepEqual(placed.margins.map((m) => m.id), ['packet:d:b', 'packet:d:a'], 'ids stay, so opening the file twice adds nothing');
+});
+
+test('an episode not in the Library is added under the sender, ready to play', () => {
+  const packetEpisode = { title: 'Their episode', guid: 'g-9', audioUrl: 'https://media.example.com/9.mp3', durationSeconds: 180, showTitle: 'Their show', publisher: 'Pub' };
+  const placed = placeImport(read(packetEpisode, { sender: 'Ada' }), [show], [mine], 'NOW');
+  assert.equal(placed.newEpisode, true);
+  assert.deepEqual(placed.show, { id: 'shared:Ada', kind: 'podcast', title: 'Shared by Ada', feedUrl: '', followedAt: 'NOW' });
+  assert.deepEqual(placed.episode, {
+    id: 'shared:Ada#g-9', showId: 'shared:Ada', title: 'Their episode', guid: 'g-9', audioUrl: 'https://media.example.com/9.mp3', durationSeconds: 180,
+  });
+  assert.ok(placed.margins.every((m) => m.episodeId === 'shared:Ada#g-9'));
+
+  // A second file from Ada reuses her show.
+  const again = placeImport(read({ title: 'Another', audioUrl: 'https://media.example.com/10.mp3' }, { sender: 'Ada' }), [show, placed.show!], [mine]);
+  assert.equal(again.show, undefined);
+  assert.equal(again.episode.showId, 'shared:Ada');
+  assert.equal(again.episode.id, 'shared:Ada#https://media.example.com/10.mp3');
+});
+
+test('no sender, no identity: still one show, and an id from the file', () => {
+  assert.equal(sharedShowFor(undefined, 'T').title, 'Shared with you');
+  assert.equal(sharedShowFor('  ', 'T').id, 'shared:');
+  const placed = placeImport(read({ title: 'Untitled' }), [], []);
+  assert.equal(placed.episode.id, `shared:#${'d'.repeat(64)}`);
+});
+
+test('the summary counts what was placed and names what wasn’t', () => {
+  const placed = placeImport(read({ title: 'Ep', guid: 'g-1' }, { textMarginCount: 1 }), [show], [mine]);
+  assert.equal(importSummary(placed, 'Ada'), 'Opened 2 Margins from Ada on “Episode 1”. 1 Margin is on an article’s text, which the web app can’t open yet.');
+  const one = placeImport(read({ title: 'Ep', guid: 'g-1' }, { margins: [margin('a', 1)] }), [show], [mine]);
+  assert.equal(importSummary(one, undefined), 'Opened 1 Margin on “Episode 1”.');
+  const none = placeImport(read({ title: 'Ep' }, { margins: [], textMarginCount: 3 }), [], []);
+  assert.equal(none.landAt, undefined);
+  assert.equal(importSummary(none, undefined), 'This file has no Margins the web app can place. 3 Margins are on an article’s text, which the web app can’t open yet.');
+});
