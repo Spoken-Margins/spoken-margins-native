@@ -58,13 +58,13 @@ for filter_line in \
   'log default {' 'format filter {' 'wrap json' \
   'request>remote_ip delete' 'request>remote_port delete' 'request>client_ip delete' \
   'request>headers delete' 'request>tls delete' \
-  'request>uri regexp ^(/api/v1/maps|/l)/.* $1/*'; do
+  'request>uri regexp (^/api/v1/maps/|^/l/|[?]).* $1*'; do
   grep -qxF -e "${filter_line}" <<<"${global_block}" || die "log filter line missing from the global block: ${filter_line}"
 done
 grep -q 'reverse_proxy 127.0.0.1:8795' "${work}/c1" || die "port not rendered"
 grep -q 'root \* /srv/www/spokenmargins-server' "${work}/c1" || die "server root not rendered"
 grep -q 'handle /l/\*' "${work}/c1" || die "share link routing missing"
-grep -Fq 'request>uri regexp ^(/api/v1/maps|/l)/.* $1/*' "${work}/c1" || die "share link privacy filter missing"
+grep -Fq 'request>uri regexp (^/api/v1/maps/|^/l/|[?]).* $1*' "${work}/c1" || die "share link, episode and query privacy filter missing"
 # Everything outside the two managed blocks is byte-for-byte unchanged.
 diff <(sed -n '/^proximitytoprogress.com {/,/^}/p;/^other.proximitytoprogress.com {/,/^}/p' "${work}/live") \
   <(sed -n '/^proximitytoprogress.com {/,/^}/p;/^other.proximitytoprogress.com {/,/^}/p' "${work}/c1") >/dev/null ||
@@ -130,6 +130,8 @@ if [[ -n "${CADDY:-}" && -n "${SMSERVER:-}" ]]; then
   mapkey=5ec2e7a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
   [[ "$(code http://127.0.0.1:18443/api/v1/maps/${mapkey})" == 502 ]] || die "map fetch should 502 with smserver down"
   [[ "$(code http://127.0.0.1:18443/api/v1/health)" == 502 ]] || die "api should 502 with smserver down"
+  relayurl='https%3A%2F%2Ffeeds.example%2Fprivate%3Ftoken%3DRELAYSECRET'
+  [[ "$(code "http://127.0.0.1:18443/api/v1/relay?url=${relayurl}")" == 502 ]] || die "relay should 502 with smserver down"
   "${SMSERVER}" serve -listen 127.0.0.1:8795 -state "${work}/state" -public "${root}" >/dev/null 2>&1 &
   sleep 0.5
   [[ "$(curl -s http://127.0.0.1:18443/api/v1/health)" == *'"status":"ok"'* ]] || die "health not proxied to smserver"
@@ -140,8 +142,10 @@ if [[ -n "${CADDY:-}" && -n "${SMSERVER:-}" ]]; then
   grep -q '"uri":"/l/\*"' "${work}/caddy.log" || die "share link not logged as /l/*"
   ! grep -q "${mapkey}" "${work}/caddy.log" || die "Caddy error log leaked an episode key"
   grep -q '"uri":"/api/v1/maps/\*"' "${work}/caddy.log" || die "map fetch not logged as /api/v1/maps/*"
+  ! grep -qE 'RELAYSECRET|url=' "${work}/caddy.log" || die "Caddy error log leaked a relay URL"
+  grep -q '"uri":"/api/v1/relay?\*"' "${work}/caddy.log" || die "relay not logged as /api/v1/relay?*"
   grep 'http.log.error' "${work}/caddy.log" | head -1 | grep -q '^{' || die "error log is not JSON"
-  ok "served locally: config.json with smserver down, site, /api proxied, error log JSON without IP, headers or episode keys"
+  ok "served locally: config.json with smserver down, site, /api proxied, error log JSON without IP, headers, episode keys or relay URLs"
 fi
 if [[ -z "${CADDY:-}" ]]; then
   echo "SKIPPED caddy validate of every candidate (set CADDY)"
