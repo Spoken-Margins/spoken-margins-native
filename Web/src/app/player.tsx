@@ -4,6 +4,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Episode } from '../shared/model.ts';
 import { useData } from './data.tsx';
+import { FINISHED_WITHIN_SECONDS } from './logic/library.ts';
 import { services } from './services.ts';
 import { useRelay, useUi } from './ui.tsx';
 
@@ -92,7 +93,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         return;
       }
       const resume = dataRef.current.positions.find((p) => p.episodeId === id)?.seconds;
-      const finished = target.durationSeconds && resume && resume >= target.durationSeconds - 15;
+      const finished = target.durationSeconds && resume && resume >= target.durationSeconds - FINISHED_WITHIN_SECONDS;
       pendingSeek.current = options.at ?? (finished ? 0 : resume);
       loadedId.current = id;
       setEpisodeId(id);
