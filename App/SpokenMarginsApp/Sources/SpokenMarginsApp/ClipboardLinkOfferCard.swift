@@ -182,7 +182,8 @@ struct ClipboardLinkOfferCard: View {
                 let content = await PastedClipboardContent.text(from: providers)
                 // A newer copy replaced the offer while this was read: its result is stale.
                 guard clipboard.offer.changeCount == changeCount else { return }
-                pasted(content)
+                // The add runs on the main actor; the label lets the hang probe name it, as for Paste & go.
+                model.hangTelemetry.labels.scoped("clipboardLinkPaste") { pasted(content) }
             }
         }
         .labelStyle(.titleAndIcon)
