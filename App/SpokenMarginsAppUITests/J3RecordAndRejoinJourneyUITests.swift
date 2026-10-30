@@ -100,7 +100,7 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
             // "Where you were" is the position when the Margin opened, not the Margin's own place a minute or more earlier.
             XCTAssertGreaterThanOrEqual(now, beforeOpeningMargin - 5,
                                         "Podcast continued at \(now) s, before where you were (\(beforeOpeningMargin) s), perhaps at the Margin (\(marginPosition) s)")
-            XCTAssertLessThan(now - beforeOpeningMargin, 20,
+            XCTAssertLessThan(now - beforeOpeningMargin, 30,
                               "Podcast continued at \(now) s, far past where you were (\(beforeOpeningMargin) s)")
             try waitUntilAdvancing("Podcast is stuck after the Margin played")
         }

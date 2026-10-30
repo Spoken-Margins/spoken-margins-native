@@ -3,7 +3,8 @@ import XCTest
 // J8: put a Library item in a new collection, then choose that collection in the Margins scope and see the
 // item and its Margin there. The seed has no Margin, so the script writes one on the item (the same written
 // Margin J7 writes) after making the collection and before opening the scope.
-// The article is the offline seed (SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT), so no audio or network is involved.
+// The article is the offline seed (SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT), so no network is involved; opening it to
+// write the Margin starts live speech, which the script neither waits for nor judges.
 // Screenshots of the sheet are attached to the test result (kept by the xcresult), so the Add to Collection
 // sheet can be looked at without driving the simulator by hand. Whether the sheet looks right stays with
 // the agent run and the owner.

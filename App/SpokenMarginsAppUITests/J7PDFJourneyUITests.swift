@@ -110,12 +110,11 @@ final class J7PDFJourneyUITests: XCTestCase {
             XCTAssertTrue(text.waitForExistence(timeout: 5), "The Margin does not show what was written")
             tap("marginDetail.playMoment.button")
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Play this moment did not open Now Playing")
-            waitUntil("The Margin did not open at its passage (\(marginPercent)%)", timeout: 10) {
-                self.currentPercent().map { abs($0 - marginPercent) <= 3 } ?? false
-            }
-            // Percent alone allows a neighbouring sentence; the passage id is the sentence the Margin was written at.
-            waitUntil("The Margin did not reopen at its passage (\(marginPassageID))", timeout: 10) {
-                self.currentPassage.exists && self.currentPassage.identifier == marginPassageID
+            // One wait for both, so a PDF already playing on from the Margin's sentence can't move the id between two
+            // checks. Percent alone allows a neighbouring sentence; the id is the sentence the Margin was written at.
+            waitUntil("The Margin did not open at its passage (\(marginPassageID), \(marginPercent)%)", timeout: 10) {
+                (self.currentPercent().map { abs($0 - marginPercent) <= 3 } ?? false)
+                    && self.currentPassage.exists && self.currentPassage.identifier == marginPassageID
             }
         }
     }
