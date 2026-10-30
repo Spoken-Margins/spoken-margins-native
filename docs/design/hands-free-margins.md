@@ -103,7 +103,7 @@ One rule covers every trigger: **trigger → tone → talk → silence → tone 
 
 | Where you are | Start | Finish early | Cancel |
 |---|---|---|---|
-| AirPods / wired headphones | Double-press (the "next track" signal) | Any single press | Stay silent: it becomes a flag. Then delete it later. |
+| AirPods / wired headphones | Double-press (the "next track" signal), once the setting is on | Not possible: with the microphone open the headset is in call mode, so a press is its mute. Stop talking, or use the screen. | Stay silent: it becomes a flag. Then delete it later. |
 | Car, Bluetooth only | Steering-wheel skip-forward (the same signal) | Play/pause on the wheel | Same as above |
 | Car, CarPlay | The **Margin** button on the CarPlay Now Playing screen, or Siri | The same button (it shows a stop icon) | Same |
 | Phone locked | The Live Activity mic (runs in place, no unlock **(spike)**), the Action button, or a Lock Screen control | The same button again | Same |
@@ -111,7 +111,7 @@ One rule covers every trigger: **trigger → tone → talk → silence → tone 
 | Apple Watch (later, #96) | A Watch button or the complication | Tap again | Same |
 | On screen | Add a Margin, as today | Save & resume (moving to the bottom in #148) | Cancel, as today |
 
-**Default taken:** double-press means **Add a Margin**, and skip forward moves to the Lock Screen and on-screen buttons. A setting can put it back ("Headphone double-press: Add a Margin / Skip forward"). Triple-press stays as skip back. Press-and-hold is reserved by iOS (Siri and noise control), so the app can't use it.
+**Owner's call (2026-10-30, replaces the 2026-10-17 default):** double-press keeps skip forward by default, and **Add a Margin** is a setting he turns on ("Headphone double-press: Skip forward / Add a Margin"). He tested it on his phone: a double-press adds a Margin, but no headphone press ends one (a single press only makes the call-mode mute "ba-dump"), and he thinks a default-on double-press would confuse people (#2957). Triple-press stays as skip back. Press-and-hold is reserved by iOS (Siri and noise control), so the app can't use it.
 
 ### 4.2 The recording, step by step
 
@@ -120,7 +120,7 @@ One rule covers every trigger: **trigger → tone → talk → silence → tone 
 3. **Listening window.** You have **6 seconds** to start talking.
    - If you don't, the falling double tick plays and a **flag** is saved at the anchor. The source carries on.
 4. **Talking.** You talk as long as you like, up to **5 minutes**. A soft tick at 4:30 warns you.
-5. **End on silence, or on a command.** About **2.5 seconds** of quiet after you've spoken ends it. A headphone click, a play/pause command or a skip-forward command (AirPods, a steering-wheel button) ends it immediately and keeps what you said, including quiet words that stayed under the speech threshold, the same as the silence timer. Only a Margin with nothing said becomes a flag. Saying "end margin" or "stop margin" aloud is a possible later option; it needs on-device speech recognition while recording, so it is not built yet.
+5. **End on silence, or on a command.** About **2.5 seconds** of quiet after you've spoken ends it. A play/pause or skip-forward command ends it immediately, but not from headphones: on the owner's phone, with the microphone open, a headphone press only toggles the call-mode mute and does not reach the app as an end command (tested 2026-10-30). A steering-wheel button is untested. When one does arrive, it ends it immediately and keeps what you said, including quiet words that stayed under the speech threshold, the same as the silence timer. Only a Margin with nothing said becomes a flag. Saying "end margin" or "stop margin" aloud is a possible later option; it needs on-device speech recognition while recording, so it is not built yet.
    - Before speech crosses the threshold, a level more than **4 dB above the measured room** counts as an attempt to talk and is kept. Exactly 4 dB or less stays a flag. This rule is the same for an end command and the silence timeout.
 6. **Save tone.** A falling two-note tone plays. The Margin is saved before the tone plays, so the tone means "it's safe".
 7. **Rejoin.** The source **backs up 3 seconds** (a podcast) or **to the start of the sentence** (an article), then plays.
@@ -255,7 +255,7 @@ In order. Each is S or M and can be its own issue. "Where" follows the project's
 | 2 | **`HandsFreeMarginCoordinator` in SessionKit:** all states, a fake clock, voice-level input, host tests for flag, save, cap, interruption and bounce. No UI. | M | cloud | nothing |
 | 3 | **Silence detection and the 5-minute cap** wired to the real recorder level meter. Crash-safe recording format. | M | Mac | 2 |
 | 4 | **Tones and the first-three-uses spoken coaching.** A setting to keep the coaching on. | S | cloud + Mac build | 2 |
-| 5 | **Headphone and steering-wheel trigger:** double-press starts, any press finishes, plus the setting to switch back to skip. | M | Mac | 0, 2, 3, 4 |
+| 5 | **Headphone and steering-wheel trigger:** a setting (off by default) makes double-press start a Margin; a headphone press can't finish one (#2957). | M | Mac | 0, 2, 3, 4 |
 | 6 | **Rejoin step-back** (3 s or previous sentence), checked against podcast anchor evidence on a stream. J3's wording "resumes where it paused" gets updated to "a few seconds before". | S | cloud (SessionKit) | 2 |
 | 7 | **Live Activity mic runs in place** through `StartMarginIntent`, with a colour-blind-safe recording state (ring + word). | M | Mac | 0, 2 |
 | 8 | **Siri:** "Margin in Spoken Margins", "Replay my Margins in Spoken Margins". | M | Mac | 7 |
@@ -274,7 +274,7 @@ Related issues: #96, #117, #121 (closed into #96), #126, #148, #203, #428, #472.
 
 ## 7. Decisions only you can make
 
-1. **Double-press means Add a Margin by default.** My pick: yes, with a setting to switch back to skip forward. It's the app's core action, and triple-press still skips back.
+1. **Double-press means Add a Margin by default.** Decided 2026-10-30: no. It is a setting that is off by default, because a default-on double-press would confuse people. Triple-press still skips back.
 2. **Step back 3 seconds when a Margin ends.** My pick: yes, for every Margin, not only hands-free ones. It changes the wording of J3.
 3. **Widen the product boundary** in `recovery-mvp.md` to allow a Control (Action button and Lock Screen) now, and CarPlay later. My pick: the Control now. Request the CarPlay entitlement only after the spike shows recording works with the phone locked.
 
