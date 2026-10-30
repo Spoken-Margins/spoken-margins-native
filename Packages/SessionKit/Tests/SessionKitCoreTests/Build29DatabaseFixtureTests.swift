@@ -182,6 +182,63 @@ final class Build29DatabaseFixtureTests: XCTestCase {
             "itemHasNoMedia": true,
         ])
 
+        // Podcasts (#1900). A streamed episode with a saved download and a Margin placed by media time, and an imported
+        // audio file the listener linked to its episode (#755). Their Item fields (episodeGUID, showTitle, publishedAt,
+        // descriptionText, linkedEpisode) and the download record are newer than Build 29, which must still read them.
+        // Every shipped build the script checks opens them (scripts/check-build29-database.sh).
+        var streamed = Item(
+            id: "item-podcast-downloaded", title: "A downloaded episode", mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil, externalReference: "https://feeds.example.com/downloaded", status: "ready", externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/downloaded.mp3", durationMs: 1_800_000),
+            sourceTitle: "The Fixture Show", createdAt: Date(timeIntervalSince1970: 1_758_000_000)
+        )
+        streamed.episodeGUID = "guid-downloaded"
+        streamed.showTitle = "The Fixture Show"
+        streamed.publishedAt = "Tue, 29 Sep 2026 10:00:00 GMT"
+        streamed.descriptionText = "What the publisher says about this episode."
+        try store.saveItem(streamed)
+        let download = PodcastDownloadRecord(
+            id: "download-podcast-downloaded", itemId: streamed.id, remoteURL: "https://cdn.example.com/downloaded.mp3",
+            localRelativePath: "Podcasts/downloaded.mp3", state: .availableOffline, bytesWritten: 28_800_000,
+            expectedBytes: 28_800_000, lastPlayedAt: Date(timeIntervalSince1970: 1_758_000_300), updatedAt: Date(timeIntervalSince1970: 1_758_000_400)
+        )
+        try store.savePodcastDownload(download)
+        let streamedSession = Session(
+            id: "session-podcast-downloaded", itemId: streamed.id, createdAt: Date(timeIntervalSince1970: 1_758_000_000),
+            status: "in_progress", phase: .itemPlayback, currentTargetType: .transcriptBackedMedia,
+            currentTargetId: streamed.media?.url ?? streamed.id, position: Position(mediaTimeMs: 600_000), completionPercent: 33, playbackRate: 1
+        )
+        try store.saveSession(streamedSession)
+        try store.saveInterjection(Interjection(
+            id: "margin-podcast-downloaded", itemId: streamed.id, sessionId: streamedSession.id, targetType: .item, targetId: streamed.id,
+            createdAt: Date(timeIntervalSince1970: 1_758_000_100), roughPercent: 33,
+            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 600_000),
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil,
+            displayText: "A Margin at ten minutes", status: "active"
+        ))
+        var linkedFile = Item(
+            id: "item-podcast-linked", title: "An imported file", mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil, externalReference: "imported-audio://linked", status: "ready", externalReferenceType: "file",
+            media: ItemMedia(sourceType: .nativeMediaFile, url: "file:///var/mobile/Library/linked.mp3", durationMs: 1_790_000),
+            createdAt: Date(timeIntervalSince1970: 1_758_000_000)
+        )
+        linkedFile.linkedEpisode = LinkedEpisode(
+            guid: "guid-downloaded", title: "A downloaded episode", showTitle: "The Fixture Show",
+            publishedAt: "Tue, 29 Sep 2026 10:00:00 GMT", pageURL: "https://feeds.example.com/downloaded",
+            enclosureURL: "https://cdn.example.com/downloaded.mp3", durationMs: 1_800_000
+        )
+        try store.saveItem(linkedFile)
+        XCTAssertEqual(try store.loadItem(id: linkedFile.id).linkedEpisode, linkedFile.linkedEpisode)
+        XCTAssertEqual(try store.loadPodcastDownloads().map(\.id), [download.id])
+        let podcasts: [[String: Any]] = [
+            [
+                "itemId": streamed.id, "mediaURL": "https://cdn.example.com/downloaded.mp3", "durationMs": 1_800_000,
+                "downloadId": download.id, "downloadPath": "Podcasts/downloaded.mp3",
+                "sessionId": streamedSession.id, "marginId": "margin-podcast-downloaded", "marginMediaTimeMs": 600_000,
+            ],
+            ["itemId": linkedFile.id, "mediaURL": "file:///var/mobile/Library/linked.mp3", "durationMs": 1_790_000, "linkedEpisodeGUID": "guid-downloaded"],
+        ]
+
         XCTAssertNil(try store.loadStructuredDocument(itemId: v1.id))
         XCTAssertEqual(try store.loadStructuredDocument(itemId: v2.id), document)
 
@@ -217,7 +274,7 @@ final class Build29DatabaseFixtureTests: XCTestCase {
         XCTAssertEqual(try reopened.quarantinedRecordCount(), 0)
         XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 5)
         let data = try JSONSerialization.data(
-            withJSONObject: ["items": expected, "importedMargins": [["layerId": layer.id, "marginId": "arrived-reply"]], "feedEntryIds": [feedEntry.id]],
+            withJSONObject: ["items": expected, "importedMargins": [["layerId": layer.id, "marginId": "arrived-reply"]], "feedEntryIds": [feedEntry.id], "podcasts": podcasts],
             options: [.sortedKeys]
         )
         try data.write(to: URL(fileURLWithPath: path + ".expected.json"))

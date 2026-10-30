@@ -20,6 +20,11 @@ case "$1" in
     exit "$FAKE_TEST_EXIT" ;;
   build)
     echo "error: cannot find 'x' in scope"
+    if [ "$FAKE_BUILD_EXIT" = 0 ]; then
+      mkdir -p "$3/.build/debug"
+      printf '#!/bin/sh\necho "ok   \$2 opened the database"\n' > "$3/.build/debug/reader"
+      chmod +x "$3/.build/debug/reader"
+    fi
     exit "$FAKE_BUILD_EXIT" ;;
 esac
 """
@@ -33,6 +38,7 @@ def run_script(tmp, **env):
     swift.chmod(swift.stat().st_mode | stat.S_IEXEC)
     full = {**os.environ, 'PATH': f'{fake}:{os.environ["PATH"]}', 'TMPDIR': tmp, 'BUILD29_TAG': 'HEAD',
             'FAKE_FAILURES': '0', 'FAKE_TEST_EXIT': '0', 'FAKE_BUILD_EXIT': '0', **env}
+    full = {key: value for key, value in full.items() if value is not None}  # BUILD29_TAG=None leaves it unset
     return subprocess.run(['sh', str(SCRIPT)], env=full, capture_output=True, text=True, timeout=120)
 
 
@@ -62,6 +68,34 @@ class WriterStatusTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("FAIL Build 29's reader did not build", result.stderr)
         self.assertNotIn('== reading it with Build 29', result.stdout)
+
+
+TAGS = ['testflight/0.1-build-29', 'testflight/0.1-build-32', 'testflight/0.1-build-34']
+
+
+class EveryShippedBuildTests(unittest.TestCase):
+    """#1900: with no BUILD29_TAG the script opens the database with Builds 29, 32 and 34, in that order."""
+
+    def setUp(self):
+        root = SCRIPT.parents[1]
+        missing = [tag for tag in TAGS if subprocess.run(
+            ['git', '-C', str(root), 'rev-parse', '--verify', '--quiet', f'{tag}^{{commit}}'], capture_output=True).returncode]
+        if missing:
+            self.skipTest(f'tags not fetched here: {missing}')  # the compat workflow fetches them
+
+    def test_each_build_gets_its_own_reader_and_a_failing_one_names_itself(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_script(tmp, BUILD29_TAG=None)
+        steps = [line for line in result.stdout.splitlines() if line.startswith('== building ')]
+        self.assertEqual([line.split("'s")[0] for line in steps],
+                         ['== building Build 29', '== building Build 32', '== building Build 34'])
+        self.assertEqual(result.stdout.count('== reading it with Build'), 3)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            failed = run_script(tmp, BUILD29_TAG=None, FAKE_BUILD_EXIT='1')
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("FAIL Build 29's reader did not build", failed.stderr)
+        self.assertNotIn('== building Build 32', failed.stdout, 'the first failure stops the run')
 
 
 if __name__ == '__main__':
