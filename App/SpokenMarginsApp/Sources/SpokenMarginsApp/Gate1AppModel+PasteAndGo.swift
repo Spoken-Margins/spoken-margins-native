@@ -14,7 +14,7 @@ extension Gate1AppModel {
 
     /// Routes pasted content: a link through the podcast-first link import with its article fallback,
     /// text through the text import, and anything else to an inline message. Starts playback only for a link and
-    /// only when `startSession` says so (the Library's "Add and play" offer, #1379); Paste & go never does.
+    /// only when `startSession` says so; the Library's copied-link card (#2944) and Paste & go never do.
     @discardableResult
     func pasteAndGo(_ content: String?, html: String? = nil, startSession: Bool = false) -> PasteAndGoOutcome {
         switch ClipboardIntakeClassifier.classify(content) {
