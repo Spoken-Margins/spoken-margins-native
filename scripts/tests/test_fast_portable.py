@@ -99,7 +99,7 @@ class PortableStepTable(unittest.TestCase):
         calls, skipped, slots, printed = self.run_portable()
         names = [name for name, _ in calls]
         self.assertEqual(names, ['runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'browser', 'share-link',
-                                 'research'])
+                                 'web', 'research'])
         self.assertEqual(skipped, verification.PORTABLE_LEFT_OUT)
         for name in verification.PORTABLE_LEFT_OUT:
             self.assertIn(name, printed)

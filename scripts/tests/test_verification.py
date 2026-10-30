@@ -2462,11 +2462,11 @@ class VerificationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'zero tests'):
                 run.command('runner-tests', [sys.executable, '-c', 'print("Ran 0 tests in 0.0s")'])
 
-    def test_a_node_suite_that_ran_zero_tests_is_not_a_pass_for_the_browser_and_share_link_steps(self):
+    def test_a_node_suite_that_ran_zero_tests_is_not_a_pass_for_the_browser_share_link_and_web_steps(self):
         # `node --test` exits 0 and prints "# tests 0" when its glob matches no files (a renamed folder).
         with tempfile.TemporaryDirectory() as temporary:
             run = verification.Run(Path(temporary) / 'run', 'test')
-            for name in ('browser', 'share-link'):
+            for name in ('browser', 'share-link', 'web'):
                 for label, output in (('a TAP summary of zero tests', '# tests 0'),
                                       ('a spec summary of zero tests', 'ℹ tests 0'),
                                       ('no TAP summary at all', 'npm warn nothing to run')):

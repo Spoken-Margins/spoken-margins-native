@@ -52,6 +52,11 @@ class TestScopeTests(unittest.TestCase):
         self.assertEqual(result['run'], [])
         self.assertIsNone(result['lane_request'])
 
+    def test_the_web_app_runs_its_node_tests_without_an_app_compile(self):
+        result = self.classify('Web/src/sources/rss.ts', 'Web/README.md')
+        self.assertEqual(result['tier'], 'T1')
+        self.assertEqual(result['run'], ['npm run test:web'])
+
     def test_no_changes_is_t0(self):
         self.assertEqual(self.classify()['tier'], 'T0')
 

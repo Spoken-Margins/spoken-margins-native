@@ -612,7 +612,7 @@ def on_hosted_runner(environ=None):
     return environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
 
 
-PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'browser', 'share-link', 'research')
+PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'browser', 'share-link', 'web', 'research')
 PORTABLE_LEFT_OUT = {
     'package-build': 'needs the Swift toolchain on macOS; hosted-sessionkit-linux.yml builds the Foundation-only modules on Linux',
     'package-core': 'needs the Swift toolchain on macOS (SessionKitCoreTests also run in hosted-sessionkit-linux.yml)',
@@ -1600,7 +1600,7 @@ class Run:
             if failures := unittest_failures(text):  # name them: CI shows only the manifest's errors (#2457)
                 errors.extend(report_unittest_failures(name, failures))
                 print('\n'.join(error for error in errors if error.startswith('Failed: ')), flush=True)
-        if name in ('browser', 'share-link'):
+        if name in ('browser', 'share-link', 'web'):
             # `node --test` prints the TAP summary "# tests N" on Node 20 and 22 when piped, and the spec reporter's
             # "ℹ tests N" on 24 (#2480), where TAP is no longer the default.
             match = re.search(r'^(?:# |ℹ )tests (\d+)$', text, re.M)
@@ -1830,6 +1830,7 @@ class Run:
                 raise RuntimeError(f'{failure}; {node_modules_drift.message(stale_modules)}') from failure
             raise
         self.command('share-link', ['npm', 'run', 'test:share-link'])
+        self.command('web', ['npm', 'run', 'test:web'])
         # The Go server, the research Python tests and the Caddy script (#1033); a suite that can't run
         # here is reported as skipped with its reason, not passed.
         self.command('research', [sys.executable, 'scripts/research_tests.py'], timeout=300)

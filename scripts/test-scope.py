@@ -36,6 +36,8 @@ VALIDATED_PREFIXES = ('Contracts/', 'validation/', 'schemas/', 'traces/', 'fixtu
 RESEARCH_TESTED_PREFIXES = ('research/B4/', 'research/B2/', 'research/D3/', 'research/C1/tools/')
 BROWSER_PREFIXES = ('Tools/BrowserExtraction/',)
 BROWSER_FILES = {'package.json', 'package-lock.json'}
+# The web app's logic modules, tested with `node --test` on Node 24's type stripping (no installed packages).
+WEB_PREFIXES = ('Web/',)
 BUILD_FILES = ('project.yml', 'SpokenMarginsNative.xcodeproj/', 'Config/')
 
 # The lane's own machinery (owner rule 2026-10-01). A PR touching any of these merges only after a clean
@@ -81,6 +83,7 @@ REASONS = {
     'build-script': 'script run by the Xcode build',
     'validated': 'contracts, fixtures or test plans (validators)',
     'browser': 'browser extraction JavaScript',
+    'web': 'web app TypeScript',
     'sessionkit': 'SessionKit logic',
     'sessionkit-tests': 'SessionKit tests',
     'sessionkit-tools': 'SessionKit developer tools (coop-packet, phone-plan)',
@@ -195,6 +198,8 @@ def classify_path(root, path, diff_text='', build_script_paths=frozenset()):
         return Finding(path, 1, 'ops', commands=[f'.venv/bin/python -m unittest discover -s {folder}'])
     if path.startswith(BROWSER_PREFIXES) or path in BROWSER_FILES:
         return Finding(path, 1, 'browser', commands=['npm run test:browser-extraction'])
+    if path.startswith(WEB_PREFIXES):
+        return Finding(path, 1, 'web', commands=['npm run test:web'])
     if path.startswith(PERSISTENCE_FIXTURES):
         return Finding(path, 2, 'persistence', swift_filters=['PriorBuildPersistenceTests', 'Build29UpgradeProgressTests'],
                        commands=['.venv/bin/python scripts/validate-contracts.py'] + T2_COMMANDS)
