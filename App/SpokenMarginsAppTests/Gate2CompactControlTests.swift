@@ -299,7 +299,7 @@ final class Gate2CompactControlTests: XCTestCase {
 
             model.dispatchGate2CompactCommand(command, origin: "now_playing_live_speech")
 
-            XCTAssertFalse(model.snapshot.isRecording, "\(command.rawValue) from the headphones ends the Margin")
+            XCTAssertFalse(model.snapshot.isRecording, "\(command.rawValue) as a Now Playing command ends the Margin")
             XCTAssertEqual(model.diagnostics["gate2LastCommand"], "finishInterjection", command.rawValue)
         }
     }
@@ -386,7 +386,7 @@ final class Gate2CompactControlTests: XCTestCase {
 
         model.dispatchGate2CompactCommand(.togglePlayPause, origin: "widget_queue")
 
-        XCTAssertTrue(model.snapshot.isRecording, "only a headphone click or Now Playing command ends it")
+        XCTAssertTrue(model.snapshot.isRecording, "only a Now Playing transport command ends it")
     }
 
     func testSkipBackWhileRecordingStillDoesNotEndTheMargin() {

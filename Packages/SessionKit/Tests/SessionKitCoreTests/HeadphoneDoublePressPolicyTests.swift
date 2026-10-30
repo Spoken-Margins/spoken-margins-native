@@ -42,9 +42,18 @@ final class HeadphoneDoublePressPolicyTests: XCTestCase {
         XCTAssertEqual(HeadphoneRemoteSignal(origin: "compact_url"), .skipForward)
     }
 
-    func testSettingDefaultsToAddMarginAndParsesStoredValues() {
-        XCTAssertEqual(HeadphoneDoublePressAction(storedValue: nil), .addMargin)
-        XCTAssertEqual(HeadphoneDoublePressAction(storedValue: "garbage"), .addMargin)
+    /// #2957: a listener who never chose gets skip forward, and an explicit Add a Margin is honored.
+    func testSettingDefaultsToSkipForwardAndHonorsAStoredAddMargin() {
+        XCTAssertEqual(HeadphoneDoublePressAction.default, .skipForward)
+        XCTAssertEqual(HeadphoneDoublePressAction(storedValue: nil), .skipForward)
+        XCTAssertEqual(HeadphoneDoublePressAction(storedValue: ""), .skipForward)
+        XCTAssertEqual(HeadphoneDoublePressAction(storedValue: "garbage"), .skipForward)
         XCTAssertEqual(HeadphoneDoublePressAction(storedValue: "skipForward"), .skipForward)
+        XCTAssertEqual(HeadphoneDoublePressAction(storedValue: "addMargin"), .addMargin)
+    }
+
+    func testAFreshInstallDoubleTapSkipsForward() {
+        let setting = HeadphoneDoublePressAction(storedValue: nil)
+        XCTAssertEqual(decide(.nextTrack, setting, false), .skipForward)
     }
 }
