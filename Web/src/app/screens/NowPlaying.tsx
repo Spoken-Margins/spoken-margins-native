@@ -7,7 +7,9 @@ import { nextSpeed, timelineFraction } from '../logic/library.ts';
 import { plainError } from '../logic/messages.ts';
 import { SKIP_SECONDS, usePlayer } from '../player.tsx';
 import type { RecordedVoice, VoiceRecording } from '../ports.ts';
-import { services } from '../services.ts';
+import { linkPreview, linkUploadMessage } from '../logic/share-link.ts';
+import { SHARE_LINKS_OFFERED, services, uploadShareLink } from '../services.ts';
+import { shortDate } from '../format.ts';
 import { useUi } from '../ui.tsx';
 import { MarginRow } from './Margins.tsx';
 
@@ -166,6 +168,7 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   const { toast } = useUi();
   const [busy, setBusy] = useState(false);
   const [sendable] = useState(canSendFiles);
+  const [link, setLink] = useState('');
 
   const share = async (how: 'save' | 'send') => {
     setBusy(true);
@@ -198,6 +201,29 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
     }
   };
 
+  const makeLink = async () => {
+    setBusy(true);
+    try {
+      const written = await services.packets.writePacket(episode, margins, show);
+      const preview = linkPreview(episode, show, margins, written.included);
+      const made = await uploadShareLink(written.bytes, preview);
+      setLink(made.url);
+      let copied = false;
+      try {
+        await navigator.clipboard.writeText(made.url);
+        copied = true;
+      } catch {
+        // No clipboard permission: the link is in the field below to copy by hand.
+      }
+      const until = made.expiresAt ? ` It works until ${shortDate(made.expiresAt)}.` : '';
+      toast(`${copied ? 'Link copied.' : 'Link ready. Copy it below.'}${until}${written.notice ? ` ${written.notice}` : ''}`);
+    } catch (error) {
+      toast(`No link was made. ${linkUploadMessage(error)}`, 'problem');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="share-margins">
       <p className="muted">Share them as a .spokenmargins file. A friend opens it in Spoken Margins and hears each one at its moment.</p>
@@ -212,7 +238,19 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
             Send
           </button>
         )}
+        {SHARE_LINKS_OFFERED && (
+          <button type="button" className="button" disabled={busy} onClick={() => void makeLink()}>
+            <ShareIcon />
+            Make a link
+          </button>
+        )}
       </div>
+      {link && (
+        <div className="share-link-row">
+          <label htmlFor="share-link-made">Link to these Margins</label>
+          <input id="share-link-made" type="text" readOnly value={link} onFocus={(event) => event.target.select()} />
+        </div>
+      )}
     </div>
   );
 }
