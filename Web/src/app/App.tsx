@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { DataProvider } from './data.tsx';
 import { FollowingIcon, LibraryIcon, MarginsIcon, SettingsIcon } from './icons.tsx';
-import { PlayerProvider } from './player.tsx';
+import { PlayerProvider, usePlayer } from './player.tsx';
 import { Following } from './screens/Following.tsx';
 import { Library } from './screens/Library.tsx';
 import { Margins } from './screens/Margins.tsx';
@@ -43,6 +43,14 @@ function Shell() {
   }, []);
 
   const openPlayer = useCallback(() => setNowPlaying(true), []);
+
+  // The tab's title names where the listener is, so a screen reader or the tab switcher can tell (WCAG 2.4.2).
+  const player = usePlayer();
+  const playingTitle = nowPlaying ? player.episode?.title : undefined;
+  useEffect(() => {
+    const label = TABS.find((t) => t.id === tab)?.label ?? 'Library';
+    document.title = playingTitle ? `${playingTitle}, Now Playing · Spoken Margins` : `${label} · Spoken Margins`;
+  }, [tab, playingTitle]);
 
   return (
     <div className="app">

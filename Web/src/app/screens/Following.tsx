@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useRestoreFocus } from '../focus.ts';
 import type { Show } from '../../shared/model.ts';
 import { useData } from '../data.tsx';
 import { errorText, minutes, shortDate } from '../format.ts';
@@ -7,20 +8,43 @@ import { followingRows, libraryRows, newestFirst } from '../logic/library.ts';
 import { usePlayer } from '../player.tsx';
 import { services } from '../services.ts';
 import { useRelay, useUi } from '../ui.tsx';
+import { StateTag } from './Library.tsx';
 
 export function Following({ onPlay, followOpen, setFollowOpen }: { onPlay: () => void; followOpen: boolean; setFollowOpen: (open: boolean) => void }) {
   const data = useData();
   const player = usePlayer();
   const [openShowId, setOpenShowId] = useState<string>();
+  // The show the listener came back from, so focus lands on its row again, not at the top of the page.
+  const [returnTo, setReturnTo] = useState<string>();
   const rows = followingRows(data.shows, data.episodes, data.positions);
   const openShow = data.shows.find((s) => s.id === openShowId);
 
-  if (openShow) return <ShowScreen show={openShow} onBack={() => setOpenShowId(undefined)} onPlay={onPlay} />;
+  useEffect(() => {
+    if (openShowId || !returnTo) return;
+    const row = document.querySelector<HTMLElement>(`[data-show-id="${CSS.escape(returnTo)}"]`);
+    (row ?? document.getElementById('following-title'))?.focus();
+    setReturnTo(undefined);
+  }, [openShowId, returnTo]);
+
+  if (openShow) {
+    return (
+      <ShowScreen
+        show={openShow}
+        onBack={() => {
+          setReturnTo(openShow.id);
+          setOpenShowId(undefined);
+        }}
+        onPlay={onPlay}
+      />
+    );
+  }
 
   return (
-    <section className="screen" aria-labelledby="following-title">
+    <div className="screen">
       <header className="screen-header">
-        <h1 id="following-title">Following</h1>
+        <h1 id="following-title" tabIndex={-1}>
+          Following
+        </h1>
         <button type="button" className="icon-button" aria-label="Follow a show" onClick={() => setFollowOpen(true)}>
           <PlusIcon />
         </button>
@@ -36,10 +60,23 @@ export function Following({ onPlay, followOpen, setFollowOpen }: { onPlay: () =>
         <ul className="rows" aria-label="Shows you follow, newest episode first">
           {rows.map((row) => (
             <li key={row.show.id} className="row show-row">
-              <button type="button" className="row-open" onClick={() => setOpenShowId(row.show.id)} aria-label={`Open ${row.show.title}`}>
+              <button
+                type="button"
+                className="row-open"
+                data-show-id={row.show.id}
+                onClick={() => setOpenShowId(row.show.id)}
+                aria-label={[
+                  `Open ${row.show.title}`,
+                  row.newCount > 0 ? `${row.newCount} new` : '',
+                  row.newest ? `latest ${shortDate(row.newest.publishedAt)}: ${row.newest.title}` : 'no episodes yet',
+                ]
+                  .filter(Boolean)
+                  .join(', ')}
+              >
                 <Artwork show={row.show} />
                 <span className="row-main">
                   <span className="row-title">{row.show.title}</span>
+                  {row.newest && <span className="row-sub">{row.newest.title}</span>}
                   <span className="row-meta">
                     {row.newCount > 0 && <span className="tag tag-outline">{row.newCount} new</span>}
                     {row.newest ? `Latest ${shortDate(row.newest.publishedAt)}` : 'No episodes yet'}
@@ -67,7 +104,7 @@ export function Following({ onPlay, followOpen, setFollowOpen }: { onPlay: () =>
         </ul>
       )}
       {followOpen && <FollowSheet onClose={() => setFollowOpen(false)} />}
-    </section>
+    </div>
   );
 }
 
@@ -88,8 +125,10 @@ function ShowScreen({ show, onBack, onPlay }: { show: Show; onBack: () => void; 
   const player = usePlayer();
   const { toast } = useUi();
   const rows = libraryRows(data.episodes.filter((e) => e.showId === show.id), data.shows, data.positions);
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => heading.current?.focus(), []);
   return (
-    <section className="screen" aria-labelledby="show-title">
+    <div className="screen">
       <header className="screen-header screen-header-sub">
         <button type="button" className="back-button" onClick={onBack}>
           <span className="flip" aria-hidden="true">
@@ -101,7 +140,9 @@ function ShowScreen({ show, onBack, onPlay }: { show: Show; onBack: () => void; 
       <div className="show-head">
         <Artwork show={show} />
         <div>
-          <h1 id="show-title">{show.title}</h1>
+          <h1 id="show-title" ref={heading} tabIndex={-1}>
+            {show.title}
+          </h1>
           {show.author && <p className="muted">{show.author}</p>}
           <p className="muted">Following since {shortDate(show.followedAt)}</p>
         </div>
@@ -134,13 +175,16 @@ function ShowScreen({ show, onBack, onPlay }: { show: Show; onBack: () => void; 
               </span>
               <span className="row-main">
                 <span className="row-title">{row.episode.title}</span>
-                <span className="row-meta">{[shortDate(row.episode.publishedAt), minutes(row.episode.durationSeconds)].filter(Boolean).join(', ')}</span>
+                <span className="row-meta">
+                  <StateTag row={row} />
+                  {[shortDate(row.episode.publishedAt), minutes(row.episode.durationSeconds)].filter(Boolean).join(', ')}
+                </span>
               </span>
             </button>
           </li>
         ))}
       </ul>
-    </section>
+    </div>
   );
 }
 
@@ -157,6 +201,7 @@ function FollowSheet({ onClose }: { onClose: () => void }) {
   const [problem, setProblem] = useState<string>();
   const [results, setResults] = useState<Show[]>();
   const dialog = useRef<HTMLDialogElement>(null);
+  useRestoreFocus('#following-title');
 
   useEffect(() => {
     const d = dialog.current;
