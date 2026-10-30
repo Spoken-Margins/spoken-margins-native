@@ -5475,11 +5475,12 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         try renderer.writePDF(to: file) { context in
             context.beginPage()
             var y: CGFloat = 30
+            // A named font, not the system font: PDFKit resolves a variable system font
+            // anew on every attribute read, which took the extraction 7 to 75 s on the
+            // hosted simulator (#2925). Real PDFs embed static fonts.
             func draw(_ text: String, size: CGFloat, bold: Bool = false) {
-                (text as NSString).draw(
-                    at: CGPoint(x: 40, y: y),
-                    withAttributes: [.font: bold ? UIFont.boldSystemFont(ofSize: size) : UIFont.systemFont(ofSize: size)]
-                )
+                let font = UIFont(name: bold ? "Helvetica-Bold" : "Helvetica", size: size) ?? UIFont.systemFont(ofSize: size)
+                (text as NSString).draw(at: CGPoint(x: 40, y: y), withAttributes: [.font: font])
                 y += size + 13
             }
             draw("A Structured Report", size: 26, bold: true)
@@ -5493,8 +5494,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         model.importObsidianMarkdownFiles(urls: [file])
         // Alone this import takes about 0.1 s, but in the full app plan on a
-        // loaded simulator it overran the 1 s default (#1413), so give it 10 s.
-        try await waitFor("structured PDF import to finish", timeoutNanoseconds: 10_000_000_000) {
+        // loaded simulator it overran the 1 s default (#1413) and then 10 s (#2925).
+        try await waitFor("structured PDF import to finish", timeoutNanoseconds: 30_000_000_000) {
             !model.isImportingSources
         }
 
