@@ -426,7 +426,7 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         XCTAssertEqual(h.spies.passesLog.first?.new, h.expectedPasses(.transcript))
 
         h.transcriber.open()
-        let released = try await h.waitUntil { h.coordinator.admission[item.id] == nil }
+        let released = try await h.waitForTransientPassToFinish()
         XCTAssertTrue(released)
         XCTAssertEqual(h.spies.passesLog.count, 2)
         XCTAssertEqual(h.spies.passesLog.last?.old, h.expectedPasses(.transcript))
