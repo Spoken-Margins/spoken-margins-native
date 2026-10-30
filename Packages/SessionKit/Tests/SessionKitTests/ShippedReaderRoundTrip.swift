@@ -18,10 +18,25 @@ func exportPacket(
     // Build 29 must decode every Margin the new writer put in (#1039 PKT-01): a packet whose Margins its reader
     // drops comes back "successfully" with a short list. This compares what its reader decoded from the zip, not
     // what its importer then saved. Skipped only when the packet has no commentary layer to compare with.
-    if let mismatch = shippedMarginsMismatch(sent: try marginIDs(in: prepared), shippedBuildRead: shippedReadIDs) {
+    let sent = try marginIDs(in: prepared)
+    if let mismatch = shippedMarginsMismatch(sent: sent, shippedBuildRead: shippedReadIDs) {
         throw mismatch
     }
+    try keepForLaterShippedBuilds(url, sent: sent)
     return manifest
+}
+
+/// Builds 32 and 34 have no frozen copy here. When `SM_SHIPPED_PACKETS_DIR` is set, scripts/check-build29-database.sh
+/// collects every packet Build 29 read, with the Margin ids it carries, and opens them with each shipped build's
+/// own reader built from its tag (#1900). Without the variable this does nothing.
+func keepForLaterShippedBuilds(_ url: URL, sent: [String]?, environment: [String: String] = ProcessInfo.processInfo.environment) throws {
+    guard let folder = environment["SM_SHIPPED_PACKETS_DIR"], !folder.isEmpty else { return }
+    let name = "\(UUID().uuidString)-\(url.lastPathComponent)"
+    let destination = URL(fileURLWithPath: folder).appendingPathComponent(name)
+    try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try FileManager.default.copyItem(at: url, to: destination)
+    let expected: [String: Any] = ["margins": sent.map { $0.sorted() } ?? NSNull()]
+    try JSONSerialization.data(withJSONObject: expected).write(to: destination.appendingPathExtension("expected.json"))
 }
 
 /// Writes a map-only packet (#1471), then checks the shipped build refuses it by its ordinary "unsupported capability"
@@ -80,5 +95,31 @@ final class ShippedReaderRoundTripTests: XCTestCase {
         }
         XCTAssertGreaterThan(files.count, 10, "the test sources were not found")
         XCTAssertEqual(direct, [], "export with exportPacket(_:to:) so the shipped build reads the packet")
+    }
+
+    /// The packets Builds 32 and 34 import come from here (#1900): each one Build 29 read, with its Margin ids.
+    func testAPacketBuild29ReadIsKeptForTheLaterShippedBuilds() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("kept-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let packet = root.appendingPathComponent("written.spokenmargins")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("packet bytes".utf8).write(to: packet)
+        let kept = root.appendingPathComponent("kept", isDirectory: true)
+
+        try keepForLaterShippedBuilds(packet, sent: ["margin-002", "margin-001"], environment: [:])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: kept.path), "nothing is kept without SM_SHIPPED_PACKETS_DIR")
+
+        try keepForLaterShippedBuilds(packet, sent: ["margin-002", "margin-001"], environment: ["SM_SHIPPED_PACKETS_DIR": kept.path])
+        try keepForLaterShippedBuilds(packet, sent: nil, environment: ["SM_SHIPPED_PACKETS_DIR": kept.path])
+        let packets = try FileManager.default.contentsOfDirectory(at: kept, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "spokenmargins" }
+        XCTAssertEqual(packets.count, 2, "two exports of the same name are both kept")
+        var expected: [String] = []
+        for copy in packets {
+            XCTAssertEqual(try Data(contentsOf: copy), Data("packet bytes".utf8))
+            let sidecar = try JSONSerialization.jsonObject(with: Data(contentsOf: copy.appendingPathExtension("expected.json"))) as? [String: Any]
+            expected.append((sidecar?["margins"] as? [String])?.joined(separator: ",") ?? "null")
+        }
+        XCTAssertEqual(expected.sorted(), ["margin-001,margin-002", "null"])
     }
 }
