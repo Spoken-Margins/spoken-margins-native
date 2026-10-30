@@ -439,3 +439,15 @@ The `.env` paths stay out of `~/Documents` (#2493): macOS privacy denies the run
 
 - Each stream's PR shows its requests and reports in order, so the phone view of GitHub is the dashboard.
 - The owner gets a notification only for: a crash flood, a FAIL on a gate stream, a TestFlight candidate that passed T5 and is ready for T6, or an owner decision a stream is blocked on.
+
+## The pipeline dashboard (#2379)
+
+What each lane step and hosted job costs and catches, without asking an agent. `scripts/pipeline_events.py` (#2377) gathers lane reports, Actions runs and jobs, reverts and regression issues into one event file; the `pipeline-dashboard` workflow runs it once a day and keeps the result.
+
+- **The issue.** One pinned issue, "Pipeline value: what each step and test catches (updated daily)", is rewritten in place each day (never commented, so nothing notifies). It shows a line per lane step and per busy job with counts, the T3 batching verdict, the five noisiest tests, the five slowest tests that never failed, escapes by source and a 14-day trend chart in Okabe-Ito colours. Its first line carries the date.
+- **The data.** The orphan `metrics` branch holds `events-YYYY-MM.jsonl` and a README: no app code, and no workflow runs on it. Events hold ids, enums and numbers only; `clean` in `scripts/pipeline_dashboard.py` drops any key a kind does not have and refuses a string that does not fit its key's shape (a test id, a hex commit, an enum, a short name; a sentence fits none). A year's files are capped at 20 MB (the files as they stand, not git's packed history of them); past that nothing is written, the issue says so and the run fails.
+- **Reading it yourself.** `git clone --branch metrics <repo> metrics`, then `scripts/pipeline_dashboard.py render --metrics metrics` prints the issue body from the files.
+- **T3 batching verdict.** T3 requests on PRs are batched when their median queue wait is 15 minutes or more and they arrive 5 or more a day (constants in the script, printed beside the counts). With fewer than 10 T3 reports, or fewer than 5 with a queue wait, it says "Not enough data". Default taken: T4 desk batching already has its own rule (`scripts/desk-batch.py`).
+- **Slow tests.** The per-day `slow` events come from the lane-event line's 20 slowest tests, so a report without that line (older prose-only reports) adds none. "Never failed" means no retained `test-failure` event names the test.
+- **Not stored.** Skipped runs and jobs, and runs that succeeded or were cancelled (their jobs say the same). The ledger's `test-catches.jsonl` lives on the owner's Mac, so the hosted run has no `catch` events.
+- **Waste signal.** No decision cites the issue in 30 days: turn the schedule off and keep the collector. A change to the workflow is the owner's merge tap.
