@@ -124,7 +124,7 @@ final class SkimBridgeController {
     /// reloads the map and asset metadata (#2184): every reload used to, so each tap re-read them. Arriving at the
     /// loaded item counts as a change, so opening it reads them once. Explicit refreshes still reload them (#954).
     func itemDetailChanged(from old: SkimResourceKey, to new: SkimResourceKey) {
-        guard old != new, resourceContext?.itemId == new.itemId else { return }
+        guard old != new, resourceContext?.itemId == new.itemId || resourceLoad?.itemId == new.itemId else { return }
         invalidateResources()
     }
 
@@ -146,6 +146,8 @@ final class SkimBridgeController {
         if let context = resourceContext, context.itemId == itemId,
            !assetIDs.isSubset(of: Set(context.assets.lazy.filter { $0.integrity == .valid }.map(\.id))) {
             invalidateResources()
+        } else if resourceLoad?.itemId == itemId {
+            invalidateResources() // the first read may have started before these were saved (#2943)
         }
         updateAvailability(refreshResources: false)
     }
