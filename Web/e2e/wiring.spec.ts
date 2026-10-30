@@ -39,7 +39,7 @@ function countRelay(page: Page): Request[] {
   return calls;
 }
 
-test('follow, play, write and record Margins, export them, and open the file in a fresh profile at the Margin’s moment', async ({ page, browser }, info) => {
+test('follow, play, write and record Margins, export them, and open the file in a fresh profile at the Margin’s moment', async ({ page, browser, baseURL }, info) => {
   const relayCalls = countRelay(page);
   await follow(page, FEED);
   await page.getByRole('button', { name: /Play the newest episode/ }).click();
@@ -57,7 +57,7 @@ test('follow, play, write and record Margins, export them, and open the file in 
 
   // A voice Margin with words, so it can travel in the file.
   await nowPlaying.getByRole('button', { name: 'Record a Margin' }).click();
-  await expect(nowPlaying.getByText(/Recording your Margin at/)).toBeVisible();
+  await expect(nowPlaying.getByRole('status').filter({ hasText: 'Recording' })).toBeVisible();
   await page.waitForTimeout(1500);
   await nowPlaying.getByRole('button', { name: 'Stop', exact: true }).click();
   await nowPlaying.getByLabel(/Words to go with your voice Margin at/).fill('Listen to the tide bit again.');
@@ -92,7 +92,7 @@ test('follow, play, write and record Margins, export them, and open the file in 
 
   // A friend with an empty Library opens the file: the episode arrives under the sender, and Now Playing
   // lands on the first Margin's moment.
-  const friend = await browser.newContext({ baseURL: 'http://127.0.0.1:4173/', viewport: { width: 390, height: 844 }, hasTouch: true, serviceWorkers: 'block' });
+  const friend = await browser.newContext({ baseURL, viewport: { width: 390, height: 844 }, hasTouch: true, serviceWorkers: 'block' });
   const friendPage = await friend.newPage();
   await serveFixtures(friendPage);
   await friendPage.goto('./#margins');
@@ -104,7 +104,7 @@ test('follow, play, write and record Margins, export them, and open the file in 
   const audioTime = () => friendPage.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.currentTime);
   await expect.poll(audioTime, { timeout: 10_000 }).toBeGreaterThanOrEqual(writtenAt - 0.5);
   expect(await audioTime()).toBeLessThan(writtenAt + 4);
-  await expect(friendPlaying.getByRole('button', { name: /^Margin at .*tide bit is the one/ })).toBeVisible();
+  await expect(friendPlaying.getByRole('button', { name: /^Play from .*tide bit is the one/ })).toBeVisible();
   await shot(friendPage, info, '22-friend-landed');
 
   await friendPlaying.getByRole('button', { name: 'Close Now Playing' }).click();
@@ -135,7 +135,7 @@ test('a Substack post with only the automatic voice plays it after a tap, readin
   await expect(page.getByText(/Following .*1 episode/)).toBeVisible();
   await tab(page, 'Library');
   const row = page.getByRole('button', { name: new RegExp(TITLE) });
-  await expect(row).toContainText('voice found when you tap');
+  await expect(row).toContainText('voice checked when you play');
   // Following the feed read no post page (owner, 2026-10-21: only on a listener's tap).
   expect(pageReads).toHaveLength(0);
   await shot(page, info, '24-substack-library');

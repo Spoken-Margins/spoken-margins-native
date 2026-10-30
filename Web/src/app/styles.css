@@ -8,10 +8,13 @@
   --ink: #17202e;
   --muted: #586274;
   --rule: #dde2ea;
+  /* Edges a control needs to be seen by: field borders, the switch, the scrubber track (3:1 or more). */
+  --field: #6b7686;
   --blue: #0b5cad;
   --blue-soft: #e3eefa;
   --on-blue: #ffffff;
-  --orange-mark: #e69f00;
+  /* Darker than Okabe-Ito's #e69f00 so a Margin's post on the timeline reaches 3:1 on the page. */
+  --orange-mark: #b86e00;
   --orange-ink: #8f4a00;
   --orange-soft: #fdf0d9;
   --shadow: 0 10px 30px rgb(15 25 45 / 0.16);
@@ -30,6 +33,7 @@
     --ink: #e9edf3;
     --muted: #9aa5b5;
     --rule: #2a3442;
+    --field: #7d8aa0;
     --blue: #6aaef5;
     --blue-soft: #16314f;
     --on-blue: #0b1522;
@@ -56,7 +60,6 @@ body {
   font-size: 1rem;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
 }
 
 h1,
@@ -71,6 +74,11 @@ input,
 textarea {
   font: inherit;
   color: inherit;
+}
+
+::placeholder {
+  color: var(--muted);
+  opacity: 1;
 }
 
 button {
@@ -117,7 +125,7 @@ button:disabled {
   inset: auto 0 0 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   height: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
   background: color-mix(in srgb, var(--surface) 92%, transparent);
@@ -138,8 +146,21 @@ button:disabled {
   gap: 2px;
   min-height: 44px;
   color: var(--muted);
-  font-size: 0.75rem;
+  /* Capped like iOS caps its tab bar: four labels must share a 320 px bar even at 200% text. */
+  font-size: min(0.8125rem, 15px);
   font-weight: 500;
+}
+
+.tab > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Inset, so the ring isn't cut off at the screen's edge. */
+.tab:focus-visible {
+  outline-offset: -3px;
 }
 
 .tab[aria-current='page'] {
@@ -163,6 +184,7 @@ button:disabled {
 
 .screen-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -171,6 +193,8 @@ button:disabled {
 }
 
 .screen-header h1 {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 2rem;
   line-height: 1.1;
   font-weight: 750;
@@ -242,7 +266,7 @@ button:disabled {
 .row-kicker {
   display: block;
   color: var(--muted);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   font-weight: 600;
 }
 
@@ -282,7 +306,7 @@ button:disabled {
   align-items: center;
   padding: 1px 8px;
   border-radius: 999px;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   font-weight: 650;
   line-height: 1.5;
   white-space: nowrap;
@@ -300,7 +324,7 @@ button:disabled {
 
 .tag-quiet {
   color: var(--muted);
-  box-shadow: inset 0 0 0 1px var(--rule);
+  box-shadow: inset 0 0 0 1px var(--field);
 }
 
 .tag-orange {
@@ -399,7 +423,7 @@ button:disabled {
   border-radius: 12px;
   font-weight: 650;
   background: var(--surface);
-  box-shadow: inset 0 0 0 1.5px var(--rule);
+  box-shadow: inset 0 0 0 1.5px var(--field);
 }
 
 .button-primary {
@@ -518,11 +542,47 @@ button:disabled {
 }
 
 .margin-voice-label {
-  font-style: italic;
+  font-family: var(--ui);
+  font-weight: 600;
 }
 
 .voice-button {
-  margin-right: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  margin-right: 6px;
+  padding: 0 12px 0 8px;
+  border-radius: 999px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-weight: 650;
+  font-size: 0.9375rem;
+}
+
+.recording-clock {
+  margin-left: auto;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.row-sub {
+  color: var(--muted);
+  font-size: 0.9375rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ---------- Settings ---------- */
@@ -541,6 +601,24 @@ button:disabled {
 
 .settings-section p {
   color: var(--muted);
+}
+
+.more {
+  display: grid;
+  gap: 10px;
+}
+
+.more summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--blue);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.more[open] summary {
+  margin-bottom: -2px;
 }
 
 .switch-row {
@@ -581,7 +659,8 @@ button:disabled {
   height: 32px;
   margin: 6px 0;
   border-radius: 16px;
-  background: var(--rule);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 2px var(--field);
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -594,13 +673,18 @@ button:disabled {
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--field);
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.3);
   transition: transform 0.15s;
 }
 
 .switch:checked {
   background: var(--blue);
+  box-shadow: none;
+}
+
+.switch:checked::after {
+  background: var(--on-blue);
 }
 
 .switch:checked::after {
@@ -618,12 +702,12 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 4px;
-  height: var(--mini-h);
-  padding: 0 6px 0 14px;
+  min-height: var(--mini-h);
+  padding: 6px 6px 12px 14px;
   border-radius: 14px;
+  border: 1px solid var(--rule);
   background: var(--surface);
   box-shadow: var(--shadow);
-  overflow: hidden;
 }
 
 .mini-progress {
@@ -661,7 +745,7 @@ button:disabled {
 
 .mini-time {
   color: var(--muted);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -717,13 +801,13 @@ button:disabled {
 
 .timeline-ticks {
   position: relative;
-  height: 26px;
-  margin: 0 11px;
+  height: 44px;
+  margin: 0 11px -10px;
 }
 
 .tick {
   position: absolute;
-  bottom: -14px;
+  bottom: 0;
   width: 44px;
   height: 44px;
   transform: translateX(-50%);
@@ -734,12 +818,19 @@ button:disabled {
   content: '';
   position: absolute;
   left: 50%;
-  bottom: 14px;
+  bottom: 0;
   width: 4px;
-  height: 22px;
+  height: 24px;
   margin-left: -2px;
   border-radius: 2px;
   background: var(--orange-mark);
+}
+
+/* A post shared by Margins at nearly the same moment is drawn double, so it reads as more than one. */
+.tick-shared::before {
+  width: 9px;
+  margin-left: -4.5px;
+  background: linear-gradient(to right, var(--orange-mark) 0 3px, transparent 3px 6px, var(--orange-mark) 6px);
 }
 
 .tick:hover::before,
@@ -762,13 +853,13 @@ button:disabled {
 .scrubber::-webkit-slider-runnable-track {
   height: 6px;
   border-radius: 3px;
-  background: linear-gradient(to right, var(--blue) var(--fill), var(--rule) var(--fill));
+  background: linear-gradient(to right, var(--blue) var(--fill), var(--field) var(--fill));
 }
 
 .scrubber::-moz-range-track {
   height: 6px;
   border-radius: 3px;
-  background: linear-gradient(to right, var(--blue) var(--fill), var(--rule) var(--fill));
+  background: linear-gradient(to right, var(--blue) var(--fill), var(--field) var(--fill));
 }
 
 .scrubber::-webkit-slider-thumb {
@@ -793,7 +884,7 @@ button:disabled {
   display: flex;
   justify-content: space-between;
   color: var(--muted);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -802,7 +893,7 @@ button:disabled {
   grid-template-columns: 1fr auto auto auto 1fr;
   align-items: center;
   justify-items: center;
-  gap: 18px;
+  gap: clamp(6px, 3vw, 18px);
 }
 
 .transport-skip {
@@ -833,7 +924,7 @@ button:disabled {
   border-radius: 10px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  box-shadow: inset 0 0 0 1.5px var(--rule);
+  box-shadow: inset 0 0 0 1.5px var(--field);
   justify-self: start;
 }
 
@@ -841,17 +932,20 @@ button:disabled {
   justify-self: end;
 }
 
+/* One row while both labels fit on one line each; otherwise each button takes a full row, and a label
+   wraps only when the screen is narrower than the label itself (320 px, 200% text). */
 .margin-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   padding-top: 6px;
 }
 
 .button-margin {
+  flex: 1 1 auto;
+  gap: 6px;
   min-height: 52px;
-  padding: 0 12px;
-  white-space: nowrap;
+  padding: 6px 8px;
   box-shadow: inset 0 0 0 1.5px var(--orange-mark);
   background: var(--orange-soft);
   color: var(--orange-ink);
@@ -875,7 +969,7 @@ button:disabled {
   min-height: 88px;
   padding: 10px 12px;
   border-radius: 10px;
-  border: 1.5px solid var(--rule);
+  border: 1.5px solid var(--field);
   background: var(--page);
   font-family: var(--note);
   font-size: 1.0625rem;
@@ -885,8 +979,9 @@ button:disabled {
 
 .composer-actions {
   display: flex;
-  justify-content: flex-end;
-  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .recording-line {
@@ -1012,6 +1107,8 @@ button:disabled {
 
 .follow-form {
   display: grid;
+  /* minmax(0, …): an input's built-in width would otherwise push the sheet wider than a 320 px screen. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   padding-bottom: 8px;
 }
@@ -1032,7 +1129,7 @@ button:disabled {
   min-height: 44px;
   padding: 0 12px;
   border-radius: 12px;
-  border: 1.5px solid var(--rule);
+  border: 1.5px solid var(--field);
   background: var(--surface);
 }
 
@@ -1042,7 +1139,8 @@ button:disabled {
   align-items: flex-start;
   padding: 10px 12px;
   border-radius: 10px;
-  background: var(--orange-soft);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1.5px var(--ink);
   color: var(--ink);
 }
 
@@ -1057,6 +1155,12 @@ button:disabled {
   gap: 8px;
   padding: 0 var(--gutter);
   pointer-events: none;
+}
+
+.toasts > div {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
 }
 
 .toast {
@@ -1087,8 +1191,38 @@ button:disabled {
 
 .toast-problem .toast-mark,
 .problem .toast-mark {
-  background: var(--orange-mark);
-  color: #1b1200;
+  border-radius: 4px;
+  background: var(--ink);
+  color: var(--page);
+}
+
+.toast-problem {
+  pointer-events: auto;
+  align-items: center;
+}
+
+.toast-problem .toast-mark {
+  background: var(--page);
+  color: var(--ink);
+}
+
+.toast-close {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  margin: -10px -8px -10px 4px;
+  border-radius: 10px;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+/* Inside Now Playing there is no mini player or tab bar, so toasts sit at the bottom. */
+body:has(.now-playing) .toasts {
+  bottom: calc(16px + env(safe-area-inset-bottom));
+}
+
+body:not(:has(.mini-player)) .toasts {
+  bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 16px);
 }
 
 /* ---------- Wide screens: the tab bar becomes a rail, Now Playing a side panel ---------- */
@@ -1174,8 +1308,61 @@ button:disabled {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     animation: none !important;
     transition: none !important;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  /* A near-white toast glares on the dark page. */
+  .toast {
+    background: var(--surface);
+    color: var(--ink);
+    box-shadow: inset 0 0 0 1px var(--field), var(--shadow);
+  }
+
+  .toast-problem .toast-mark {
+    background: var(--ink);
+    color: var(--page);
+  }
+}
+
+/* Windows High Contrast and other forced colours drop backgrounds: give every drawn control an edge. */
+@media (forced-colors: active) {
+  .switch,
+  .tag,
+  .button,
+  .play-button,
+  .row-play,
+  .speed-button,
+  .progress,
+  .mini-progress {
+    border: 2px solid CanvasText;
+  }
+
+  .switch::after,
+  .switch:checked,
+  .tick::before,
+  .progress > span,
+  .mini-progress > span,
+  .rec-dot {
+    background: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  .switch:checked::after {
+    background: Canvas;
+  }
+
+  .scrubber {
+    forced-color-adjust: none;
+    border: 1px solid CanvasText;
+  }
+
+  .tab[aria-current='page'] {
+    outline: 2px solid Highlight;
   }
 }

@@ -2,8 +2,9 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { formatClock } from '../../shared/clock.ts';
 import type { Episode, Margin, Show } from '../../shared/model.ts';
 import { useData } from '../data.tsx';
+import { useRestoreFocus } from '../focus.ts';
 import { BackIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenIcon, PlayIcon, ShareIcon, StopIcon } from '../icons.tsx';
-import { nextSpeed, timelineFraction } from '../logic/library.ts';
+import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
 import { plainError } from '../logic/messages.ts';
 import { SKIP_SECONDS, usePlayer } from '../player.tsx';
 import type { RecordedVoice, VoiceRecording } from '../ports.ts';
@@ -19,10 +20,34 @@ export function NowPlaying({ onClose }: { onClose: () => void }) {
   const player = usePlayer();
   const data = useData();
   const [composer, setComposer] = useState<{ kind: 'write' | 'record'; at: number } | null>(null);
+  // Which composer just closed, so focus goes back to the button that opened it.
+  const [closedKind, setClosedKind] = useState<'write' | 'record'>();
   const closeRef = useRef<HTMLButtonElement>(null);
+  const writeRef = useRef<HTMLButtonElement>(null);
+  const recordRef = useRef<HTMLButtonElement>(null);
   const episode = player.episode;
+  useRestoreFocus('.mini-open');
+  // The track's width, so posts closer than one 44 px target share a post instead of covering each other.
+  const [trackWidth, setTrackWidth] = useState(340);
+  const scrubberRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const el = scrubberRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => setTrackWidth(el.clientWidth || 340));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [episode?.id]);
 
   useEffect(() => closeRef.current?.focus(), []);
+  useEffect(() => {
+    if (!closedKind) return;
+    (closedKind === 'write' ? writeRef : recordRef).current?.focus();
+    setClosedKind(undefined);
+  }, [closedKind]);
+  const closeComposer = (kind: 'write' | 'record') => () => {
+    setComposer(null);
+    setClosedKind(kind);
+  };
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !composer) onClose();
@@ -54,20 +79,27 @@ export function NowPlaying({ onClose }: { onClose: () => void }) {
         </h2>
 
         <div className="timeline">
-          <div className="timeline-ticks" aria-label="Margins on the timeline" role="group">
-            {margins.map((margin) => (
-              <button
-                key={margin.id}
-                type="button"
-                className="tick"
-                style={{ left: `${timelineFraction(margin.atSeconds, duration) * 100}%` }}
-                aria-label={`Margin at ${formatClock(margin.atSeconds)}: ${margin.text ?? 'voice'}. Play from here.`}
-                title={`${formatClock(margin.atSeconds)} ${margin.text ?? 'Voice Margin'}`}
-                onClick={() => player.seek(margin.atSeconds)}
-              />
-            ))}
-          </div>
+          {/* The posts are for pointing at. They stay out of the tab order and the screen reader's path,
+              because "Margins in this episode" below lists the same Margins, each one a button that plays
+              from its moment; reading both would say every Margin twice. */}
+          {margins.length > 0 && (
+            <div className="timeline-ticks" aria-hidden="true">
+              {timelinePosts(margins, duration, 44 / Math.max(trackWidth, 44)).map((post) => (
+                <button
+                  key={post.margins[0].id}
+                  type="button"
+                  tabIndex={-1}
+                  className={`tick${post.margins.length > 1 ? ' tick-shared' : ''}`}
+                  data-at={post.atSeconds}
+                  style={{ left: `${post.fraction * 100}%` }}
+                  title={post.margins.map((m) => `${formatClock(m.atSeconds)} ${m.text ?? 'Voice Margin'}`).join('\n')}
+                  onClick={() => player.seek(post.atSeconds)}
+                />
+              ))}
+            </div>
+          )}
           <input
+            ref={scrubberRef}
             className="scrubber"
             type="range"
             min={0}
@@ -105,22 +137,22 @@ export function NowPlaying({ onClose }: { onClose: () => void }) {
 
         {composer ? (
           composer.kind === 'write' ? (
-            <WriteMargin at={composer.at} episodeId={episode.id} onDone={() => setComposer(null)} />
+            <WriteMargin at={composer.at} episodeId={episode.id} onDone={closeComposer('write')} />
           ) : (
             <RecordMargin
               at={composer.at}
               episodeId={episode.id}
-              onDone={() => setComposer(null)}
+              onDone={closeComposer('record')}
               onWriteInstead={() => setComposer({ kind: 'write', at: composer.at })}
             />
           )
         ) : (
           <div className="margin-actions">
-            <button type="button" className="button button-margin" onClick={() => setComposer({ kind: 'write', at: player.now() })}>
+            <button ref={writeRef} type="button" className="button button-margin" onClick={() => setComposer({ kind: 'write', at: player.now() })}>
               <PenIcon />
               Write a Margin
             </button>
-            <button type="button" className="button button-margin" onClick={() => setComposer({ kind: 'record', at: player.now() })}>
+            <button ref={recordRef} type="button" className="button button-margin" onClick={() => setComposer({ kind: 'record', at: player.now() })}>
               <MicIcon />
               Record a Margin
             </button>
@@ -422,11 +454,19 @@ function RecordMargin({
   }
 
   return (
-    <div className="composer composer-recording" aria-live="polite">
-      <p className="recording-line">
+    <div className="composer composer-recording">
+      {/* Announced once when recording starts; the running clock is not a live region, so a screen
+          reader isn't interrupted every second. */}
+      <p className="recording-line" role="status">
         <span className="rec-dot" aria-hidden="true" />
-        {recording ? `Recording your Margin at ${formatClock(at)}, ${formatClock(elapsed)}` : 'Starting the microphone…'}
+        {recording ? 'Recording' : 'Starting the microphone…'}
+        {recording && (
+          <span className="recording-clock" aria-hidden="true">
+            {formatClock(elapsed)} so far
+          </span>
+        )}
       </p>
+      <p className="muted">Your Margin goes at {formatClock(at)} in the episode.</p>
       <div className="composer-actions">
         <button type="button" className="button" onClick={cancel}>
           Cancel
