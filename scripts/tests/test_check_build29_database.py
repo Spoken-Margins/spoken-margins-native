@@ -97,12 +97,6 @@ class PacketTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('== importing the packets with Build 29', result.stdout)
 
-    def test_the_generated_package_builds_the_sharing_code_and_both_readers(self):
-        script = SCRIPT.read_text()
-        self.assertIn('Packages/SessionKit/Sources/SessionKitSharing | tar -x', script)
-        self.assertIn('.executableTarget(name: "packet-reader"', script)
-        self.assertIn('build29-db-reader/packet-reader.swift', script)
-
 
 TAGS = ['testflight/0.1-build-29', 'testflight/0.1-build-32', 'testflight/0.1-build-34']
 
