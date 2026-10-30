@@ -27,7 +27,7 @@ final class SkimPressTests: XCTestCase {
 
     func testEveryReasonTellsTheListenerSomething() {
         let reasons: [SkimUnavailableReason] = [
-            .noSource, .noMap, .noSceneSummary, .suppliedSummaryMissing, .preparationFailed, .movedOn
+            .noSource, .loading, .noMap, .noSceneSummary, .suppliedSummaryMissing, .preparationFailed, .movedOn
         ]
         XCTAssertEqual(Set(reasons.map(\.rawValue)).count, reasons.count)
         for reason in reasons {

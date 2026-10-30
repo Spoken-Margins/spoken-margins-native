@@ -85,6 +85,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         model.resumePlayback()
         let resumed = try await waitForSourceProgress(model: model, player: sourcePlayer, toMs: pausedTime + 200)
         XCTAssertGreaterThan(sourcePlayer.currentMediaTimeMs() ?? 0, pausedTime + 100, "Resume must play on: \(resumed)")
+        await model.settleSkimResources()
         XCTAssertTrue(model.snapshot.canSkimForward)
         XCTAssertEqual(model.skimForwardDestinationMs, 5_000)
         XCTAssertEqual(model.skimForwardTitle, "Skim to 0:05")
@@ -101,6 +102,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         for _ in 0..<250 where model.preparingLocalAudioMapItems[item.id] != nil { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertNil(model.preparingLocalAudioMapItems[item.id], "the summary pass must finish")
         XCTAssertEqual(model.diagnostics["localAudioSkim:\(item.id)"], "ready")
+        await model.settleSkimResources()
         XCTAssertEqual(model.skimResourceLoadCount, loadedResources, "Reopening with every summary saved must not reload Skim's map and assets")
         XCTAssertTrue(model.snapshot.canSkimForward)
         // Next chapter reads the summary of the chapter being left, then lands at the next chapter;
@@ -108,6 +110,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         XCTAssertEqual(model.nextPlaybackMediaChapter?.startMs, 5_000)
         // The state the owner saw on the phone (#1628, #1666): a ready map and a next chapter, with no summary playing.
         // Forward Skim is the one forward control in the chapter row; Next chapter stays for the Lock Screen.
+        await model.settleSkimResources()
         XCTAssertNil(model.snapshot.skimBridgeState, "precondition: no summary is playing")
         XCTAssertTrue(model.showsSkimRow, "the Skim row is on the dock")
         XCTAssertTrue(model.canJumpToNextChapter, "the Lock Screen and external commands keep Next chapter")
@@ -156,11 +159,13 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         }
         try store.savePortableListeningMapProposal(movedMap(sceneOneStartMs: 4_000), itemId: item.id)
         model.refreshSkimAvailabilityForTesting()
+        await model.settleSkimResources()
         XCTAssertTrue(model.snapshot.canSkimBackward)
         XCTAssertEqual(model.skimBackwardDestinationMs, 4_000)
         XCTAssertEqual(model.gate2CompactSnapshot?.skimBackwardDestinationMs, 4_000, "a destination-only change must reach the Lock Screen")
         try store.savePortableListeningMapProposal(movedMap(sceneOneStartMs: 5_000), itemId: item.id)
         model.refreshSkimAvailabilityForTesting()
+        await model.settleSkimResources()
         XCTAssertEqual(model.gate2CompactSnapshot?.skimBackwardDestinationMs, 5_000)
         // Reproduce a device update: the durable item URL points at a former
         // container, while the owned asset remains under the current support root.
@@ -183,6 +188,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         // The supplied voice survives a user voice preference change.
         model.ttsVoiceSelection = .james
         model.openItem(id: item.id)
+        await model.settleSkimResources()
         XCTAssertTrue(model.snapshot.canSkimForward)
         // A stale catalog digest cannot authorize modified source bytes.
         try Data("changed source".utf8).write(to: relocatedURL)
@@ -254,6 +260,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         // The summaries' audio is gone, as after a voice change: the map stays, the audio doesn't.
         for asset in bridges() { try fixture.store.deleteOwnedOfflineAsset(id: asset.id) }
         model.updateSkimAvailability()
+        await model.settleSkimResources()
         XCTAssertTrue(model.snapshot.canSkimForward, "a scene with a summary can be skimmed before its audio exists")
         XCTAssertTrue(model.showsSkimRow)
         XCTAssertEqual(model.chapterRowForwardControl, .skim, "the slot stays Skim, not a silent Next chapter")
