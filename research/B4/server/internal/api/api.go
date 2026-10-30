@@ -27,6 +27,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -398,8 +399,25 @@ func (s *Server) clientKey(r *http.Request) string {
 		}
 	}
 	m := hmac.New(sha256.New, s.ipSecret)
-	m.Write([]byte(host))
+	m.Write([]byte(clientNet(host)))
 	return hex.EncodeToString(m.Sum(nil))
+}
+
+// clientNet is what one client controls: an IPv4 address, or an IPv6
+// address's /64, the standard size of one subscriber's network. Keying an
+// IPv6 client per address gave it a fresh hourly budget for every address
+// it picked (#2988). Spellings of one address (case, zero padding,
+// IPv4-mapped) are one key. A host that doesn't parse is used as it is.
+func clientNet(host string) string {
+	a, err := netip.ParseAddr(host)
+	if err != nil {
+		return host
+	}
+	a = a.Unmap().WithZone("")
+	if a.Is6() {
+		return netip.PrefixFrom(a, 64).Masked().String()
+	}
+	return a.String()
 }
 
 func (s *Server) challenge(w http.ResponseWriter, r *http.Request) {
