@@ -64,8 +64,10 @@ final class ClipboardLinkOfferModel: ObservableObject {
 
 /// The Library's offer to add a copied link, on one compact line (#2835). iOS reads the clipboard without
 /// the "Allow Paste" alert only for the system Paste button, so there is one of them: "Link detected" with
-/// Paste. Pasting swaps the line to the link's site with "Add to Library" and "Add and play", ordinary
-/// buttons, so every tap shows something: a reading spinner, the pasted site, the import's progress or a message.
+/// Paste. That tap is the permission to read the clipboard, so a link is added to the Library at once, with no
+/// second step (owner, 2026-10-29, #2944); the listener deletes the item if they didn't want it. Every tap shows
+/// something: a reading spinner, the import's progress, the new item in the Library or a message. Text that is
+/// not a link is never added from here.
 struct ClipboardLinkOfferCard: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -78,7 +80,6 @@ struct ClipboardLinkOfferCard: View {
         case offered
         /// The Paste tap landed and the clipboard is being read.
         case reading
-        case pasted(URL)
     }
 
     var body: some View {
@@ -164,8 +165,6 @@ struct ClipboardLinkOfferCard: View {
                     dismissButton
                 }
                 .frame(minHeight: TapTarget.minimum)
-            case .pasted(let url):
-                pastedLine(url)
             }
         }
     }
@@ -183,7 +182,8 @@ struct ClipboardLinkOfferCard: View {
                 let content = await PastedClipboardContent.text(from: providers)
                 // A newer copy replaced the offer while this was read: its result is stale.
                 guard clipboard.offer.changeCount == changeCount else { return }
-                pasted(content)
+                // The add runs on the main actor; the label lets the hang probe name it, as for Paste & go.
+                model.hangTelemetry.labels.scoped("clipboardLinkPaste") { pasted(content) }
             }
         }
         .labelStyle(.titleAndIcon)
@@ -206,60 +206,12 @@ struct ClipboardLinkOfferCard: View {
         .accessibilityIdentifier("library.clipboardLink.dismiss")
     }
 
-    /// "example.com · Add to Library · Add and play · ×" on one line; the site drops off, then the buttons stack, as space runs out.
-    private func pastedLine(_ url: URL) -> some View {
-        let host = ClipboardLinkOffer.displayHost(of: url)
-        // With something already playing the import adds without interrupting it, so don't promise play.
-        let addAndPlay = !model.hasActiveSession
-        return ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
-                Text(host)
-                    .font(.subheadline)
-                    .foregroundStyle(AppColors.secondaryText)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                addButtons(url, host: host, addAndPlay: addAndPlay)
-                dismissButton
-            }
-            HStack(spacing: 8) {
-                addButtons(url, host: host, addAndPlay: addAndPlay)
-                Spacer(minLength: 8)
-                dismissButton
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                Text(host)
-                    .font(.subheadline)
-                    .foregroundStyle(AppColors.secondaryText)
-                addButtons(url, host: host, addAndPlay: addAndPlay, wraps: true)
-                dismissButton
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func addButtons(_ url: URL, host: String, addAndPlay: Bool, wraps: Bool = false) -> some View {
-        Button("Add to Library") { add(url, play: false) }
-            .filledActionButton()
-            .fixedSize(horizontal: wraps ? false : true, vertical: true)
-            .accessibilityLabel("Add to Library, \(host)")
-            .accessibilityIdentifier("library.clipboardLink.add")
-        if addAndPlay {
-            Button("Add and play") { add(url, play: true) }
-                .buttonStyle(.bordered)
-                .tint(AppColors.evergreen)
-                .fixedSize(horizontal: wraps ? false : true, vertical: true)
-                .accessibilityLabel("Add and play, \(host)")
-                .accessibilityIdentifier("library.clipboardLink.addAndPlay")
-        }
-    }
-
-    /// Only a link is added from this card. If the clipboard changed to text since the check, nothing is created
-    /// and the card says so; the text is never shown or added from here.
+    /// Only a link is added from this card, at once and without starting playback. If the clipboard changed to text
+    /// since the check, nothing is created and the card says so; the text is never shown or added from here.
     private func pasted(_ content: String?) {
         switch ClipboardLinkOffer.pasteResult(for: content) {
         case .link(let url):
-            stage = .pasted(url)
-            announce("\(ClipboardLinkOffer.displayHost(of: url)). Add to Library or Add and play.")
+            add(url)
         case let result:
             // The card stays with this note until the X or a new copy.
             stage = .offered
@@ -268,12 +220,14 @@ struct ClipboardLinkOfferCard: View {
         }
     }
 
-    private func add(_ url: URL, play: Bool) {
-        switch model.pasteAndGo(url.absoluteString, startSession: play) {
+    private func add(_ url: URL) {
+        // Back to the Paste line: the import's progress or error shows above it, and a failed add is retried with another Paste.
+        stage = .offered
+        switch model.pasteAndGo(url.absoluteString) {
         case .resolvingLink:
             message = nil
             clipboard.beganAdding()
-            announce("Adding the link")
+            announce("Adding \(ClipboardLinkOffer.displayHost(of: url)) to the Library")
         case .addedText:
             clipboard.markHandled()
         case .notAdded(let reason):
