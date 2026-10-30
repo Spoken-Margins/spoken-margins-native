@@ -298,6 +298,7 @@ private struct FollowingShowRowView: View {
                                         .font(.caption)
                                         .foregroundStyle(AppColors.secondaryText)
                                 }
+                                .accessibilityElement(children: .combine)
                                 .accessibilityIdentifier("sources.show.\(row.id).adding")
                             } else if row.isNewestInLibrary {
                                 Label("In Library", systemImage: "checkmark.circle")
