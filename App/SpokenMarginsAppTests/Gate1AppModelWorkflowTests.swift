@@ -5717,7 +5717,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.importObsidianMarkdownFiles(urls: [file])
-        try await waitFor("PDF contents import to finish", timeoutNanoseconds: 5_000_000_000) {
+        // The test checks chapters, not speed: a loaded hosted runner took over 5 s to import this PDF (#2973).
+        try await waitFor("PDF contents import to finish", timeoutNanoseconds: 30_000_000_000) {
             !model.isImportingSources
         }
 
