@@ -855,6 +855,33 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertEqual(controller.status, "updated_pruned_stale")
     }
 
+    /// #2962: a podcast's card was staying on the Lock Screen over a live session's. While the session's running card
+    /// is up, publishing removes the item's cards and requests nothing; once the session's card is gone, the next
+    /// publish puts the item's card back.
+    func testRunningLiveSessionHoldsTheItemsCardOffTheLockScreen() async {
+        let list = FakeLiveActivityList()
+        list.add(id: "activity-pill", sessionId: "session-pill")
+        list.isLiveSessionCardShowing = true
+        let controller = Gate2LiveActivityController(system: list.system)
+
+        publish(liveActivitySnapshot(sessionId: "session-pill", status: .playing), to: controller)
+        await controller.waitForPendingWork()
+        XCTAssertEqual(list.log, ["end:activity-pill"])
+        XCTAssertEqual(list.cardIds, [])
+        XCTAssertEqual(controller.status, "held_for_live_session")
+
+        publish(liveActivitySnapshot(sessionId: "session-pill", status: .paused), to: controller)
+        await controller.waitForPendingWork()
+        XCTAssertEqual(list.log, ["end:activity-pill"], "no request while the session runs")
+        XCTAssertEqual(controller.status, "held_for_live_session")
+
+        list.isLiveSessionCardShowing = false
+        publish(liveActivitySnapshot(sessionId: "session-pill", status: .playing), to: controller)
+        await controller.waitForPendingWork()
+        XCTAssertEqual(list.log, ["end:activity-pill", "request:session-pill"])
+        XCTAssertEqual(controller.status, "started")
+    }
+
     /// A handed-off card can't be updated, so publishing replaces it with a new request.
     func testPublishReplacesAHandedOffCardWithANewOne() async {
         let list = FakeLiveActivityList()
@@ -1551,6 +1578,13 @@ private final class FakeLiveActivityList: @unchecked Sendable {
     private var events: [String] = []
     private var dismissals: [Date] = []
     private var requestCount = 0
+    private var liveSessionCardShowing = false
+
+    /// Whether a live session's running card is up, as the controller's system reports it (#2962).
+    var isLiveSessionCardShowing: Bool {
+        get { lock.withLock { liveSessionCardShowing } }
+        set { lock.withLock { liveSessionCardShowing = newValue } }
+    }
 
     var log: [String] { lock.withLock { events } }
     var cardIds: [String] { lock.withLock { cards.map(\.id) } }
@@ -1570,7 +1604,8 @@ private final class FakeLiveActivityList: @unchecked Sendable {
                     events.append("request:\(sessionId)")
                     return id
                 }
-            }
+            },
+            isLiveSessionCardShowing: { [self] in isLiveSessionCardShowing }
         )
     }
 

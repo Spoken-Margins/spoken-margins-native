@@ -319,6 +319,7 @@ final class Gate2CompactControlController {
     private var latestSkimDestinations: (forward: Int?, backward: Int?) = (nil, nil)
     /// Whether the microphone is really taking in sound, for the Live Activity's REC indicator (#937).
     private(set) var microphone = Gate2LiveActivityMicrophone.capturing
+    private var liveSessionCardsObserver: NSObjectProtocol?
     private(set) var lastCommand: CompactControlCommand?
     private(set) var lastCommandOrigin = "none"
     private(set) var lastApplicationCommand = "none"
@@ -351,6 +352,16 @@ final class Gate2CompactControlController {
             onBackground: { [weak self] in self?.startBackgroundWatchIfNeeded() },
             onForeground: { [weak self] in self?.handleAppReturnedToForeground() }
         )
+        // The item's card was held back while a live session ran (#2962). When the session's card goes, or turns into
+        // "Ended · Resume", it comes back even though the item's own state has not changed. (The live session's start ends the item's
+        // cards directly, so the controller can't tell by its own status whether one was taken away.)
+        liveSessionCardsObserver = notificationCenter.addObserver(
+            forName: LiveSessionActivities.cardsChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.publishCurrentSnapshot(force: true)
+            }
+        }
     }
 
     var snapshot: CompactControlSnapshot? {
@@ -572,6 +583,7 @@ final class Gate2CompactControlController {
             "gate2LastRemoteCommandDetail": liveSpeechNowPlaying.lastRemoteCommandDetail,
             "gate2LiveActivity": liveActivity.status,
             "gate2LiveActivityLifecycle": liveActivityLifecycleStatus,
+            "gate2LiveSessionActivityStart": LiveSessionActivities.lastStartOutcome,
             "gate2LastCommand": lastCommand?.rawValue ?? "none",
             "gate2LastCommandOrigin": lastCommandOrigin,
             "gate2LastApplicationCommand": lastApplicationCommand,
@@ -738,6 +750,8 @@ struct Gate2LiveActivitySystem: Sendable {
         _ state: Gate2LiveActivityAttributes.ContentState,
         _ staleDate: Date?
     ) throws -> String
+    /// Whether a live session's running card is up (#2962). Its card takes the Lock Screen, so the item's stays off.
+    var isLiveSessionCardShowing: @Sendable () -> Bool = { false }
 
     static let activityKit = Gate2LiveActivitySystem(
         areActivitiesEnabled: { ActivityAuthorizationInfo().areActivitiesEnabled },
@@ -748,6 +762,11 @@ struct Gate2LiveActivitySystem: Sendable {
                 content: ActivityContent(state: state, staleDate: staleDate),
                 pushType: nil
             ).id
+        },
+        isLiveSessionCardShowing: {
+            Activity<LiveSessionActivityAttributes>.activities.contains {
+                !$0.content.state.hasEnded && $0.activityState != .ended && $0.activityState != .dismissed
+            }
         }
     )
 
@@ -963,6 +982,13 @@ final class Gate2LiveActivityController: Gate2LiveActivityControlling {
         state: Gate2LiveActivityAttributes.ContentState,
         staleDate: Date?
     ) async -> (activityId: String?, status: String) {
+        // A running live session owns the Lock Screen (#2962): iOS picks which of an app's cards shows first, and the
+        // item's was staying on top. Nothing is requested or updated until the session ends; the next publish after
+        // that (the app coming forward, or the item's state changing) puts the card back.
+        if system.isLiveSessionCardShowing() {
+            for card in system.activities() { await card.endImmediately() }
+            return (nil, "held_for_live_session")
+        }
         var matchingCards: [any Gate2LiveActivityCard] = []
         var endedCount = 0
         for card in system.activities() {
