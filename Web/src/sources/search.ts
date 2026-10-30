@@ -1,11 +1,12 @@
 // Podcast search through the iTunes Search API, which allows browser requests (CORS) so no server is involved.
 
 import type { Show } from '../shared/model.ts';
+import { pickReadTransport } from './native-http.ts';
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 export interface SearchOptions {
-  /** Injected in tests. Defaults to the global `fetch`. */
+  /** Injected in tests. Defaults to native HTTP inside the Android app and the browser's `fetch` elsewhere. */
   fetch?: FetchLike;
   /** Results to ask for. Default 15, which is what the recorded fixtures use. */
   limit?: number;
@@ -65,7 +66,7 @@ export function showFromItunesResult(result: ItunesResult): Show | undefined {
 export async function searchPodcasts(term: string, options: SearchOptions = {}): Promise<Show[]> {
   const query = term.trim();
   if (!query) return [];
-  const doFetch: FetchLike = options.fetch ?? ((input, init) => fetch(input, init));
+  const doFetch: FetchLike = options.fetch ?? pickReadTransport().fetch;
   const url = `https://itunes.apple.com/search?media=podcast&term=${encodeURIComponent(query)}&limit=${options.limit ?? 15}`;
   const response = await doFetch(url, { credentials: 'omit' });
   if (!response.ok) throw new SearchError(`Podcast search failed with status ${response.status}.`);
