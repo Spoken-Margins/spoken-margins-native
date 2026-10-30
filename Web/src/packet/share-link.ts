@@ -5,14 +5,26 @@
 //
 // SHARE_LINKS_ENABLED stays false in every build until the owner's gates clear: links reach the public only after
 // the LLC, the DMCA designated agent and insurance exist (2026-10-20), and a feature is switched on only in a new
-// reviewed build, never from a server switch or remote config (2026-10-17). Turning it on is a code change.
+// reviewed build, never from a server switch or remote config (2026-10-17). Turning it on is a build change.
+//
+// The value is fixed when the app is built: Vite replaces `__SM_SHARE_LINKS__` (vite.config.ts), which is true
+// only in the Playwright build `--mode share-links-test` (served from `dist-share-links/`, git-ignored, never
+// hosted). Every other build, and Node's tests, read false.
 
 import { base64url } from './bytes.ts';
-import { PART, keyFromFragment, openPart } from '../../../research/B4/server/internal/links/share-link-open.mjs';
+import {
+  DAMAGED_MESSAGE,
+  DamagedLinkError,
+  PART,
+  keyFromFragment,
+  openPart,
+} from '../../../research/B4/server/internal/links/share-link-open.mjs';
 
-export const SHARE_LINKS_ENABLED = false;
+declare const __SM_SHARE_LINKS__: boolean | undefined;
 
-export { PART, keyFromFragment, openPart };
+export const SHARE_LINKS_ENABLED: boolean = typeof __SM_SHARE_LINKS__ === 'boolean' && __SM_SHARE_LINKS__;
+
+export { DAMAGED_MESSAGE, DamagedLinkError, PART, keyFromFragment, openPart };
 
 const MAGIC = [0x53, 0x4d, 0x4c, 0x49, 0x4e, 0x4b]; // "SMLINK"
 const VERSION = 1;
@@ -27,7 +39,7 @@ export class ShareLinksOffError extends Error {
 /** The preview a friend's browser shows before playing, as the landing page reads it. */
 export interface LinkPreview {
   schema: 'spokenmargins.link-preview.v1';
-  source: { title: string; show?: string };
+  source: { title: string; show?: string; url?: string };
   margins: { text: string; before?: string; after?: string }[];
 }
 
@@ -77,6 +89,22 @@ export function uploadForm(sealed: SealedLink): FormData {
   return form;
 }
 
+/** The link server refused or failed the upload; `status` is its HTTP status. */
+export class ShareLinkUploadError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`share link upload failed: ${status}`);
+    this.name = 'ShareLinkUploadError';
+    this.status = status;
+  }
+}
+
+/** http only for this machine (a local stub link server in tests); every other server must be https. */
+function uploadableServer(url: URL): boolean {
+  if (url.protocol === 'https:') return true;
+  return url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+}
+
 export interface UploadOptions {
   /** The Spoken Margins server, e.g. `https://spokenmargins.proximitytoprogress.com`. */
   server: string;
@@ -92,9 +120,9 @@ export async function uploadLink(packet: Uint8Array, preview: LinkPreview, optio
   const sealed = await sealPacket(packet, preview);
   const send = options.fetch ?? fetch;
   const base = new URL(options.server);
-  if (base.protocol !== 'https:') throw new Error('share links upload over https only');
+  if (!uploadableServer(base)) throw new Error('share links upload over https only');
   const response = await send(new URL('/api/v1/links', base), { method: 'POST', body: uploadForm(sealed) });
-  if (!response.ok) throw new Error(`share link upload failed: ${response.status}`);
+  if (!response.ok) throw new ShareLinkUploadError(response.status);
   const body = (await response.json()) as { id?: string; path?: string; expiresAt?: string };
   if (!body.path || !/^\/l\/[A-Za-z0-9_-]+$/.test(body.path)) throw new Error('share link upload returned no link');
   return { url: `${new URL(body.path, base).href}#${sealed.keyFragment}`, ...(body.expiresAt && { expiresAt: body.expiresAt }) };
