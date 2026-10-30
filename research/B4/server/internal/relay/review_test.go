@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"sync/atomic"
 	"testing"
 
@@ -158,5 +159,39 @@ func TestRefusesRequestsWithNoListedOrigin(t *testing.T) {
 	}
 	if hits.Load() != 0 {
 		t.Fatal("a request with no listed origin still fetched upstream")
+	}
+}
+
+// Finding 5 (the review's item 6): the server's own public address passes
+// PublicAddr, so ?url= could point back at the relay. The relay's own
+// User-Agent marks a nested request whatever host name or address it used,
+// even one that forges a listed Origin.
+func TestRefusesItsOwnRequests(t *testing.T) {
+	feed, r, hits := countingFeed(t)
+	front := httptest.NewServer(r)
+	defer front.Close()
+	code, body, _ := relayStatus(t, front.URL+"/?url="+url.QueryEscape(feed.URL+"/feed.xml"),
+		map[string]string{"Origin": "https://web.spokenmargins.test", "User-Agent": relay.UserAgent})
+	if code != 403 || body["error"] != "loop_refused" {
+		t.Fatalf("got %d %v", code, body)
+	}
+	if hits.Load() != 0 {
+		t.Fatal("a nested relay request still fetched upstream")
+	}
+}
+
+// End to end: the relay pointed at itself fetches nothing.
+func TestRelayPointedAtItselfDoesNotNest(t *testing.T) {
+	feed, r, hits := countingFeed(t)
+	front := httptest.NewServer(r)
+	defer front.Close()
+	fu, _ := url.Parse(front.URL)
+	fport, _ := strconv.Atoi(fu.Port())
+	r.Ports = append(r.Ports, fport)
+	inner := front.URL + "/?url=" + url.QueryEscape(feed.URL+"/feed.xml")
+	code, _, _ := relayStatus(t, front.URL+"/?url="+url.QueryEscape(inner),
+		map[string]string{"Origin": "https://web.spokenmargins.test"})
+	if code == 200 || hits.Load() != 0 {
+		t.Fatalf("nested relay fetched the feed: %d, %d upstream hits", code, hits.Load())
 	}
 }

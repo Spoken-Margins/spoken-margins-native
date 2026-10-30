@@ -45,7 +45,9 @@ const (
 	// MaxURLLength bounds the query parameter before anything parses it.
 	MaxURLLength = 2048
 
-	userAgent = "SpokenMarginsRelay/1 (+https://github.com/Spoken-Margins/spoken-margins-native)"
+	// UserAgent is sent on every fetch. A request that arrives with it is
+	// the relay calling itself, and Admit refuses it.
+	UserAgent = "SpokenMarginsRelay/1 (+https://github.com/Spoken-Margins/spoken-margins-native)"
 	accept    = "application/rss+xml, application/atom+xml, application/feed+json, application/xml;q=0.9, text/xml;q=0.9, text/html;q=0.8, application/xhtml+xml;q=0.8"
 )
 
@@ -76,6 +78,7 @@ var (
 	ErrPortRefused      = &Error{http.StatusForbidden, "port_refused"}
 	ErrAddressRefused   = &Error{http.StatusForbidden, "address_refused"}
 	ErrOriginRefused    = &Error{http.StatusForbidden, "origin_refused"}
+	ErrLoopRefused      = &Error{http.StatusForbidden, "loop_refused"}
 	ErrTooManyRedirects = &Error{http.StatusBadGateway, "too_many_redirects"}
 	ErrTypeRefused      = &Error{http.StatusBadGateway, "type_refused"}
 	ErrTooLarge         = &Error{http.StatusBadGateway, "too_large"}
@@ -424,7 +427,7 @@ func (r *Relay) Fetch(ctx context.Context, raw string) (*Result, error) {
 	if err != nil {
 		return nil, ErrBadURL
 	}
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", UserAgent)
 	req.Header.Set("Accept", accept)
 	resp, err := r.client.Do(req)
 	if err != nil {
@@ -486,6 +489,13 @@ func (r *Relay) Admit(w http.ResponseWriter, req *http.Request) bool {
 	// on the share-link host; fetch() from the web app is unaffected.
 	h.Set("Content-Security-Policy", "sandbox; default-src 'none'")
 	h.Set("Vary", "Origin")
+	// The server's own public address passes PublicAddr, so ?url= can name
+	// this relay under any host name or address. Its User-Agent gives the
+	// nested request away, and redirect hops carry it too.
+	if req.Header.Get("User-Agent") == UserAgent {
+		writeError(w, ErrLoopRefused)
+		return false
+	}
 	origin := req.Header.Get("Origin")
 	if !r.AllowedOrigin(origin) {
 		writeError(w, ErrOriginRefused)
