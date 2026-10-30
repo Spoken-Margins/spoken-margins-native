@@ -37,6 +37,36 @@ Reads and writes .spokenmargins packets.
 
 Reads web pages. Compiled into browserTextCapture.js and SourceLinkPreprocessor.js for the app, the Safari extension and the Share extension. The Share extension carries identical copies of the two notice files (checked).
 
+### React 19.3.1
+
+- Licence: MIT
+- From: Meta Platforms, Inc. and affiliates
+- Source: <https://github.com/facebook/react>
+- Where: `Web`
+- Licence text: <https://github.com/facebook/react/blob/main/LICENSE>
+
+Ships in the web app (Web/), compiled by Vite into the JavaScript that the page serves to browsers. Not in the iOS app. Listed in Web/package.json; the web app tools entry claims that manifest.
+
+### React DOM 19.3.1
+
+- Licence: MIT
+- From: Meta Platforms, Inc. and affiliates
+- Source: <https://github.com/facebook/react>
+- Where: `Web`
+- Licence text: <https://github.com/facebook/react/blob/main/LICENSE>
+
+Ships in the web app (Web/), compiled by Vite into the JavaScript that the page serves to browsers. Not in the iOS app. Listed in Web/package.json.
+
+### scheduler 0.28.0
+
+- Licence: MIT
+- From: Meta Platforms, Inc. and affiliates
+- Source: <https://github.com/facebook/react>
+- Where: `Web`
+- Licence text: <https://github.com/facebook/react/blob/main/LICENSE>
+
+Ships in the web app (Web/), compiled by Vite into the JavaScript that the page serves to browsers. Not in the iOS app. React DOM depends on it (Web/package-lock.json); Web/package.json does not list it itself.
+
 ### turndown 7.2.4
 
 - Licence: MIT
@@ -197,6 +227,14 @@ Builds the page-reading scripts. Not shipped.
 - Licence text: <https://github.com/WebReflection/linkedom/blob/main/LICENSE>
 
 Stands in for a browser page in the page-reading tests. Not shipped.
+
+### Web app build and test tools (npm)
+
+- Licence: MIT (Vite, @vitejs/plugin-react, @types/node, @types/react, @types/react-dom); Apache-2.0 (TypeScript, Playwright)
+- From: Their authors
+- Where: `Web`
+
+Web/package.json's devDependencies, installed by npm from Web/package-lock.json and never copied into this repository: Vite 8.3.5 (MIT, VoidZero Inc. and Vite contributors) and @vitejs/plugin-react 6.1.2 (MIT) build the page; TypeScript 5.9.3 (Apache-2.0, Microsoft) and the @types/node 24.19.2, @types/react 19.3.0 and @types/react-dom 19.3.0 type packages (MIT, DefinitelyTyped) check it; @playwright/test 1.64.1 (Apache-2.0, Microsoft) runs its journey tests. What the page itself ships is in the React, React DOM and scheduler entries.
 
 ### jsonschema (Python) 4.26.0
 
