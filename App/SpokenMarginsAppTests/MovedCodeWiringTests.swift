@@ -119,11 +119,15 @@ final class MovedCodeWiringTests: XCTestCase {
         XCTAssertEqual(resolver.callCount, 1)
         XCTAssertEqual(try handoffStore.pendingPayloadIDs(), ["payload-waiting-link"], "a connection failure keeps the link pending")
 
+        // Starting the monitor reports the real network once; let that land so it can't fall between the updates below.
+        try await waitFor("the monitor's first report") { model.connectivity.hasReported }
+        let callsBeforeOffline = resolver.callCount
         model.connectivity.update(transport: .unavailable, isOffline: true)
-        XCTAssertEqual(resolver.callCount, 1, "going offline retries nothing")
+        XCTAssertEqual(resolver.callCount, callsBeforeOffline, "going offline retries nothing")
         model.connectivity.update(transport: .wifi, isOffline: false)
 
-        try await waitFor("the import to run again") { resolver.callCount >= 2 }
+        try await waitFor("the import to run again") { resolver.callCount > callsBeforeOffline }
+        try await waitFor("the retried drain to finish") { !model.isImportingPendingSourceLinkHandoffs }
     }
 
     // MARK: starting a Margin stops queued speech
@@ -145,6 +149,8 @@ final class MovedCodeWiringTests: XCTestCase {
 
         XCTAssertTrue(model.snapshot.isRecording)
         XCTAssertEqual(speech.stopCount, stopsBeforeMargin + 1, "starting a Margin stops the speech the queue is driving")
+        XCTAssertTrue(model.streamingSpeechQueue.isPausedForInterjection, "paused, not cleared")
+        XCTAssertEqual(model.streamingSpeechQueue.pendingCount, 1, "the interrupted sentence waits to be spoken again")
         model.cancelInterjection()
         model.streamingSpeechQueue.stopAndClear()
     }
