@@ -3,6 +3,7 @@ package links
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,104 +14,110 @@ import (
 	"time"
 )
 
-const fixture = `{"source":{"title":"A source <title>","show":"A show & name","url":"https://example.org/episode"},"margins":[{"text":"My <script>alert(1)</script>","before":"Before <img src=x>","after":"After & <b>text</b>"},{"text":"Second Margin","before":"second before","after":"second after"}]}`
 const install = "https://testflight.apple.com/join/fixture"
 
-func TestLinkPreviewValidation(t *testing.T) {
-	// Neighbouring values: ASCII, Unicode, whitespace, punctuation, empty,
-	// normalization variants, and a very long excerpt on either side. The sides
-	// have different caps (#2237): 500 before the Margin, 120 after it.
-	for _, side := range []struct {
-		name string
-		max  int
-	}{{"before", MaxBeforeCharacters}, {"after", MaxAfterCharacters}} {
-		for _, row := range []struct {
-			name, text string
-			valid      bool
-		}{
-			{"empty", "", true}, {"whitespace", " \t\n", true}, {"punctuation", "—.!?", true},
-			{"case", "Aa", true}, {"at the cap, ASCII", strings.Repeat("x", side.max), true},
-			{"at the cap, Unicode", strings.Repeat("🎧", side.max), true}, {"composed", "café", true},
-			{"decomposed", "cafe\u0301", true}, {"over the cap, ASCII", strings.Repeat("x", side.max+1), false},
-			{"over the cap, Unicode", strings.Repeat("🎧", side.max+1), false}, {"very long", strings.Repeat("x", 16000), false},
-		} {
-			t.Run(side.name+"/"+row.name, func(t *testing.T) {
-				p, _ := ParsePreview([]byte(fixture))
-				if side.name == "before" {
-					p.Margins[0].Before = row.text
-				} else {
-					p.Margins[0].After = row.text
-				}
-				data, _ := json.Marshal(p)
-				_, err := ParsePreview(data)
-				if (err == nil) != row.valid {
-					t.Fatalf("valid=%v, err=%v", row.valid, err)
-				}
-			})
+// The vector the phone (ShareLinkSealingTests) and the browser (share-link-open.test.mjs) check
+// against (#805): the server must store and serve these bytes without reading them.
+type sealingVector struct {
+	KeyFragment string `json:"keyFragment"`
+	Preview     struct {
+		Plaintext string `json:"plaintextBase64"`
+		Sealed    string `json:"sealedBase64"`
+	} `json:"preview"`
+	Packet struct {
+		Plaintext string `json:"plaintextBase64"`
+		Sealed    string `json:"sealedBase64"`
+	} `json:"packet"`
+}
+
+func loadVector(t *testing.T) (preview, packet, previewPlain, packetPlain []byte) {
+	t.Helper()
+	data, err := os.ReadFile("../../../contracts/fixtures/share-link-sealing-vector.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v sealingVector
+	if err := json.Unmarshal(data, &v); err != nil {
+		t.Fatal(err)
+	}
+	decode := func(s string) []byte {
+		b, err := base64.StdEncoding.DecodeString(s)
+		if err != nil || len(b) == 0 {
+			t.Fatalf("vector: %v", err)
 		}
+		return b
 	}
-	// The caps are not the same on both sides: 121 characters fit before a Margin, not after it.
-	p, _ := ParsePreview([]byte(fixture))
-	p.Margins[0].Before = strings.Repeat("x", MaxAfterCharacters+1)
-	p.Margins[0].After = strings.Repeat("x", MaxAfterCharacters+1)
-	data, _ := json.Marshal(p)
-	if _, err := ParsePreview(data); err == nil {
-		t.Fatal("an after excerpt of 121 characters was accepted")
+	return decode(v.Preview.Sealed), decode(v.Packet.Sealed), decode(v.Preview.Plaintext), decode(v.Packet.Plaintext)
+}
+
+func TestSealedPartsAreRecognisedByHeaderAndLength(t *testing.T) {
+	preview, packet, previewPlain, packetPlain := loadVector(t)
+	if !Sealed(preview, PartPreview) || !Sealed(packet, PartPacket) {
+		t.Fatal("the shared vector's sealed parts were refused")
 	}
-	p.Margins[0].After = ""
-	data, _ = json.Marshal(p)
-	if _, err := ParsePreview(data); err != nil {
-		t.Fatalf("a before excerpt of 121 characters was refused: %v", err)
-	}
-	for _, data := range [][]byte{[]byte(`{}`), []byte(`null`), []byte(fixture + ` {}`), []byte(strings.Replace(fixture, `"source":`, `"unknown":true,"source":`, 1)), bytes.Repeat([]byte(" "), MaxPreviewBytes+1), {0xff}} {
-		if _, err := ParsePreview(data); err == nil {
-			t.Fatalf("accepted bad preview: %.50s", data)
+	minimal := append([]byte("SMLINK\x01\x01"), make([]byte, nonceBytes+tagBytes)...)
+	for _, row := range []struct {
+		name string
+		data []byte
+		part byte
+		want bool
+	}{
+		{"packet as the preview", packet, PartPreview, false},
+		{"preview as the packet", preview, PartPacket, false},
+		{"readable preview JSON", previewPlain, PartPreview, false},
+		{"readable packet zip", packetPlain, PartPacket, false},
+		{"empty", nil, PartPreview, false},
+		{"header only", preview[:8], PartPreview, false},
+		{"one byte short of header, nonce and tag", minimal[:SealedOverhead-1], PartPreview, false},
+		{"header, nonce and tag with no ciphertext", minimal, PartPreview, true},
+		{"version 2", append([]byte("SMLINK\x02\x01"), preview[8:]...), PartPreview, false},
+		{"lower-case magic", append([]byte("smlink\x01\x01"), preview[8:]...), PartPreview, false},
+		{"part 3", append([]byte("SMLINK\x01\x03"), preview[8:]...), PartPreview, false},
+	} {
+		if got := Sealed(row.data, row.part); got != row.want {
+			t.Errorf("%s: sealed=%v, want %v", row.name, got, row.want)
 		}
 	}
 }
 
-func TestLinkLandingEscapesFixtureAndOmitsUnsafeURLs(t *testing.T) {
-	p, err := ParsePreview([]byte(fixture))
-	if err != nil {
+func TestLinkLandingIsAShellWithNoPreview(t *testing.T) {
+	id := strings.Repeat("a", 32)
+	var page bytes.Buffer
+	if err := Render(&page, id, install); err != nil {
 		t.Fatal(err)
 	}
-	for _, row := range []struct {
-		url  string
-		safe bool
-	}{
-		{"https://example.org/episode", true}, {"http://example.org/a", true},
-		{"HTTPS://example.org/A", true}, {"https://other.example/episode", true},
-		{"https://examp1e.org/episode", true}, {"https://example.org/caf%C3%A9", true},
-		{"https://example.org/episode?token=PRIVATE", false}, {"https://example.org/episode?", false},
-		{"https://PRIVATE:secret@example.org/episode", false}, {"https://example.org/episode#PRIVATE", false},
-		{"javascript:alert(1)", false}, {"//example.org/a", false}, {"", false}, {" https://example.org/a", false},
-		{"https://example.org/\nPRIVATE", false}, {"https://", false}, {"https://example.org/%zz", false},
+	html := page.String()
+	for _, want := range []string{
+		`<script type="module" src="/l/share-link-page.mjs"></script>`,
+		`<section id="margins" data-link="` + id + `"><p id="status" role="status"></p>`,
+		`<noscript>`, `action="/l/` + id + `/report"`, "Report this link", install,
 	} {
-		t.Run(row.url, func(t *testing.T) {
-			p.Source.URL = row.url
-			var page bytes.Buffer
-			if err := Render(&page, strings.Repeat("a", 32), p, install); err != nil {
-				t.Fatal(err)
-			}
-			html := page.String()
-			if strings.Contains(html, "<audio") || strings.Contains(html, "<script>") || strings.Contains(html, "<img src=x>") || strings.Contains(html, "<b>text</b>") {
-				t.Fatal("unescaped HTML or audio")
-			}
-			if !strings.Contains(html, "&lt;script&gt;") || !strings.Contains(html, "&lt;img src=x&gt;") || !strings.Contains(html, "&lt;b&gt;text&lt;/b&gt;") {
-				t.Fatal("escaped fixture missing")
-			}
-			if strings.Contains(html, "Open public source") != row.safe {
-				t.Fatalf("safe=%v, page %s", row.safe, html)
-			}
-			if !row.safe && (strings.Contains(html, "PRIVATE") || (row.url != "" && strings.Contains(html, `href="`+row.url+`"`))) {
-				t.Fatal("unsafe source URL leaked")
-			}
-			for _, want := range []string{"A source &lt;title&gt;", "A show &amp; name", "Quotation from the source", "Second Margin", "second before", "second after", "Report this link", install} {
-				if !strings.Contains(html, want) {
-					t.Errorf("missing %q", want)
-				}
-			}
-		})
+		if !strings.Contains(html, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if strings.Contains(html, "<audio") {
+		t.Fatal("audio on the page")
+	}
+	for _, bad := range [][2]string{{"../", install}, {strings.Repeat("A", 32), install}, {id, "https://evil.test/join/x"}} {
+		if err := Render(io.Discard, bad[0], bad[1]); err == nil {
+			t.Errorf("rendered with %q %q", bad[0], bad[1])
+		}
+	}
+}
+
+func TestLinkPageScriptsAreTheEmbeddedModules(t *testing.T) {
+	for _, name := range []string{"share-link-open.mjs", "share-link-page.mjs"} {
+		got, ok := PageScript(name)
+		want, err := os.ReadFile(name)
+		if !ok || err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("%s: not the file on disk", name)
+		}
+	}
+	for _, name := range []string{"", "share-link-open.test.mjs", "sealed.go", "../links/sealed.go", "share-link-page.mjs/"} {
+		if _, ok := PageScript(name); ok {
+			t.Errorf("served %q", name)
+		}
 	}
 }
 
@@ -121,15 +128,15 @@ func TestLinkStoreRoundTripExpiryAndSweep(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
-	packet := []byte{'P', 'K', 0, 255, 1, 2, 3}
-	id, expiry, err := st.Put(packet, []byte(fixture), now)
+	preview, packet, previewPlain, packetPlain := loadVector(t)
+	id, expiry, err := st.Put(packet, preview, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !ValidID(id) || !expiry.Equal(now.Add(Lifetime)) {
 		t.Fatalf("id=%q expiry=%s", id, expiry)
 	}
-	other, _, err := st.Put(packet, []byte(fixture), now)
+	other, _, err := st.Put(packet, preview, now)
 	if err != nil || other == id {
 		t.Fatal("ids not independently random")
 	}
@@ -144,8 +151,31 @@ func TestLinkStoreRoundTripExpiryAndSweep(t *testing.T) {
 	if err != nil || sha256.Sum256(got) != sha256.Sum256(packet) {
 		t.Fatal("packet bytes changed")
 	}
+	gotPreview, err := reopened.Preview(id, expiry.Add(-time.Nanosecond))
+	if err != nil || !bytes.Equal(gotPreview, preview) {
+		t.Fatal("sealed preview bytes changed")
+	}
+	if err := reopened.Live(id, expiry.Add(-time.Nanosecond)); err != nil {
+		t.Fatal(err)
+	}
+	// Nothing readable is on disk: neither the Margin's text and title nor the packet's plaintext.
+	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, _ := os.ReadFile(path)
+		for _, plain := range [][]byte{[]byte("This is the part I wanted you to hear"), []byte("Fourier"), previewPlain, packetPlain[:32]} {
+			if bytes.Contains(data, plain) {
+				t.Fatalf("%s holds readable %q", path, plain)
+			}
+		}
+		return nil
+	})
 	if _, err := reopened.Preview(id, expiry); !errors.Is(err, ErrGone) {
 		t.Fatalf("at expiry: %v", err)
+	}
+	if err := reopened.Live(id, expiry); !errors.Is(err, ErrGone) {
+		t.Fatalf("live at expiry: %v", err)
 	}
 	if _, err := reopened.Packet(id, expiry); !errors.Is(err, ErrGone) {
 		t.Fatalf("expired packet: %v", err)
@@ -156,7 +186,7 @@ func TestLinkStoreRoundTripExpiryAndSweep(t *testing.T) {
 	if n, err := reopened.Sweep(expiry); err != nil || n != 2 {
 		t.Fatalf("sweep %d %v", n, err)
 	}
-	for _, name := range []string{"packet", "preview.json"} {
+	for _, name := range contentFiles {
 		if _, err := os.Stat(filepath.Join(dir, id, name)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("content still stored: %s %v", name, err)
 		}
@@ -176,10 +206,24 @@ func TestLinkStoreBoundsAndTakedown(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := OpenStore(dir)
 	now := time.Now()
-	if _, _, err := st.Put(make([]byte, MaxPacketBytes+1), []byte(fixture), now); !errors.Is(err, ErrTooLarge) {
+	preview, packet, previewPlain, packetPlain := loadVector(t)
+	big := append(append([]byte{}, packet[:8]...), make([]byte, MaxPacketBytes-8+1)...)
+	if _, _, err := st.Put(big, preview, now); !errors.Is(err, ErrTooLarge) {
 		t.Fatal("oversize packet accepted")
 	}
-	id, _, err := st.Put([]byte("packet"), []byte(fixture), now)
+	bigPreview := append(append([]byte{}, preview[:8]...), make([]byte, MaxPreviewBytes-8+1)...)
+	if _, _, err := st.Put(packet, bigPreview, now); !errors.Is(err, ErrTooLarge) {
+		t.Fatal("oversize preview accepted")
+	}
+	if _, _, err := st.Put(packet, bigPreview[:MaxPreviewBytes], now); err != nil {
+		t.Fatalf("a sealed preview of exactly 16 KB was refused: %v", err)
+	}
+	for _, row := range [][2][]byte{{packet, previewPlain}, {packetPlain, preview}, {preview, packet}, {packet, packet}} {
+		if _, _, err := st.Put(row[0], row[1], now); !errors.Is(err, ErrUnsealed) {
+			t.Fatalf("stored an unsealed or swapped part: %v", err)
+		}
+	}
+	id, _, err := st.Put(packet, preview, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +240,7 @@ func TestLinkStoreBoundsAndTakedown(t *testing.T) {
 	if err := admin.Takedown(id); err != nil {
 		t.Fatal("takedown not idempotent")
 	}
-	for _, name := range []string{"packet", "preview.json"} {
+	for _, name := range contentFiles {
 		if _, err := os.Stat(filepath.Join(dir, id, name)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatal("takedown left content")
 		}
@@ -217,18 +261,19 @@ func TestLinkStoreFilesArePrivateAndFailedUploadIsUnpublished(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := st.Put([]byte("packet"), []byte(`{}`), time.Now()); err == nil {
-		t.Fatal("invalid preview stored")
+	preview, packet, _, _ := loadVector(t)
+	if _, _, err := st.Put(packet, []byte(`{}`), time.Now()); err == nil {
+		t.Fatal("readable preview stored")
 	}
 	entries, err := os.ReadDir(st.dir)
 	if err != nil || len(entries) != 0 {
 		t.Fatal("failed upload left files")
 	}
-	id, _, err := st.Put([]byte("packet"), []byte(fixture), time.Now())
+	id, _, err := st.Put(packet, preview, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, rel := range []string{"", id, id + "/packet", id + "/preview.json", id + "/meta.json"} {
+	for _, rel := range []string{"", id, id + "/packet", id + "/" + previewFile, id + "/meta.json"} {
 		info, err := os.Stat(filepath.Join(st.dir, rel))
 		if err != nil {
 			t.Fatal(err)

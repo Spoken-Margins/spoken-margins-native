@@ -80,3 +80,59 @@ export async function openPreview(sealed, hash, subtle = globalThis.crypto?.subt
     throw new DamagedLinkError();
   }
 }
+
+// The share page's excerpt ceilings (owner, 2026-10-20, D16 in docs/legal/attorney-questions.md; #2237),
+// in Unicode code points. The app's ExcerptCapRule (SessionKit) scales the "before" side to the comment
+// (280 to 800) and holds "after" to 120; Builds 32 and 34 refuse packet context over 500 a side, so the
+// "before" ceiling stays 500 until they retire. The server can't read the sealed preview, so the page
+// checks these after opening it, as the server's ParsePreview did before #805 reached it.
+export const MAX_BEFORE_CHARACTERS = 500;
+export const MAX_AFTER_CHARACTERS = 120;
+
+const codePoints = (value) => [...value].length;
+const optionalString = (value) => value === undefined || typeof value === 'string';
+
+/**
+ * Checks an opened preview the way the server used to: a source title, at least one Margin, string
+ * fields, and excerpts within the ceilings. Fields it doesn't know (such as `schema`) are ignored.
+ * Returns only the fields the page shows; anything else fails as DamagedLinkError.
+ */
+export function checkPreview(preview) {
+  const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+  if (!isObject(preview) || !isObject(preview.source) || !Array.isArray(preview.margins)) throw new DamagedLinkError();
+  const { title, show, url } = preview.source;
+  if (typeof title !== 'string' || title.trim() === '' || !optionalString(show) || !optionalString(url)) {
+    throw new DamagedLinkError();
+  }
+  if (preview.margins.length === 0) throw new DamagedLinkError();
+  const margins = preview.margins.map((margin) => {
+    if (!isObject(margin) || typeof margin.text !== 'string' || !optionalString(margin.before) || !optionalString(margin.after)) {
+      throw new DamagedLinkError();
+    }
+    const before = margin.before ?? '';
+    const after = margin.after ?? '';
+    if (codePoints(before) > MAX_BEFORE_CHARACTERS || codePoints(after) > MAX_AFTER_CHARACTERS) throw new DamagedLinkError();
+    return { text: margin.text, before, after };
+  });
+  return { source: { title, show: show ?? '', url: url ?? '' }, margins };
+}
+
+/**
+ * The source link the page may show, or '' to leave it out: http or https with a host, and no
+ * credentials, query or fragment, which could disclose signed or private URLs.
+ */
+export function safeSourceURL(raw) {
+  if (typeof raw !== 'string' || raw === '' || raw.trim() !== raw || /[\u0000-\u001f\u007f?#]/.test(raw)) return '';
+  if (!/^https?:\/\/[^/]/i.test(raw)) return '';
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return '';
+  }
+  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.hostname === '' || url.username !== '' || url.password !== '') {
+    return '';
+  }
+  if (/%(?![0-9a-f]{2})/i.test(raw)) return '';
+  return url.href;
+}

@@ -30,25 +30,29 @@ owner. Set `serve -links-install-url https://testflight.apple.com/join/INVITATIO
 install URL the link routes fail closed with 503. Existing config files missing
 `links` remain off; `smserver switch -public DIR links on|off` adds the entry.
 
-`POST /api/v1/links` accepts `multipart/form-data` with exactly two parts:
-`packet` (opaque, nonempty, at most 20 MiB) and `preview` (UTF-8 JSON, at most
-16 KiB), in either order. Preview shape:
+`POST /api/v1/links` accepts `multipart/form-data` with exactly two parts,
+`packet` (at most 20 MiB) and `preview` (at most 16 KiB), in either order. Both
+are sealed on the phone (#805, SessionKit's `ShareLinkSealing`): each is
+`"SMLINK"`, version 1, the part number (1 preview, 2 packet), a 12-byte nonce,
+the AES-256-GCM ciphertext and its 16-byte tag, under a key that travels only in
+the link's `#` part. The server checks only that header and the minimum length,
+and stores both parts unread; a readable or swapped part is refused (400
+`bad_preview` or `bad_packet`). Extra or duplicate parts are rejected. The
+response is 201 with `id` (16 random bytes in lowercase hex), `path` (`/l/<id>`)
+and `expiresAt` (UTC deadline). Upload attempts are limited to 30 per client
+address per hour in memory. The sealing vector both sides test against is
+`contracts/fixtures/share-link-sealing-vector.json`.
 
-```json
-{"source":{"title":"Episode title","show":"Show name","url":"https://publisher.example/episode"},"margins":[{"text":"My Margin","before":"Source excerpt before","after":"Source excerpt after"}]}
-```
-
-The excerpt before a Margin is limited to 500 Unicode code points and the one after it to 120 (the app's `ExcerptCapRule`, #2237). At least one Margin and a
-source title are required. Unknown fields, trailing JSON, extra or duplicate
-parts are rejected. The response is 201 with `id` (16 random bytes in lowercase
-hex), `path` (`/l/<id>`) and `expiresAt` (UTC deadline). Upload attempts are
-limited to 30 per client address per hour in memory. This contract stores the
-preview as readable JSON as requested by #486; it does **not** wire #805's sealed
-preview/browser decryption. Resolve that privacy difference before enabling it.
-
-`GET /l/<id>` serves an escaped, self-contained HTML page, and
-`GET /l/<id>/packet` downloads the unchanged bytes. No source audio is served or
-fetched. Source URLs containing queries, credentials or fragments are omitted.
+`GET /l/<id>` serves a page shell with the install link and the report form,
+and no Margin, title or excerpt. Its module (`/l/share-link-page.mjs`, with
+`/l/share-link-open.mjs`, both embedded in the binary) fetches the sealed bytes
+from `GET /l/<id>/preview`, opens them with the key from `location.hash`, and
+shows the Margins as text. The page checks what the server can no longer read:
+a source title, at least one Margin, and the excerpt ceilings of 500 code points
+before a Margin and 120 after it (the app's `ExcerptCapRule`, #2237). It leaves
+out a source URL with a query, credentials or fragment. `GET /l/<id>/packet`
+downloads the unchanged sealed packet, which the app opens with the same key.
+No source audio is served or fetched.
 The report form posts one fixed reason (`privacy`, `copyright`, `harmful`, `spam`
 or `other`) to `/l/<id>/report`; reports join the existing hourly abuse log with
 an `id` field, without a reporter address. Request logs use `/l/*` for all link
