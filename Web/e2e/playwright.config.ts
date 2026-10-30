@@ -3,16 +3,19 @@
 // root, which git ignores.
 import { defineConfig, devices } from '@playwright/test';
 
+// Threads run side by side on one Mac, so another worktree may hold the port: set SM_E2E_PORT to move.
+const port = Number(process.env.SM_E2E_PORT ?? 4173);
+
 export default defineConfig({
   testDir: '.',
-  outputDir: '../../artifacts/web-2982/test-results',
+  outputDir: '../../artifacts/web-e2e/test-results',
   fullyParallel: false,
   workers: 1,
   retries: 0,
   reporter: [['list']],
   timeout: 45_000,
   use: {
-    baseURL: 'http://127.0.0.1:4173/',
+    baseURL: `http://127.0.0.1:${port}/`,
     serviceWorkers: 'block',
     trace: 'retain-on-failure',
     launchOptions: {
@@ -31,9 +34,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npx vite preview --host 127.0.0.1 --port 4173 --strictPort',
+    command: `npx vite preview --host 127.0.0.1 --port ${port} --strictPort`,
     cwd: '..',
-    url: 'http://127.0.0.1:4173/',
+    url: `http://127.0.0.1:${port}/`,
     reuseExistingServer: false,
     timeout: 30_000,
   },
