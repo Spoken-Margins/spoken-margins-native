@@ -907,6 +907,27 @@ final class Gate1FlowUITests: XCTestCase {
         captureScreen(named: "written-margin-accessibility-keyboard")
     }
 
+    /// #2963: typing a Margin in a Live session, Add Margin is reachable above the keyboard without scrolling.
+    func testLiveSessionAddMarginIsAboveTheKeyboardWhileTyping() throws {
+        app.buttons["home.addSource.button"].tap()
+        scrollToElement("addSource.route.liveSession").tap()
+        let start = app.buttons["liveSession.start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 6))
+        start.tap()
+        let field = element("liveSession.marginText")
+        XCTAssertTrue(field.waitForExistence(timeout: 6))
+        field.tap()
+        field.typeText("Johnny moved on to the budget.")
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 4))
+        let add = element("liveSession.addMargin.keyboard.button")
+        XCTAssertTrue(add.waitForExistence(timeout: 4), "No Add Margin on the keyboard")
+        XCTAssertTrue(add.isEnabled && add.isHittable, "Add Margin on the keyboard can't be tapped")
+        captureScreen(named: "live-session-add-margin-keyboard")
+        add.tap()
+        XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4), "Add Margin left the keyboard up")
+    }
+
     func testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource() throws {
         app.terminate()
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = "A walk with room to think"

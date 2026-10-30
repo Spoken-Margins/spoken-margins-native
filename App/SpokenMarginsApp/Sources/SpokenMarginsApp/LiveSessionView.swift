@@ -72,6 +72,15 @@ struct LiveSessionView: View {
                         DispatchQueue.main.async { withAnimation { scroller.scrollTo(Self.endCardId, anchor: .bottom) } }
                     }
                 }
+                // Typing a Margin: bring the composer to the top of the visible area, so the field and the buttons under it sit
+                // above the keyboard even on a short screen (#2963).
+                .onChange(of: marginFieldFocused) { _, focused in
+                    guard focused else { return }
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(350)) // after the keyboard has finished rising
+                        withAnimation { scroller.scrollTo(Self.composerId, anchor: .top) }
+                    }
+                }
             }
             .scrollDismissesKeyboard(.interactively)
             .background(AppColors.bone)
@@ -80,6 +89,17 @@ struct LiveSessionView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("Close") { dismiss() } }
+                // Return is a new line in a Margin, so Add Margin is on the keyboard itself, not below it (#2963).
+                ToolbarItemGroup(placement: .keyboard) {
+                    if marginFieldFocused {
+                        Button("Done") { marginFieldFocused = false }
+                        Spacer()
+                        Button("Add Margin", action: submitMargin)
+                            .fontWeight(.semibold)
+                            .disabled(marginText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .accessibilityIdentifier("liveSession.addMargin.keyboard.button")
+                    }
+                }
             }
         }
         .onAppear { controller.load() }
@@ -178,6 +198,7 @@ struct LiveSessionView: View {
                 Label("Start Session", systemImage: "record.circle").frame(maxWidth: .infinity, minHeight: 44)
             }
             .filledActionButton()
+            .accessibilityIdentifier("liveSession.start")
         }
         .padding(16)
         .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -316,6 +337,7 @@ struct LiveSessionView: View {
                 .lineLimit(2...5)
                 .textFieldStyle(.roundedBorder)
                 .focused($marginFieldFocused)
+                .accessibilityIdentifier("liveSession.marginText")
             if session.kind != .meeting {
                 LiveSessionPlaceField(
                     prompt: session.kind == .paper ? "Page (optional)" : "Page, chapter or percent (optional)",
@@ -327,22 +349,29 @@ struct LiveSessionView: View {
                     PositionNudgeRow(label: adjustmentMs == 0 ? position.label : "you set \(LiveSessionPositionMap.clock(position.ms))", adjustmentMs: $adjustmentMs)
                 }
             }
-            Button {
-                controller.addMargin(text: marginText, whereNote: marginWhere.isEmpty ? nil : marginWhere, adjustmentMs: adjustmentMs)
-                marginText = ""
-                marginWhere = ""
-                adjustmentMs = 0
-                marginFieldFocused = false
-            } label: {
+            Button(action: submitMargin) {
                 Label("Add Margin", systemImage: "text.bubble").frame(maxWidth: .infinity, minHeight: 44)
             }
             .filledActionButton()
             .disabled(marginText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityIdentifier("liveSession.addMargin.button")
             spokenMarginButton
         }
         .padding(16)
         .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .id(Self.composerId)
     }
+
+    /// Add Margin, from the button under the field or the one on the keyboard.
+    private func submitMargin() {
+        controller.addMargin(text: marginText, whereNote: marginWhere.isEmpty ? nil : marginWhere, adjustmentMs: adjustmentMs)
+        marginText = ""
+        marginWhere = ""
+        adjustmentMs = 0
+        marginFieldFocused = false
+    }
+
+    private static let composerId = "liveSession.composer"
 
     /// Speak a Margin on the phone (#2487). During a call it says to use the Watch: the call holds the microphone.
     private var spokenMarginButton: some View {

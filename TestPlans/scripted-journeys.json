@@ -50,6 +50,10 @@
     {
       "test": "SpokenMarginsAppUITests/J11FirstMinuteJourneyUITests",
       "journey": "J11"
+    },
+    {
+      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testLiveSessionAddMarginIsAboveTheKeyboardWhileTyping",
+      "journey": "Live session: Add Margin is on the keyboard while typing a Margin (#2963)"
     }
   ]
 }
