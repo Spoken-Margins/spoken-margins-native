@@ -486,6 +486,17 @@ class WorkflowTests(unittest.TestCase):
         for phrase in ('Cost and catch', 'Waste signal', 'Actions minutes'):
             self.assertIn(phrase, self.text)
 
+    def test_the_push_step_runs_after_a_failed_publish_but_not_after_a_failed_checkout(self):
+        steps = self.document['jobs']['snapshot']['steps']
+        names = [step.get('name') for step in steps]
+        publish, push = names.index('Collect, write the month files and update the issue'), names.index('Push the metrics branch')
+        self.assertLess(publish, push)
+        condition = steps[push]['if']
+        self.assertIn('!cancelled()', condition)  # a publish that exited 1 may still have written another year's file
+        self.assertIn("steps.branch.conclusion == 'success'", condition)  # no metrics folder to push from otherwise
+        self.assertEqual(steps[names.index('Check out the metrics branch, or start it')]['id'], 'branch')
+        self.assertNotIn('continue-on-error', self.text)
+
     def test_it_runs_the_script_this_file_tests(self):
         self.assertIn('python3 scripts/pipeline_dashboard.py publish --metrics metrics', self.text)
 

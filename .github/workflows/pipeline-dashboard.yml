@@ -8,7 +8,8 @@
 #      commented, so it sends no notification.
 #   3. This workflow commits and pushes the branch.
 # Events hold only ids, enums and numbers; scripts/pipeline_dashboard.py refuses anything else before it is written.
-# The year's files are capped at 20 MB: past that nothing is written, the issue says so and this run fails.
+# The year's files are capped at 20 MB: past that, new events for that year are not written, the issue says so and this run
+# fails (other years are still written, and the push step below still runs, so they reach the branch).
 #
 # GitHub reads `schedule` and `workflow_dispatch` only from the default branch (main). Run it by hand with
 # `gh workflow run pipeline-dashboard.yml`.
@@ -51,6 +52,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Check out the metrics branch, or start it
+        id: branch
         run: |
           set -euo pipefail
           url="https://github.com/${GITHUB_REPOSITORY}.git"
@@ -71,6 +73,9 @@ jobs:
       - name: Collect, write the month files and update the issue
         run: python3 scripts/pipeline_dashboard.py publish --metrics metrics
       - name: Push the metrics branch
+        # After a failed publish too: it exits 1 for a full year or a failed collect but may have written other years' files.
+        # With nothing written, `git status` is clean and this step does nothing; the job still fails on the publish step.
+        if: ${{ !cancelled() && steps.branch.conclusion == 'success' }}
         run: |
           set -euo pipefail
           cd metrics
