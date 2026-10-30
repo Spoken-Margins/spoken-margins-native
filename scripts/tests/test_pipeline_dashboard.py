@@ -154,7 +154,8 @@ class FilesTests(unittest.TestCase):
 
     def test_collect_starts_at_a_day_boundary_a_few_days_back(self):
         self.assertEqual(dash.collect_since([lane(at='2026-10-29T10:00:00Z')], NOW), '2026-10-26T00:00:00Z')
-        self.assertEqual(dash.collect_since([], NOW), '2026-10-16T00:00:00Z')
+        self.assertEqual(dash.collect_since([], NOW), '2026-10-28T00:00:00Z')
+        self.assertEqual(dash.collect_since([], NOW, 14), '2026-10-16T00:00:00Z')
 
 
 class SlowEventTests(unittest.TestCase):
@@ -325,12 +326,12 @@ class PublishTests(unittest.TestCase):
                 return super().request(method, path, body)
         self.assertEqual(dash.publish_issue(Refusing(), 'body'), 77)
 
-    def run_publish(self, folder, comments, events=None, limit=None):
+    def run_publish(self, folder, comments, events=None, limit=None, github=None, comments_error=None):
         fake = mock.MagicMock()
-        fake.GitHub.return_value = FakeGitHub()
+        fake.GitHub.return_value = github or FakeGitHub()
         out = Path(folder) / 'body.md'
         patches = [mock.patch.dict(sys.modules, {'sm_status': fake}),
-                   mock.patch.object(pe, 'fetch_comments', return_value=comments),
+                   mock.patch.object(pe, 'fetch_comments', return_value=comments, side_effect=comments_error),
                    mock.patch.object(pe, 'fetch_runs', return_value=[]),
                    mock.patch.object(pe, 'fetch_escapes', return_value=([], [])),
                    mock.patch.object(pe, 'default_catches', return_value=Path(folder) / 'none.jsonl')]
@@ -366,6 +367,89 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn('is full for 2026', body)
         self.assertTrue(any(c[0] == 'POST' for c in github.calls))
+
+    def at(self, day):
+        return fixtures.comment(fixtures.MAIN_PASS, at=f'{day}T10:00:00Z')
+
+    def clocked(self):
+        clock = mock.patch.object(dash.dt, 'datetime', wraps=dt.datetime)
+        started = clock.start()
+        started.now.return_value = NOW
+        started.strptime = dt.datetime.strptime
+        self.addCleanup(clock.stop)
+
+    def test_a_full_year_does_not_block_the_next_one(self):
+        self.clocked()
+        with tempfile.TemporaryDirectory() as folder:
+            metrics = Path(folder) / 'metrics'
+            dash.write_files(metrics, dash.plan_files(pe.merge([], [lane(id=f'lane:{n}', at='2026-10-29T10:00:00Z') for n in range(30)])))
+            code, body, github = self.run_publish(folder, [self.at('2027-01-02')], limit=3000)
+            files = sorted(p.name for p in metrics.glob('events-*.jsonl'))
+        self.assertEqual(files, ['events-2026-10.jsonl', 'events-2027-01.jsonl'])
+        self.assertEqual(code, 0)  # the 2026 file is full but this run adds nothing to it
+        self.assertNotIn('is full', body)
+
+    def test_a_full_year_refuses_only_its_own_new_events(self):
+        self.clocked()
+        with tempfile.TemporaryDirectory() as folder:
+            metrics = Path(folder) / 'metrics'
+            dash.write_files(metrics, dash.plan_files(pe.merge([], [lane(id=f'lane:{n}', at='2026-10-29T10:00:00Z') for n in range(30)])))
+            before = (metrics / 'events-2026-10.jsonl').read_text()
+            code, body, _ = self.run_publish(folder, [self.at('2026-10-30'), self.at('2027-01-02')], limit=3000)
+            self.assertEqual((metrics / 'events-2026-10.jsonl').read_text(), before)
+            self.assertTrue((metrics / 'events-2027-01.jsonl').is_file())
+        self.assertEqual(code, 1)
+        self.assertIn('is full for 2026', body)
+
+    def test_a_failed_collect_still_refreshes_the_issues_date_and_fails_the_run(self):
+        self.clocked()
+        with tempfile.TemporaryDirectory() as folder:
+            code, body, github = self.run_publish(folder, [], comments_error=RuntimeError('HTTP 403 (rate limit used up)'))
+        self.assertEqual(code, 1)
+        self.assertIn('Updated 2026-10-30', body)
+        self.assertIn('could not collect', body)
+        self.assertTrue(any(c[0] == 'POST' for c in github.calls))
+
+
+class MeterTests(unittest.TestCase):
+    class Api:
+        def __init__(self, remaining):
+            self.remaining, self.paths = remaining, []
+
+        def request(self, method, path, body=None):
+            self.paths.append(path)
+            self.remaining -= 1
+            return {}, {'x-ratelimit-remaining': str(self.remaining)}
+
+    def test_jobs_are_read_until_the_reserve_and_other_calls_always_go_through(self):
+        api = self.Api(105)
+        meter = dash.Meter(api, reserve=100)
+        for run in range(10):
+            try:
+                api.request('GET', f'actions/runs/{run}/jobs?filter=all')
+            except RuntimeError:
+                pass
+        api.request('GET', 'issues?state=all')
+        api.request('PATCH', 'issues/40', {})
+        self.assertEqual(meter.skipped, 5)
+        self.assertEqual(len([p for p in api.paths if '/jobs?' in p]), 5)
+        self.assertIn('issues/40', api.paths)
+
+    def test_runs_without_a_jobs_read_are_counted_in_the_issue(self):
+        class Api(self.Api):
+            def pages(self, *args, **kwargs):
+                return []
+        api = Api(3)
+        meter = dash.Meter(api, reserve=100)
+        api.request('GET', 'actions/runs?created=2026-10-30&per_page=100&page=1')
+        with self.assertRaises(RuntimeError):
+            api.request('GET', 'actions/runs/1/jobs?filter=all&per_page=100')
+        self.assertEqual(meter.skipped, 1)
+
+    def test_a_workflow_token_run_over_a_busy_week_fits_the_hour(self):
+        """The default reserve leaves room for the comment pages, the escapes, the issue search and the edit."""
+        self.assertGreaterEqual(dash.RATE_RESERVE, 100)
+        self.assertLessEqual(dash.BACKFILL_DAYS, 2)
 
 
 class WorkflowTests(unittest.TestCase):

@@ -23,7 +23,7 @@ string does not fit its key's shape (a test id, a hex commit, an enum, a short n
 is a nested object it does not know, so a collector change can't start storing a failure message or a log line. Skipped runs and jobs say nothing about cost or catches, and a run that succeeded or was cancelled is told by its
 jobs, so none of those are stored.
 
-The year's files are held under YEAR_BYTES (20 MB). That counts the files as they stand, not git's history of them (each day's
+The year's files are held under YEAR_BYTES (20 MB); a year that is full refuses new events for itself only. That counts the files as they stand, not git's history of them (each day's
 commit adds a delta to a month file, which git packs far smaller). A write that would pass it is not made: the issue says so and
 the run fails, so the owner decides what to thin out instead of the branch growing without a limit.
 
@@ -55,7 +55,8 @@ MARKER = '<!-- pipeline-dashboard v1 -->'
 YEAR_BYTES = 20 * 1024 * 1024
 WINDOW_DAYS = 30
 TREND_DAYS = 14
-BACKFILL_DAYS = 14   # the first run, with no events on the branch yet
+BACKFILL_DAYS = 2    # the first run, with no events on the branch yet; the workflow token's allowance is 1,000 requests an hour
+RATE_RESERVE = 150   # stop reading jobs when this few API requests are left, so the issue can still be updated
 OVERLAP_DAYS = 3     # each run collects this far back from its newest event
 BODY_LIMIT = 60000   # GitHub takes 65,536 characters in an issue body
 
@@ -240,11 +241,11 @@ def in_window(events: list[dict], now: dt.datetime, days: int) -> list[dict]:
     return [e for e in events if start <= (e.get('at') or '') <= stamp(now)]
 
 
-def collect_since(events: list[dict], now: dt.datetime) -> str:
+def collect_since(events: list[dict], now: dt.datetime, backfill: int = BACKFILL_DAYS) -> str:
     """Where this run's collect starts: a day's beginning (the day events of a `slow` kind are whole days), a few
-    days before the newest event on the branch, or BACKFILL_DAYS ago when there is none."""
+    days before the newest event on the branch, or `backfill` days ago when there is none."""
     newest = max((e['at'] for e in events if e.get('at')), default='')
-    anchor = parse_time(newest) - dt.timedelta(days=OVERLAP_DAYS) if newest else now - dt.timedelta(days=BACKFILL_DAYS)
+    anchor = parse_time(newest) - dt.timedelta(days=OVERLAP_DAYS) if newest else now - dt.timedelta(days=backfill)
     return anchor.strftime('%Y-%m-%dT00:00:00Z')
 
 
@@ -385,6 +386,27 @@ def render(events: list[dict], now: dt.datetime, sizes: dict | None = None, note
 
 # ---- Publishing ---------------------------------------------------------------------------------------
 
+class Meter:
+    """Watches the API allowance. The workflow token gets 1,000 requests an hour, and one run reads each run's jobs with
+    a call of its own; below RATE_RESERVE left, jobs calls are refused (the run keeps going without them), so the
+    comment reads, the issue search and the issue edit still fit. `skipped` counts the runs whose jobs were not read."""
+
+    def __init__(self, github, reserve: int = RATE_RESERVE):
+        self.remaining, self.skipped, self.reserve = None, 0, reserve
+        inner = github.request
+
+        def request(method, path, body=None):
+            if '/jobs?' in path and self.remaining is not None and self.remaining <= self.reserve:
+                self.skipped += 1
+                raise RuntimeError('API allowance low: jobs not read')
+            data, headers = inner(method, path, body)
+            left = (headers or {}).get('x-ratelimit-remaining')
+            if isinstance(left, str) and left.isdigit():
+                self.remaining = int(left)
+            return data, headers
+        github.request = request
+
+
 def gather(github, since: str, existing: list[dict], log=lambda text: None) -> list[dict]:
     """The events after collecting everything new since <since>, on top of <existing>."""
     comments = pe.fetch_comments(github, since)
@@ -419,27 +441,46 @@ def publish_issue(github, body: str):
     return created['number']
 
 
+def year_of(name: str) -> str:
+    match = MONTH_FILE.fullmatch(name)
+    return match.group(1) if match else 'undated'
+
+
 def command_publish(args) -> int:
     metrics, now = Path(args.metrics), dt.datetime.now(dt.timezone.utc)
     existing = [e for e in (storable(e) for e in load(metrics)) if e]
-    since = collect_since(existing, now)
+    since = collect_since(existing, now, args.backfill_days)
     import sm_status  # noqa: PLC0415  (imported late so the tests need no token)
     github = sm_status.GitHub(pe.REPO)
-    events = gather(github, since, existing, lambda text: print(text, file=sys.stderr))
+    meter = Meter(github)
+    notes, failed = [], False
+    try:
+        events = gather(github, since, existing, lambda text: print(text, file=sys.stderr))
+    except RuntimeError as error:  # a read failed (often the API allowance): keep the issue's date fresh anyway
+        events, failed = existing, True
+        notes.append(f'**This run could not collect** ({str(error)[:120]}); the counts below are from the last stored events. '
+                     'Nothing new was stored.')
+    if meter.skipped:
+        notes.append(f'The API allowance ran low, so the jobs of {meter.skipped} runs were not read. They are read again on the '
+                     f'next run while they are inside the last {OVERLAP_DAYS} days; older ones stay unread.')
     kept = [e for e in (storable(e) for e in events) if e]
     refused = sum(clean(e) is None for e in events)
     files = plan_files(kept)
     sizes = year_bytes(files)
-    notes, failed = [], False
     if refused:
         notes.append(f'{refused} events held a value that does not fit its field (not a number, id or short name) and were not stored.')
-    if over_budget(sizes):
-        failed = True
-        notes.append(f'**The `metrics` branch is full for {", ".join(over_budget(sizes))}** (over {YEAR_BYTES // 1048576} MB): '
-                     'nothing was written this run. Thin out the oldest job events or raise YEAR_BYTES in `scripts/pipeline_dashboard.py`.')
-    else:
-        changed = write_files(metrics, files)
-        print(f'{metrics}: {len(kept)} events, {len(changed)} files written ({", ".join(changed) or "none"})')
+    if not failed:
+        full = set(over_budget(sizes))
+        changed = [name for name, text in files.items()
+                   if not (metrics / name).is_file() or (metrics / name).read_text() != text]
+        blocked = sorted({year_of(name) for name in changed} & full)
+        if blocked:  # only a year that would grow is refused; the other years are still written
+            failed = True
+            notes.append(f'**The `metrics` branch is full for {", ".join(blocked)}** (over {YEAR_BYTES // 1048576} MB): '
+                         'new events for that year were not written. Thin out the oldest job events or raise YEAR_BYTES in '
+                         '`scripts/pipeline_dashboard.py`.')
+        written = write_files(metrics, {name: text for name, text in files.items() if year_of(name) not in blocked})
+        print(f'{metrics}: {len(kept)} events, {len(written)} files written ({", ".join(written) or "none"})')
     body = render(kept, now, sizes, notes)
     if args.body_out:
         Path(args.body_out).write_text(body)
@@ -462,6 +503,7 @@ def main(argv=None) -> int:
     publish.add_argument('--metrics', default='metrics', help='the checked-out metrics branch')
     publish.add_argument('--dry-run', action='store_true', help='write the files and the body, change no issue')
     publish.add_argument('--body-out', help='also write the issue body here')
+    publish.add_argument('--backfill-days', type=int, default=BACKFILL_DAYS, help='days to read on the first run')
     publish.set_defaults(run=command_publish)
     show = commands.add_parser('render', help='print the issue body from the files')
     show.add_argument('--metrics', default='metrics')
