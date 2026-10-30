@@ -8,7 +8,7 @@ enum RecordingFileFinalizer {
     static func finish(url: URL, reportedMs: Int, stop: () -> Void) -> FinalizedRecordingIntegrity {
         stop()
         let fileMs: Int?
-        switch RecordedFileDuration.measure(url) {
+        switch MainThreadOperationLabels.shared.scoped("recorder.measureFile", { RecordedFileDuration.measure(url) }) {
         case .milliseconds(let ms): fileMs = ms
         case .unreadable: fileMs = nil
         }

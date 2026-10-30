@@ -2053,6 +2053,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             model.finishInterjection()
             XCTAssertFalse(model.snapshot.isRecording)
         }
+        await model.settleItemReload() // the item detail reloads off the main thread after a save (#2967)
 
         XCTAssertEqual(recorder.finishCount, 2)
         XCTAssertEqual(Set(recorder.savedPaths).count, 2, "each Margin keeps its own recording")
@@ -4067,7 +4068,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
 
     /// #142: a spoken recap Margin at the end saves at the end and returns to the finished state.
-    func testSpokenMarginOnAFinishedItemSavesAtTheEndAndStaysFinished() throws {
+    func testSpokenMarginOnAFinishedItemSavesAtTheEndAndStaysFinished() async throws {
         let audio = WorkflowCompletionAudioClient()
         // A finished speech player reports offset 0, the position #142 saved the Margin at.
         audio.reportsZeroOffsetAfterCompletion = true
@@ -4092,6 +4093,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.snapshot.status.isPlaybackActive)
         XCTAssertEqual(audio.playCount, playsBefore, "the source must not restart")
         XCTAssertNil(model.lastError)
+        await model.settleItemReload() // the item detail reloads off the main thread after a save (#2967)
         let margin = try XCTUnwrap(model.selectedItem.interjections.first { !marginIDsBefore.contains($0.id) })
         XCTAssertEqual(margin.sessionId, sessionID)
         XCTAssertEqual(margin.anchor.startChar, model.selectedItem.text.count, "saved at the end, not at the stopped player's 0")

@@ -312,14 +312,17 @@ extension Gate1AppModel {
     func finishInterjection() {
         guard snapshot.isRecording, let verdict = verdictForSavingRecording() else { return }
         let held = heldMarginVoice // a Margin recorded over a voice leaves the source paused for it to play on (#1672)
+        let labels = hangTelemetry.labels
         run { engine in
-            defer { recordSpokenMarginSavedBeforeFailure(engine.lastScheduledTranscriptionInterjectionId) }
+            defer { labels.scoped("marginSave.signal") { recordSpokenMarginSavedBeforeFailure(engine.lastScheduledTranscriptionInterjectionId) } }
             snapshot = try engine.finishInterjection(audioRef: nil, resumesSource: held == nil)
             if held?.kind == .own { noteMarginRecordedOverHeldOwnMargin(engine.lastScheduledTranscriptionInterjectionId) }
-            refreshSelectedItem()
-            recordSavedInterjectionForOnboarding()
-            transcribeAndRecordSavedSpokenMargin()
-            reportMarginSaved(verdict)
+            // The item detail is read off the main thread, as Pause does (#2102): the read costs most of a second on
+            // a long item, and every Margin save waited for it (#2967). The new Margin shows when the read lands.
+            refreshSelectedItemInBackground()
+            labels.scoped("marginSave.onboarding") { recordSavedInterjectionForOnboarding() }
+            labels.scoped("marginSave.transcription") { transcribeAndRecordSavedSpokenMargin() }
+            labels.scoped("marginSave.report") { reportMarginSaved(verdict) }
         }
         if !snapshot.isRecording {
             marginCapture.clearPresentationContext()

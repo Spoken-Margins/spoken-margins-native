@@ -73,36 +73,45 @@ final class Gate1AppModel: ObservableObject {
     var snapshot = SessionSnapshot() {
         willSet { publishSnapshotChange(to: newValue) }
         didSet {
-            recordPlaybackEventState(previous: oldValue)
-            if oldValue.sessionId != snapshot.sessionId { resumeDeferredPodcastPlacements() }
-            if oldValue.isRecording, !snapshot.isRecording { endCaptureWatch() }
-            if !oldValue.isRecording, snapshot.isRecording { startCaptureWatch() }
-            settleSpeechInterruptionResume()
-            listeningSignals.snapshotChanged(from: oldValue, to: snapshot); playQueueSnapshotChanged(from: oldValue, to: snapshot)
-            updateNarrationVoiceNotice()
-            if playingImportedCommentary != nil,
-               oldValue.sessionId != snapshot.sessionId || oldValue.itemId != snapshot.itemId
-                || oldValue.targetId != snapshot.targetId || snapshot.status.isPlaybackActive {
-                stopImportedCommentaryPlayback(resumeSource: false)
-            }
-            if snapshot.status.isPlaybackActive { releaseOwnMarginReturn(); libraryAudioLoop.renderPolicy.noteListenerEngaged() }
-            if let status = snapshot.preparedTextAudioStatus, status != preparedTextAudioStatus { preparedTextAudioStatus = status } // an equal write still publishes
-            if let snapshotSourceTranscriptStatus = snapshot.sourceTranscriptStatus, snapshotSourceTranscriptStatus != sourceTranscriptStatus,
-               !(sourceTranscriptStatus == "transcribing" && snapshotSourceTranscriptStatus == "not_started") {
-                sourceTranscriptStatus = snapshotSourceTranscriptStatus
-            }
-            if oldValue.status.isPlaybackActive != snapshot.status.isPlaybackActive || oldValue.itemId != snapshot.itemId {
-                if !canPrepareLibraryAudio {
-                    libraryAudioLoop.cancelOnly()
-                } else {
-                    startForegroundAudioPreparationIfNeeded()
-                }
-            }
-            reconcilePlaybackProgressTicker()
-            reconcileNarrationStartupProtection()
-            updateSkimAvailability(refreshResources: false)
-            updateGate2CompactState()
+            // Every status change runs this chain, from a tap or from an audio callback alike. Named, a hang in one of
+            // the callbacks reads `snapshotChanged` instead of `none` (#2967).
+            hangTelemetry.labels.scoped("snapshotChanged") { snapshotDidChange(from: oldValue) }
         }
+    }
+
+    private func snapshotDidChange(from oldValue: SessionSnapshot) {
+        let labels = hangTelemetry.labels
+        labels.scoped("snapshot.playbackEvents") { recordPlaybackEventState(previous: oldValue) }
+        if oldValue.sessionId != snapshot.sessionId { resumeDeferredPodcastPlacements() }
+        if oldValue.isRecording, !snapshot.isRecording { endCaptureWatch() }
+        if !oldValue.isRecording, snapshot.isRecording { startCaptureWatch() }
+        settleSpeechInterruptionResume()
+        labels.scoped("snapshot.listeningSignals") {
+            listeningSignals.snapshotChanged(from: oldValue, to: snapshot); playQueueSnapshotChanged(from: oldValue, to: snapshot)
+        }
+        updateNarrationVoiceNotice()
+        if playingImportedCommentary != nil,
+           oldValue.sessionId != snapshot.sessionId || oldValue.itemId != snapshot.itemId
+            || oldValue.targetId != snapshot.targetId || snapshot.status.isPlaybackActive {
+            stopImportedCommentaryPlayback(resumeSource: false)
+        }
+        if snapshot.status.isPlaybackActive { releaseOwnMarginReturn(); libraryAudioLoop.renderPolicy.noteListenerEngaged() }
+        if let status = snapshot.preparedTextAudioStatus, status != preparedTextAudioStatus { preparedTextAudioStatus = status } // an equal write still publishes
+        if let snapshotSourceTranscriptStatus = snapshot.sourceTranscriptStatus, snapshotSourceTranscriptStatus != sourceTranscriptStatus,
+           !(sourceTranscriptStatus == "transcribing" && snapshotSourceTranscriptStatus == "not_started") {
+            sourceTranscriptStatus = snapshotSourceTranscriptStatus
+        }
+        if oldValue.status.isPlaybackActive != snapshot.status.isPlaybackActive || oldValue.itemId != snapshot.itemId {
+            if !canPrepareLibraryAudio {
+                libraryAudioLoop.cancelOnly()
+            } else {
+                labels.scoped("snapshot.audioPreparation") { startForegroundAudioPreparationIfNeeded() }
+            }
+        }
+        reconcilePlaybackProgressTicker()
+        labels.scoped("snapshot.narrationProtection") { reconcileNarrationStartupProtection() }
+        labels.scoped("snapshot.skimAvailability") { updateSkimAvailability(refreshResources: false) }
+        updateGate2CompactState()
     }
     @Published var narrationVoiceNotice = NarrationVoiceNotice() // written by updateNarrationVoiceNotice() only
     var gate2CompactSnapshot: CompactControlSnapshot?
@@ -2530,8 +2539,10 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    /// `caller` names the function that asked, so a hang inside the engine reads `engine.run:finishInterjection` and
+    /// not a bare `engine.run` shared by about 200 call sites (#2967).
     @discardableResult
-    func run(_ operation: (SessionEngine) throws -> Void) -> Bool {
+    func run(caller: StaticString = #function, _ operation: (SessionEngine) throws -> Void) -> Bool {
         if engine == nil {
             do {
                 let store = try requireStore()
@@ -2542,12 +2553,18 @@ final class Gate1AppModel: ObservableObject {
         }
         guard let engine else { return false }
         do {
-            try hangTelemetry.labels.scoped("engine.run") { try operation(engine) }
+            try hangTelemetry.labels.scoped(Self.engineRunLabel(caller: caller)) { try operation(engine) }
             return true
         } catch {
             reportFailure(error)
             return false
         }
+    }
+
+    /// `engine.run:finishInterjection` for `finishInterjection()`. A stack label holds 40 characters.
+    nonisolated static func engineRunLabel(caller: StaticString) -> String {
+        let name = "\(caller)".prefix { $0 != "(" }
+        return name.isEmpty ? "engine.run" : String("engine.run:\(name)".prefix(40))
     }
 
     func previewSpeech(label: String, mode: AppSpeechPreviewMode) {

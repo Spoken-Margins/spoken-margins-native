@@ -2138,7 +2138,9 @@ public final class SessionEngine {
             return try finishStoredMargin(session, anchor: anchor, targetType: targetType, resumesSource: resumesSource)
         }
         storedMarginFinish = nil // left over from another session
-        let savedAudioRef = try recorder.finishRecording(audioRef: audioRef ?? closedRecordingRef)
+        let savedAudioRef = try MainThreadOperationLabels.shared.scoped("finish.recorder") {
+            try recorder.finishRecording(audioRef: audioRef ?? closedRecordingRef)
+        }
         closedRecordingRef = savedAudioRef
         updateRecordingDraft { $0.audioRef = savedAudioRef; $0.state = .closed }
         if profile.has("sync", "queue_offline_events"), let package = currentWatchPackage {
@@ -2188,7 +2190,7 @@ public final class SessionEngine {
                 : nil,
             replyTo: recordingReplyTo
         )
-        try repository.saveInterjection(interjection)
+        try MainThreadOperationLabels.shared.scoped("finish.store") { try repository.saveInterjection(interjection) }
         removeRecordingDraft()
         closedRecordingRef = nil // owned by a Margin now; a later failure must not store it again
         lastMediaPercentageRepair = nil
@@ -2196,7 +2198,9 @@ public final class SessionEngine {
             interjection: interjection,
             capturesPostResumeEvidence: shouldCapturePostResumePodcastEvidence
         )
-        return try finishStoredMargin(session, anchor: anchor, targetType: targetType, resumesSource: resumesSource)
+        return try MainThreadOperationLabels.shared.scoped("finish.resume") {
+            try finishStoredMargin(session, anchor: anchor, targetType: targetType, resumesSource: resumesSource)
+        }
     }
 
     /// Everything after the Margin is stored. Each step that has run is remembered, so a Save that failed part way
