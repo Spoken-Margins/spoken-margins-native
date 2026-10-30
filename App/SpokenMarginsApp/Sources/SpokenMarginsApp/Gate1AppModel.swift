@@ -1855,10 +1855,8 @@ final class Gate1AppModel: ObservableObject {
                     reportWarning("Offline preparation needs James, Lily, Phonon or Kokoro, with the Terms accepted.")
                     return
                 }
-                // The preparation needs the article text, so the whole item is read here, off the main actor (#2506).
-                Task { [weak self] in
-                    guard let whole = try? await StoreReader(store).read({ try $0.loadItem(id: id) }) else { return }
-                    await self?.enqueueExplicitAudioPreparation(item: whole)
+                Task { [weak self] in // the preparation needs the article text, so the whole item is read here, off the main actor (#2506)
+                    if let whole = try? await StoreReader(store).read({ try $0.loadItem(id: id) }) { await self?.enqueueExplicitAudioPreparation(item: whole) }
                 }
             }
         } catch {
