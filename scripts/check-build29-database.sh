@@ -34,9 +34,14 @@ summarize() { printf '%s\n' "$1" | grep -E "error|Executed .* test" | tail -2 ||
 
 echo "== writing a database and packets with the current code"
 mkdir -p "$packets"
+# Only the SessionKitTests classes that export a packet: the rest of that target holds real-time AVFoundation
+# tests that need a sound output, which the hosted runner leaves out (verify-tests.py PORTABLE_LEFT_OUT).
+exporters=$(grep -l 'exportPacket(' "$repo"/Packages/SessionKit/Tests/SessionKitTests/*.swift \
+    | xargs sed -nE 's/.*class ([A-Za-z0-9_]+): XCTestCase.*/\1/p' | sort -u | paste -sd '|' -)
+[ -n "$exporters" ] || { echo "FAIL found no exporter tests in SessionKitTests" >&2; exit 1; }
 status=0
 out=$(SM_BUILD29_DB="$db" SM_SHIPPED_PACKETS_DIR="$packets" swift test --package-path "$repo/Packages/SessionKit" \
-    --filter 'Build29DatabaseFixtureTests|SessionKitTests\.' 2>&1) || status=$?
+    --filter "Build29DatabaseFixtureTests|SessionKitTests\\.($exporters)/" 2>&1) || status=$?
 summarize "$out"
 [ "$status" -eq 0 ] || { echo "FAIL the writer's tests failed (swift test exited $status)" >&2; exit 1; }
 [ -f "$db.expected.json" ] || { echo "FAIL the writer produced no database" >&2; exit 1; }
@@ -47,6 +52,7 @@ echo "kept $count packets"
 zip="$repo/Packages/SessionKit/.build/checkouts/ZIPFoundation"
 zip_version() { sed -n '/"identity" : "zipfoundation"/,/"version"/s/.*"version" : "\(.*\)".*/\1/p'; }
 current_zip=$(zip_version < "$repo/Packages/SessionKit/Package.resolved")
+[ -n "$current_zip" ] || { echo "FAIL no ZIPFoundation version in Package.resolved" >&2; exit 1; }
 
 # Opens the database and imports the packets with one shipped build's own code. $1 is its tag, $2 its name.
 check_build() {

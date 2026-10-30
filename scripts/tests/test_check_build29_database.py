@@ -15,6 +15,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / 'check-build29-database.sh'
 FAKE_SWIFT = """#!/bin/sh
 case "$1" in
   test)
+    printf '%s\n' "$@" > "$TMPDIR/swift-test-args"
     echo "Executed 3 tests, with $FAKE_FAILURES failures"
     echo "error: XCTAssertEqual failed" >&2
     [ "${FAKE_WRITES_DB:-1}" = 1 ] && echo '{}' > "$SM_BUILD29_DB.expected.json"
@@ -90,6 +91,19 @@ class PacketTests(unittest.TestCase):
         self.assertIn('kept 1 packets', result.stdout)
         self.assertIn('== importing the packets with Build 29', result.stdout)
         self.assertIn('a.spokenmargins', result.stdout)  # the fake reader lists the folder it was given
+
+    def test_the_writer_runs_only_the_exporter_classes_of_sessionkittests(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_script(tmp)
+            args = (Path(tmp) / 'swift-test-args').read_text().splitlines()
+        selected = args[args.index('--filter') + 1]
+        self.assertTrue(selected.startswith('Build29DatabaseFixtureTests|SessionKitTests\\.('), selected)
+        classes = selected.split('(', 1)[1].rstrip(')/').split('|')
+        self.assertIn('SharingTests', classes)
+        self.assertIn('ShippedReaderRoundTripTests', classes)
+        # Real-time audio tests need a sound output the hosted runner lacks; they export no packet.
+        self.assertNotIn('KittenRendererTests', classes)
+        self.assertNotIn('HeardSourceWindowFilesTests', classes)
 
     def test_a_packet_the_build_cannot_import_fails_the_script(self):
         with tempfile.TemporaryDirectory() as tmp:
