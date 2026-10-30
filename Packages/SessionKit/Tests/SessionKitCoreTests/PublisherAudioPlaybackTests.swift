@@ -86,11 +86,16 @@ final class PublisherAudioPlaybackTests: XCTestCase {
         ]
         for (name, item, record) in cases {
             XCTAssertNil(PublisherAudioPlayback.plan(for: item, record: record), name)
+            XCTAssertFalse(PublisherAudioPlayback.playsRecording(summary: LibraryItemSummary(item), record: record),
+                           "the summary check refuses it too: \(name)")
         }
         for media in [ItemMedia(sourceType: .generatedTTSRealtime), ItemMedia(sourceType: .generatedTTSPrerendered, url: "file:///tmp/n.caf")] {
             XCTAssertNotNil(PublisherAudioPlayback.plan(for: article(media: media), record: record(map: map())),
                             "generated narration gives way to the publisher's own recording: \(media.sourceType)")
+            XCTAssertTrue(PublisherAudioPlayback.playsRecording(summary: LibraryItemSummary(article(media: media)), record: record(map: map())))
         }
+        XCTAssertTrue(PublisherAudioPlayback.playsRecording(summary: LibraryItemSummary(article()), record: record(map: map())),
+                      "the play-start check reads a summary, with no article text, and gives the plan's answer (#2506)")
     }
 
     func testThePlayingCopyHasTheRecordingAndTheStoredCopyGetsItsOwnAudioBack() throws {
