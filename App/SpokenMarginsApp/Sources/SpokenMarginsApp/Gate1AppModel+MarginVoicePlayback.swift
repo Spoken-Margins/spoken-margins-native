@@ -391,7 +391,7 @@ extension Gate1AppModel {
         guard interjection.isSpokenItemMargin else { return }
         let clock: MarginMomentClock = snapshot.targetType == TargetType.itemTextTTS.rawValue ? .liveNarration : .media
         let spoken = spokenItemMargins(itemId: interjection.itemId, store: store)
-        let text = clock.isNarratedText ? ((try? store.loadItem(id: interjection.itemId))?.text ?? "") : ""
+        let text = clock.isNarratedText ? narratedMomentText(itemId: interjection.itemId) : ""
         guard let anchors = MarginMomentPlanner.anchors(
             played: interjection, among: spoken, clock: clock, targetMediaTimeMs: snapshot.currentMediaTimeMs, text: text
         ) else { return }
@@ -411,6 +411,17 @@ extension Gate1AppModel {
             isApproximate: false,
             clock: clock
         )
+    }
+
+    /// The text a narrated Margin moment plans its lead-in on. The item's detail on screen already holds it, and both
+    /// callers set `selectedItem` to this item first, so it is not read from the store on the main actor again (#2506).
+    /// Another item's detail gives no text, which only loses the sentence-start snap, and is noted in Diagnostics.
+    private func narratedMomentText(itemId: String) -> String {
+        guard let text = selectedItem.text(forItem: itemId) else {
+            diagnostics["marginMoment.textUnavailable"] = itemId
+            return ""
+        }
+        return text
     }
 
     /// The listener's spoken Margins on the item, from every session, in no particular order.
@@ -451,7 +462,7 @@ extension Gate1AppModel {
         if resuming {
             conductor.startListening(atMediaTimeMs: snapshot.currentMediaTimeMs)
         } else if clock.isNarratedText {
-            let text = (try? store?.loadItem(id: itemId))?.text ?? ""
+            let text = narratedMomentText(itemId: itemId)
             let start = clock.leadInStartOffset(forTargetPosition: target.mediaTimeMs, in: text)
             seekText(toCharOffset: start)
             conductor.startListening(atMediaTimeMs: clock.position(forTextOffset: start))

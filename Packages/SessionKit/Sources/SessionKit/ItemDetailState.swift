@@ -30,6 +30,12 @@ public struct ItemDetailState: Equatable, Sendable {
     public var originalSourceURL: URL? {
         OriginalSourceLink.url(externalReference: externalReference, externalReferenceType: externalReferenceType)
     }
+
+    /// The item's text when this is the detail of `itemId`, so a caller that holds the screen's detail doesn't read
+    /// the whole item from the store for it (#2506). Nil for another item's detail: its text is not this item's.
+    public func text(forItem itemId: String) -> String? {
+        id == itemId ? text : nil
+    }
     public var isNativeAudio = false
     public var timelineSource = TimelineSourceContent(text: "")
     public var documentStructure: PDFDocumentStructure?
