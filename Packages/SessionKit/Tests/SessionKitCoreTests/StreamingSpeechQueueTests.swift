@@ -45,9 +45,7 @@ extension StreamingSpeechQueueTests {
         let queue = StreamingSpeechQueue(speech: audio)
         queue.configureSpeechClient(audio)
         queue.enqueue(["A streamed response sentence."], turnId: "turn-001")
-        for _ in 0..<20 where audio.playCount == 0 {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await waitUntil { audio.playCount > 0 } // the queue is speaking, so the Margin has something to stop (#1894)
         let stopsBeforeMargin = audio.stopCount
 
         queue.pauseForInterjection()
