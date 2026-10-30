@@ -66,4 +66,50 @@ extension Gate1AppModel {
         recordDeveloperDiagnostic("miniPlayer.close.outcome", ["outcome": outcome])
         if outcome == "accepted" { hangTelemetry.closeTapped() }
     }
+
+    // MARK: Snapshot changes
+
+    /// What follows a change of the playback snapshot. `snapshot`'s `didSet` calls it under the `snapshotChanged`
+    /// label, and each step that can wait has its own, so a hang in a tap or an audio callback names the step
+    /// instead of reading `none` (#2967).
+    func snapshotDidChange(from oldValue: SessionSnapshot) {
+        let labels = hangTelemetry.labels
+        labels.scoped("snapshot.playbackEvents") { recordPlaybackEventState(previous: oldValue) }
+        if oldValue.sessionId != snapshot.sessionId { resumeDeferredPodcastPlacements() }
+        if oldValue.isRecording, !snapshot.isRecording { endCaptureWatch() }
+        if !oldValue.isRecording, snapshot.isRecording { startCaptureWatch() }
+        settleSpeechInterruptionResume()
+        labels.scoped("snapshot.listeningSignals") {
+            listeningSignals.snapshotChanged(from: oldValue, to: snapshot); playQueueSnapshotChanged(from: oldValue, to: snapshot)
+        }
+        updateNarrationVoiceNotice()
+        if playingImportedCommentary != nil,
+           oldValue.sessionId != snapshot.sessionId || oldValue.itemId != snapshot.itemId
+            || oldValue.targetId != snapshot.targetId || snapshot.status.isPlaybackActive {
+            stopImportedCommentaryPlayback(resumeSource: false)
+        }
+        if snapshot.status.isPlaybackActive { releaseOwnMarginReturn(); libraryAudioLoop.renderPolicy.noteListenerEngaged() }
+        if let status = snapshot.preparedTextAudioStatus, status != preparedTextAudioStatus { preparedTextAudioStatus = status } // an equal write still publishes
+        if let snapshotSourceTranscriptStatus = snapshot.sourceTranscriptStatus, snapshotSourceTranscriptStatus != sourceTranscriptStatus,
+           !(sourceTranscriptStatus == "transcribing" && snapshotSourceTranscriptStatus == "not_started") {
+            sourceTranscriptStatus = snapshotSourceTranscriptStatus
+        }
+        if oldValue.status.isPlaybackActive != snapshot.status.isPlaybackActive || oldValue.itemId != snapshot.itemId {
+            if !canPrepareLibraryAudio {
+                libraryAudioLoop.cancelOnly()
+            } else {
+                labels.scoped("snapshot.audioPreparation") { startForegroundAudioPreparationIfNeeded() }
+            }
+        }
+        reconcilePlaybackProgressTicker()
+        labels.scoped("snapshot.narrationProtection") { reconcileNarrationStartupProtection() }
+        labels.scoped("snapshot.skimAvailability") { updateSkimAvailability(refreshResources: false) }
+        updateGate2CompactState()
+    }
+
+    /// `engine.run:finishInterjection` for `finishInterjection()`. A stack label holds 40 characters.
+    nonisolated static func engineRunLabel(caller: StaticString) -> String {
+        let name = "\(caller)".prefix { $0 != "(" }
+        return name.isEmpty ? "engine.run" : String("engine.run:\(name)".prefix(40))
+    }
 }

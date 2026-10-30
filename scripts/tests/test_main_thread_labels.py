@@ -20,8 +20,9 @@ SITES = {
     'Gate1AppModel+LibraryAudioQueue.swift': ['scheduleAudioPreparation', 'explicitAudioPreparationQueued'],
     'Gate1AppModel+MarginCapture.swift': [
         'marginSaveFinish', 'marginSave.onboarding', 'marginSave.transcription', 'marginSave.report', 'marginSave.signal'],
-    'Gate1AppModel.swift': [
-        'snapshotChanged', 'snapshot.playbackEvents', 'snapshot.listeningSignals', 'snapshot.audioPreparation',
+    'Gate1AppModel.swift': ['snapshotChanged'],
+    'Gate1AppModel+HangTelemetry.swift': [
+        'snapshot.playbackEvents', 'snapshot.listeningSignals', 'snapshot.audioPreparation',
         'snapshot.narrationProtection', 'snapshot.skimAvailability'],
     'Gate1AppModel+EngineInstall.swift': ['compactControls.update'],
     'Gate2CompactControlController.swift': [

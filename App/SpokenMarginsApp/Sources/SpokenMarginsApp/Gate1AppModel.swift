@@ -79,40 +79,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func snapshotDidChange(from oldValue: SessionSnapshot) {
-        let labels = hangTelemetry.labels
-        labels.scoped("snapshot.playbackEvents") { recordPlaybackEventState(previous: oldValue) }
-        if oldValue.sessionId != snapshot.sessionId { resumeDeferredPodcastPlacements() }
-        if oldValue.isRecording, !snapshot.isRecording { endCaptureWatch() }
-        if !oldValue.isRecording, snapshot.isRecording { startCaptureWatch() }
-        settleSpeechInterruptionResume()
-        labels.scoped("snapshot.listeningSignals") {
-            listeningSignals.snapshotChanged(from: oldValue, to: snapshot); playQueueSnapshotChanged(from: oldValue, to: snapshot)
-        }
-        updateNarrationVoiceNotice()
-        if playingImportedCommentary != nil,
-           oldValue.sessionId != snapshot.sessionId || oldValue.itemId != snapshot.itemId
-            || oldValue.targetId != snapshot.targetId || snapshot.status.isPlaybackActive {
-            stopImportedCommentaryPlayback(resumeSource: false)
-        }
-        if snapshot.status.isPlaybackActive { releaseOwnMarginReturn(); libraryAudioLoop.renderPolicy.noteListenerEngaged() }
-        if let status = snapshot.preparedTextAudioStatus, status != preparedTextAudioStatus { preparedTextAudioStatus = status } // an equal write still publishes
-        if let snapshotSourceTranscriptStatus = snapshot.sourceTranscriptStatus, snapshotSourceTranscriptStatus != sourceTranscriptStatus,
-           !(sourceTranscriptStatus == "transcribing" && snapshotSourceTranscriptStatus == "not_started") {
-            sourceTranscriptStatus = snapshotSourceTranscriptStatus
-        }
-        if oldValue.status.isPlaybackActive != snapshot.status.isPlaybackActive || oldValue.itemId != snapshot.itemId {
-            if !canPrepareLibraryAudio {
-                libraryAudioLoop.cancelOnly()
-            } else {
-                labels.scoped("snapshot.audioPreparation") { startForegroundAudioPreparationIfNeeded() }
-            }
-        }
-        reconcilePlaybackProgressTicker()
-        labels.scoped("snapshot.narrationProtection") { reconcileNarrationStartupProtection() }
-        labels.scoped("snapshot.skimAvailability") { updateSkimAvailability(refreshResources: false) }
-        updateGate2CompactState()
-    }
     @Published var narrationVoiceNotice = NarrationVoiceNotice() // written by updateNarrationVoiceNotice() only
     var gate2CompactSnapshot: CompactControlSnapshot?
     let runtimeDiagnostics = RuntimeDiagnostics()
@@ -918,7 +884,7 @@ final class Gate1AppModel: ObservableObject {
         offlineServicesStartupTasks.forEach { $0.cancel() }
     }
 
-    private func reconcilePlaybackProgressTicker() {
+    func reconcilePlaybackProgressTicker() {
         if snapshot.status.isPlaybackActive {
             startPlaybackProgressTicker()
         } else {
@@ -1448,7 +1414,7 @@ final class Gate1AppModel: ObservableObject {
         reconcileNarrationStartupProtection()
     }
 
-    private func reconcileNarrationStartupProtection() {
+    func reconcileNarrationStartupProtection() {
         let itemId = snapshot.itemId
         narrationStartupProtection.statusChanged(to: snapshot.status, itemId: itemId) {
             itemId.map { narrationRendersOnDevice(itemId: $0) } ?? false
@@ -2559,12 +2525,6 @@ final class Gate1AppModel: ObservableObject {
             reportFailure(error)
             return false
         }
-    }
-
-    /// `engine.run:finishInterjection` for `finishInterjection()`. A stack label holds 40 characters.
-    nonisolated static func engineRunLabel(caller: StaticString) -> String {
-        let name = "\(caller)".prefix { $0 != "(" }
-        return name.isEmpty ? "engine.run" : String("engine.run:\(name)".prefix(40))
     }
 
     func previewSpeech(label: String, mode: AppSpeechPreviewMode) {
